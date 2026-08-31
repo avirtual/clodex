@@ -150,7 +150,9 @@ them.
   (`name`), `request-open-skills-drawer` (`name`), `request-open-exec-drawer`
   (`name`), `request-open-inbox-drawer`, `request-open-prompts-drawer`,
   `request-open-templates-drawer`, `request-open-ipc-log`,
-  `request-rename-workspace`, `request-switch-session` (`name`),
+  `request-rename-workspace`, `request-switch-session` (`name` — session-manager
+  `voiceSelect` sends this one too, ahead of the tap, so the named seat is on
+  screen before its recorder lights),
   `request-open-team-roles` (`name`), `request-open-team-create`.
 - **`set-theme`** (`name`) — app-menus theme submenu (the browser sets its own
   theme in-page).

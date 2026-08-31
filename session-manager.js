@@ -2293,6 +2293,111 @@ function createSessionManager(deps) {
 
     appFocused() { return this._appFocused; }
 
+    // Every decline a voice verb can reach, in one place so `select` cannot
+    // admit a seat `tap` would refuse. Falling back to the focused seat on an
+    // ABSENT target is the tap's rule and stays here; an UNMATCHED name is a
+    // decline for both — never a fallback, or a named select would arm a seat
+    // he did not name while he believes he switched.
+    _voiceRoute(target = null) {
+      const name = target || this._focusedSession;
+      if (!name) return { ok: false, error: 'no target and no focused session' };
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
+      if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
+      const win = this.windowForSession(name);
+      if (!win) return { ok: false, error: `"${name}" has no window attached` };
+      return { ok: true, name, session: s, win };
+    }
+
+    // SELECT THEN ARM. The tab has to be the one he is looking at before the
+    // recorder lights, or he dictates into a seat he cannot see.
+    //
+    // The switch frame goes to the target's OWN window; the raise stays
+    // voiceTap's single site, asked for explicitly — one raise mechanism, and
+    // it already orders retarget → raise → frame correctly.
+    //
+    // A NAME IS MANDATORY HERE, checked before _voiceRoute rather than inside
+    // it: the route's absent-target fallback is the TAP's rule, and an empty
+    // string reaches it as falsy and resolves to the focused seat — selecting
+    // and ARMING a seat he did not name while he believes he switched. That is
+    // the outcome this verb calls worse than silence, and it arrives from an
+    // unset shell variable, not from exotic input. The check lives in the
+    // MANAGER because the socket is the trust boundary every front-end shares.
+    voiceSelect(target = null) {
+      if (typeof target !== 'string' || !target.trim()) {
+        return { ok: false, error: 'select needs a seat name' };
+      }
+      const r = this._voiceRoute(target);
+      if (!r.ok) return r;
+      // Ahead of the tap: the tap's raise brings the window forward, and it must
+      // already be showing the named seat when it arrives.
+      this._sendToSession(r.name, 'request-switch-session', r.name);
+      return this.voiceTap(r.name, { raise: true });
+    }
+
+    // Switch the CLI's own push-to-talk mode, INJECTED rather than written to a
+    // settings file: the CLI's `/voice` handler writes the GLOBAL
+    // ~/.claude/settings.json and reads the mode into memory at startup, so a
+    // file written under a running seat disagrees with the process holding it.
+    //
+    // Targets the MICROPHONE HOLDER, never `activeSession` — the holder is the
+    // one invariant that is single-valued across windows, and the mode belongs
+    // to whichever seat would actually record.
+    voiceMode(mode) {
+      if (mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use tap|hold)` };
+      const name = this._micTarget;
+      if (!name) return { ok: false, error: 'no seat holds the microphone' };
+      const r = this._voiceRoute(name);
+      if (!r.ok) return r;
+      // bypassHold, like every other injected slash command: a held bare command
+      // '\n'-joins into a flush batch and the CLI reads the rest of the batch as
+      // garbage arguments.
+      //
+      // parkable protects his draft, and the cost is that a PARKED slash command
+      // does not execute: the CLI hook returns parked text as additionalContext,
+      // which is prose the model reads, not a typed line — so the mode does not
+      // change. Whether that happens is a race with the idle drain, which does
+      // deliver it as a command. Nothing is lost or spliced either way, so the
+      // draft still wins; the divert logs the outcome rather than leaving a
+      // spoken verb that silently did nothing.
+      this._injectText(r.session, `/voice ${mode}`, {
+        bypassHold: true,
+        parkable: true,
+        onDivert: () => log.info('voice',
+          `mode ${mode} → ${name} parked behind an open draft — it will not execute as a command`),
+      });
+      log.info('voice', `mode ${mode} → ${name}`);
+      return { ok: true, name, mode };
+    }
+
+    // Spoken replies on or off, from across the room. CLODEX'S OWN setting, so
+    // this is an ordinary store write — no injection, no slash command, no pty.
+    // The CLI is not involved and must not be: `mode` needs injection only
+    // because the CLI owns voice mode and reads it at startup.
+    //
+    // BOX-WIDE. There is no per-seat speech flag, so this takes no seat name and
+    // never consults the microphone holder.
+    //
+    // EXPLICIT ON/OFF, NEVER A TOGGLE: he cannot see the current state from
+    // across the room, so a toggle fired on a mis-hear leaves him unsure which
+    // state he is in and saying it again to check flips it back. Explicit is
+    // idempotent and safe to repeat, the same reasoning that has `select`
+    // decline an unmatched name rather than guess.
+    voiceSpeech(state) {
+      if (state !== 'on' && state !== 'off') return { ok: false, error: `unknown speech state "${state}" (use on|off)` };
+      const store = getUiSettings && getUiSettings();
+      if (!store) return { ok: false, error: 'no settings store' };
+      const on = state === 'on';
+      store.set({ speakReplies: on });
+      log.info('voice', `speech ${state}`);
+      // No push to the windows, and none to add: nothing subscribes to this
+      // value. The speaking gate reads the store at every turn end, and the
+      // voice popover re-reads it on OPEN — so both already agree with the
+      // store the moment this returns. A broadcast invented here would be a
+      // second notification mechanism serving no reader.
+      return { ok: true, state, speakReplies: on };
+    }
+
     // ENSURE-ON from outside the app: a Voice Control wake word arrived over
     // this box's agent socket asking for the recorder.
     //
@@ -2302,14 +2407,10 @@ function createSessionManager(deps) {
     //
     // An explicit target overrides the focused seat, so a script can address a
     // seat the operator is not looking at.
-    voiceTap(target = null) {
-      const name = target || this._focusedSession;
-      if (!name) return { ok: false, error: 'no target and no focused session' };
-      const s = this.sessions.get(name);
-      if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
-      if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
-      const win = this.windowForSession(name);
-      if (!win) return { ok: false, error: `"${name}" has no window attached` };
+    voiceTap(target = null, { raise = false } = {}) {
+      const r = this._voiceRoute(target);
+      if (!r.ok) return r;
+      const { name, win } = r;
       // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
       // is the design: he NAMED this seat, so it takes the microphone from
       // whoever held it; a re-arm names nobody, so it gets no say in who holds
@@ -2337,7 +2438,13 @@ function createSessionManager(deps) {
       // Only where a host actually answers the question. On the headless path
       // nothing reports focus, so `_appFocused` is permanently false and an
       // unconditional raise would fan a `focus-hint` on EVERY tap.
-      if (this._appFocusReported && !this._appFocused) {
+      //
+      // `raise` is the CALLER'S INTENT and is why it ORs rather than extending
+      // the focus test: app-focus answers "is Clodex buried", which is the
+      // tap's question, and it is FALSE exactly when he is looking at another
+      // Clodex WINDOW. A select must cross that gap — its whole job is moving
+      // him between windows — so it says so instead of re-deriving it.
+      if (raise || (this._appFocusReported && !this._appFocused)) {
         try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
       }
       this._sendToSession(name, 'voice-tap', name);
@@ -6087,6 +6194,21 @@ function createSessionManager(deps) {
       if (mtype === 'voice-tap') {
         const r = this.voiceTap(typeof msg.target === 'string' ? msg.target : null);
         if (!r.ok) log.info('voice', `external tap declined: ${r.error}`);
+        return;
+      }
+      if (mtype === 'voice-select') {
+        const r = this.voiceSelect(typeof msg.target === 'string' ? msg.target : null);
+        if (!r.ok) log.info('voice', `external select declined: ${r.error}`);
+        return;
+      }
+      if (mtype === 'voice-mode') {
+        const r = this.voiceMode(typeof msg.mode === 'string' ? msg.mode : null);
+        if (!r.ok) log.info('voice', `external mode declined: ${r.error}`);
+        return;
+      }
+      if (mtype === 'voice-speech') {
+        const r = this.voiceSpeech(typeof msg.state === 'string' ? msg.state : null);
+        if (!r.ok) log.info('voice', `external speech declined: ${r.error}`);
         return;
       }
       if (mtype === 'team-retire') {

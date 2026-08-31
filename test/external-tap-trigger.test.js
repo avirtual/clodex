@@ -277,6 +277,11 @@ function mk(overrides = {}) {
     spillToFile: () => '/tmp/spill-stub.txt',
     MSG_MAX_AGE: 1800,
     termAvailableFor: require('../drawer-avail').termAvailableFor,
+    // Silent by default. Three tests in this file have now failed on a missing
+    // `log` rather than on their subject — every decline path logs, so a
+    // fixture without one turns any new decline into a TypeError that reads
+    // like a bug in the code under test.
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     ...overrides,
   });
   return new SessionManager();
@@ -938,4 +943,556 @@ test('the sender script speaks the envelope the socket arm decodes', () => {
   const requires = [...script.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
   assert.deepStrictEqual(requires.filter((r) => r.startsWith('.')), [],
     'the sender script must not require anything from the app tree');
+});
+
+// ---------------------------------------------------- the select + mode verbs
+
+// The daily path is the thing this ticket could break: a shortcut he already
+// has, invoking this script by path with zero or one argument. Byte-identical
+// envelopes, not merely "still a tap".
+test('VERBS: the legacy invocations build byte-identical envelopes', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.deepStrictEqual(envelopeFor([]),
+    { type: 'voice-tap', from: 'voice-tap' },
+    'bare: no target key at all, exactly as before');
+  assert.deepStrictEqual(envelopeFor(['wirescope']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'wirescope' },
+    'one bare token is a seat name, exactly as before');
+});
+
+// A seat may legitimately be NAMED for a verb, and the one-token rule is what
+// makes that unambiguous rather than a collision to be resolved by precedence.
+test('VERBS: a lone verb-spelled token is still a seat name, not a verb', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  for (const word of ['tap', 'select', 'mode', 'speech']) {
+    assert.deepStrictEqual(envelopeFor([word]),
+      { type: 'voice-tap', from: 'voice-tap', target: word },
+      `"${word}" alone addresses a seat of that name`);
+  }
+});
+
+test('VERBS: the explicit verb forms build the envelopes the socket decodes', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.deepStrictEqual(envelopeFor(['tap', 'wirescope']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'wirescope' });
+  assert.deepStrictEqual(envelopeFor(['select', 'wirescope']),
+    { type: 'voice-select', from: 'voice-tap', target: 'wirescope' });
+  assert.deepStrictEqual(envelopeFor(['mode', 'tap']),
+    { type: 'voice-mode', from: 'voice-tap', mode: 'tap' });
+  assert.deepStrictEqual(envelopeFor(['mode', 'hold']),
+    { type: 'voice-mode', from: 'voice-tap', mode: 'hold' });
+  assert.deepStrictEqual(envelopeFor(['speech', 'on']),
+    { type: 'voice-speech', from: 'voice-tap', state: 'on' });
+  assert.deepStrictEqual(envelopeFor(['speech', 'off']),
+    { type: 'voice-speech', from: 'voice-tap', state: 'off' });
+});
+
+// Rejected at the script, so a typo'd shortcut fails where he can see it rather
+// than sending an envelope the app declines into a log he never reads.
+test('VERBS: an unknown verb and a bad mode are refused, not sent', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.match(envelopeFor(['reboot', 'now']).error, /unknown verb "reboot"/);
+  assert.match(envelopeFor(['speech', 'loud']).error, /on\|off/);
+  assert.match(envelopeFor(['mode', 'loud']).error, /tap\|hold/);
+  // No envelope is built on either path — an `error` key and nothing to send.
+  assert.strictEqual(envelopeFor(['mode', 'loud']).type, undefined);
+});
+
+// `reboot` kills every session and is reachable from a stray phrase, so its
+// ABSENCE is the safety property — a hook left for it is the thing to catch.
+test('VERBS: no reboot verb exists anywhere on the voice path', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'clodex-voice-tap.js'), 'utf-8');
+  assert.doesNotMatch(script, /reboot/i, 'the sender must not know the word');
+  const handler = fs.readFileSync(
+    path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  assert.doesNotMatch(handler, /voice-reboot/, 'and no socket arm decodes one');
+});
+
+test('SELECT: selects the named seat, then arms it, in that order', () => {
+  const m = mk();
+  const { b } = twoWindows(m);
+  m.noteAppFocused(true);
+  assert.deepStrictEqual(m.voiceSelect('B'), { ok: true, name: 'B' });
+  // THE WHOLE FRAME SEQUENCE, and the order is the assertion: the switch has to
+  // reach the window before the tap, or the recorder lights on a tab that is
+  // not yet on screen — which is the entire bug this verb fixes.
+  //
+  // The raise sits INSIDE the sequence, between the retarget and the tap: with
+  // Clodex frontmost this fixture once asserted no raise at all, which pinned
+  // the very no-op that made select useless across windows.
+  assert.deepStrictEqual(b.sent,
+    [['app-focused', true], ['request-switch-session', 'B'],
+      ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
+});
+
+// THE CASE THE VERB EXISTS FOR, and it was covered nowhere: he is looking at
+// Clodex WINDOW A and names a seat in window B. App focus is TRUE — Clodex is
+// not buried, so the tap's own gate declines to raise — and without an explicit
+// intent the tab switches inside a HIDDEN window, the microphone follows it,
+// and he dictates at a screen showing A while the audio goes to B.
+test('SELECT: raises the target window even when Clodex is ALREADY frontmost', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  assert.strictEqual(m.appFocused(), true,
+    'ENTER: Clodex is frontmost, or this passes for the backgrounded reason below');
+
+  assert.deepStrictEqual(m.voiceSelect('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, ['show', 'focus'],
+    'the target window came forward across the workspace boundary');
+  assert.deepStrictEqual(a.raised, [], 'and the window he was looking at was not disturbed');
+});
+
+// The other half of the pair: a BARE TAP must keep declining to raise while
+// Clodex is frontmost. The raise is select's intent, not a new default — a tap
+// that stole focus between windows would interrupt whatever he is typing.
+test('SELECT: the raise is select\'s intent only — a bare tap still does not steal focus', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  assert.deepStrictEqual(m.voiceTap('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, [], 'the tap did not pull window B forward');
+});
+
+test('SELECT: a select with the whole APP backgrounded raises that seat\'s window', () => {
+  // Distinct from the frontmost cross-window case above: here Clodex itself is
+  // buried behind another application, which is the raise voiceTap already had.
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  m.noteAppFocused(false);
+  assert.deepStrictEqual(m.voiceSelect('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, ['show', 'focus'], 'B\'s window came forward');
+  assert.deepStrictEqual(b.sent,
+    [['request-switch-session', 'B'], ['mic-target', 'B'], ['#show'], ['#focus'],
+      ['voice-tap', 'B']]);
+  // voiceTap's raise, REUSED rather than duplicated: A's window is untouched, which
+  // a second raise mechanism firing on the manager's own idea of "the window"
+  // would not be.
+  assert.deepStrictEqual(a.raised, [], 'no other window was disturbed');
+});
+
+// THE SAFETY PROPERTY. An unmatched name must not fall back to the focused
+// seat: that has him dictating into the wrong agent BELIEVING he switched,
+// which is worse than nothing happening at all.
+test('SELECT: an unmatched name arms NOTHING and selects NOTHING', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  const before = { a: [...a.sent], b: [...b.sent] };
+  const r = m.voiceSelect('ghost');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /no live session "ghost"/);
+  // Nothing moved: not the microphone, not a window, not one frame on either
+  // window. Comparing the WHOLE list against its own prior value is what makes
+  // this a no-op assertion rather than an absence-of-one-thing assertion.
+  assert.deepStrictEqual(a.sent, before.a, 'the focused seat was NOT selected or armed');
+  assert.deepStrictEqual(b.sent, before.b);
+  assert.deepStrictEqual(a.raised, []);
+  assert.deepStrictEqual(b.raised, []);
+  assert.strictEqual(m.micTarget(), 'A', 'the microphone did not move');
+});
+
+// MUTATION CHECK on the rule above: if `select` ever grew the tap's absent-target
+// fallback, the test above would still pass for a DIFFERENT reason unless the
+// fallback path itself is pinned as unreachable from a NAMED select. A named
+// select and a bare tap must not resolve the same way.
+test('SELECT: the fallback that serves a bare tap is unreachable from a named select', () => {
+  const m = mk();
+  const { a } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  // The focused seat IS live and armable — so a fallback would succeed here.
+  // That is what makes the decline meaningful rather than incidental.
+  assert.deepStrictEqual(m.voiceTap(), { ok: true, name: 'A' }, 'the fallback works when nothing is named');
+  const armed = [...a.sent];
+  assert.strictEqual(m.voiceSelect('ghost').ok, false);
+  assert.deepStrictEqual(a.sent, armed, 'a named select did not reach that same fallback');
+});
+
+// THE HOLE THE UNMATCHED-NAME PIN DID NOT COVER. An empty string is a PRESENT
+// argument, so it never reaches the "unmatched" path: it is falsy, and the
+// route's absent-target fallback is the tap's rule, which resolves it to the
+// FOCUSED seat — selected, given the microphone and armed while he believes he
+// switched. It arrives from `select "$SEAT"` with SEAT unset, not from
+// anything exotic.
+test('SELECT: an EMPTY name arms NOTHING and selects NOTHING', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  const before = { a: [...a.sent], b: [...b.sent] };
+
+  for (const empty of ['', '   ', '\t']) {
+    const r = m.voiceSelect(empty);
+    assert.strictEqual(r.ok, false, `${JSON.stringify(empty)} is refused`);
+    assert.match(r.error, /select needs a seat name/);
+  }
+  // Same whole-list no-op shape the unmatched-name pin uses: nothing moved on
+  // either window, and the microphone stayed where it was.
+  assert.deepStrictEqual(a.sent, before.a, 'the focused seat was NOT selected or armed');
+  assert.deepStrictEqual(b.sent, before.b);
+  assert.deepStrictEqual(a.raised, []);
+  assert.deepStrictEqual(b.raised, []);
+  assert.strictEqual(m.micTarget(), 'A', 'the microphone did not move');
+});
+
+// The manager holds the line even when the script is bypassed — the socket is
+// the trust boundary, and the design note anticipates a second front-end onto
+// these verbs.
+test('SELECT: the socket arm cannot smuggle an empty name past the manager', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  const before = [...a.sent];
+  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: '' });
+  assert.deepStrictEqual(a.sent, before, 'nothing reached the focused seat');
+  assert.deepStrictEqual(b.sent.filter((f) => f[0] === 'voice-tap'), [], 'and nothing armed');
+});
+
+// And the script refuses it before an envelope exists, so the shortcut fails
+// where he can see it rather than sending something the app silently drops.
+test('SELECT: the script refuses an empty seat name', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.match(envelopeFor(['select', '']).error, /select needs a seat name/);
+  assert.match(envelopeFor(['select', '  ']).error, /select needs a seat name/);
+  assert.strictEqual(envelopeFor(['select', '']).type, undefined, 'no envelope is built');
+});
+
+test('SELECT: the socket arm dispatches voice-select', () => {
+  const m = mk();
+  const { b } = twoWindows(m);
+  m.noteAppFocused(true);
+  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: 'B' });
+  // Raise included: the socket arm is the real entry point, so it must show the
+  // same window-forward behaviour the direct call does.
+  assert.deepStrictEqual(b.sent,
+    [['app-focused', true], ['request-switch-session', 'B'],
+      ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
+});
+
+// `mode` is the only verb that reaches the pty, so its manager needs the inject
+// machinery `mk` leaves out — the REAL InjectQueue, because the whole claim is
+// that the bytes ride the queue and inherit its gates. A stub queue here would
+// assert only that this file can call a function it also wrote.
+//
+// Timings flattened to zero so the writes land inside the test rather than
+// production's quiet window; the SPEAKING window is the one exception, set per
+// test, because a gate that never holds cannot show a deferral.
+function mkInject({ speakingStale = 0 } = {}) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const PENDING_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicemode-'));
+  const m = mk({
+    InjectQueue: require('../inject-queue').InjectQueue,
+    PENDING_DIR,
+    parkDelivery: require('../pending-store').parkDelivery,
+    INJECT_QUIET_MS: 0,
+    // Large: the cap firing underneath a deferral test would inject the very
+    // bytes that test asserts are withheld, and it would look like a pass of
+    // the opposite claim.
+    INJECT_QUIET_MAXWAIT: 3_600_000,
+    INJECT_BOOT_MAXWAIT: 0,
+    INJECT_SPEAKING_STALE_MS: speakingStale,
+    INJECT_VOICE_DRAFT_STALE_MS: 0,
+    SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9,
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  m._broadcast = () => {};
+  return { m, PENDING_DIR };
+}
+
+// A seat with a pty whose writes are recorded, so `mode` can be followed all the
+// way to the bytes rather than to a spy on the manager's own method.
+function micSeat(m, name, win) {
+  const writes = [];
+  m.sessions.set(name, {
+    name, agentType: 'claude', workspaceId: win.ws, _dead: false,
+    _bootReadySeen: true,
+    lastUserInputTs: 0, lastUserSubmitTs: 0,
+    pty: { write: (b) => writes.push(b) },
+  });
+  return writes;
+}
+
+function settle(ms = 250) { return new Promise((r) => setTimeout(r, ms)); }
+
+test('MODE: injects /voice into the MIC HOLDER, not the active session', async () => {
+  const { m } = mkInject();
+  const a = fakeWin(); a.ws = 'ws1';
+  const b = fakeWin(); b.ws = 'ws2';
+  m.registerWindow('ws1', a);
+  m.registerWindow('ws2', b);
+  const aWrites = micSeat(m, 'A', a);
+  const bWrites = micSeat(m, 'B', b);
+  // THE TWO DIFFER, which is the whole point of the fixture: B holds the
+  // microphone while A is the seat a window would call active. `activeSession`
+  // is per-window and there are two windows, so it cannot answer this.
+  reportFrom(m, a, 'A');
+  m.voiceTap('B');
+  assert.strictEqual(m.micTarget(), 'B');
+
+  assert.deepStrictEqual(m.voiceMode('hold'), { ok: true, name: 'B', mode: 'hold' });
+  await settle();
+  assert.ok(bWrites.join('').includes('/voice hold'), 'the mic holder got the command');
+  assert.deepStrictEqual(aWrites, [], 'the other seat got nothing');
+});
+
+test('MODE: the bytes ride the inject queue rather than a raw pty write', async () => {
+  const { m } = mkInject();
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  const writes = micSeat(m, 'A', win);
+  reportFrom(m, win, 'A');
+  m.voiceMode('tap');
+  await settle();
+  // The queue's signature, not the manager's: a leading Ctrl-U in its own write
+  // and the text in a later one. A raw `pty.write('/voice tap\r')` would be a
+  // single chunk with no '\x15' — and would splice a half-typed draft, which is
+  // exactly what riding the queue prevents.
+  assert.ok(writes.length > 1, 'more than one write — the Ctrl-U is split from the text');
+  assert.strictEqual(writes[0], '\x15', 'the queue leads with clear-line');
+  assert.ok(writes.join('').includes('/voice tap'));
+});
+
+test('MODE: a mode switch DEFERS while he is dictating', async () => {
+  // The recorder window must be OPEN for the gate to hold at all — with it
+  // closed this test would pass for the wrong reason (nothing to defer).
+  const { m } = mkInject({ speakingStale: 60_000 });
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  const writes = micSeat(m, 'A', win);
+  reportFrom(m, win, 'A');
+  const s = m.sessions.get('A');
+  // Dictation gets the protection typing has: the Ctrl-U that opens an injection
+  // eats a half-SPOKEN draft exactly as it eats a half-typed one.
+  s.lastVoiceRecordingTs = Date.now();
+  assert.ok(Date.now() - s.lastVoiceRecordingTs < 60_000,
+    'ENTER: the recorder window is open, or the deferral below is vacuous');
+
+  m.voiceMode('hold');
+  await settle();
+  assert.deepStrictEqual(writes, [], 'nothing was written into the live dictation');
+
+  // Release the deferral loop before the file ends. It polls until the window
+  // closes or the seat dies, and with the quiet interval flattened to zero for
+  // this fixture it would spin for the full 60s and hang the run — production's
+  // interval is not zero, so this is the fixture's debt, not the queue's.
+  s._dead = true;
+  await settle(20);
+  assert.deepStrictEqual(writes, [], 'and the release did not flush it either');
+});
+
+test('MODE: an unknown mode and an unheld microphone are declined', () => {
+  const { m } = mkInject();
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  micSeat(m, 'A', win);
+  // No mic target yet: nothing has focused or tapped.
+  assert.match(m.voiceMode('tap').error, /no seat holds the microphone/);
+  reportFrom(m, win, 'A');
+  assert.match(m.voiceMode('loud').error, /unknown voice mode "loud"/);
+  // The mode is validated BEFORE the target is resolved, so a typo cannot
+  // reach a live seat at all.
+  assert.match(m.voiceMode(null).error, /unknown voice mode/);
+});
+
+test('MODE: the socket arm dispatches voice-mode and takes the mode only as a string', async () => {
+  const { m } = mkInject();
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  const writes = micSeat(m, 'A', win);
+  reportFrom(m, win, 'A');
+  m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: 'hold' });
+  await settle();
+  assert.ok(writes.join('').includes('/voice hold'));
+  // Delivered to NO transcript: a box-wide request arriving on an agent's
+  // socket is not a message to that agent.
+  assert.deepStrictEqual(win.sent.filter((f) => f[0] === 'agent-message'), []);
+});
+
+// The one hop nothing else covers, extended to the new verbs: the script builds
+// these envelopes and the manager dispatches on them, in two files that never
+// import each other. Spelling either side differently leaves both green in
+// isolation and the phrase silently dead.
+test('VERBS: script and socket agree on the new envelope types', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'clodex-voice-tap.js'), 'utf-8');
+  const handler = fs.readFileSync(
+    path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  assert.match(script, /type: 'voice-select'/);
+  assert.match(handler, /mtype === 'voice-select'/);
+  assert.match(script, /type: 'voice-mode'/);
+  assert.match(handler, /mtype === 'voice-mode'/);
+});
+
+// ------------------------------------------------------------- the speech verb
+
+// A manager whose settings store is REAL enough to be written and read back,
+// because the claim is that the verb changes what the box will do — not that it
+// called a setter. `set` merges like the real store's, so a write of one key
+// must leave the others alone.
+function mkSpeech({ speakReplies = false } = {}) {
+  let cur = { speakReplies, speakVoice: 'Daniel', speakRate: 210 };
+  const sets = [];
+  const store = {
+    get: () => ({ ...cur }),
+    set: (partial) => {
+      sets.push(partial);
+      cur = { ...cur, ...partial };
+      return { ...cur };
+    },
+  };
+  const m = mk({ getUiSettings: () => store });
+  m._broadcast = () => {};
+  return { m, store, sets, read: () => ({ ...cur }) };
+}
+
+test('SPEECH: `on` sets the store value and `off` clears it', () => {
+  const h = mkSpeech();
+  assert.strictEqual(h.read().speakReplies, false, 'ENTER: starts off, or `on` proves nothing');
+
+  assert.deepStrictEqual(h.m.voiceSpeech('on'), { ok: true, state: 'on', speakReplies: true });
+  assert.strictEqual(h.read().speakReplies, true, 'the STORE changed, not just the return value');
+
+  assert.deepStrictEqual(h.m.voiceSpeech('off'), { ok: true, state: 'off', speakReplies: false });
+  assert.strictEqual(h.read().speakReplies, false);
+});
+
+// The gate that decides whether a turn is spoken reads the store at every turn
+// end, so "the setting changed" and "the box will now speak" are the same claim
+// — asserted through the REAL gate rather than by re-reading the value written.
+test('SPEECH: the speaking gate follows the store, which is what makes the verb real', () => {
+  const h = mkSpeech();
+  const cfgOff = h.store.get();
+  assert.strictEqual(cfgOff.speakReplies !== true, true,
+    'ENTER: the gate\'s own predicate says silent before the flip');
+  h.m.voiceSpeech('on');
+  const cfgOn = h.store.get();
+  assert.strictEqual(cfgOn.speakReplies !== true, false,
+    'and says speak after it — the same expression _maybeSpeak evaluates');
+});
+
+// BOX-WIDE, not per-seat. The verb must not grow a seat scope: there is no
+// per-seat speech flag for it to mean anything against.
+test('SPEECH: takes no seat name and does not consult the microphone holder', () => {
+  const h = mkSpeech();
+  const win = fakeWin(); win.ws = 'ws1';
+  h.m.registerWindow('ws1', win);
+  h.m.sessions.set('A', { name: 'A', agentType: 'claude', workspaceId: 'ws1', _dead: false });
+  reportFrom(h.m, win, 'A');
+  assert.strictEqual(h.m.micTarget(), 'A', 'ENTER: a seat DOES hold the mic, so ignoring it is a choice');
+
+  // WATCH THE READ, not the arity. `voiceSpeech.length` is 1 even for
+  // `(state, seat = null)` — a default parameter does not count — so an arity
+  // pin passes for exactly the per-seat mutant it was meant to forbid.
+  // Observing whether micTarget is CONSULTED is the property itself.
+  let micReads = 0;
+  const realMicTarget = h.m.micTarget.bind(h.m);
+  h.m.micTarget = () => { micReads++; return realMicTarget(); };
+  Object.defineProperty(h.m, '_micTarget', {
+    get() { micReads++; return 'A'; },
+    set() {},
+    configurable: true,
+  });
+
+  // Called the way the SOCKET ARM calls it — state only. That is the invocation
+  // a per-seat implementation would have to serve by falling back to the mic
+  // holder, so it is the one that exposes the read. Passing a seat explicitly
+  // would short-circuit that fallback and hide it.
+  assert.deepStrictEqual(h.m.voiceSpeech('on'), { ok: true, state: 'on', speakReplies: true });
+  assert.strictEqual(micReads, 0, 'the microphone holder was never read — this verb is box-wide');
+
+  // And a seat passed anyway changes nothing, which is the other half.
+  assert.deepStrictEqual(h.m.voiceSpeech('off', 'A'), { ok: true, state: 'off', speakReplies: false });
+  // Box-wide writes, with no seat key anywhere in either partial.
+  assert.deepStrictEqual(h.sets, [{ speakReplies: true }, { speakReplies: false }]);
+  assert.strictEqual(realMicTarget(), 'A', 'and the microphone did not move');
+});
+
+// A TOGGLE IS FORBIDDEN: he cannot see the current state from across the room,
+// so repeating a mis-heard phrase must not flip it back. Idempotence IS the
+// safety property here.
+test('SPEECH: repeating the same state is idempotent, never a toggle', () => {
+  const h = mkSpeech();
+  h.m.voiceSpeech('on');
+  h.m.voiceSpeech('on');
+  h.m.voiceSpeech('on');
+  assert.strictEqual(h.read().speakReplies, true, 'still on after saying it three times');
+  h.m.voiceSpeech('off');
+  h.m.voiceSpeech('off');
+  assert.strictEqual(h.read().speakReplies, false, 'and still off');
+});
+
+test('SPEECH: a state that is neither on nor off writes NOTHING', () => {
+  const h = mkSpeech({ speakReplies: true });
+  for (const bad of ['loud', 'toggle', '', null, undefined, true]) {
+    const r = h.m.voiceSpeech(bad);
+    assert.strictEqual(r.ok, false, `${String(bad)} is refused`);
+    assert.match(r.error, /unknown speech state/);
+  }
+  // The store was never touched: a rejected state must not fall through to a
+  // write, which is what would make a mis-heard word silence him.
+  assert.deepStrictEqual(h.sets, []);
+  assert.strictEqual(h.read().speakReplies, true, 'the existing value survived every refusal');
+});
+
+// The write must not clobber the sibling keys — the popover reads voice and rate
+// from the same object, and a full-object write would reset them.
+test('SPEECH: the write is a partial and leaves the other speech settings alone', () => {
+  const h = mkSpeech();
+  h.m.voiceSpeech('on');
+  assert.deepStrictEqual(h.sets, [{ speakReplies: true }], 'ONE key in the partial');
+  assert.deepStrictEqual(h.read(), { speakReplies: true, speakVoice: 'Daniel', speakRate: 210 });
+});
+
+test('SPEECH: the socket arm dispatches voice-speech and takes the state only as a string', () => {
+  const h = mkSpeech();
+  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: 'on' });
+  assert.strictEqual(h.read().speakReplies, true);
+  // A non-string state reaches the verb as null and is refused, so a malformed
+  // envelope cannot write anything.
+  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: { on: true } });
+  assert.strictEqual(h.read().speakReplies, true, 'unchanged by the malformed envelope');
+  assert.deepStrictEqual(h.sets, [{ speakReplies: true }], 'and no second write happened');
+});
+
+test('SPEECH: script and socket agree on the envelope type', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'clodex-voice-tap.js'), 'utf-8');
+  const handler = fs.readFileSync(
+    path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  assert.match(script, /type: 'voice-speech'/);
+  assert.match(handler, /mtype === 'voice-speech'/);
+  // NOT injected: this is Clodex's own setting, and a slash command here would
+  // be writing a file the running CLI disagrees with — the exact failure `mode`
+  // exists to avoid, in reverse.
+  const body = /voiceSpeech\(state\)\s*\{[\s\S]*?\n    \}/.exec(handler);
+  assert.ok(body, 'ENTER: the method body was located, or the assertions below read nothing');
+  assert.doesNotMatch(body[0], /_injectText|pty\.write/,
+    'speech writes the settings store, never the pty');
+});
+
+// THE COMPATIBILITY PROPERTY, re-pinned with three verbs present. His daily
+// shortcut invokes this script by path with zero or one argument; a third verb
+// must not have changed those bytes.
+test('SPEECH: his legacy invocations are STILL byte-identical with three verbs present', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.deepStrictEqual(envelopeFor([]),
+    { type: 'voice-tap', from: 'voice-tap' },
+    'bare: still no target key at all');
+  assert.deepStrictEqual(envelopeFor(['wirescope']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'wirescope' },
+    'named: still a tap of that seat');
+  // The one-token rule now carries four verb words, and a seat may be named for
+  // any of them. `speech` is the newest and the one a later verb is most likely
+  // to collide with.
+  assert.deepStrictEqual(envelopeFor(['speech']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'speech' },
+    'a seat named `speech` is still addressable by the legacy shape');
 });
