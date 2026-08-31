@@ -50,9 +50,8 @@ blocks a release.
 
 - **The microphone comes back on its own after a hands-free submit.** When the
   model answered quickly, the CLI left its recorder running after Clodex sent
-  your message — and that surviving recording was dead: `REC` stayed lit but no
-  words reached the composer, and Clodex would not re-arm the microphone while
-  it looked like you were still talking. You had to tap the key by hand. Clodex
+  your message, and Clodex would not re-arm the microphone while it looked like
+  you were still talking. You had to tap the key by hand. Clodex
   now stops that leftover recorder itself, immediately after sending, which is
   safe precisely there: you have just finished saying the trigger phrase, so
   there is nothing left to cut off. The usual re-arm then taps it back.
