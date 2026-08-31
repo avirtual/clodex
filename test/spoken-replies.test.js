@@ -10,7 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { speakable, isUnspeakableToken, SPEAK_MAX_CHARS } = require('../speakable');
-const { createSpeaker, listVoices, DEFAULT_VOICE, SAY_BIN } = require('../speaker');
+const { createSpeaker, createVoiceCatalog, listVoices, DEFAULT_VOICE, SAY_BIN } = require('../speaker');
 const { isTurnEndEntry } = require('../transcript');
 
 // --- the discriminator ------------------------------------------------------
@@ -239,6 +239,46 @@ test('a blank voice omits the flag rather than sending an empty one', () => {
   const sp = createSpeaker({ execFileImpl: (_b, args) => { calls.push(args); return { kill() {} }; } });
   sp.speak('hello', { voice: '' });
   assert.deepStrictEqual(calls[0], ['--', 'hello'], 'an empty -v argument would be a malformed command');
+});
+
+// The enumeration costs ~650ms and settings:get is called on every popover open,
+// so a synchronous read there would freeze the main process for two thirds of a
+// second per open. These pin that list() neither blocks nor stampedes.
+test('the voice catalog never blocks a reader', () => {
+  let spawned = 0;
+  const cat = createVoiceCatalog({ execFileImpl: (_b, _a, _o, cb) => { spawned += 1; return cb; } });
+  assert.deepStrictEqual(cat.list(), [], 'a cold read answers empty rather than waiting');
+  assert.strictEqual(spawned, 1, 'and starts exactly one warm');
+});
+
+test('concurrent reads do not stampede the enumeration', () => {
+  const cbs = [];
+  const cat = createVoiceCatalog({ execFileImpl: (_b, _a, _o, cb) => { cbs.push(cb); } });
+  cat.list(); cat.list(); cat.list();
+  assert.strictEqual(cbs.length, 1, 'a burst of settings:get opens must spawn one `say`, not three');
+
+  cbs[0](null, 'Daniel              en_GB    # Hello!\n');
+  assert.deepStrictEqual(cat.list(), [{ name: 'Daniel', locale: 'en_GB' }]);
+});
+
+test('a failed enumeration keeps the last good list rather than blanking it', () => {
+  const cbs = [];
+  let t = 1000;
+  const cat = createVoiceCatalog({
+    execFileImpl: (_b, _a, _o, cb) => { cbs.push(cb); },
+    ttlMs: 10,
+    now: () => t,
+  });
+  cat.list();
+  cbs[0](null, 'Daniel              en_GB    # Hello!\n');
+  assert.strictEqual(cat.list().length, 1);
+
+  t += 100;                       // past the TTL, so the next read re-warms
+  cat.list();
+  assert.strictEqual(cbs.length, 2, 'the TTL expiry re-warms, so an installed voice appears without a restart');
+  cbs[1](new Error('say vanished'));
+  assert.deepStrictEqual(cat.list(), [{ name: 'Daniel', locale: 'en_GB' }],
+    'a failed refresh must not empty the picker');
 });
 
 // --- the settings -----------------------------------------------------------

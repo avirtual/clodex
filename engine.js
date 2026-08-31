@@ -19,7 +19,7 @@ const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { readVoiceMode, readVoiceTrigger } = require('./voice-settings');
-const { createSpeaker, listVoices } = require('./speaker');
+const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { materializeExecScripts } = require('./bin-materialize');
 // Module-level, unlike the rest of pending-store's surface (required inside
@@ -922,6 +922,10 @@ let pluginLoader = null;
 // output, so a per-session speaker would let two seats finishing together talk
 // over each other with nothing able to arbitrate.
 const speaker = createSpeaker();
+// Warmed off the critical path — see createVoiceCatalog: the enumeration costs
+// ~650ms and settings:get must not pay it.
+const voiceCatalog = createVoiceCatalog();
+voiceCatalog.refresh();
 
 const SessionManager = createSessionManager({
     AGENT_NAME_RE,
@@ -1993,7 +1997,7 @@ const toolCache = createToolCache({ whichBin });
     refreshRemoteToken,
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),
-    listSpeakVoices: () => listVoices(),
+    listSpeakVoices: () => voiceCatalog.list(),
     REGISTRY_DIR, proxyPoller, wirescope, ProxyClient, pty,
     getRemoteServer: () => remoteServer,
     getRemoteError: () => remoteError,

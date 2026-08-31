@@ -50,6 +50,10 @@ function listVoices({ execFileSyncImpl = execFileSync, bin = SAY_BIN, lang = 'en
   try {
     raw = String(execFileSyncImpl(bin, ['-v', '?'], { encoding: 'utf-8', timeout: 5000 }));
   } catch { return []; }
+  return parseVoices(raw, lang);
+}
+
+function parseVoices(raw, lang = 'en') {
   const out = [];
   for (const line of raw.split('\n')) {
     const m = VOICE_LINE.exec(line);
@@ -60,6 +64,47 @@ function listVoices({ execFileSyncImpl = execFileSync, bin = SAY_BIN, lang = 'en
     out.push({ name, locale });
   }
   return out;
+}
+
+// MEASURED: `say -v '?'` takes ~650ms on this box, every time — it is not
+// cached by the OS. settings:get is called on every Preferences and popover
+// open, and doing this enumeration inline there blocks the MAIN PROCESS for
+// two thirds of a second per open, which is a visible freeze of every window.
+//
+// So the catalog is warmed asynchronously and read from cache. `list()` never
+// blocks and never spawns: it answers with what it has, which is an empty list
+// until the first warm lands — and the UI renders the configured name as plain
+// text for exactly that case, rather than claiming the voice does not exist.
+function createVoiceCatalog({ execFileImpl = execFile, bin = SAY_BIN, lang = 'en', ttlMs = 5 * 60 * 1000, now = Date.now } = {}) {
+  let voices = [];
+  let fetchedAt = 0;
+  let inFlight = false;
+
+  function refresh() {
+    // One at a time: settings:get can arrive several times in a burst as
+    // surfaces open, and each would otherwise spawn its own 650ms enumeration.
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      execFileImpl(bin, ['-v', '?'], { encoding: 'utf-8', timeout: 5000 }, (err, stdout) => {
+        inFlight = false;
+        if (err) return;                 // keep the last good list rather than blanking it
+        voices = parseVoices(String(stdout), lang);
+        fetchedAt = now();
+      });
+    } catch { inFlight = false; }
+  }
+
+  function list() {
+    // Re-warmed on a TTL rather than once: a voice installed from System
+    // Settings should appear without restarting the app. The staleness this
+    // permits is a voice missing from the picker for a few minutes, never a
+    // voice that fails to speak.
+    if (!fetchedAt || now() - fetchedAt > ttlMs) refresh();
+    return voices;
+  }
+
+  return { list, refresh };
 }
 
 function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
@@ -119,4 +164,4 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
   return { speak, stop, interruptForRecorder, isSpeaking: () => !!child };
 }
 
-module.exports = { createSpeaker, listVoices, DEFAULT_VOICE, SAY_BIN };
+module.exports = { createSpeaker, createVoiceCatalog, listVoices, parseVoices, DEFAULT_VOICE, SAY_BIN };
