@@ -267,6 +267,10 @@ function withWrite(body, fn) {
       file,
       write: (mode) => writeVoiceMode(mode, { homeDir: home }),
       read: () => JSON.parse(fs.readFileSync(file, 'utf8')),
+      // RAW BYTES, because the refusal cases claim the file was not touched at
+      // all. A parsed comparison would call a rewrite with reordered keys or a
+      // changed indent "unchanged", which is most of what a bad write looks like.
+      bytes: () => fs.readFileSync(file),
     });
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
@@ -342,18 +346,82 @@ test('writeVoiceMode creates the file when a box has never used voice', () => {
   });
 });
 
-test('writeVoiceMode does not throw on a corrupt file, and does not preserve its garbage', () => {
-  for (const body of ['{ not json', '[]', 'null', '"a string"']) {
+// THE DATA-LOSS CASE. An unparseable file is the user mid-hand-edit, and this
+// is their GLOBAL CLI settings — merging onto `{}` there would replace every key
+// they have with a two-key object, silently, on a verb they spoke from across
+// the room. The CLI refuses the same case ("Check your settings file for syntax
+// errors") instead of overwriting, so refusing is also what mirroring it means.
+test('writeVoiceMode REFUSES an unparseable file and leaves it byte-identical', () => {
+  const corrupt = [
+    '{ not json',
+    '{"model":"opus",',          // truncated mid-edit, the realistic shape
+    '{"a":1,}',                  // trailing comma, the commonest hand-edit typo
+  ];
+  for (const body of corrupt) {
     withWrite(body, (t) => {
+      const before = t.bytes();
       const r = t.write('tap');
-      assert.strictEqual(r.ok, true, body);
-      // Nothing legible was there to keep, so the result is the bare voice
-      // shape rather than an attempt to merge onto an array or a scalar.
-      assert.deepStrictEqual(t.read(), {
-        voiceEnabled: true, voice: { enabled: true, mode: 'tap' },
-      }, body);
+      assert.strictEqual(r.ok, false, body);
+      assert.match(r.error, /syntax error/, body);
+      assert.match(r.error, /not changed/, body);
+      assert.ok(before.equals(t.bytes()), `${body}: the file was rewritten`);
     });
   }
+});
+
+// Legible JSON that is not an object is a THIRD case, decided deliberately
+// rather than let ride with the corrupt bodies: there is no key to merge into,
+// so writing means discarding whatever the user does have. Same refusal, and
+// the same byte-identity claim — one rule: we write only where our keys can be
+// carried.
+test('writeVoiceMode REFUSES legible JSON that is not an object, byte-identically', () => {
+  for (const body of ['[]', 'null', '"a string"', '42']) {
+    withWrite(body, (t) => {
+      const before = t.bytes();
+      const r = t.write('tap');
+      assert.strictEqual(r.ok, false, body);
+      assert.match(r.error, /not a JSON object/, body);
+      assert.ok(before.equals(t.bytes()), `${body}: the file was rewritten`);
+    });
+  }
+});
+
+// An EMPTY file is on the write-succeeds side, with the absent file: there is
+// demonstrably nothing in it to lose, so refusing would strand a box whose file
+// was created empty with a verb that never works.
+test('writeVoiceMode writes onto an empty or whitespace-only file', () => {
+  for (const body of ['', '   \n\t ']) {
+    withWrite(body, (t) => {
+      assert.strictEqual(t.write('hold').ok, true, JSON.stringify(body));
+      assert.deepStrictEqual(t.read(), {
+        voiceEnabled: true, voice: { enabled: true, mode: 'hold' },
+      }, JSON.stringify(body));
+    });
+  }
+});
+
+// A file we cannot READ is refused too, and for a sharper reason than symmetry:
+// treating an unreadable file as absent would merge onto `{}` and clobber it the
+// moment permissions allowed the write through.
+test('writeVoiceMode refuses an unreadable file rather than treating it as absent', () => {
+  withWrite({ model: 'opus', voice: { mode: 'hold' } }, (t) => {
+    fs.chmodSync(t.file, 0o000);
+    try {
+      // Root ignores the mode bits, so a test running as root would read the
+      // file happily and assert nothing. Skip rather than pass vacuously.
+      let readable = true;
+      try { fs.readFileSync(t.file); } catch { readable = false; }
+      if (!readable) {
+        const r = t.write('tap');
+        assert.strictEqual(r.ok, false);
+        assert.match(r.error, /could not be read/);
+      }
+    } finally {
+      fs.chmodSync(t.file, 0o600);
+    }
+    assert.deepStrictEqual(t.read(), { model: 'opus', voice: { mode: 'hold' } },
+      'the settings survived intact either way');
+  });
 });
 
 test('writeVoiceMode leaves no temp file behind, and writes atomically', () => {

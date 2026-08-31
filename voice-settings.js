@@ -12,6 +12,7 @@
 
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 const { readJsonSafe, atomicWriteFileSync } = require('./fs-util');
 
 // The three modes `/voice` accepts. Order is the order the menu offers them.
@@ -73,17 +74,52 @@ function readVoiceMode({ homeDir = os.homedir() } = {}) {
 // sets that for no seat); and the CLI's watcher only covers directories that had
 // a settings file when that session started, so CREATING this file will not
 // reach an already-running seat — the write lands, that seat does not move.
+//
+// WRITE ONLY WHERE WE COULD MERGE, OR WHERE THERE IS NOTHING TO LOSE. This does
+// its own read and parse rather than going through readJsonSafe, which cannot
+// distinguish "no file" from "file we could not parse" — and that distinction is
+// the whole safety property. Merging onto `{}` is right for an absent file and
+// catastrophic for an unparseable one: this is the user's global CLI settings,
+// so a mode verb fired while a hand-edit is mid-typo would replace every key in
+// it with a two-key object. The CLI declines the same case ("Check your settings
+// file for syntax errors") rather than overwriting.
 function writeVoiceMode(mode, { homeDir = os.homedir() } = {}) {
   if (mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use tap|hold)` };
   const file = path.join(homeDir, '.claude', 'settings.json');
-  // An unreadable or corrupt file flattens to null, and the write proceeds onto
-  // `{}` rather than throwing: that is the same "ordinary state of a box that
-  // never used voice" the read treats it as. It cannot lose keys that were not
-  // legible to begin with.
-  const data = readJsonSafe(file);
-  const raw = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-  const v = raw.voice && typeof raw.voice === 'object' && !Array.isArray(raw.voice) ? raw.voice : {};
-  const next = { ...raw, voiceEnabled: true, voice: { ...v, enabled: true, mode } };
+
+  let text = null;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    // ENOENT is the ordinary never-used-voice box. Any other read failure means
+    // a file IS there and we cannot see it, which is the case we must not write
+    // over — an EACCES treated as absent would clobber on the next chmod.
+    if (e.code !== 'ENOENT') {
+      return { ok: false, error: `${file} could not be read (${e.code || e.message}) — voice mode not changed` };
+    }
+  }
+
+  let base = {};
+  if (text !== null && text.trim() !== '') {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return { ok: false, error: `${file} has a syntax error — voice mode not changed` };
+    }
+    // Legible JSON that is not an object (`[]`, `null`, a bare string or number)
+    // is refused for the same reason as a syntax error rather than merged onto
+    // `{}`: it is not a settings file we can add a key to, so writing means
+    // discarding whatever the user does have there. One rule covers both — we
+    // only ever write where the existing content can carry our keys.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: `${file} is not a JSON object — voice mode not changed` };
+    }
+    base = parsed;
+  }
+
+  const v = base.voice && typeof base.voice === 'object' && !Array.isArray(base.voice) ? base.voice : {};
+  const next = { ...base, voiceEnabled: true, voice: { ...v, enabled: true, mode } };
   try {
     atomicWriteFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
   } catch (e) {
