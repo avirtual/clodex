@@ -23,12 +23,79 @@
 const { esc } = require('../lib/format');
 const { VOICE_ITEMS } = require('../voice-control');
 
-function initVoicePopover({ core, renderProxyBar }) {
+// How often the open popover re-reads the recorder state. Matched to the
+// watcher's own composition poll, which is what actually moves the value: a
+// faster tick re-reads a getter that cannot have changed, a slower one shows a
+// state the gates have already left.
+//
+// Only ever running while the popover is OPEN, and it writes a class and a
+// string on ONE node — never innerHTML on the bar. An indicator on the session
+// bar would repaint #proxy-actions on this timer, which is the measured
+// click-eating rebuild (t517 ate 10-15% of clicks); the popover placement is
+// what makes a tick this fast affordable at all.
+const RECORDER_TICK_MS = 300;
+
+// What CLODEX believes, in the words of the predicate that produced it. THREE
+// states rendered distinctly and not two — 'unreadable' is the one this whole
+// surface exists for: it silently blocks every re-arm and is indistinguishable
+// from 'off' on screen today, which is how a U+00A0-vs-U+0020 scrape mismatch
+// once left the feature dead with a green suite.
+//
+// 'out' is not a recorder state and paints nothing: the scan does not run on a
+// seat that is not the active Claude one, so there is no reading to report and
+// claiming 'off' would be a measurement nobody took.
+const RECORDER_STATES = {
+  lit: { cls: 'rec-lit', text: 'Recording', hint: 'Clodex sees the recorder running — click to stop it' },
+  busy: { cls: 'rec-busy', text: 'Processing', hint: 'The CLI is finishing the last utterance — Clodex will not write to it now' },
+  unreadable: { cls: 'rec-unreadable', text: 'Cannot read the screen', hint: 'Clodex cannot see the indicator, so it will not write — a re-arm is blocked while this shows' },
+  off: { cls: 'rec-off', text: 'Not recording', hint: 'Clodex sees no recorder running' },
+};
+
+function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffRecorder }) {
   const pop = document.getElementById('voice-popover');
   const body = document.getElementById('voice-popover-body');
   if (!pop || !body) return { actionHtml: () => '', closeVoicePopover() {}, openVoicePopover() {} };
 
-  function closeVoicePopover() { pop.classList.add('hidden'); }
+  // Read through the injected getter, never scraped here. This surface reports
+  // the gates' own reading and must never be able to disagree with it — a
+  // second detector that said "off" while the gate said "blocked" would make
+  // the operator trust the wrong one at exactly the moment the scrape is broken.
+  function reading() {
+    try { return getRecorderReading(); } catch { return 'out'; }
+  }
+
+  function recorderHtml() {
+    const st = RECORDER_STATES[reading()];
+    if (!st) return '';
+    return `<div class="rec-state ${st.cls}" data-rec title="${esc(st.hint)}">`
+      + '<span class="rec-dot"></span>'
+      + `<span class="rec-text">${esc(st.text)}</span></div>`;
+  }
+
+  // Repaints the ONE node, and only when the state actually moved. Not a
+  // renderRows() call: that rebuilds the picker's innerHTML, which detaches the
+  // rows under the pointer and eats the click it was meant to show — the same
+  // mechanism the subscriber's gate below exists to prevent, arrived at from a
+  // timer instead of an emit.
+  let recTimer = null;
+  let lastReading = null;
+  function paintRecorder() {
+    const now = reading();
+    if (now === lastReading) return;
+    lastReading = now;
+    const host = body.querySelector('.rec-host');
+    if (host) host.innerHTML = recorderHtml();
+  }
+
+  function stopRecorderTick() {
+    if (recTimer) { clearInterval(recTimer); recTimer = null; }
+    lastReading = null;
+  }
+
+  function closeVoicePopover() {
+    stopRecorderTick();
+    pop.classList.add('hidden');
+  }
 
   // Built synchronously inside renderSessionActions, so it reads the core rather
   // than waiting for a subscription tick — a button that painted a mode one
@@ -71,8 +138,12 @@ function initVoicePopover({ core, renderProxyBar }) {
     } else {
       note = 'One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.';
     }
+    // The reading rides in its own host node so the tick can replace it without
+    // touching the picker rows around it.
     body.innerHTML = `<div class="voice-rows${snap.target ? '' : ' voice-rows-off'}">${rows}</div>`
+      + `<div class="rec-host">${recorderHtml()}</div>`
       + `<div class="cost-note">${note}</div>`;
+    lastReading = reading();
   }
 
   function openVoicePopover(anchor) {
@@ -84,12 +155,32 @@ function initVoicePopover({ core, renderProxyBar }) {
     const r = anchor.getBoundingClientRect();
     renderRows();
     pop.classList.remove('hidden');
+    // Only while open. The core's own emits are driven by mode changes and the
+    // session list, neither of which moves when the microphone does, so the
+    // reading needs a tick of its own — and closing must take it back, or a
+    // dismissed popover keeps polling for the life of the window.
+    stopRecorderTick();
+    lastReading = reading();
+    recTimer = setInterval(paintRecorder, RECORDER_TICK_MS);
     const w = pop.offsetWidth;
     pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
     pop.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
   }
 
   body.addEventListener('click', (e) => {
+    // The indicator is a control only where there is something to stop. The
+    // watcher decides that for itself — this must not pre-judge it from the
+    // painted state, which is one tick old and would let a click through into a
+    // recorder that stopped in the meantime.
+    if (e.target.closest('[data-rec]')) {
+      try { tapOffRecorder(); } catch {}
+      // Left OPEN, deliberately: the operator asked for a state change and the
+      // indicator is where he watches it land. Closing would hide the one
+      // surface that says whether the click did anything — and it may honestly
+      // have done nothing, which is a decline he is owed the sight of.
+      paintRecorder();
+      return;
+    }
     const row = e.target.closest('.voice-row');
     if (!row || !row.dataset.mode) return;
     core.choose(row.dataset.mode);

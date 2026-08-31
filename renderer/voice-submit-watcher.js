@@ -365,6 +365,10 @@ function createVoiceSubmitWatcher(terminal, {
   // re-arm's: the two answer different questions about the same byte, and one
   // number could not say which of them wrote it.
   let externalTaps = 0;
+  // Taps written to STOP the recorder at the operator's request, counted apart
+  // from the two that arm it: a single number could not say which direction the
+  // byte went, and direction is the only thing that differs between them.
+  let offTaps = 0;
   // When the microphone was last seen. Written ONLY where dictation is proven
   // (a composition commit, or the CLI's recording indicator on screen) and read
   // only by the marker — never by a gate, so a wrong value here can cost the
@@ -385,6 +389,15 @@ function createVoiceSubmitWatcher(terminal, {
   // When the recorder was last seen lit, anchoring the dictated-draft report.
   let lastLitAt = 0;
   let marks = 0;
+  // What the gates saw on their last look, for DISPLAY only. Derived from the
+  // same rows in the same pass as `observed` below, never re-scraped: a second
+  // read would be a second opinion, and a display that can disagree with the
+  // gate it reports on is worse than no display.
+  //
+  // 'out' rather than a reading whenever the seat is out of scope, because the
+  // scan does not run then — reporting 'off' there would claim a dark recorder
+  // was measured on a seat nothing looked at.
+  let reading = 'out';
 
   // The composition half's own state. `pending` is the composed text as of the
   // last sample and `pendingAt` when it last CHANGED, which together are the
@@ -632,7 +645,27 @@ function createVoiceSubmitWatcher(terminal, {
     // and is deliberately untouched here.
     let inScope = false;
     try { inScope = !!cfg || !!recorderScope(); } catch {}
-    const observed = inScope ? recordingObserved(indicatorRows()) : false;
+    // ONE read, shared by the gate below and by the display. Two calls would
+    // sample the screen twice and could straddle a repaint, which is exactly
+    // the disagreement the display exists to expose rather than to create.
+    const indRows = inScope ? indicatorRows() : null;
+    const observed = inScope ? recordingObserved(indRows) : false;
+    // THREE STATES, and the third is the reason this exists. `recordingObserved`
+    // and `recorderBlocksRearm` disagree in precisely two places, and both are
+    // states the operator cannot see today: the CLI's processing window (busy,
+    // not lit) and an unreadable screen (blocks every re-arm while looking
+    // exactly like "off"). Collapsing either into 'off' returns the display to
+    // the blindness it was built to end.
+    //
+    // Ordered unreadable → lit → busy → off, and the null test comes FIRST for
+    // the same reason it does in `externalTap`: `recordingObserved(null)` is
+    // false and `recorderBlocksRearm(null)` is true, so asking either one first
+    // would report a definite state about a screen nobody could read.
+    if (!inScope) reading = 'out';
+    else if (!Array.isArray(indRows)) reading = 'unreadable';
+    else if (observed) reading = 'lit';
+    else if (recorderBlocksRearm(indRows)) reading = 'busy';
+    else reading = 'off';
     // Reported on the LEVEL, every poll it stays lit, because main expires the
     // stamp rather than waiting for an off. Before the bail for the reason
     // above: this is the operator's protection from being spliced mid-sentence,
@@ -903,6 +936,13 @@ function createVoiceSubmitWatcher(terminal, {
     if (attention === 'permission') return false;
 
     const rows = indicatorRows();
+    // REDUNDANT TODAY AND KEPT ON PURPOSE: `recorderBlocksRearm(null)` is true,
+    // so the line below already declines here and DELETING THIS LEAVES THE
+    // SUITE GREEN. It stays because it states the polarity rule where the
+    // decision is made rather than one file away, and because it is the defence
+    // if that predicate is ever swapped for one whose null answers the other
+    // way. Unpinned by construction — no fixture where the two predicates
+    // disagree exists, and inventing one would pin an unreachable state.
     if (!Array.isArray(rows)) return false;      // unreadable: never write
     // BUSY, not merely lit — two reasons, and the second is not obvious from
     // here. A lit recorder means ensure-on is already met. But the CLI REPLACES
@@ -920,6 +960,65 @@ function createVoiceSubmitWatcher(terminal, {
 
     if (!tapTrigger()) return false;
     externalTaps += 1;
+    return true;
+  }
+
+  // ENSURE-OFF, asked for by a CLICK on the indicator. The operator can see the
+  // recorder is running and wants it stopped; lit stops it, anything else
+  // declines and writes nothing.
+  //
+  // THE POLARITY IS NOT THE MIRROR OF `externalTap`'s, and reasoning it out is
+  // the whole of this function. Both refuse an unreadable screen, and they do it
+  // for DIFFERENT reasons — a symmetry that is a coincidence of this call site,
+  // not a rule to factor out.
+  //
+  // The three errors, stated where the decision is made:
+  //
+  //   Write while LIT — the intended action. This is the only good branch.
+  //   Write while DARK and the composer empty — arms a microphone he asked to
+  //     turn OFF, the inverted failure, and one nobody is watching for because
+  //     he believes he just stopped it.
+  //   Write while DARK and the composer non-empty, or during PROCESSING — the
+  //     byte is not swallowed and lands as a LITERAL in the draft (measured in
+  //     2.1.251, see PROCESSING in lib/voice-submit.js). From then on every
+  //     re-arm and every tap declines on the non-empty composer: a permanently
+  //     stuck mic that only a manual clear escapes.
+  //
+  // So an unreadable screen DECLINES: two of its three outcomes are bad, one of
+  // them permanent, while declining costs only that the recorder keeps running
+  // until the CLI's own ~15s silence auto-finish or until he taps the key
+  // himself. Recoverable beats permanent, the same direction every other writer
+  // in this file chose.
+  //
+  // `recordingObserved` happens to answer false for null, which is the branch
+  // this wants — but the null is tested EXPLICITLY above it anyway, because
+  // "the convention happened to point the right way here" is not a reason a
+  // reader can check, and it is what makes this line survive a predicate swap.
+  function tapOff() {
+    if (disposed) return false;
+    // Same interlock as the ensure-on half and for the same reason: a byte
+    // written into an open permission dialog ANSWERS it.
+    let attention = null;
+    try { attention = getAttention(); } catch { attention = 'permission'; }
+    if (attention === 'permission') return false;
+
+    const rows = indicatorRows();
+    if (!Array.isArray(rows)) return false;
+    // LIT, not merely busy. During PROCESSING the recorder has already stopped,
+    // so ensure-off is met and there is nothing to write for; the byte would
+    // only land as the literal described above.
+    if (!recordingObserved(rows)) return false;
+
+    // The CLI paints `tap to send` beside the lit indicator, and that is what
+    // the key does: while recording it stops AND SUBMITS. An empty composer is
+    // what keeps this an ensure-off rather than a send of whatever is sitting
+    // there unsent — and it is the same bail the CLI itself makes before
+    // swallowing the key, so on a non-empty composer the byte would be inserted
+    // and would stop nothing.
+    if (!composerIsEmpty(cursorRow())) return false;
+
+    if (!tapTrigger()) return false;
+    offTaps += 1;
     return true;
   }
 
@@ -1015,10 +1114,16 @@ function createVoiceSubmitWatcher(terminal, {
     noteActivity,
     noteInput,
     externalTap,
+    tapOff,
+    // A GETTER over the existing 300ms poll, never a scan of its own: the
+    // display must report what the gates last saw, and a fresh read on every
+    // paint could answer differently from the decision it is describing.
+    recorderReading: () => reading,
     fireCount: () => fires,
     stopCount: () => stops,
     rearmCount: () => rearms,
     externalTapCount: () => externalTaps,
+    offTapCount: () => offTaps,
     commitCount: () => commits,
     commitFailureCount: () => commitFailures,
     markCount: () => marks,
