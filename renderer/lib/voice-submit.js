@@ -230,6 +230,11 @@ const RECORDING = /\u23faREC/u;
 // literal space because JS `\s` admits U+00A0, which is the separator the CLI
 // actually paints elsewhere in this footer — spelling a U+0020 here is the exact
 // defect COMPOSER_EMPTY carried while its fixtures agreed with it.
+//
+// `indicatorRows()` scans the composer row too, so a draft that literally
+// contains this text blocks the operator's own re-arm; that direction is the
+// safe one and is deliberate — excluding the composer row would blind the whole
+// footer scan, which is the only thing indicator detection reads.
 const PROCESSING = /Voice:\s*processing/i;
 
 // Whether the re-arm must stand down — the recorder is BUSY (running OR still
