@@ -236,8 +236,9 @@ function recordingBlocksRearm(rows) {
 // indicator on screen — and NEITHER PROVES THIS DRAFT WAS SPOKEN. The indicator
 // says only that the recorder was running, and t571's re-arm lights it by
 // machine at every turn end, so a draft typed into a lit composer would be
-// marked. Typing therefore CLEARS the stamp (the watcher's noteInput); this
-// function only judges what survived that.
+// marked. Typing therefore clears the stamp AND mutes the indicator path until
+// the recorder next rises (the watcher's noteInput); this function only judges
+// what survived that.
 //
 // `windowMs` bounds staleness so evidence cannot outlive the utterance that
 // produced it. Null (never seen) is not stale, it is absent, and both answer no.

@@ -23747,6 +23747,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let answered = null;
         let fires = 0;
         let voiceEvidenceAt = null;
+        let mutedByTyping = false;
+        let prevObserved = false;
         let marks = 0;
         let pending = null;
         let pendingAt = 0;
@@ -23853,7 +23855,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
             forgetPending();
             return;
           }
-          if (recordingObserved(indicatorRows())) voiceEvidenceAt = now();
+          const observed = recordingObserved(indicatorRows());
+          if (observed && !prevObserved) mutedByTyping = false;
+          prevObserved = observed;
+          if (observed && !mutedByTyping) voiceEvidenceAt = now();
           if (cfg.composition !== true) {
             forgetPending();
             forgetConsumed();
@@ -23964,6 +23969,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (disposed) return;
           if (!isHumanPtyInput(data)) return;
           voiceEvidenceAt = null;
+          mutedByTyping = true;
         }
         function noteActivity(state, turnEnd) {
           if (disposed) return;

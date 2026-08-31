@@ -2384,15 +2384,25 @@ test('a lit indicator does NOT mark a TYPED submit: typing is evidence of not-vo
   // the marker must never do.
   //
   // Driven through `noteInput`, the seam the local onData branch calls: typing
-  // is POSITIVE EVIDENCE OF NOT-VOICE and clears the stamp. The operator's own
-  // tap keypress clears it too, and the indicator re-stamps on the next poll —
-  // which is what keeps tap-listening (the workflow that matters) marked.
-  const h = markHarness({ rows: ['\u276f ', ' agents \u23faREC \u00b7 tap to send'] });
+  // is POSITIVE EVIDENCE OF NOT-VOICE and mutes the indicator path until the
+  // recorder next RISES.
+  //
+  // THE INDICATOR STAYS PAINTED WHILE THE DRAFT IS TYPED, and that is the whole
+  // fixture. `fakeTerminal.write` REPLACES the row set, so painting the draft
+  // alone silently removes the ` REC ` row — and an earlier version of this test
+  // passed for exactly that reason, because the indicator had vanished rather
+  // than because the code was right. A live recording composer shows both rows,
+  // and the recorder stays lit for ~15s of silence after the re-arm lights it.
+  const REC = ' agents \u23faREC \u00b7 tap to send';
+  const h = markHarness({ rows: ['\u276f ', REC] });
   return (async () => {
     await settle(10); // the indicator is observed and stamps evidence
     // The operator TYPES. Every keystroke reaches the local onData branch.
     for (const ch of 'finish the report over and out') h.watcher.noteInput(ch);
-    h.term.write('\u276f finish the report over and out');
+    // `cursor: true` on the DRAFT row: the composer read follows the cursor, and
+    // the indicator paints BELOW it — which is the geometry indicatorRows() scans
+    // and the one a live recording composer actually has.
+    h.term.write({ text: '\u276f finish the report over and out', cursor: true }, REC);
     await h.done();
     assert.deepStrictEqual(h.events, ['ERASE', 'ENTER'],
       'a typed draft must submit UNMARKED even with the recorder lit');
@@ -2432,6 +2442,49 @@ test('the tap keypress clears evidence, and the indicator re-stamps it', async (
   assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER'],
     'tap-listening must still be marked');
   assert.strictEqual(h.watcher.markCount(), 1);
+  h.watcher.dispose();
+});
+
+test('a LONG utterance keeps refreshing: the level stamp is not a rising edge', async () => {
+  // The reason the fix mutes the level stamp rather than replacing it with a
+  // bare rising-edge one, which is the obvious simplification.
+  //
+  // The recorder lights ONCE and stays lit while the operator speaks for longer
+  // than the evidence window. With a rising-edge-only stamp the single edge ages
+  // out of `evidenceMs` and a genuinely spoken message submits UNMARKED — a
+  // silent loss of the feature on exactly the long dictations it is for. The
+  // level stamp refreshes it on every poll; nothing here types, so the mute
+  // never engages.
+  const REC = ' agents \u23faREC \u00b7 tap to send';
+  const h = markHarness({ rows: ['\u276f ', REC], evidenceMs: 25 });
+  // Lit throughout, and polled well past the window with no fresh RISE.
+  await settle(80);
+  h.term.write({ text: '\u276f finish the report over and out', cursor: true }, REC);
+  await h.done();
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER'],
+    'a still-running recorder must keep the evidence fresh past the window');
+  assert.strictEqual(h.watcher.markCount(), 1);
+  h.watcher.dispose();
+});
+
+test('typing MUTES the lit indicator for the whole draft, not just one poll', async () => {
+  // The r1 defect in its exact shape: the clear was per-keystroke and the poll
+  // re-stamped 300ms later, so a draft typed over several seconds under a lit
+  // recorder ended up marked anyway. The mute has to survive the GAPS between
+  // keystrokes, which is what a single-keystroke test cannot show.
+  const REC = ' agents \u23faREC \u00b7 tap to send';
+  const h = markHarness({ rows: ['\u276f ', REC] });
+  await settle(10);
+  h.watcher.noteInput('f');
+  await settle(20); // several polls pass with the indicator still lit
+  h.watcher.noteInput('i');
+  await settle(20);
+  h.term.write({ text: '\u276f finish the report over and out', cursor: true }, REC);
+  await h.done();
+  assert.deepStrictEqual(h.events, ['ERASE', 'ENTER'],
+    'polls between keystrokes must not re-stamp the muted indicator');
+  assert.strictEqual(h.watcher.markCount(), 0);
+  assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: it must still have SUBMITTED');
   h.watcher.dispose();
 });
 

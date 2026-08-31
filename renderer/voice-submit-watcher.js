@@ -116,14 +116,19 @@ const REARM_ABANDON_MS = 10000;
 // clear below exists and why it is not optional.
 //
 // t571's re-arm writes the trigger character at every turn end, so the recorder
-// is lit at the START of an ordinary turn. Typing into that lit composer used
-// to submit the operator's exact typed words carrying a marker saying they were
-// dictated — a mislabel of his own words, the one thing this feature must never
-// do. So typing is POSITIVE EVIDENCE OF NOT-VOICE and clears the stamp.
+// is lit at the START of an ordinary turn, and it stays lit for ~15s of silence.
+// Typing into that lit composer would submit the operator's exact typed words
+// carrying a marker saying they were dictated — a mislabel of his own words, the
+// one thing this feature must never do. So typing is POSITIVE EVIDENCE OF
+// NOT-VOICE: it clears the stamp AND mutes the indicator path.
+//
+// THE MUTE IS WHAT MAKES THE CLEAR STICK. The stamp is level-triggered, so a
+// clear alone is undone by the next 300ms poll while the recorder is still lit —
+// which is how a narrower version of this fix left the defect open.
 //
 // This does not cost tap-listening, which is the workflow that matters: the tap
-// keypress clears the stamp, and the indicator re-stamps it on the next poll a
-// moment later, before the transcription lands.
+// keypress mutes, the recorder then LIGHTS, and that rising edge unmutes and
+// stamps before the transcription lands.
 
 // How long evidence that the operator was DICTATING keeps a submit eligible for
 // the voice-origin marker.
@@ -284,6 +289,18 @@ function createVoiceSubmitWatcher(terminal, {
   // only by the marker — never by a gate, so a wrong value here can cost the
   // annotation and nothing else.
   let voiceEvidenceAt = null;
+  // THE INDICATOR STAMP IS LEVEL-TRIGGERED, so clearing the evidence on a
+  // keystroke is not enough on its own: the recorder stays lit for ~15s after
+  // t571's re-arm lights it, and the 300ms poll would re-stamp the cleared
+  // evidence again and again while the operator types a reply. These two make
+  // the clear STICK until the recorder next RISES.
+  //
+  // Not a bare rising-edge stamp instead, which is the obvious simplification
+  // and is wrong: a 30s utterance would then age out of VOICE_EVIDENCE_MS with
+  // nothing to refresh it, and long dictations would silently stop being marked.
+  // The level stamp is what refreshes them; this only suppresses it after typing.
+  let mutedByTyping = false;
+  let prevObserved = false;
   let marks = 0;
 
   // The composition half's own state. `pending` is the composed text as of the
@@ -468,7 +485,15 @@ function createVoiceSubmitWatcher(terminal, {
     //
     // Read-only. `recordingBlocksRearm` makes the re-arm's own decision from the
     // same rows and is deliberately untouched here.
-    if (recordingObserved(indicatorRows())) voiceEvidenceAt = now();
+    const observed = recordingObserved(indicatorRows());
+    // A RISE is the recorder starting, which is the operator reaching for the
+    // microphone: it clears the mute so tap-listening marks normally (the tap
+    // keypress mutes, the recorder then lights, and this unmutes on that edge).
+    // After the re-arm lit it by machine there is no second rise, so typing into
+    // an already-lit composer stays muted — which is the defect this closes.
+    if (observed && !prevObserved) mutedByTyping = false;
+    prevObserved = observed;
+    if (observed && !mutedByTyping) voiceEvidenceAt = now();
 
     // The COMPOSITION checkbox going off is the operator saying stop, and that
     // does end the session. The master switch never reaches here.
@@ -644,13 +669,11 @@ function createVoiceSubmitWatcher(terminal, {
   //
   // Gated on isHumanPtyInput because onData also carries terminal chatter; a
   // clear on a mouse report would silently un-mark genuinely spoken text.
-  // Injected text does not come through here — it is written by the main
-  // process, not by this terminal's onData — so a dm delivery cannot clear it
-  // either.
   function noteInput(data) {
     if (disposed) return;
     if (!isHumanPtyInput(data)) return;
     voiceEvidenceAt = null;
+    mutedByTyping = true;
   }
 
   function noteActivity(state, turnEnd) {
