@@ -1926,10 +1926,17 @@ function registerIpcHandlers(deps) {
   // exiting there switches that window to its next seat and reports it. Main
   // uses the window to decide whether that report may move the MICROPHONE; the
   // routing record moves either way.
+  // STRICT resolution, unlike almost every other handler here: the loose helper
+  // answers DEFAULT_WORKSPACE_ID for a sender whose window is already gone, so a
+  // dying window's last report would be authorised against whatever the default
+  // workspace's window happens to be. Null is the right answer there, and
+  // `noteFocusedSession` already treats a null window as "takes nothing".
   on('session:focused', (e, name) => {
     manager.noteFocusedSession(
       name == null ? null : String(name),
-      manager.windowForWorkspace(workspaceOfSender(e)),
+      manager.windowForWorkspace(
+        workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e),
+      ),
     );
   });
 

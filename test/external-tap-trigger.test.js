@@ -850,10 +850,26 @@ test('FOCUS: main reports the APP’s focus, not a window’s', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf-8');
   assert.match(src, /noteAppFocused\(app\.isFocused\(\)\)/,
     'main must report app.isFocused(), never a window-level focus read');
-  // BOTH edges, or the flag sticks: focus without blur never releases, blur
-  // without focus never re-arms.
-  assert.match(src, /app\.on\('browser-window-focus', reportAppFocus\)/);
-  assert.match(src, /app\.on\('browser-window-blur', reportAppFocus\)/);
+  // The backstop pair RE-DERIVES the flag, so on darwin it must not be
+  // registered at all: on an ordering where `browser-window-blur` runs after
+  // `did-resign-active`, the re-read answers true mid-resign and flips the flag
+  // back — the stuck-true no-op the app-level pair below exists to prevent.
+  // Off darwin the pair is the only cover, and BOTH edges are needed or the
+  // flag sticks the other way: focus without blur never releases, blur without
+  // focus never re-arms. Matched as ONE block for that reason.
+  const guarded = src.match(
+    /if \(process\.platform !== 'darwin'\) \{\s*app\.on\('browser-window-focus', reportAppFocus\);\s*app\.on\('browser-window-blur', reportAppFocus\);\s*\}/);
+  assert.ok(guarded, 'both backstop edges must be registered together, under the non-darwin guard');
+  // And NOWHERE else. Without this, re-adding an unguarded registration leaves
+  // the assertion above green while the darwin hazard is back — the substring
+  // match that used to stand here had exactly that hole.
+  assert.doesNotMatch(src.replace(guarded[0], ''), /app\.on\('browser-window-(focus|blur)'/,
+    'no backstop edge may be registered outside the guard');
+  // The startup SEED stays on every platform: it reads once, before any edge,
+  // so it cannot undo one, and without it a launch into the foreground waits
+  // for the first alt-tab. Moving it inside the guard would break darwin.
+  assert.match(src, /\}\n\s*reportAppFocus\(\);/,
+    'the startup seed must sit outside the guard');
 
   // THE APP-LEVEL EDGES, and the FALSE they must carry. `app.isFocused()` read
   // inside `browser-window-blur` is the one read that decides "he alt-tabbed
@@ -917,6 +933,40 @@ test('the session:focused handler records the name, and null CLEARS it', () => {
   // The WINDOW rides with the name now: without it main cannot tell a report
   // from the front window apart from one a background window sent itself.
   assert.deepStrictEqual(calls, [['watched', senderWin], [null, senderWin]]);
+});
+
+test('the session:focused handler resolves the sender STRICTLY', () => {
+  // The loose helper answers DEFAULT_WORKSPACE_ID for a sender whose window is
+  // already gone, so a dying window's last report would be authorised against
+  // whatever window the default workspace happens to hold. Strict answers null
+  // there, and a null window takes nothing (pinned above). Both seams are wired
+  // so the assertion is about WHICH ONE the handler asks, not about either
+  // one's own resolution.
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const asked = [];
+  const handlers = new Map();
+  const calls = [];
+  registerIpcHandlers({
+    handle: () => {},
+    on: (ch, fn) => handlers.set(ch, fn),
+    workspaceOfSenderStrict: () => { asked.push('strict'); return null; },
+    workspaceOfSender: () => { asked.push('loose'); return 'default'; },
+    manager: {
+      noteFocusedSession: (n, win) => calls.push([n, win]),
+      // The real one answers null for a workspace with no live window; here it
+      // must never be reached with the loose helper's 'default'.
+      windowForWorkspace: (ws) => (ws == null ? null : fakeWin()),
+    },
+    log: { info() {}, error() {} },
+  });
+  const fn = handlers.get('session:focused');
+  assert.ok(fn, 'session:focused is registered');
+
+  fn({}, 'watched');
+  assert.deepStrictEqual(asked, ['strict'], 'the loose fallback must not be consulted when strict is wired');
+  // The NAME still travels — routing is not gated, only the microphone is. The
+  // window is null, which is how noteFocusedSession is told to take nothing.
+  assert.deepStrictEqual(calls, [['watched', null]]);
 });
 
 test('the sender script speaks the envelope the socket arm decodes', () => {
