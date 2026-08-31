@@ -897,10 +897,11 @@ function createVoiceSubmitWatcher(terminal, {
     // deadline is consulted only there, and the `abandonMs: 0` pin depends on
     // that branch being the first one an attempt reaches.
     //
-    // The deadline is PUSHED OUT by the wait rather than consumed by it. A long
-    // reply would otherwise spend the whole 20s abandon budget on narration and
-    // cancel the re-arm the operator is standing there waiting for — the budget
-    // exists to bound a doomed retry loop, and waiting out audio is not that.
+    // The abandon deadline is REFRESHED for as long as this waits, so narration
+    // cannot spend it. A long reply would otherwise burn the whole 20s budget
+    // and cancel the re-arm the operator is standing there waiting for — that
+    // budget exists to bound a doomed retry loop, and waiting out audio is not
+    // that. This wait has its own bound, SPEECH_ABANDON_MS.
     let speaking = false;
     try { speaking = getSpeakerBusy() === true; } catch { speaking = false; }
     if (speaking) {
@@ -909,12 +910,19 @@ function createVoiceSubmitWatcher(terminal, {
       // is also what would let a stuck flag reschedule forever.
       if (speechDeferredSince === 0) speechDeferredSince = now();
       if (now() - speechDeferredSince >= speechAbandonMs) return;
-      rearmDeadline += rearmMs;
+      // The budget is REFRESHED, not incremented. Adding `rearmMs` per attempt
+      // only keeps pace with real time because attempts are `rearmMs` apart —
+      // an approximation that lands a hair either side of the deadline
+      // depending on timer jitter. Restating it makes the property exact: the
+      // abandon budget starts counting when the narration ENDS, and speech
+      // cannot spend any of it.
+      rearmDeadline = now() + abandonMs;
       rearmTimer = setTimeout(attemptRearm, rearmMs);
       return;
     }
-    // Cleared on the way past, so the next edge measures its own wait rather
-    // than inheriting the last one's.
+    // The narration is over. `noteActivity` clears this too, and that one is
+    // what makes the budget per-edge; this clear covers the release WITHIN an
+    // edge, so a second deferral on the same edge starts its own budget.
     speechDeferredSince = 0;
 
     // Last, because it is the only gate that reads the screen, and the reason
@@ -1108,6 +1116,14 @@ function createVoiceSubmitWatcher(terminal, {
     if (!rearmAllowed(from, state)) return;
     if (rearmTimer) clearTimeout(rearmTimer);
     rearmDeadline = now() + abandonMs;
+    // PER-EDGE, exactly like the deadline above it. Every early return from
+    // attemptRearm during a deferral leaves this set — the stale-edge return and
+    // the still-painting abandon are both reachable — so without the reset the
+    // next edge inherits a spent budget, returns without deferring AND without
+    // rescheduling, and nothing fires when speech ends because no timer
+    // survives. Clearing it only on attemptRearm's fall-through is not enough:
+    // that path runs when speech is already over.
+    speechDeferredSince = 0;
     rearmTimer = setTimeout(attemptRearm, rearmMs);
   }
 

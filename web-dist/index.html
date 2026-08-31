@@ -24222,7 +24222,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (speaking) {
             if (speechDeferredSince === 0) speechDeferredSince = now();
             if (now() - speechDeferredSince >= speechAbandonMs) return;
-            rearmDeadline += rearmMs;
+            rearmDeadline = now() + abandonMs;
             rearmTimer = setTimeout(attemptRearm, rearmMs);
             return;
           }
@@ -24298,6 +24298,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (!rearmAllowed(from, state)) return;
           if (rearmTimer) clearTimeout(rearmTimer);
           rearmDeadline = now() + abandonMs;
+          speechDeferredSince = 0;
           rearmTimer = setTimeout(attemptRearm, rearmMs);
         }
         const schedule = () => {

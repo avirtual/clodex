@@ -2417,6 +2417,57 @@ test('SPEECH: a flag stuck true is abandoned rather than rescheduling forever', 
   h.watcher.dispose();
 });
 
+test('SPEECH: an abandoned deferral does not poison the NEXT turn', async () => {
+  // THE LEAK, and it needs no operator action to reach: an injected dm, a
+  // reminder or a peer message starts the new turn all by itself.
+  //
+  // `speechDeferredSince` is per-EDGE state, but it was cleared only on the
+  // fall-through where speech is already over. Every early return from
+  // attemptRearm during a deferral leaves it set — and two are reachable, the
+  // stale-edge return and the still-painting abandon. So the NEXT edge inherits
+  // the old start stamp, reads its budget as already spent, and returns without
+  // deferring AND without rescheduling: nothing fires when speech ends, because
+  // no timer survives. It then only heals on a turn end with no narration, which
+  // is the uncommon case once speech is on.
+  //
+  // The distinguishing move from the test above: `speaking` stays TRUE across
+  // the second edge. Clearing it first is what masked this.
+  //
+  // The CLOCK IS DRIVEN, and it has to be: the budget must be exhausted by the
+  // FIRST edge and still have room for the second, so the gap between the edges
+  // is jumped rather than slept. With a budget small enough to expire in real
+  // settle time, the second edge abandons on its own merits and the test cannot
+  // tell the leak from correct behaviour — which is exactly what a first
+  // version of it did.
+  const BUDGET = 200;
+  const h = rearmHarness({ speaking: true, speechAbandonMs: BUDGET });
+
+  h.turn();
+  await settle(TEST_REARM_MS * 3);
+  assert.deepStrictEqual(h.writes, [], 'first edge is deferring, narration playing');
+
+  // Jump past the budget so the FIRST edge abandons — the state this leaks.
+  h.clock.offset += BUDGET + 100;
+  await settle(TEST_REARM_MS * 3);
+  assert.deepStrictEqual(h.writes, [], 'first edge abandoned, no timer left');
+
+  // A fresh turn arrives WHILE the narration is still playing — an injected dm,
+  // a reminder or a peer message is enough to produce it.
+  h.turn();
+  await settle(TEST_REARM_MS * 3);
+  assert.deepStrictEqual(h.writes, [], 'second edge: still speaking, so still nothing');
+
+  // Speech ends. This edge is entitled to its OWN budget, so the re-arm the
+  // operator is waiting for must fire. Without the reset in noteActivity the
+  // second edge inherited the first's spent stamp, returned without scheduling
+  // anything, and nothing survives to fire here.
+  h.env.speaking = false;
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' '],
+    'the new edge must get its own budget, not the previous edge\'s exhausted one');
+  h.watcher.dispose();
+});
+
 test('SPEECH: a tap DURING the narration is not re-armed on top of', async () => {
   // He tapped the microphone himself while the reply was being read out. Main
   // kills the narration (interruptForRecorder), so the flag clears — and the
