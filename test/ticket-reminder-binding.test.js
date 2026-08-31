@@ -298,10 +298,12 @@ test('mkFixture injects every dep team-tickets.js reads', () => {
   // t581: ten were missing, none of them reached from here — getRemindScheduler,
   // the one whose absence the other loop fixtures swallowed, was already wired.
   const f = mkFixture();
-  assertTicketDepsCovered(assert, f.deps, {
-    // Left unset on purpose: every subject here runs under the SHIPPED timeout.
-    optional: ['ticketSuiteTimeoutMs'],
-  });
+  try {
+    assertTicketDepsCovered(assert, f.deps, {
+      // Left unset on purpose: every subject here runs under the SHIPPED timeout.
+      optional: ['ticketSuiteTimeoutMs'],
+    });
+  } finally { f.cleanup(); }
 });
 
 // ── the grammar ────────────────────────────────────────────────────────────
