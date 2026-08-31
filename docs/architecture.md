@@ -213,9 +213,11 @@ bundle), whose packaged form is the Docker image under
   (Bedrock / Vertex) the wire tee cannot see.
 - **voice-settings.js** — the box-wide voice-input mode the Claude CLI persists
   in `~/.claude/settings.json` (`voice.mode` / `voice.enabled`), behind the
-  Preferences voice selector. READ-ONLY: the mode is changed by injecting
-  `/voice <mode>`, since a running CLI holds its mode in memory and would not
-  pick up an edited file. The legacy `voiceEnabled` sibling is reported and
+  Preferences voice selector, and the WRITE behind the `mode` voice verb
+  (`writeVoiceMode` mirrors the CLI's own `/voice` handler: read-modify-write
+  preserving unrelated keys, `enabled: true`, atomic). A running CLI does pick
+  up an external write — it reads the mode through a live selector and watches
+  the settings directory. The legacy `voiceEnabled` sibling is reported and
   never merged.
 - **env-scopes.js** — merges the GUI-managed environment scopes over the base
   process env for a wrapper PTY, and is the single source for the canonical

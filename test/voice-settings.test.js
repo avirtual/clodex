@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { readVoiceMode, readVoiceTrigger, VOICE_MODES } = require('../voice-settings');
+const { readVoiceMode, writeVoiceMode, readVoiceTrigger, VOICE_MODES } = require('../voice-settings');
 
 // A temp HOME whose .claude/settings.json holds `body` verbatim (a string is
 // written raw, so a case can express a CORRUPT file — the one shape JSON.stringify
@@ -237,4 +237,296 @@ test('the trigger read never writes, and never creates the file it missed', () =
     readVoiceTrigger({ homeDir: home });
     assert.equal(fs.existsSync(path.join(home, '.claude')), false, 'no .claude/ created');
   });
+});
+
+// THE WRITE. `mode` changes the CLI's push-to-talk setting by writing
+// this file rather than by injecting `/voice`, so what these pin is that the
+// write mirrors the CLI's own handler and cannot damage the file around it.
+//
+// The file is the user's GLOBAL CLI settings and holds far more than voice, so
+// the destructive failure — clobbering an unrelated key — is the one worth the
+// most assertions. Real files in a temp HOME, same genus as the reads above.
+//
+// NOT PINNED HERE, because nothing in this process can observe it: that a
+// RUNNING CLI picks the write up. That was established by Bogdan editing the
+// file by hand under a live session and watching it move; a fixture claiming it
+// would be asserting a state it cannot reach.
+function withWrite(body, fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicew-'));
+  try {
+    if (body !== null) {
+      fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(home, '.claude', 'settings.json'),
+        typeof body === 'string' ? body : JSON.stringify(body, null, 2),
+      );
+    }
+    const file = path.join(home, '.claude', 'settings.json');
+    return fn({
+      home,
+      file,
+      write: (mode) => writeVoiceMode(mode, { homeDir: home }),
+      read: () => JSON.parse(fs.readFileSync(file, 'utf8')),
+      // RAW BYTES, because the refusal cases claim the file was not touched at
+      // all. A parsed comparison would call a rewrite with reordered keys or a
+      // changed indent "unchanged", which is most of what a bad write looks like.
+      bytes: () => fs.readFileSync(file),
+    });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('writeVoiceMode sets the mode and turns voice on, mirroring /voice', () => {
+  withWrite({ voice: { mode: 'hold', enabled: false } }, (t) => {
+    assert.deepStrictEqual(t.write('tap'), { ok: true, mode: 'tap', file: t.file });
+    const d = t.read();
+    assert.strictEqual(d.voice.mode, 'tap');
+    // enabled:true is deliberate and matches the CLI handler: setting a mode
+    // also un-mutes voice input. A write that left `enabled:false` would leave
+    // the UI showing a mode that does nothing.
+    assert.strictEqual(d.voice.enabled, true);
+    assert.strictEqual(d.voiceEnabled, true);
+  });
+});
+
+test('writeVoiceMode preserves voice siblings and every unrelated top-level key', () => {
+  const before = {
+    model: 'opus',
+    env: { FOO: '1' },
+    permissions: { allow: ['Bash'] },
+    voice: { mode: 'hold', enabled: true, autoSubmit: true, language: 'en' },
+  };
+  withWrite(before, (t) => {
+    t.write('tap');
+    const d = t.read();
+    // The whole object, not a spot check: a partial assertion here would read
+    // around exactly the key a future spread forgot to carry.
+    assert.deepStrictEqual(d, {
+      model: 'opus',
+      env: { FOO: '1' },
+      permissions: { allow: ['Bash'] },
+      voiceEnabled: true,
+      voice: { mode: 'tap', enabled: true, autoSubmit: true, language: 'en' },
+    });
+  });
+});
+
+test('writeVoiceMode round-trips through readVoiceMode', () => {
+  withWrite({ voice: { mode: 'hold', enabled: true } }, (t) => {
+    t.write('tap');
+    const r = readVoiceMode({ homeDir: t.home });
+    assert.strictEqual(r.mode, 'tap');
+    assert.strictEqual(r.effective, 'tap', 'the selector shows what was written');
+  });
+});
+
+test('writeVoiceMode refuses anything outside the two-valued CLI enum', () => {
+  withWrite({ model: 'opus', voice: { mode: 'hold' } }, (t) => {
+    const before = t.bytes();
+    // "off" is the case worth naming: it is a VOICE_MODES member and the CLI's
+    // own argumentHint advertises it, but it is enabled:false, NOT a mode — a
+    // write of mode:"off" would produce a value the CLI never stores.
+    for (const bad of ['off', 'loud', '', null, undefined, { evil: 1 }]) {
+      const r = t.write(bad);
+      assert.strictEqual(r.ok, false, String(bad));
+      assert.match(r.error, /unknown voice mode/, String(bad));
+    }
+    assert.ok(before.equals(t.bytes()), 'a refused write leaves the file byte-for-byte alone');
+  });
+});
+
+test('writeVoiceMode creates the file when a box has never used voice', () => {
+  withWrite(null, (t) => {
+    assert.strictEqual(fs.existsSync(t.file), false, 'ENTER: no file to start with');
+    assert.strictEqual(t.write('hold').ok, true);
+    assert.deepStrictEqual(t.read(), {
+      voiceEnabled: true, voice: { enabled: true, mode: 'hold' },
+    });
+  });
+});
+
+// THE DATA-LOSS CASE. An unparseable file is the user mid-hand-edit, and this
+// is their GLOBAL CLI settings — merging onto `{}` there would replace every key
+// they have with a two-key object, silently, on a verb they spoke from across
+// the room. The CLI refuses the same case ("Check your settings file for syntax
+// errors") instead of overwriting, so refusing is also what mirroring it means.
+test('writeVoiceMode REFUSES an unparseable file and leaves it byte-identical', () => {
+  const corrupt = [
+    '{ not json',
+    '{"model":"opus",',          // truncated mid-edit, the realistic shape
+    '{"a":1,}',                  // trailing comma, the commonest hand-edit typo
+  ];
+  for (const body of corrupt) {
+    withWrite(body, (t) => {
+      const before = t.bytes();
+      const r = t.write('tap');
+      assert.strictEqual(r.ok, false, body);
+      assert.match(r.error, /syntax error/, body);
+      assert.match(r.error, /not changed/, body);
+      assert.ok(before.equals(t.bytes()), `${body}: the file was rewritten`);
+    });
+  }
+});
+
+// Legible JSON that is not an object is a THIRD case, decided deliberately
+// rather than let ride with the corrupt bodies: there is no key to merge into,
+// so writing means discarding whatever the user does have. Same refusal, and
+// the same byte-identity claim — one rule: we write only where our keys can be
+// carried.
+test('writeVoiceMode REFUSES legible JSON that is not an object, byte-identically', () => {
+  for (const body of ['[]', 'null', '"a string"', '42']) {
+    withWrite(body, (t) => {
+      const before = t.bytes();
+      const r = t.write('tap');
+      assert.strictEqual(r.ok, false, body);
+      assert.match(r.error, /not a JSON object/, body);
+      assert.ok(before.equals(t.bytes()), `${body}: the file was rewritten`);
+    });
+  }
+});
+
+// An EMPTY file is on the write-succeeds side, with the absent file: there is
+// demonstrably nothing in it to lose, so refusing would strand a box whose file
+// was created empty with a verb that never works.
+test('writeVoiceMode writes onto an empty or whitespace-only file', () => {
+  for (const body of ['', '   \n\t ']) {
+    withWrite(body, (t) => {
+      assert.strictEqual(t.write('hold').ok, true, JSON.stringify(body));
+      assert.deepStrictEqual(t.read(), {
+        voiceEnabled: true, voice: { enabled: true, mode: 'hold' },
+      }, JSON.stringify(body));
+    });
+  }
+});
+
+// A file we cannot READ is refused too, and for a sharper reason than symmetry:
+// treating an unreadable file as absent would merge onto `{}` and clobber it the
+// moment permissions allowed the write through.
+test('writeVoiceMode refuses an unreadable file rather than treating it as absent', () => {
+  withWrite({ model: 'opus', voice: { mode: 'hold' } }, (t) => {
+    fs.chmodSync(t.file, 0o000);
+    try {
+      // Root ignores the mode bits, so a test running as root would read the
+      // file happily and assert nothing. Skip rather than pass vacuously.
+      let readable = true;
+      try { fs.readFileSync(t.file); } catch { readable = false; }
+      if (!readable) {
+        const r = t.write('tap');
+        assert.strictEqual(r.ok, false);
+        assert.match(r.error, /could not be read/);
+      }
+    } finally {
+      fs.chmodSync(t.file, 0o600);
+    }
+    assert.deepStrictEqual(t.read(), { model: 'opus', voice: { mode: 'hold' } },
+      'the settings survived intact either way');
+  });
+});
+
+test('writeVoiceMode leaves no temp file behind, and writes atomically', () => {
+  withWrite({ voice: { mode: 'hold' } }, (t) => {
+    t.write('tap');
+    const strays = fs.readdirSync(path.join(t.home, '.claude')).filter((f) => f !== 'settings.json');
+    assert.deepStrictEqual(strays, [], 'the atomic temp file was renamed, not orphaned');
+  });
+});
+
+test('writeVoiceMode reports a write it could not perform rather than throwing', () => {
+  withWrite({ voice: { mode: 'hold' } }, (t) => {
+    const dir = path.join(t.home, '.claude');
+    fs.chmodSync(dir, 0o500); // readable, not writable
+    try {
+      // Root ignores the mode bits and the write SUCCEEDS, which would fail this
+      // assertion rather than skip it. Probe instead of assuming, same shape as
+      // the unreadable-file case above.
+      let blocked = false;
+      try { fs.writeFileSync(path.join(dir, '.probe'), 'x'); fs.unlinkSync(path.join(dir, '.probe')); }
+      catch { blocked = true; }
+      if (blocked) {
+        const r = t.write('tap');
+        assert.strictEqual(r.ok, false);
+        assert.ok(r.error && /EACCES|EPERM|EROFS/.test(r.error), `unexpected: ${r.error}`);
+      }
+    } finally {
+      fs.chmodSync(dir, 0o700);
+    }
+  });
+});
+
+// A SYMLINKED settings.json is a dotfiles repo driving the setting. The write
+// must land on the link's TARGET: renaming over the link replaces it with a
+// regular file, after which the repo no longer drives anything and the next sync
+// reverts the mode — silently, with an ok:true in hand.
+//
+// Both halves are load-bearing. Asserting only that the link survived passes for
+// a mutant that skips the write entirely; asserting only the mode passes for one
+// that clobbered the link. Neither alone pins the behaviour.
+test('writeVoiceMode writes THROUGH a symlinked settings.json, not over it', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicesym-'));
+  try {
+    const store = path.join(home, 'dotfiles');
+    fs.mkdirSync(store, { recursive: true });
+    const real = path.join(store, 'settings.json');
+    fs.writeFileSync(real, JSON.stringify({ model: 'opus', voice: { mode: 'hold', autoSubmit: true } }, null, 2));
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    const link = path.join(home, '.claude', 'settings.json');
+    fs.symlinkSync(real, link);
+
+    const r = writeVoiceMode('tap', { homeDir: home });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.file, link, 'the result names the path the caller asked about');
+
+    assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the symlink was replaced by a regular file');
+    // The link surviving proves nothing on its own — the bytes must have moved.
+    const written = JSON.parse(fs.readFileSync(real, 'utf8'));
+    assert.strictEqual(written.voice.mode, 'tap', 'the repo file carries the new mode');
+    assert.strictEqual(written.model, 'opus', 'and its unrelated keys survived');
+    assert.strictEqual(written.voice.autoSubmit, true);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A symlinked ~/.claude DIRECTORY is the same hazard one level up, and realpath
+// on the file resolves it without a second code path.
+test('writeVoiceMode writes through a symlinked .claude directory', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicesymd-'));
+  try {
+    const store = path.join(home, 'dotfiles-claude');
+    fs.mkdirSync(store, { recursive: true });
+    fs.writeFileSync(path.join(store, 'settings.json'), JSON.stringify({ model: 'opus' }, null, 2));
+    fs.symlinkSync(store, path.join(home, '.claude'));
+
+    assert.strictEqual(writeVoiceMode('hold', { homeDir: home }).ok, true);
+    assert.ok(fs.lstatSync(path.join(home, '.claude')).isSymbolicLink(), 'the directory link survived');
+    const written = JSON.parse(fs.readFileSync(path.join(store, 'settings.json'), 'utf8'));
+    assert.strictEqual(written.voice.mode, 'hold');
+    assert.strictEqual(written.model, 'opus');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A DANGLING link: readFileSync follows it and throws ENOENT, so the file reads
+// as absent. Creating a regular file in its place would be the destructive
+// fallback — the link is a structure the user put there deliberately and its
+// target may simply be an unmounted drive, so this refuses instead.
+test('writeVoiceMode refuses a dangling symlink rather than replacing it with a file', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicedang-'));
+  try {
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    const link = path.join(home, '.claude', 'settings.json');
+    fs.symlinkSync(path.join(home, 'nowhere', 'settings.json'), link);
+
+    const r = writeVoiceMode('tap', { homeDir: home });
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /cannot be resolved/);
+    assert.match(r.error, /not changed/);
+    assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the dangling link is still a link');
+    assert.strictEqual(fs.existsSync(path.join(home, 'nowhere', 'settings.json')), false,
+      'and nothing was created at its target');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

@@ -1,10 +1,5 @@
-// voice-settings.js — read the Claude CLI's PERSISTED voice-input state out of
-// `~/.claude/settings.json`, for the voice-mode selector.
-//
-// READ-ONLY BY CONSTRUCTION, and that is the whole design. The mode is changed
-// by INJECTING `/voice <mode>` into a live session; a running CLI reads the file
-// at its own startup and holds the mode in memory, so a writer here would leave
-// the UI asserting a state no session is actually in.
+// voice-settings.js — read and write the Claude CLI's PERSISTED voice-input
+// state in `~/.claude/settings.json`, for the voice-mode selector.
 //
 // The legacy sibling key `voiceEnabled` is REPORTED and never merged: `voice` is
 // authoritative, so a file whose two keys disagree still reports `voice`, and a
@@ -17,7 +12,8 @@
 
 const path = require('path');
 const os = require('os');
-const { readJsonSafe } = require('./fs-util');
+const fs = require('fs');
+const { readJsonSafe, atomicWriteFileSync } = require('./fs-util');
 
 // The three modes `/voice` accepts. Order is the order the menu offers them.
 const VOICE_MODES = ['off', 'tap', 'hold'];
@@ -49,6 +45,112 @@ function readVoiceMode({ homeDir = os.homedir() } = {}) {
     legacy,
     effective: enabled === false ? 'off' : mode,
   };
+}
+
+// Set the mode by writing the file the CLI reads, mirroring what its own
+// `/voice` handler writes:
+//
+//   rn("userSettings", { voiceEnabled: true,
+//                        voice: { ...existing.voice, enabled: true, mode } })
+//
+// READ-MODIFY-WRITE, and every part of that matters. This is the user's GLOBAL
+// CLI settings file and holds far more than voice: unrelated top-level keys are
+// carried through untouched, and `voice`'s own siblings (autoSubmit, language,
+// whatever a later CLI adds) survive the spread. A whole-object write here would
+// silently delete the rest of their configuration.
+//
+// `enabled: true` is not incidental — a mode change also turns voice input ON
+// when it was off, which is exactly what `/voice` does. Matching the handler is
+// the point; diverging would make our write and theirs disagree about a file
+// they share. `voiceEnabled` rides along for the same reason: the CLI writes
+// both, and readVoiceMode above has opinions about a file where they disagree.
+//
+// The GLOBAL file only. A per-agent `--settings` file is the CLI's flagSettings
+// layer, which `/voice` explicitly no-ops on, so writing a mode there would
+// produce a file the CLI never honors.
+//
+// Two limits this cannot fix, both accepted: a seat launched with
+// CLAUDE_CONFIG_DIR elsewhere reads a different file and never sees this (Clodex
+// sets that for no seat); and the CLI's watcher only covers directories that had
+// a settings file when that session started, so CREATING this file will not
+// reach an already-running seat — the write lands, that seat does not move.
+//
+// WRITE ONLY WHERE WE COULD MERGE, OR WHERE THERE IS NOTHING TO LOSE. This does
+// its own read and parse rather than going through readJsonSafe, which cannot
+// distinguish "no file" from "file we could not parse" — and that distinction is
+// the whole safety property. Merging onto `{}` is right for an absent file and
+// catastrophic for an unparseable one: this is the user's global CLI settings,
+// so a mode verb fired while a hand-edit is mid-typo would replace every key in
+// it with a two-key object. The CLI declines the same case ("Check your settings
+// file for syntax errors") rather than overwriting.
+function writeVoiceMode(mode, { homeDir = os.homedir() } = {}) {
+  if (mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use tap|hold)` };
+  const file = path.join(homeDir, '.claude', 'settings.json');
+
+  let text = null;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    // ENOENT is the ordinary never-used-voice box. Any other read failure means
+    // a file IS there and we cannot see it, which is the case we must not write
+    // over — an EACCES treated as absent would clobber on the next chmod.
+    if (e.code !== 'ENOENT') {
+      return { ok: false, error: `${file} could not be read (${e.code || e.message}) — voice mode not changed` };
+    }
+  }
+
+  let base = {};
+  if (text !== null && text.trim() !== '') {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return { ok: false, error: `${file} has a syntax error — voice mode not changed` };
+    }
+    // Legible JSON that is not an object (`[]`, `null`, a bare string or number)
+    // is refused for the same reason as a syntax error rather than merged onto
+    // `{}`: it is not a settings file we can add a key to, so writing means
+    // discarding whatever the user does have there. One rule covers both — we
+    // only ever write where the existing content can carry our keys.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: `${file} is not a JSON object — voice mode not changed` };
+    }
+    base = parsed;
+  }
+
+  // WRITE THROUGH THE SYMLINK, not over it. atomicWriteFileSync renames onto the
+  // path it is given, so handing it a symlinked settings.json (a dotfiles repo,
+  // or a symlinked ~/.claude) would REPLACE the link with a regular file: the
+  // repo silently stops driving the setting and the next sync reverts the mode,
+  // with nothing in the result or the log saying so. Same genus as refusing an
+  // unparseable file — a write that discards the structure the user has.
+  //
+  // The result keeps reporting `file`, the path the caller asked about; `target`
+  // is where the bytes land.
+  let target = file;
+  try {
+    target = fs.realpathSync(file);
+  } catch {
+    // realpath fails for an absent file (ordinary: fall through and create it)
+    // and for a DANGLING link, which is not ordinary — a link whose target is
+    // missing or unmounted is still a structure the user put there deliberately,
+    // and writing would convert it to a regular file. Refuse instead: this is
+    // the one case where falling back to `file` destroys something.
+    let dangling = false;
+    try { dangling = fs.lstatSync(file).isSymbolicLink(); } catch { dangling = false; }
+    if (dangling) {
+      return { ok: false, error: `${file} is a symlink whose target cannot be resolved — voice mode not changed` };
+    }
+  }
+
+  const v = base.voice && typeof base.voice === 'object' && !Array.isArray(base.voice) ? base.voice : {};
+  const next = { ...base, voiceEnabled: true, voice: { ...v, enabled: true, mode } };
+  try {
+    atomicWriteFileSync(target, `${JSON.stringify(next, null, 2)}\n`);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+  return { ok: true, mode, file };
 }
 
 // The key that arms the CLI's recorder, read from `~/.claude/keybindings.json`.
@@ -119,4 +221,4 @@ function readVoiceTrigger({ homeDir = os.homedir() } = {}) {
   return { file, binding: found, custom };
 }
 
-module.exports = { VOICE_MODES, readVoiceMode, readVoiceTrigger };
+module.exports = { VOICE_MODES, readVoiceMode, writeVoiceMode, readVoiceTrigger };
