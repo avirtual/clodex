@@ -533,6 +533,21 @@ app.whenReady().then(() => {
   manager = engine.manager;
   ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes } = engine.stores);
 
+  // WHETHER CLODEX IS FRONTMOST, which gates the automatic microphone re-arm.
+  // Only this process can answer it: `app.isFocused()` is about the
+  // APPLICATION, while a renderer's `document.hasFocus()` is about its window —
+  // and a window reports focus perfectly happily while the app itself sits
+  // behind a browser playing video, which is the case that got transcribed.
+  //
+  // Both Electron edges, because either alone is a stuck flag: `browser-window-
+  // focus` without the blur never releases, and the blur without the focus
+  // never re-arms. Seeded from the current answer so a launch into the
+  // foreground does not wait for the first alt-tab.
+  const reportAppFocus = () => { try { manager.noteAppFocused(app.isFocused()); } catch {} };
+  app.on('browser-window-focus', reportAppFocus);
+  app.on('browser-window-blur', reportAppFocus);
+  reportAppFocus();
+
   log.info('app', `startup — Clodex ${app.getVersion()} (electron ${process.versions.electron}, pid ${process.pid})`);
 
   writeHostStamp(path.join(REGISTRY_DIR, 'run'), __dirname);

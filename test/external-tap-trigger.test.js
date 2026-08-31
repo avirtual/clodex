@@ -285,10 +285,15 @@ function mk(overrides = {}) {
 function fakeWin() {
   const win = {
     sent: [],
+    // The raise is recorded in the SAME list as the frames, so a test can
+    // assert that the window came forward BEFORE the tap frame went out —
+    // ordering that two separate counters could not express.
+    raised: [],
     webContents: { send: (...a) => win.sent.push(a) },
     isDestroyed: () => false,
     isFocused: () => true,
-    show() {}, focus() {},
+    show() { win.raised.push('show'); win.sent.push(['#show']); },
+    focus() { win.raised.push('focus'); win.sent.push(['#focus']); },
   };
   return win;
 }
@@ -318,8 +323,12 @@ test('an explicit target is preferred over the focused seat', () => {
   // the seat must not receive its own tap while another seat is still recorded
   // as holding the microphone. A tap NAMES a seat, so it takes the microphone;
   // the automatic re-arm names nobody and never does.
+  // The RAISE precedes the frame: no path arms the recorder while Clodex is
+  // behind another app, and the tap's answer to that is to bring the seat's
+  // window forward rather than to decline — it named a seat, so it knows which.
   assert.deepStrictEqual(win.sent,
-    [['mic-target', 'watched'], ['mic-target', 'named'], ['voice-tap', 'named']],
+    [['mic-target', 'watched'], ['mic-target', 'named'],
+      ['#show'], ['#focus'], ['voice-tap', 'named']],
     'a script can address a seat the operator is not looking at');
 });
 
@@ -330,7 +339,8 @@ test('no target falls back to the focused seat', () => {
   // The focus report already made it the target, so the tap has nothing to move
   // — the idempotence guard is what keeps a second frame off the wire here.
   assert.deepStrictEqual(m.voiceTap(), { ok: true, name: 'watched' });
-  assert.deepStrictEqual(win.sent, [['mic-target', 'watched'], ['voice-tap', 'watched']]);
+  assert.deepStrictEqual(win.sent,
+    [['mic-target', 'watched'], ['#show'], ['#focus'], ['voice-tap', 'watched']]);
 });
 
 test('no target and nothing focused declines rather than guessing a seat', () => {
@@ -390,7 +400,8 @@ test('the socket arm dispatches voice-tap and delivers it to NO transcript', () 
   m.sessions.set('courier', { name: 'courier', agentType: 'claude', workspaceId: 'ws1' });
   m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap' });
 
-  assert.deepStrictEqual(win.sent, [['mic-target', 'watched'], ['voice-tap', 'watched']],
+  assert.deepStrictEqual(win.sent,
+    [['mic-target', 'watched'], ['#show'], ['#focus'], ['voice-tap', 'watched']],
     'the socket it arrived on identifies the app, not the seat');
 });
 
@@ -404,7 +415,8 @@ test('the socket arm honours an explicit target on the envelope', () => {
   m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap', target: 'named' });
   // The focus put the microphone on 'courier'; the NAMED target takes it away.
   assert.deepStrictEqual(win.sent,
-    [['mic-target', 'courier'], ['mic-target', 'named'], ['voice-tap', 'named']]);
+    [['mic-target', 'courier'], ['mic-target', 'named'],
+      ['#show'], ['#focus'], ['voice-tap', 'named']]);
 });
 
 // ----------------------------------------------- the microphone has ONE target
@@ -484,7 +496,8 @@ test('MIC: an EXPLICIT tap takes the microphone from the focused seat', () => {
   assert.strictEqual(m._focusedSession, 'A',
     'the tap moves the microphone and leaves the focus record alone');
   assert.deepStrictEqual(a.sent, [['mic-target', 'A'], ['mic-target', 'B']]);
-  assert.deepStrictEqual(b.sent, [['mic-target', 'A'], ['mic-target', 'B'], ['voice-tap', 'B']]);
+  assert.deepStrictEqual(b.sent,
+    [['mic-target', 'A'], ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
 });
 
 test('MIC: a tap that DECLINES does not move the microphone', () => {
@@ -564,6 +577,159 @@ test('MIC: the voice:micTarget handler is registered and returns the target', ()
   const fn = handlers.get('voice:micTarget');
   assert.ok(fn, 'voice:micTarget is registered');
   assert.strictEqual(fn({}), 'A');
+});
+
+// -------------------------------------------- the app must be FRONTMOST to arm
+
+// The second condition, independent of the target. He browsed the web with
+// Clodex behind it; an agent's turn ended, the re-arm fired, and the CLI
+// transcribed the VIDEO into that seat's composer. The seat WAS the target, so
+// the invariant above passes — nobody was talking to it.
+//
+// ONE RULE, not an asymmetric pair: no path arms the recorder from the
+// background. What differs between the two paths is what they do about it — the
+// re-arm declines (it names nobody, so it has no window it could justify
+// raising), while the tap names a seat and therefore RAISES it.
+
+test('FOCUS: it starts backgrounded, so nothing arms before the host reports', () => {
+  const m = mk();
+  assert.strictEqual(m.appFocused(), false);
+});
+
+test('FOCUS: the host report is mirrored and broadcast to every window', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  m.noteAppFocused(true);
+  assert.strictEqual(m.appFocused(), true);
+  assert.deepStrictEqual(a.sent, [['app-focused', true]]);
+  assert.deepStrictEqual(b.sent, [['app-focused', true]], 'every window, like the target');
+});
+
+test('FOCUS: going to the background broadcasts the FALSE edge', () => {
+  // The edge that matters: without it every seat goes on believing the app is
+  // in front, which is the state that recorded.
+  const m = mk();
+  const { a } = twoWindows(m);
+  m.noteAppFocused(true);
+  m.noteAppFocused(false);
+  assert.strictEqual(m.appFocused(), false);
+  assert.deepStrictEqual(a.sent, [['app-focused', true], ['app-focused', false]]);
+});
+
+test('FOCUS: a repeated report of the same state broadcasts once', () => {
+  // Window focus churns between sibling windows without the APP's
+  // frontmost-ness changing, and both Electron edges call this.
+  const m = mk();
+  const { a } = twoWindows(m);
+  m.noteAppFocused(true);
+  m.noteAppFocused(true);
+  m.noteAppFocused(true);
+  assert.deepStrictEqual(a.sent, [['app-focused', true]]);
+});
+
+test('FOCUS: exactly true, not merely truthy', () => {
+  for (const v of [1, 'yes', {}, [], 'true']) {
+    const m = mk();
+    m.noteAppFocused(v);
+    assert.strictEqual(m.appFocused(), false, `noteAppFocused(${JSON.stringify(v)})`);
+  }
+});
+
+test('FOCUS: a tap from the BACKGROUND raises the window, then arms', () => {
+  // The ruling: focus-then-arm rather than decline. The tap already names a
+  // seat, so it knows which window to bring forward — which keeps the daily
+  // workflow (a wake phrase with another app in front) while removing the
+  // background-recording hole.
+  const m = mk();
+  const { b } = twoWindows(m);
+  // No 'app-focused' frame below: the flag ALREADY starts false, and the
+  // idempotence guard is what keeps a redundant edge off the wire. Windows
+  // default to backgrounded for the same reason, so nothing is missed.
+  m.noteAppFocused(false);
+  assert.deepStrictEqual(m.voiceTap('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, ['show', 'focus'], 'the window was brought forward');
+  // ORDER, which is the part a pair of counters could not express: the seat
+  // holds the microphone before its window comes forward, and the tap frame
+  // goes out last.
+  assert.deepStrictEqual(b.sent,
+    [['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
+});
+
+test('FOCUS: a tap with the app ALREADY in front does not re-raise it', () => {
+  // Raising an app that is already frontmost is a no-op the user cannot see,
+  // but it would steal focus BETWEEN windows — the tap names a seat in one
+  // workspace and he may be typing in another.
+  const m = mk();
+  const { b } = twoWindows(m);
+  m.noteAppFocused(true);
+  assert.deepStrictEqual(m.voiceTap('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, [], 'already frontmost: nothing to raise');
+  assert.deepStrictEqual(b.sent,
+    [['app-focused', true], ['mic-target', 'B'], ['voice-tap', 'B']]);
+});
+
+test('FOCUS: a host that cannot raise still routes the tap', () => {
+  // web-host's handles implement show/focus, but a handle whose raise THROWS
+  // must not cost the operator the tap itself — the renderer still owns the
+  // decision about whether the key may be written.
+  const m = mk();
+  const win = fakeWin();
+  win.show = () => { throw new Error('no window server'); };
+  m.registerWindow('ws1', win);
+  m.sessions.set('A', { name: 'A', agentType: 'claude', workspaceId: 'ws1' });
+  m.noteAppFocused(false);
+  assert.deepStrictEqual(m.voiceTap('A'), { ok: true, name: 'A' });
+  assert.deepStrictEqual(win.sent.at(-1), ['voice-tap', 'A']);
+});
+
+test('FOCUS: a DECLINED tap neither raises a window nor moves the microphone', () => {
+  // Every decline is above the raise, so a tap that routed nowhere cannot pull
+  // the app in front of whatever the operator is doing.
+  const m = mk();
+  const { a } = twoWindows(m);
+  m.noteAppFocused(false);
+  m.noteFocusedSession('A');
+  assert.strictEqual(m.voiceTap('ghost').ok, false);
+  assert.deepStrictEqual(a.raised, [], 'no window came forward for a tap that went nowhere');
+  assert.strictEqual(m.micTarget(), 'A');
+});
+
+test('FOCUS: the contract carries both halves with the kinds each relies on', () => {
+  const rows = new Map(API_CONTRACT.map((r) => [r.name, r]));
+  assert.deepStrictEqual(rows.get('onAppFocused'),
+    { name: 'onAppFocused', kind: 'on', channel: 'app-focused' });
+  assert.deepStrictEqual(rows.get('appFocused'),
+    { name: 'appFocused', kind: 'invoke', channel: 'voice:appFocused' });
+});
+
+test('FOCUS: the voice:appFocused handler is registered and returns the flag', () => {
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: () => {},
+    manager: { appFocused: () => true },
+    log: { info() {}, error() {} },
+  });
+  const fn = handlers.get('voice:appFocused');
+  assert.ok(fn, 'voice:appFocused is registered');
+  assert.strictEqual(fn({}), true);
+});
+
+test('FOCUS: main reports the APP’s focus, not a window’s', () => {
+  // A source-shape pin, because the distinction is invisible at runtime here
+  // and is the entire reason this condition exists: `win.isFocused()` is true
+  // for the focused window of an application that is itself behind a browser.
+  // Only `app.isFocused()` answers the question that was asked.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf-8');
+  assert.match(src, /noteAppFocused\(app\.isFocused\(\)\)/,
+    'main must report app.isFocused(), never a window-level focus read');
+  // BOTH edges, or the flag sticks: focus without blur never releases, blur
+  // without focus never re-arms.
+  assert.match(src, /app\.on\('browser-window-focus', reportAppFocus\)/);
+  assert.match(src, /app\.on\('browser-window-blur', reportAppFocus\)/);
 });
 
 // ----------------------------------------------------------------- the contract

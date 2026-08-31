@@ -413,6 +413,17 @@ const API_CONTRACT = [
   // talking to the seat he already picked — so without this read the new
   // window's seat could never arm, however long he waited.
   { name: 'micTarget', kind: 'invoke', channel: 'voice:micTarget' },
+  // Whether CLODEX is the frontmost APPLICATION — the second condition on the
+  // automatic re-arm, independent of the target above. A renderer cannot answer
+  // it: `document.hasFocus()` is about the WINDOW, and a window can be the
+  // focused window of an app sitting behind a browser, which is the case that
+  // transcribed video audio into a composer.
+  //
+  // Broadcast plus catch-up pull, the same pair and for the same reason as the
+  // target: a window that opened while the app was already frontmost missed the
+  // edge, and there is no poll to correct it.
+  { name: 'onAppFocused', kind: 'on', channel: 'app-focused' },
+  { name: 'appFocused', kind: 'invoke', channel: 'voice:appFocused' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },

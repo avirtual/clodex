@@ -572,6 +572,15 @@ function createSessionManager(deps) {
       // one tap the two differ, and a later untargeted tap must still route by
       // the seat he is LOOKING at rather than the one he last named.
       this._micTarget = null;
+      // IS CLODEX THE FRONTMOST APPLICATION? The second condition on the
+      // automatic re-arm, and independent of the target: the operator browsed
+      // the web with Clodex behind it, a turn ended, the re-arm fired, and the
+      // CLI transcribed the VIDEO he was watching into that seat's composer.
+      // The seat legitimately held the microphone — nobody was talking to it.
+      //
+      // Starts FALSE. Before any host has reported, no seat may arm: the
+      // opposite default records the room at launch, which is the failure.
+      this._appFocused = false;
       // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
       // per-seat field of the same name because audio has no seat.
       this._lastVoiceRecordingTs = 0;
@@ -2234,6 +2243,23 @@ function createSessionManager(deps) {
     // he already picked, so the re-arm would be dead in a fresh window.
     micTarget() { return this._micTarget; }
 
+    // The host telling us whether Clodex is the frontmost APPLICATION. Only a
+    // host can answer it: a window reporting its own focus answers a different
+    // question — a window can be the focused window of an app that is itself
+    // behind a browser, which is exactly the case that recorded video audio.
+    //
+    // Same broadcast-plus-pull shape as the target above, and the same
+    // idempotence guard: window focus churns between sibling windows without
+    // the APP's frontmost-ness changing at all.
+    noteAppFocused(focused) {
+      const next = focused === true;
+      if (this._appFocused === next) return;
+      this._appFocused = next;
+      this._broadcast('app-focused', next);
+    }
+
+    appFocused() { return this._appFocused; }
+
     // ENSURE-ON from outside the app: a Voice Control wake word arrived over
     // this box's agent socket asking for the recorder.
     //
@@ -2249,7 +2275,8 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
       if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
-      if (!this.windowForSession(name)) return { ok: false, error: `"${name}" has no window attached` };
+      const win = this.windowForSession(name);
+      if (!win) return { ok: false, error: `"${name}" has no window attached` };
       // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
       // is the design: he NAMED this seat, so it takes the microphone from
       // whoever held it; a re-arm names nobody, so it gets no say in who holds
@@ -2261,6 +2288,22 @@ function createSessionManager(deps) {
       // Only past every decline above: a tap that routed nowhere must not move
       // the microphone off the seat that has it.
       this._setMicTarget(name);
+      // FOCUS-THEN-ARM, not decline. No path arms the recorder while Clodex is
+      // in the background — a microphone behind a browser records whatever the
+      // room is playing. But the tap NAMES a seat, so unlike the automatic
+      // re-arm it knows which window to raise, and raising it is what keeps the
+      // daily workflow (a Voice Control phrase with another app in front)
+      // working rather than silently declining.
+      //
+      // `show()` then `focus()`, the pair the file-view path already uses and
+      // the window-bridge contract already documents — this adds no window
+      // capability. AFTER the retarget and BEFORE the frame: the seat must
+      // already hold the microphone when its window comes forward, and the
+      // renderer decides whether the key may be written against an app that is
+      // by then coming to the front.
+      if (!this._appFocused) {
+        try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
+      }
       this._sendToSession(name, 'voice-tap', name);
       return { ok: true, name };
     }

@@ -7633,6 +7633,17 @@ body {
         // talking to the seat he already picked — so without this read the new
         // window's seat could never arm, however long he waited.
         { name: "micTarget", kind: "invoke", channel: "voice:micTarget" },
+        // Whether CLODEX is the frontmost APPLICATION — the second condition on the
+        // automatic re-arm, independent of the target above. A renderer cannot answer
+        // it: `document.hasFocus()` is about the WINDOW, and a window can be the
+        // focused window of an app sitting behind a browser, which is the case that
+        // transcribed video audio into a composer.
+        //
+        // Broadcast plus catch-up pull, the same pair and for the same reason as the
+        // target: a window that opened while the app was already frontmost missed the
+        // edge, and there is no poll to correct it.
+        { name: "onAppFocused", kind: "on", channel: "app-focused" },
+        { name: "appFocused", kind: "invoke", channel: "voice:appFocused" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -23955,6 +23966,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // that forgets to wire this silences the re-arm rather than restoring the
         // failure it exists to prevent — one operator's speech reaching two agents.
         isMicTarget = () => false,
+        // Whether CLODEX is the frontmost application, as main reports it. Independent
+        // of the target: a seat can legitimately hold the microphone while the app
+        // sits behind a browser, and a recorder armed there transcribes whatever the
+        // room is playing.
+        //
+        // DEFAULTS FALSE, same polarity and same reason as isMicTarget above.
+        isAppFocused = () => false,
         evidenceMs = VOICE_EVIDENCE_MS,
         now = Date.now
       }) {
@@ -24240,6 +24258,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
             mine = false;
           }
           if (!mine) return;
+          let frontmost = false;
+          try {
+            frontmost = isAppFocused() === true;
+          } catch {
+            frontmost = false;
+          }
+          if (!frontmost) return;
           let speaking = false;
           try {
             speaking = getSpeakerBusy() === true;
@@ -33334,6 +33359,10 @@ ${detail}` });
           // name, never against `activeSession`, which is this window's own answer
           // and true of one seat in every window that is open.
           isMicTarget: () => micTarget !== null && micTarget === name,
+          // Is Clodex frontmost? Read fresh per attempt and never captured, for the
+          // same reason as the speaker flag: he alt-tabs away DURING the settle
+          // window, and that is the case this exists to catch.
+          isAppFocused: () => appFocused,
           noteVoiceRecording: () => window.api.noteVoiceRecording(name),
           noteVoiceDraft: () => window.api.noteVoiceDraft(name)
         });
@@ -35466,11 +35495,25 @@ Click for live activity`;
         speakerBusy = busy === true;
       });
       var micTarget = null;
+      var micTargetHeard = false;
       window.api.onMicTarget((name) => {
+        micTargetHeard = true;
         micTarget = typeof name === "string" ? name : null;
       });
       window.api.micTarget().then((name) => {
-        if (micTarget === null) micTarget = typeof name === "string" ? name : null;
+        if (micTargetHeard) return;
+        micTarget = typeof name === "string" ? name : null;
+      }).catch(() => {
+      });
+      var appFocused = false;
+      var appFocusedHeard = false;
+      window.api.onAppFocused((on) => {
+        appFocusedHeard = true;
+        appFocused = on === true;
+      });
+      window.api.appFocused().then((on) => {
+        if (appFocusedHeard) return;
+        appFocused = on === true;
       }).catch(() => {
       });
       function reportFocusedSession() {

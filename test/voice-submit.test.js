@@ -1904,10 +1904,14 @@ function rearmHarness({
   // written to assert; the target tests set it false explicitly, and the
   // production default is the opposite (see isMicTarget in the watcher).
   micTarget = true,
+  // Clodex is FRONTMOST, which is the situation every re-arm test below is
+  // about. Defaulted true for the same reason micTarget is; the production
+  // default is the opposite (see isAppFocused in the watcher).
+  appFocused = true,
 } = {}) {
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
-  const env = { config, attention, voiceMode, trigger, speaking, micTarget };
+  const env = { config, attention, voiceMode, trigger, speaking, micTarget, appFocused };
   // The terminal-quiet check compares timestamps, so a test that wants to say
   // "the CLI is still painting" has to control the clock rather than race it:
   // real elapsed time between a write and the assertion is longer than any
@@ -1930,6 +1934,9 @@ function rearmHarness({
     // Read through `env` so a test can move the target AFTER construction —
     // which is the real shape: main's broadcast lands while the watcher lives.
     isMicTarget: () => env.micTarget,
+    // Read through `env` for the same reason: the operator alt-tabs away DURING
+    // the settle window, which is the case worth being able to express.
+    isAppFocused: () => env.appFocused,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
@@ -2179,9 +2186,10 @@ test('a throwing environment declines rather than writing', async () => {
       getVoiceMode: () => 'tap',
       getTriggerKey: () => ' ',
       // Wired TRUE so the decline below is attributable to the patched throw.
-      // Left unwired it defaults false and every row would pass on the target
-      // gate, asserting nothing about the throw each row exists to cover.
+      // Left unwired they default false and every row would pass on one of the
+      // two gates, asserting nothing about the throw each row exists to cover.
       isMicTarget: () => true,
+      isAppFocused: () => true,
       write: (d) => writes.push(d),
       quietMs: TEST_QUIET_MS,
       rearmMs: TEST_REARM_MS,
@@ -2511,9 +2519,10 @@ test('SPEECH: an absent signal leaves the path byte-identical to before', async 
     getAttention: () => null,
     getVoiceMode: () => 'tap',
     getTriggerKey: () => ' ',
-    // The seat under test holds the microphone; the absent SPEAKER signal is
-    // the variable this test is isolating.
+    // The seat under test holds the microphone and Clodex is frontmost; the
+    // absent SPEAKER signal is the variable this test is isolating.
     isMicTarget: () => true,
+    isAppFocused: () => true,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
@@ -2535,6 +2544,7 @@ test('SPEECH: a throwing busy read declines to defer rather than wedging', async
     getTriggerKey: () => ' ',
     getSpeakerBusy: () => { throw new Error('x'); },
     isMicTarget: () => true,
+    isAppFocused: () => true,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
@@ -2615,6 +2625,7 @@ test('TARGET: two seats, one microphone — only the holder arms on the same edg
       getVoiceMode: () => 'tap',
       getTriggerKey: () => ' ',
       isMicTarget: () => target.name === seat,
+      isAppFocused: () => true,
       write: (d) => writes.push(d),
       quietMs: TEST_QUIET_MS,
       rearmMs: TEST_REARM_MS,
@@ -2651,6 +2662,9 @@ test('TARGET: an absent signal DECLINES, opposite to the speaker default', async
     getAttention: () => null,
     getVoiceMode: () => 'tap',
     getTriggerKey: () => ' ',
+    // Frontmost, so the decline below is attributable to the ABSENT target
+    // signal this test is about and not to the other gate.
+    isAppFocused: () => true,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
@@ -2671,6 +2685,7 @@ test('TARGET: a throwing read declines, and does not take the watcher down', asy
     getVoiceMode: () => 'tap',
     getTriggerKey: () => ' ',
     isMicTarget: () => { throw new Error('x'); },
+    isAppFocused: () => true,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
@@ -2700,6 +2715,7 @@ test('TARGET: exactly true, not merely truthy', async () => {
       getVoiceMode: () => 'tap',
       getTriggerKey: () => ' ',
       isMicTarget: () => v,
+      isAppFocused: () => true,
       write: (d) => writes.push(d),
       quietMs: TEST_QUIET_MS,
       rearmMs: TEST_REARM_MS,
@@ -2742,6 +2758,159 @@ test('TARGET: the check sits BELOW the still-painting branch', () => {
   assert.ok(painting > 0 && target > 0 && speech > 0, 'all three must still be there');
   assert.ok(painting < target, 'the target check must not be hoisted above the still-painting branch');
   assert.ok(target < speech, 'a non-target seat must decline before it defers on speech');
+});
+
+// ------------------------------------------- the app must be FRONTMOST to arm
+
+// The same bug class as the target above, one layer out. The operator was
+// browsing the web with Clodex in the BACKGROUND when an agent's turn ended:
+// the re-arm fired and the CLI transcribed the VIDEO he was watching into that
+// seat's composer — four turns of ambient narration reached the agent.
+//
+// The target invariant does not stop it, and that is why this is a SECOND
+// condition rather than a refinement: that seat legitimately held the
+// microphone. The target answers WHICH seat; this answers whether anyone is
+// there at all. Neither implies the other, and the tests below assert exactly
+// that by moving one with the other held fixed.
+
+test('FRONTMOST: a backgrounded app writes NOTHING, even on the target seat', async () => {
+  const h = rearmHarness({ micTarget: true, appFocused: false });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [],
+    'the microphone must not arm into a room Clodex is not in front of');
+  assert.strictEqual(h.watcher.rearmCount(), 0);
+  h.watcher.dispose();
+});
+
+test('FRONTMOST: with the app in front, the target seat still arms', async () => {
+  // The other direction, and the reason the pin above is not satisfied by a
+  // build that re-arms nowhere. Identical fixture, one flag apart.
+  const h = rearmHarness({ micTarget: true, appFocused: true });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
+  assert.strictEqual(h.watcher.rearmCount(), 1);
+  h.watcher.dispose();
+});
+
+test('FRONTMOST: the two conditions are INDEPENDENT — three of four cases decline', async () => {
+  // The whole truth table, because a build that ANDed one condition into the
+  // other would pass either pin above on its own. Each row carries its expected
+  // writes as a literal rather than as a rule the test re-derives.
+  const cases = [
+    [true, true, [' ']],
+    [true, false, []],
+    [false, true, []],
+    [false, false, []],
+  ];
+  for (const [micTarget, appFocused, expected] of cases) {
+    const h = rearmHarness({ micTarget, appFocused });
+    h.turn();
+    await h.done();
+    assert.deepStrictEqual(h.writes, expected,
+      `target=${micTarget} frontmost=${appFocused}`);
+    h.watcher.dispose();
+  }
+});
+
+test('FRONTMOST: alt-tabbing away DURING the settle window declines at the timer', async () => {
+  // The gate is re-read when the timer LANDS, not captured at the edge. This is
+  // the realistic shape of the reported bug: the turn ends while he is still in
+  // Clodex, and he switches to the browser before the re-arm fires.
+  const h = rearmHarness({ appFocused: true });
+  h.turn();
+  h.env.appFocused = false;
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('FRONTMOST: an absent signal DECLINES', async () => {
+  // Fails CLOSED, opposite to getSpeakerBusy and identical to the target gate:
+  // an unwired speaker signal costs one narration, an unwired focus signal
+  // records the operator's living room.
+  const writes = [];
+  const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }] });
+  const watcher = createVoiceSubmitWatcher(term, {
+    getConfig: () => ({ enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+    getAttention: () => null,
+    getVoiceMode: () => 'tap',
+    getTriggerKey: () => ' ',
+    isMicTarget: () => true,
+    write: (d) => writes.push(d),
+    quietMs: TEST_QUIET_MS,
+    rearmMs: TEST_REARM_MS,
+  });
+  watcher.noteActivity('thinking');
+  watcher.noteActivity('idle', true);
+  await settle(TEST_REARM_MS + TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+  assert.deepStrictEqual(writes, []);
+  watcher.dispose();
+});
+
+test('FRONTMOST: a throwing read declines rather than arming', async () => {
+  const writes = [];
+  const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }] });
+  const watcher = createVoiceSubmitWatcher(term, {
+    getConfig: () => ({ enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+    getAttention: () => null,
+    getVoiceMode: () => 'tap',
+    getTriggerKey: () => ' ',
+    isMicTarget: () => true,
+    isAppFocused: () => { throw new Error('x'); },
+    write: (d) => writes.push(d),
+    quietMs: TEST_QUIET_MS,
+    rearmMs: TEST_REARM_MS,
+  });
+  watcher.noteActivity('thinking');
+  watcher.noteActivity('idle', true);
+  await settle(TEST_REARM_MS + TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+  assert.deepStrictEqual(writes, []);
+  watcher.dispose();
+});
+
+test('FRONTMOST: exactly true, not merely truthy', async () => {
+  for (const v of [1, {}, 'true', [], undefined, null, 0, '']) {
+    const writes = [];
+    const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }] });
+    const watcher = createVoiceSubmitWatcher(term, {
+      getConfig: () => ({ enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+      getAttention: () => null,
+      getVoiceMode: () => 'tap',
+      getTriggerKey: () => ' ',
+      isMicTarget: () => true,
+      isAppFocused: () => v,
+      write: (d) => writes.push(d),
+      quietMs: TEST_QUIET_MS,
+      rearmMs: TEST_REARM_MS,
+    });
+    watcher.noteActivity('thinking');
+    watcher.noteActivity('idle', true);
+    await settle(TEST_REARM_MS + TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+    assert.deepStrictEqual(writes, [], `appFocused ${JSON.stringify(v)}`);
+    watcher.dispose();
+  }
+});
+
+test('FRONTMOST: the check sits BELOW the still-painting branch', () => {
+  // The placement rule has not changed: the abandon deadline is consulted only
+  // inside the still-painting branch, so a new check hoisted above it breaks
+  // the `abandonMs: 0` pin's premise.
+  //
+  // Also above the speech branch, with the target: a seat that may not arm at
+  // all has no business spending a speech budget waiting out a narration.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'voice-submit-watcher.js'), 'utf-8');
+  const body = src.slice(src.indexOf('function attemptRearm()'));
+  const painting = body.indexOf('if (quietFor < rearmMs)');
+  const front = body.indexOf('isAppFocused()');
+  const speech = body.indexOf('getSpeakerBusy()');
+  assert.ok(painting > 0 && front > 0 && speech > 0, 'all three must still be there');
+  assert.ok(painting < front, 'the frontmost check must not be hoisted above the still-painting branch');
+  assert.ok(front < speech, 'a backgrounded app must decline before it defers on speech');
 });
 
 // MF2: our "empty" must not be laxer than the CLI's `value.length > 0`, or we
@@ -3160,7 +3329,7 @@ function stopHarness({
 } = {}) {
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
-  const env = { config, attention, trigger, micTarget: true };
+  const env = { config, attention, trigger, micTarget: true, appFocused: true };
   const watcher = track(createVoiceSubmitWatcher(term, {
     getConfig: () => env.config,
     getAttention: () => env.attention,
@@ -3170,6 +3339,7 @@ function stopHarness({
     // stop below does not consult this, but the turn-end re-arm one test here
     // composes with does, and it is the target's re-arm being asserted.
     isMicTarget: () => env.micTarget,
+    isAppFocused: () => env.appFocused,
     // `onWrite` fires INSIDE the write, so a test can change the world at an
     // exact point in the sequence. A real timer racing the watcher's own is the
     // alternative, and the margins here are inside this file's observed jitter.
