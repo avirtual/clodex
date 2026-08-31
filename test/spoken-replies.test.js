@@ -11,7 +11,8 @@ const assert = require('node:assert');
 
 const { speakable, isUnspeakableToken, SPEAK_MAX_CHARS } = require('../speakable');
 const {
-  createSpeaker, createVoiceCatalog, listVoices, DEFAULT_VOICE, DEFAULT_RATE, SAY_BIN,
+  createSpeaker, createVoiceCatalog, listVoices,
+  DEFAULT_VOICE, DEFAULT_RATE, MIN_RATE, MAX_RATE, SAY_BIN,
 } = require('../speaker');
 const { isTurnEndEntry } = require('../transcript');
 
@@ -555,6 +556,45 @@ test('the operator listened to three rates and picked 210', () => {
   const { DEFAULT_UI_SETTINGS } = requireDefaults();
   assert.strictEqual(DEFAULT_UI_SETTINGS.speakRate, 210,
     'the store default and the speaker default must not be able to disagree');
+});
+
+// The band is written twice — stores.js cannot import speaker.js, since it is
+// loaded before whenReady and must stay off the process side. Nothing held the
+// pair, and the drift is SILENT in the direction that matters: the store admits
+// a rate `speak()` then drops, so the operator hears `say`'s 175 with the
+// picker showing what he chose.
+test('the store admits exactly the band the speaker will honour', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'stores.js'), 'utf-8');
+  const guard = /raw >= (\d+) && raw <= (\d+)/.exec(src);
+  assert.ok(guard, 'sanitizeSpeakRate must still express the band as literals');
+  assert.strictEqual(Number(guard[1]), MIN_RATE, 'store floor === speaker MIN_RATE');
+  assert.strictEqual(Number(guard[2]), MAX_RATE, 'store ceiling === speaker MAX_RATE');
+});
+
+// The popover's copy of the default is the one that would LIE: the two
+// main-process copies are pinned against each other above, and this one is what
+// the operator sees when a read produces no rate.
+test('every surface offering a rate agrees on the default', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const pop = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'popovers', 'voice-popover.js'), 'utf-8');
+  const fallback = /const DEFAULT_SPEAK_RATE = (\d+);/.exec(pop);
+  assert.ok(fallback, 'the popover fallback must be a named constant, not inlined');
+  assert.strictEqual(Number(fallback[1]), DEFAULT_RATE,
+    'the popover would show a default the speaker does not use');
+  // And the chosen rate must actually be OFFERED, or picking it back after
+  // switching away is impossible from the surface that owns the choice.
+  const listed = [...pop.matchAll(/\{ rate: (\d+), label:/g)].map((m) => Number(m[1]));
+  assert.ok(listed.includes(DEFAULT_RATE), `the picker must offer ${DEFAULT_RATE}: got ${listed}`);
+
+  const html = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'index.html'), 'utf-8');
+  const opts = [...html.matchAll(/<option value="(\d+)">\d+ &mdash;/g)].map((m) => Number(m[1]));
+  assert.deepStrictEqual(opts, listed,
+    'Settings and the popover must offer the same rates, in the same order');
 });
 
 // --- the busy signal --------------------------------------------------------

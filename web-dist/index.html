@@ -27326,6 +27326,7 @@ helper=${d.helperPath}`;
         { rate: 210, label: "210 \u2014 brisk" },
         { rate: 240, label: "240 \u2014 fast" }
       ];
+      var DEFAULT_SPEAK_RATE = 210;
       var RECORDER_TICK_MS = COMPOSITION_POLL_MS;
       var RECORDER_STATES = {
         lit: { cls: "rec-lit", text: "Recording", hint: "Clodex sees the recorder running \u2014 click to stop it (declines while a draft is in the composer, since the key would SEND it)" },
@@ -27404,8 +27405,9 @@ helper=${d.helperPath}`;
         function speakHtml() {
           if (!speak) return "";
           const voices = speak.voices.length ? `<select class="speak-voice" ${speak.on ? "" : "disabled"}>` + speak.voices.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? " selected" : ""}>${esc(v.name)} (${esc(v.locale)})</option>`).join("") + "</select>" : `<span class="speak-voice-fixed">${esc(speak.voice)}</span>`;
-          const want = speak.rate === null ? 210 : speak.rate;
-          const rates = `<select class="speak-rate" ${speak.on ? "" : "disabled"}>` + SPEAK_RATES.map((r) => `<option value="${r.rate}"${r.rate === want ? " selected" : ""}>${esc(r.label)}</option>`).join("") + "</select>";
+          const want = speak.rate === null ? DEFAULT_SPEAK_RATE : speak.rate;
+          const offered = SPEAK_RATES.some((r) => r.rate === want) ? SPEAK_RATES : [{ rate: want, label: `${want} \u2014 set elsewhere` }, ...SPEAK_RATES];
+          const rates = `<select class="speak-rate" ${speak.on ? "" : "disabled"}>` + offered.map((r) => `<option value="${r.rate}"${r.rate === want ? " selected" : ""}>${esc(r.label)}</option>`).join("") + "</select>";
           return `<label class="speak-row" title="Synthesized on this machine by /usr/bin/say \u2014 no audio and no text leave the box"><input type="checkbox" class="speak-toggle"${speak.on ? " checked" : ""}> Speak the final reply aloud</label><div class="speak-sub">Local only \u2014 nothing leaves this machine. ${voices} ${rates}</div>`;
         }
         async function refreshSpeakSection() {

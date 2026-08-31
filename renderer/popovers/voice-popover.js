@@ -54,6 +54,12 @@ const SPEAK_RATES = [
   { rate: 240, label: '240 — fast' },
 ];
 
+// The fallback for a read that produced no rate. Named rather than inlined
+// because it is the fourth copy of this number (stores.js, speaker.js and the
+// <option> list in index.html hold the others) and was the only one no test
+// could reach — the two main-process copies are pinned against each other.
+const DEFAULT_SPEAK_RATE = 210;
+
 
 // How often the open popover re-reads the recorder state. Matched to the
 // watcher's own composition poll, which is what actually moves the value: a
@@ -198,9 +204,18 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     // Falls back to the default when the read produced nothing rather than
     // leaving every option unselected, which would show a picker asserting a
     // rate the store does not hold.
-    const want = speak.rate === null ? 210 : speak.rate;
+    const want = speak.rate === null ? DEFAULT_SPEAK_RATE : speak.rate;
+    // A STORED value that is not on the list gets its own option, the same way
+    // setSpeakSettings does for voices. The store accepts the whole 80-400 band,
+    // so a rate set from anywhere else — a hand-edited settings file, a future
+    // surface — would otherwise leave every option unselected, and a browser
+    // renders that as the FIRST one: the picker would claim 150 while the store
+    // held 190, which is precisely what the note above says it prevents.
+    const offered = SPEAK_RATES.some((r) => r.rate === want)
+      ? SPEAK_RATES
+      : [{ rate: want, label: `${want} — set elsewhere` }, ...SPEAK_RATES];
     const rates = `<select class="speak-rate" ${speak.on ? '' : 'disabled'}>`
-      + SPEAK_RATES.map((r) => `<option value="${r.rate}"${r.rate === want ? ' selected' : ''}>`
+      + offered.map((r) => `<option value="${r.rate}"${r.rate === want ? ' selected' : ''}>`
         + `${esc(r.label)}</option>`).join('')
       + '</select>';
     return '<label class="speak-row" title="Synthesized on this machine by /usr/bin/say — no audio and no text leave the box">'
