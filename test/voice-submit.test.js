@@ -2042,12 +2042,29 @@ test('the indicator is seen even though it paints RIGHT of the cursor', async ()
   // The composer read truncates at cursorX, so a scan reusing that read would
   // never see an indicator on the cursor's own row. Measured through a real
   // xterm: full row `❯  agents ⏺REC · tap to send`, cursorX 2.
+  //
+  // The two cases are a PAIR and neither is meaningful alone. Silence is
+  // produced just as well by a composer read that broke and saw a non-empty
+  // row, so the second case — same shape, same cursorX, right-of-cursor
+  // content that is NOT the indicator — is what says the silence came from
+  // the indicator rather than from a widened composer read.
   const h = rearmHarness({
     rows: [{ text: EMPTY_COMPOSER + REC_ROW, cursorX: 2, cursor: true }],
   });
   h.turn();
   await h.done();
   assert.deepStrictEqual(h.writes, [], 'the untruncated row carries the indicator');
+
+  const quiet = rearmHarness({
+    rows: [{
+      text: EMPTY_COMPOSER + ' agents \u00b7 tap to talk', cursorX: 2, cursor: true,
+    }],
+  });
+  quiet.turn();
+  await quiet.done();
+  assert.deepStrictEqual(quiet.writes, [' '],
+    'right-of-cursor content must not widen the composer read');
+  quiet.watcher.dispose();
   h.watcher.dispose();
 });
 
