@@ -3609,7 +3609,10 @@ function reportFocusedSession() {
   try { window.api.noteFocusedSession(activeSession); } catch {}
 }
 window.addEventListener('focus', reportFocusedSession);
-reportFocusedSession();
+// Guarded: at eval time no session is active yet, and an unguarded call would
+// report a null that CLEARS whatever another workspace window just recorded —
+// this file is evaluated once per window.
+if (activeSession) reportFocusedSession();
 
 // An outside script asked for the recorder on this seat (a Voice Control wake
 // word, over the agent socket). Main routed it here because only this side can

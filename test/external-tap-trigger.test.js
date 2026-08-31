@@ -149,6 +149,41 @@ test('the ALTERNATE buffer is not written to either', () => {
   assert.deepStrictEqual(h.writes, []);
 });
 
+// THE PROCESSING WINDOW, and it sits on this feature's HAPPY PATH rather than
+// in a corner. t587's stop-at-submit writes the key at the end of a dictated
+// turn, the recorder enters processing, and processing is the first moment
+// Voice Control can hear a wake word again — so the tap this feature exists to
+// deliver is aimed straight into this window. The two features compose into the
+// bug.
+//
+// The CLI REPLACES the lit indicator with this row rather than adding to it, so
+// `recordingObserved` reads NOT-LIT for the whole window while the composer is
+// still clean. Measured in 2.1.251: the tap handler's processing arm returns
+// WITHOUT swallowing a single-character binding, so the byte falls through as a
+// LITERAL into the composer — and from then on `composerIsEmpty` is false, which
+// blocks every later re-arm AND every later external tap. A permanently stuck
+// mic that only a manual composer clear escapes.
+//
+// NOT VACUOUS, by the same bar the null case had to clear: the composer reads
+// clean here and no permission dialog is up, so every earlier guard PASSES and
+// the processing gate is the only thing that can decline. A fixture an earlier
+// guard already rejects would pin nothing.
+//
+// Both spellings, for the reason t587's table gives: the CLI's real bytes carry
+// a single U+2026, and a rule anchored on that ellipsis would pass the first row
+// and fail the ASCII form a normalisation produces.
+test('THE PROCESSING WINDOW gets no character — the byte would land as a literal', () => {
+  for (const row of [
+    ' agents Voice: processing\u2026',
+    ' agents Voice: processing...',
+  ]) {
+    const h = tapHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, row] });
+    assert.strictEqual(h.watcher.externalTap(), false, JSON.stringify(row));
+    assert.deepStrictEqual(h.writes, [], JSON.stringify(row));
+    assert.strictEqual(h.watcher.externalTapCount(), 0, JSON.stringify(row));
+  }
+});
+
 test('a recorder already LIT is left alone — ensure-on, never toggle', () => {
   const h = tapHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, REC_ROW] });
   assert.strictEqual(h.watcher.externalTap(), false);
@@ -369,6 +404,31 @@ test('the two contract rows exist with the kinds the halves rely on', () => {
     { name: 'noteFocusedSession', kind: 'send', channel: 'session:focused' });
   assert.deepStrictEqual(rows.get('onVoiceTap'),
     { name: 'onVoiceTap', kind: 'on', channel: 'voice-tap' });
+});
+
+test('the session:focused handler records the name, and null CLEARS it', () => {
+  // The REGISTERED handler, not a hand-rolled call to noteFocusedSession: the
+  // hop under test is the channel wiring, and a test that calls the method
+  // directly stays green if the handler is registered on the wrong channel or
+  // never registered at all.
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const handlers = new Map();
+  const calls = [];
+  registerIpcHandlers({
+    handle: () => {},
+    on: (ch, fn) => handlers.set(ch, fn),
+    manager: { noteFocusedSession: (n) => calls.push(n) },
+    log: { info() {}, error() {} },
+  });
+  const fn = handlers.get('session:focused');
+  assert.ok(fn, 'session:focused is registered — without this the assertions below read around a missing channel');
+
+  fn({}, 'watched');
+  // NULL IS LOAD-BEARING, not a defensive nicety: renderer.js clears the record
+  // when the last seat closes, and a handler that coerced this to the string
+  // "null" would leave an external tap aiming at a seat that is gone.
+  fn({}, null);
+  assert.deepStrictEqual(calls, ['watched', null]);
 });
 
 test('the sender script speaks the envelope the socket arm decodes', () => {

@@ -66,10 +66,14 @@ function* candidateSockets() {
 function send(socketPath, envelope) {
   return new Promise((resolve) => {
     const conn = net.createConnection(socketPath, () => {
-      conn.end(JSON.stringify(envelope), () => resolve(true));
+      conn.end(JSON.stringify(envelope), () => done(true));
     });
-    conn.on('error', () => resolve(false));
-    setTimeout(() => { conn.destroy(); resolve(false); }, 2000);
+    conn.on('error', () => done(false));
+    // CLEARED on both settled paths, and that is latency the operator feels: an
+    // uncleared timer keeps the event loop alive for its full 2s AFTER the send
+    // succeeded, so every wake word would pay that before the shortcut returns.
+    const timer = setTimeout(() => { conn.destroy(); resolve(false); }, 2000);
+    function done(ok) { clearTimeout(timer); resolve(ok); }
   });
 }
 

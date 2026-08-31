@@ -904,7 +904,14 @@ function createVoiceSubmitWatcher(terminal, {
 
     const rows = indicatorRows();
     if (!Array.isArray(rows)) return false;      // unreadable: never write
-    if (recordingObserved(rows)) return false;   // already on: ensure-on is met
+    // BUSY, not merely lit — two reasons, and the second is not obvious from
+    // here. A lit recorder means ensure-on is already met. But the CLI REPLACES
+    // the lit indicator with `Voice: processing…` rather than adding to it, and
+    // through that whole window its tap handler does NOT swallow a
+    // single-character binding: the byte falls through as a LITERAL into the
+    // composer, and a non-empty composer then blocks every later re-arm and
+    // every later tap until it is cleared by hand.
+    if (recorderBlocksRearm(rows)) return false;
 
     // The CLI's tap handler bails on a NON-EMPTY composer BEFORE it swallows
     // the key, so the character would be inserted into his draft and arm

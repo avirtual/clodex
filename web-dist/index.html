@@ -24116,7 +24116,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (attention === "permission") return false;
           const rows = indicatorRows();
           if (!Array.isArray(rows)) return false;
-          if (recordingObserved(rows)) return false;
+          if (recorderBlocksRearm(rows)) return false;
           if (!composerIsEmpty(cursorRow())) return false;
           if (!tapTrigger()) return false;
           externalTaps += 1;
@@ -35144,7 +35144,7 @@ Click for live activity`;
         }
       }
       window.addEventListener("focus", reportFocusedSession);
-      reportFocusedSession();
+      if (activeSession) reportFocusedSession();
       window.api.onVoiceTap((name) => {
         const sess = sessions.get(name);
         if (sess && sess.voiceSubmit) sess.voiceSubmit.externalTap();
