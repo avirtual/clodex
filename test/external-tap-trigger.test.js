@@ -277,6 +277,11 @@ function mk(overrides = {}) {
     spillToFile: () => '/tmp/spill-stub.txt',
     MSG_MAX_AGE: 1800,
     termAvailableFor: require('../drawer-avail').termAvailableFor,
+    // Silent by default. Three tests in this file have now failed on a missing
+    // `log` rather than on their subject — every decline path logs, so a
+    // fixture without one turns any new decline into a TypeError that reads
+    // like a bug in the code under test.
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     ...overrides,
   });
   return new SessionManager();
@@ -1014,14 +1019,47 @@ test('SELECT: selects the named seat, then arms it, in that order', () => {
   // THE WHOLE FRAME SEQUENCE, and the order is the assertion: the switch has to
   // reach the window before the tap, or the recorder lights on a tab that is
   // not yet on screen — which is the entire bug this verb fixes.
+  //
+  // The raise sits INSIDE the sequence, between the retarget and the tap: with
+  // Clodex frontmost this fixture once asserted no raise at all, which pinned
+  // the very no-op that made select useless across windows.
   assert.deepStrictEqual(b.sent,
     [['app-focused', true], ['request-switch-session', 'B'],
-      ['mic-target', 'B'], ['voice-tap', 'B']]);
+      ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
 });
 
-test('SELECT: a cross-workspace select raises that seat\'s window', () => {
-  // One BrowserWindow per workspace: without the raise the selection happens
-  // behind whatever he is looking at and he dictates into an invisible tab.
+// THE CASE THE VERB EXISTS FOR, and it was covered nowhere: he is looking at
+// Clodex WINDOW A and names a seat in window B. App focus is TRUE — Clodex is
+// not buried, so the tap's own gate declines to raise — and without an explicit
+// intent the tab switches inside a HIDDEN window, the microphone follows it,
+// and he dictates at a screen showing A while the audio goes to B.
+test('SELECT: raises the target window even when Clodex is ALREADY frontmost', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  assert.strictEqual(m.appFocused(), true,
+    'ENTER: Clodex is frontmost, or this passes for the backgrounded reason below');
+
+  assert.deepStrictEqual(m.voiceSelect('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, ['show', 'focus'],
+    'the target window came forward across the workspace boundary');
+  assert.deepStrictEqual(a.raised, [], 'and the window he was looking at was not disturbed');
+});
+
+// The other half of the pair: a BARE TAP must keep declining to raise while
+// Clodex is frontmost. The raise is select's intent, not a new default — a tap
+// that stole focus between windows would interrupt whatever he is typing.
+test('SELECT: the raise is select\'s intent only — a bare tap still does not steal focus', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  assert.deepStrictEqual(m.voiceTap('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, [], 'the tap did not pull window B forward');
+});
+
+test('SELECT: a select with the whole APP backgrounded raises that seat\'s window', () => {
+  // Distinct from the frontmost cross-window case above: here Clodex itself is
+  // buried behind another application, which is the raise voiceTap already had.
   const m = mk();
   const { a, b } = twoWindows(m);
   m.noteAppFocused(false);
@@ -1073,14 +1111,64 @@ test('SELECT: the fallback that serves a bare tap is unreachable from a named se
   assert.deepStrictEqual(a.sent, armed, 'a named select did not reach that same fallback');
 });
 
+// THE HOLE THE UNMATCHED-NAME PIN DID NOT COVER. An empty string is a PRESENT
+// argument, so it never reaches the "unmatched" path: it is falsy, and the
+// route's absent-target fallback is the tap's rule, which resolves it to the
+// FOCUSED seat — selected, given the microphone and armed while he believes he
+// switched. It arrives from `select "$SEAT"` with SEAT unset, not from
+// anything exotic.
+test('SELECT: an EMPTY name arms NOTHING and selects NOTHING', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  const before = { a: [...a.sent], b: [...b.sent] };
+
+  for (const empty of ['', '   ', '\t']) {
+    const r = m.voiceSelect(empty);
+    assert.strictEqual(r.ok, false, `${JSON.stringify(empty)} is refused`);
+    assert.match(r.error, /select needs a seat name/);
+  }
+  // Same whole-list no-op shape the unmatched-name pin uses: nothing moved on
+  // either window, and the microphone stayed where it was.
+  assert.deepStrictEqual(a.sent, before.a, 'the focused seat was NOT selected or armed');
+  assert.deepStrictEqual(b.sent, before.b);
+  assert.deepStrictEqual(a.raised, []);
+  assert.deepStrictEqual(b.raised, []);
+  assert.strictEqual(m.micTarget(), 'A', 'the microphone did not move');
+});
+
+// The manager holds the line even when the script is bypassed — the socket is
+// the trust boundary, and the design note anticipates a second front-end onto
+// these verbs.
+test('SELECT: the socket arm cannot smuggle an empty name past the manager', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  const before = [...a.sent];
+  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: '' });
+  assert.deepStrictEqual(a.sent, before, 'nothing reached the focused seat');
+  assert.deepStrictEqual(b.sent.filter((f) => f[0] === 'voice-tap'), [], 'and nothing armed');
+});
+
+// And the script refuses it before an envelope exists, so the shortcut fails
+// where he can see it rather than sending something the app silently drops.
+test('SELECT: the script refuses an empty seat name', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.match(envelopeFor(['select', '']).error, /select needs a seat name/);
+  assert.match(envelopeFor(['select', '  ']).error, /select needs a seat name/);
+  assert.strictEqual(envelopeFor(['select', '']).type, undefined, 'no envelope is built');
+});
+
 test('SELECT: the socket arm dispatches voice-select', () => {
   const m = mk();
   const { b } = twoWindows(m);
   m.noteAppFocused(true);
   m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: 'B' });
+  // Raise included: the socket arm is the real entry point, so it must show the
+  // same window-forward behaviour the direct call does.
   assert.deepStrictEqual(b.sent,
     [['app-focused', true], ['request-switch-session', 'B'],
-      ['mic-target', 'B'], ['voice-tap', 'B']]);
+      ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
 });
 
 // `mode` is the only verb that reaches the pty, so its manager needs the inject
@@ -1258,10 +1346,7 @@ function mkSpeech({ speakReplies = false } = {}) {
       return { ...cur };
     },
   };
-  const m = mk({
-    getUiSettings: () => store,
-    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-  });
+  const m = mk({ getUiSettings: () => store });
   m._broadcast = () => {};
   return { m, store, sets, read: () => ({ ...cur }) };
 }

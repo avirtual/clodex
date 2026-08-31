@@ -2312,16 +2312,27 @@ function createSessionManager(deps) {
     // SELECT THEN ARM. The tab has to be the one he is looking at before the
     // recorder lights, or he dictates into a seat he cannot see.
     //
-    // The switch frame goes to the target's OWN window and the raise is
-    // voiceTap's, unchanged — one raise mechanism, and it already orders
-    // retarget → raise → frame correctly.
+    // The switch frame goes to the target's OWN window; the raise stays
+    // voiceTap's single site, asked for explicitly — one raise mechanism, and
+    // it already orders retarget → raise → frame correctly.
+    //
+    // A NAME IS MANDATORY HERE, checked before _voiceRoute rather than inside
+    // it: the route's absent-target fallback is the TAP's rule, and an empty
+    // string reaches it as falsy and resolves to the focused seat — selecting
+    // and ARMING a seat he did not name while he believes he switched. That is
+    // the outcome this verb calls worse than silence, and it arrives from an
+    // unset shell variable, not from exotic input. The check lives in the
+    // MANAGER because the socket is the trust boundary every front-end shares.
     voiceSelect(target = null) {
+      if (typeof target !== 'string' || !target.trim()) {
+        return { ok: false, error: 'select needs a seat name' };
+      }
       const r = this._voiceRoute(target);
       if (!r.ok) return r;
       // Ahead of the tap: the tap's raise brings the window forward, and it must
       // already be showing the named seat when it arrives.
       this._sendToSession(r.name, 'request-switch-session', r.name);
-      return this.voiceTap(r.name);
+      return this.voiceTap(r.name, { raise: true });
     }
 
     // Switch the CLI's own push-to-talk mode, INJECTED rather than written to a
@@ -2340,9 +2351,21 @@ function createSessionManager(deps) {
       if (!r.ok) return r;
       // bypassHold, like every other injected slash command: a held bare command
       // '\n'-joins into a flush batch and the CLI reads the rest of the batch as
-      // garbage arguments. parkable keeps the park divert — a mode switch that
-      // spliced a half-dictated draft is the problem that rule exists for.
-      this._injectText(r.session, `/voice ${mode}`, { bypassHold: true, parkable: true });
+      // garbage arguments.
+      //
+      // parkable protects his draft, and the cost is that a PARKED slash command
+      // does not execute: the CLI hook returns parked text as additionalContext,
+      // which is prose the model reads, not a typed line — so the mode does not
+      // change. Whether that happens is a race with the idle drain, which does
+      // deliver it as a command. Nothing is lost or spliced either way, so the
+      // draft still wins; the divert logs the outcome rather than leaving a
+      // spoken verb that silently did nothing.
+      this._injectText(r.session, `/voice ${mode}`, {
+        bypassHold: true,
+        parkable: true,
+        onDivert: () => log.info('voice',
+          `mode ${mode} → ${name} parked behind an open draft — it will not execute as a command`),
+      });
       log.info('voice', `mode ${mode} → ${name}`);
       return { ok: true, name, mode };
     }
@@ -2384,7 +2407,7 @@ function createSessionManager(deps) {
     //
     // An explicit target overrides the focused seat, so a script can address a
     // seat the operator is not looking at.
-    voiceTap(target = null) {
+    voiceTap(target = null, { raise = false } = {}) {
       const r = this._voiceRoute(target);
       if (!r.ok) return r;
       const { name, win } = r;
@@ -2415,7 +2438,13 @@ function createSessionManager(deps) {
       // Only where a host actually answers the question. On the headless path
       // nothing reports focus, so `_appFocused` is permanently false and an
       // unconditional raise would fan a `focus-hint` on EVERY tap.
-      if (this._appFocusReported && !this._appFocused) {
+      //
+      // `raise` is the CALLER'S INTENT and is why it ORs rather than extending
+      // the focus test: app-focus answers "is Clodex buried", which is the
+      // tap's question, and it is FALSE exactly when he is looking at another
+      // Clodex WINDOW. A select must cross that gap — its whole job is moving
+      // him between windows — so it says so instead of re-deriving it.
+      if (raise || (this._appFocusReported && !this._appFocused)) {
         try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
       }
       this._sendToSession(name, 'voice-tap', name);

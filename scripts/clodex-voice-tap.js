@@ -103,6 +103,11 @@ function envelopeFor(args) {
   const [first, second] = args;
   if (args.length >= 2) {
     if (first === 'select') {
+      // An unset shell variable — `select "$SEAT"` — arrives as an empty
+      // string, which is a present argument. Refused here so the shortcut
+      // fails where he can see it; the manager refuses it too, because the
+      // socket is the boundary a second front-end would also cross.
+      if (!second.trim()) return { error: 'select needs a seat name' };
       // No focused-seat fallback, here or in the app: he is looking at another
       // application by construction, so a select that silently landed on the
       // seat he already had would have him dictating into the wrong agent
