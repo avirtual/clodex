@@ -1794,6 +1794,47 @@ html, body {
    Unicode, so the word carries the precise state and this carries the glance. */
 #proxy-actions .px-action.px-voice-off { opacity: 0.45; }
 
+/* What CLODEX believes the recorder is doing — the same predicates the voice
+   gates read, never a second detector.
+
+   FOUR rules for three states plus a no-reading case, and they must stay
+   visually distinct: 'unreadable' is a blocked re-arm and it is the state this
+   surface was built to expose, so painting it like 'off' would return the
+   operator to the blindness the display ends. Colour is not the only carrier —
+   each row also spells its state in words, since the two dim states differ by
+   hue alone and a colour-blind reader gets nothing from that.
+
+   Semantic vars rather than literals so every theme darkens them for contrast
+   at the same place the status bar does. */
+.rec-state {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding: 5px 8px;
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px; color: var(--text-dim);
+}
+.rec-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+/* Only the LIT row LOOKS like a control, but `data-rec` is emitted on every
+   rendered state, so any of them can be clicked. THE WATCHER is what declines,
+   not this rule — a painted reading is up to one tick (300ms) stale, so a row
+   reading "Not recording" may be lit by the time the click lands, and deciding
+   from the paint would let that click through into a live recording. */
+.rec-lit { color: var(--error); cursor: pointer; }
+.rec-lit:hover { background: var(--active-bg); }
+/* Transient, on a decline the watcher made silently. Must not outlive the next
+   reading: the tick would otherwise paint a fresh state under a stale flash. */
+.rec-declined { animation: rec-decline-flash 600ms ease-out; }
+@keyframes rec-decline-flash {
+  0% { background: var(--warn); }
+  100% { background: transparent; }
+}
+.rec-busy { color: var(--warn); }
+/* Hollow, not filled: an outline reads as "no reading taken" where a solid dot
+   in any colour reads as a measurement. */
+.rec-unreadable { color: var(--warn); }
+.rec-unreadable .rec-dot { background: none; border: 1px solid currentColor; }
+.rec-off { color: var(--text-dim); }
+.rec-off .rec-dot { background: none; border: 1px solid currentColor; }
+
 /* Touched-files popover — same shell as the bust popover. */
 #files-popover {
   position: fixed;
