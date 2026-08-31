@@ -1905,6 +1905,17 @@ function registerIpcHandlers(deps) {
     manager.noteVoiceDraft(String(name || ''));
   });
 
+  // The operator switched seats, or focused this window. Main keeps the last
+  // report as "the seat he is looking at" — an external voice tap that names no
+  // target lands here.
+  //
+  // Null clears it, and clearing has to be possible: a window that closed with
+  // its last seat archived leaves nothing focused, and a stale name would send
+  // the next tap at a seat he is not watching.
+  on('session:focused', (_e, name) => {
+    manager.noteFocusedSession(name == null ? null : String(name));
+  });
+
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   handle('session:retrySpawn', async (e, name) => {

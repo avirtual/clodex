@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (204 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (205 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (60 channels). This doc maps each to its emission point, its
+`preload.js` (61 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -63,6 +63,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
 | `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
+| `voice-tap` | `name` (ensure-on request from an outside script; the renderer decides whether a key is written, since only it can read the recording indicator) | session-manager `voiceTap` |
 
 ## B. Broadcast channels (via `_broadcast`)
 

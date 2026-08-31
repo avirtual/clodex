@@ -546,6 +546,11 @@ function createSessionManager(deps) {
     constructor() {
       this.sessions = new Map();
       this.windows = new Map(); // workspaceId -> BrowserWindow
+      // The seat the operator is LOOKING at, as last reported by a renderer.
+      // Global rather than per-window on purpose: the external tap has to pick
+      // ONE seat for the whole box, and the last report is the one that moved
+      // most recently — which is the window he is in.
+      this._focusedSession = null;
       this._knownDmOrigins = new Set();
       this._relayRosters = new Map();
       this._lastPendingCounts = new Map();
@@ -2140,6 +2145,34 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       s.lastVoiceDraftTs = Date.now();
+    }
+
+    // Which seat a renderer is showing. Kept even when the name is not a live
+    // session: the record is a REPORT, and validating it here against a map
+    // that a spawn may not have filled yet would silently drop the first
+    // report for a seat that is about to exist. The reader below resolves it.
+    noteFocusedSession(name) {
+      this._focusedSession = name || null;
+    }
+
+    // ENSURE-ON from outside the app: a Voice Control wake word arrived over
+    // this box's agent socket asking for the recorder.
+    //
+    // ROUTES ONLY. Whether a key may actually be written is decided in the
+    // renderer, against the seat's own screen — main cannot read the recording
+    // indicator, and a decision made here would be made blind.
+    //
+    // An explicit target overrides the focused seat, so a script can address a
+    // seat the operator is not looking at.
+    voiceTap(target = null) {
+      const name = target || this._focusedSession;
+      if (!name) return { ok: false, error: 'no target and no focused session' };
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
+      if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
+      if (!this.windowForSession(name)) return { ok: false, error: `"${name}" has no window attached` };
+      this._sendToSession(name, 'voice-tap', name);
+      return { ok: true, name };
     }
 
     releaseSelection(name) {
@@ -5820,6 +5853,17 @@ function createSessionManager(deps) {
       const mtype = msg.type || 'dm';
       if (msg.delivery === 'passive') {
         this._deliverPassive(targetName, sender, body, mtype);
+        return;
+      }
+      // Not a message to an agent at all — a box-wide request that happens to
+      // arrive on an agent's socket, since that is the only local-user-only
+      // pipe Clodex already listens on (~/.clodex is 0700, the socket 0600).
+      // `targetName` is therefore just whichever socket the sender could reach,
+      // NOT the seat this acts on: `msg.target` names that, or the focused seat
+      // does. Delivered to nobody's transcript, so it takes no `body`.
+      if (mtype === 'voice-tap') {
+        const r = this.voiceTap(typeof msg.target === 'string' ? msg.target : null);
+        if (!r.ok) log.info('voice', `external tap declined: ${r.error}`);
         return;
       }
       if (mtype === 'team-retire') {

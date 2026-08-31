@@ -7489,6 +7489,23 @@ body {
         // to the seat permanently, which is worse than the bug this fixes.
         { name: "noteVoiceRecording", kind: "send", channel: "voice:recording" },
         { name: "noteVoiceDraft", kind: "send", channel: "voice:draft" },
+        // Which seat the operator is LOOKING at. Main has no other way to know: the
+        // renderer owns `activeSession` and only WINDOW-level focus crosses today.
+        // Read by the external voice tap, which has to pick a seat when the caller
+        // named none.
+        //
+        // NOT derivable from `lastUserInputTs`, and that is the whole reason this row
+        // exists: that stamp is written for TYPED bytes only, so a dictating operator
+        // never moves it and a trigger routed by it would land on the seat he is not
+        // talking to.
+        //
+        // A SEND, like its voice neighbours above: nothing waits on the answer, and a
+        // dropped report is corrected by the next switch.
+        { name: "noteFocusedSession", kind: "send", channel: "session:focused" },
+        // The external tap reached this seat — write the trigger key if, and only if,
+        // this terminal's own screen says that is safe. The DECISION is the
+        // renderer's because only it can read the recorder; main routes.
+        { name: "onVoiceTap", kind: "on", channel: "voice-tap" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -23808,6 +23825,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let answered = null;
         let fires = 0;
         let stops = 0;
+        let externalTaps = 0;
         let voiceEvidenceAt = null;
         let mutedByTyping = false;
         let prevObserved = false;
@@ -23915,22 +23933,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               if (disposed) return;
               if (!recordingObserved(indicatorRows())) return;
               if (!composerIsEmpty(cursorRow())) return;
-              let mode = null;
-              try {
-                mode = getVoiceMode();
-              } catch {
-                mode = null;
-              }
-              if (mode !== "tap") return;
-              let key = null;
-              try {
-                key = getTriggerKey();
-              } catch {
-                key = null;
-              }
-              if (typeof key !== "string" || key.length !== 1) return;
-              stops += 1;
-              write(key);
+              if (tapTrigger()) stops += 1;
             }, STOP_SETTLE_MS);
           }, ENTER_SETTLE_MS);
         }
@@ -24082,15 +24085,42 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!composerIsEmpty(cursorRow())) return;
           if (recorderBlocksRearm(indicatorRows())) return;
+          if (tapTrigger()) rearms += 1;
+        }
+        function tapTrigger() {
+          let mode = null;
+          try {
+            mode = getVoiceMode();
+          } catch {
+            mode = null;
+          }
+          if (mode !== "tap") return false;
           let key = null;
           try {
             key = getTriggerKey();
           } catch {
             key = null;
           }
-          if (typeof key !== "string" || key.length !== 1) return;
-          rearms += 1;
+          if (typeof key !== "string" || key.length !== 1) return false;
           write(key);
+          return true;
+        }
+        function externalTap() {
+          if (disposed) return false;
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (attention === "permission") return false;
+          const rows = indicatorRows();
+          if (!Array.isArray(rows)) return false;
+          if (recorderBlocksRearm(rows)) return false;
+          if (!composerIsEmpty(cursorRow())) return false;
+          if (!tapTrigger()) return false;
+          externalTaps += 1;
+          return true;
         }
         function noteInput(data) {
           if (disposed) return;
@@ -24131,9 +24161,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           refresh: schedule,
           noteActivity,
           noteInput,
+          externalTap,
           fireCount: () => fires,
           stopCount: () => stops,
           rearmCount: () => rearms,
+          externalTapCount: () => externalTaps,
           commitCount: () => commits,
           commitFailureCount: () => commitFailures,
           markCount: () => marks,
@@ -33056,6 +33088,7 @@ ${detail}` });
         if (isSearchOpen()) closeSearch();
         const wasActive = activeSession;
         activeSession = name;
+        reportFocusedSession();
         if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
         else drawerHost.syncSeatAvailability();
         for (const [n, s] of sessions) {
@@ -33158,6 +33191,7 @@ ${detail}` });
             switchSession(remaining[0]);
           } else {
             activeSession = null;
+            reportFocusedSession();
             emptyState.style.display = "";
             renderProxyBar();
           }
@@ -35102,6 +35136,18 @@ Click for live activity`;
       refreshVoiceSubmitConfig();
       window.addEventListener("focus", () => {
         refreshVoiceSubmitConfig();
+      });
+      function reportFocusedSession() {
+        try {
+          window.api.noteFocusedSession(activeSession);
+        } catch {
+        }
+      }
+      window.addEventListener("focus", reportFocusedSession);
+      if (activeSession) reportFocusedSession();
+      window.api.onVoiceTap((name) => {
+        const sess = sessions.get(name);
+        if (sess && sess.voiceSubmit) sess.voiceSubmit.externalTap();
       });
       var voiceControl = createVoiceControl({ core: voiceCore });
       var { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
