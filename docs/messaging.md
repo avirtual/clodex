@@ -165,10 +165,30 @@ Codex gets a read-with-Read pointer.
    `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk).
 
 **Park-at-fire divert** — injects marked `parkable` re-check
-`_parkDivertFor` at the moment of writing: if the operator has a draft open
-(`isDraftOpen`, stateful across PTY chunks including bracketed paste), the
-delivery parks instead of splicing into the draft. Opt-in at conversational
+`_parkDivertFor` at the moment of writing: if the operator has a draft open,
+the delivery parks instead of splicing into the draft. Opt-in at conversational
 call sites only; self-intents are never parkable.
+
+Two independent readings of "a draft is open", because the two kinds of draft
+reach Clodex by different routes and neither predicate can see the other's:
+
+- **Typed** — `isDraftOpen`, stateful across PTY chunks including bracketed
+  paste, fed by `isHumanPtyInput` inside `SessionManager.write()`. Held until
+  he submits or clears.
+- **Dictated** — `_voiceDraftOpen`, an expiring stamp
+  (`INJECT_VOICE_DRAFT_STALE_MS`) refreshed by the renderer while a non-empty
+  composer sits under a recently-lit recorder. Dictated words never pass
+  through `write()`, so no typed stamp ever moves for them and the typed
+  predicate reads such a seat as idle. Distinct from the `speaking` gate in
+  inject-queue.js, which defers only while the recorder is LIT: the indicator
+  goes dark when he stops talking, and the exposure is the reading that follows.
+
+  It EXPIRES rather than waiting for a release event, because dictation has no
+  submit Clodex can observe. Every way the report can stop — submitted, cleared,
+  seat switched, window closed, screen unreadable — releases it, and the park
+  cap bounds it again from a timer that reads no voice signal. The renderer's
+  composer read is positive (`composerHasDraft`) and never `!composerIsEmpty`:
+  an unreadable row must not park deliveries nothing can then release.
 
 ### Parking & resend (pending-store.js)
 

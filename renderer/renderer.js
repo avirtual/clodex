@@ -1195,6 +1195,7 @@ function createTerminal(name, peer = null) {
     // background seat's indicator is not him speaking into it.
     recorderScope: () => name === activeSession && sessionTypeOf(name) === 'claude',
     noteVoiceRecording: () => window.api.noteVoiceRecording(name),
+    noteVoiceDraft: () => window.api.noteVoiceDraft(name),
   });
 
   const searchAddon = new SearchAddon();

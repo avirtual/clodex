@@ -187,6 +187,24 @@ function composerIsEmpty(row) {
   return COMPOSER_EMPTY.test(row);
 }
 
+// The composer holding TEXT, as its own POSITIVE rule rather than the negation
+// of the one above. `composerIsEmpty(null)` is false, so `!composerIsEmpty(row)`
+// answers "there is a draft" for every row it could not read — a null off the
+// alternate buffer, a mid-repaint screen, a dialog interior. Its caller parks
+// deliveries on this answer, and a park that no reader can release is a seat
+// nobody can reach; so an unreadable screen MUST NOT count as a draft still
+// open. Doubt delivers here, the same direction as the speaking gate and the
+// opposite of `recorderBlocksRearm`, where doubt blocks.
+//
+// The marker and its separator are required for the same reason they are in
+// COMPOSER_EMPTY: without them any transcript row with a word on it is a draft.
+const COMPOSER_DRAFT = /^[\u276f>][\u0020\u00a0][\s\S]*\S/u;
+
+function composerHasDraft(row) {
+  if (typeof row !== 'string') return false;
+  return COMPOSER_DRAFT.test(row);
+}
+
 // The CLI's own recording indicator, as it lands in the BUFFER. Measured
 // 2026-08-31 through a real xterm replaying the painted spans (CLI 2.1.251):
 // the row reads ` agents ⏺REC · tap to send`, and the bullet and
@@ -344,6 +362,7 @@ module.exports = {
   shouldFire,
   shouldRearm,
   composerIsEmpty,
+  composerHasDraft,
   recorderBlocksRearm,
   isVoiceOriginated,
   recordingObserved,

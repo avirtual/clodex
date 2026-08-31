@@ -326,6 +326,7 @@ function createSessionManager(deps) {
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
     INJECT_SPEAKING_STALE_MS,
+    INJECT_VOICE_DRAFT_STALE_MS,
     InjectQueue,
     JsonlWatcher,
     LONG_TEXT_DELAY,
@@ -2124,6 +2125,21 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       s.lastVoiceRecordingTs = Date.now();
+    }
+
+    // The renderer saw a DICTATED draft still sitting unsent in this seat's
+    // composer. Same level shape and same expiry reason as the recorder stamp
+    // above, and its own field again for the same reason: this one is read by
+    // the park divert, and folding it into either of the others would change
+    // what those readers mean.
+    //
+    // What it buys over the recorder stamp is the window the operator is
+    // actually exposed in — he stops talking, the indicator goes dark, and he
+    // spends the next minute READING the transcription before he sends it.
+    noteVoiceDraft(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return;
+      s.lastVoiceDraftTs = Date.now();
     }
 
     releaseSelection(name) {
@@ -5696,10 +5712,29 @@ function createSessionManager(deps) {
       this._injectQueueFor(session).enqueue(produce ? '' : text, Object.keys(qopts).length ? qopts : undefined);
     }
 
+    // A dictated draft reads as open here and NOWHERE ELSE. `isDraftOpen` is
+    // fed only by `isHumanPtyInput` in write(), i.e. by TYPING — dictation is
+    // recorded by the CLI and painted into its own composer, so a dictated
+    // draft never sets those stamps and the divert that protects a typed draft
+    // never engaged for one. This is the parity, kept to the divert rather than
+    // widened into `isDraftOpen`, whose five other call sites ask a question
+    // about keystrokes that this cannot answer.
+    //
+    // An EXPIRING stamp, so it releases on its own: he submits (the composer
+    // empties, the renderer stops reporting, and the submit drains the park),
+    // he clears it, the seat loses focus, the window closes, the screen becomes
+    // unreadable — every one of those stops the level and the stamp goes stale.
+    // Past that the park cap bounds it again from a timer that reads no voice
+    // signal at all, so the protection cannot outlive its release.
+    _voiceDraftOpen(session) {
+      return Date.now() - (session.lastVoiceDraftTs || 0) < INJECT_VOICE_DRAFT_STALE_MS;
+    }
+
     _parkDivertFor(session, id = null) {
       if (!session || session.agentType !== 'claude') return null;
       return (text) => {
-        if (session._dead || !isDraftOpen(session)) return false;
+        if (session._dead) return false;
+        if (!isDraftOpen(session) && !this._voiceDraftOpen(session)) return false;
         try {
           parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id, false, this._bornFor(session.name));
         } catch (e) {
@@ -5707,7 +5742,8 @@ function createSessionManager(deps) {
           return false;
         }
         this._armParkCap(session);
-        log.info('inject', `diverted to park: draft open (${session.name})`);
+        const why = isDraftOpen(session) ? 'draft open' : 'dictated draft open';
+        log.info('inject', `diverted to park: ${why} (${session.name})`);
         return true;
       };
     }

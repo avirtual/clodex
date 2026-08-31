@@ -3007,12 +3007,16 @@ test('an out-of-scope seat reports nothing, lit or not', async () => {
   h.watcher.dispose();
 });
 
-test('a throwing recorderScope falls back to the config rather than to silence', async () => {
+test('a throwing recorderScope leaves a configured seat reporting anyway', async () => {
   // getAttention's own harness reads the sidebar row, which can be gone; this
   // thunk reads the same DOM and can throw the same way. A throw must not
   // silently disable the protection on a seat whose CONFIG already says it is
-  // the active claude seat — the config is the narrower answer, so falling back
-  // to it keeps the in-scope case working.
+  // the active claude seat.
+  //
+  // What keeps it working is the SHORT CIRCUIT, not a fallback in the catch:
+  // `!!cfg || !!recorderScope()` never evaluates the thunk once cfg is truthy,
+  // so with a config the throw does not happen at all. The catch is reached only
+  // when cfg is falsy, where the answer is already false.
   const reports = [];
   const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }, { text: REC_ROW }] });
   const env = { config: { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE } };
@@ -3035,6 +3039,129 @@ test('a throwing recorderScope falls back to the config rather than to silence',
   await settle(10);
   assert.deepStrictEqual(reports, [],
     'ENTER: with both the scope throwing and no config, nothing is reported — and the poll survived');
+  watcher.dispose();
+});
+
+// --- t594: the DICTATED DRAFT report, which outlives the recorder ------------
+//
+// The recorder goes dark the moment he stops talking, which is the moment he
+// starts RE-READING what was transcribed. That reading window is the operator's
+// actual exposure, and the recorder report cannot cover it.
+
+const DRAFT_ROW = '\u276f\u00a0the long transcription he is re-reading';
+
+function draftReportHarness({ rows = [DRAFT_ROW], scope = true, lit = true } = {}) {
+  const drafts = [];
+  const recs = [];
+  // The real screen shape: the composer is the CURSOR row and the indicator
+  // paints BELOW it, which is the only arrangement in which both reads see what
+  // they are meant to — `cursorRow` truncates at the cursor, and the indicator
+  // scan walks downward from it. The cursor mark is required because this stub
+  // otherwise puts it on the LAST row, i.e. on the indicator, where the composer
+  // read finds no draft and every subject here passes or fails for the wrong
+  // reason.
+  const composer = rows.map((r) => ({ text: r, cursor: true }));
+  const term = fakeTerminal({ rows: lit ? [...composer, { text: REC_ROW }] : composer });
+  const watcher = track(createVoiceSubmitWatcher(term, {
+    getConfig: () => null,
+    getAttention: () => null,
+    write: () => {},
+    quietMs: TEST_QUIET_MS,
+    pollMs: 1,
+    recorderScope: () => scope,
+    noteVoiceRecording: () => recs.push('REC'),
+    noteVoiceDraft: () => drafts.push('DRAFT'),
+  }));
+  return { term, watcher, drafts, recs };
+}
+
+test('the dictated draft is reported after the recorder goes DARK', async () => {
+  // The whole point: the indicator is gone, the words are still in the composer.
+  const h = draftReportHarness();
+  await settle(10);
+  assert.ok(h.recs.length > 0, 'ENTER: the recorder was seen lit first, or there is no anchor');
+  h.term._state.rows = [{ text: DRAFT_ROW, cursor: true }];  // he stops talking; indicator gone
+  const before = h.drafts.length;
+  await settle(10);
+  assert.ok(h.drafts.length > before,
+    'the draft must keep being reported once the recorder is dark — that is the exposure');
+  h.watcher.dispose();
+});
+
+test('the draft report REPEATS, so main can expire it', async () => {
+  // Level-triggered for the same reason the recorder report is: main expires the
+  // stamp, so a watcher that stops (disposed, seat switched, window closed)
+  // RELEASES the seat instead of parking its messages forever.
+  const h = draftReportHarness();
+  await settle(30);
+  assert.ok(h.drafts.length > 3,
+    `one edge cannot hold a level-expiring stamp open (got ${h.drafts.length})`);
+  h.watcher.dispose();
+});
+
+test('an EMPTY composer reports no draft, however recently he spoke', async () => {
+  // He submitted it. Nothing is at risk, so nothing may be parked.
+  const h = draftReportHarness({ rows: [EMPTY_COMPOSER] });
+  await settle(10);
+  assert.ok(h.recs.length > 0, 'ENTER: the recorder is lit, so only the composer read can be declining');
+  assert.deepStrictEqual(h.drafts, [],
+    'an empty composer holds nothing to protect');
+  h.watcher.dispose();
+});
+
+test('an UNREADABLE screen reports no draft — doubt must not park deliveries', async () => {
+  // The polarity trap, at the reporting call site rather than only at the
+  // predicate. cursorRow() returns null off the normal buffer, and a `null` that
+  // read as "a draft is open" would park every message to the seat behind a
+  // signal no reader can clear.
+  const h = draftReportHarness();
+  await settle(10);
+  assert.ok(h.drafts.length > 0, 'ENTER: these rows DO report while readable');
+  h.term._state.type = 'alternate';                   // a full-screen program: unreadable
+  const before = h.drafts.length;
+  await settle(10);
+  assert.strictEqual(h.drafts.length, before,
+    'an unreadable screen must not report a draft — doubt delivers, it never wedges');
+  h.watcher.dispose();
+});
+
+test('an out-of-scope seat reports no draft', async () => {
+  // Dictation reaches the FOCUSED composer; a background seat's leftover text is
+  // not a dictated draft, and parking its messages would be unexplainable.
+  const h = draftReportHarness({ scope: false });
+  await settle(10);
+  assert.deepStrictEqual(h.drafts, []);
+  h.watcher.dispose();
+});
+
+test('a composer never touched by the recorder reports no draft', async () => {
+  // The anchor is what makes this a DICTATED draft rather than any draft.
+  // Without it the report fires on every seat with text in its composer and
+  // quietly reroutes injection box-wide.
+  const h = draftReportHarness({ lit: false });
+  await settle(10);
+  assert.deepStrictEqual(h.recs, [], 'ENTER: the recorder was never lit on this seat');
+  assert.deepStrictEqual(h.drafts, [],
+    'text alone is not evidence of dictation');
+  h.watcher.dispose();
+});
+
+test('a throwing noteVoiceDraft does not break the poll', async () => {
+  const term = fakeTerminal({ rows: [{ text: DRAFT_ROW }, { text: REC_ROW }] });
+  const recs = [];
+  const watcher = track(createVoiceSubmitWatcher(term, {
+    getConfig: () => null,
+    getAttention: () => null,
+    write: () => {},
+    quietMs: TEST_QUIET_MS,
+    pollMs: 1,
+    recorderScope: () => true,
+    noteVoiceRecording: () => recs.push('REC'),
+    noteVoiceDraft: () => { throw new Error('ipc gone'); },
+  }));
+  await settle(10);
+  assert.ok(recs.length > 0,
+    'the poll survived a throwing draft reporter — the recorder report still ran');
   watcher.dispose();
 });
 
