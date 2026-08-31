@@ -24,6 +24,19 @@ const { pathFor } = require('./clodex-paths');
 const POLL_INTERVAL = 250; // ms
 const TURN_COMPLETE_TIMEOUT = 1000; // ms
 
+// Entry types that never end a pending turn: more of the same turn is still
+// coming.
+const NON_FLUSHING_TYPES = ['assistant', 'response_item'];
+
+// Codex emits `token_count` between the reply and `task_complete`. It is
+// telemetry, not a turn boundary — but it is textless and its type is
+// `event_msg`, so it used to trigger the flush and carry away the pending text
+// BEFORE `task_complete` could mark it as ending the turn. Exempting it is what
+// lets the real terminator do that job.
+function isTelemetryOnly(obj) {
+  return (obj.type || '') === 'event_msg' && (obj.payload || {}).type === 'token_count';
+}
+
 function createJsonlWatcher({ REGISTRY_DIR }) {
   class JsonlWatcher {
     constructor(name, onText, onSessionId, onActivity, onCompactSummary, onFileTouches) {
@@ -40,13 +53,12 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._position = 0;
       this._pendingRid = null;
       this._pendingText = null;
-      this._pendingTurnEnd = false;
       this._pendingTime = 0;
       this._readBuf = '';
       this._activityState = 'idle';
-      // Whether the entry that contributed the pending text ended the turn.
-      // Carried to the flush rather than re-derived there: by flush time the
-      // entry is gone, and the 1s-silence flush has no entry at all.
+      // Whether the pending text's turn is over. Carried to the flush rather
+      // than re-derived there: by flush time the entry is gone, and the
+      // 1s-silence flush has no entry at all.
       this._pendingTurnEnd = false;
       // Touches seen since the last text flush. They fire per-LINE the moment
       // they are parsed (onFileTouches, below) because the touched-files UI wants them
@@ -178,7 +190,13 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           this._pendingTime = Date.now();
           this._pendingTurnEnd = isTurnEndEntry(obj);
           this._setActivity('thinking');
-        } else if (!['assistant', 'response_item'].includes(obj.type || '')) {
+        } else if (!NON_FLUSHING_TYPES.includes(obj.type || '') && !isTelemetryOnly(obj)) {
+          // A textless entry ends the pending turn. Codex closes with
+          // `task_complete`, which carries no text and so never reaches the
+          // branch above — read the flag off THIS entry before flushing, or the
+          // flag that ships is the one computed from `agent_message`, which is
+          // false by construction and leaves a Codex reply permanently unspoken.
+          if (isTurnEndEntry(obj)) this._pendingTurnEnd = true;
           if (this._pendingText) this._flushPending();
         }
       }
@@ -191,6 +209,10 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       }
       this._pendingRid = null;
       this._pendingText = null;
+      // Cleared with the rest of the pending state rather than relying on every
+      // writer of _pendingText to reassign it — true today, and not an invariant
+      // the next reader should have to rediscover.
+      this._pendingTurnEnd = false;
       // Cleared unconditionally, including on a no-text flush: touches held past
       // their own turn would attach to a LATER turn's text, which is a worse
       // claim than not reporting them.

@@ -58,6 +58,84 @@ test('the renderer activity seam cannot answer the turn-end question', () => {
   );
 });
 
+// THE WATCHER SEAM — the pin that matters, and the one whose absence let a dead
+// path ship green. A unit assertion on `isTurnEndEntry` says what the function
+// returns; it cannot say whether the value ever REACHES `onText`. The Codex
+// branch was correct as a function and unreachable as a feature, because
+// `isTurnEndEntry` was only ever consulted for entries carrying text and
+// `task_complete` carries none.
+//
+// So these drive real entry sequences through the real line handler and assert
+// the `{ turnEnd }` that actually arrives at the callback.
+function runWatcher(entries) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { createJsonlWatcher } = require('../jsonl-watcher');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-watcher-'));
+  const file = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+
+  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: dir });
+  const seen = [];
+  const w = new JsonlWatcher('seat', (text, touches, meta) => seen.push({ text, meta }));
+  // Drive the reader directly against the fixture: _poll would resolve the
+  // registry symlink and start at EOF, which is right in production and would
+  // read nothing here.
+  w._fd = fs.openSync(file, 'r');
+  w._position = 0;
+  w._readLines();
+  // The terminator may be the last line, leaving text pending exactly as a live
+  // transcript does between turns; stop() performs the same final flush.
+  w.stop();
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  return seen;
+}
+
+test('a Claude turn reaches onText with turnEnd true only at end_turn', () => {
+  const seen = runWatcher([
+    { type: 'assistant', requestId: 'r1', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'working on it' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result' }] } },
+    { type: 'assistant', requestId: 'r2', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'all done' }] } },
+  ]);
+  assert.deepStrictEqual(
+    seen.map((s) => [s.text, s.meta.turnEnd]),
+    [['working on it', false], ['all done', true]],
+    'the inter-tool flush must arrive false and only the end_turn text true',
+  );
+});
+
+// The exact four-entry rollout shape, in order, from real Codex sessions. Before
+// the fix `token_count` flushed the text away carrying false, and
+// `task_complete` arrived with nothing pending — so no Codex reply could ever
+// be spoken while the unit test asserted otherwise and stayed green.
+test('a Codex turn reaches onText with turnEnd true at task_complete', () => {
+  const seen = runWatcher([
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'the codex reply' } },
+    { type: 'response_item', payload: { type: 'reasoning' } },
+    { type: 'event_msg', payload: { type: 'token_count' } },
+    { type: 'event_msg', payload: { type: 'task_complete' } },
+  ]);
+  assert.deepStrictEqual(
+    seen.map((s) => [s.text, s.meta.turnEnd]),
+    [['the codex reply', true]],
+    'the reply must arrive exactly once, flagged as ending the turn',
+  );
+});
+
+test('a Codex turn still mid-flight does not report a turn end', () => {
+  const seen = runWatcher([
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'thinking aloud' } },
+    { type: 'event_msg', payload: { type: 'token_count' } },
+  ]);
+  assert.deepStrictEqual(
+    seen.map((s) => [s.text, s.meta.turnEnd]),
+    [['thinking aloud', false]],
+    'telemetry alone must not promote a mid-turn flush into a turn end',
+  );
+});
+
 // --- what reaches `say` -----------------------------------------------------
 
 test('speakable drops what cannot be spoken', () => {
@@ -307,6 +385,58 @@ test('constructing the engine does not spawn the voice enumeration', () => {
   assert.ok(!/voiceCatalog\.refresh\(\)/.test(src),
     'engine.js must not warm the catalog eagerly — that spawns `say` in every '
     + 'engine-building test and orphans it');
+});
+
+// THE BOX-WIDE INTERLOCK, through the real SessionManager wiring.
+//
+// The failing case is the ordinary one: he dictates into the seat he is looking
+// at while a BACKGROUND seat finishes a turn. The renderer only ever reports the
+// ACTIVE seat's recorder, so the background seat's own stamp is undefined
+// forever — a per-seat gate passes and `say` narrates into the open microphone.
+// One microphone, one speaker, one gate.
+function bootSpeakingManager() {
+  const { createSessionManager } = require('../session-manager');
+  const spoken = [];
+  const SessionManager = createSessionManager({
+    INJECT_SPEAKING_STALE_MS: 3000,
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    getUiSettings: () => ({ get: () => ({ speakReplies: true, speakVoice: 'Daniel' }) }),
+    speaker: {
+      speak: (text) => { spoken.push(text); return true; },
+      stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
+    },
+  });
+  const m = new SessionManager();
+  m._broadcast = () => {};
+  const mk = (name) => ({ name, agentType: 'claude', _dead: false });
+  m.sessions = new Map([['seatA', mk('seatA')], ['seatB', mk('seatB')]]);
+  return { m, spoken };
+}
+
+test('the recorder on ONE seat silences a turn ending on ANOTHER', () => {
+  const { m, spoken } = bootSpeakingManager();
+  // The renderer reports the seat he is looking at — by its real entry point.
+  m.noteVoiceRecording('seatA');
+  m._maybeSpeak('seatB', 'a background seat just finished', true);
+  assert.deepStrictEqual(spoken, [],
+    'a background turn must not narrate into a microphone lit on another seat');
+});
+
+test('with no recorder anywhere, a turn end speaks', () => {
+  const { m, spoken } = bootSpeakingManager();
+  m._maybeSpeak('seatB', 'all quiet here', true);
+  assert.deepStrictEqual(spoken, ['all quiet here'],
+    'absent evidence reads as not recording — doubt must speak, never wedge');
+});
+
+test('the per-seat recorder field survives alongside the box-wide one', () => {
+  const { m } = bootSpeakingManager();
+  m.noteVoiceRecording('seatA');
+  assert.ok(m.sessions.get('seatA').lastVoiceRecordingTs > 0,
+    'the inject gate reads the per-seat field and is correctly per-seat — it must not be replaced');
+  assert.ok(m._lastVoiceRecordingTs > 0, 'and the box-wide stamp is written alongside it');
+  assert.strictEqual(m.sessions.get('seatB').lastVoiceRecordingTs, undefined,
+    'stamping one seat must not stamp another — that is what makes the per-seat read useless for audio');
 });
 
 // --- the settings -----------------------------------------------------------

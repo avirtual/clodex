@@ -45,6 +45,10 @@ const VOICE_LINE = /^(.+?)\s+([a-z]{2}_[A-Z]{2})\s+#/;
 // system voice and exits 0, so the operator would hear the wrong voice with no
 // error anywhere. Enumerating is the only way to offer a name that will be
 // honoured.
+// SCOPED TO ENGLISH by default, while the store accepts any name: an operator
+// whose only voices are non-English sees the configured name as fixed text and
+// cannot pick from the list. Accepted for an experiment, and the reason the
+// parameter exists rather than being inlined.
 function listVoices({ execFileSyncImpl = execFileSync, bin = SAY_BIN, lang = 'en' } = {}) {
   let raw;
   try {
@@ -88,9 +92,15 @@ function createVoiceCatalog({ execFileImpl = execFile, bin = SAY_BIN, lang = 'en
     try {
       execFileImpl(bin, ['-v', '?'], { encoding: 'utf-8', timeout: 5000 }, (err, stdout) => {
         inFlight = false;
-        if (err) return;                 // keep the last good list rather than blanking it
-        voices = parseVoices(String(stdout), lang);
+        // STAMPED ON FAILURE TOO, with `voices` left untouched. The stamp is what
+        // the TTL measures, so leaving it at 0 after an error means every later
+        // read re-spawns immediately — on a host without /usr/bin/say that is one
+        // ENOENT fork per Preferences or popover open, forever. Keeping the last
+        // good list is the other half: a transient failure must not blank a
+        // picker that was working.
         fetchedAt = now();
+        if (err) return;
+        voices = parseVoices(String(stdout), lang);
       });
     } catch { inFlight = false; }
   }

@@ -561,6 +561,9 @@ function createSessionManager(deps) {
       // ONE seat for the whole box, and the last report is the one that moved
       // most recently — which is the window he is in.
       this._focusedSession = null;
+      // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
+      // per-seat field of the same name because audio has no seat.
+      this._lastVoiceRecordingTs = 0;
       this._knownDmOrigins = new Set();
       this._relayRosters = new Map();
       this._lastPendingCounts = new Map();
@@ -1058,7 +1061,8 @@ function createSessionManager(deps) {
 
     unregisterWindow(workspaceId) {
       this.windows.delete(workspaceId);
-      // Closing the window that was narrating must stop the sound. Sessions
+      // Stops whatever is playing, from any seat in any workspace: the speaker
+      // is box-wide and cannot attribute an utterance to a session. Sessions
       // survive a window close by design, so nothing else on this path would.
       try { speaker.stop(); } catch {}
     }
@@ -2148,6 +2152,15 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       s.lastVoiceRecordingTs = Date.now();
+      // BOX-WIDE COPY, kept ALONGSIDE the per-seat field above rather than
+      // replacing it. The two answer different questions and must not be merged:
+      // an inject targets ONE seat, so its gate is correctly per-seat, while the
+      // microphone and the speaker are properties of the room. The renderer only
+      // ever reports the ACTIVE seat's recorder, so a per-seat read is
+      // permanently undefined for every background seat — gating audio on it
+      // means no gate at all for exactly the case that matters: dictating into
+      // the focused seat while another seat finishes a turn.
+      this._lastVoiceRecordingTs = Date.now();
       // He tapped the microphone while a narration was still playing — the
       // converse of the gate in _maybeSpeak, and the harder half. Stopping is
       // what a person does when interrupted; see interruptForRecorder for the
@@ -3651,13 +3664,17 @@ function createSessionManager(deps) {
         const store = getUiSettings && getUiSettings();
         const cfg = store ? store.get() : null;
         if (!cfg || cfg.speakReplies !== true) return;
-        // DO NOT TALK OVER A LIVE MICROPHONE. The same level the inject gate
-        // reads, not a second detector: his mic is open, and narrating into it
-        // feeds the speaker's own words back through transcription. Absent
-        // evidence reads as NOT recording, matching the inject gate's polarity —
-        // the cost of a wrong "quiet" here is one narration he can stop, while a
-        // deferral nothing releases would silence the feature permanently.
-        if (Date.now() - (s.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS) return;
+        // DO NOT TALK OVER A LIVE MICROPHONE. Read the BOX-WIDE stamp, never the
+        // per-seat one: the recorder is reported only for the active seat, so
+        // `s.lastVoiceRecordingTs` is undefined on every background seat and a
+        // gate reading it would pass exactly when he is dictating into another
+        // pane. One microphone, one speaker, one gate.
+        //
+        // Absent evidence reads as NOT recording, matching the inject gate's
+        // polarity — the cost of a wrong "quiet" here is one narration he can
+        // stop, while a deferral nothing releases would silence the feature
+        // permanently.
+        if (Date.now() - (this._lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS) return;
         const say = speakable(text);
         if (!say) return;
         speaker.speak(say, { voice: cfg.speakVoice });
