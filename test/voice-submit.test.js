@@ -351,6 +351,10 @@ function fastHarness({
   rows = [''], type = 'normal',
   config = { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE },
   attention = null,
+  // Overridden only by the starvation tests below, which have to place a
+  // repaint INSIDE the window and a probe between two deadlines. At 5ms those
+  // margins are shorter than the timer jitter they would be measuring.
+  quietMs = TEST_QUIET_MS,
 } = {}) {
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)), type });
@@ -359,9 +363,9 @@ function fastHarness({
     getConfig: () => env.config,
     getAttention: () => env.attention,
     write: (d) => writes.push(d),
-    quietMs: TEST_QUIET_MS,
+    quietMs,
   }));
-  return { term, watcher, writes, env, done: () => settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25) };
+  return { term, watcher, writes, env, done: () => settle(quietMs + ENTER_SETTLE_MS + 25) };
 }
 
 test('a matching composer submits after the quiet window: backspaces then Enter', async () => {
@@ -560,6 +564,86 @@ test('the quiet window restarts on every write, so a mid-utterance match waits',
   h.term.write('❯ over and out of the office tomorrow');
   await h.done();
   assert.deepStrictEqual(h.writes, [], 'the utterance kept going — nothing should have been sent');
+  h.watcher.dispose();
+});
+
+// The animation starves the gate. Reported live: "it doesn't seem to be sending
+// when tap is on" ... "i had to untap, for the text to get processed" -- the
+// submit landed the moment recording STOPPED, which is the whole diagnosis.
+// While the microphone is live the CLI paints an audio level meter on a 50ms
+// tick, and a window restarted by every write can never elapse under it.
+//
+// The meter is the cursor GLYPH, not a row: the CLI passes it as the composer
+// input's `cursorChar`, so it animates inside the cursor cell on the composer
+// row itself. Both fixtures below therefore paint it on the cursor row, which
+// is the shape a fix that only ignored OTHER rows would not survive.
+//
+// `cursorX` sits AT the meter glyph, not past it: that models the cursor cell
+// the CLI paints into, and the read this gate makes ends there exclusively. A
+// fixture that put the cursor past the glyph would be asserting against a
+// screen the CLI never draws, and would make the erase counts below wrong.
+//
+// Each test asserts DURING the animation, not after it. Asserting only at the
+// end cannot tell a starved window from a slow one -- the first draft of these
+// passed against the shipped bug for exactly that reason, because the loop's
+// own duration outlasted the window it was supposed to be holding open.
+
+const METER = '\u2581\u2583\u2585\u2587';
+
+test('a meter animating on the composer row does not hold the window open', async () => {
+  // 20 frames at 8ms is 160ms over a 40ms window: four deadlines' worth, with
+  // no gap between frames wide enough to fire in. Under the shipped code the
+  // window restarts on every frame and NOTHING is ever written.
+  //
+  // The fire is asserted while frames are STILL ARRIVING, which is what makes
+  // this a starvation measurement rather than a race with the loop's runtime.
+  const h = fastHarness({ quietMs: 40 });
+  const draft = '\u276f finish the report over and out';
+  let firedDuring = 0;
+  for (let i = 0; i < 20; i += 1) {
+    h.term.write({ text: draft + METER[i % 4], cursorX: draft.length, cursor: true });
+    await settle(8);
+    if (i === 14) firedDuring = h.watcher.fireCount();
+  }
+  assert.strictEqual(firedDuring, 1,
+    'the submit must fire WHILE the meter is still painting');
+  await settle(ENTER_SETTLE_MS + 25);
+  assert.deepStrictEqual(h.writes, ['\x7f'.repeat(13), '\r']);
+  h.watcher.dispose();
+});
+
+test('speech arriving under a live meter RESTARTS the window', async () => {
+  // The property the fix must not trade away, and the discriminator against a
+  // fix that simply stopped restarting: more speech lands mid-window, and the
+  // probe sits past the FIRST deadline but before the restarted one. A watcher
+  // that ignored the change would already have submitted the partial draft.
+  //
+  // The meter animates throughout, so the restart cannot be coming from the
+  // frames -- only the words can have caused it.
+  const h = fastHarness({ quietMs: 60 });
+  const half = '\u276f tell them over and out';
+  h.term.write({ text: half + METER[0], cursorX: half.length, cursor: true });
+  await settle(30);
+  const full = '\u276f tell them over and out and i mean it over and out';
+  for (let i = 0; i < 5; i += 1) {
+    h.term.write({ text: full + METER[i % 4], cursorX: full.length, cursor: true });
+    await settle(8);
+  }
+  assert.deepStrictEqual(h.writes, [],
+    'the partial draft must NOT have been submitted at its own deadline');
+  assert.strictEqual(h.watcher.fireCount(), 0, 'ENTER: nothing may have fired yet');
+
+  // And it does fire once the speech stops, so the assertion above is a WAIT
+  // rather than a permanent decline -- the failure a fix that never rescheduled
+  // would also produce.
+  for (let i = 0; i < 12; i += 1) {
+    h.term.write({ text: full + METER[i % 4], cursorX: full.length, cursor: true });
+    await settle(8);
+  }
+  await settle(ENTER_SETTLE_MS + 25);
+  assert.strictEqual(h.watcher.fireCount(), 1, 'the settled draft must submit');
+  // 13 = the phrase plus the space before it, erased from the FULL draft.
+  assert.deepStrictEqual(h.writes, ['\x7f'.repeat(13), '\r']);
   h.watcher.dispose();
 });
 

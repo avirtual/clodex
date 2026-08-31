@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Hands-free submit now fires while tap recording is still on.** It used to
+  wait for you to untap before sending, which defeats the point of hands-free:
+  Clodex waits for the composer to go quiet before submitting, and the audio
+  level meter the CLI animates while the microphone is live counted as activity,
+  so the wait never ended. It now watches what you have actually dictated rather
+  than every repaint of the screen. The wait itself is unchanged — a phrase that
+  lands mid-sentence still waits for you to finish talking.
+
 - **A spoken message now tells the agent it was spoken.** Speech-to-text does
   not always produce what you said — a dictated "over and out" arrived once as
   "call where not" — and the agent reading it had no way to tell, so it took the

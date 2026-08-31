@@ -699,19 +699,50 @@ function createVoiceSubmitWatcher(terminal, {
     rearmTimer = setTimeout(attemptRearm, rearmMs);
   }
 
-  // Trailing debounce: every write RESTARTS the window, which is what makes the
-  // wait a quiet gate rather than a fixed delay.
+  // Trailing debounce: a write that CHANGES the composer restarts the window,
+  // which is what makes the wait a quiet gate rather than a fixed delay.
   const schedule = () => {
     if (disposed) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(tick, quietMs);
   };
 
+  // The composer row as of the last write. Restarting the window on every write
+  // instead starves it to death under tap recording: while the microphone is
+  // live the CLI animates an audio level meter on a 50ms tick, far under
+  // quietMs, so the window never elapsed and the submit fired only once the
+  // operator STOPPED recording.
+  //
+  // Comparing what the gate READS, rather than counting frames or capping the
+  // window, is what keeps the gate's purpose intact: the wait exists so that a
+  // transcriber emitting the phrase mid-utterance cannot fire an unrecallable
+  // submit, and every arrival of further speech changes this string. An
+  // absolute ceiling would be the opposite trade — it would fire PRECISELY in
+  // the state where the row is still changing, which is the state the wait is
+  // for.
+  //
+  // The meter is not on a row of its own: the CLI renders it as the composer
+  // input's `cursorChar`, so it animates INSIDE the cursor cell. cursorRow()
+  // ends its read AT cursorX, exclusive, so that cell is already outside the
+  // string compared here — which is why no glyph filtering is needed, and why
+  // moving this comparison off cursorRow() onto an untruncated read would
+  // restore the starvation.
+  let lastRow = null;
   // A write is the only wake the BUFFER half needs: nothing else changes what
   // is on screen. The composition half cannot use it — while a composition is
   // pending onData has not fired and the buffer does not hold the text — so it
   // polls the overlay instead, on its own timer.
-  const subs = [terminal.onWriteParsed(() => { lastWriteAt = now(); schedule(); })];
+  //
+  // lastWriteAt is stamped on EVERY write, unchanged: the re-arm half reads it
+  // as "the terminal is still painting", and an animation is exactly the paint
+  // it must keep waiting out.
+  const subs = [terminal.onWriteParsed(() => {
+    lastWriteAt = now();
+    const row = cursorRow();
+    if (row === lastRow) return;
+    lastRow = row;
+    schedule();
+  })];
   pollTimer = setInterval(pollComposition, pollMs);
 
   return {
