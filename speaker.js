@@ -151,17 +151,27 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN, onBusy = null }
     if (onBusy) { try { onBusy(next); } catch { /* observer-grade */ } }
   }
 
-  function stop() {
+  // The kill WITHOUT the announcement, which is the half speak() needs. A
+  // replacement utterance must not emit a false edge on its way in: playback
+  // never actually stopped, and a consumer waiting on that edge — the turn-end
+  // re-arm — would take the gap as permission and arm into the narration that
+  // is about to start.
+  function killChild() {
     if (!child) return false;
     const c = child;
     // Cleared BEFORE the kill so the exit handler cannot null out a NEWER child:
     // kill() is async and speak() may start a replacement before SIGTERM lands.
     child = null;
+    try { c.kill(); } catch { /* already gone */ }
+    return true;
+  }
+
+  function stop() {
+    if (!killChild()) return false;
     // Announced HERE rather than left to the exit callback, which lands a tick
     // or more later. A killed narration is over the moment it is killed, and a
     // consumer waiting on the false edge would otherwise sit through the gap.
     setBusy(false);
-    try { c.kill(); } catch { /* already gone */ }
     return true;
   }
 
@@ -185,7 +195,8 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN, onBusy = null }
   // until it narrated the distant past.
   function speak(text, { voice = DEFAULT_VOICE, rate = DEFAULT_RATE } = {}) {
     if (!text) return false;
-    stop();
+    // The silent kill, never stop(): see killChild.
+    killChild();
     const args = [];
     if (voice) args.push('-v', voice);
     // Dropped rather than clamped when it is out of range or not a number: the
