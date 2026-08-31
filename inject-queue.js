@@ -23,9 +23,19 @@ const { PASTE_START, PASTE_END } = require('./proxy-util');
 // the operator's draft is one-shot and pops at the next TURN START, so injecting
 // during a pause long enough to have stopped counting as typing would consume it.
 // Its own cap lives with the hold, so the max-wait below still bounds it.
-function shouldDeferInject({ now, lastHumanInputAt, waitingSince, quietMs, maxWaitMs, hintHeld = false }) {
+//
+// `speaking` is the SAME protection as the typing window for an operator who is
+// DICTATING. It is a separate input and not a widening of `lastHumanInputAt`
+// because dictated words never pass through SessionManager.write(): the CLI
+// records the audio and paints the transcription into its own composer, so the
+// `isHumanPtyInput` stamp that feeds `lastHumanInputAt` never happens and a
+// speaking operator reads as perfectly idle. The Ctrl-U that opens an injection
+// eats his half-spoken draft exactly as it would eat a half-typed one — and
+// speaking is SLOWER than typing, so the window it needs is longer, not shorter.
+function shouldDeferInject({ now, lastHumanInputAt, waitingSince, quietMs, maxWaitMs, hintHeld = false, speaking = false }) {
   if (now - waitingSince >= maxWaitMs) return false;       // max-wait cap reached — inject anyway
   if (hintHeld) return true;
+  if (speaking) return true;
   return now - (lastHumanInputAt || 0) < quietMs;          // still inside the typing window
 }
 
@@ -53,13 +63,14 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking }) {
     this._write = write;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
     this._maxWaitMs = maxWaitMs;
     this._lastHumanInputAt = lastHumanInputAt || (() => 0);
     this._hintHeld = hintHeld || (() => false);
+    this._speaking = speaking || (() => false);
     this._isDead = isDead || (() => false);
     this._now = now || Date.now;
     this._sleep = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -78,6 +89,12 @@ class InjectQueue {
 
   // A throwing hold must not block delivery — the hint is optional, the message is not.
   _held() { try { return !!this._hintHeld(); } catch { return false; } }
+
+  // Same swallow, same direction, and here the direction is load-bearing rather
+  // than merely tidy: everything about this signal fails toward DELIVERING.
+  // A deferral that cannot be released strands every message to the seat, so a
+  // throwing reader must not be the thing that makes injection stop forever.
+  _speakingNow() { try { return !!this._speaking(); } catch { return false; } }
 
   enqueue(text, opts = {}) {
     this._length++;
@@ -115,6 +132,7 @@ class InjectQueue {
         lastHumanInputAt: this._lastHumanInputAt(),
         waitingSince, quietMs: this._quietMs, maxWaitMs: this._maxWaitMs,
         hintHeld: this._held(),
+        speaking: this._speakingNow(),
       })) {
       deferred = true;
       await this._sleep(Math.min(this._quietMs, 500));

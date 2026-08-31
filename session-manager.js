@@ -325,6 +325,7 @@ function createSessionManager(deps) {
     INJECT_HOLD_TIMEOUT,
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
+    INJECT_SPEAKING_STALE_MS,
     InjectQueue,
     JsonlWatcher,
     LONG_TEXT_DELAY,
@@ -2107,6 +2108,22 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       try { voiceOriginArm.arm(this._armCtx(s)); } catch {}
+    }
+
+    // The renderer saw the CLI's recording indicator lit on this seat. Stamped
+    // as a LEVEL the renderer keeps refreshing, not an edge, and the difference
+    // is what bounds the failure: an edge-shaped signal whose "stopped" event is
+    // lost — window closed, seat switched, renderer gone — leaves the seat
+    // marked speaking forever, and forever means every message to it is
+    // deferred. A stamp that must be refreshed decays on its own instead.
+    //
+    // Its OWN field. `lastUserInputTs` has three readers (the inject gate, the
+    // reboot-notice draft staleness, and _maybeParkDelivery's typing test) and
+    // stamping this into it would silently change what the other two mean.
+    noteVoiceRecording(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return;
+      s.lastVoiceRecordingTs = Date.now();
     }
 
     releaseSelection(name) {
@@ -5712,6 +5729,21 @@ function createSessionManager(deps) {
           maxWaitMs: INJECT_QUIET_MAXWAIT,
           lastHumanInputAt: () => session.lastUserInputTs || 0,
           hintHeld: () => { try { return !!(arm.holding && arm.holding(session.name)); } catch { return false; } },
+          // Dictation gets the protection typing already has. Fed as its own
+          // input rather than by stamping lastUserInputTs, which has two other
+          // readers whose meaning that would quietly change.
+          //
+          // ABSENT EVIDENCE READS AS NOT SPEAKING, and that polarity is the
+          // OPPOSITE of `recorderBlocksRearm`'s in voice-submit.js, where an
+          // unreadable screen BLOCKS. Both are correct because the two mistakes
+          // are not the same mistake. There, missing a lit recorder writes a key
+          // that CUTS HIM OFF mid-sentence, so doubt must block. Here, a
+          // deferral that cannot be released stops delivery to the seat
+          // ENTIRELY, so doubt must deliver — a terminal nobody can read, or a
+          // renderer that went away, must not silently wedge every message. Do
+          // not "make these consistent": aligning them breaks whichever one is
+          // aligned to the other.
+          speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!session._dead,
           bracketedPaste: () => !!session._pasteModeOn,
           ready: isClaude ? () => !!session._bootReadySeen : undefined,

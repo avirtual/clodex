@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A message from another agent no longer cuts you off while you are
+  dictating.** Clodex holds an incoming message back while you are typing,
+  because delivering one clears whatever is half-written in the composer. That
+  protection never covered SPEAKING: dictated words are transcribed by the CLI
+  straight into its own composer without passing through Clodex, so a seat you
+  were talking into looked completely idle, and a message arriving mid-sentence
+  truncated it mid-word. Clodex now also waits while the CLI's recording
+  indicator is lit, on whichever seat is in front of you — whether or not
+  hands-free submit is switched on. The existing five-minute cap still applies,
+  so a recorder that gets stuck lit cannot hold your messages indefinitely.
+
 - **The microphone comes back on its own after a hands-free submit.** When the
   model answered quickly, the CLI left its recorder running after Clodex sent
   your message — and that surviving recording was dead: `REC` stayed lit but no

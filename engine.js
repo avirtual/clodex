@@ -321,6 +321,15 @@ const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
 // text+Enter written before the CLI's raw-mode input loop is up arrives as one
 // paste-like chunk and the Enter lands as content, so nothing submits.
 const INJECT_BOOT_MAXWAIT = 20 * 1000;
+// How long a renderer's "recorder is lit" sample keeps deferring injection. The
+// renderer resamples on its 300ms poll, so this is a STALENESS bound on that
+// poll and not a guess at how long anyone speaks: it must clear several missed
+// polls (a busy renderer, a slow repaint) without wedging, since the only thing
+// that ends the deferral when the renderer stops reporting is this expiry.
+// Deliberately well above INJECT_QUIET_MS — the typing window waits out a pause
+// between keystrokes, this waits out a pause between WORDS, and the whole bug is
+// that speaking is the slower of the two.
+const INJECT_SPEAKING_STALE_MS = 3 * 1000;
 
 
 
@@ -910,6 +919,7 @@ const SessionManager = createSessionManager({
     INJECT_HOLD_TIMEOUT,
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
+    INJECT_SPEAKING_STALE_MS,
     InjectQueue,
     JsonlWatcher,
     LONG_TEXT_DELAY,

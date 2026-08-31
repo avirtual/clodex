@@ -7479,6 +7479,15 @@ body {
         // round trip in front of the operator's Enter, so there is no result to wait
         // for and a failure costs the annotation alone.
         { name: "markVoiceOrigin", kind: "send", channel: "voice:markOrigin" },
+        // The operator is dictating RIGHT NOW — the recording indicator is lit on
+        // this seat — so the inject quiet-gate must defer as it does for typing.
+        //
+        // A SEND for the same reason as its neighbour, and REPEATED rather than
+        // paired with an off: main expires the stamp, so a renderer that stops
+        // sending (window closed, seat switched, crashed mid-utterance) releases the
+        // deferral by itself. An off-frame that never arrives would strand delivery
+        // to the seat permanently, which is worse than the bug this fixes.
+        { name: "noteVoiceRecording", kind: "send", channel: "voice:recording" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -23739,6 +23748,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // every other path here is unchanged — the marker is an annotation on a
         // submit, never a precondition for one.
         markVoiceOrigin = null,
+        // Reports the CLI's recording indicator to main, which defers injection while
+        // it is lit. Resent on every poll that sees it, never paired with an off —
+        // main expires the stamp, so a watcher disposed mid-utterance releases the
+        // deferral instead of stranding it.
+        noteVoiceRecording = null,
+        // Whether this seat is one whose recorder is worth reporting at all. Distinct
+        // from `getConfig`, which additionally requires hands-free SUBMIT to be
+        // switched on: the operator dictates whether or not that feature is enabled,
+        // and gating his protection on an unrelated checkbox would fix the bug only
+        // for the seats that had opted into something else.
+        recorderScope = () => false,
         evidenceMs = VOICE_EVIDENCE_MS,
         now = Date.now
       }) {
@@ -23878,11 +23898,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
           } catch {
             cfg = null;
           }
+          let inScope = false;
+          try {
+            inScope = !!cfg || !!recorderScope();
+          } catch {
+            inScope = !!cfg;
+          }
+          const observed = inScope ? recordingObserved(indicatorRows()) : false;
+          if (observed && noteVoiceRecording) {
+            try {
+              noteVoiceRecording();
+            } catch {
+            }
+          }
           if (!cfg) {
             forgetPending();
             return;
           }
-          const observed = recordingObserved(indicatorRows());
           if (observed && !prevObserved) mutedByTyping = false;
           prevObserved = observed;
           if (observed && !mutedByTyping) voiceEvidenceAt = now();
@@ -32871,7 +32903,14 @@ ${detail}` });
           getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
           // A `send`, so this returns immediately and the erase/Enter that follow it
           // are never waiting on the proxy.
-          markVoiceOrigin: () => window.api.markVoiceOrigin(name)
+          markVoiceOrigin: () => window.api.markVoiceOrigin(name),
+          // Deliberately NOT gated on voiceSubmitConfig.enabled, which getConfig above
+          // requires: he dictates into claude seats whether or not hands-free submit
+          // is switched on, and the quiet-gate protection is owed to him either way.
+          // Still the ACTIVE seat only — dictation reaches the focused composer, so a
+          // background seat's indicator is not him speaking into it.
+          recorderScope: () => name === activeSession && sessionTypeOf(name) === "claude",
+          noteVoiceRecording: () => window.api.noteVoiceRecording(name)
         });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);

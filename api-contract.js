@@ -368,6 +368,15 @@ const API_CONTRACT = [
   // round trip in front of the operator's Enter, so there is no result to wait
   // for and a failure costs the annotation alone.
   { name: 'markVoiceOrigin', kind: 'send', channel: 'voice:markOrigin' },
+  // The operator is dictating RIGHT NOW — the recording indicator is lit on
+  // this seat — so the inject quiet-gate must defer as it does for typing.
+  //
+  // A SEND for the same reason as its neighbour, and REPEATED rather than
+  // paired with an off: main expires the stamp, so a renderer that stops
+  // sending (window closed, seat switched, crashed mid-utterance) releases the
+  // deferral by itself. An off-frame that never arrives would strand delivery
+  // to the seat permanently, which is worse than the bug this fixes.
+  { name: 'noteVoiceRecording', kind: 'send', channel: 'voice:recording' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },

@@ -1891,6 +1891,13 @@ function registerIpcHandlers(deps) {
     manager.markVoiceOrigin(String(name || ''));
   });
 
+  // The recorder is lit on this seat, resent while it stays lit. Carries no
+  // timestamp: main stamps its own clock, so a renderer cannot hold a seat's
+  // injection open by reporting a future time.
+  on('voice:recording', (_e, name) => {
+    manager.noteVoiceRecording(String(name || ''));
+  });
+
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   handle('session:retrySpawn', async (e, name) => {
