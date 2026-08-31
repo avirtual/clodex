@@ -27284,9 +27284,6 @@ helper=${d.helperPath}`;
           const sel = e.target.closest(".speak-voice");
           if (sel) saveSpeak({ speakVoice: sel.value });
         });
-        body.addEventListener("click", (e) => {
-          if (e.target.closest(".speak-host")) e.stopPropagation();
-        }, true);
         document.addEventListener("mousedown", (e) => {
           if (pop.classList.contains("hidden")) return;
           if (pop.contains(e.target)) return;

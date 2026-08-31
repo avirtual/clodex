@@ -225,13 +225,6 @@ function initVoicePopover({ core, renderProxyBar }) {
     if (sel) saveSpeak({ speakVoice: sel.value });
   });
 
-  // The label wraps the checkbox, so a click inside this section must not fall
-  // through to the mode picker below it — that would change the input mode on a
-  // click aimed at the output half.
-  body.addEventListener('click', (e) => {
-    if (e.target.closest('.speak-host')) e.stopPropagation();
-  }, true);
-
   document.addEventListener('mousedown', (e) => {
     if (pop.classList.contains('hidden')) return;
     if (pop.contains(e.target)) return;
