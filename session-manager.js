@@ -2329,8 +2329,7 @@ function createSessionManager(deps) {
       }
       const r = this._voiceRoute(target);
       if (!r.ok) return r;
-      // Ahead of the tap: the tap's raise brings the window forward, and it must
-      // already be showing the named seat when it arrives.
+      // Ahead of the tap: the tap's raise brings the window forward.
       this._sendToSession(r.name, 'request-switch-session', r.name);
       return this.voiceTap(r.name, { raise: true });
     }
@@ -2435,10 +2434,6 @@ function createSessionManager(deps) {
       // already hold the microphone when its window comes forward, and the
       // renderer decides whether the key may be written against an app that is
       // by then coming to the front.
-      // Only where a host actually answers the question. On the headless path
-      // nothing reports focus, so `_appFocused` is permanently false and an
-      // unconditional raise would fan a `focus-hint` on EVERY tap.
-      //
       // `raise` is the CALLER'S INTENT and is why it ORs rather than extending
       // the focus test: app-focus answers "is Clodex buried", which is the
       // tap's question, and it is FALSE exactly when he is looking at another

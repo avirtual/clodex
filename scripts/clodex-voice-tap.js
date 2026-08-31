@@ -125,7 +125,15 @@ function envelopeFor(args) {
       if (second !== 'on' && second !== 'off') return { error: `speech takes on|off, got "${second}"` };
       return { type: 'voice-speech', from: 'voice-tap', state: second };
     }
-    if (first === 'tap') return { type: 'voice-tap', from: 'voice-tap', target: second };
+    // An UNSET shell variable (`tap "$SEAT"`) degrades to the explicit bare
+    // tap rather than a named one: `voiceTap('')` reaching the focused seat is
+    // the tap's own documented default, but arriving there through a name he
+    // believes he supplied is the shell-variable hole `select` closes.
+    if (first === 'tap') {
+      return second.trim()
+        ? { type: 'voice-tap', from: 'voice-tap', target: second }
+        : { type: 'voice-tap', from: 'voice-tap' };
+    }
     return { error: `unknown verb "${first}" (use tap|select|mode|speech)` };
   }
   const target = first || null;
