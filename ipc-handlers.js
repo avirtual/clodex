@@ -1924,6 +1924,10 @@ function registerIpcHandlers(deps) {
     manager.noteFocusedSession(name == null ? null : String(name));
   });
 
+  // What a window that opened or reloaded mid-dictation missed. Read-only: the
+  // target moves on a focus report or an external tap, never on being asked.
+  handle('voice:micTarget', () => manager.micTarget());
+
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   handle('session:retrySpawn', async (e, name) => {

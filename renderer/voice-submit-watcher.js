@@ -365,6 +365,13 @@ function createVoiceSubmitWatcher(terminal, {
   // exactly as it did before speech existed, which is the requirement for a
   // seat with the feature switched off.
   getSpeakerBusy = () => false,
+  // Whether this seat is the one seat that holds the microphone, box-wide, as
+  // main decides it. The automatic re-arm may arm the target and nothing else.
+  //
+  // DEFAULTS TO FALSE, the same polarity every interlock here takes: a host
+  // that forgets to wire this silences the re-arm rather than restoring the
+  // failure it exists to prevent — one operator's speech reaching two agents.
+  isMicTarget = () => false,
   evidenceMs = VOICE_EVIDENCE_MS,
   now = Date.now,
 }) {
@@ -887,6 +894,27 @@ function createVoiceSubmitWatcher(terminal, {
       rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
       return;
     }
+
+    // THIS SEAT DOES NOT HOLD THE MICROPHONE. There is one microphone and one
+    // target, so a turn ending on any other seat is a turn ending in the
+    // background: arming here puts a second live recorder in the room, and the
+    // operator's next sentence lands in two composers — including, once his
+    // words happen to end in the trigger phrase, as a SENT turn to an agent he
+    // was not addressing.
+    //
+    // A flat decline that writes nothing and schedules nothing. Nothing to
+    // wait for: re-arming names no seat, so it can never become the reason the
+    // microphone moves — only an explicit tap or the operator's own focus does
+    // that, and either one arrives with its own edge.
+    //
+    // BELOW the still-painting branch for the standing reason: the abandon
+    // deadline is consulted only there, and the `abandonMs: 0` pin depends on
+    // that branch being the first one an attempt reaches. ABOVE the speech
+    // branch because a seat that cannot arm has no reason to spend a speech
+    // budget waiting for a narration it will decline after anyway.
+    let mine = false;
+    try { mine = isMicTarget() === true; } catch { mine = false; }
+    if (!mine) return;
 
     // A narration is PLAYING, and it started on this same turn-end edge. Arming
     // now points a live microphone at the machine's own speaker, and the CLI

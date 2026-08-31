@@ -1197,6 +1197,10 @@ function createTerminal(name, peer = null) {
     // Box-wide and read fresh per attempt, never captured: the flag flips
     // mid-wait, which is the entire point of the deferral.
     getSpeakerBusy: () => speakerBusy,
+    // Does THIS seat hold the microphone? Compared against main's box-wide
+    // name, never against `activeSession`, which is this window's own answer
+    // and true of one seat in every window that is open.
+    isMicTarget: () => micTarget !== null && micTarget === name,
     noteVoiceRecording: () => window.api.noteVoiceRecording(name),
     noteVoiceDraft: () => window.api.noteVoiceDraft(name),
   });
@@ -3616,6 +3620,24 @@ window.addEventListener('focus', () => { refreshVoiceSubmitConfig(); });
 // a stuck one silences the feature.
 let speakerBusy = false;
 window.api.onSpeakerBusy((busy) => { speakerBusy = busy === true; });
+
+// Which seat holds the microphone, box-wide. A mirror of main's value like
+// `speakerBusy` above, and never a reading taken here: `activeSession` is this
+// WINDOW's answer, and two windows each have one — which is precisely how a
+// background seat's re-arm put a second live recorder in the room.
+//
+// Starts null, so every seat declines until main has spoken. The opposite
+// default would arm every seat in a window that had not yet heard, which is the
+// bug; a seat that declines for one poll costs the operator one repeated tap.
+let micTarget = null;
+window.api.onMicTarget((name) => { micTarget = typeof name === 'string' ? name : null; });
+// A window that opened or reloaded mid-dictation missed the broadcast, and the
+// target does not move again while he keeps talking to the seat he picked.
+window.api.micTarget().then((name) => {
+  // The broadcast WINS: an await that resolves after one arrived would put the
+  // stale answer back, and this read exists only to cover having heard nothing.
+  if (micTarget === null) micTarget = typeof name === 'string' ? name : null;
+}).catch(() => {});
 
 // Tell main which seat the operator is looking at.
 //

@@ -561,6 +561,17 @@ function createSessionManager(deps) {
       // ONE seat for the whole box, and the last report is the one that moved
       // most recently — which is the window he is in.
       this._focusedSession = null;
+      // WHICH SEAT HOLDS THE MICROPHONE. One name for the whole box, because
+      // there is one microphone: a seat may arm only if it IS this, so two
+      // seats cannot both hold it by construction. A per-seat "may I arm?"
+      // test cannot express that — a dozen seats each answering locally all
+      // answer yes, which is how the operator's speech reached two composers.
+      //
+      // NOT merged with _focusedSession above, which it tracks by default: an
+      // external tap moves this and deliberately does NOT move that, so after
+      // one tap the two differ, and a later untargeted tap must still route by
+      // the seat he is LOOKING at rather than the one he last named.
+      this._micTarget = null;
       // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
       // per-seat field of the same name because audio has no seat.
       this._lastVoiceRecordingTs = 0;
@@ -2195,7 +2206,33 @@ function createSessionManager(deps) {
     // report for a seat that is about to exist. The reader below resolves it.
     noteFocusedSession(name) {
       this._focusedSession = name || null;
+      this._setMicTarget(this._focusedSession);
     }
+
+    // THE ONLY WRITER of the target, so the invariant is enforceable by reading
+    // one function: every path that moves the microphone comes through here and
+    // every window learns the same name.
+    //
+    // Broadcast to ALL windows, not sent to the target's: the losers are what
+    // makes this an invariant. A seat that has just STOPPED being the target
+    // has to hear so, or it goes on believing it may arm and the second live
+    // recorder — the whole bug — survives.
+    //
+    // Idempotent by the equality guard: the focus report repeats on every
+    // window focus, and re-broadcasting an unchanged name would put a frame on
+    // every window each time he alt-tabs.
+    _setMicTarget(name) {
+      const next = name || null;
+      if (this._micTarget === next) return;
+      this._micTarget = next;
+      this._broadcast('mic-target', next);
+    }
+
+    // A window opened, or reloaded, and starts life believing it holds nothing.
+    // Without this it would stay that way until the target next CHANGED — and
+    // the target does not change while the operator is dictating into the seat
+    // he already picked, so the re-arm would be dead in a fresh window.
+    micTarget() { return this._micTarget; }
 
     // ENSURE-ON from outside the app: a Voice Control wake word arrived over
     // this box's agent socket asking for the recorder.
@@ -2213,6 +2250,17 @@ function createSessionManager(deps) {
       if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
       if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
       if (!this.windowForSession(name)) return { ok: false, error: `"${name}" has no window attached` };
+      // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
+      // is the design: he NAMED this seat, so it takes the microphone from
+      // whoever held it; a re-arm names nobody, so it gets no say in who holds
+      // it and may only arm the seat that already does.
+      //
+      // BEFORE the frame, so the seat cannot receive its own tap while another
+      // seat is still recorded as the holder.
+      //
+      // Only past every decline above: a tap that routed nowhere must not move
+      // the microphone off the seat that has it.
+      this._setMicTarget(name);
       this._sendToSession(name, 'voice-tap', name);
       return { ok: true, name };
     }

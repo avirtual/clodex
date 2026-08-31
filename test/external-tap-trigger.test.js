@@ -313,7 +313,13 @@ test('an explicit target is preferred over the focused seat', () => {
   assert.deepStrictEqual(m.voiceTap('named'), { ok: true, name: 'named' });
   // The whole frame: a tap that reached the right seat over the wrong channel
   // is as dead as one that reached nobody.
-  assert.deepStrictEqual(win.sent, [['voice-tap', 'named']],
+  //
+  // THE RETARGET RIDES AHEAD OF THE TAP, and the order is the assertion:
+  // the seat must not receive its own tap while another seat is still recorded
+  // as holding the microphone. A tap NAMES a seat, so it takes the microphone;
+  // the automatic re-arm names nobody and never does.
+  assert.deepStrictEqual(win.sent,
+    [['mic-target', 'watched'], ['mic-target', 'named'], ['voice-tap', 'named']],
     'a script can address a seat the operator is not looking at');
 });
 
@@ -321,8 +327,10 @@ test('no target falls back to the focused seat', () => {
   const m = mk();
   const win = seat(m, 'watched');
   m.noteFocusedSession('watched');
+  // The focus report already made it the target, so the tap has nothing to move
+  // — the idempotence guard is what keeps a second frame off the wire here.
   assert.deepStrictEqual(m.voiceTap(), { ok: true, name: 'watched' });
-  assert.deepStrictEqual(win.sent, [['voice-tap', 'watched']]);
+  assert.deepStrictEqual(win.sent, [['mic-target', 'watched'], ['voice-tap', 'watched']]);
 });
 
 test('no target and nothing focused declines rather than guessing a seat', () => {
@@ -341,7 +349,11 @@ test('a cleared focus stops routing at the seat that went away', () => {
   m.noteFocusedSession('watched');
   m.noteFocusedSession(null);
   assert.strictEqual(m.voiceTap().ok, false);
-  assert.deepStrictEqual(win.sent, []);
+  // The microphone was RELEASED with the focus, and the null is what releases
+  // it: a target left pointing at the seat that went away would let that seat's
+  // window go on believing it may arm.
+  assert.deepStrictEqual(win.sent, [['mic-target', 'watched'], ['mic-target', null]],
+    'no tap frame — and the target was cleared, not merely left behind');
 });
 
 test('a DEAD seat, a BASH seat and an UNKNOWN name are each declined', () => {
@@ -378,7 +390,7 @@ test('the socket arm dispatches voice-tap and delivers it to NO transcript', () 
   m.sessions.set('courier', { name: 'courier', agentType: 'claude', workspaceId: 'ws1' });
   m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap' });
 
-  assert.deepStrictEqual(win.sent, [['voice-tap', 'watched']],
+  assert.deepStrictEqual(win.sent, [['mic-target', 'watched'], ['voice-tap', 'watched']],
     'the socket it arrived on identifies the app, not the seat');
 });
 
@@ -390,7 +402,168 @@ test('the socket arm honours an explicit target on the envelope', () => {
   m.sessions.set('named', { name: 'named', agentType: 'claude', workspaceId: 'ws1' });
   m.noteFocusedSession('courier');
   m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap', target: 'named' });
-  assert.deepStrictEqual(win.sent, [['voice-tap', 'named']]);
+  // The focus put the microphone on 'courier'; the NAMED target takes it away.
+  assert.deepStrictEqual(win.sent,
+    [['mic-target', 'courier'], ['mic-target', 'named'], ['voice-tap', 'named']]);
+});
+
+// ----------------------------------------------- the microphone has ONE target
+
+// Main owns WHICH SEAT holds the microphone, box-wide, for the reason it owns
+// the speaker flag — there is one microphone, and `activeSession` is
+// per-WINDOW, so two workspace windows each have a seat that is "active" and a
+// locally-evaluated permission answers yes in both. That is how the operator's
+// dictation reached two composers at once.
+//
+// The asymmetry between the two writers is the design and is pinned below: a
+// TAP names a seat, so it may take the microphone; the automatic re-arm names
+// nobody, so it may only ever arm whoever already holds it (that half is
+// enforced in the renderer and pinned in voice-submit.test.js).
+
+// A second workspace window, which is what makes the box-wide claim testable at
+// all: a value delivered only to the holder's window leaves the LOSER believing
+// it may still arm, and the loser is the seat that caused this bug.
+function twoWindows(m) {
+  const a = fakeWin();
+  const b = fakeWin();
+  m.registerWindow('ws1', a);
+  m.registerWindow('ws2', b);
+  m.sessions.set('A', { name: 'A', agentType: 'claude', workspaceId: 'ws1' });
+  m.sessions.set('B', { name: 'B', agentType: 'claude', workspaceId: 'ws2' });
+  return { a, b };
+}
+
+test('MIC: the focus report sets the target, and EVERY window is told', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  m.noteFocusedSession('A');
+  assert.strictEqual(m.micTarget(), 'A');
+  // BOTH windows, and B's frame is the load-bearing one: B's seat has to learn
+  // it does NOT hold the microphone, which is the only thing that stops it
+  // arming when its own turn ends.
+  assert.deepStrictEqual(a.sent, [['mic-target', 'A']]);
+  assert.deepStrictEqual(b.sent, [['mic-target', 'A']], 'the losing window is told too');
+});
+
+test('MIC: switching focus moves it, so two seats can never both hold it', () => {
+  const m = mk();
+  const { a } = twoWindows(m);
+  m.noteFocusedSession('A');
+  m.noteFocusedSession('B');
+  assert.strictEqual(m.micTarget(), 'B');
+  // The frames in order: the SECOND is what takes it off A. A design that only
+  // ever added a holder would leave both live, which is the bug.
+  assert.deepStrictEqual(a.sent, [['mic-target', 'A'], ['mic-target', 'B']]);
+});
+
+test('MIC: a repeated report of the SAME seat broadcasts once', () => {
+  // The renderer reports on every window focus, so this repeats whenever the
+  // operator alt-tabs. Without the equality guard each one puts a frame on
+  // every window for a value that did not change.
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  m.noteFocusedSession('A');
+  m.noteFocusedSession('A');
+  m.noteFocusedSession('A');
+  assert.deepStrictEqual(a.sent, [['mic-target', 'A']]);
+  assert.deepStrictEqual(b.sent, [['mic-target', 'A']]);
+});
+
+test('MIC: an EXPLICIT tap takes the microphone from the focused seat', () => {
+  // The asymmetry, in the direction that MOVES it. He named B out loud while
+  // looking at A. The tap is used with another app in front — that is the
+  // point of it — so requiring Clodex to be frontmost would break the feature
+  // outright. Naming a seat is the deliberate act that earns the retarget.
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  m.noteFocusedSession('A');
+  assert.deepStrictEqual(m.voiceTap('B'), { ok: true, name: 'B' });
+  assert.strictEqual(m.micTarget(), 'B');
+  // A still believes it is the FOCUSED seat — the two records are deliberately
+  // separate — but it no longer holds the microphone.
+  assert.strictEqual(m._focusedSession, 'A',
+    'the tap moves the microphone and leaves the focus record alone');
+  assert.deepStrictEqual(a.sent, [['mic-target', 'A'], ['mic-target', 'B']]);
+  assert.deepStrictEqual(b.sent, [['mic-target', 'A'], ['mic-target', 'B'], ['voice-tap', 'B']]);
+});
+
+test('MIC: a tap that DECLINES does not move the microphone', () => {
+  // Every decline in voiceTap is above the retarget, so a tap that routed
+  // nowhere cannot take the microphone off the seat that has it and leave the
+  // box with no holder at all — which would silence the re-arm everywhere.
+  for (const [label, target, setup] of [
+    ['unknown name', 'ghost', () => {}],
+    ['dead seat', 'D', (m) => m.sessions.set('D', { name: 'D', agentType: 'claude', workspaceId: 'ws1', _dead: true })],
+    ['bash seat', 'S', (m) => m.sessions.set('S', { name: 'S', agentType: null, workspaceId: 'ws1' })],
+    ['no window', 'X', (m) => m.sessions.set('X', { name: 'X', agentType: 'claude', workspaceId: 'ws-closed' })],
+  ]) {
+    const m = mk();
+    const { a } = twoWindows(m);
+    setup(m);
+    m.noteFocusedSession('A');
+    assert.strictEqual(m.voiceTap(target).ok, false, `${label}: declined`);
+    assert.strictEqual(m.micTarget(), 'A', `${label}: A still holds it`);
+    assert.deepStrictEqual(a.sent, [['mic-target', 'A']], `${label}: no second frame`);
+  }
+});
+
+test('MIC: nothing focused releases the microphone rather than stranding it', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  m.noteFocusedSession('A');
+  m.noteFocusedSession(null);
+  assert.strictEqual(m.micTarget(), null);
+  // The null has to REACH the windows: a holder left recorded on a seat that
+  // went away is a seat whose window still believes it may arm.
+  assert.deepStrictEqual(a.sent, [['mic-target', 'A'], ['mic-target', null]]);
+  assert.deepStrictEqual(b.sent, [['mic-target', 'A'], ['mic-target', null]]);
+});
+
+test('MIC: it starts held by NOBODY', () => {
+  // Before any window has reported, no seat may arm. The opposite default
+  // would arm every seat at launch, which is the bug at its widest.
+  const m = mk();
+  assert.strictEqual(m.micTarget(), null);
+});
+
+test('MIC: the pull answers what a window that opened mid-dictation missed', () => {
+  // The broadcast is an EDGE and the target does not move again while he keeps
+  // talking to the seat he already picked, so a window opened after it would
+  // never learn the holder without this read — and its seat could never arm.
+  const m = mk();
+  twoWindows(m);
+  m.noteFocusedSession('A');
+  const late = fakeWin();
+  m.registerWindow('ws3', late);
+  assert.deepStrictEqual(late.sent, [], 'it missed the broadcast, by construction');
+  assert.strictEqual(m.micTarget(), 'A', 'and the pull is how it catches up');
+});
+
+test('MIC: the contract carries both halves with the kinds each relies on', () => {
+  const rows = new Map(API_CONTRACT.map((r) => [r.name, r]));
+  // The WHOLE row: an `on` that became `invoke` would silently stop delivering
+  // the broadcast, and the losing window would go on believing it holds the
+  // microphone — which is the failure with no visible symptom until he speaks.
+  assert.deepStrictEqual(rows.get('onMicTarget'),
+    { name: 'onMicTarget', kind: 'on', channel: 'mic-target' });
+  assert.deepStrictEqual(rows.get('micTarget'),
+    { name: 'micTarget', kind: 'invoke', channel: 'voice:micTarget' });
+});
+
+test('MIC: the voice:micTarget handler is registered and returns the target', () => {
+  // The REGISTERED handler, for the reason its neighbour below gives: a test
+  // calling the method directly stays green if the channel was never wired.
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: () => {},
+    manager: { micTarget: () => 'A' },
+    log: { info() {}, error() {} },
+  });
+  const fn = handlers.get('voice:micTarget');
+  assert.ok(fn, 'voice:micTarget is registered');
+  assert.strictEqual(fn({}), 'A');
 });
 
 // ----------------------------------------------------------------- the contract
