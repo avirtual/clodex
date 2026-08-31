@@ -939,3 +939,253 @@ test('the sender script speaks the envelope the socket arm decodes', () => {
   assert.deepStrictEqual(requires.filter((r) => r.startsWith('.')), [],
     'the sender script must not require anything from the app tree');
 });
+
+// --------------------------------------------------- t600: select + mode verbs
+
+// The daily path is the thing this ticket could break: a shortcut he already
+// has, invoking this script by path with zero or one argument. Byte-identical
+// envelopes, not merely "still a tap".
+test('VERBS: the legacy invocations build byte-identical envelopes', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.deepStrictEqual(envelopeFor([]),
+    { type: 'voice-tap', from: 'voice-tap' },
+    'bare: no target key at all, exactly as before');
+  assert.deepStrictEqual(envelopeFor(['wirescope']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'wirescope' },
+    'one bare token is a seat name, exactly as before');
+});
+
+// A seat may legitimately be NAMED for a verb, and the one-token rule is what
+// makes that unambiguous rather than a collision to be resolved by precedence.
+test('VERBS: a lone verb-spelled token is still a seat name, not a verb', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  for (const word of ['tap', 'select', 'mode']) {
+    assert.deepStrictEqual(envelopeFor([word]),
+      { type: 'voice-tap', from: 'voice-tap', target: word },
+      `"${word}" alone addresses a seat of that name`);
+  }
+});
+
+test('VERBS: the explicit verb forms build the envelopes the socket decodes', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.deepStrictEqual(envelopeFor(['tap', 'wirescope']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'wirescope' });
+  assert.deepStrictEqual(envelopeFor(['select', 'wirescope']),
+    { type: 'voice-select', from: 'voice-tap', target: 'wirescope' });
+  assert.deepStrictEqual(envelopeFor(['mode', 'tap']),
+    { type: 'voice-mode', from: 'voice-tap', mode: 'tap' });
+  assert.deepStrictEqual(envelopeFor(['mode', 'hold']),
+    { type: 'voice-mode', from: 'voice-tap', mode: 'hold' });
+});
+
+// Rejected at the script, so a typo'd shortcut fails where he can see it rather
+// than sending an envelope the app declines into a log he never reads.
+test('VERBS: an unknown verb and a bad mode are refused, not sent', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.match(envelopeFor(['reboot', 'now']).error, /unknown verb "reboot"/);
+  assert.match(envelopeFor(['mode', 'loud']).error, /tap\|hold/);
+  // No envelope is built on either path — an `error` key and nothing to send.
+  assert.strictEqual(envelopeFor(['mode', 'loud']).type, undefined);
+});
+
+// `reboot` kills every session and is reachable from a stray phrase, so its
+// ABSENCE is the safety property — a hook left for it is the thing to catch.
+test('VERBS: no reboot verb exists anywhere on the voice path', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'clodex-voice-tap.js'), 'utf-8');
+  assert.doesNotMatch(script, /reboot/i, 'the sender must not know the word');
+  const handler = fs.readFileSync(
+    path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  assert.doesNotMatch(handler, /voice-reboot/, 'and no socket arm decodes one');
+});
+
+test('SELECT: selects the named seat, then arms it, in that order', () => {
+  const m = mk();
+  const { b } = twoWindows(m);
+  m.noteAppFocused(true);
+  assert.deepStrictEqual(m.voiceSelect('B'), { ok: true, name: 'B' });
+  // THE WHOLE FRAME SEQUENCE, and the order is the assertion: the switch has to
+  // reach the window before the tap, or the recorder lights on a tab that is
+  // not yet on screen — which is the entire bug this verb fixes.
+  assert.deepStrictEqual(b.sent,
+    [['app-focused', true], ['request-switch-session', 'B'],
+      ['mic-target', 'B'], ['voice-tap', 'B']]);
+});
+
+test('SELECT: a cross-workspace select raises that seat\'s window', () => {
+  // One BrowserWindow per workspace: without the raise the selection happens
+  // behind whatever he is looking at and he dictates into an invisible tab.
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  m.noteAppFocused(false);
+  assert.deepStrictEqual(m.voiceSelect('B'), { ok: true, name: 'B' });
+  assert.deepStrictEqual(b.raised, ['show', 'focus'], 'B\'s window came forward');
+  assert.deepStrictEqual(b.sent,
+    [['request-switch-session', 'B'], ['mic-target', 'B'], ['#show'], ['#focus'],
+      ['voice-tap', 'B']]);
+  // t599's raise, REUSED rather than duplicated: A's window is untouched, which
+  // a second raise mechanism firing on the manager's own idea of "the window"
+  // would not be.
+  assert.deepStrictEqual(a.raised, [], 'no other window was disturbed');
+});
+
+// THE SAFETY PROPERTY. An unmatched name must not fall back to the focused
+// seat: that has him dictating into the wrong agent BELIEVING he switched,
+// which is worse than nothing happening at all.
+test('SELECT: an unmatched name arms NOTHING and selects NOTHING', () => {
+  const m = mk();
+  const { a, b } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  const before = { a: [...a.sent], b: [...b.sent] };
+  const r = m.voiceSelect('ghost');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /no live session "ghost"/);
+  // Nothing moved: not the microphone, not a window, not one frame on either
+  // window. Comparing the WHOLE list against its own prior value is what makes
+  // this a no-op assertion rather than an absence-of-one-thing assertion.
+  assert.deepStrictEqual(a.sent, before.a, 'the focused seat was NOT selected or armed');
+  assert.deepStrictEqual(b.sent, before.b);
+  assert.deepStrictEqual(a.raised, []);
+  assert.deepStrictEqual(b.raised, []);
+  assert.strictEqual(m.micTarget(), 'A', 'the microphone did not move');
+});
+
+// MUTATION CHECK on the rule above: if `select` ever grew the tap's absent-target
+// fallback, the test above would still pass for a DIFFERENT reason unless the
+// fallback path itself is pinned as unreachable from a NAMED select. A named
+// select and a bare tap must not resolve the same way.
+test('SELECT: the fallback that serves a bare tap is unreachable from a named select', () => {
+  const m = mk();
+  const { a } = twoWindows(m);
+  reportFrom(m, a, 'A');
+  // The focused seat IS live and armable — so a fallback would succeed here.
+  // That is what makes the decline meaningful rather than incidental.
+  assert.deepStrictEqual(m.voiceTap(), { ok: true, name: 'A' }, 'the fallback works when nothing is named');
+  const armed = [...a.sent];
+  assert.strictEqual(m.voiceSelect('ghost').ok, false);
+  assert.deepStrictEqual(a.sent, armed, 'a named select did not reach that same fallback');
+});
+
+test('SELECT: the socket arm dispatches voice-select', () => {
+  const m = mk();
+  const { b } = twoWindows(m);
+  m.noteAppFocused(true);
+  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: 'B' });
+  assert.deepStrictEqual(b.sent,
+    [['app-focused', true], ['request-switch-session', 'B'],
+      ['mic-target', 'B'], ['voice-tap', 'B']]);
+});
+
+// A seat with a pty whose writes are recorded, so `mode` can be followed all the
+// way to the bytes rather than to a spy on the manager's own method.
+function micSeat(m, name, win) {
+  const writes = [];
+  m.sessions.set(name, {
+    name, agentType: 'claude', workspaceId: win.ws, _dead: false,
+    _bootReadySeen: true,
+    pty: { write: (b) => writes.push(b) },
+  });
+  return writes;
+}
+
+function settle(ms = 250) { return new Promise((r) => setTimeout(r, ms)); }
+
+test('MODE: injects /voice into the MIC HOLDER, not the active session', async () => {
+  const m = mk();
+  const a = fakeWin(); a.ws = 'ws1';
+  const b = fakeWin(); b.ws = 'ws2';
+  m.registerWindow('ws1', a);
+  m.registerWindow('ws2', b);
+  const aWrites = micSeat(m, 'A', a);
+  const bWrites = micSeat(m, 'B', b);
+  // THE TWO DIFFER, which is the whole point of the fixture: B holds the
+  // microphone while A is the seat a window would call active. `activeSession`
+  // is per-window and there are two windows, so it cannot answer this.
+  reportFrom(m, a, 'A');
+  m.voiceTap('B');
+  assert.strictEqual(m.micTarget(), 'B');
+
+  assert.deepStrictEqual(m.voiceMode('hold'), { ok: true, name: 'B', mode: 'hold' });
+  await settle();
+  assert.ok(bWrites.join('').includes('/voice hold'), 'the mic holder got the command');
+  assert.deepStrictEqual(aWrites, [], 'the other seat got nothing');
+});
+
+test('MODE: the bytes ride the inject queue rather than a raw pty write', async () => {
+  const m = mk();
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  const writes = micSeat(m, 'A', win);
+  reportFrom(m, win, 'A');
+  m.voiceMode('tap');
+  await settle();
+  // The queue's signature, not the manager's: a leading Ctrl-U in its own write
+  // and the text in a later one. A raw `pty.write('/voice tap\r')` would be a
+  // single chunk with no '\x15' — and would splice a half-typed draft, which is
+  // exactly what riding the queue prevents.
+  assert.ok(writes.length > 1, 'more than one write — the Ctrl-U is split from the text');
+  assert.strictEqual(writes[0], '\x15', 'the queue leads with clear-line');
+  assert.ok(writes.join('').includes('/voice tap'));
+});
+
+test('MODE: a mode switch DEFERS while he is dictating', async () => {
+  const m = mk();
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  const writes = micSeat(m, 'A', win);
+  reportFrom(m, win, 'A');
+  // t593: dictation gets the protection typing has. The Ctrl-U that opens an
+  // injection eats a half-SPOKEN draft exactly as it eats a half-typed one, and
+  // stranding his draft is t594's problem class.
+  m.sessions.get('A').lastVoiceRecordingTs = Date.now();
+  m.voiceMode('hold');
+  await settle();
+  assert.deepStrictEqual(writes, [], 'nothing was written into the live dictation');
+});
+
+test('MODE: an unknown mode and an unheld microphone are declined', () => {
+  const m = mk();
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  micSeat(m, 'A', win);
+  // No mic target yet: nothing has focused or tapped.
+  assert.match(m.voiceMode('tap').error, /no seat holds the microphone/);
+  reportFrom(m, win, 'A');
+  assert.match(m.voiceMode('loud').error, /unknown voice mode "loud"/);
+  // The mode is validated BEFORE the target is resolved, so a typo cannot
+  // reach a live seat at all.
+  assert.match(m.voiceMode(null).error, /unknown voice mode/);
+});
+
+test('MODE: the socket arm dispatches voice-mode and takes the mode only as a string', async () => {
+  const m = mk();
+  const win = fakeWin(); win.ws = 'ws1';
+  m.registerWindow('ws1', win);
+  const writes = micSeat(m, 'A', win);
+  reportFrom(m, win, 'A');
+  m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: 'hold' });
+  await settle();
+  assert.ok(writes.join('').includes('/voice hold'));
+  // Delivered to NO transcript: a box-wide request arriving on an agent's
+  // socket is not a message to that agent.
+  assert.deepStrictEqual(win.sent.filter((f) => f[0] === 'agent-message'), []);
+});
+
+// The one hop nothing else covers, extended to the new verbs: the script builds
+// these envelopes and the manager dispatches on them, in two files that never
+// import each other. Spelling either side differently leaves both green in
+// isolation and the phrase silently dead.
+test('VERBS: script and socket agree on the new envelope types', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'clodex-voice-tap.js'), 'utf-8');
+  const handler = fs.readFileSync(
+    path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  assert.match(script, /type: 'voice-select'/);
+  assert.match(handler, /mtype === 'voice-select'/);
+  assert.match(script, /type: 'voice-mode'/);
+  assert.match(handler, /mtype === 'voice-mode'/);
+});

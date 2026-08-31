@@ -1,11 +1,25 @@
 #!/usr/bin/env node
 'use strict';
 
-// clodex-voice-tap.js — ask Clodex to start recording, from outside the app.
+// clodex-voice-tap.js — ask Clodex for a named voice action, from outside the app.
 //
 // For a macOS Voice Control custom command → shortcut → shell script:
 //
 //   node /path/to/clodex/scripts/clodex-voice-tap.js [seat-name]
+//   node /path/to/clodex/scripts/clodex-voice-tap.js tap [seat-name]
+//   node /path/to/clodex/scripts/clodex-voice-tap.js select <seat-name>
+//   node /path/to/clodex/scripts/clodex-voice-tap.js mode tap|hold
+//
+// A VERB NEEDS ITS ARGUMENT TO BE A VERB — one bare token is always a seat
+// name, whatever it spells. That is what keeps every shortcut written against
+// the older one-argument shape working unchanged, including one naming a seat
+// called `tap`, `select` or `mode`, and it costs the new grammar nothing: a
+// bare tap of the focused seat is the zero-argument form it always was.
+//
+// The name NEVER comes from speech. Voice Control matches a fixed phrase and
+// runs a shortcut carrying the name as a literal, so N phrases on his side
+// reach one script here — no transcription of an invented compound like
+// `wirescope`, which is the surface that broke a spoken wake word before.
 //
 // WHY THIS EXISTS RATHER THAN Voice Control's own `press space key`: a
 // keystroke goes to whatever app is frontmost, so with Clodex in the
@@ -77,9 +91,37 @@ function send(socketPath, envelope) {
   });
 }
 
+// argv → envelope, or an error string. Split out from the send so the grammar
+// is testable without a socket.
+//
+// The ONE-TOKEN RULE (see the header) is the compatibility hinge: a verb is
+// recognised only with an argument after it, so every legacy invocation —
+// bare, or with any seat name — takes the tap arm and builds the byte-identical
+// envelope it always did.
+function envelopeFor(args) {
+  const [first, second] = args;
+  if (args.length >= 2) {
+    if (first === 'select') {
+      // No focused-seat fallback, here or in the app: he is looking at another
+      // application by construction, so a select that silently landed on the
+      // seat he already had would have him dictating into the wrong agent
+      // believing he switched. Silence is the safe failure.
+      return { type: 'voice-select', from: 'voice-tap', target: second };
+    }
+    if (first === 'mode') {
+      if (second !== 'tap' && second !== 'hold') return { error: `mode takes tap|hold, got "${second}"` };
+      return { type: 'voice-mode', from: 'voice-tap', mode: second };
+    }
+    if (first === 'tap') return { type: 'voice-tap', from: 'voice-tap', target: second };
+    return { error: `unknown verb "${first}" (use tap|select|mode)` };
+  }
+  const target = first || null;
+  return { type: 'voice-tap', from: 'voice-tap', ...(target ? { target } : {}) };
+}
+
 async function main() {
-  const target = process.argv[2] || null;
-  const envelope = { type: 'voice-tap', from: 'voice-tap', ...(target ? { target } : {}) };
+  const envelope = envelopeFor(process.argv.slice(2));
+  if (envelope.error) die(envelope.error);
 
   for (const socketPath of candidateSockets()) {
     if (await send(socketPath, envelope)) return;
@@ -89,4 +131,8 @@ async function main() {
   die(`no live Clodex agent socket under ${RUN_DIR}`);
 }
 
-main().catch((e) => die(e.message));
+// Guarded so a test can require this file for `envelopeFor` without the require
+// itself firing a socket send. Running it as a script is unchanged.
+if (require.main === module) main().catch((e) => die(e.message));
+
+module.exports = { envelopeFor };

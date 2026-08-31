@@ -2293,6 +2293,60 @@ function createSessionManager(deps) {
 
     appFocused() { return this._appFocused; }
 
+    // Every decline a voice verb can reach, in one place so `select` cannot
+    // admit a seat `tap` would refuse. Falling back to the focused seat on an
+    // ABSENT target is the tap's rule and stays here; an UNMATCHED name is a
+    // decline for both — never a fallback, or a named select would arm a seat
+    // he did not name while he believes he switched.
+    _voiceRoute(target = null) {
+      const name = target || this._focusedSession;
+      if (!name) return { ok: false, error: 'no target and no focused session' };
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
+      if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
+      const win = this.windowForSession(name);
+      if (!win) return { ok: false, error: `"${name}" has no window attached` };
+      return { ok: true, name, session: s, win };
+    }
+
+    // SELECT THEN ARM. The tab has to be the one he is looking at before the
+    // recorder lights, or he dictates into a seat he cannot see.
+    //
+    // The switch frame goes to the target's OWN window and the raise is
+    // voiceTap's, unchanged — one raise mechanism, and it already orders
+    // retarget → raise → frame correctly.
+    voiceSelect(target = null) {
+      const r = this._voiceRoute(target);
+      if (!r.ok) return r;
+      // Ahead of the tap: the tap's raise brings the window forward, and it must
+      // already be showing the named seat when it arrives.
+      this._sendToSession(r.name, 'request-switch-session', r.name);
+      return this.voiceTap(r.name);
+    }
+
+    // Switch the CLI's own push-to-talk mode, INJECTED rather than written to a
+    // settings file: the CLI's `/voice` handler writes the GLOBAL
+    // ~/.claude/settings.json and reads the mode into memory at startup, so a
+    // file written under a running seat disagrees with the process holding it.
+    //
+    // Targets the MICROPHONE HOLDER, never `activeSession` — the holder is the
+    // one invariant that is single-valued across windows, and the mode belongs
+    // to whichever seat would actually record.
+    voiceMode(mode) {
+      if (mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use tap|hold)` };
+      const name = this._micTarget;
+      if (!name) return { ok: false, error: 'no seat holds the microphone' };
+      const r = this._voiceRoute(name);
+      if (!r.ok) return r;
+      // bypassHold, like every other injected slash command: a held bare command
+      // '\n'-joins into a flush batch and the CLI reads the rest of the batch as
+      // garbage arguments. parkable keeps t594's protection — a mode switch that
+      // spliced a half-dictated draft is the problem that rule exists for.
+      this._injectText(r.session, `/voice ${mode}`, { bypassHold: true, parkable: true });
+      log.info('voice', `mode ${mode} → ${name}`);
+      return { ok: true, name, mode };
+    }
+
     // ENSURE-ON from outside the app: a Voice Control wake word arrived over
     // this box's agent socket asking for the recorder.
     //
@@ -2303,13 +2357,9 @@ function createSessionManager(deps) {
     // An explicit target overrides the focused seat, so a script can address a
     // seat the operator is not looking at.
     voiceTap(target = null) {
-      const name = target || this._focusedSession;
-      if (!name) return { ok: false, error: 'no target and no focused session' };
-      const s = this.sessions.get(name);
-      if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
-      if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
-      const win = this.windowForSession(name);
-      if (!win) return { ok: false, error: `"${name}" has no window attached` };
+      const r = this._voiceRoute(target);
+      if (!r.ok) return r;
+      const { name, win } = r;
       // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
       // is the design: he NAMED this seat, so it takes the microphone from
       // whoever held it; a re-arm names nobody, so it gets no say in who holds
@@ -6087,6 +6137,16 @@ function createSessionManager(deps) {
       if (mtype === 'voice-tap') {
         const r = this.voiceTap(typeof msg.target === 'string' ? msg.target : null);
         if (!r.ok) log.info('voice', `external tap declined: ${r.error}`);
+        return;
+      }
+      if (mtype === 'voice-select') {
+        const r = this.voiceSelect(typeof msg.target === 'string' ? msg.target : null);
+        if (!r.ok) log.info('voice', `external select declined: ${r.error}`);
+        return;
+      }
+      if (mtype === 'voice-mode') {
+        const r = this.voiceMode(typeof msg.mode === 'string' ? msg.mode : null);
+        if (!r.ok) log.info('voice', `external mode declined: ${r.error}`);
         return;
       }
       if (mtype === 'team-retire') {
