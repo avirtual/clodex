@@ -206,7 +206,7 @@ function mkFixture() {
     // t581 widened t574's audit to this file. getRemindScheduler — the one that
     // was reached-and-swallowed in the other four fixtures — was already wired
     // above, which is why every reminder subject here measures a real scheduler.
-    // None of the ten below is reached by a subject here. The five manifest verbs
+    // None of the keys below is reached by a subject here. The five manifest verbs
     // go through `loadManifest`, which reads `<home>/teams/team/team.json`; this
     // fixture never writes that file, so a subject reaching one gets `no team
     // manifest at …` and must write it first rather than read the error as a
