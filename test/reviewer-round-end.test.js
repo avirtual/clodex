@@ -55,6 +55,16 @@ const SHIPPED_REVIEWER_TEMPLATE = {
   },
 };
 
+// ONE seed dir for the whole file, not one per mkFixture(): initStores SEEDS the
+// shipped library into whatever registryDir it is handed, and re-seeding it per
+// fixture cost 13 copies of nine files for a directory nothing reads.
+//
+// Still a THROWAWAY and deliberately NOT `home`, which is this fixture's
+// REGISTRY_DIR: seeding `home` would plant clodex-team-reviewer.md under the dir
+// the reviewer-prompt lookup reads, which the prompt-absent subjects need bare.
+// Shared is safe BECAUSE nothing reads it; pointing it at `home` would not be.
+const SEED_DIR = mkTmpRoot('clodex-t470-seed-');
+
 // A REAL git repo, for the reason ticket-reminder-binding.test.js gives: the
 // accept arms fork on a git fact (merged / not merged / check could not run),
 // and a stubbed gitWorktree would let a subject claim to exercise the merged arm
@@ -86,11 +96,7 @@ function mkFixture() {
     now: () => Date.now(),
     setTimer: () => null,
     clearTimer: () => {},
-    // registryDir is a THROWAWAY, deliberately not `home`: initStores SEEDS the
-    // shipped prompt library into whatever dir it is given, and this fixture's
-    // REGISTRY_DIR is `home` — seeding it would plant clodex-team-reviewer.md
-    // under the dir the reviewer-prompt lookup reads.
-    store: initStores(userData, { log: console, registryDir: mkTmpRoot('clodex-t470-seed-') }).reminders,
+    store: initStores(userData, { log: console, registryDir: SEED_DIR }).reminders,
     deliver: () => {},
   });
   const repoDir = mkRepo();
@@ -168,8 +174,8 @@ function mkFixture() {
     // their absence swallowed:
     //
     //   getRemindScheduler — `_cancelTicketReminders` catches the TypeError into
-    //     `sched = null` and returns '', so no accept or cancel here ever
-    //     cancelled a ticket-bound reminder or rendered the clause reporting it.
+    //     `sched = null` and returns '', so no accept here ever cancelled a
+    //     ticket-bound reminder or rendered the clause reporting it.
     //   DEFAULT_WORKSPACE_ID — `resolveSeatShape` resolves every reviewer spawn's
     //     workspaceId through it, and this fixture's seats carry no workspaceId,
     //     so every spawn resolved `undefined`. Invisible because `create` is a

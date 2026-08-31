@@ -25,7 +25,7 @@
 // change is the DISTINCTION. `.claude/CLAUDE.md` documents that vacuity shape
 // under Tests, with seven recorded instances in this repo.
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
@@ -39,6 +39,21 @@ const { initStores } = require('../stores');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { createTeamManifest } = require('../team-manifest');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
+
+// ONE seed dir for the whole file, minted on first use: initStores SEEDS the
+// shipped library into whatever registryDir it is handed, and re-seeding it per
+// mkFixture() cost 34 copies of nine files for a directory nothing reads.
+//
+// Still a THROWAWAY and deliberately NOT `home`, which is this fixture's
+// REGISTRY_DIR. Sharing is safe BECAUSE nothing reads it; pointing it at `home`
+// would plant the shipped prompts under a dir the seat-shape lookup reads.
+//
+// Reaped by a TOP-LEVEL after rather than the per-fixture `tmpDirs`: those run
+// per subject, and the first one to fire would delete the dir the remaining
+// fixtures still share.
+let SEED_DIR = null;
+const seedDir = () => (SEED_DIR ||= fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-seed-')));
+after(() => { if (SEED_DIR) { try { fsReal.rmSync(SEED_DIR, { recursive: true, force: true }); } catch {} } });
 
 // A REAL repo with REAL worktrees, for the reason reviewer-round-end.test.js
 // gives about the accept arms: every assertion below is about what survived on
@@ -72,18 +87,14 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-'));
   const repoDir = mkRepo();
   const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-ud-'));
-  // registryDir is a THROWAWAY, deliberately not `home`: initStores SEEDS the
-  // shipped prompt library into whatever dir it is given, and this fixture's
-  // REGISTRY_DIR is `home`.
-  const seedDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-seed-'));
-  const tmpDirs = [home, repoDir, userData, seedDir];
+  const tmpDirs = [home, repoDir, userData];
   if (t) t.after(() => { for (const d of tmpDirs) { try { fsReal.rmSync(d, { recursive: true, force: true }); } catch {} } });
   const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
   const scheduler = createRemindScheduler({
     now: () => Date.now(),
     setTimer: () => null,
     clearTimer: () => {},
-    store: initStores(userData, { log: console, registryDir: seedDir }).reminders,
+    store: initStores(userData, { log: console, registryDir: seedDir() }).reminders,
     deliver: () => {},
   });
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });

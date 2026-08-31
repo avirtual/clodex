@@ -198,7 +198,11 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     // REAL, like gitWorktree: the suite-in-flight gate asks whether a pid that
     // wrote a lock file is still running, and a stub answering `false` would
     // turn every "a live suite holds the lock" subject into a merge that
-    // proceeded — the assertions would then be measuring the stub.
+    // proceeded — the assertions would then be measuring the stub. `isAliveOver`
+    // exists to override exactly this.
+    isAlive: isAliveOver || ((pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }),
+    // REAL: every merge writes the commit message through it.
+    ensureDir: require('../fs-util').ensureDir,
     // Un-injected until t574, and its absence was SWALLOWED: every close verb
     // here runs `_cancelTicketReminders`, whose `getRemindScheduler()` TypeError
     // is caught into `sched = null`. So no merge subject in this file ever
@@ -220,8 +224,6 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     removeRole: manifest.removeRole,
     renameRole: manifest.renameRole,
     setTeamWatchdog: manifest.setTeamWatchdog,
-    isAlive: isAliveOver || ((pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }),
-    ensureDir: require('../fs-util').ensureDir,
     // REAL, deliberately — see the header. The merge WRITES to this repo.
     gitWorktree: gitOver ? { ...require('../git-worktree'), ...gitOver } : require('../git-worktree'),
     childProcess: require('node:child_process'),
