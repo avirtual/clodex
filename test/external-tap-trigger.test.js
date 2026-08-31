@@ -1078,6 +1078,38 @@ test('SELECT: the socket arm dispatches voice-select', () => {
       ['mic-target', 'B'], ['voice-tap', 'B']]);
 });
 
+// `mode` is the only verb that reaches the pty, so its manager needs the inject
+// machinery `mk` leaves out — the REAL InjectQueue, because the whole claim is
+// that the bytes ride the queue and inherit its gates. A stub queue here would
+// assert only that this file can call a function it also wrote.
+//
+// Timings flattened to zero so the writes land inside the test rather than
+// production's quiet window; the SPEAKING window is the one exception, set per
+// test, because a gate that never holds cannot show a deferral.
+function mkInject({ speakingStale = 0 } = {}) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const PENDING_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicemode-'));
+  const m = mk({
+    InjectQueue: require('../inject-queue').InjectQueue,
+    PENDING_DIR,
+    parkDelivery: require('../pending-store').parkDelivery,
+    INJECT_QUIET_MS: 0,
+    // Large: the cap firing underneath a deferral test would inject the very
+    // bytes that test asserts are withheld, and it would look like a pass of
+    // the opposite claim.
+    INJECT_QUIET_MAXWAIT: 3_600_000,
+    INJECT_BOOT_MAXWAIT: 0,
+    INJECT_SPEAKING_STALE_MS: speakingStale,
+    INJECT_VOICE_DRAFT_STALE_MS: 0,
+    SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9,
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  m._broadcast = () => {};
+  return { m, PENDING_DIR };
+}
+
 // A seat with a pty whose writes are recorded, so `mode` can be followed all the
 // way to the bytes rather than to a spy on the manager's own method.
 function micSeat(m, name, win) {
@@ -1085,6 +1117,7 @@ function micSeat(m, name, win) {
   m.sessions.set(name, {
     name, agentType: 'claude', workspaceId: win.ws, _dead: false,
     _bootReadySeen: true,
+    lastUserInputTs: 0, lastUserSubmitTs: 0,
     pty: { write: (b) => writes.push(b) },
   });
   return writes;
@@ -1093,7 +1126,7 @@ function micSeat(m, name, win) {
 function settle(ms = 250) { return new Promise((r) => setTimeout(r, ms)); }
 
 test('MODE: injects /voice into the MIC HOLDER, not the active session', async () => {
-  const m = mk();
+  const { m } = mkInject();
   const a = fakeWin(); a.ws = 'ws1';
   const b = fakeWin(); b.ws = 'ws2';
   m.registerWindow('ws1', a);
@@ -1114,7 +1147,7 @@ test('MODE: injects /voice into the MIC HOLDER, not the active session', async (
 });
 
 test('MODE: the bytes ride the inject queue rather than a raw pty write', async () => {
-  const m = mk();
+  const { m } = mkInject();
   const win = fakeWin(); win.ws = 'ws1';
   m.registerWindow('ws1', win);
   const writes = micSeat(m, 'A', win);
@@ -1131,21 +1164,35 @@ test('MODE: the bytes ride the inject queue rather than a raw pty write', async 
 });
 
 test('MODE: a mode switch DEFERS while he is dictating', async () => {
-  const m = mk();
+  // The recorder window must be OPEN for the gate to hold at all — with it
+  // closed this test would pass for the wrong reason (nothing to defer).
+  const { m } = mkInject({ speakingStale: 60_000 });
   const win = fakeWin(); win.ws = 'ws1';
   m.registerWindow('ws1', win);
   const writes = micSeat(m, 'A', win);
   reportFrom(m, win, 'A');
+  const s = m.sessions.get('A');
   // Dictation gets the protection typing has: the Ctrl-U that opens an injection
   // eats a half-SPOKEN draft exactly as it eats a half-typed one.
-  m.sessions.get('A').lastVoiceRecordingTs = Date.now();
+  s.lastVoiceRecordingTs = Date.now();
+  assert.ok(Date.now() - s.lastVoiceRecordingTs < 60_000,
+    'ENTER: the recorder window is open, or the deferral below is vacuous');
+
   m.voiceMode('hold');
   await settle();
   assert.deepStrictEqual(writes, [], 'nothing was written into the live dictation');
+
+  // Release the deferral loop before the file ends. It polls until the window
+  // closes or the seat dies, and with the quiet interval flattened to zero for
+  // this fixture it would spin for the full 60s and hang the run — production's
+  // interval is not zero, so this is the fixture's debt, not the queue's.
+  s._dead = true;
+  await settle(20);
+  assert.deepStrictEqual(writes, [], 'and the release did not flush it either');
 });
 
 test('MODE: an unknown mode and an unheld microphone are declined', () => {
-  const m = mk();
+  const { m } = mkInject();
   const win = fakeWin(); win.ws = 'ws1';
   m.registerWindow('ws1', win);
   micSeat(m, 'A', win);
@@ -1159,7 +1206,7 @@ test('MODE: an unknown mode and an unheld microphone are declined', () => {
 });
 
 test('MODE: the socket arm dispatches voice-mode and takes the mode only as a string', async () => {
-  const m = mk();
+  const { m } = mkInject();
   const win = fakeWin(); win.ws = 'ws1';
   m.registerWindow('ws1', win);
   const writes = micSeat(m, 'A', win);
