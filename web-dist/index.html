@@ -7488,6 +7488,7 @@ body {
         // deferral by itself. An off-frame that never arrives would strand delivery
         // to the seat permanently, which is worse than the bug this fixes.
         { name: "noteVoiceRecording", kind: "send", channel: "voice:recording" },
+        { name: "noteVoiceDraft", kind: "send", channel: "voice:draft" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -23629,6 +23630,27 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof row !== "string") return false;
         return COMPOSER_EMPTY.test(row);
       }
+      var COMPOSER_DRAFT = /^[\u276f>][\u0020\u00a0][\s\S]*\S/u;
+      function composerHasDraft(row) {
+        if (typeof row !== "string") return false;
+        return COMPOSER_DRAFT.test(row);
+      }
+      var COMPOSER_CONTINUATION = /^\u0020\u0020\S/u;
+      function composerContinues(row) {
+        if (typeof row !== "string") return false;
+        return COMPOSER_CONTINUATION.test(row);
+      }
+      function composerHasDraftRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return false;
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const row = rows[i];
+          if (typeof row !== "string") return false;
+          if (composerHasDraft(row)) return true;
+          if (composerIsEmpty(row)) return false;
+          if (!composerContinues(row)) return false;
+        }
+        return false;
+      }
       var RECORDING = /\u23faREC/u;
       var PROCESSING = /Voice:\s*processing/i;
       function recorderBlocksRearm(rows) {
@@ -23669,6 +23691,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         shouldFire,
         shouldRearm,
         composerIsEmpty,
+        composerHasDraft,
+        composerContinues,
+        composerHasDraftRows,
         recorderBlocksRearm,
         isVoiceOriginated,
         recordingObserved,
@@ -23687,6 +23712,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         shouldFire,
         shouldRearm,
         composerIsEmpty,
+        composerHasDraftRows,
         recorderBlocksRearm,
         isVoiceOriginated,
         recordingObserved
@@ -23700,6 +23726,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var REARM_SETTLE_MS = 3e3;
       var REARM_ABANDON_MS = 2e4;
       var VOICE_EVIDENCE_MS = 2e4;
+      var VOICE_DRAFT_SITTING_MS = 12e4;
       function readComposition(terminal) {
         const root = terminal && terminal.element;
         if (!root || typeof root.querySelector !== "function") return null;
@@ -23753,6 +23780,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // main expires the stamp, so a watcher disposed mid-utterance releases the
         // deferral instead of stranding it.
         noteVoiceRecording = null,
+        // Reports that a DICTATED draft is sitting in the composer, which outlives the
+        // recorder: the indicator goes dark the moment he stops talking, and that is
+        // when he starts READING what was transcribed. Reported on the level like the
+        // recorder above and expired by main the same way, so every way this watcher
+        // can stop — disposed, seat switched, window closed, screen unreadable —
+        // releases the protection rather than stranding the seat.
+        noteVoiceDraft = null,
+        // How long after the recorder was last seen lit a non-empty composer is still
+        // attributed to dictation. Bounds the attribution, not the protection: past
+        // it the text is just text, and a draft he typed was never this feature's.
+        voiceDraftMs = VOICE_DRAFT_SITTING_MS,
         // Whether this seat is one whose recorder is worth reporting at all. Distinct
         // from `getConfig`, which additionally requires hands-free SUBMIT to be
         // switched on: the operator dictates whether or not that feature is enabled,
@@ -23773,6 +23811,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let voiceEvidenceAt = null;
         let mutedByTyping = false;
         let prevObserved = false;
+        let lastLitAt = 0;
         let marks = 0;
         let pending = null;
         let pendingAt = 0;
@@ -23811,6 +23850,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
               if (line) out.push(line.translateToString(true));
             }
             return out;
+          } catch {
+            return null;
+          }
+        }
+        function composerRows() {
+          if (!onNormalBuffer()) return null;
+          try {
+            const buf = terminal.buffer.active;
+            const out = [];
+            for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
+              const line = buf.getLine(buf.baseY + y);
+              if (!line) break;
+              out.unshift(line.translateToString(true));
+            }
+            return out.length ? out : null;
           } catch {
             return null;
           }
@@ -23902,13 +23956,27 @@ ${m[2].replace(/^\r?\n/, "")}`;
           try {
             inScope = !!cfg || !!recorderScope();
           } catch {
-            inScope = !!cfg;
           }
           const observed = inScope ? recordingObserved(indicatorRows()) : false;
           if (observed && noteVoiceRecording) {
             try {
               noteVoiceRecording();
             } catch {
+            }
+          }
+          if (observed) lastLitAt = now();
+          if (inScope && noteVoiceDraft && lastLitAt && now() - lastLitAt < voiceDraftMs) {
+            let rows = null;
+            try {
+              rows = composerRows();
+            } catch {
+              rows = null;
+            }
+            if (composerHasDraftRows(rows)) {
+              try {
+                noteVoiceDraft();
+              } catch {
+              }
             }
           }
           if (!cfg) {
@@ -32910,7 +32978,8 @@ ${detail}` });
           // Still the ACTIVE seat only — dictation reaches the focused composer, so a
           // background seat's indicator is not him speaking into it.
           recorderScope: () => name === activeSession && sessionTypeOf(name) === "claude",
-          noteVoiceRecording: () => window.api.noteVoiceRecording(name)
+          noteVoiceRecording: () => window.api.noteVoiceRecording(name),
+          noteVoiceDraft: () => window.api.noteVoiceDraft(name)
         });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);

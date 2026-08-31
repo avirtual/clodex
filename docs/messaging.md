@@ -165,10 +165,44 @@ Codex gets a read-with-Read pointer.
    `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk).
 
 **Park-at-fire divert** — injects marked `parkable` re-check
-`_parkDivertFor` at the moment of writing: if the operator has a draft open
-(`isDraftOpen`, stateful across PTY chunks including bracketed paste), the
-delivery parks instead of splicing into the draft. Opt-in at conversational
+`_parkDivertFor` at the moment of writing: if the operator has a draft open,
+the delivery parks instead of splicing into the draft. Opt-in at conversational
 call sites only; self-intents are never parkable.
+
+Two independent readings of "a draft is open", because the two kinds of draft
+reach Clodex by different routes and neither predicate can see the other's:
+
+- **Typed** — `isDraftOpen`, stateful across PTY chunks including bracketed
+  paste, fed by `isHumanPtyInput` inside `SessionManager.write()`. Held until
+  he submits or clears.
+- **Dictated** — `_voiceDraftOpen`, an expiring stamp
+  (`INJECT_VOICE_DRAFT_STALE_MS`) refreshed by the renderer while a non-empty
+  composer sits under a recently-lit recorder. Dictated words never pass
+  through `write()`, so no typed stamp ever moves for them and the typed
+  predicate reads such a seat as idle. Distinct from the `speaking` gate in
+  inject-queue.js, which defers only while the recorder is LIT: the indicator
+  goes dark when he stops talking, and the exposure is the reading that follows.
+
+  The composer read is MULTI-ROW: the CLI hard-paints continuation rows
+  (`isWrapped` is false on them, measured) with a two-space indent, so a long
+  dictated draft — the case the protection exists for — puts the cursor on a row
+  carrying no marker. The watcher scans upward from the cursor, bounded by the
+  screen height, for the composer head.
+
+  It EXPIRES rather than waiting for a release event, because dictation has no
+  submit Clodex can observe. Every way the report can stop — submitted, cleared,
+  seat switched, window closed, screen unreadable — releases it, and the park
+  cap bounds it again from a timer that reads no voice signal. The renderer's
+  composer read is positive (`composerHasDraftRows`) and never
+  `!composerIsEmpty`: an unreadable row, a scan that falls off the top, and a
+  head that is never found all decline, because an unreadable screen must not
+  park deliveries nothing can then release.
+
+The idle and boot-ready pending drains consult `_anyDraftOpen` — BOTH
+predicates — rather than `isDraftOpen` alone. Guarding on the typed one let a
+dictated draft through, `drainPending` claimed the directory destructively, and
+the divert re-parked the joined text as one ACTIVE entry: no message lost, but a
+`.passive.` park came back active, and a passive park never earns a turn.
 
 ### Parking & resend (pending-store.js)
 

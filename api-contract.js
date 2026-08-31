@@ -377,6 +377,7 @@ const API_CONTRACT = [
   // deferral by itself. An off-frame that never arrives would strand delivery
   // to the seat permanently, which is worse than the bug this fixes.
   { name: 'noteVoiceRecording', kind: 'send', channel: 'voice:recording' },
+  { name: 'noteVoiceDraft', kind: 'send', channel: 'voice:draft' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },

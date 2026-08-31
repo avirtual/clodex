@@ -28,7 +28,15 @@ const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 // A virtual clock, so "he is still speaking" is a state the test holds rather
 // than a race it runs. `speaking` is read on every loop turn exactly as the
 // live thunk is.
-function vqueue({ speaking, maxWaitMs = 10_000, onTurn = null }) {
+// `maxTurns` bounds the gate loop so a mutation that removes the cap check
+// fails with a NAMED assertion instead of spinning the virtual clock forever.
+// The failure shape matters more than usual here: a wedge is reported by the
+// runner as a timeout with no subject name, and this file's own mutation check
+// hit exactly that. Generous enough that no honest test below approaches it —
+// each waits out a few hundred virtual ms at 50ms a turn.
+const MAX_TURNS = 1000;
+
+function vqueue({ speaking, maxWaitMs = 10_000 }) {
   const writes = [];
   const clock = { t: 1_000 };
   // The clock at the FIRST byte — i.e. how long the GATE held. Measured here
@@ -37,6 +45,7 @@ function vqueue({ speaking, maxWaitMs = 10_000, onTurn = null }) {
   // gate that deferred from a settle that did, and the difference is the whole
   // subject of this file.
   let firstWriteAt = null;
+  let turns = 0;
   const q = new InjectQueue({
     write: (bytes) => { if (firstWriteAt === null) firstWriteAt = clock.t; writes.push(bytes); },
     settleMsFor: () => 1,
@@ -49,7 +58,17 @@ function vqueue({ speaking, maxWaitMs = 10_000, onTurn = null }) {
     speaking: () => speaking(clock),
     isDead: () => false,
     now: () => clock.t,
-    sleep: (ms) => { clock.t += ms; if (onTurn) onTurn(clock); return Promise.resolve(); },
+    sleep: (ms) => {
+      clock.t += ms;
+      if (++turns > MAX_TURNS) {
+        throw new assert.AssertionError({
+          message: `the inject gate never released after ${MAX_TURNS} turns (virtual t=${clock.t}, `
+            + `maxWaitMs=${maxWaitMs}) — the max-wait cap did not bound the deferral. `
+            + 'Reported here rather than as an unnamed runner timeout: a wedge names no subject.',
+        });
+      }
+      return Promise.resolve();
+    },
   });
   return { q, writes, clock, firstWriteAt: () => firstWriteAt };
 }

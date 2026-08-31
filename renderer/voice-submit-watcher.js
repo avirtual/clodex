@@ -24,7 +24,7 @@
 
 const {
   findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
-  recorderBlocksRearm, isVoiceOriginated, recordingObserved,
+  composerHasDraftRows, recorderBlocksRearm, isVoiceOriginated, recordingObserved,
 } = require('./lib/voice-submit');
 // The SAME classifier the main process and typeToTakeControl use. A second
 // predicate here would drift from the one that already decides what counts as a
@@ -185,6 +185,21 @@ const REARM_ABANDON_MS = 20000;
 // discriminator: the discrimination is done by requiring evidence AT ALL.
 const VOICE_EVIDENCE_MS = 20_000;
 
+// How long a non-empty composer stays attributed to DICTATION after the
+// recorder was last seen lit. It bounds the ATTRIBUTION, not the protection:
+// the operator's exposure is the minutes he spends re-reading a long
+// transcription before sending it, so this has to outlast reading rather than
+// speaking, and 3s (the recorder's own stale window) is far too short for that
+// — a stale window sized for "is he talking right now" cannot answer "is what
+// he dictated still on screen".
+//
+// Bounded rather than open-ended because there is no event that says he
+// abandoned it. Past this, a composer with words in it is treated as ordinary
+// text: he may well have typed it, and the delivery he is owed is not held
+// forever on evidence this old. The 5-minute inject cap bounds it again from
+// the main side regardless of what this says.
+const VOICE_DRAFT_SITTING_MS = 120_000;
+
 // Provisional boundary #1: where the pending composed text comes from.
 // Contract: the text of THIS terminal's pending composition, or null when there
 // is none. Everything downstream reads this; nothing else queries the DOM.
@@ -311,6 +326,17 @@ function createVoiceSubmitWatcher(terminal, {
   // main expires the stamp, so a watcher disposed mid-utterance releases the
   // deferral instead of stranding it.
   noteVoiceRecording = null,
+  // Reports that a DICTATED draft is sitting in the composer, which outlives the
+  // recorder: the indicator goes dark the moment he stops talking, and that is
+  // when he starts READING what was transcribed. Reported on the level like the
+  // recorder above and expired by main the same way, so every way this watcher
+  // can stop — disposed, seat switched, window closed, screen unreadable —
+  // releases the protection rather than stranding the seat.
+  noteVoiceDraft = null,
+  // How long after the recorder was last seen lit a non-empty composer is still
+  // attributed to dictation. Bounds the attribution, not the protection: past
+  // it the text is just text, and a draft he typed was never this feature's.
+  voiceDraftMs = VOICE_DRAFT_SITTING_MS,
   // Whether this seat is one whose recorder is worth reporting at all. Distinct
   // from `getConfig`, which additionally requires hands-free SUBMIT to be
   // switched on: the operator dictates whether or not that feature is enabled,
@@ -352,6 +378,8 @@ function createVoiceSubmitWatcher(terminal, {
   // The level stamp is what refreshes them; this only suppresses it after typing.
   let mutedByTyping = false;
   let prevObserved = false;
+  // When the recorder was last seen lit, anchoring the dictated-draft report.
+  let lastLitAt = 0;
   let marks = 0;
 
   // The composition half's own state. `pending` is the composed text as of the
@@ -441,6 +469,30 @@ function createVoiceSubmitWatcher(terminal, {
         if (line) out.push(line.translateToString(true));
       }
       return out;
+    } catch { return null; }
+  }
+
+  // The composer rows ending at the CURSOR's row, top→bottom, each read WHOLE.
+  // Upward because a long draft's head — the row carrying the marker, which is
+  // the only evidence a draft exists — is ABOVE the cursor; `indicatorRows`
+  // scans downward for the opposite reason, the indicator painting to the right
+  // and below.
+  //
+  // Bounded by `terminal.rows`, so a screen with no marker anywhere costs one
+  // screen of reads and not a walk through scrollback. Null (never []) when the
+  // screen cannot be read, so `composerHasDraftRows` declines rather than
+  // guessing — an unreadable screen must not park deliveries.
+  function composerRows() {
+    if (!onNormalBuffer()) return null;
+    try {
+      const buf = terminal.buffer.active;
+      const out = [];
+      for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
+        const line = buf.getLine(buf.baseY + y);
+        if (!line) break;
+        out.unshift(line.translateToString(true));
+      }
+      return out.length ? out : null;
     } catch { return null; }
   }
 
@@ -586,13 +638,35 @@ function createVoiceSubmitWatcher(terminal, {
     // `recorderBlocksRearm` makes the re-arm's own decision from the same rows
     // and is deliberately untouched here.
     let inScope = false;
-    try { inScope = !!cfg || !!recorderScope(); } catch { inScope = !!cfg; }
+    try { inScope = !!cfg || !!recorderScope(); } catch {}
     const observed = inScope ? recordingObserved(indicatorRows()) : false;
     // Reported on the LEVEL, every poll it stays lit, because main expires the
     // stamp rather than waiting for an off. Before the bail for the reason
     // above: this is the operator's protection from being spliced mid-sentence,
     // not part of the submit feature.
     if (observed && noteVoiceRecording) { try { noteVoiceRecording(); } catch {} }
+    if (observed) lastLitAt = now();
+
+    // The DRAFT report, and the reason it is not the recorder report: the
+    // indicator goes dark the instant he stops talking, which is the instant he
+    // starts re-reading the transcription. This keeps the protection alive for
+    // as long as the dictated words are still sitting in the composer unsent.
+    //
+    // `composerHasDraft` is a POSITIVE read, never `!composerIsEmpty`: that
+    // negation is true of every row this cannot read (null off the alternate
+    // buffer, a dialog interior, a mid-repaint screen), and main PARKS on this
+    // answer — an unreadable screen must not park deliveries nobody can then
+    // release. Doubt delivers, as it does for the recorder gate.
+    //
+    // Anchored on the recorder having been lit RECENTLY, which is what makes it
+    // a dictated draft rather than any draft: without the anchor this reports on
+    // every seat with text in its composer and quietly reroutes injection
+    // box-wide.
+    if (inScope && noteVoiceDraft && lastLitAt && now() - lastLitAt < voiceDraftMs) {
+      let rows = null;
+      try { rows = composerRows(); } catch { rows = null; }
+      if (composerHasDraftRows(rows)) { try { noteVoiceDraft(); } catch {} }
+    }
 
     // A null config is an out-of-scope SEAT, not a stop: getConfig returns it
     // for any seat that is not the active claude session, and also whenever

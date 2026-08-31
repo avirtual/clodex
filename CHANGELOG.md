@@ -24,6 +24,17 @@ blocks a release.
   hands-free submit is switched on. The existing five-minute cap still applies,
   so a recorder that gets stuck lit cannot hold your messages indefinitely.
 
+- **And it no longer cuts you off while you are re-reading what you dictated.**
+  The recording indicator goes out the moment you stop talking, which is exactly
+  when you start reading the transcription back before sending it — so the
+  protection above expired seconds into the window you were most exposed in. A
+  message arriving while a long dictated draft sat in the composer still ate it.
+  Clodex now recognises a dictated draft that is still sitting unsent and holds
+  the message back the same way it already does for a draft you TYPED: the
+  message waits on disk and arrives with your next turn, so nothing is delayed
+  once you send. It releases as soon as the composer is empty or Clodex stops
+  being able to see it, and the same five-minute cap bounds it regardless.
+
 - **The microphone comes back on its own after a hands-free submit.** When the
   model answered quickly, the CLI left its recorder running after Clodex sent
   your message — and that surviving recording was dead: `REC` stayed lit but no

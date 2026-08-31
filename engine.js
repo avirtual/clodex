@@ -330,6 +330,14 @@ const INJECT_BOOT_MAXWAIT = 20 * 1000;
 // between keystrokes, this waits out a pause between WORDS, and the whole bug is
 // that speaking is the slower of the two.
 const INJECT_SPEAKING_STALE_MS = 3 * 1000;
+// The same staleness bound for the renderer's "a dictated draft is still
+// sitting in the composer" sample. Larger than the speaking window because it
+// answers a different question: that one asks whether he is talking right now,
+// this one whether what he dictated is still on screen unsent — and re-reading
+// a long transcription takes minutes. It is still an EXPIRY, so a renderer that
+// stops reporting releases the seat; and the park it gates is bounded again by
+// INJECT_QUIET_MAXWAIT, which no voice signal can hold open.
+const INJECT_VOICE_DRAFT_STALE_MS = 10 * 1000;
 
 
 
@@ -920,6 +928,7 @@ const SessionManager = createSessionManager({
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
     INJECT_SPEAKING_STALE_MS,
+    INJECT_VOICE_DRAFT_STALE_MS,
     InjectQueue,
     JsonlWatcher,
     LONG_TEXT_DELAY,

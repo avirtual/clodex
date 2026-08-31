@@ -1898,6 +1898,13 @@ function registerIpcHandlers(deps) {
     manager.noteVoiceRecording(String(name || ''));
   });
 
+  // A dictated draft is sitting unsent in this seat's composer, resent while it
+  // sits. Same shape and same reason as the recorder report above: no timestamp
+  // crosses, main stamps its own clock, and main expires it.
+  on('voice:draft', (_e, name) => {
+    manager.noteVoiceDraft(String(name || ''));
+  });
+
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   handle('session:retrySpawn', async (e, name) => {
