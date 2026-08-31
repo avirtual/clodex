@@ -306,6 +306,17 @@ function createVoiceSubmitWatcher(terminal, {
   // every other path here is unchanged — the marker is an annotation on a
   // submit, never a precondition for one.
   markVoiceOrigin = null,
+  // Reports the CLI's recording indicator to main, which defers injection while
+  // it is lit. Resent on every poll that sees it, never paired with an off —
+  // main expires the stamp, so a watcher disposed mid-utterance releases the
+  // deferral instead of stranding it.
+  noteVoiceRecording = null,
+  // Whether this seat is one whose recorder is worth reporting at all. Distinct
+  // from `getConfig`, which additionally requires hands-free SUBMIT to be
+  // switched on: the operator dictates whether or not that feature is enabled,
+  // and gating his protection on an unrelated checkbox would fix the bug only
+  // for the seats that had opted into something else.
+  recorderScope = () => false,
   evidenceMs = VOICE_EVIDENCE_MS,
   now = Date.now,
 }) {
@@ -558,14 +569,6 @@ function createVoiceSubmitWatcher(terminal, {
 
     let cfg = null;
     try { cfg = getConfig(); } catch { cfg = null; }
-    // A null config is an out-of-scope SEAT, not a stop: getConfig returns it
-    // for any seat that is not the active claude session, and also whenever
-    // hands-free submit is off at all — so clicking another sidebar row
-    // produces one. Clearing the prefix here would resend the whole
-    // accumulation the moment the operator clicks back and keeps dictating —
-    // the same shape as the alt-screen arm, and the same answer.
-    if (!cfg) { forgetPending(); return; }
-
     // The CLI's own voice path, which never produces a composition: it records
     // and paints the transcription straight into the composer, so the indicator
     // is the only moment the microphone is visible from here. Sampled ABOVE the
@@ -574,9 +577,31 @@ function createVoiceSubmitWatcher(terminal, {
     // seconds, so 300ms resolves it, while a scan on every write parse would
     // run orders of magnitude more often for the same answer.
     //
-    // Read-only. `recorderBlocksRearm` makes the re-arm's own decision from the
-    // same rows and is deliberately untouched here.
-    const observed = recordingObserved(indicatorRows());
+    // Sampled above the CONFIG BAIL too, and that is the wider of the two
+    // hoists: a null config means hands-free submit is off or this is not the
+    // active seat, and the operator dictates into seats regardless of whether he
+    // opted into an unrelated feature. `recorderScope` is what re-narrows it, so
+    // a non-null config still samples exactly what it sampled before.
+    //
+    // `recorderBlocksRearm` makes the re-arm's own decision from the same rows
+    // and is deliberately untouched here.
+    let inScope = false;
+    try { inScope = !!cfg || !!recorderScope(); } catch { inScope = !!cfg; }
+    const observed = inScope ? recordingObserved(indicatorRows()) : false;
+    // Reported on the LEVEL, every poll it stays lit, because main expires the
+    // stamp rather than waiting for an off. Before the bail for the reason
+    // above: this is the operator's protection from being spliced mid-sentence,
+    // not part of the submit feature.
+    if (observed && noteVoiceRecording) { try { noteVoiceRecording(); } catch {} }
+
+    // A null config is an out-of-scope SEAT, not a stop: getConfig returns it
+    // for any seat that is not the active claude session, and also whenever
+    // hands-free submit is off at all — so clicking another sidebar row
+    // produces one. Clearing the prefix here would resend the whole
+    // accumulation the moment the operator clicks back and keeps dictating —
+    // the same shape as the alt-screen arm, and the same answer.
+    if (!cfg) { forgetPending(); return; }
+
     // A RISE is the recorder starting, which is the operator reaching for the
     // microphone: it clears the mute so tap-listening marks normally (the tap
     // keypress mutes, the recorder then lights, and this unmutes on that edge).

@@ -2930,3 +2930,128 @@ test('the abandon deadline outlasts the CLI 15s tap silence timeout', () => {
   assert.ok(REARM_ABANDON_MS > CLI_TAP_SILENCE_MS,
     `the deadline (${REARM_ABANDON_MS}ms) must outlast the CLI ${CLI_TAP_SILENCE_MS}ms timeout`);
 });
+
+// --- reporting the recorder to main, so speaking defers injection -----------
+//
+// The watcher already SAW the indicator (it feeds the voice-origin marker); the
+// gap was that nothing told the main process, whose inject quiet-gate protects
+// a TYPING operator and had no signal at all for a speaking one. These pin the
+// renderer end of that hop: what is reported, when, and — the part that is easy
+// to get subtly wrong — for which seats.
+
+function recorderReportHarness({
+  rows = [EMPTY_COMPOSER],
+  // The submit feature OFF, which is the interesting default here: he dictates
+  // whether or not he opted into hands-free submit, so the reporting must not
+  // be downstream of that checkbox.
+  config = null,
+  scope = true,
+} = {}) {
+  const reports = [];
+  const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
+  const env = { config, scope };
+  const watcher = track(createVoiceSubmitWatcher(term, {
+    getConfig: () => env.config,
+    getAttention: () => null,
+    write: () => {},
+    quietMs: TEST_QUIET_MS,
+    pollMs: 1,
+    recorderScope: () => env.scope,
+    noteVoiceRecording: () => reports.push('REC'),
+  }));
+  return { term, watcher, reports, env };
+}
+
+test('the lit recorder is reported to main even with hands-free submit OFF', async () => {
+  // The half-fix this guards against: sampling below the config bail reports
+  // only for seats that enabled an unrelated feature, and he is cut off on
+  // every other seat exactly as before.
+  const h = recorderReportHarness({ rows: [EMPTY_COMPOSER, REC_ROW] });
+  await settle(10);
+  assert.ok(h.reports.length > 0, 'a null config must not silence the report');
+  h.watcher.dispose();
+});
+
+test('the report REPEATS while the recorder stays lit', async () => {
+  // Level-triggered by design: main expires the stamp rather than waiting for
+  // an off-frame, so a renderer that stops (window closed, seat switched, seat
+  // crashed mid-utterance) releases the deferral instead of wedging it. One
+  // edge-triggered report would make that release impossible.
+  const h = recorderReportHarness({ rows: [EMPTY_COMPOSER, REC_ROW] });
+  await settle(30);
+  assert.ok(h.reports.length > 3,
+    `a single report cannot hold a level-expiring stamp open (got ${h.reports.length})`);
+  h.watcher.dispose();
+});
+
+test('nothing is reported when the recorder is dark', async () => {
+  const h = recorderReportHarness({ rows: [EMPTY_COMPOSER, ' agents · tap to talk'] });
+  await settle(10);
+  assert.deepStrictEqual(h.reports, [],
+    'a dark recorder must never defer delivery to the seat');
+  h.watcher.dispose();
+});
+
+test('an out-of-scope seat reports nothing, lit or not', async () => {
+  // Dictation reaches the FOCUSED composer, so a background seat's indicator is
+  // not him speaking into it — and deferring that seat's messages on a stale
+  // indicator elsewhere would be a delivery pause nobody could explain.
+  const h = recorderReportHarness({ rows: [EMPTY_COMPOSER, REC_ROW], scope: false });
+  await settle(10);
+  assert.deepStrictEqual(h.reports, []);
+  // ENTER: the same rows DO report once the seat is in scope, or the assertion
+  // above is passing for want of an indicator rather than for want of scope.
+  h.env.scope = true;
+  await settle(10);
+  assert.ok(h.reports.length > 0, 'ENTER: these rows must be reportable in scope');
+  h.watcher.dispose();
+});
+
+test('a throwing recorderScope falls back to the config rather than to silence', async () => {
+  // getAttention's own harness reads the sidebar row, which can be gone; this
+  // thunk reads the same DOM and can throw the same way. A throw must not
+  // silently disable the protection on a seat whose CONFIG already says it is
+  // the active claude seat — the config is the narrower answer, so falling back
+  // to it keeps the in-scope case working.
+  const reports = [];
+  const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }, { text: REC_ROW }] });
+  const env = { config: { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE } };
+  const watcher = track(createVoiceSubmitWatcher(term, {
+    getConfig: () => env.config,
+    getAttention: () => null,
+    write: () => {},
+    quietMs: TEST_QUIET_MS,
+    pollMs: 1,
+    recorderScope: () => { throw new Error('sidebar row vanished'); },
+    noteVoiceRecording: () => reports.push('REC'),
+  }));
+  await settle(10);
+  assert.ok(reports.length > 0,
+    'a non-null config must still report when the scope thunk throws');
+
+  // And with NO config either, the throw leaves it silent rather than escaping.
+  reports.length = 0;
+  env.config = null;
+  await settle(10);
+  assert.deepStrictEqual(reports, [],
+    'ENTER: with both the scope throwing and no config, nothing is reported — and the poll survived');
+  watcher.dispose();
+});
+
+test('a throwing noteVoiceRecording does not break the poll', async () => {
+  // The poll also drives the composition half and the voice-origin evidence; a
+  // throw escaping the report would take both down with it.
+  const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }, { text: REC_ROW }] });
+  const watcher = track(createVoiceSubmitWatcher(term, {
+    getConfig: () => null,
+    getAttention: () => null,
+    write: () => {},
+    quietMs: TEST_QUIET_MS,
+    pollMs: 1,
+    recorderScope: () => true,
+    noteVoiceRecording: () => { throw new Error('ipc gone'); },
+  }));
+  await settle(10);
+  assert.ok(true, 'the poll survived a throwing reporter');
+  watcher.dispose();
+});
