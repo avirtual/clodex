@@ -1,9 +1,16 @@
 // jsonl-watcher.js — the JsonlWatcher class. Polls the run/<name>/transcript.jsonl
 // transcript symlink (created by the SessionStart hook) every 250ms, follows it
 // through /clear + /compact, extracts assistant text (Claude type:"assistant";
-// Codex event_msg/agent_message), buffers by requestId, and flushes on a new
-// requestId / non-assistant entry / 1s silence — emitting onText (intent scan),
-// onSessionId (persistence), onActivity (UI), onCompactSummary, onFileTouches.
+// Codex event_msg/agent_message), buffers it, and flushes on a new requestId
+// (or ANY Codex text entry, which carries no id and so cannot be grouped by
+// one) / a non-telemetry textless entry / 1s silence — emitting onText (intent
+// scan, with a per-flush { turnEnd } that is true only when the pending text is
+// the agent's own REPLY and its turn ended), onSessionId (persistence),
+// onActivity (UI), onCompactSummary, onFileTouches.
+//
+// The flush rule is stated precisely because a header that mis-states it is
+// what made a silent text-loss bug hard to see: grouping by an id that Codex
+// never sets reads two unrelated replies as one turn and drops the first.
 //
 // FACTORY (M3 DI): the class reads one main.js global, REGISTRY_DIR (to resolve
 // the run/<name>/transcript.jsonl symlink via clodex-paths.pathFor), injected as
@@ -14,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { extractText } = require('./transcript');
+const { extractText, isTurnEndEntry } = require('./transcript');
 const { extractFileTouches } = require('./file-touch');
 const { pathFor } = require('./clodex-paths');
 
@@ -22,6 +29,19 @@ const { pathFor } = require('./clodex-paths');
 // identifiers, which broke every non-wire agent spawn at watcher.start()).
 const POLL_INTERVAL = 250; // ms
 const TURN_COMPLETE_TIMEOUT = 1000; // ms
+
+// Entry types that never end a pending turn: more of the same turn is still
+// coming.
+const NON_FLUSHING_TYPES = ['assistant', 'response_item'];
+
+// Codex emits `token_count` between the reply and `task_complete`. It is
+// telemetry, not a turn boundary — but it is textless and its type is
+// `event_msg`, so it used to trigger the flush and carry away the pending text
+// BEFORE `task_complete` could mark it as ending the turn. Exempting it is what
+// lets the real terminator do that job.
+function isTelemetryOnly(obj) {
+  return (obj.type || '') === 'event_msg' && (obj.payload || {}).type === 'token_count';
+}
 
 function createJsonlWatcher({ REGISTRY_DIR }) {
   class JsonlWatcher {
@@ -42,6 +62,13 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._pendingTime = 0;
       this._readBuf = '';
       this._activityState = 'idle';
+      // Whether the pending text's turn is over. Carried to the flush rather
+      // than re-derived there: by flush time the entry is gone, and the
+      // 1s-silence flush has no entry at all.
+      this._pendingTurnEnd = false;
+      // Whether the pending text is the agent's own reply rather than a tool's
+      // output. Only a reply may end a turn audibly.
+      this._pendingIsReply = false;
       // Touches seen since the last text flush. They fire per-LINE the moment
       // they are parsed (onFileTouches, below) because the touched-files UI wants them
       // immediately; onText flushes on a requestId change or 1s of silence. The
@@ -164,14 +191,37 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         const text = extractText(obj);
         if (text) {
           const rid = obj.requestId || (obj.payload || {}).id || '';
-          if (rid !== this._pendingRid && this._pendingText) {
+          // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. Codex entries
+          // carry no requestId and no payload.id, so `rid` is '' for every one
+          // and an equality test reads two unrelated text entries as the same
+          // turn — the second then OVERWRITES the first. What that silently
+          // discards is the intent scan's input: an [agent:dm ...] emitted in a
+          // commentary message followed by a quick tool call would never be
+          // seen. `token_count` used to be the accidental separator; exempting
+          // it from the textless flush removed the only thing standing between
+          // them, so the separation has to be stated here instead.
+          if ((rid !== this._pendingRid || !rid) && this._pendingText) {
             this._flushPending();
           }
           this._pendingRid = rid;
           this._pendingText = text;
           this._pendingTime = Date.now();
+          // WHERE the pending text came from, not just what it says. A turn can
+          // end on a tool output (an interrupted Codex turn closes right after
+          // one), and a terminator that flagged whatever happened to be pending
+          // would mark a command dump as the reply — which is the one scope rule
+          // the operator stated twice: never tool output.
+          this._pendingIsReply = (obj.type || '') === 'assistant'
+            || ((obj.payload || {}).type === 'agent_message');
+          this._pendingTurnEnd = isTurnEndEntry(obj);
           this._setActivity('thinking');
-        } else if (!['assistant', 'response_item'].includes(obj.type || '')) {
+        } else if (!NON_FLUSHING_TYPES.includes(obj.type || '') && !isTelemetryOnly(obj)) {
+          // A textless entry ends the pending turn. Codex closes with
+          // `task_complete`, which carries no text and so never reaches the
+          // branch above — read the flag off THIS entry before flushing, or the
+          // flag that ships is the one computed from `agent_message`, which is
+          // false by construction and leaves a Codex reply permanently unspoken.
+          if (this._pendingIsReply && isTurnEndEntry(obj)) this._pendingTurnEnd = true;
           if (this._pendingText) this._flushPending();
         }
       }
@@ -179,11 +229,16 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
 
     _flushPending() {
       if (this._pendingText) {
-        try { this._onText(this._pendingText, this._pendingTouches); } catch {}
+        try { this._onText(this._pendingText, this._pendingTouches, { turnEnd: this._pendingTurnEnd }); } catch {}
         this._setActivity('idle');
       }
       this._pendingRid = null;
       this._pendingText = null;
+      // Cleared with the rest of the pending state rather than relying on every
+      // writer of _pendingText to reassign it — true today, and not an invariant
+      // the next reader should have to rediscover.
+      this._pendingTurnEnd = false;
+      this._pendingIsReply = false;
       // Cleared unconditionally, including on a no-text flush: touches held past
       // their own turn would attach to a LATER turn's text, which is a worse
       // claim than not reporting them.

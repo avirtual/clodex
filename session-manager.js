@@ -314,6 +314,8 @@ function deniedBodyDisposition(intent) {
   }
 }
 
+const { speakable } = require('./speakable');
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -499,6 +501,14 @@ function createSessionManager(deps) {
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
 
+  // A SILENT speaker when none is injected, rather than a bare destructure whose
+  // absence would be swallowed by the try/catch at each call site. Every test
+  // fixture builds this manager without one, and speech is observer-grade: a
+  // host that wires no speaker gets no narration, never a broken session.
+  const speaker = deps.speaker || {
+    speak: () => false, stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
+  };
+
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain.
   // The first mode-2004 (which latches _bootReadySeen) is Claude ANNOUNCING
@@ -551,6 +561,9 @@ function createSessionManager(deps) {
       // ONE seat for the whole box, and the last report is the one that moved
       // most recently — which is the window he is in.
       this._focusedSession = null;
+      // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
+      // per-seat field of the same name because audio has no seat.
+      this._lastVoiceRecordingTs = 0;
       this._knownDmOrigins = new Set();
       this._relayRosters = new Map();
       this._lastPendingCounts = new Map();
@@ -707,6 +720,11 @@ function createSessionManager(deps) {
           });
           const s = this.sessions.get(t.agent);
           if (s) s.lastMainStop = { isTurn: !!(t.stop && t.stop.is_turn), ts: Date.now() };
+          // Already past the side-call / subagent filter above, so this is the
+          // main line's own text. `stop.is_turn` is the wire's truthful
+          // discriminator — the same one ActivityTracker trusts for its
+          // notification-worthy idle.
+          this._maybeSpeak(t.agent, t.text, !!(t.stop && t.stop.is_turn));
           if (s && t.stop && t.stop.is_turn) this._maybeDeliverDigest(s, t.sessionId || s.sessionId);
           if (s && s.intentSource === 'wire') {
             if (s.sentinel) s.sentinel.noteWireHealthy();
@@ -1043,6 +1061,10 @@ function createSessionManager(deps) {
 
     unregisterWindow(workspaceId) {
       this.windows.delete(workspaceId);
+      // Stops whatever is playing, from any seat in any workspace: the speaker
+      // is box-wide and cannot attribute an utterance to a session. Sessions
+      // survive a window close by design, so nothing else on this path would.
+      try { speaker.stop(); } catch {}
     }
 
     windowForWorkspace(workspaceId) {
@@ -1822,7 +1844,7 @@ function createSessionManager(deps) {
       } else if (agentType) {
         session.watcher = new JsonlWatcher(
           name,
-          (text, touches) => this._scanJsonlText(text, name, touches),
+          (text, touches, meta) => this._scanJsonlText(text, name, touches, meta),
           onSessionId,
           (state) => this._emitActivity(name, state, state === 'idle'),
           () => this._fireCompactContinuation(session),
@@ -2130,6 +2152,26 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       s.lastVoiceRecordingTs = Date.now();
+      // BOX-WIDE COPY, kept ALONGSIDE the per-seat field above rather than
+      // replacing it. The two answer different questions and must not be merged:
+      // an inject targets ONE seat, so its gate is correctly per-seat, while the
+      // microphone and the speaker are properties of the room. The renderer only
+      // ever reports the ACTIVE seat's recorder, so a per-seat read is
+      // permanently undefined for every background seat — gating audio on it
+      // means no gate at all for exactly the case that matters: dictating into
+      // the focused seat while another seat finishes a turn.
+      // RISING EDGE, computed BEFORE the stamp below overwrites the evidence.
+      // The renderer reports the recorder as a LEVEL every ~300ms while it is
+      // lit, so an unguarded call runs the interrupt hundreds of times per
+      // dictation; it is harmless (stop() is a no-op when nothing is playing)
+      // but it makes the call site claim an event it is not detecting.
+      const recorderJustLit = Date.now() - (this._lastVoiceRecordingTs || 0) >= INJECT_SPEAKING_STALE_MS;
+      this._lastVoiceRecordingTs = Date.now();
+      // He tapped the microphone while a narration was still playing — the
+      // converse of the gate in _maybeSpeak, and the harder half. Stopping is
+      // what a person does when interrupted; see interruptForRecorder for the
+      // alternative that was rejected.
+      if (recorderJustLit) { try { speaker.interruptForRecorder(); } catch {} }
     }
 
     // The renderer saw a DICTATED draft still sitting unsent in this seat's
@@ -3021,6 +3063,12 @@ function createSessionManager(deps) {
       // prompt unconditionally. Residue for a never-recreated name is a few small
       // files and is harmless.
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
+      // A narration outliving the seat that produced it is the obvious bug: the
+      // `say` child is ours, not the pty's, so nothing else here reaches it.
+      // Unconditional — the speaker is box-wide and cannot attribute an
+      // utterance to a session, so the alternative is leaving a dead seat's
+      // voice playing.
+      try { speaker.stop(); } catch {}
       if (s.watcher) s.watcher.stop();
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
@@ -3544,8 +3592,16 @@ function createSessionManager(deps) {
       return intents;
     }
 
-    _scanJsonlText(text, senderName, touches) {
+    _scanJsonlText(text, senderName, touches, meta) {
       const s = this.sessions.get(senderName);
+      // Mirrors the publish gate directly below and for the same reason: a
+      // wire-routed session with a live tee already spoke from turn.completed,
+      // and speaking here too would say every reply twice. A tee-blind
+      // (Bedrock/Vertex) session is wireRouted but never fires turn.completed,
+      // so `!s.backend` is what keeps this its ONLY voice rather than none.
+      if (!(s && s.wireRouted && !s.backend)) {
+        this._maybeSpeak(senderName, text, !!(meta && meta.turnEnd));
+      }
       // A wire-routed session running intentSource:'jsonl' (shadow mode) has
       // BOTH junctions live. Publishing here too would double-deliver every
       // turn deterministically, so the wire wins: it is already firing and
@@ -3592,6 +3648,43 @@ function createSessionManager(deps) {
         if (!ev.text && !hasFiles && !hasReads) return;
         hooks.fireAgentText(ev);
       } catch { /* consume-only */ }
+    }
+
+
+    // Speak the agent's FINAL reply, when the operator asked to hear it.
+    //
+    // TURN-END IS THE WHOLE FEATURE. The caller supplies it from a source that
+    // knows: the wire's `stop.is_turn`, or the transcript entry's own
+    // `stop_reason` via isTurnEndEntry. Deliberately NOT the renderer activity
+    // seam, whose `turnEnd` is `state === 'idle'` for jsonl sessions and so is
+    // true on every inter-tool flush — reading it here would narrate after every
+    // tool call, which is precisely what the operator asked not to happen.
+    //
+    // Off by default and read fresh per turn: the setting is a live toggle, so a
+    // cached answer would keep talking after it was switched off.
+    _maybeSpeak(name, text, turnEnd) {
+      if (!turnEnd || !text) return;
+      try {
+        const s = this.sessions.get(name);
+        if (!s || !s.agentType) return;
+        const store = getUiSettings && getUiSettings();
+        const cfg = store ? store.get() : null;
+        if (!cfg || cfg.speakReplies !== true) return;
+        // DO NOT TALK OVER A LIVE MICROPHONE. Read the BOX-WIDE stamp, never the
+        // per-seat one: the recorder is reported only for the active seat, so
+        // `s.lastVoiceRecordingTs` is undefined on every background seat and a
+        // gate reading it would pass exactly when he is dictating into another
+        // pane. One microphone, one speaker, one gate.
+        //
+        // Absent evidence reads as NOT recording, matching the inject gate's
+        // polarity — the cost of a wrong "quiet" here is one narration he can
+        // stop, while a deferral nothing releases would silence the feature
+        // permanently.
+        if (Date.now() - (this._lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS) return;
+        const say = speakable(text);
+        if (!say) return;
+        speaker.speak(say, { voice: cfg.speakVoice });
+      } catch { /* observer-grade: speech must never break turn handling */ }
     }
 
 

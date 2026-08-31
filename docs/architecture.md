@@ -229,7 +229,18 @@ bundle), whose packaged form is the Docker image under
   worktree:<branch>]`, and the delete flow's awaited `removeWorktree`.
   `execFile`, never a shell; in SCANNED_MODULES. Its ticket-seat consumers are
   under *Teams and tickets*.
-- **transcript.js** — JSONL transcript → markdown/messages rendering.
+- **transcript.js** — JSONL transcript → markdown/messages rendering, plus
+  `isTurnEndEntry`: whether one entry ENDS the main-line turn, read off the
+  model's own `stop_reason` (Claude) or `task_complete` (Codex). The renderer
+  activity seam cannot answer that — it reports `state === 'idle'`, true on every
+  inter-tool flush.
+- **speakable.js** — an agent's reply → the text worth reading aloud, or ''.
+  Strips fences, tables, intent bodies, paths and URLs, and bounds the
+  utterance. Pure string → string.
+- **speaker.js** — owns the single `say` child and the voice catalog behind the
+  spoken-reply setting. `execFile` with the text as an argv element, never a
+  shell string: model text reaches this call. One utterance at a time; stopped
+  on session kill, window close and quit.
 - **statusline.js** — statusline script generation + proxy-base resolution.
 - **ctx-reminder.js** — context-pressure reminders on the session's own tail.
 - **attention.js** — which sessions are asking for the operator's attention.

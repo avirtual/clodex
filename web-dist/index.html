@@ -2464,6 +2464,42 @@ body {
   flex-direction: column;
   gap: 2px;
 }
+.speak-host {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.speak-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text);
+}
+.speak-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.speak-voice {
+  font-size: 10px;
+  background: var(--input-bg, var(--active-bg));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+.speak-voice:disabled {
+  opacity: 0.5;
+}
+.speak-voice-fixed {
+  color: var(--text);
+}
 .voice-row {
   display: flex;
   align-items: baseline;
@@ -27221,6 +27257,18 @@ helper=${d.helperPath}`;
       var { esc } = require_format();
       var { VOICE_ITEMS } = require_voice_control();
       var { COMPOSITION_POLL_MS } = require_voice_submit_watcher();
+      async function readSpeakSettings() {
+        try {
+          const s = await window.api.getSettings();
+          return {
+            on: s?.speakReplies === true,
+            voice: typeof s?.speakVoice === "string" ? s.speakVoice : "",
+            voices: Array.isArray(s?.speakVoices) ? s.speakVoices : []
+          };
+        } catch {
+          return null;
+        }
+      }
       var RECORDER_TICK_MS = COMPOSITION_POLL_MS;
       var RECORDER_STATES = {
         lit: { cls: "rec-lit", text: "Recording", hint: "Clodex sees the recorder running \u2014 click to stop it (declines while a draft is in the composer, since the key would SEND it)" },
@@ -27291,8 +27339,29 @@ helper=${d.helperPath}`;
           } else {
             note = "One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.";
           }
-          body.innerHTML = `<div class="voice-rows${snap.target ? "" : " voice-rows-off"}">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div>`;
+          body.innerHTML = `<div class="voice-rows${snap.target ? "" : " voice-rows-off"}">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
           lastReading = reading();
+          refreshSpeakSection();
+        }
+        let speak = null;
+        function speakHtml() {
+          if (!speak) return "";
+          const voices = speak.voices.length ? `<select class="speak-voice" ${speak.on ? "" : "disabled"}>` + speak.voices.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? " selected" : ""}>${esc(v.name)} (${esc(v.locale)})</option>`).join("") + "</select>" : `<span class="speak-voice-fixed">${esc(speak.voice)}</span>`;
+          return `<label class="speak-row" title="Synthesized on this machine by /usr/bin/say \u2014 no audio and no text leave the box"><input type="checkbox" class="speak-toggle"${speak.on ? " checked" : ""}> Speak the final reply aloud</label><div class="speak-sub">Local only \u2014 nothing leaves this machine. ${voices}</div>`;
+        }
+        async function refreshSpeakSection() {
+          const next = await readSpeakSettings();
+          if (!next) return;
+          speak = next;
+          const host = body.querySelector(".speak-host");
+          if (host) host.innerHTML = speakHtml();
+        }
+        async function saveSpeak(partial) {
+          try {
+            await window.api.setSettings(partial);
+          } catch {
+          }
+          await refreshSpeakSection();
         }
         function openVoicePopover(anchor) {
           if (!pop.classList.contains("hidden")) return closeVoicePopover();
@@ -27351,6 +27420,15 @@ helper=${d.helperPath}`;
           }
           lastKey = key;
           failedOnce = false;
+        });
+        body.addEventListener("change", (e) => {
+          const toggle = e.target.closest(".speak-toggle");
+          if (toggle) {
+            saveSpeak({ speakReplies: toggle.checked });
+            return;
+          }
+          const sel = e.target.closest(".speak-voice");
+          if (sel) saveSpeak({ speakVoice: sel.value });
         });
         document.addEventListener("mousedown", (e) => {
           if (pop.classList.contains("hidden")) return;

@@ -144,6 +144,7 @@ test('the voice island registers no DOM listener that accepts a parameter', () =
   assert.deepStrictEqual(
     all.map((r) => `${r.file} ${r.kind}(${r.event || ''})`).sort(),
     [
+      'renderer/popovers/voice-popover.js addEventListener(change)',  // the spoken-reply toggle + voice pick
       'renderer/popovers/voice-popover.js addEventListener(click)',   // body: a row pick
       'renderer/popovers/voice-popover.js addEventListener(click)',   // close button
       'renderer/popovers/voice-popover.js addEventListener(keydown)', // Escape dismiss

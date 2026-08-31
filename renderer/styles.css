@@ -1776,6 +1776,14 @@ html, body {
 #voice-popover.hidden { display: none; }
 #voice-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .voice-rows { display: flex; flex-direction: column; gap: 2px; }
+/* The output half of the voice popover. */
+.speak-host { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
+.speak-row { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: var(--text); }
+.speak-sub { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+.speak-voice { font-size: 10px; background: var(--input-bg, var(--active-bg)); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 1px 3px; }
+.speak-voice:disabled { opacity: 0.5; }
+.speak-voice-fixed { color: var(--text); }
+
 .voice-row {
   display: flex; align-items: baseline; gap: 8px;
   padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;

@@ -25,6 +25,22 @@ blocks a release.
   state it declines and writes nothing, since a keystroke sent then would arm a
   microphone you just asked to switch off.
 
+- **Hear the reply from across the room.** Clodex can now read the agent's final
+  reply aloud when a turn ends. Off by default; turn it on in the voice popover
+  on the session bar, where the dictation mode already lives. **The speech is
+  synthesized locally by macOS `say` — no audio and no text leaves the machine**,
+  unlike dictation, which streams your microphone upstream to be transcribed.
+  Only the final reply is spoken: never tool output, never a diff, never the
+  intermediate chatter between tool calls. Code blocks, file paths, URLs, tables
+  and markdown syntax are stripped before anything is spoken (a path read out
+  character by character is unbearable), and a long reply is cut at a sentence
+  end rather than narrated for minutes. The default voice is Daniel (en_GB),
+  picked for being the clearest at a distance; any other installed voice can be
+  chosen from the same popover, and voices you have not installed fall back to
+  the system default rather than failing. It will not start talking while your
+  microphone is live, and if you tap the mic while it is talking it stops
+  immediately so you are not spoken over.
+
 - **Start dictating from an outside script, without the keystroke going to the
   wrong app.** macOS Voice Control can already tap the recorder by pressing
   space, but a keystroke lands wherever the frontmost window happens to be, so
