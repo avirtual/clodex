@@ -1297,6 +1297,7 @@ function switchSession(name) {
 
   const wasActive = activeSession;
   activeSession = name;
+  reportFocusedSession();
   // An armed drawer selection is registered on ONE session's wirescope route, so
   // leaving that session has to take it back — the drawer cannot see this
   // switch, and a peek left behind rides a request the operator is no longer
@@ -1427,6 +1428,9 @@ function removeSession(name, { keepPersisted = false } = {}) {
       switchSession(remaining[0]);
     } else {
       activeSession = null;
+      // Main's record has to go too, or an external voice tap keeps aiming at
+      // the seat that just went away.
+      reportFocusedSession();
       emptyState.style.display = '';
       renderProxyBar();
     }
@@ -3593,6 +3597,28 @@ refreshVoiceSubmitConfig();
 // including the OFF direction — until it reloaded. Focus is the same moment
 // voice-control.js re-reads the mode for the same reason.
 window.addEventListener('focus', () => { refreshVoiceSubmitConfig(); });
+
+// Tell main which seat the operator is looking at.
+//
+// ALSO ON WINDOW FOCUS, not on session switch alone, and that is what makes it
+// correct with several workspace windows open: each window reports its own
+// active seat, main keeps the LAST report, and moving between windows without
+// switching seats inside either one would otherwise leave the record pointing
+// into the window he just left.
+function reportFocusedSession() {
+  try { window.api.noteFocusedSession(activeSession); } catch {}
+}
+window.addEventListener('focus', reportFocusedSession);
+reportFocusedSession();
+
+// An outside script asked for the recorder on this seat (a Voice Control wake
+// word, over the agent socket). Main routed it here because only this side can
+// read the recording indicator; the watcher makes the decision and owns the
+// polarity rule that an unreadable screen writes nothing.
+window.api.onVoiceTap((name) => {
+  const sess = sessions.get(name);
+  if (sess && sess.voiceSubmit) sess.voiceSubmit.externalTap();
+});
 const voiceControl = createVoiceControl({ core: voiceCore });
 
 const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({

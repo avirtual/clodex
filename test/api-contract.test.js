@@ -113,6 +113,11 @@ const PINNED_NAMES = [
   // dark — a second level report, because the recorder's answers a different
   // question and expires far sooner.
   'noteVoiceDraft',
+  // Which seat the renderer is showing, and the external ensure-on tap that
+  // routes by it. Main knows the focused WINDOW and never the focused pane, so
+  // a trigger arriving from outside the app had no seat to aim at.
+  'noteFocusedSession',
+  'onVoiceTap',
   'newWorkspace',
   // Managed Docker sandbox (sandbox-plan.md [internal design doc, not in this repo] M2) — appended deliberately as
   // the surface grew past the ffe1161 snapshot; the count below moved with it.
@@ -195,7 +200,7 @@ test('no duplicate names and no duplicate channels', () => {
 });
 
 test('contract covers exactly the pinned 263-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 264, 'pinned list is the full 264-method surface');
+  assert.equal(PINNED_NAMES.length, 266, 'pinned list is the full 266-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -219,7 +224,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 264, 'window.api has exactly 264 methods');
+    assert.equal(generated.length, 266, 'window.api has exactly 266 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

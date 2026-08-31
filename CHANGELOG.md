@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- **Start dictating from an outside script, without the keystroke going to the
+  wrong app.** macOS Voice Control can already tap the recorder by pressing
+  space, but a keystroke lands wherever the frontmost window happens to be, so
+  the space went into someone else's document whenever Clodex was in the
+  background. `scripts/clodex-voice-tap.js` asks Clodex directly instead: run it
+  from a Voice Control command (via a shortcut), and it reaches the seat you are
+  looking at whatever has focus. Pass a seat name to aim it somewhere else. It
+  only ever turns recording ON — asking twice is harmless — and it declines
+  rather than risk interrupting: if the recorder is already running, if there is
+  a draft in the composer, if a permission dialog is open, or if it cannot read
+  the seat's screen to tell, it writes nothing. It talks over Clodex's existing
+  local socket, so it needs no new setting and stays reachable only by you.
+
 - **A message from another agent no longer cuts you off while you are
   dictating.** Clodex holds an incoming message back while you are typing,
   because delivering one clears whatever is half-written in the composer. That

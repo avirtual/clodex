@@ -361,6 +361,10 @@ function createVoiceSubmitWatcher(terminal, {
   let fires = 0;
   // Submits that found the recorder still lit afterwards and stopped it.
   let stops = 0;
+  // Taps written for an EXTERNAL ensure-on request, counted apart from the
+  // re-arm's: the two answer different questions about the same byte, and one
+  // number could not say which of them wrote it.
+  let externalTaps = 0;
   // When the microphone was last seen. Written ONLY where dictation is proven
   // (a composition commit, or the CLI's recording indicator on screen) and read
   // only by the marker — never by a gate, so a wrong value here can cost the
@@ -580,18 +584,7 @@ function createVoiceSubmitWatcher(terminal, {
         // that nothing new has arrived; anything else and we skip the stop and
         // inherit the pre-t587 behaviour, which is the safe direction.
         if (!composerIsEmpty(cursorRow())) return;
-        // TAP only, for the reason `shouldRearm` gives: the swallow-and-toggle
-        // measured in the CLI is the tap branch specifically, and in hold mode
-        // a single written character cannot reach the auto-repeat threshold, so
-        // it lands in the draft as a literal instead of stopping anything.
-        let mode = null;
-        try { mode = getVoiceMode(); } catch { mode = null; }
-        if (mode !== 'tap') return;
-        let key = null;
-        try { key = getTriggerKey(); } catch { key = null; }
-        if (typeof key !== 'string' || key.length !== 1) return;
-        stops += 1;
-        write(key);
+        if (tapTrigger()) stops += 1;
       }, STOP_SETTLE_MS);
     }, ENTER_SETTLE_MS);
   }
@@ -851,14 +844,76 @@ function createVoiceSubmitWatcher(terminal, {
     // recording, and this is the read that tells the two apart.
     if (recorderBlocksRearm(indicatorRows())) return;
 
+    if (tapTrigger()) rearms += 1;
+  }
+
+  // THE ONLY PLACE A TRIGGER CHARACTER IS WRITTEN. Three callers reach the
+  // recorder through it — the turn-end re-arm, the submit-time stop, and the
+  // external tap — and each carries its OWN screen gate, which is the part that
+  // differs between them and must stay at the call site. What is shared is only
+  // what it takes to put the byte out, and a fourth caller open-coding that is
+  // how this subsystem's polarity bugs started.
+  //
+  // TAP mode only, for the reason `shouldRearm` gives: the swallow-and-toggle
+  // measured in the CLI is the tap branch specifically, and in hold mode a
+  // single written character cannot reach the auto-repeat threshold, so it
+  // lands in the draft as a literal instead of toggling anything. Reported
+  // rather than thrown, so a caller can count what it actually wrote.
+  function tapTrigger() {
+    let mode = null;
+    try { mode = getVoiceMode(); } catch { mode = null; }
+    if (mode !== 'tap') return false;
     let key = null;
-    try { key = getTriggerKey(); } catch { key = null; }
     // No plain character is bound to push-to-talk, so no byte can arm the
     // recorder — a space written in hope would just type into the draft.
-    if (typeof key !== 'string' || key.length !== 1) return;
-
-    rearms += 1;
+    try { key = getTriggerKey(); } catch { key = null; }
+    if (typeof key !== 'string' || key.length !== 1) return false;
     write(key);
+    return true;
+  }
+
+  // ENSURE-ON, asked for from outside the app — a Voice Control wake word that
+  // reached this seat over the agent socket rather than as a keystroke aimed at
+  // whatever window happened to be frontmost.
+  //
+  // AN UNREADABLE SCREEN MUST NOT WRITE, and that is why this reads the rows
+  // ONCE and tests the null ITSELF instead of asking `recordingObserved`. That
+  // predicate answers `false` for an unreadable screen — correct where it feeds
+  // the marker, fatal here: `if (!recordingObserved(rows)) tap()` sends the key
+  // into a screen that may well be recording, and STOPS the operator
+  // mid-sentence. The errors are not symmetric. Declining while the mic was
+  // dark costs him one repeated phrase; writing while it was lit costs him the
+  // sentence he was speaking.
+  //
+  // ENSURE-ON rather than toggle, and there is no off half to add: Voice
+  // Control goes deaf while the recorder is live, so no wake word can be heard
+  // to ask for one.
+  //
+  // Deliberately NOT gated on the turn-end edge the re-arm confines itself to.
+  // That gate exists because arming mid-turn is a live microphone nobody asked
+  // for; here the operator asked, out loud, which is the entire event.
+  function externalTap() {
+    if (disposed) return false;
+    // A byte written into an open permission dialog ANSWERS it. The re-arm
+    // declines there through `shouldRearm` and this owes the same interlock,
+    // which it cannot inherit — the re-arm's gate also requires hands-free
+    // submit to be switched on, and this feature is not that one.
+    let attention = null;
+    try { attention = getAttention(); } catch { attention = 'permission'; }
+    if (attention === 'permission') return false;
+
+    const rows = indicatorRows();
+    if (!Array.isArray(rows)) return false;      // unreadable: never write
+    if (recordingObserved(rows)) return false;   // already on: ensure-on is met
+
+    // The CLI's tap handler bails on a NON-EMPTY composer BEFORE it swallows
+    // the key, so the character would be inserted into his draft and arm
+    // nothing — the same read the re-arm makes, for the same reason.
+    if (!composerIsEmpty(cursorRow())) return false;
+
+    if (!tapTrigger()) return false;
+    externalTaps += 1;
+    return true;
   }
 
   // Every byte the local onData branch sends to the pty. The ONLY writer that
@@ -952,9 +1007,11 @@ function createVoiceSubmitWatcher(terminal, {
     refresh: schedule,
     noteActivity,
     noteInput,
+    externalTap,
     fireCount: () => fires,
     stopCount: () => stops,
     rearmCount: () => rearms,
+    externalTapCount: () => externalTaps,
     commitCount: () => commits,
     commitFailureCount: () => commitFailures,
     markCount: () => marks,

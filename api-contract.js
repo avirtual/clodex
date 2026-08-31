@@ -378,6 +378,23 @@ const API_CONTRACT = [
   // to the seat permanently, which is worse than the bug this fixes.
   { name: 'noteVoiceRecording', kind: 'send', channel: 'voice:recording' },
   { name: 'noteVoiceDraft', kind: 'send', channel: 'voice:draft' },
+  // Which seat the operator is LOOKING at. Main has no other way to know: the
+  // renderer owns `activeSession` and only WINDOW-level focus crosses today.
+  // Read by the external voice tap, which has to pick a seat when the caller
+  // named none.
+  //
+  // NOT derivable from `lastUserInputTs`, and that is the whole reason this row
+  // exists: that stamp is written for TYPED bytes only, so a dictating operator
+  // never moves it and a trigger routed by it would land on the seat he is not
+  // talking to.
+  //
+  // A SEND, like its voice neighbours above: nothing waits on the answer, and a
+  // dropped report is corrected by the next switch.
+  { name: 'noteFocusedSession', kind: 'send', channel: 'session:focused' },
+  // The external tap reached this seat — write the trigger key if, and only if,
+  // this terminal's own screen says that is safe. The DECISION is the
+  // renderer's because only it can read the recorder; main routes.
+  { name: 'onVoiceTap', kind: 'on', channel: 'voice-tap' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },
