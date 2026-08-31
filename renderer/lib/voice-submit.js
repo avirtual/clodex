@@ -207,13 +207,17 @@ const RECORDING = /\u23faREC/u;
 
 // The CLI's PROCESSING indicator, which REPLACES the lit one rather than joining
 // it: the moment recording stops, `\u23faREC` is gone and this is painted in its
-// place, while the utterance is still being transcribed.
+// place, while the CLI finishes transcribing.
 //
-// That replacement is why this pattern has to exist. A gate anchored only on the
-// lit indicator reads NOT RECORDING for that whole window, so a re-arm landing
-// in it writes the trigger key into a recorder that is still finishing and
-// aborts the transcription — the operator's words are lost with nothing on
-// screen to say so.
+// That replacement is why this pattern has to exist, and the harm it prevents is
+// measured, not assumed. In 2.1.251 the tap handler's processing arm is
+// `if(voiceState==="processing"){if(J===null)stopImmediatePropagation();return}`,
+// where `J` is the bare single-char binding. With a one-character trigger `J` is
+// non-null, so the key is NOT swallowed and the handler returns before touching
+// the voice session: nothing is aborted, and the character falls through into
+// the composer as a literal. From that moment `composerIsEmpty` is false, so
+// every later re-arm declines — the mic never comes back until the operator
+// clears the draft by hand. A permanent stuck state, not one lost utterance.
 //
 // Anchored on `Voice:` + `processing` and NOTHING ELSE. The trailing ellipsis is
 // deliberately not encoded: the CLI's own literal is a single U+2026, but that is

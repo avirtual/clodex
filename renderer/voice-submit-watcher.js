@@ -504,6 +504,13 @@ function createVoiceSubmitWatcher(terminal, {
         // ARMS a recording the operator never asked for, and an armed mic that
         // nobody knows is running is worse than the stuck state this fixes.
         if (!recordingObserved(indicatorRows())) return;
+        // The "complete BY CONSTRUCTION" argument above has one hole: the
+        // operator can keep talking past the trigger phrase, and interim
+        // transcript for the NEW utterance lands after our `\r`. Stopping then
+        // would cut them off mid-sentence. An empty composer is the evidence
+        // that nothing new has arrived; anything else and we skip the stop and
+        // inherit the pre-t587 behaviour, which is the safe direction.
+        if (!composerIsEmpty(cursorRow())) return;
         // TAP only, for the reason `shouldRearm` gives: the swallow-and-toggle
         // measured in the CLI is the tap branch specifically, and in hold mode
         // a single written character cannot reach the auto-repeat threshold, so
@@ -714,8 +721,7 @@ function createVoiceSubmitWatcher(terminal, {
     rearmTimer = null;
     if (disposed) return;
     // The edge being waited on is stale: re-check it rather than trusting the
-    // timer, since a turn that restarted means the CLI's key path is dead
-    // again and a dialog that opened means the byte would answer it.
+    // timer, since a dialog that opened means the byte would answer it.
     if (activity !== 'idle' || !rearmAllowed('thinking', 'idle')) return;
 
     const quietFor = now() - lastWriteAt;

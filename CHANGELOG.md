@@ -22,11 +22,14 @@ blocks a release.
   safe precisely there: you have just finished saying the trigger phrase, so
   there is nothing left to cut off. The usual re-arm then taps it back.
 
-- **Fixed a case that could silently swallow what you just said.** For about
+- **Fixed a case that could leave the microphone permanently stuck.** For about
   half a second after a recording stops, the CLI shows `Voice: processing…`
-  while it transcribes. Clodex read that as "not recording" and could tap the
-  microphone key in that window, aborting the transcription and losing the
-  words with nothing on screen to say so. That state now blocks the re-arm.
+  while it finishes transcribing. Clodex read that as "not recording" and could
+  tap the microphone key in that window — and in that state the key is not
+  swallowed, so it landed in your input as a stray character. Your composer was
+  then no longer empty, which is the one thing that stops the microphone being
+  re-armed: it never came back until you cleared the stray character by hand.
+  That state now blocks the re-arm.
 
 - **Hands-free submit now fires while tap recording is still on.** It used to
   wait for you to untap before sending, which defeats the point of hands-free:

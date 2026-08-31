@@ -23840,6 +23840,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               stopTimer = null;
               if (disposed) return;
               if (!recordingObserved(indicatorRows())) return;
+              if (!composerIsEmpty(cursorRow())) return;
               let mode = null;
               try {
                 mode = getVoiceMode();
