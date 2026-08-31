@@ -31,8 +31,6 @@ function createMirrorLatch(initial = null, { normalize = (v) => v } = {}) {
       value = normalize(next);
     },
     read() { return value; },
-    // For tests and for a caller that needs to distinguish "no host answers
-    // this" from a legitimate falsy value — the headless host never reports.
     heard() { return heard; },
   };
 }

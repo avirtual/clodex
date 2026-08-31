@@ -856,9 +856,7 @@ Own state + DOM, `init*(deps)`:
   users `null` is a legitimate released mic target and `false` a legitimate
   backgrounded app — the value cannot double as the flag. Read by the two
   microphone mirrors in renderer.js, which has no harness: that is why the rule
-  lives out here where `test/mirror-latch.test.js` can reach it. `heard()` also
-  separates "no host answers this" from a falsy answer, which is how the
-  headless path is told apart from a backgrounded desktop one.
+  lives out here where `test/mirror-latch.test.js` can reach it.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a
