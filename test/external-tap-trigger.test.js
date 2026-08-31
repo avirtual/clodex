@@ -940,7 +940,7 @@ test('the sender script speaks the envelope the socket arm decodes', () => {
     'the sender script must not require anything from the app tree');
 });
 
-// --------------------------------------------------- t600: select + mode verbs
+// ---------------------------------------------------- the select + mode verbs
 
 // The daily path is the thing this ticket could break: a shortcut he already
 // has, invoking this script by path with zero or one argument. Byte-identical
@@ -1025,7 +1025,7 @@ test('SELECT: a cross-workspace select raises that seat\'s window', () => {
   assert.deepStrictEqual(b.sent,
     [['request-switch-session', 'B'], ['mic-target', 'B'], ['#show'], ['#focus'],
       ['voice-tap', 'B']]);
-  // t599's raise, REUSED rather than duplicated: A's window is untouched, which
+  // voiceTap's raise, REUSED rather than duplicated: A's window is untouched, which
   // a second raise mechanism firing on the manager's own idea of "the window"
   // would not be.
   assert.deepStrictEqual(a.raised, [], 'no other window was disturbed');
@@ -1136,9 +1136,8 @@ test('MODE: a mode switch DEFERS while he is dictating', async () => {
   m.registerWindow('ws1', win);
   const writes = micSeat(m, 'A', win);
   reportFrom(m, win, 'A');
-  // t593: dictation gets the protection typing has. The Ctrl-U that opens an
-  // injection eats a half-SPOKEN draft exactly as it eats a half-typed one, and
-  // stranding his draft is t594's problem class.
+  // Dictation gets the protection typing has: the Ctrl-U that opens an injection
+  // eats a half-SPOKEN draft exactly as it eats a half-typed one.
   m.sessions.get('A').lastVoiceRecordingTs = Date.now();
   m.voiceMode('hold');
   await settle();

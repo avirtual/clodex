@@ -2340,7 +2340,7 @@ function createSessionManager(deps) {
       if (!r.ok) return r;
       // bypassHold, like every other injected slash command: a held bare command
       // '\n'-joins into a flush batch and the CLI reads the rest of the batch as
-      // garbage arguments. parkable keeps t594's protection — a mode switch that
+      // garbage arguments. parkable keeps the park divert — a mode switch that
       // spliced a half-dictated draft is the problem that rule exists for.
       this._injectText(r.session, `/voice ${mode}`, { bypassHold: true, parkable: true });
       log.info('voice', `mode ${mode} → ${name}`);
