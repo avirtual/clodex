@@ -2766,6 +2766,13 @@ test('recorder NOT lit at submit: no stop key is written', async () => {
   const idle = ' agents \u00b7 tap to talk';
   const h = stopHarness({ rows: [{ text: '\u276f ', cursor: true }, idle] });
   h.term.write({ text: DRAFT, cursor: true }, idle);
+  // The CLI clears the composer on Enter. Without this the composer guard
+  // declines first and the indicator read is never consulted — the assertion
+  // below would then pass for a reason unrelated to what this test is named
+  // after, and would survive deleting the indicator gate entirely.
+  h.env.onWrite = (d) => {
+    if (d === '\r') h.term.write({ text: EMPTY_COMPOSER, cursor: true }, idle);
+  };
   await h.done();
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');
@@ -2776,10 +2783,16 @@ test('recorder NOT lit at submit: no stop key is written', async () => {
 
 test('indicator UNREADABLE at submit: no stop key is written', async () => {
   const h = stopHarness({ rows: [{ text: '\u276f ', cursor: true }, REC_ROW] });
-  // The alt buffer is what indicatorRows() reports as unreadable (null). Flipped
-  // FROM THE WRITE SPY the instant the `\r` goes out, not on a timer racing the
-  // watcher's: that lands it strictly between the Enter and the gated read, with
-  // no margin to tune and nothing to flake either way.
+  // SCOPE, because this one cannot be what its name suggests: the alt-buffer
+  // flip nulls `cursorRow()` as well as `indicatorRows()`, so the composer
+  // guard and the indicator read both decline and no fixture can separate them
+  // here. This asserts only that an unreadable screen writes NO KEY.
+  //
+  // The polarity that matters — null is NOT lit, the opposite of the re-arm
+  // gate — is pinned at the unit level, in `recordingObserved stays REC-ONLY`.
+  //
+  // Flipped FROM THE WRITE SPY the instant the `\r` goes out, not on a timer
+  // racing the watcher's: no margin to tune and nothing to flake either way.
   h.env.onWrite = (d) => { if (d === '\r') h.term._state.type = 'alternate'; };
   h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
   await h.done();
@@ -2797,6 +2810,11 @@ test('the PROCESSING row at submit does not draw a stop key either', async () =>
   // ARM rather than stop. Same answer as "not lit", different row.
   const h = stopHarness({ rows: [{ text: '\u276f ', cursor: true }, PROCESSING_ROW] });
   h.term.write({ text: DRAFT, cursor: true }, PROCESSING_ROW);
+  // As above: the composer must be empty at stop time, or this passes without
+  // the indicator read happening at all.
+  h.env.onWrite = (d) => {
+    if (d === '\r') h.term.write({ text: EMPTY_COMPOSER, cursor: true }, PROCESSING_ROW);
+  };
   await h.done();
 
   assert.deepStrictEqual(h.writes, [ERASE, '\r']);
@@ -2834,6 +2852,11 @@ test('HOLD mode gets no stop key: the character would land in the draft', async 
   const h = stopHarness({ rows: [{ text: '\u276f ', cursor: true }, REC_ROW] });
   h.env.voiceMode = 'hold';
   h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  // The composer must be empty at stop time, or execution returns at the
+  // composer guard and never reaches the mode read this test is about.
+  h.env.onWrite = (d) => {
+    if (d === '\r') h.term.write({ text: EMPTY_COMPOSER, cursor: true }, REC_ROW);
+  };
   await h.done();
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');

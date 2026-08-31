@@ -210,12 +210,16 @@ const RECORDING = /\u23faREC/u;
 // place, while the CLI finishes transcribing.
 //
 // That replacement is why this pattern has to exist, and the harm it prevents is
-// measured, not assumed. In 2.1.251 the tap handler's processing arm is
-// `if(voiceState==="processing"){if(J===null)stopImmediatePropagation();return}`,
-// where `J` is the bare single-char binding. With a one-character trigger `J` is
-// non-null, so the key is NOT swallowed and the handler returns before touching
-// the voice session: nothing is aborted, and the character falls through into
-// the composer as a literal. From that moment `composerIsEmpty` is false, so
+// measured, not assumed. The tap handler's processing arm in 2.1.251, VERBATIM
+// from the minified binary (its own identifiers, so this string is greppable):
+//
+//   if(Ln==="processing"){if(J===null)ie.stopImmediatePropagation();return}
+//
+// `Ln` is the voice state, `ie` the key event, and `J` the bare single-char
+// binding — the same rule as `resolveTriggerKey` below. With a one-character
+// trigger `J` is non-null, so the key is NOT swallowed and the handler returns
+// before touching the voice session: nothing is aborted, and the character
+// falls through into the composer as a literal. From that moment `composerIsEmpty` is false, so
 // every later re-arm declines — the mic never comes back until the operator
 // clears the draft by hand. A permanent stuck state, not one lost utterance.
 //

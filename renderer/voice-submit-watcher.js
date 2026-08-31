@@ -61,6 +61,12 @@ const ENTER_SETTLE_MS = 30;
 //
 // This does NOT widen ENTER_SETTLE_MS, which is 30 for the erase/Enter pair;
 // it is a second gap AFTER the Enter, so nothing above it is delayed.
+//
+// COUPLED TO REARM_ABANDON_MS, which a tuning pass would not guess: if the
+// CLI's post-Enter repaint ever lags past this gap, the composer still holds
+// the draft at the read below and the stop silently never fires. What recovers
+// the mic then is the abandon deadline outlasting the recorder's own timeout.
+// Shortening that deadline and this gap independently is what removes both.
 const STOP_SETTLE_MS = 250;
 
 // How long a consumed prefix outlives the composition it came from.
