@@ -23987,8 +23987,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (timer) clearTimeout(timer);
           timer = setTimeout(tick, quietMs);
         };
+        let lastRow = null;
         const subs = [terminal.onWriteParsed(() => {
           lastWriteAt = now();
+          const row = cursorRow();
+          if (row === lastRow) return;
+          lastRow = row;
           schedule();
         })];
         pollTimer = setInterval(pollComposition, pollMs);
