@@ -1897,6 +1897,7 @@ function rearmHarness({
   voiceMode = 'tap',
   trigger = ' ',
   abandonMs,
+  speechAbandonMs,
   speaking = false,
 } = {}) {
   const writes = [];
@@ -1925,6 +1926,7 @@ function rearmHarness({
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
     ...(abandonMs === undefined ? {} : { abandonMs }),
+    ...(speechAbandonMs === undefined ? {} : { speechAbandonMs }),
   }));
   // A turn, then its end. Every re-arm needs the edge, so this is the shape
   // every test below starts from.
@@ -2350,19 +2352,54 @@ test('SPEECH: the deferred re-arm fires once the narration ENDS', async () => {
 
 test('SPEECH: a narration does not spend the abandon budget', async () => {
   // REARM_ABANDON_MS bounds a DOOMED retry loop; waiting out audio is not that.
-  // Without the deadline being pushed out, a reply longer than the budget
-  // silently cancels the re-arm the operator is standing there waiting for.
   //
-  // abandonMs is set to just over one settle: the narration outlasts it several
-  // times over, so an unextended deadline abandons long before the flag clears.
+  // THE SEQUENCE MATTERS, and an earlier version of this test did not have it.
+  // The deadline is consulted ONLY inside the still-painting branch, so merely
+  // deferring and then releasing never reads it — that test passed with the
+  // extension deleted (found by mutation). The case where narration having
+  // eaten the budget actually bites is: narration ends, the CLI then PAINTS,
+  // and the paint-wait consults a deadline the narration already exhausted.
+  //
+  // abandonMs is just over one settle, so an unextended deadline is long gone by
+  // the time the paint is waited out.
   const h = rearmHarness({ speaking: true, abandonMs: TEST_REARM_MS + 1 });
   h.turn();
   for (let i = 0; i < 6; i += 1) await settle(TEST_REARM_MS);
   assert.deepStrictEqual(h.writes, [], 'still narrating');
+  // Narration ends, and the CLI repaints the composer — the ordering the wire
+  // path always produces.
   h.env.speaking = false;
+  h.term.write(EMPTY_COMPOSER);
   await h.done();
   assert.deepStrictEqual(h.writes, [' '],
-    'the re-arm survived a narration longer than the abandon budget');
+    'the paint after a long narration must not hit an exhausted deadline');
+  h.watcher.dispose();
+});
+
+test('SPEECH: a flag stuck true is abandoned rather than rescheduling forever', async () => {
+  // The deferral pushes the abandon deadline out, so speech cannot spend the
+  // re-arm's budget — which also means nothing else bounds this wait. The flag
+  // mirrors a value MAIN owns, so a dropped false edge (a window that missed the
+  // broadcast, a main that died mid-utterance) strands this side believing the
+  // room is still talking, and an unbounded timer is what every other wait here
+  // refuses. Found by mutation: with the flag pinned true the test process hung.
+  const h = rearmHarness({ speaking: true, speechAbandonMs: TEST_REARM_MS });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'nothing written while it believes the room is talking');
+
+  // THE DISCRIMINATOR, and without it this test passes on an unbounded build:
+  // releasing the flag with NO new turn must write nothing, because the edge was
+  // abandoned. A wait that was merely still running would fire here instead.
+  h.env.speaking = false;
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the abandoned edge must not resurrect when the flag clears');
+
+  // And the abandonment is per-EDGE: a fresh turn end re-arms normally, so one
+  // stuck flag costs a single re-arm rather than the feature.
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
   h.watcher.dispose();
 });
 

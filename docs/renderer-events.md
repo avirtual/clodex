@@ -6,7 +6,7 @@ THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (61 channels). This doc maps each to its emission point, its
+`preload.js` (62 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -74,6 +74,7 @@ Every live window; a web host fans to every connection.
 | `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/… — common fields `{type, from, to, body}`; some carry `{ts, kind}` | ~40 sites: session-manager (intent routing, DM fan-out, remind/exec/notify), remote-wiring (wire relay), wirescope-proxy |
 | `pending-count` | `msg` object `{name, count}` (parked-DM badge) | session-manager |
 | `wire-quota` | `snapshot` (account plan quota off the wire's `anthropic-ratelimit-unified-*` response headers; absolute `reset`, no baked countdown) | session-manager `_broadcastQuota` (wire `response` event) |
+| `speaker-busy` | `busy` boolean — a spoken reply started or finished playing, box-wide. The renderer holds the turn-end mic re-arm while it is true; `say` blocks until playback ends, so the false edge is the end of audio and not an estimate | engine `createSpeaker({ onBusy })` → `manager._broadcast` |
 | `peer-disabled` | `id, on, label` | ipc-handlers (`peer:setDisabled`) |
 | `peer-state` | `id, status` (`{online, label, …}`) | peer-client `_emit` → peer-wiring `emit` |
 | `peer-removed` | `id` | peer-client / peer-wiring |

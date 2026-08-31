@@ -23856,6 +23856,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var COMPOSITION_POLL_MS = 300;
       var REARM_SETTLE_MS = 3e3;
       var REARM_ABANDON_MS = 2e4;
+      var SPEECH_ABANDON_MS = 12e4;
       var VOICE_EVIDENCE_MS = 2e4;
       var VOICE_DRAFT_SITTING_MS = 12e4;
       function readComposition(terminal) {
@@ -23902,6 +23903,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         getTriggerKey = () => null,
         rearmMs = REARM_SETTLE_MS,
         abandonMs = REARM_ABANDON_MS,
+        speechAbandonMs = SPEECH_ABANDON_MS,
         // Marks the submit as voice-originated. Absent, the feature is simply off and
         // every other path here is unchanged — the marker is an annotation on a
         // submit, never a precondition for one.
@@ -23965,6 +23967,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let rearmTimer = null;
         let lastWriteAt = 0;
         let rearmDeadline = 0;
+        let speechDeferredSince = 0;
         function onNormalBuffer() {
           try {
             return terminal.buffer.active.type === "normal";
@@ -24217,10 +24220,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
             speaking = false;
           }
           if (speaking) {
+            if (speechDeferredSince === 0) speechDeferredSince = now();
+            if (now() - speechDeferredSince >= speechAbandonMs) return;
             rearmDeadline += rearmMs;
             rearmTimer = setTimeout(attemptRearm, rearmMs);
             return;
           }
+          speechDeferredSince = 0;
           if (!composerIsEmpty(cursorRow())) return;
           if (recorderBlocksRearm(indicatorRows())) return;
           if (tapTrigger()) rearms += 1;
@@ -24337,6 +24343,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (stopTimer) clearTimeout(stopTimer);
             if (pollTimer) clearInterval(pollTimer);
             if (rearmTimer) clearTimeout(rearmTimer);
+            speechDeferredSince = 0;
             timer = null;
             enterTimer = null;
             stopTimer = null;
@@ -24357,6 +24364,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         CONSUMED_IDLE_MS,
         REARM_SETTLE_MS,
         REARM_ABANDON_MS,
+        SPEECH_ABANDON_MS,
         VOICE_EVIDENCE_MS
       };
     }

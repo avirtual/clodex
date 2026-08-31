@@ -626,17 +626,26 @@ test('a speaker with no listener still works — the signal is optional', () => 
 test('the speaker is stopped AFTER the thing that can start it speaking', () => {
   const fs = require('node:fs');
   const path = require('node:path');
+  // Scoped to a WINDOW around the flushing call, never a file-wide indexOf:
+  // both files hold other, legitimate `speaker.stop()` calls — the window-close
+  // one in session-manager.js precedes this code entirely — and a bare search
+  // measures whichever came first in the file rather than the pair under test.
+  const WINDOW = 600;
   for (const [file, starter] of [
     ['session-manager.js', 'if (s.watcher) s.watcher.stop();'],
     ['engine.js', 'manager.killAll();'],
   ]) {
     const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf-8');
-    const start = src.indexOf(starter);
-    const stop = src.indexOf('speaker.stop()');
-    assert.ok(start > 0, `${file}: the flushing call must still exist`);
-    assert.ok(stop > 0, `${file}: the speaker stop must still exist`);
-    assert.ok(start < stop,
-      `${file}: speaker.stop() must come after \`${starter}\` — the flush can start a narration`);
+    const at = src.indexOf(starter);
+    assert.ok(at > 0, `${file}: the flushing call must still exist`);
+    assert.ok(src.indexOf(starter, at + 1) === -1,
+      `${file}: \`${starter}\` must be unique, or this pin is reading the wrong one`);
+    const after = src.slice(at + starter.length, at + starter.length + WINDOW);
+    const before = src.slice(Math.max(0, at - WINDOW), at);
+    assert.ok(after.includes('speaker.stop()'),
+      `${file}: speaker.stop() must follow \`${starter}\` — the flush can start a narration`);
+    assert.ok(!before.includes('speaker.stop()'),
+      `${file}: speaker.stop() must NOT precede \`${starter}\` — that is the defect this pins`);
   }
 });
 
