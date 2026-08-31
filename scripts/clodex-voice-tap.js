@@ -9,11 +9,12 @@
 //   node /path/to/clodex/scripts/clodex-voice-tap.js tap [seat-name]
 //   node /path/to/clodex/scripts/clodex-voice-tap.js select <seat-name>
 //   node /path/to/clodex/scripts/clodex-voice-tap.js mode tap|hold
+//   node /path/to/clodex/scripts/clodex-voice-tap.js speech on|off
 //
 // A VERB NEEDS ITS ARGUMENT TO BE A VERB — one bare token is always a seat
 // name, whatever it spells. That is what keeps every shortcut written against
 // the older one-argument shape working unchanged, including one naming a seat
-// called `tap`, `select` or `mode`, and it costs the new grammar nothing: a
+// called `tap`, `select`, `mode` or `speech`, and it costs the grammar nothing: a
 // bare tap of the focused seat is the zero-argument form it always was.
 //
 // The name NEVER comes from speech. Voice Control matches a fixed phrase and
@@ -112,8 +113,15 @@ function envelopeFor(args) {
       if (second !== 'tap' && second !== 'hold') return { error: `mode takes tap|hold, got "${second}"` };
       return { type: 'voice-mode', from: 'voice-tap', mode: second };
     }
+    if (first === 'speech') {
+      // Explicit on|off, never a toggle: he cannot see the current state from
+      // across the room, so a toggle fired on a mis-hear leaves him unsure
+      // which state he is in and repeating it flips back.
+      if (second !== 'on' && second !== 'off') return { error: `speech takes on|off, got "${second}"` };
+      return { type: 'voice-speech', from: 'voice-tap', state: second };
+    }
     if (first === 'tap') return { type: 'voice-tap', from: 'voice-tap', target: second };
-    return { error: `unknown verb "${first}" (use tap|select|mode)` };
+    return { error: `unknown verb "${first}" (use tap|select|mode|speech)` };
   }
   const target = first || null;
   return { type: 'voice-tap', from: 'voice-tap', ...(target ? { target } : {}) };

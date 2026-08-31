@@ -2347,6 +2347,34 @@ function createSessionManager(deps) {
       return { ok: true, name, mode };
     }
 
+    // Spoken replies on or off, from across the room. CLODEX'S OWN setting, so
+    // this is an ordinary store write — no injection, no slash command, no pty.
+    // The CLI is not involved and must not be: `mode` needs injection only
+    // because the CLI owns voice mode and reads it at startup.
+    //
+    // BOX-WIDE. There is no per-seat speech flag, so this takes no seat name and
+    // never consults the microphone holder.
+    //
+    // EXPLICIT ON/OFF, NEVER A TOGGLE: he cannot see the current state from
+    // across the room, so a toggle fired on a mis-hear leaves him unsure which
+    // state he is in and saying it again to check flips it back. Explicit is
+    // idempotent and safe to repeat, the same reasoning that has `select`
+    // decline an unmatched name rather than guess.
+    voiceSpeech(state) {
+      if (state !== 'on' && state !== 'off') return { ok: false, error: `unknown speech state "${state}" (use on|off)` };
+      const store = getUiSettings && getUiSettings();
+      if (!store) return { ok: false, error: 'no settings store' };
+      const on = state === 'on';
+      store.set({ speakReplies: on });
+      log.info('voice', `speech ${state}`);
+      // No push to the windows, and none to add: nothing subscribes to this
+      // value. The speaking gate reads the store at every turn end, and the
+      // voice popover re-reads it on OPEN — so both already agree with the
+      // store the moment this returns. A broadcast invented here would be a
+      // second notification mechanism serving no reader.
+      return { ok: true, state, speakReplies: on };
+    }
+
     // ENSURE-ON from outside the app: a Voice Control wake word arrived over
     // this box's agent socket asking for the recorder.
     //
@@ -6147,6 +6175,11 @@ function createSessionManager(deps) {
       if (mtype === 'voice-mode') {
         const r = this.voiceMode(typeof msg.mode === 'string' ? msg.mode : null);
         if (!r.ok) log.info('voice', `external mode declined: ${r.error}`);
+        return;
+      }
+      if (mtype === 'voice-speech') {
+        const r = this.voiceSpeech(typeof msg.state === 'string' ? msg.state : null);
+        if (!r.ok) log.info('voice', `external speech declined: ${r.error}`);
         return;
       }
       if (mtype === 'team-retire') {

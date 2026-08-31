@@ -959,7 +959,7 @@ test('VERBS: the legacy invocations build byte-identical envelopes', () => {
 // makes that unambiguous rather than a collision to be resolved by precedence.
 test('VERBS: a lone verb-spelled token is still a seat name, not a verb', () => {
   const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
-  for (const word of ['tap', 'select', 'mode']) {
+  for (const word of ['tap', 'select', 'mode', 'speech']) {
     assert.deepStrictEqual(envelopeFor([word]),
       { type: 'voice-tap', from: 'voice-tap', target: word },
       `"${word}" alone addresses a seat of that name`);
@@ -976,6 +976,10 @@ test('VERBS: the explicit verb forms build the envelopes the socket decodes', ()
     { type: 'voice-mode', from: 'voice-tap', mode: 'tap' });
   assert.deepStrictEqual(envelopeFor(['mode', 'hold']),
     { type: 'voice-mode', from: 'voice-tap', mode: 'hold' });
+  assert.deepStrictEqual(envelopeFor(['speech', 'on']),
+    { type: 'voice-speech', from: 'voice-tap', state: 'on' });
+  assert.deepStrictEqual(envelopeFor(['speech', 'off']),
+    { type: 'voice-speech', from: 'voice-tap', state: 'off' });
 });
 
 // Rejected at the script, so a typo'd shortcut fails where he can see it rather
@@ -983,6 +987,7 @@ test('VERBS: the explicit verb forms build the envelopes the socket decodes', ()
 test('VERBS: an unknown verb and a bad mode are refused, not sent', () => {
   const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
   assert.match(envelopeFor(['reboot', 'now']).error, /unknown verb "reboot"/);
+  assert.match(envelopeFor(['speech', 'loud']).error, /on\|off/);
   assert.match(envelopeFor(['mode', 'loud']).error, /tap\|hold/);
   // No envelope is built on either path — an `error` key and nothing to send.
   assert.strictEqual(envelopeFor(['mode', 'loud']).type, undefined);
@@ -1234,4 +1239,175 @@ test('VERBS: script and socket agree on the new envelope types', () => {
   assert.match(handler, /mtype === 'voice-select'/);
   assert.match(script, /type: 'voice-mode'/);
   assert.match(handler, /mtype === 'voice-mode'/);
+});
+
+// ------------------------------------------------------------- the speech verb
+
+// A manager whose settings store is REAL enough to be written and read back,
+// because the claim is that the verb changes what the box will do — not that it
+// called a setter. `set` merges like the real store's, so a write of one key
+// must leave the others alone.
+function mkSpeech({ speakReplies = false } = {}) {
+  let cur = { speakReplies, speakVoice: 'Daniel', speakRate: 210 };
+  const sets = [];
+  const store = {
+    get: () => ({ ...cur }),
+    set: (partial) => {
+      sets.push(partial);
+      cur = { ...cur, ...partial };
+      return { ...cur };
+    },
+  };
+  const m = mk({
+    getUiSettings: () => store,
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  m._broadcast = () => {};
+  return { m, store, sets, read: () => ({ ...cur }) };
+}
+
+test('SPEECH: `on` sets the store value and `off` clears it', () => {
+  const h = mkSpeech();
+  assert.strictEqual(h.read().speakReplies, false, 'ENTER: starts off, or `on` proves nothing');
+
+  assert.deepStrictEqual(h.m.voiceSpeech('on'), { ok: true, state: 'on', speakReplies: true });
+  assert.strictEqual(h.read().speakReplies, true, 'the STORE changed, not just the return value');
+
+  assert.deepStrictEqual(h.m.voiceSpeech('off'), { ok: true, state: 'off', speakReplies: false });
+  assert.strictEqual(h.read().speakReplies, false);
+});
+
+// The gate that decides whether a turn is spoken reads the store at every turn
+// end, so "the setting changed" and "the box will now speak" are the same claim
+// — asserted through the REAL gate rather than by re-reading the value written.
+test('SPEECH: the speaking gate follows the store, which is what makes the verb real', () => {
+  const h = mkSpeech();
+  const cfgOff = h.store.get();
+  assert.strictEqual(cfgOff.speakReplies !== true, true,
+    'ENTER: the gate\'s own predicate says silent before the flip');
+  h.m.voiceSpeech('on');
+  const cfgOn = h.store.get();
+  assert.strictEqual(cfgOn.speakReplies !== true, false,
+    'and says speak after it — the same expression _maybeSpeak evaluates');
+});
+
+// BOX-WIDE, not per-seat. The verb must not grow a seat scope: there is no
+// per-seat speech flag for it to mean anything against.
+test('SPEECH: takes no seat name and does not consult the microphone holder', () => {
+  const h = mkSpeech();
+  const win = fakeWin(); win.ws = 'ws1';
+  h.m.registerWindow('ws1', win);
+  h.m.sessions.set('A', { name: 'A', agentType: 'claude', workspaceId: 'ws1', _dead: false });
+  reportFrom(h.m, win, 'A');
+  assert.strictEqual(h.m.micTarget(), 'A', 'ENTER: a seat DOES hold the mic, so ignoring it is a choice');
+
+  // WATCH THE READ, not the arity. `voiceSpeech.length` is 1 even for
+  // `(state, seat = null)` — a default parameter does not count — so an arity
+  // pin passes for exactly the per-seat mutant it was meant to forbid.
+  // Observing whether micTarget is CONSULTED is the property itself.
+  let micReads = 0;
+  const realMicTarget = h.m.micTarget.bind(h.m);
+  h.m.micTarget = () => { micReads++; return realMicTarget(); };
+  Object.defineProperty(h.m, '_micTarget', {
+    get() { micReads++; return 'A'; },
+    set() {},
+    configurable: true,
+  });
+
+  // Called the way the SOCKET ARM calls it — state only. That is the invocation
+  // a per-seat implementation would have to serve by falling back to the mic
+  // holder, so it is the one that exposes the read. Passing a seat explicitly
+  // would short-circuit that fallback and hide it.
+  assert.deepStrictEqual(h.m.voiceSpeech('on'), { ok: true, state: 'on', speakReplies: true });
+  assert.strictEqual(micReads, 0, 'the microphone holder was never read — this verb is box-wide');
+
+  // And a seat passed anyway changes nothing, which is the other half.
+  assert.deepStrictEqual(h.m.voiceSpeech('off', 'A'), { ok: true, state: 'off', speakReplies: false });
+  // Box-wide writes, with no seat key anywhere in either partial.
+  assert.deepStrictEqual(h.sets, [{ speakReplies: true }, { speakReplies: false }]);
+  assert.strictEqual(realMicTarget(), 'A', 'and the microphone did not move');
+});
+
+// A TOGGLE IS FORBIDDEN: he cannot see the current state from across the room,
+// so repeating a mis-heard phrase must not flip it back. Idempotence IS the
+// safety property here.
+test('SPEECH: repeating the same state is idempotent, never a toggle', () => {
+  const h = mkSpeech();
+  h.m.voiceSpeech('on');
+  h.m.voiceSpeech('on');
+  h.m.voiceSpeech('on');
+  assert.strictEqual(h.read().speakReplies, true, 'still on after saying it three times');
+  h.m.voiceSpeech('off');
+  h.m.voiceSpeech('off');
+  assert.strictEqual(h.read().speakReplies, false, 'and still off');
+});
+
+test('SPEECH: a state that is neither on nor off writes NOTHING', () => {
+  const h = mkSpeech({ speakReplies: true });
+  for (const bad of ['loud', 'toggle', '', null, undefined, true]) {
+    const r = h.m.voiceSpeech(bad);
+    assert.strictEqual(r.ok, false, `${String(bad)} is refused`);
+    assert.match(r.error, /unknown speech state/);
+  }
+  // The store was never touched: a rejected state must not fall through to a
+  // write, which is what would make a mis-heard word silence him.
+  assert.deepStrictEqual(h.sets, []);
+  assert.strictEqual(h.read().speakReplies, true, 'the existing value survived every refusal');
+});
+
+// The write must not clobber the sibling keys — the popover reads voice and rate
+// from the same object, and a full-object write would reset them.
+test('SPEECH: the write is a partial and leaves the other speech settings alone', () => {
+  const h = mkSpeech();
+  h.m.voiceSpeech('on');
+  assert.deepStrictEqual(h.sets, [{ speakReplies: true }], 'ONE key in the partial');
+  assert.deepStrictEqual(h.read(), { speakReplies: true, speakVoice: 'Daniel', speakRate: 210 });
+});
+
+test('SPEECH: the socket arm dispatches voice-speech and takes the state only as a string', () => {
+  const h = mkSpeech();
+  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: 'on' });
+  assert.strictEqual(h.read().speakReplies, true);
+  // A non-string state reaches the verb as null and is refused, so a malformed
+  // envelope cannot write anything.
+  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: { on: true } });
+  assert.strictEqual(h.read().speakReplies, true, 'unchanged by the malformed envelope');
+  assert.deepStrictEqual(h.sets, [{ speakReplies: true }], 'and no second write happened');
+});
+
+test('SPEECH: script and socket agree on the envelope type', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'clodex-voice-tap.js'), 'utf-8');
+  const handler = fs.readFileSync(
+    path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  assert.match(script, /type: 'voice-speech'/);
+  assert.match(handler, /mtype === 'voice-speech'/);
+  // NOT injected: this is Clodex's own setting, and a slash command here would
+  // be writing a file the running CLI disagrees with — the exact failure `mode`
+  // exists to avoid, in reverse.
+  const body = /voiceSpeech\(state\)\s*\{[\s\S]*?\n    \}/.exec(handler);
+  assert.ok(body, 'ENTER: the method body was located, or the assertions below read nothing');
+  assert.doesNotMatch(body[0], /_injectText|pty\.write/,
+    'speech writes the settings store, never the pty');
+});
+
+// THE COMPATIBILITY PROPERTY, re-pinned with three verbs present. His daily
+// shortcut invokes this script by path with zero or one argument; a third verb
+// must not have changed those bytes.
+test('SPEECH: his legacy invocations are STILL byte-identical with three verbs present', () => {
+  const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
+  assert.deepStrictEqual(envelopeFor([]),
+    { type: 'voice-tap', from: 'voice-tap' },
+    'bare: still no target key at all');
+  assert.deepStrictEqual(envelopeFor(['wirescope']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'wirescope' },
+    'named: still a tap of that seat');
+  // The one-token rule now carries four verb words, and a seat may be named for
+  // any of them. `speech` is the newest and the one a later verb is most likely
+  // to collide with.
+  assert.deepStrictEqual(envelopeFor(['speech']),
+    { type: 'voice-tap', from: 'voice-tap', target: 'speech' },
+    'a seat named `speech` is still addressable by the legacy shape');
 });

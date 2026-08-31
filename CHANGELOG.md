@@ -20,7 +20,11 @@ blocks a release.
   currently see instead of dictating into whichever tab happened to be open.
   `clodex-voice-tap.js mode tap|hold` switches the CLI's push-to-talk mode on
   whichever seat holds the microphone, which previously meant editing settings
-  by hand. A name that matches no live seat does nothing at all rather than
+  by hand. `clodex-voice-tap.js speech on|off` turns spoken replies on or off
+  for the box, so you can ask for narration from across the room instead of
+  walking to the voice popover — always explicit, never a toggle, so repeating
+  it is safe when you cannot see the current state. A name that matches no live
+  seat does nothing at all rather than
   falling back to the seat you were on. Existing shortcuts are unaffected:
   `clodex-voice-tap.js` and `clodex-voice-tap.js <seat>` behave exactly as
   before, including for a seat named `tap`, `select` or `mode`.
