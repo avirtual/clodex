@@ -224,6 +224,40 @@ function recordingBlocksRearm(rows) {
   return rows.some((row) => typeof row === 'string' && RECORDING.test(row));
 }
 
+// Was this submit VOICE-originated, and so worth marking as transcribed?
+//
+// The trigger phrase submits a TYPED draft ending in those words too, and that
+// message is not dictated. Marking it would teach the reader to distrust the
+// marker, which is worse than no marker: a reader told to treat literals as
+// suspect on text the operator typed exactly will start second-guessing exact
+// words. So this reads POSITIVE EVIDENCE ONLY and its default is NO.
+//
+// Two things stamp evidence — a composition commit, and the CLI's recording
+// indicator on screen — and NEITHER PROVES THIS DRAFT WAS SPOKEN. The indicator
+// says only that the recorder was running, and t571's re-arm lights it by
+// machine at every turn end, so a draft typed into a lit composer would be
+// marked. Typing therefore clears the stamp AND mutes the indicator path until
+// the recorder next rises (the watcher's noteInput); this function only judges
+// what survived that.
+//
+// `windowMs` bounds staleness so evidence cannot outlive the utterance that
+// produced it. Null (never seen) is not stale, it is absent, and both answer no.
+function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
+  if (typeof evidenceAt !== 'number' || !Number.isFinite(evidenceAt)) return false;
+  if (typeof now !== 'number' || typeof windowMs !== 'number') return false;
+  return now - evidenceAt <= windowMs && now >= evidenceAt;
+}
+
+// Whether the screen shows the CLI recording RIGHT NOW. Same pattern and same
+// rows as `recordingBlocksRearm`, opposite failure handling: this one feeds a
+// marker rather than an interlock, so an unreadable screen is "no evidence"
+// rather than "assume the worst". Reading the recorder's state must never be
+// confused with the re-arm's decision to stand down.
+function recordingObserved(rows) {
+  if (!Array.isArray(rows)) return false;
+  return rows.some((row) => typeof row === 'string' && RECORDING.test(row));
+}
+
 // The character that arms the recorder, or null when no character can.
 //
 // The CLI resolves its own trigger the same way: it takes the Chat-context
@@ -271,6 +305,8 @@ module.exports = {
   shouldRearm,
   composerIsEmpty,
   recordingBlocksRearm,
+  isVoiceOriginated,
+  recordingObserved,
   resolveTriggerKey,
   readVoiceSubmitSettings,
 };

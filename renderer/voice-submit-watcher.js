@@ -24,8 +24,14 @@
 
 const {
   findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
-  recordingBlocksRearm,
+  recordingBlocksRearm, isVoiceOriginated, recordingObserved,
 } = require('./lib/voice-submit');
+// The SAME classifier the main process and typeToTakeControl use. A second
+// predicate here would drift from the one that already decides what counts as a
+// human keystroke, and this one has to agree with it: xterm's onData carries
+// mouse reports and query replies too, and treating those as typing would wipe
+// the microphone evidence on scroll alone.
+const { isHumanPtyInput } = require('../proxy-util');
 
 // The quiet window. Streamed transcription lands in segments, so a fire on the
 // first write that completes the phrase submits half an utterance. Shorter than
@@ -105,6 +111,42 @@ const REARM_SETTLE_MS = 3000;
 // to work without an activity event — would reschedule off one edge forever.
 // Abandoning is the safe end: the next real turn end starts a fresh attempt.
 const REARM_ABANDON_MS = 10000;
+
+// THE INDICATOR IS NOT EVIDENCE THAT *THIS DRAFT* WAS SPOKEN, which is why the
+// clear below exists and why it is not optional.
+//
+// t571's re-arm writes the trigger character at every turn end, so the recorder
+// is lit at the START of an ordinary turn, and it stays lit for ~15s of silence.
+// Typing into that lit composer would submit the operator's exact typed words
+// carrying a marker saying they were dictated — a mislabel of his own words, the
+// one thing this feature must never do. So typing is POSITIVE EVIDENCE OF
+// NOT-VOICE: it clears the stamp AND mutes the indicator path.
+//
+// THE MUTE IS WHAT MAKES THE CLEAR STICK. The stamp is level-triggered, so a
+// clear alone is undone by the next 300ms poll while the recorder is still lit —
+// which is how a narrower version of this fix left the defect open.
+//
+// This does not cost tap-listening, which is the workflow that matters: the tap
+// keypress mutes, the recorder then LIGHTS, and that rising edge unmutes and
+// stamps before the transcription lands.
+
+// How long evidence that the operator was DICTATING keeps a submit eligible for
+// the voice-origin marker.
+//
+// It spans one gap: the last moment this side can see the microphone (a
+// composition commit, or the recording indicator painted on screen) to the
+// Enter that submits those words. The buffer half's own QUIET_MS sits inside
+// that gap, so the window cannot be tightened toward it — a fire happens a
+// quiet window AFTER the last write, and on the CLI's voice path the indicator
+// comes down when the recorder stops, before the transcription is even painted.
+//
+// Generous rather than tight because the two errors are not symmetric and the
+// tight side is not the safe one here: too short silently drops the marker on
+// genuinely spoken text (the case the feature exists for), while too long can
+// only mark a message typed within seconds of dictating — which is text the
+// operator spoke into moments earlier anyway. It is a staleness bound, not a
+// discriminator: the discrimination is done by requiring evidence AT ALL.
+const VOICE_EVIDENCE_MS = 20_000;
 
 // Provisional boundary #1: where the pending composed text comes from.
 // Contract: the text of THIS terminal's pending composition, or null when there
@@ -223,6 +265,11 @@ function createVoiceSubmitWatcher(terminal, {
   getTriggerKey = () => null,
   rearmMs = REARM_SETTLE_MS,
   abandonMs = REARM_ABANDON_MS,
+  // Marks the submit as voice-originated. Absent, the feature is simply off and
+  // every other path here is unchanged — the marker is an annotation on a
+  // submit, never a precondition for one.
+  markVoiceOrigin = null,
+  evidenceMs = VOICE_EVIDENCE_MS,
   now = Date.now,
 }) {
   let timer = null;
@@ -237,6 +284,24 @@ function createVoiceSubmitWatcher(terminal, {
   // stays killed.
   let answered = null;
   let fires = 0;
+  // When the microphone was last seen. Written ONLY where dictation is proven
+  // (a composition commit, or the CLI's recording indicator on screen) and read
+  // only by the marker — never by a gate, so a wrong value here can cost the
+  // annotation and nothing else.
+  let voiceEvidenceAt = null;
+  // THE INDICATOR STAMP IS LEVEL-TRIGGERED, so clearing the evidence on a
+  // keystroke is not enough on its own: the recorder stays lit for ~15s after
+  // t571's re-arm lights it, and the 300ms poll would re-stamp the cleared
+  // evidence again and again while the operator types a reply. These two make
+  // the clear STICK until the recorder next RISES.
+  //
+  // Not a bare rising-edge stamp instead, which is the obvious simplification
+  // and is wrong: a 30s utterance would then age out of VOICE_EVIDENCE_MS with
+  // nothing to refresh it, and long dictations would silently stop being marked.
+  // The level stamp is what refreshes them; this only suppresses it after typing.
+  let mutedByTyping = false;
+  let prevObserved = false;
+  let marks = 0;
 
   // The composition half's own state. `pending` is the composed text as of the
   // last sample and `pendingAt` when it last CHANGED, which together are the
@@ -353,6 +418,23 @@ function createVoiceSubmitWatcher(terminal, {
     if (!shouldFire({ enabled: cfg.enabled, attention })) return;
 
     fires += 1;
+    // BEFORE the writes, and that ordering is the whole of it: the marker has
+    // to be registered at the proxy before the submitted text reaches the
+    // model, or it rides the wrong turn — or no turn. It is not awaited (it
+    // must never delay the keystroke), so what buys the margin is the
+    // ENTER_SETTLE_MS gap that already sits between the erase and the \r, plus
+    // the CLI's own time from Enter to its request. Measured against a live
+    // proxy the arm POST is a median 0.45ms and a p95 4.6ms on loopback,
+    // against a 30ms floor. Do NOT widen ENTER_SETTLE_MS to buy more: it is 30
+    // for a different reason (t566) and merging those writes breaks the submit.
+    if (markVoiceOrigin
+      && isVoiceOriginated({ evidenceAt: voiceEvidenceAt, now: now(), windowMs: evidenceMs })) {
+      marks += 1;
+      // Consumed, so one utterance marks one submit. A second submit needs its
+      // own evidence rather than inheriting this one.
+      voiceEvidenceAt = null;
+      try { markVoiceOrigin(); } catch {}
+    }
     write('\x7f'.repeat(found.erase));
     enterTimer = setTimeout(() => {
       enterTimer = null;
@@ -392,6 +474,27 @@ function createVoiceSubmitWatcher(terminal, {
     // accumulation the moment the operator clicks back and keeps dictating —
     // the same shape as the alt-screen arm, and the same answer.
     if (!cfg) { forgetPending(); return; }
+
+    // The CLI's own voice path, which never produces a composition: it records
+    // and paints the transcription straight into the composer, so the indicator
+    // is the only moment the microphone is visible from here. Sampled ABOVE the
+    // composition gate because that path does not need the composition setting,
+    // and on this timer rather than per write — the indicator stands for
+    // seconds, so 300ms resolves it, while a scan on every write parse would
+    // run orders of magnitude more often for the same answer.
+    //
+    // Read-only. `recordingBlocksRearm` makes the re-arm's own decision from the
+    // same rows and is deliberately untouched here.
+    const observed = recordingObserved(indicatorRows());
+    // A RISE is the recorder starting, which is the operator reaching for the
+    // microphone: it clears the mute so tap-listening marks normally (the tap
+    // keypress mutes, the recorder then lights, and this unmutes on that edge).
+    // After the re-arm lit it by machine there is no second rise, so typing into
+    // an already-lit composer stays muted — which is the defect this closes.
+    if (observed && !prevObserved) mutedByTyping = false;
+    prevObserved = observed;
+    if (observed && !mutedByTyping) voiceEvidenceAt = now();
+
     // The COMPOSITION checkbox going off is the operator saying stop, and that
     // does end the session. The master switch never reaches here.
     if (cfg.composition !== true) { forgetPending(); forgetConsumed(); return; }
@@ -478,6 +581,18 @@ function createVoiceSubmitWatcher(terminal, {
     let took = false;
     try { took = commitPending(terminal, text, alreadySent) !== false; } catch { took = false; }
     if (!took) commitFailures += 1;
+    // A composition IS the microphone on macOS: these words were dictated into
+    // the overlay, never typed.
+    //
+    // STAMPED AFTER THE COMMIT, and the order is load-bearing. commitPending
+    // dispatches the keydown that makes xterm fire onData synchronously with the
+    // dictated text, which reaches noteInput and CLEARS the stamp — so a stamp
+    // written before the commit is wiped by its own echo and macOS dictation
+    // silently stops being marked.
+    //
+    // Stamped even when the commit REPORTS FAILURE: the evidence is about where
+    // the text came from, not about whether finalising it worked.
+    voiceEvidenceAt = now();
   }
 
   function rearmAllowed(from, to) {
@@ -548,6 +663,19 @@ function createVoiceSubmitWatcher(terminal, {
     write(key);
   }
 
+  // Every byte the local onData branch sends to the pty. The ONLY writer that
+  // clears voice evidence, and it is what makes the marker mean "spoken" rather
+  // than "the recorder happened to be on".
+  //
+  // Gated on isHumanPtyInput because onData also carries terminal chatter; a
+  // clear on a mouse report would silently un-mark genuinely spoken text.
+  function noteInput(data) {
+    if (disposed) return;
+    if (!isHumanPtyInput(data)) return;
+    voiceEvidenceAt = null;
+    mutedByTyping = true;
+  }
+
   function noteActivity(state, turnEnd) {
     if (disposed) return;
     const from = activity;
@@ -589,10 +717,12 @@ function createVoiceSubmitWatcher(terminal, {
   return {
     refresh: schedule,
     noteActivity,
+    noteInput,
     fireCount: () => fires,
     rearmCount: () => rearms,
     commitCount: () => commits,
     commitFailureCount: () => commitFailures,
+    markCount: () => marks,
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);
@@ -611,5 +741,5 @@ function createVoiceSubmitWatcher(terminal, {
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
   QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
-  REARM_SETTLE_MS, REARM_ABANDON_MS,
+  REARM_SETTLE_MS, REARM_ABANDON_MS, VOICE_EVIDENCE_MS,
 };

@@ -1185,6 +1185,9 @@ function createTerminal(name, peer = null) {
       return (state && state.effective) || null;
     },
     getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
+    // A `send`, so this returns immediately and the erase/Enter that follow it
+    // are never waiting on the proxy.
+    markVoiceOrigin: () => window.api.markVoiceOrigin(name),
   });
 
   const searchAddon = new SearchAddon();
@@ -1221,6 +1224,11 @@ function createTerminal(name, peer = null) {
       typeToTakeControl(name, data);
       return;
     }
+    // Typing is evidence the draft was NOT dictated, and this is the only place
+    // that sees it: the recording indicator can be lit through an ordinary typed
+    // turn (t571's re-arm writes the trigger character at every turn end), so
+    // without this the operator's exact typed words submit marked as spoken.
+    if (voiceSubmit) voiceSubmit.noteInput(data);
     window.api.writeToSession(name, data);
   });
 

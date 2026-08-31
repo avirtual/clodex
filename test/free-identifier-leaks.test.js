@@ -126,6 +126,11 @@ const SCANNED_MODULES = [
   // what keeps session-manager from reaching into its registers instead of
   // going through arm/release.
   'selection-arm.js',
+  // The voice-origin marker's armer (t572), scanned for the third instance of
+  // the same reason: its one proxy call arrives injected, so the reverse scan is
+  // what keeps session-manager going through arm() rather than reaching for the
+  // hint id or its text.
+  'voice-origin-arm.js',
   'hint-retrieve.js',
   // The second retriever the seam above was built for. It shares only the
   // tokenizer with hint-retrieve.js; its thresholds are deliberately its own,
