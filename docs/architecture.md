@@ -531,7 +531,9 @@ worktree, which is why membership is by repo.
   fixed-id and self-clearing under the operator's typing, while the proxy
   registry is keyed by id and armHints merges, so distinct ids coexist. The
   renderer decides WHETHER (it watched the microphone); this owns the id, the
-  text and the TTL.
+  text and the TTL. The recorder being LIT is not enough — t571's re-arm lights
+  it at every turn end — so typing clears the evidence and an unmarked submit is
+  the default.
 
 ### Sandbox and external tools
 

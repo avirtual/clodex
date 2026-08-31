@@ -26,6 +26,12 @@ const {
   findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
   recordingBlocksRearm, isVoiceOriginated, recordingObserved,
 } = require('./lib/voice-submit');
+// The SAME classifier the main process and typeToTakeControl use. A second
+// predicate here would drift from the one that already decides what counts as a
+// human keystroke, and this one has to agree with it: xterm's onData carries
+// mouse reports and query replies too, and treating those as typing would wipe
+// the microphone evidence on scroll alone.
+const { isHumanPtyInput } = require('../proxy-util');
 
 // The quiet window. Streamed transcription lands in segments, so a fire on the
 // first write that completes the phrase submits half an utterance. Shorter than
@@ -105,6 +111,19 @@ const REARM_SETTLE_MS = 3000;
 // to work without an activity event — would reschedule off one edge forever.
 // Abandoning is the safe end: the next real turn end starts a fresh attempt.
 const REARM_ABANDON_MS = 10000;
+
+// THE INDICATOR IS NOT EVIDENCE THAT *THIS DRAFT* WAS SPOKEN, which is why the
+// clear below exists and why it is not optional.
+//
+// t571's re-arm writes the trigger character at every turn end, so the recorder
+// is lit at the START of an ordinary turn. Typing into that lit composer used
+// to submit the operator's exact typed words carrying a marker saying they were
+// dictated — a mislabel of his own words, the one thing this feature must never
+// do. So typing is POSITIVE EVIDENCE OF NOT-VOICE and clears the stamp.
+//
+// This does not cost tap-listening, which is the workflow that matters: the tap
+// keypress clears the stamp, and the indicator re-stamps it on the next poll a
+// moment later, before the transcription lands.
 
 // How long evidence that the operator was DICTATING keeps a submit eligible for
 // the voice-origin marker.
@@ -534,14 +553,21 @@ function createVoiceSubmitWatcher(terminal, {
     // retrying cannot work. It stays visible through commitFailureCount()
     // instead of being discarded.
     commits += 1;
-    // A composition IS the microphone on macOS: these words were dictated into
-    // the overlay, never typed. Stamped even if the commit below fails — the
-    // evidence is about where the text came from, not about whether finalising
-    // it worked.
-    voiceEvidenceAt = now();
     let took = false;
     try { took = commitPending(terminal, text, alreadySent) !== false; } catch { took = false; }
     if (!took) commitFailures += 1;
+    // A composition IS the microphone on macOS: these words were dictated into
+    // the overlay, never typed.
+    //
+    // STAMPED AFTER THE COMMIT, and the order is load-bearing. commitPending
+    // dispatches the keydown that makes xterm fire onData synchronously with the
+    // dictated text, which reaches noteInput and CLEARS the stamp — so a stamp
+    // written before the commit is wiped by its own echo and macOS dictation
+    // silently stops being marked.
+    //
+    // Stamped even when the commit REPORTS FAILURE: the evidence is about where
+    // the text came from, not about whether finalising it worked.
+    voiceEvidenceAt = now();
   }
 
   function rearmAllowed(from, to) {
@@ -612,6 +638,21 @@ function createVoiceSubmitWatcher(terminal, {
     write(key);
   }
 
+  // Every byte the local onData branch sends to the pty. The ONLY writer that
+  // clears voice evidence, and it is what makes the marker mean "spoken" rather
+  // than "the recorder happened to be on".
+  //
+  // Gated on isHumanPtyInput because onData also carries terminal chatter; a
+  // clear on a mouse report would silently un-mark genuinely spoken text.
+  // Injected text does not come through here — it is written by the main
+  // process, not by this terminal's onData — so a dm delivery cannot clear it
+  // either.
+  function noteInput(data) {
+    if (disposed) return;
+    if (!isHumanPtyInput(data)) return;
+    voiceEvidenceAt = null;
+  }
+
   function noteActivity(state, turnEnd) {
     if (disposed) return;
     const from = activity;
@@ -653,6 +694,7 @@ function createVoiceSubmitWatcher(terminal, {
   return {
     refresh: schedule,
     noteActivity,
+    noteInput,
     fireCount: () => fires,
     rearmCount: () => rearms,
     commitCount: () => commits,

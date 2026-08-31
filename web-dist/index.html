@@ -23681,6 +23681,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         isVoiceOriginated,
         recordingObserved
       } = require_voice_submit();
+      var { isHumanPtyInput } = require_proxy_util();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
       var CONSUMED_IDLE_MS = 9e4;
@@ -23899,7 +23900,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!shouldFire({ enabled: cfg.enabled, attention })) return;
           commits += 1;
-          voiceEvidenceAt = now();
           let took = false;
           try {
             took = commitPending(terminal, text, alreadySent) !== false;
@@ -23907,6 +23907,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             took = false;
           }
           if (!took) commitFailures += 1;
+          voiceEvidenceAt = now();
         }
         function rearmAllowed(from, to) {
           let cfg = null;
@@ -23959,6 +23960,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           rearms += 1;
           write(key);
         }
+        function noteInput(data) {
+          if (disposed) return;
+          if (!isHumanPtyInput(data)) return;
+          voiceEvidenceAt = null;
+        }
         function noteActivity(state, turnEnd) {
           if (disposed) return;
           const from = activity;
@@ -23983,6 +23989,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return {
           refresh: schedule,
           noteActivity,
+          noteInput,
           fireCount: () => fires,
           rearmCount: () => rearms,
           commitCount: () => commits,
@@ -32847,6 +32854,7 @@ ${detail}` });
             typeToTakeControl(name, data);
             return;
           }
+          if (voiceSubmit) voiceSubmit.noteInput(data);
           window.api.writeToSession(name, data);
         });
         sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer });

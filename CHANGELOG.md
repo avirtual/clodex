@@ -19,9 +19,10 @@ blocks a release.
   garbled words literally. A hands-free submit now carries a marker saying the
   text was transcribed, so the agent reads for intent and asks when a word does
   not fit instead of guessing. The marker is attached only when Clodex actually
-  saw you dictating: a typed message that happens to end in the trigger phrase
-  is not marked. It needs traffic optimization on, expires within a minute, and
-  never enters the conversation history.
+  saw you dictating for THIS message: a typed message that happens to end in the
+  trigger phrase is not marked, and neither is one you type while the recorder
+  happens to be listening. It needs traffic optimization on, expires in seconds,
+  and never enters the conversation history.
 
 - **Hands-free submit no longer re-sends what you already said.** With macOS
   dictation, the second and every later submit in one dictation session sent the

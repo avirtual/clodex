@@ -2322,3 +2322,51 @@ test('write: a refresh that throws never blocks the continuation', async () => {
       'a stale prompt is recoverable at the next spawn; a dropped continuation is not — the refresh is best-effort and must never take the handoff down with it');
   } finally { h.stop('a'); }
 });
+
+// ------------------------------------------- the voice-origin marker's wiring
+
+test('markVoiceOrigin arms through _armCtx, with the exact route and the captured base', async () => {
+  // The seam ipc-handlers reaches. Pinned here because the route grammar and the
+  // captured-vs-live base rule are the two things a second base resolution in
+  // markVoiceOrigin would silently get wrong — and the renderer half cannot see
+  // either, so nothing else in the suite would catch it.
+  const armed = [];
+  const h = mkManager({ extraDeps: { voiceOriginArm: { arm: (ctx) => { armed.push(ctx); return true; } } } });
+  await spawned(h, 'a');
+  try {
+    h.m.markVoiceOrigin('a');
+    assert.strictEqual(armed.length, 1, 'ENTER: the arm must have been REACHED');
+    assert.strictEqual(armed[0].agent, 'a');
+    // The EXACT minted id, for the same reason the draft seam asserts it: a glob
+    // is fnmatchcase at the proxy, so `clodex-a-*` would mark every agent whose
+    // name extends this one.
+    assert.strictEqual(armed[0].route, 'clodex-a-deadbeef');
+    assert.ok(!armed[0].route.includes('*'), 'never a glob when the exact id is known');
+    assert.strictEqual(armed[0].base, 'http://127.0.0.1:1');
+  } finally { h.stop('a'); }
+});
+
+test('markVoiceOrigin on a dead or unknown session is a no-op, not a throw', async () => {
+  // It is called from an ipc `send`, which has no reply channel: a throw here
+  // would surface as an unhandled error in main with nothing to report it to.
+  const armed = [];
+  const h = mkManager({ extraDeps: { voiceOriginArm: { arm: (ctx) => { armed.push(ctx); return true; } } } });
+  const s = await spawned(h, 'a');
+  try {
+    // `_dead` is what the exit path sets, and it is a DIFFERENT state from being
+    // absent from the map — a dead session is still in it for the retry/forget
+    // UI, so a guard that only checks the map would arm on this one.
+    s._dead = true;
+    h.m.markVoiceOrigin('a');
+    h.m.markVoiceOrigin('never-existed');
+    assert.deepStrictEqual(armed, [], 'a session that is gone cannot submit anything to mark');
+  } finally { h.stop('a'); }
+});
+
+test('a voice armer that THROWS cannot escape into the ipc handler', async () => {
+  const h = mkManager({ extraDeps: { voiceOriginArm: { arm: () => { throw new Error('proxy is down'); } } } });
+  await spawned(h, 'a');
+  try {
+    assert.doesNotThrow(() => h.m.markVoiceOrigin('a'));
+  } finally { h.stop('a'); }
+});

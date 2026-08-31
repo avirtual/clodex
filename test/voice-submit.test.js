@@ -2267,6 +2267,9 @@ function markHarness({
   const events = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
   const env = { config, attention };
+  // The commit stub calls back into the watcher it is a dependency OF, exactly
+  // as the real one does through xterm.
+  const watcherRef = {};
   const watcher = track(createVoiceSubmitWatcher(term, {
     getConfig: () => env.config,
     getAttention: () => env.attention,
@@ -2275,9 +2278,20 @@ function markHarness({
     quietMs: TEST_QUIET_MS,
     pollMs: 1,
     readComposition: () => env.composed ?? null,
-    commitComposition: () => { env.composed = null; return true; },
+    // MODELS THE REAL BOUNDARY, and the synchronous noteInput is the whole
+    // reason: commitComposition dispatches the keydown that makes xterm fire
+    // onData with the dictated text, so the local onData branch calls noteInput
+    // DURING the commit. A stub that omits it cannot catch a stamp written
+    // before the commit — which its own echo then clears — and that failure is
+    // invisible in a green suite.
+    commitComposition: () => {
+      env.composed = null;
+      watcherRef.watcher.noteInput('finish the report over and out');
+      return true;
+    },
     ...(evidenceMs === undefined ? {} : { evidenceMs }),
   }));
+  watcherRef.watcher = watcher;
   return {
     term, watcher, events, env,
     done: () => settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25),
@@ -2355,6 +2369,69 @@ test('one utterance marks ONE submit: the evidence is consumed', async () => {
   await h.done();
   assert.strictEqual(h.watcher.fireCount(), 2, 'ENTER: the second submit must have FIRED');
   assert.strictEqual(h.watcher.markCount(), 1, 'but it must not inherit the first utterance');
+  h.watcher.dispose();
+});
+
+test('a lit indicator does NOT mark a TYPED submit: typing is evidence of not-voice', () => {
+  // THE DEFECT this pin exists for, and the claim it falsifies is the one the
+  // first round of this feature shipped on: "typing produces neither".
+  //
+  // The recording indicator is not evidence that THIS draft was spoken. t571's
+  // own re-arm writes the trigger character at every turn end, so the indicator
+  // is lit at the START of an ordinary typed turn — and the operator's typed
+  // words then submit carrying a marker telling the agent they were dictated.
+  // That is a mislabel of the operator's exact words, which is the one thing
+  // the marker must never do.
+  //
+  // Driven through `noteInput`, the seam the local onData branch calls: typing
+  // is POSITIVE EVIDENCE OF NOT-VOICE and clears the stamp. The operator's own
+  // tap keypress clears it too, and the indicator re-stamps on the next poll —
+  // which is what keeps tap-listening (the workflow that matters) marked.
+  const h = markHarness({ rows: ['\u276f ', ' agents \u23faREC \u00b7 tap to send'] });
+  return (async () => {
+    await settle(10); // the indicator is observed and stamps evidence
+    // The operator TYPES. Every keystroke reaches the local onData branch.
+    for (const ch of 'finish the report over and out') h.watcher.noteInput(ch);
+    h.term.write('\u276f finish the report over and out');
+    await h.done();
+    assert.deepStrictEqual(h.events, ['ERASE', 'ENTER'],
+      'a typed draft must submit UNMARKED even with the recorder lit');
+    assert.strictEqual(h.watcher.markCount(), 0);
+    assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: it must still have SUBMITTED');
+    h.watcher.dispose();
+  })();
+});
+
+test('terminal chatter is not typing: a mouse report must not clear voice evidence', async () => {
+  // The gate that keeps the clear from eating the evidence it is meant to
+  // preserve. xterm's onData also carries mouse reports and query replies — the
+  // Claude pane enables tracking — so an ungated clear would wipe the stamp on
+  // scroll alone and silently un-mark genuinely spoken text.
+  const h = markHarness({ rows: ['\u276f ', ' agents \u23faREC \u00b7 tap to send'] });
+  await settle(10);
+  h.watcher.noteInput('\x1b[<0;10;5M'); // an SGR mouse report, not a keystroke
+  h.term.write('\u276f finish the report over and out');
+  await h.done();
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER'],
+    'chatter must leave the microphone evidence standing');
+  assert.strictEqual(h.watcher.markCount(), 1);
+  h.watcher.dispose();
+});
+
+test('the tap keypress clears evidence, and the indicator re-stamps it', async () => {
+  // Tap-listening is the workflow that matters, so this is the case the fix
+  // must NOT break. The operator presses the trigger key (a keystroke, so it
+  // clears), the recorder lights, the poll re-stamps, and the transcription
+  // that follows submits MARKED.
+  const h = markHarness({ rows: ['\u276f ', ' agents \u00b7 tap to speak'] });
+  h.watcher.noteInput(' '); // the tap keypress itself
+  h.term.write('\u276f ', ' agents \u23faREC \u00b7 tap to send'); // the recorder lights
+  await settle(10); // the poll re-stamps from the indicator
+  h.term.write('\u276f finish the report over and out'); // the transcription lands
+  await h.done();
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER'],
+    'tap-listening must still be marked');
+  assert.strictEqual(h.watcher.markCount(), 1);
   h.watcher.dispose();
 });
 
