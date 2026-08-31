@@ -3042,7 +3042,7 @@ test('a throwing recorderScope leaves a configured seat reporting anyway', async
   watcher.dispose();
 });
 
-// --- t594: the DICTATED DRAFT report, which outlives the recorder ------------
+// --- the DICTATED DRAFT report, which outlives the recorder -----------------
 //
 // The recorder goes dark the moment he stops talking, which is the moment he
 // starts RE-READING what was transcribed. That reading window is the operator's

@@ -1,8 +1,8 @@
 'use strict';
 // Run: node --test
 // The operator finishes a long transcription and re-reads it before sending. The
-// recorder went dark when he stopped talking, so t593's 3s speaking window has
-// long expired; a dm arrives, and the Ctrl-U that opens every injection eats the
+// recorder went dark when he stopped talking, so the `speaking` gate's window
+// (INJECT_SPEAKING_STALE_MS) has long expired; a dm arrives, and the Ctrl-U that opens every injection eats the
 // draft he was reading.
 //
 // A TYPED draft never had this problem: `_parkDivertFor` asks `isDraftOpen` and
@@ -53,8 +53,8 @@ function boot({ draftStale = DRAFT_STALE_MS } = {}) {
     // subject below, but it must not fire underneath the others.
     INJECT_QUIET_MAXWAIT: 3_600_000,
     INJECT_BOOT_MAXWAIT: 0,
-    INJECT_SPEAKING_STALE_MS: 0,     // the RECORDER window: dark throughout, so
-                                     // nothing below can pass for t593's gate
+    INJECT_SPEAKING_STALE_MS: 0,     // the RECORDER window: expired throughout, so
+                                     // nothing below can pass for the `speaking` gate
     INJECT_VOICE_DRAFT_STALE_MS: draftStale,
     SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
@@ -101,7 +101,7 @@ test('a dictated draft parks the delivery: not one byte reaches the pty', async 
 });
 
 test('REGRESSION: with the recorder dark and no dictated draft, the injection goes straight through', async () => {
-  // The seat t593 already handles. Nothing here reports a draft, so the divert
+  // The unprotected seat. Nothing here reports a draft, so the divert
   // must not engage — this is what keeps the new signal from parking everything.
   const h = boot();
   assert.ok(!h.s.lastVoiceDraftTs, 'ENTER: no draft stamp on this seat');
@@ -114,8 +114,8 @@ test('REGRESSION: with the recorder dark and no dictated draft, the injection go
 });
 
 test('the protection outlives the recorder — the case the 3s speaking window cannot cover', async () => {
-  // INJECT_SPEAKING_STALE_MS is 0 in this harness, so t593's gate is fully
-  // expired at every instant below. He stopped talking; the words are still on
+  // INJECT_SPEAKING_STALE_MS is 0 in this harness, so the `speaking` gate is
+  // fully expired at every instant below. He stopped talking; the words are still on
   // screen; this is the operator's actual exposure.
   const h = boot();
   h.m.noteVoiceDraft('hand');
@@ -198,7 +198,7 @@ test('the dictated stamp is its own field, not an overload of the typed ones', (
   assert.strictEqual(h.s.lastUserInputTs, 0,
     'reporting a dictated draft must not make the seat look like it was TYPED into');
   assert.strictEqual(h.s.lastVoiceRecordingTs, undefined,
-    'nor like its recorder is lit — that is t593ʼs field and its window is far shorter');
+    'nor like its recorder is lit — lastVoiceRecordingTs is its own field, with a far shorter window');
   cleanup(h);
 });
 
