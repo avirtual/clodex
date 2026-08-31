@@ -92,15 +92,11 @@ const REARM_SETTLE_MS = 3000;
 
 // How long a single idle edge may keep rescheduling before it is abandoned.
 //
-// THIS CONSTANT BOUNDS A HAZARD; it is not merely a guard against a stuck edge.
-// Nothing here can see whether the recorder is already armed, so a byte written
-// late can land after the operator has tapped push-to-talk by hand, where it
-// STOPS recording instead of arming it. This deadline is the width of that
-// exposure window PLUS one settle: it is consulted only on the still-painting
-// branch, so a paint at `deadline - 1` still schedules an attempt that may write
-// up to `rearmMs` past it. Do NOT hoist the check to the top of `attemptRearm`
-// to tighten that — the `abandonMs: 0` re-arm in `MF1: one edge cannot
-// reschedule forever` depends on the current placement.
+// The deadline is not tight, and must not be tightened here: it is consulted
+// only on the still-painting branch, so a paint at `deadline - 1` still
+// schedules an attempt that may write up to `rearmMs` past it. Do NOT hoist
+// the check to the top of `attemptRearm` — the `abandonMs: 0` re-arm in `MF1:
+// one edge cannot reschedule forever` depends on the current placement.
 //
 // Ten seconds because a genuine turn end that has not produced a settle-length
 // lull within it is almost certainly not a turn end. The trailing window below
@@ -540,11 +536,6 @@ function createVoiceSubmitWatcher(terminal, {
     // The CLI's tap recorder auto-finishes after ~15s of silence and only then
     // does our character arm it; a turn ending within that window leaves it
     // recording, and this is the read that tells the two apart.
-    //
-    // It blocks on an unreadable screen, the opposite of every other gate here.
-    // The asymmetry is the point: a missed indicator cuts the operator off
-    // mid-sentence and loses the words, while a phantom one only skips a
-    // re-arm they can do with the key themselves.
     if (recordingBlocksRearm(indicatorRows())) return;
 
     let key = null;
