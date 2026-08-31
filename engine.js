@@ -922,10 +922,12 @@ let pluginLoader = null;
 // output, so a per-session speaker would let two seats finishing together talk
 // over each other with nothing able to arbitrate.
 const speaker = createSpeaker();
-// Warmed off the critical path — see createVoiceCatalog: the enumeration costs
-// ~650ms and settings:get must not pay it.
+// NOT warmed here. Building the engine must spawn NOTHING: every test that
+// constructs it would otherwise fork a real 650ms `say -v '?'`, and those
+// children outlive a test process that exits first — orphaned to pid 1 with
+// nothing left to reap them. The catalog warms itself on its first read
+// instead, which is a settings:get from a surface the operator opened.
 const voiceCatalog = createVoiceCatalog();
-voiceCatalog.refresh();
 
 const SessionManager = createSessionManager({
     AGENT_NAME_RE,

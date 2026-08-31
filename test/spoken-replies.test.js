@@ -295,6 +295,20 @@ test('a manager built without a speaker still handles a turn', () => {
     'and must not ALSO be destructured, which would shadow the fallback with undefined');
 });
 
+// Building the engine must spawn nothing. An eager warm here forked a real
+// `say -v '?'` in every test that constructs an engine, and those children
+// outlived the test process that spawned them — orphaned to pid 1, invisible to
+// a green suite. The catalog warms on first READ, which only a live surface does.
+test('constructing the engine does not spawn the voice enumeration', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf-8');
+  assert.ok(src.includes('createVoiceCatalog()'), 'the catalog is still constructed');
+  assert.ok(!/voiceCatalog\.refresh\(\)/.test(src),
+    'engine.js must not warm the catalog eagerly — that spawns `say` in every '
+    + 'engine-building test and orphans it');
+});
+
 // --- the settings -----------------------------------------------------------
 
 test('the setting defaults OFF and to the clearest voice', () => {
