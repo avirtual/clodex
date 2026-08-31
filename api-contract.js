@@ -208,6 +208,11 @@ const API_CONTRACT = [
   { name: 'setTheme', kind: 'invoke', channel: 'theme:set' },
   { name: 'onSetTheme', kind: 'on', channel: 'set-theme' },
   { name: 'setSettings', kind: 'invoke', channel: 'settings:set' },
+  // Playback of a spoken reply started or ended, box-wide. The re-arm lives in
+  // the renderer and the `say` child in main, so this is the only way the
+  // recorder can be held off until the narration it would otherwise transcribe
+  // has finished.
+  { name: 'onSpeakerBusy', kind: 'on', channel: 'speaker-busy' },
   { name: 'onZoomNudge', kind: 'on', channel: 'zoom-nudge' },
   { name: 'setDefaultToolDeny', kind: 'invoke', channel: 'defaults:setToolDeny' },
   { name: 'openWirescope', kind: 'invoke', channel: 'app:openWirescope' },

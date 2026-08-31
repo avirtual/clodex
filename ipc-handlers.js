@@ -941,6 +941,7 @@ function registerIpcHandlers(deps) {
       voiceSubmitPhrase: s.voiceSubmitPhrase,
       speakReplies: s.speakReplies,
       speakVoice: s.speakVoice,
+      speakRate: s.speakRate,
       // Enumerated per box, not a constant: the installed set is far smaller
       // than the documented one and differs per machine, and `say` answers an
       // uninstalled name by substituting the system voice rather than failing.

@@ -13,6 +13,23 @@ blocks a release.
 
 ## Unreleased
 
+- **Spoken replies no longer talk into their own microphone.** With both
+  "speak the final reply aloud" and the tap-mode re-arm switched on, the two
+  fired on the same turn-end edge — so the recorder came back to life just as
+  the narration started, and the reply Clodex was reading out was transcribed
+  straight back into the composer. The re-arm now waits for the narration to
+  finish before it presses the push-to-talk key. Tapping the microphone
+  yourself mid-narration still stops the speech, and the re-arm stays out of
+  the way afterwards rather than stopping the recording you just started. With
+  speech switched off nothing changed at all.
+- **Speech speed is yours to pick, and long replies are read to the end.**
+  `say`'s default 175 wpm dragged; the new default is 210, with 150/175/240
+  also offered. The point at which a reply is cut short doubled to 700
+  characters, so a real answer is read out rather than a sentence or two of it.
+- **The speech settings are in Settings now**, under Voice — the same
+  checkbox, voice and speed the &#127908; button in the session bar carries,
+  reading and writing the same values rather than a second copy.
+
 - **See whether Clodex can actually tell the recorder is running — and stop it
   with a click.** The `⏺REC` on screen is painted by the Claude CLI, not by
   Clodex, so it says nothing about whether Clodex itself can see it; every voice

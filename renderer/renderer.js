@@ -1194,6 +1194,9 @@ function createTerminal(name, peer = null) {
     // Still the ACTIVE seat only — dictation reaches the focused composer, so a
     // background seat's indicator is not him speaking into it.
     recorderScope: () => name === activeSession && sessionTypeOf(name) === 'claude',
+    // Box-wide and read fresh per attempt, never captured: the flag flips
+    // mid-wait, which is the entire point of the deferral.
+    getSpeakerBusy: () => speakerBusy,
     noteVoiceRecording: () => window.api.noteVoiceRecording(name),
     noteVoiceDraft: () => window.api.noteVoiceDraft(name),
   });
@@ -3598,6 +3601,22 @@ refreshVoiceSubmitConfig();
 // voice-control.js re-reads the mode for the same reason.
 window.addEventListener('focus', () => { refreshVoiceSubmitConfig(); });
 
+// Whether a spoken reply is playing, box-wide. Main owns the `say` child and
+// pushes both edges, so this is a mirror of a value that lives elsewhere and
+// never a reading taken here.
+//
+// ONE flag for every terminal, matching the thing it describes: there is a
+// single audio output, so a narration started by any seat is one every seat's
+// re-arm has to wait out — a per-terminal copy would let a background seat arm
+// its microphone into the same room.
+//
+// Starts false. A window opened mid-narration re-arms as it does today until
+// the next edge arrives, which is the same direction every other absent-evidence
+// gate here takes: a missed deferral costs one narration the operator can stop,
+// a stuck one silences the feature.
+let speakerBusy = false;
+window.api.onSpeakerBusy((busy) => { speakerBusy = busy === true; });
+
 // Tell main which seat the operator is looking at.
 //
 // ALSO ON WINDOW FOCUS, not on session switch alone, and that is what makes it
@@ -3999,6 +4018,9 @@ const prefsVoiceSubmit = document.getElementById('prefs-voice-submit');
 const prefsVoiceSubmitComposition = document.getElementById('prefs-voice-submit-composition');
 const prefsVoiceSubmitRearm = document.getElementById('prefs-voice-submit-rearm');
 const prefsVoiceSubmitPhrase = document.getElementById('prefs-voice-submit-phrase');
+const prefsSpeakReplies = document.getElementById('prefs-speak-replies');
+const prefsSpeakVoice = document.getElementById('prefs-speak-voice');
+const prefsSpeakRate = document.getElementById('prefs-speak-rate');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
@@ -5635,6 +5657,28 @@ function setTerminalReports(value) {
   }
 }
 
+// The SAME store fields the voice popover writes, read here rather than
+// mirrored into a second source of truth — the operator went looking in
+// Settings first, and a copy that could disagree with the popover is worse than
+// not having the row.
+function setSpeakSettings(s) {
+  if (prefsSpeakReplies) prefsSpeakReplies.checked = s.speakReplies === true;
+  if (prefsSpeakRate && Number.isInteger(s.speakRate)) prefsSpeakRate.value = String(s.speakRate);
+  if (!prefsSpeakVoice) return;
+  // Rebuilt from what `say` reports installed on this box, plus the configured
+  // name when the enumeration has not landed or does not contain it: an option
+  // list missing the stored voice would show — and then SAVE — a different one.
+  const names = (Array.isArray(s.speakVoices) ? s.speakVoices : []).map((v) => v.name);
+  const want = typeof s.speakVoice === 'string' ? s.speakVoice : '';
+  const opts = (names.includes(want) || !want ? names : [want, ...names])
+    .map((n) => {
+      const v = (s.speakVoices || []).find((x) => x.name === n);
+      return `<option value="${esc(n)}"${n === want ? ' selected' : ''}>`
+        + `${esc(v ? `${n} (${v.locale})` : n)}</option>`;
+    });
+  prefsSpeakVoice.innerHTML = opts.join('');
+}
+
 function readTerminalReports() {
   if (!prefsTerminalReports) return 'off';
   const picked = prefsTerminalReports.querySelector('input[type="radio"]:checked');
@@ -5658,6 +5702,7 @@ async function openPrefs() {
   // The stored phrase, never the default, so an empty box is the operator
   // asking for the default back rather than a value they typed being hidden.
   if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || '';
+  setSpeakSettings(s);
   setTerminalReports(s.terminalReports);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
@@ -5715,6 +5760,13 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
     voiceSubmitRearm: prefsVoiceSubmitRearm ? prefsVoiceSubmitRearm.checked : false,
     voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : '',
+    speakReplies: prefsSpeakReplies ? prefsSpeakReplies.checked : false,
+    // Both omitted rather than sent blank when the control is missing: the store
+    // treats an absent key as "keep the current value" and a blank/invalid one
+    // as "reset to the default", so a Save from a dialog without these rows must
+    // not silently overwrite what the popover set.
+    ...(prefsSpeakVoice && prefsSpeakVoice.value ? { speakVoice: prefsSpeakVoice.value } : {}),
+    ...(prefsSpeakRate && prefsSpeakRate.value ? { speakRate: Number(prefsSpeakRate.value) } : {}),
     terminalReports: readTerminalReports(),
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,

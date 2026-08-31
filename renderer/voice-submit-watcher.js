@@ -343,6 +343,11 @@ function createVoiceSubmitWatcher(terminal, {
   // and gating his protection on an unrelated checkbox would fix the bug only
   // for the seats that had opted into something else.
   recorderScope = () => false,
+  // Whether a spoken reply is PLAYING right now, box-wide, reported by main —
+  // this side cannot see the `say` child at all. Absent, the re-arm behaves
+  // exactly as it did before speech existed, which is the requirement for a
+  // seat with the feature switched off.
+  getSpeakerBusy = () => false,
   evidenceMs = VOICE_EVIDENCE_MS,
   now = Date.now,
 }) {
@@ -861,6 +866,27 @@ function createVoiceSubmitWatcher(terminal, {
       // reschedule forever behind a spinner or a tailing log.
       if (now() >= rearmDeadline) return;
       rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
+      return;
+    }
+
+    // A narration is PLAYING, and it started on this same turn-end edge. Arming
+    // now points a live microphone at the machine's own speaker, and the CLI
+    // transcribes `say` into the composer — reported from the live microphone,
+    // which is the only place it can be seen.
+    //
+    // BELOW the still-painting branch, never hoisted above it: the abandon
+    // deadline is consulted only there, and the `abandonMs: 0` pin depends on
+    // that branch being the first one an attempt reaches.
+    //
+    // The deadline is PUSHED OUT by the wait rather than consumed by it. A long
+    // reply would otherwise spend the whole 20s abandon budget on narration and
+    // cancel the re-arm the operator is standing there waiting for — the budget
+    // exists to bound a doomed retry loop, and waiting out audio is not that.
+    let speaking = false;
+    try { speaking = getSpeakerBusy() === true; } catch { speaking = false; }
+    if (speaking) {
+      rearmDeadline += rearmMs;
+      rearmTimer = setTimeout(attemptRearm, rearmMs);
       return;
     }
 

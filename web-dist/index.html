@@ -6904,6 +6904,26 @@ body {
           <span>Re-arm tap mode when a session finishes its turn</span>
         </label>
         <span class="hint-text" style="display: block; margin-top: 6px;">In the CLI&rsquo;s <strong>tap</strong> mode the recorder stops inserting what you say while the agent is working, and only a keypress starts it again &mdash; so after every answer you have to walk over and tap. With this on, Clodex presses the push-to-talk key for you once the agent has finished and the screen has stopped repainting, and you can keep dictating from where you are. It presses nothing if you have started typing in the box, if the session is asking permission, or if push-to-talk is bound to a key combination rather than a single character. Needs the CLI&rsquo;s voice mode set to tap, and the box above ticked.</span>
+        <h5>Spoken replies</h5>
+        <p class="hint-text">Reads the agent&rsquo;s final answer aloud when it finishes a turn &mdash; the prose only, with code, paths, tables and diffs dropped rather than spelled out, and long replies cut at a sentence. Synthesized on this machine by <code>say</code>: no audio and no text leave the box. It stays quiet while you are dictating, and stops mid-sentence if you tap the microphone. The same settings live on the &#127908; button in the session bar.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-speak-replies">
+          <span>Speak the final reply aloud</span>
+        </label>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Voice</span>
+          <select id="prefs-speak-voice" style="flex: none;"></select>
+        </div>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Speed</span>
+          <select id="prefs-speak-rate" style="flex: none;">
+            <option value="150">150 &mdash; slow</option>
+            <option value="175">175 &mdash; say&rsquo;s default</option>
+            <option value="210">210 &mdash; brisk</option>
+            <option value="240">240 &mdash; fast</option>
+          </select>
+        </div>
+        <span class="hint-text" style="display: block; margin-top: 6px;">The voice list is what <code>say</code> reports installed on this machine; install more in System Settings &rsaquo; Accessibility &rsaquo; Spoken Content. An empty list means <code>say</code> has not answered yet &mdash; the configured name is still what gets spoken.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
@@ -7408,6 +7428,11 @@ body {
         { name: "setTheme", kind: "invoke", channel: "theme:set" },
         { name: "onSetTheme", kind: "on", channel: "set-theme" },
         { name: "setSettings", kind: "invoke", channel: "settings:set" },
+        // Playback of a spoken reply started or ended, box-wide. The re-arm lives in
+        // the renderer and the `say` child in main, so this is the only way the
+        // recorder can be held off until the narration it would otherwise transcribe
+        // has finished.
+        { name: "onSpeakerBusy", kind: "on", channel: "speaker-busy" },
         { name: "onZoomNudge", kind: "on", channel: "zoom-nudge" },
         { name: "setDefaultToolDeny", kind: "invoke", channel: "defaults:setToolDeny" },
         { name: "openWirescope", kind: "invoke", channel: "app:openWirescope" },
@@ -23903,6 +23928,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // and gating his protection on an unrelated checkbox would fix the bug only
         // for the seats that had opted into something else.
         recorderScope = () => false,
+        // Whether a spoken reply is PLAYING right now, box-wide, reported by main —
+        // this side cannot see the `say` child at all. Absent, the re-arm behaves
+        // exactly as it did before speech existed, which is the requirement for a
+        // seat with the feature switched off.
+        getSpeakerBusy = () => false,
         evidenceMs = VOICE_EVIDENCE_MS,
         now = Date.now
       }) {
@@ -24178,6 +24208,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (quietFor < rearmMs) {
             if (now() >= rearmDeadline) return;
             rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
+            return;
+          }
+          let speaking = false;
+          try {
+            speaking = getSpeakerBusy() === true;
+          } catch {
+            speaking = false;
+          }
+          if (speaking) {
+            rearmDeadline += rearmMs;
+            rearmTimer = setTimeout(attemptRearm, rearmMs);
             return;
           }
           if (!composerIsEmpty(cursorRow())) return;
@@ -27263,12 +27304,19 @@ helper=${d.helperPath}`;
           return {
             on: s?.speakReplies === true,
             voice: typeof s?.speakVoice === "string" ? s.speakVoice : "",
-            voices: Array.isArray(s?.speakVoices) ? s.speakVoices : []
+            voices: Array.isArray(s?.speakVoices) ? s.speakVoices : [],
+            rate: Number.isInteger(s?.speakRate) ? s.speakRate : null
           };
         } catch {
           return null;
         }
       }
+      var SPEAK_RATES = [
+        { rate: 150, label: "150 \u2014 slow" },
+        { rate: 175, label: "175 \u2014 say's default" },
+        { rate: 210, label: "210 \u2014 brisk" },
+        { rate: 240, label: "240 \u2014 fast" }
+      ];
       var RECORDER_TICK_MS = COMPOSITION_POLL_MS;
       var RECORDER_STATES = {
         lit: { cls: "rec-lit", text: "Recording", hint: "Clodex sees the recorder running \u2014 click to stop it (declines while a draft is in the composer, since the key would SEND it)" },
@@ -27347,7 +27395,9 @@ helper=${d.helperPath}`;
         function speakHtml() {
           if (!speak) return "";
           const voices = speak.voices.length ? `<select class="speak-voice" ${speak.on ? "" : "disabled"}>` + speak.voices.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? " selected" : ""}>${esc(v.name)} (${esc(v.locale)})</option>`).join("") + "</select>" : `<span class="speak-voice-fixed">${esc(speak.voice)}</span>`;
-          return `<label class="speak-row" title="Synthesized on this machine by /usr/bin/say \u2014 no audio and no text leave the box"><input type="checkbox" class="speak-toggle"${speak.on ? " checked" : ""}> Speak the final reply aloud</label><div class="speak-sub">Local only \u2014 nothing leaves this machine. ${voices}</div>`;
+          const want = speak.rate === null ? 210 : speak.rate;
+          const rates = `<select class="speak-rate" ${speak.on ? "" : "disabled"}>` + SPEAK_RATES.map((r) => `<option value="${r.rate}"${r.rate === want ? " selected" : ""}>${esc(r.label)}</option>`).join("") + "</select>";
+          return `<label class="speak-row" title="Synthesized on this machine by /usr/bin/say \u2014 no audio and no text leave the box"><input type="checkbox" class="speak-toggle"${speak.on ? " checked" : ""}> Speak the final reply aloud</label><div class="speak-sub">Local only \u2014 nothing leaves this machine. ${voices} ${rates}</div>`;
         }
         async function refreshSpeakSection() {
           const next = await readSpeakSettings();
@@ -27428,7 +27478,12 @@ helper=${d.helperPath}`;
             return;
           }
           const sel = e.target.closest(".speak-voice");
-          if (sel) saveSpeak({ speakVoice: sel.value });
+          if (sel) {
+            saveSpeak({ speakVoice: sel.value });
+            return;
+          }
+          const rate = e.target.closest(".speak-rate");
+          if (rate) saveSpeak({ speakRate: Number(rate.value) });
         });
         document.addEventListener("mousedown", (e) => {
           if (pop.classList.contains("hidden")) return;
@@ -33234,6 +33289,9 @@ ${detail}` });
           // Still the ACTIVE seat only — dictation reaches the focused composer, so a
           // background seat's indicator is not him speaking into it.
           recorderScope: () => name === activeSession && sessionTypeOf(name) === "claude",
+          // Box-wide and read fresh per attempt, never captured: the flag flips
+          // mid-wait, which is the entire point of the deferral.
+          getSpeakerBusy: () => speakerBusy,
           noteVoiceRecording: () => window.api.noteVoiceRecording(name),
           noteVoiceDraft: () => window.api.noteVoiceDraft(name)
         });
@@ -35361,6 +35419,10 @@ Click for live activity`;
       window.addEventListener("focus", () => {
         refreshVoiceSubmitConfig();
       });
+      var speakerBusy = false;
+      window.api.onSpeakerBusy((busy) => {
+        speakerBusy = busy === true;
+      });
       function reportFocusedSession() {
         try {
           window.api.noteFocusedSession(activeSession);
@@ -35720,6 +35782,9 @@ Click for live activity`;
       var prefsVoiceSubmitComposition = document.getElementById("prefs-voice-submit-composition");
       var prefsVoiceSubmitRearm = document.getElementById("prefs-voice-submit-rearm");
       var prefsVoiceSubmitPhrase = document.getElementById("prefs-voice-submit-phrase");
+      var prefsSpeakReplies = document.getElementById("prefs-speak-replies");
+      var prefsSpeakVoice = document.getElementById("prefs-speak-voice");
+      var prefsSpeakRate = document.getElementById("prefs-speak-rate");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
@@ -37316,6 +37381,18 @@ ${res.stderr}` : "");
           el.checked = el.value === want;
         }
       }
+      function setSpeakSettings(s) {
+        if (prefsSpeakReplies) prefsSpeakReplies.checked = s.speakReplies === true;
+        if (prefsSpeakRate && Number.isInteger(s.speakRate)) prefsSpeakRate.value = String(s.speakRate);
+        if (!prefsSpeakVoice) return;
+        const names = (Array.isArray(s.speakVoices) ? s.speakVoices : []).map((v) => v.name);
+        const want = typeof s.speakVoice === "string" ? s.speakVoice : "";
+        const opts = (names.includes(want) || !want ? names : [want, ...names]).map((n) => {
+          const v = (s.speakVoices || []).find((x) => x.name === n);
+          return `<option value="${esc(n)}"${n === want ? " selected" : ""}>${esc(v ? `${n} (${v.locale})` : n)}</option>`;
+        });
+        prefsSpeakVoice.innerHTML = opts.join("");
+      }
       function readTerminalReports() {
         if (!prefsTerminalReports) return "off";
         const picked = prefsTerminalReports.querySelector('input[type="radio"]:checked');
@@ -37336,6 +37413,7 @@ ${res.stderr}` : "");
         if (prefsVoiceSubmitComposition) prefsVoiceSubmitComposition.checked = s.voiceSubmitComposition === true;
         if (prefsVoiceSubmitRearm) prefsVoiceSubmitRearm.checked = s.voiceSubmitRearm === true;
         if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || "";
+        setSpeakSettings(s);
         setTerminalReports(s.terminalReports);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
@@ -37388,6 +37466,13 @@ ${res.stderr}` : "");
           voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
           voiceSubmitRearm: prefsVoiceSubmitRearm ? prefsVoiceSubmitRearm.checked : false,
           voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : "",
+          speakReplies: prefsSpeakReplies ? prefsSpeakReplies.checked : false,
+          // Both omitted rather than sent blank when the control is missing: the store
+          // treats an absent key as "keep the current value" and a blank/invalid one
+          // as "reset to the default", so a Save from a dialog without these rows must
+          // not silently overwrite what the popover set.
+          ...prefsSpeakVoice && prefsSpeakVoice.value ? { speakVoice: prefsSpeakVoice.value } : {},
+          ...prefsSpeakRate && prefsSpeakRate.value ? { speakRate: Number(prefsSpeakRate.value) } : {},
           terminalReports: readTerminalReports(),
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked

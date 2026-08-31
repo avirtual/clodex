@@ -3063,13 +3063,16 @@ function createSessionManager(deps) {
       // prompt unconditionally. Residue for a never-recreated name is a few small
       // files and is harmless.
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
-      // A narration outliving the seat that produced it is the obvious bug: the
-      // `say` child is ours, not the pty's, so nothing else here reaches it.
+      // AFTER the watcher stop, and the order is the whole of it: stop() calls
+      // _flushPending(), which re-enters _maybeSpeak and can START a narration.
+      // Stopping the speaker first therefore leaves a dead seat talking, which
+      // is the case this call exists to prevent.
+      //
       // Unconditional — the speaker is box-wide and cannot attribute an
       // utterance to a session, so the alternative is leaving a dead seat's
       // voice playing.
-      try { speaker.stop(); } catch {}
       if (s.watcher) s.watcher.stop();
+      try { speaker.stop(); } catch {}
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
       if (s.transport) s.transport.stop();
@@ -3683,7 +3686,7 @@ function createSessionManager(deps) {
         if (Date.now() - (this._lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS) return;
         const say = speakable(text);
         if (!say) return;
-        speaker.speak(say, { voice: cfg.speakVoice });
+        speaker.speak(say, { voice: cfg.speakVoice, rate: cfg.speakRate });
       } catch { /* observer-grade: speech must never break turn handling */ }
     }
 

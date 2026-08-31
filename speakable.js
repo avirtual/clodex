@@ -12,12 +12,15 @@
 // clause is a shorter sentence and the cost of a mangled one is the operator
 // reaching for the mute.
 
-// Utterance ceiling, in characters. Roughly 20-25 seconds at `say`'s default
-// rate — long enough for a real answer, short enough that a wrong one can be
-// waited out rather than killed. A ten-paragraph reply read verbatim is the
-// failure the operator named when he asked for this; without a bound, one
-// unlucky turn narrates for four minutes.
-const SPEAK_MAX_CHARS = 350;
+// Utterance ceiling, in characters. Roughly 40 seconds at the 210 wpm the
+// speaker now runs at (700 chars is ~140 words), against the ~24 seconds 350
+// bought at `say`'s ~175 default. So this is a real INCREASE in narration
+// length, not the rate change paying for itself — the operator's report was
+// that a reply was cut off after a sentence or two, and 350 was the cause.
+// The bound's reason is unchanged and still correct: a ten-paragraph reply read
+// verbatim narrates for minutes, which is the failure he named when he asked
+// for this. Raise it further only against a listening test, not arithmetic.
+const SPEAK_MAX_CHARS = 700;
 
 // Below this, a truncation is not worth making: cutting "Done." to "Do" says
 // less than saying nothing. Only reached when a reply's FIRST sentence already

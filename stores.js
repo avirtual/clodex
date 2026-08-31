@@ -79,6 +79,9 @@ const DEFAULT_UI_SETTINGS = {
   // change. Daniel (en_GB) because it was the clearest across a room in the
   // operator's listening test — clarity is the criterion, not warmth.
   speakVoice: 'Daniel',
+  // Words per minute. 210, not `say`'s ~175: the operator listened to 175, 210
+  // and 240 and picked this one — 175 dragged, 240 was rushed.
+  speakRate: 210,
   // New installs get the capability WITHOUT the firehose. Existing ones never
   // reach this value for this key — sanitizeTerminalReports resolves an absent
   // key to 'off' rather than falling through to the default.
@@ -362,6 +365,16 @@ function sanitizeTerminalReports(raw) {
   if (TERMINAL_REPORTS.includes(raw?.terminalReports)) return raw.terminalReports;
   if (typeof raw?.terminalReporting === 'boolean') return raw.terminalReporting ? 'all' : 'off';
   return 'off';
+}
+
+// The speech rate, resolved rather than rejected. `say -r` accepts any integer
+// and speaks at it — 5 wpm narrates one sentence for minutes and looks exactly
+// like a wedged box — so an out-of-range or non-integer value falls back to the
+// chosen default instead of reaching the argv. Bounds match speaker.js's
+// MIN_RATE/MAX_RATE; they are duplicated rather than imported because stores.js
+// is loaded before whenReady and must stay free of the process side.
+function sanitizeSpeakRate(raw) {
+  return Number.isInteger(raw) && raw >= 80 && raw <= 400 ? raw : DEFAULT_UI_SETTINGS.speakRate;
 }
 
 function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
@@ -1276,6 +1289,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           speakVoice: (typeof raw?.speakVoice === 'string' && raw.speakVoice.trim())
             ? raw.speakVoice.trim()
             : DEFAULT_UI_SETTINGS.speakVoice,
+          speakRate: sanitizeSpeakRate(raw?.speakRate),
           terminalReports: sanitizeTerminalReports(raw),
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
@@ -1347,6 +1361,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         speakVoice: typeof partial?.speakVoice === 'string'
           ? (partial.speakVoice.trim() || DEFAULT_UI_SETTINGS.speakVoice)
           : cur.speakVoice,
+        // Absent keeps the current value; anything present goes through the same
+        // clamp the read uses, so a junk write cannot land a rate that reads
+        // back as itself and is then SPOKEN at — `say` accepts any integer and
+        // narrates at 5 wpm without complaint.
+        speakRate: partial?.speakRate === undefined ? cur.speakRate : sanitizeSpeakRate(partial.speakRate),
         terminalReports: TERMINAL_REPORTS.includes(partial?.terminalReports) ? partial.terminalReports : cur.terminalReports,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
