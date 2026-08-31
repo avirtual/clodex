@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **`clodex-voice-tap` now takes named actions, not just a seat.**
+  `clodex-voice-tap.js select <seat>` switches to that seat — bringing its
+  workspace window forward if it is behind something — and then opens the
+  microphone on it, so a spoken phrase can move you to an agent you cannot
+  currently see instead of dictating into whichever tab happened to be open.
+  `clodex-voice-tap.js mode tap|hold` switches the CLI's push-to-talk mode on
+  whichever seat holds the microphone, which previously meant editing settings
+  by hand. A name that matches no live seat does nothing at all rather than
+  falling back to the seat you were on. Existing shortcuts are unaffected:
+  `clodex-voice-tap.js` and `clodex-voice-tap.js <seat>` behave exactly as
+  before, including for a seat named `tap`, `select` or `mode`.
+
 - **The microphone opens only when Clodex is in front.** With Clodex in the
   background — a browser over it, a video playing — an agent finishing a turn
   re-armed the recorder, and the audio in the room was transcribed into its
