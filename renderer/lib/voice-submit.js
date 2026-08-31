@@ -232,16 +232,15 @@ function recordingBlocksRearm(rows) {
 // suspect on text the operator typed exactly will start second-guessing exact
 // words. So this reads POSITIVE EVIDENCE ONLY and its default is NO.
 //
-// Two things are evidence, and typing produces neither:
-//   - a composition commit — macOS dictation put the words in the overlay and
-//     this feature finalised them;
-//   - the CLI's own recording indicator seen on screen, which means the CLI
-//     transcribed into its composer.
-// A keyboard leaves no overlay and lights no indicator.
+// Two things stamp evidence — a composition commit, and the CLI's recording
+// indicator on screen — and NEITHER PROVES THIS DRAFT WAS SPOKEN. The indicator
+// says only that the recorder was running, and t571's re-arm lights it by
+// machine at every turn end, so a draft typed into a lit composer would be
+// marked. Typing therefore CLEARS the stamp (the watcher's noteInput); this
+// function only judges what survived that.
 //
-// `sinceMs` bounds it so evidence cannot outlive the utterance that produced
-// it and mark a message typed minutes later. Null (never seen) is not stale,
-// it is absent, and both answer no.
+// `windowMs` bounds staleness so evidence cannot outlive the utterance that
+// produced it. Null (never seen) is not stale, it is absent, and both answer no.
 function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
   if (typeof evidenceAt !== 'number' || !Number.isFinite(evidenceAt)) return false;
   if (typeof now !== 'number' || typeof windowMs !== 'number') return false;
