@@ -156,7 +156,7 @@ test('voice origin requires POSITIVE evidence, and its default is NO', () => {
 });
 
 test('the recording read reports what is there, and an unreadable screen is NOT evidence', () => {
-  // The polarity is the OPPOSITE of recordingBlocksRearm's, deliberately: that
+  // The polarity is the OPPOSITE of recorderBlocksRearm's, deliberately: that
   // one guards a write into a live recording and so must assume the worst on an
   // unreadable screen. This one feeds an annotation, so the same input is
   // simply an absence of evidence.

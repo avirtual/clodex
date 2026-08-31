@@ -13,6 +13,24 @@ blocks a release.
 
 ## Unreleased
 
+- **The microphone comes back on its own after a hands-free submit.** When the
+  model answered quickly, the CLI left its recorder running after Clodex sent
+  your message — and that surviving recording was dead: `REC` stayed lit but no
+  words reached the composer, and Clodex would not re-arm the microphone while
+  it looked like you were still talking. You had to tap the key by hand. Clodex
+  now stops that leftover recorder itself, immediately after sending, which is
+  safe precisely there: you have just finished saying the trigger phrase, so
+  there is nothing left to cut off. The usual re-arm then taps it back.
+
+- **Fixed a case that could leave the microphone permanently stuck.** For about
+  half a second after a recording stops, the CLI shows `Voice: processing…`
+  while it finishes transcribing. Clodex read that as "not recording" and could
+  tap the microphone key in that window — and in that state the key is not
+  swallowed, so it landed in your input as a stray character. Your composer was
+  then no longer empty, which is the one thing that stops the microphone being
+  re-armed: it never came back until you cleared the stray character by hand.
+  That state now blocks the re-arm.
+
 - **Hands-free submit now fires while tap recording is still on.** It used to
   wait for you to untap before sending, which defeats the point of hands-free:
   Clodex waits for the composer to go quiet before submitting, and the audio
