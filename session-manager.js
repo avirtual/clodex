@@ -2160,12 +2160,18 @@ function createSessionManager(deps) {
       // permanently undefined for every background seat — gating audio on it
       // means no gate at all for exactly the case that matters: dictating into
       // the focused seat while another seat finishes a turn.
+      // RISING EDGE, computed BEFORE the stamp below overwrites the evidence.
+      // The renderer reports the recorder as a LEVEL every ~300ms while it is
+      // lit, so an unguarded call runs the interrupt hundreds of times per
+      // dictation; it is harmless (stop() is a no-op when nothing is playing)
+      // but it makes the call site claim an event it is not detecting.
+      const recorderJustLit = Date.now() - (this._lastVoiceRecordingTs || 0) >= INJECT_SPEAKING_STALE_MS;
       this._lastVoiceRecordingTs = Date.now();
       // He tapped the microphone while a narration was still playing — the
       // converse of the gate in _maybeSpeak, and the harder half. Stopping is
       // what a person does when interrupted; see interruptForRecorder for the
       // alternative that was rejected.
-      try { speaker.interruptForRecorder(); } catch {}
+      if (recorderJustLit) { try { speaker.interruptForRecorder(); } catch {} }
     }
 
     // The renderer saw a DICTATED draft still sitting unsent in this seat's

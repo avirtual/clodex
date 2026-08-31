@@ -124,6 +124,49 @@ test('a Codex turn reaches onText with turnEnd true at task_complete', () => {
   );
 });
 
+// THE SHAPE THAT MADE THE LOSS GREEN. The round-2 Codex fixture had no
+// `function_call_output` after the reply, so the one interleaving that drops
+// text was never exercised. Codex entries carry no requestId and no payload.id,
+// so every rid is '' — an equality test reads a reply and a later tool output as
+// the same turn and OVERWRITES the reply. What is discarded is the intent scan's
+// input, which this repo keeps at-least-once on purpose.
+//
+// This shape occurs ~7859 times across the corpus; it is the common turn, not
+// an edge case.
+test('a Codex reply survives a fast tool call in the same turn', () => {
+  const seen = runWatcher([
+    { type: 'event_msg', payload: { type: 'agent_message', message: '[agent:dm clodex] first' } },
+    { type: 'response_item', payload: { type: 'message' } },
+    { type: 'event_msg', payload: { type: 'token_count' } },
+    { type: 'response_item', payload: { type: 'function_call_output', output: 'Process exited with code 0' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'final' } },
+    { type: 'event_msg', payload: { type: 'token_count' } },
+    { type: 'event_msg', payload: { type: 'task_complete' } },
+  ]);
+  assert.deepStrictEqual(
+    seen.map((x) => [x.text, x.meta.turnEnd]),
+    [
+      ['[agent:dm clodex] first', false],
+      ['Process exited with code 0', false],
+      ['final', true],
+    ],
+    'the mid-turn reply must reach onText — dropping it loses an intent silently',
+  );
+});
+
+// The one scope rule the operator stated twice. A Codex turn can end right after
+// a tool output (an interrupted turn does), and flagging whatever is pending
+// would narrate a command dump as if it were the reply.
+test('a turn ending on a tool output is not spoken', () => {
+  const seen = runWatcher([
+    { type: 'response_item', payload: { type: 'function_call_output', output: 'Command: /bin/zsh -lc ls\nProcess exited with code 0' } },
+    { type: 'event_msg', payload: { type: 'task_complete' } },
+  ]);
+  assert.strictEqual(seen.length, 1, 'the tool output still reaches the intent scan');
+  assert.strictEqual(seen[0].meta.turnEnd, false,
+    'but it must never be flagged as the reply that ends the turn');
+});
+
 test('a Codex turn still mid-flight does not report a turn end', () => {
   const seen = runWatcher([
     { type: 'event_msg', payload: { type: 'agent_message', message: 'thinking aloud' } },
