@@ -2544,6 +2544,59 @@ body {
 #proxy-actions .px-action.px-voice-off {
   opacity: 0.45;
 }
+.rec-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rec-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.rec-lit {
+  color: var(--error);
+  cursor: pointer;
+}
+.rec-lit:hover {
+  background: var(--active-bg);
+}
+.rec-declined {
+  animation: rec-decline-flash 600ms ease-out;
+}
+@keyframes rec-decline-flash {
+  0% {
+    background: var(--warn);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.rec-busy {
+  color: var(--warn);
+}
+.rec-unreadable {
+  color: var(--warn);
+}
+.rec-unreadable .rec-dot {
+  background: none;
+  border: 1px solid currentColor;
+}
+.rec-off {
+  color: var(--text-dim);
+}
+.rec-off .rec-dot {
+  background: none;
+  border: 1px solid currentColor;
+}
 #files-popover {
   position: fixed;
   z-index: 50;
@@ -23862,11 +23915,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let fires = 0;
         let stops = 0;
         let externalTaps = 0;
+        let offTaps = 0;
         let voiceEvidenceAt = null;
         let mutedByTyping = false;
         let prevObserved = false;
         let lastLitAt = 0;
         let marks = 0;
+        let reading = "out";
         let pending = null;
         let pendingAt = 0;
         let committed = null;
@@ -23996,7 +24051,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
             inScope = !!cfg || !!recorderScope();
           } catch {
           }
-          const observed = inScope ? recordingObserved(indicatorRows()) : false;
+          const indRows = inScope ? indicatorRows() : null;
+          const observed = inScope ? recordingObserved(indRows) : false;
+          if (!inScope) reading = "out";
+          else if (!Array.isArray(indRows)) reading = "unreadable";
+          else if (observed) reading = "lit";
+          else if (recorderBlocksRearm(indRows)) reading = "busy";
+          else reading = "off";
           if (observed && noteVoiceRecording) {
             try {
               noteVoiceRecording();
@@ -24158,6 +24219,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
           externalTaps += 1;
           return true;
         }
+        function tapOff() {
+          if (disposed) return false;
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (attention === "permission") return false;
+          const rows = indicatorRows();
+          if (!Array.isArray(rows)) return false;
+          if (!recordingObserved(rows)) return false;
+          if (!composerIsEmpty(cursorRow())) return false;
+          if (!tapTrigger()) return false;
+          offTaps += 1;
+          return true;
+        }
         function noteInput(data) {
           if (disposed) return;
           if (!isHumanPtyInput(data)) return;
@@ -24198,10 +24276,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
           noteActivity,
           noteInput,
           externalTap,
+          tapOff,
+          // A GETTER over the existing 300ms poll, never a scan of its own: the
+          // display must report what the gates last saw, and a fresh read on every
+          // paint could answer differently from the decision it is describing.
+          recorderReading: () => reading,
           fireCount: () => fires,
           stopCount: () => stops,
           rearmCount: () => rearms,
           externalTapCount: () => externalTaps,
+          offTapCount: () => offTaps,
           commitCount: () => commits,
           commitFailureCount: () => commitFailures,
           markCount: () => marks,
@@ -27172,6 +27256,7 @@ helper=${d.helperPath}`;
     "renderer/popovers/voice-popover.js"(exports, module) {
       var { esc } = require_format();
       var { VOICE_ITEMS } = require_voice_control();
+      var { COMPOSITION_POLL_MS } = require_voice_submit_watcher();
       async function readSpeakSettings() {
         try {
           const s = await window.api.getSettings();
@@ -27184,13 +27269,49 @@ helper=${d.helperPath}`;
           return null;
         }
       }
-      function initVoicePopover({ core, renderProxyBar }) {
+      var RECORDER_TICK_MS = COMPOSITION_POLL_MS;
+      var RECORDER_STATES = {
+        lit: { cls: "rec-lit", text: "Recording", hint: "Clodex sees the recorder running \u2014 click to stop it (declines while a draft is in the composer, since the key would SEND it)" },
+        busy: { cls: "rec-busy", text: "Processing", hint: "The CLI is finishing the last utterance \u2014 Clodex will not write to it now" },
+        unreadable: { cls: "rec-unreadable", text: "Cannot read the screen", hint: "Clodex cannot see the indicator, so it will not write \u2014 a re-arm is blocked while this shows" },
+        off: { cls: "rec-off", text: "Not recording", hint: "Clodex sees no recorder running" }
+      };
+      function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffRecorder }) {
         const pop = document.getElementById("voice-popover");
         const body = document.getElementById("voice-popover-body");
         if (!pop || !body) return { actionHtml: () => "", closeVoicePopover() {
         }, openVoicePopover() {
         } };
+        function reading() {
+          try {
+            return getRecorderReading();
+          } catch {
+            return "out";
+          }
+        }
+        function recorderHtml() {
+          const st = RECORDER_STATES[reading()];
+          if (!st) return "";
+          return `<div class="rec-state ${st.cls}" data-rec title="${esc(st.hint)}"><span class="rec-dot"></span><span class="rec-text">${esc(st.text)}</span></div>`;
+        }
+        let recTimer = null;
+        let lastReading = null;
+        function paintRecorder() {
+          const now = reading();
+          if (now === lastReading) return;
+          lastReading = now;
+          const host = body.querySelector(".rec-host");
+          if (host) host.innerHTML = recorderHtml();
+        }
+        function stopRecorderTick() {
+          if (recTimer) {
+            clearInterval(recTimer);
+            recTimer = null;
+          }
+          lastReading = null;
+        }
         function closeVoicePopover() {
+          stopRecorderTick();
           pop.classList.add("hidden");
         }
         function actionHtml() {
@@ -27218,7 +27339,8 @@ helper=${d.helperPath}`;
           } else {
             note = "One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.";
           }
-          body.innerHTML = `<div class="voice-rows${snap.target ? "" : " voice-rows-off"}">${rows}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
+          body.innerHTML = `<div class="voice-rows${snap.target ? "" : " voice-rows-off"}">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
+          lastReading = reading();
           refreshSpeakSection();
         }
         let speak = null;
@@ -27246,11 +27368,35 @@ helper=${d.helperPath}`;
           const r = anchor.getBoundingClientRect();
           renderRows();
           pop.classList.remove("hidden");
+          stopRecorderTick();
+          lastReading = reading();
+          recTimer = setInterval(paintRecorder, RECORDER_TICK_MS);
           const w = pop.offsetWidth;
           pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
           pop.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
         }
         body.addEventListener("click", (e) => {
+          if (e.target.closest("[data-rec]")) {
+            let stopped = false;
+            try {
+              stopped = tapOffRecorder() === true;
+            } catch {
+            }
+            paintRecorder();
+            if (!stopped) {
+              const host = body.querySelector("[data-rec]");
+              if (host) {
+                host.classList.add("rec-declined");
+                setTimeout(() => {
+                  try {
+                    host.classList.remove("rec-declined");
+                  } catch {
+                  }
+                }, 600);
+              }
+            }
+            return;
+          }
           const row = e.target.closest(".voice-row");
           if (!row || !row.dataset.mode) return;
           core.choose(row.dataset.mode);
@@ -35222,15 +35368,26 @@ Click for live activity`;
         }
       }
       window.addEventListener("focus", reportFocusedSession);
-      if (activeSession) reportFocusedSession();
       window.api.onVoiceTap((name) => {
         const sess = sessions.get(name);
         if (sess && sess.voiceSubmit) sess.voiceSubmit.externalTap();
       });
       var voiceControl = createVoiceControl({ core: voiceCore });
+      function activeVoiceSubmit() {
+        const entry = activeSession ? sessions.get(activeSession) : null;
+        return entry && entry.voiceSubmit || null;
+      }
       var { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
         core: voiceCore,
-        renderProxyBar
+        renderProxyBar,
+        getRecorderReading: () => {
+          const vs = activeVoiceSubmit();
+          return vs ? vs.recorderReading() : "out";
+        },
+        tapOffRecorder: () => {
+          const vs = activeVoiceSubmit();
+          return vs ? vs.tapOff() : false;
+        }
       });
       voiceBarActionHtml = voiceActionHtml;
       voiceCore.start();

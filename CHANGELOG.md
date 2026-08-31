@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **See whether Clodex can actually tell the recorder is running — and stop it
+  with a click.** The `⏺REC` on screen is painted by the Claude CLI, not by
+  Clodex, so it says nothing about whether Clodex itself can see it; every voice
+  gate depends on Clodex reading that indicator off the screen, and when the
+  read fails nothing tells you. The voice popover now shows Clodex's own
+  reading, from the same check the gates use rather than a second opinion: it
+  distinguishes recording, the CLI's brief processing window, and — the one that
+  was invisible before — "cannot read the screen", which quietly blocks the
+  automatic re-arm. Clicking it while recording stops the recorder; in any other
+  state it declines and writes nothing, since a keystroke sent then would arm a
+  microphone you just asked to switch off.
+
 - **Hear the reply from across the room.** Clodex can now read the agent's final
   reply aloud when a turn ends. Off by default; turn it on in the voice popover
   on the session bar, where the dictation mode already lives. **The speech is

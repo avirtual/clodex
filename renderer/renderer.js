@@ -3609,10 +3609,8 @@ function reportFocusedSession() {
   try { window.api.noteFocusedSession(activeSession); } catch {}
 }
 window.addEventListener('focus', reportFocusedSession);
-// Guarded: at eval time no session is active yet, and an unguarded call would
-// report a null that CLEARS whatever another workspace window just recorded —
-// this file is evaluated once per window.
-if (activeSession) reportFocusedSession();
+// No eval-time report: an unconditional one would send a null that clears
+// whatever another workspace window just recorded.
 
 // An outside script asked for the recorder on this seat (a Voice Control wake
 // word, over the agent socket). Main routed it here because only this side can
@@ -3624,8 +3622,27 @@ window.api.onVoiceTap((name) => {
 });
 const voiceControl = createVoiceControl({ core: voiceCore });
 
+// Both halves resolve the ACTIVE seat's watcher at call time rather than
+// closing over one: the popover outlives every session, and a captured watcher
+// would report the recorder of a seat the operator left. A seat with no watcher
+// (a peer, a bash shell, one still being built) reports out-of-scope and stops
+// nothing, which is what those seats are.
+function activeVoiceSubmit() {
+  const entry = activeSession ? sessions.get(activeSession) : null;
+  return (entry && entry.voiceSubmit) || null;
+}
+
 const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
-  core: voiceCore, renderProxyBar,
+  core: voiceCore,
+  renderProxyBar,
+  getRecorderReading: () => {
+    const vs = activeVoiceSubmit();
+    return vs ? vs.recorderReading() : 'out';
+  },
+  tapOffRecorder: () => {
+    const vs = activeVoiceSubmit();
+    return vs ? vs.tapOff() : false;
+  },
 });
 voiceBarActionHtml = voiceActionHtml;
 // The bar holds the core open for the life of the window: unlike the
