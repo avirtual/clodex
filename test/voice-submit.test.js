@@ -20,7 +20,7 @@ const assert = require('node:assert');
 const {
   DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
   foldConfusables, shouldFire, readVoiceSubmitSettings,
-  shouldRearm, composerIsEmpty, resolveTriggerKey,
+  shouldRearm, composerIsEmpty, recordingBlocksRearm, resolveTriggerKey,
 } = require('../renderer/lib/voice-submit');
 const {
   createVoiceSubmitWatcher, readComposition, commitComposition, CONSUMED_IDLE_MS,
@@ -267,24 +267,38 @@ test('the gate is INDEPENDENT of the CLI voice mode, in every value it takes', (
 
 // ------------------------------------------------------------------ the watcher
 
-// A fake xterm buffer holding N screen rows, cursor on the LAST one. It keeps
+// A fake xterm buffer holding N screen rows, cursor on the LAST one unless a
+// row carries `cursor: true`. It keeps
 // its multi-row shape although the watcher now reads only the cursor row: that
 // is what lets a test place rows ABOVE the cursor and assert they are not read.
 // `translateToString(_, 0, cursorX)` is the truncate-at-cursor read the watcher
 // makes, and this stub honours the cursorX argument rather than ignoring it — a
 // stub returning the whole row would hide a watcher that forgot to truncate.
+//
+// `cursor: true` exists because the real footer paints the composer with rows
+// BELOW it (box border, status line, the recording indicator). A stub that can
+// only put the cursor last cannot express that layout at all, and the
+// indicator scan reads exactly those rows.
 function fakeTerminal({ rows = [''], type = 'normal' } = {}) {
   const listeners = [];
   const state = { rows: [...rows], type };
-  const last = () => state.rows[state.rows.length - 1];
+  const cursorIndex = () => {
+    const marked = state.rows.findIndex((r) => r && r.cursor);
+    return marked === -1 ? state.rows.length - 1 : marked;
+  };
+  const last = () => state.rows[cursorIndex()];
   return {
     _state: state,
+    // The screen height, which is where the indicator scan stops. Equal to the
+    // row count here: this stub has no scrollback, so baseY is 0 and every row
+    // it holds is on screen.
+    get rows() { return state.rows.length; },
     buffer: {
       get active() {
         return {
           type: state.type,
           baseY: 0,
-          get cursorY() { return state.rows.length - 1; },
+          get cursorY() { return cursorIndex(); },
           // `cursorX` on a row puts the cursor MID-row, so a test can place text
           // to its right — the only shape that can catch a read that forgets to
           // truncate at the cursor.
@@ -1711,6 +1725,53 @@ test('composerIsEmpty: ornament is empty, a draft is not, unreadable is not', ()
   }
 });
 
+// THE MEASURED INDICATOR ROW, spelled as escapes. Captured 2026-08-31 by
+// replaying the CLI's painted spans (CLI 2.1.251) through a REAL xterm and
+// reading the buffer back: ` agents ⏺REC · tap to send`. The bullet and `REC`
+// arrive in ADJACENT cells — U+23FA is width 1 in xterm's UnicodeV6 table — so
+// there is no separator between them in the buffer, whatever the DOM's
+// negative letter-spacing suggests. A pasted glyph here would be one editor
+// normalisation away from a fixture that agrees with a broken rule — the
+// failure mode where the suite is green and the feature is dead.
+const REC_ROW = ' agents \u23faREC \u00b7 tap to send';
+
+test('recordingBlocksRearm: the measured indicator row blocks, ordinary output does not', () => {
+  // The case the whole gate exists for, first and by itself.
+  assert.strictEqual(recordingBlocksRearm([REC_ROW]), true,
+    'the measured REC row must block the re-arm');
+
+  // The MEASURED false positives. U+23FA opens every ordinary tool bullet and
+  // `REC` is a common substring, so an anchor of either alone hits real
+  // transcript — these are rows this scan genuinely sees.
+  for (const row of [
+    '\u23fa Bash(ls -la)',
+    '\u23fa Read(RECOVERY.md)',
+    '\u23fa REC',
+    'RECORD',
+    'tap to send',
+    '\u276f\u00a0',
+    '',
+  ]) {
+    assert.strictEqual(recordingBlocksRearm([row]), false, JSON.stringify(row));
+  }
+
+  // Any row in the window blocks, not just the first: the indicator paints
+  // BELOW the composer in the real footer layout.
+  assert.strictEqual(recordingBlocksRearm(['\u276f\u00a0', 'border', REC_ROW]), true);
+  assert.strictEqual(recordingBlocksRearm(['\u276f\u00a0', 'border']), false);
+
+  // UNREADABLE BLOCKS — the opposite polarity to composerIsEmpty, and the
+  // asymmetry is deliberate: a missed indicator STOPS a live recording and
+  // loses the operator's words, a phantom one only skips one re-arm.
+  for (const bad of [null, undefined, 'string', 0, {}]) {
+    assert.strictEqual(recordingBlocksRearm(bad), true, JSON.stringify(bad));
+  }
+  // A read that succeeded and saw nothing is NOT unreadable.
+  assert.strictEqual(recordingBlocksRearm([]), false);
+  // A row that is not a string cannot be matched, and must not throw.
+  assert.strictEqual(recordingBlocksRearm([null, undefined, 7]), false);
+});
+
 test('resolveTriggerKey takes a plain character and refuses a chord', () => {
   const plain = { key: ' ', ctrl: false, alt: false, shift: false, meta: false, super: false };
   assert.strictEqual(resolveTriggerKey(plain), ' ');
@@ -1766,7 +1827,7 @@ function rearmHarness({
     frozen: null,
     now: () => (clock.frozen === null ? Date.now() + clock.offset : clock.frozen),
   };
-  const watcher = createVoiceSubmitWatcher(term, {
+  const watcher = track(createVoiceSubmitWatcher(term, {
     now: () => clock.now(),
     getConfig: () => env.config,
     getAttention: () => env.attention,
@@ -1776,7 +1837,7 @@ function rearmHarness({
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
     ...(abandonMs === undefined ? {} : { abandonMs }),
-  });
+  }));
   // A turn, then its end. Every re-arm needs the edge, so this is the shape
   // every test below starts from.
   // A real turn: thinking, then an idle carrying turnEnd. `midTurnIdle` is the
@@ -1933,6 +1994,61 @@ test('dispose cancels a re-arm already in flight', async () => {
   h.watcher.dispose();
   await h.done();
   assert.deepStrictEqual(h.writes, []);
+});
+
+// THE HAZARD THE RE-ARM SHIPPED WITH OPEN. The CLI's tap recorder finishes
+// ~15s of silence, and only then does our character ARM it. A turn ending
+// inside that window leaves it RECORDING, where the same character STOPS it
+// and drops what the operator was saying. These assert on what reached the
+// pty, not on a predicate: the gate can be deleted and leave every function
+// still returning the right answer while the byte goes out anyway.
+test('THE INTERLOCK: a live recording indicator gets no character', async () => {
+  const h = rearmHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, REC_ROW] });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the byte would STOP the live recording');
+  assert.strictEqual(h.watcher.rearmCount(), 0);
+  h.watcher.dispose();
+});
+
+test('the recorder having finished re-arms normally, which is the whole point', async () => {
+  // The SAME layout with the indicator gone. Without this row the test above
+  // passes for a gate that blocks unconditionally — the feature would be dead
+  // and the suite green.
+  const h = rearmHarness({
+    rows: [{ text: EMPTY_COMPOSER, cursor: true }, ' agents \u00b7 tap to talk'],
+  });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
+  h.watcher.dispose();
+});
+
+test('the indicator scan reads BELOW the cursor and never above it', async () => {
+  // Both directions in one shape. The row above is ordinary transcript that
+  // CONTAINS the indicator's exact bytes — an agent printing this row, or a
+  // scan that walks up into scrollback, must not read as recording. U+23FA
+  // opens every tool bullet, so upward scanning was a measured false positive.
+  const h = rearmHarness({
+    rows: [REC_ROW, { text: EMPTY_COMPOSER, cursor: true }],
+  });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' '], 'a REC row ABOVE the composer is transcript');
+  h.watcher.dispose();
+});
+
+test('the indicator is seen even though it paints RIGHT of the cursor', async () => {
+  // The composer read truncates at cursorX, so a scan reusing that read would
+  // never see an indicator on the cursor's own row. Measured through a real
+  // xterm: full row `❯  agents ⏺REC · tap to send`, cursorX 2.
+  const h = rearmHarness({
+    rows: [{ text: EMPTY_COMPOSER + REC_ROW, cursorX: 2, cursor: true }],
+  });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the untruncated row carries the indicator');
+  h.watcher.dispose();
 });
 
 test('a throwing environment declines rather than writing', async () => {

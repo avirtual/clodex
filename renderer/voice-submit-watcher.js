@@ -24,6 +24,7 @@
 
 const {
   findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
+  recordingBlocksRearm,
 } = require('./lib/voice-submit');
 
 // The quiet window. Streamed transcription lands in segments, so a fire on the
@@ -307,6 +308,30 @@ function createVoiceSubmitWatcher(terminal, {
     return line.translateToString(false, 0, buf.cursorX);
   }
 
+  // The rows the recording indicator could be on: the cursor row and the ones
+  // BELOW it, each read WHOLE rather than truncated at the cursor.
+  //
+  // Whole because the indicator paints to the RIGHT of the cursor, so the
+  // truncation that protects the composer read would cut off the very thing
+  // this is looking for. Downward because everything ABOVE the composer is
+  // transcript, where U+23FA opens every ordinary tool bullet — a scan that
+  // walks up hits arbitrary scrollback, measured.
+  //
+  // Null, not [], when the screen cannot be read: `recordingBlocksRearm` maps
+  // that to "blocked", and an empty array would mean "read it, saw nothing".
+  function indicatorRows() {
+    if (!onNormalBuffer()) return null;
+    try {
+      const buf = terminal.buffer.active;
+      const out = [];
+      for (let y = buf.cursorY; y < terminal.rows; y++) {
+        const line = buf.getLine(buf.baseY + y);
+        if (line) out.push(line.translateToString(true));
+      }
+      return out;
+    } catch { return null; }
+  }
+
   function tick() {
     timer = null;
     if (disposed) return;
@@ -510,6 +535,17 @@ function createVoiceSubmitWatcher(terminal, {
     // operator's draft and would arm nothing. cursorRow() returns null off the
     // normal buffer, which composerIsEmpty declines too.
     if (!composerIsEmpty(cursorRow())) return;
+
+    // The recorder is ALREADY running, so the trigger character would STOP it.
+    // The CLI's tap recorder auto-finishes after ~15s of silence and only then
+    // does our character arm it; a turn ending within that window leaves it
+    // recording, and this is the read that tells the two apart.
+    //
+    // It blocks on an unreadable screen, the opposite of every other gate here.
+    // The asymmetry is the point: a missed indicator cuts the operator off
+    // mid-sentence and loses the words, while a phantom one only skips a
+    // re-arm they can do with the key themselves.
+    if (recordingBlocksRearm(indicatorRows())) return;
 
     let key = null;
     try { key = getTriggerKey(); } catch { key = null; }
