@@ -1747,15 +1747,44 @@ test('MODE-INDEPENDENT: the gates are re-read AFTER the wait, not before it', as
 });
 
 test('MODE-INDEPENDENT: a gate that THROWS after the wait settles, never hangs', async () => {
-  // `cursorRow()` is the one gate with no try/catch of its own. A throw there
-  // used to leave the promise pending forever, and with it the handler awaiting
-  // it. Reached by making the composer read throw only AFTER the wait, which is
-  // the only window where this can happen at all.
+  // A throw anywhere under the recursive call used to leave the promise pending
+  // forever, and with it the handler awaiting it. Reached by making the composer
+  // read throw only AFTER the wait, which is the only window where this can
+  // happen at all.
+  //
+  // WHAT THIS PINS TODAY IS THE OUTCOME, NOT THE DEFERRED CATCH. The sync path
+  // now guards its own composer read, so this throw is intercepted there and
+  // returns false before the recursive call comes back — the deferred catch is
+  // never entered. Deleting that catch leaves this test green, which is why the
+  // write case below exists and must not be folded into this one.
   const h = tapHarness();
   const pending = h.watcher.externalTap(true);
   h.throwFromCursor();
   assert.strictEqual(await pending, false, 'it declines instead of hanging');
   assert.deepStrictEqual(h.writes, []);
+});
+
+// THE DEFERRED CATCH'S OWN PIN, and the only one it has. Every other throw on
+// this path is now caught further in — the screen reads by their own guards, the
+// composer read by the sync path's — so the WRITE is the one throw that still
+// reaches this catch, and a write throws only after the wait has elapsed and
+// every gate has passed.
+//
+// IN THE RENDERER its failure is a HANG, not a wrong answer: a throw inside the
+// timer callback settles nothing, so the promise stays pending for the life of
+// the page and the `onVoiceTap` handler awaiting it never returns. Here it
+// surfaces faster — node's runner attributes the uncaught timer throw to
+// whichever test is in flight — so removing the catch fails this loudly rather
+// than stalling the file. The `timeout` is the backstop for the case where it
+// does not, since no assertion can fire on a promise that never resolves.
+test('MODE-INDEPENDENT: a WRITE that throws after the wait settles rather than hanging', { timeout: 5000 }, async () => {
+  const h = tapHarness();
+  h.throwFromWrite();
+  const pending = h.watcher.externalTap(true);
+  assert.strictEqual(await pending, false, 'the tap declines rather than hanging the handler');
+  assert.deepStrictEqual(h.writes, [], 'the byte never reached the pty');
+  assert.strictEqual(h.watcher.externalTapCount(), 0,
+    'and nothing is counted for a write that did not land');
 });
 
 // THE SYNCHRONOUS TWIN of the case above, and the one the deferred path's guard
