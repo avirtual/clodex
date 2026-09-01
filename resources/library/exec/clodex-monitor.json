@@ -1,6 +1,6 @@
 {
   "argv": ["/usr/bin/env", "node", "${CLODEX_BIN}/clodex-monitor.js"],
-  "description": "Long-running command? Start it here instead of blocking a turn on it: each output event DMs you back. start needs command or ws; stop needs the `id` from list; `agent` is your OWN name.",
+  "description": "Long AND quiet commands: runs without blocking your turn, but each output line DMs you back at one API round trip. start needs command or ws; stop needs the `id` from list; `agent` is your OWN name.",
   "timeoutMs": 15000,
   "maxBytes": 8192,
   "replyStderr": true,

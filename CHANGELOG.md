@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **`scripts/release.sh --quiet` prints milestones and nothing else.** A release
+  run through an agent's monitor sent back every line the script printed as a
+  separate message — the notes preview alone, a changelog you had just written,
+  came back as fourteen of them. With `--quiet` you get the version and tag, the
+  DMG, the push, the release URL and the image result; the electron and renderer
+  smokes, the build, the prune and the publish go to a log file whose path is
+  printed at the start and again on any failure. The log sits outside `dist/`, so
+  it survives the build step that empties it and is still there to read when the
+  build is what broke. A non-empty `CI` turns it on by itself.
+
 ## 5.20.0 — 2026-09-01 — Talking to your agents
 
 - **Moving the microphone now stops the recorder it moved away from.** Saying
