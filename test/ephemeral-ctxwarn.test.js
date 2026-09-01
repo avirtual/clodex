@@ -23,13 +23,14 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { promptCacheDir } = require('../ipc-prompt-cache');
 const { parseCtxFile } = require('../argv-merge');
-const { ctxReminderFor, CTX_REMINDER_NUDGE_TOKENS } = require('../ctx-reminder');
+const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('../ctx-reminder');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t433-')); }
 
 // One fixture; `ephemeral` is the only thing either call varies. The real
-// ctxReminderFor and parseCtxFile are injected, not spied: a stubbed decision
-// would pin the harness's copy of the threshold rather than the shipped one.
+// ctxReminderFor, ctxThresholdsFor and parseCtxFile are injected, not spied: a
+// stubbed decision would pin the harness's copy of the threshold rather than the
+// shipped one.
 function harness(t, { ephemeral = false, getThrows = false } = {}) {
   const root = tmp();
   // Three tmp trees leaked per run without this.
@@ -42,6 +43,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   // Bracketing on the arm's events rather than on "the session is in the map"
   // is what keeps the count honest: the latter attributed every persistence read
   // after sessions.set to this arm.
+  const uiReads = [];
   const getCalls = [];
   const ctxArmReads = [];
   let armOpen = false;
@@ -61,6 +63,8 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     appVersion: '5.12.0',
     parseCtxFile,
     ctxReminderFor,
+    ctxThresholdsFor,
+    CTX_THRESHOLD_MIN,
     versionNoticeFor: () => null,
     enqueueNotice: () => true,
     clearNotices: () => {},
@@ -92,7 +96,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     writeSkillPlugin: () => null,
     effectiveInjectedSkills: () => [],
     getRemoteServer: () => null,
-    getUiSettings: () => ({ get: () => ({}) }),
+    getUiSettings: () => ({ get: () => { if (armOpen) uiReads.push(1); return {}; } }),
     getPersistence: () => ({
       list: () => (record ? [record] : []),
       // Discriminates on the argument: a `() => record` stub cannot tell
@@ -139,9 +143,10 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     warnPath: () => seatWarnPath,
     // Written BEFORE create so the arm's initial readCtx() sees it. The poll is
     // otherwise fs.watch-driven, which is not synchronous enough to assert on.
+    uiReads,
     writeCtx: (tokens) => {
       fs.mkdirSync(runDirFor(root, 'seat'), { recursive: true });
-      fs.writeFileSync(pathFor(root, 'seat', 'ctx'), `50\t${tokens}\t400000\tclaude-fable-5`);
+      fs.writeFileSync(pathFor(root, 'seat', 'ctx'), `50\t${tokens}\t400000\t${FIXTURE_MODEL}`);
     },
     spawn: async () => {
       try {
@@ -164,7 +169,18 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   };
 }
 
-const OVER = CTX_REMINDER_NUDGE_TOKENS + 10_000;
+// Derived from the thresholds in force for the fixture's OWN model rather than
+// from the baseline constant. They are the same today — no model ships a
+// differentiated row — but this is the INPUT that has to reach the
+// over-threshold state, and a per-model row added later would silently stop it
+// reaching it, vacuuming out the ENTER every skip assertion below leans on.
+const FIXTURE_MODEL = 'claude-fable-5';
+const FIXTURE_THRESHOLDS = ctxThresholdsFor(FIXTURE_MODEL, {});
+const OVER = FIXTURE_THRESHOLDS.nudge + 10_000;
+
+test('the fixture is over threshold for the model it names', () => {
+  assert.ok(ctxReminderFor(OVER, FIXTURE_THRESHOLDS), 'the decision fires at this count');
+});
 
 test('a NON-ephemeral seat over threshold gets the ctxwarn file', async (t) => {
   const h = harness(t, { ephemeral: false });
@@ -174,7 +190,7 @@ test('a NON-ephemeral seat over threshold gets the ctxwarn file', async (t) => {
   // this token count, in this fixture, on this path. Without it the skip below
   // is satisfied by a create() that never reached the ctx poll at all.
   assert.ok(fs.existsSync(h.warnPath()), 'the reminder must fire for an ordinary seat');
-  assert.strictEqual(fs.readFileSync(h.warnPath(), 'utf8'), ctxReminderFor(OVER),
+  assert.strictEqual(fs.readFileSync(h.warnPath(), 'utf8'), ctxReminderFor(OVER, FIXTURE_THRESHOLDS),
     'the file carries the pure decision verbatim — the write site suppresses, it does not reword');
 });
 
@@ -190,8 +206,38 @@ test('the pure decision is untouched — it still calls an ephemeral seat heavy'
   // The suppression is the CALLER's, deliberately: "is this context heavy" and
   // "should we act on it" decay separately, and fusing them into the pure
   // function would make the threshold untestable without a seat identity.
-  assert.ok(ctxReminderFor(OVER), 'ctxReminderFor takes tokens only and knows nothing of seats');
-  assert.strictEqual(ctxReminderFor.length, 1, 'signature unchanged: no ephemeral parameter crept in');
+  assert.ok(ctxReminderFor(OVER, FIXTURE_THRESHOLDS), 'ctxReminderFor knows nothing of seats');
+  // Tokens and the resolved thresholds, and nothing else. The count alone does
+  // not say what this guards: it is that no seat identity was added alongside
+  // them — the suppression stays the caller's.
+  assert.strictEqual(ctxReminderFor.length, 2, 'tokens + thresholds; no seat parameter crept in');
+  assert.ok(ctxReminderFor(OVER, ctxThresholdsFor(null, {})),
+    'the threshold-aware call is the same decision for a model with no row');
+});
+
+// The settings read re-parses the whole of ui-settings.json, so it is gated on
+// the floor below which no override could fire anyway (sanitizeThresholdPair
+// drops a row under CTX_THRESHOLD_MIN). Both directions, because a gate that
+// never opens silences every operator override and a gate that never closes is
+// the read it was added to avoid.
+//
+// Counted inside the ctx arm's own window, like the persistence read above:
+// create() reads ui-settings for its own reasons, so an ungated count would be
+// measuring those and would pass whatever this branch did.
+test('the settings read is skipped below the floor and taken above it', async (t) => {
+  const quiet = harness(t, { ephemeral: false });
+  quiet.writeCtx(CTX_THRESHOLD_MIN - 10_000);
+  await quiet.spawn();
+  assert.deepStrictEqual(quiet.uiReads, [], 'a session under the floor must not re-parse ui-settings.json');
+  assert.ok(!fs.existsSync(quiet.warnPath()), 'and it is not nudged');
+
+  const loud = harness(t, { ephemeral: false });
+  loud.writeCtx(OVER);
+  await loud.spawn();
+  // ENTER: the skip above proves nothing unless the same path DOES read when the
+  // count is high enough to matter.
+  assert.ok(loud.uiReads.length > 0, 'an over-threshold session reads the operator overrides');
+  assert.ok(fs.existsSync(loud.warnPath()), 'and it is nudged');
 });
 
 test('an ephemeral seat that was PREVIOUSLY nudged has its stale file removed', async (t) => {

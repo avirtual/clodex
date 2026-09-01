@@ -376,6 +376,8 @@ function createSessionManager(deps) {
     composeDigest,
     digestTiers,
     ctxReminderFor,
+    ctxThresholdsFor,
+    CTX_THRESHOLD_MIN,
     bakePrompt,
     promptCacheDir,
     readCache,
@@ -1919,7 +1921,22 @@ function createSessionManager(deps) {
               // needs. Suppressed HERE, not inside ctxReminderFor, which stays
               // pure. Read off the persistence record, never re-derived from the
               // name shape.
-              let warn = ctxReminderFor(c.tok);
+              //
+              // Read here rather than memoized at create: get() re-reads
+              // ui-settings.json, so an edited threshold applies to a running
+              // session without a restart. A failed read resolves to the shipped
+              // defaults, never to no reminder.
+              //
+              // Gated on the floor rather than on the shipped nudge: no override
+              // can fire below it, because sanitizeThresholdPair drops a row
+              // whose nudge is under CTX_THRESHOLD_MIN. So this skips the
+              // ui-settings.json re-parse for the whole quiet life of a session
+              // without capping how low an operator can set the threshold.
+              let ctxOverrides = null;
+              if (c.tok >= CTX_THRESHOLD_MIN) {
+                try { ctxOverrides = getUiSettings().get().ctxReminderThresholds; } catch {}
+              }
+              let warn = ctxReminderFor(c.tok, ctxThresholdsFor(c.model, ctxOverrides));
               // Read lazily at the first over-threshold tick, not eagerly at
               // create: get() re-parses the whole of sessions.json and _load()
               // can WRITE it (the workspaceId backfill), while the record may be

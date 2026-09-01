@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **Agents are told their context is heavy at 175,000 tokens, and you can now
+  change that.** The threshold had been raised to 200,000 so that seats spawned
+  for a single ticket would not be nudged mid-task — but those seats are never
+  nudged at any threshold, by a separate rule, so the raise only pushed
+  long-running sessions deeper before they were told anything. The nudge now
+  arrives 25,000 tokens earlier, and the sterner second warning sits at 225,000.
+  Both numbers are editable in Settings ▸ Traffic optimization and persist across
+  restarts. Models can also be given thresholds of their own, which is
+  groundwork: none differs today.
+
 - **Bundled wirescope updated to v0.6.58, which retires the compact-cache
   strip.** The proxy used to drop the cache marker from a compaction request
   when it judged the session cold, on the theory that re-caching a summary you

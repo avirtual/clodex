@@ -101,7 +101,9 @@ function effectiveWindowSize(modelId, reported) {
 // the corrected size (the CLI's used_percentage is computed off the same wrong
 // denominator). cost is the CLI's running total_cost_usd (raw float) and
 // modelName its display name, surfaced for wire-off sessions where the wirescope
-// telemetry (model + cost) is absent.
+// telemetry (model + cost) is absent. `model` is returned alongside it because
+// it is the axis anything priced per-model must key on — the display name is
+// vendor prose and two ids can share one.
 function parseCtxFile(raw) {
   const parts = String(raw).trim().split('\t');
   const num = (s) => { const n = parseInt(s, 10); return isNaN(n) ? null : n; };
@@ -116,7 +118,7 @@ function parseCtxFile(raw) {
   if (size !== reported && tok != null && size > 0) {
     pct = Math.round((tok / size) * 100);
   }
-  return { pct, tok, size, cost, modelName };
+  return { pct, tok, size, model, cost, modelName };
 }
 
 module.exports = {

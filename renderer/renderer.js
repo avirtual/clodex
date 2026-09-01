@@ -4094,6 +4094,9 @@ const prefsVoiceSubmitPhrase = document.getElementById('prefs-voice-submit-phras
 const prefsSpeakReplies = document.getElementById('prefs-speak-replies');
 const prefsSpeakVoice = document.getElementById('prefs-speak-voice');
 const prefsSpeakRate = document.getElementById('prefs-speak-rate');
+const prefsCtxNudge = document.getElementById('prefs-ctx-nudge');
+const prefsCtxEscalate = document.getElementById('prefs-ctx-escalate');
+const prefsCtxModels = document.getElementById('prefs-ctx-models');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
@@ -5730,6 +5733,35 @@ function setTerminalReports(value) {
   }
 }
 
+// Baseline only. The per-model rows are rendered read-only rather than left out:
+// a surface that showed one pair while the code ran on another would read as the
+// whole truth. Editing them is a settings-file edit, and the store's merge keeps
+// such a row across a Save from here.
+function setCtxThresholds(s) {
+  const shipped = s.ctxThresholdDefaults || {};
+  const base = shipped.default || {};
+  const cur = (s.ctxReminderThresholds || {}).default;
+  if (prefsCtxNudge) {
+    prefsCtxNudge.placeholder = base.nudge != null ? String(base.nudge) : '';
+    prefsCtxNudge.value = cur && Number.isInteger(cur.nudge) ? String(cur.nudge) : '';
+  }
+  if (prefsCtxEscalate) {
+    prefsCtxEscalate.placeholder = base.escalate != null ? String(base.escalate) : '';
+    prefsCtxEscalate.value = cur && Number.isInteger(cur.escalate) ? String(cur.escalate) : '';
+  }
+  if (!prefsCtxModels) return;
+  const overrides = s.ctxReminderThresholds || {};
+  const rows = (Array.isArray(shipped.models) ? shipped.models : []).map((m) => {
+    const o = overrides[m.family];
+    const v = o || m;
+    return `${m.family}: ${v.nudge.toLocaleString()} / ${v.escalate.toLocaleString()}`
+      + (o ? ' (your override)' : '');
+  });
+  prefsCtxModels.textContent = rows.length
+    ? `Models with their own thresholds, which the baseline above does not change \u2014 ${rows.join('; ')}.`
+    : '';
+}
+
 // The SAME store fields the voice popover writes, read here rather than
 // mirrored into a second source of truth — the operator went looking in
 // Settings first, and a copy that could disagree with the popover is worse than
@@ -5750,6 +5782,19 @@ function setSpeakSettings(s) {
         + `${esc(v ? `${n} (${v.locale})` : n)}</option>`;
     });
   prefsSpeakVoice.innerHTML = opts.join('');
+}
+
+// Both boxes empty means "use what ships"; null is what the store drops. A pair
+// is sent whole, so a nudge typed without an escalate cannot merge onto a stale
+// escalate from a previous save.
+function readCtxThresholdPair() {
+  const n = prefsCtxNudge.value.trim();
+  const e = prefsCtxEscalate.value.trim();
+  if (!n && !e) return null;
+  const nudge = Number(n);
+  if (!Number.isInteger(nudge)) return null;
+  const escalate = Number(e);
+  return { nudge, escalate: Number.isInteger(escalate) ? escalate : 0 };
 }
 
 function readTerminalReports() {
@@ -5776,6 +5821,7 @@ async function openPrefs() {
   // asking for the default back rather than a value they typed being hidden.
   if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || '';
   setSpeakSettings(s);
+  setCtxThresholds(s);
   setTerminalReports(s.terminalReports);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
@@ -5840,6 +5886,10 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     // not silently overwrite what the popover set.
     ...(prefsSpeakVoice && prefsSpeakVoice.value ? { speakVoice: prefsSpeakVoice.value } : {}),
     ...(prefsSpeakRate && prefsSpeakRate.value ? { speakRate: Number(prefsSpeakRate.value) } : {}),
+    // A blank pair sends `default: null`, which the store's sanitizer drops —
+    // that is how the operator gets the shipped values back, and it is why this
+    // key is not omitted when the boxes are empty the way speakVoice is.
+    ...(prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {}),
     terminalReports: readTerminalReports(),
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,

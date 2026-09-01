@@ -30,6 +30,7 @@ const CONTROLS = [
   'prefs-claude-components', 'prefs-claude-sl-cmd', 'prefs-codex-components',
   'prefs-proxy-enabled', 'ws-dot', 'ws-status-text', 'ws-restart-btn',
   'prefs-compact-on-resume', 'prefs-compact-on-resume-why',
+  'prefs-ctx-nudge', 'prefs-ctx-escalate', 'prefs-ctx-models',
   'prefs-context-hints', 'prefs-context-hints-why',
   'prefs-semantic-hints', 'prefs-semantic-hints-why',
   'prefs-selection-hints', 'prefs-terminal-reports',

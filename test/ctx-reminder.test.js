@@ -20,8 +20,8 @@ const {
 // including down to zero, which turns "at/above the threshold nudges" into a
 // test that nudges on an empty context and still passes.
 test('the thresholds are the tuned values', () => {
-  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 200_000);
-  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 250_000);
+  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 175_000);
+  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 225_000);
 });
 
 test('below the nudge threshold returns null', () => {
@@ -30,15 +30,20 @@ test('below the nudge threshold returns null', () => {
   assert.strictEqual(ctxReminderFor(CTX_REMINDER_NUDGE_TOKENS - 1), null);
 });
 
-// BOTH sides of the boundary, by literal. A high-side-only check ("200k nudges")
-// is true of any threshold at or below 200k, zero included; the low side is what
-// makes it a boundary. The band under it is where ordinary ticket work sits, so
-// 199_999 staying silent is the behaviour the retune was for.
-test('the 200k nudge boundary holds from both sides', () => {
-  assert.strictEqual(ctxReminderFor(199_999), null, 'a normal ticket context is not nudged');
-  assert.strictEqual(ctxReminderFor(150_000), null, 'the old threshold no longer fires');
-  const r = ctxReminderFor(200_000);
-  assert.ok(r && r.includes('getting heavy'), 'ENTER: 200k must produce the nudge, or the null above proves nothing');
+// BOTH sides of the boundary, by literal. A high-side-only check ("175k nudges")
+// is true of any threshold at or below 175k, zero included; the low side is what
+// makes it a boundary.
+test('the 175k nudge boundary holds from both sides', () => {
+  assert.strictEqual(ctxReminderFor(174_999), null, 'just under the threshold stays silent');
+  assert.strictEqual(ctxReminderFor(100_000), null);
+  const r = ctxReminderFor(175_000);
+  assert.ok(r && r.includes('getting heavy'), 'ENTER: 175k must produce the nudge, or the null above proves nothing');
+  // A ticket seat deep in this band is not nudged either, but that is the
+  // `ephemeral` suppression at the call site, not this threshold.
+  // Under 200k the nudge is reached but the escalate is not: the seat is asked
+  // to act before the line a long-context surcharge would begin at.
+  assert.ok(ctxReminderFor(199_999).includes('getting heavy'), 'nudged below the 200k line');
+  assert.ok(!ctxReminderFor(199_999).includes('very heavy'), 'and not yet escalated');
 });
 
 test('at/above the nudge threshold returns the nudge reminder', () => {

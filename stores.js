@@ -15,6 +15,7 @@ const { parseSkillFrontmatter } = require('./skills-util');
 const { validateEntry } = require('./cli/src/contexts');
 const { visibleTo } = require('./scope-util');
 const { clampSidebarWidth } = require('./sidebar-width');
+const { sanitizeCtxThresholds } = require('./ctx-reminder');
 const { confineOrThrow } = require('./path-confine');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
@@ -66,6 +67,12 @@ const DEFAULT_UI_SETTINGS = {
   wirescopeDir: '',
   wirescopePort: 7800,
   compactOnResume: false,
+  // Operator overrides only. Empty by design: the shipped thresholds live in
+  // ctx-reminder.js beside the decision, and copying them here would give the
+  // same number two homes that drift. An empty map means "ship what the module
+  // says", which is also what every settings file written before this key
+  // existed resolves to.
+  ctxReminderThresholds: {},
   contextHints: false,
   semanticHints: false,
   selectionHints: false,
@@ -1266,6 +1273,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           wirescopeDir: typeof raw?.wirescopeDir === 'string' ? raw.wirescopeDir : DEFAULT_UI_SETTINGS.wirescopeDir,
           wirescopePort: Number.isInteger(raw?.wirescopePort) ? raw.wirescopePort : DEFAULT_UI_SETTINGS.wirescopePort,
           compactOnResume: typeof raw?.compactOnResume === 'boolean' ? raw.compactOnResume : DEFAULT_UI_SETTINGS.compactOnResume,
+          ctxReminderThresholds: sanitizeCtxThresholds(raw?.ctxReminderThresholds),
           contextHints: typeof raw?.contextHints === 'boolean' ? raw.contextHints : DEFAULT_UI_SETTINGS.contextHints,
           semanticHints: typeof raw?.semanticHints === 'boolean' ? raw.semanticHints : DEFAULT_UI_SETTINGS.semanticHints,
           selectionHints: typeof raw?.selectionHints === 'boolean' ? raw.selectionHints : DEFAULT_UI_SETTINGS.selectionHints,
@@ -1335,6 +1343,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         wirescopeDir: partial?.wirescopeDir ?? cur.wirescopeDir,
         wirescopePort: partial?.wirescopePort ?? cur.wirescopePort,
         compactOnResume: partial?.compactOnResume ?? cur.compactOnResume,
+        // Merged per row, not replaced: Preferences saves only the baseline, and a
+        // whole-object write would silently discard a per-model override the UI
+        // does not surface. A row is removed by sending it explicitly as null.
+        ctxReminderThresholds: partial?.ctxReminderThresholds === undefined
+          ? cur.ctxReminderThresholds
+          : sanitizeCtxThresholds({ ...cur.ctxReminderThresholds, ...partial.ctxReminderThresholds }),
         contextHints: partial?.contextHints ?? cur.contextHints,
         semanticHints: partial?.semanticHints ?? cur.semanticHints,
         selectionHints: partial?.selectionHints ?? cur.selectionHints,

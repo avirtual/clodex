@@ -122,8 +122,18 @@ popovers the owner will answer.
   source of the context-window SIZE). `rebuildAllStatusScripts` (main.js)
   re-renders on preference changes. The template is a bash heredoc —
   byte-sensitive, test-pinned.
-- **Ctx reminders** (ctx-reminder.js): absolute thresholds (nudge 200k,
-  escalate 250k — cost scales with absolute context size, not window %).
+- **Ctx reminders** (ctx-reminder.js): absolute thresholds (nudge 175k,
+  escalate 225k — cost scales with absolute context size, not window %),
+  per-model-capable and operator-overridable (no model ships a differentiated
+  row today). `ctxThresholdsFor` resolves settings-model
+  > builtin-model > settings-default > builtin-default and names which layer
+  answered, so a lookup that found nothing is distinguishable from one that
+  found the baseline. Models are keyed by the family `modelFamily` derives from
+  the model ID and matched by EXACT equality, not by the prefix regex
+  MODEL_WINDOWS uses — a prefix reaches rows it does not own and does it
+  silently. The family KEEPS the minor version (`fable-5-1` is not `fable-5`)
+  because that is the axis this vendor's prices move on; a release date and a
+  routing version are dropped, so one model does not fragment across builds.
   The ctx tick writes/removes `{name}-ctxwarn`; the read-only drain hook
   re-delivers every submit while over (recurrence counters habituation).
   The tick SKIPS the write for a seat whose persistence record is
