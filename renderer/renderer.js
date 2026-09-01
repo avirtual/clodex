@@ -28,6 +28,7 @@ const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { createMirrorLatch } = require('./lib/mirror-latch');
+const { createMicHandoff } = require('./lib/mic-handoff');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
@@ -3635,7 +3636,19 @@ window.api.onSpeakerBusy((busy) => { speakerBusy = busy === true; });
 const micTargetMirror = createMirrorLatch(null, {
   normalize: (name) => (typeof name === 'string' ? name : null),
 });
-window.api.onMicTarget((name) => micTargetMirror.note(name));
+// The broadcast also STOPS a recorder on the seat that just lost the
+// microphone: the mirror alone only stops it re-ARMING, which left a live
+// recorder in the window he switched away from.
+const noteMicTarget = createMicHandoff({
+  mirror: micTargetMirror,
+  // Resolved at call time against this window's own map, so a seat in another
+  // window resolves to nothing here and is stopped by its own window's handler.
+  watcherFor: (name) => {
+    const entry = name ? sessions.get(name) : null;
+    return (entry && entry.voiceSubmit) || null;
+  },
+});
+window.api.onMicTarget((name) => noteMicTarget(name));
 // A window that opened or reloaded mid-dictation missed the broadcast, and the
 // target does not move again while he keeps talking to the seat he picked. The
 // latch is what keeps this late answer from overwriting a fresher one.

@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Moving the microphone now stops the recorder it moved away from.** Saying
+  `select` while a seat was recording switched you to the named seat but left
+  the old one listening in the window you had just left — up to about fifteen
+  seconds of the room going to the CLI before it timed out on its own, with
+  nothing on screen to tell you. The seat that loses the microphone is stopped
+  as it loses it, so only the seat you selected is ever live. A half-written
+  draft is left alone rather than sent.
+
 - **Only the seat you are working with speaks its replies.** With spoken
   replies on, every agent finishing a turn narrated it, so a few background
   agents ending near each other produced a chorus — and since a new reply cuts
