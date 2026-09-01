@@ -9,7 +9,7 @@
 // asserts only that the code agrees with itself. So the old module is checked
 // out from the base commit into a temp file and RUN.
 //
-// The baseline NUMBERS moved deliberately (200k/250k -> 150k/200k), so byte
+// The baseline NUMBERS moved deliberately, so byte
 // equality at equal token counts is no longer the claim. What must still hold is
 // that only the numbers moved: fed the base module's OWN thresholds, the new
 // decision reproduces it exactly — same boundaries, same wording, same rounding.
@@ -131,7 +131,7 @@ test('invariant 4: fed the base commit\'s thresholds, the decision reproduces it
 });
 
 // The retune itself, stated as the behaviour change it is: a standing seat is
-// now nudged 50k earlier. Literals on both sides — reading the constants would
+// now nudged earlier. Literals on both sides — reading the constants would
 // make this true of any retune, including back to the values it corrects.
 test('the baseline retune fires 25k earlier than the base commit did', (t) => {
   const base = loadBaseModule(t);
