@@ -94,7 +94,7 @@ const SUBMIT_POLL_MS = 100;
 //
 // The submit MUST NOT be abandoned silently: the erase has already run, so the
 // draft is sitting in the composer with the trigger phrase stripped, and a wait
-// with no end leaves it there for good. So this fires rather than gives up.
+// with no end leaves it there for good. So the wait ENDS here rather than never.
 //
 // It is also why the write re-reads its gates instead of trusting the ones tick()
 // passed: at this distance from the match the operator may have started a new
@@ -656,11 +656,25 @@ function createVoiceSubmitWatcher(terminal, {
     if (!found) return;
     if (!found.erase) { answered = null; return; }
     if (answered === found.content) return;
-    // Recorded even when the gate REFUSES below, so a blocked match cannot fire
-    // later off an unrelated repaint. That is the whole of "no retry after the
-    // dialog clears": by then the operator's speech is stale, and the Enter it
-    // would send lands on whatever the dialog left behind.
+    // WHAT A BLOCKED MATCH DOES, both halves, because they are one decision:
+    // this match is finished with, whether or not it gets to write.
+    //
+    // The latch is recorded even when the gate REFUSES below, so a blocked match
+    // cannot fire later off an unrelated repaint. That is the whole of "no retry
+    // after the dialog clears": by then the operator's speech is stale, and the
+    // Enter it would send lands on whatever the dialog left behind.
+    //
+    // The cancel is here for the same reason and must stay AHEAD of every bail.
+    // A pending deferred submit belongs to the draft this match replaces, and a
+    // match blocked at the gate never reaches the erase — so a deferral that
+    // survives the bail releases its `\r` into a composer whose trigger phrase
+    // is still in it, and ships the phrase inside the message.
+    //
+    // The trade inverts here and that is the right direction: a dialog-blocked
+    // match strands the earlier submit instead, which is visible and one
+    // keypress from sent — the polarity every stand-down in this file takes.
     answered = found.content;
+    cancelDeferredSubmit();
 
     let attention = null;
     try { attention = getAttention(); } catch { attention = 'permission'; }
@@ -700,10 +714,6 @@ function createVoiceSubmitWatcher(terminal, {
     // which the operator can see and tap; a phantom one costs him a live mic he
     // never asked for and cannot see.
     const litAtMatch = recordingObserved(indicatorRows());
-    // A pending deferred submit belongs to the draft being replaced here, and
-    // that draft was never sent. Leaving it armed sends TWO `\r` for one
-    // composer — the second into whatever the first left behind.
-    cancelDeferredSubmit();
     // FIRST IN EVERY BRANCH: the submit sends the composer's raw content, so
     // without this the trigger phrase ships inside the message.
     write('\x7f'.repeat(found.erase));
