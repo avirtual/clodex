@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Only the seat you are working with speaks its replies.** With spoken
+  replies on, every agent finishing a turn narrated it, so a few background
+  agents ending near each other produced a chorus — and since a new reply cuts
+  off the one playing rather than waiting behind it, you heard the first few
+  words of several and none of them whole. Now only the seat holding the
+  microphone speaks, falling back to the seat you are looking at when no seat
+  holds it; when neither is set, nothing speaks.
+
 - **The spoken tap now works whatever voice mode you left the CLI in.** In
   `hold` it used to start a recording that stopped itself before you could
   speak, so you had to say `mode tap` first and tap again — two phrases, and no
