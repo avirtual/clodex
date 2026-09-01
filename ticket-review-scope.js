@@ -45,6 +45,48 @@ function text(v) {
   return String(v == null ? '' : v).trim();
 }
 
+// Applied HERE and not where the reason is stored: the record keeps what the
+// lead actually said, and only this rendering is bounded — the scope rides a
+// system prompt and a reason is unbounded lead prose. A cut is rendered as a
+// visible marker rather than silently, so a reviewer never mistakes a truncated
+// demand for the whole of one.
+const REWORK_REASON_CAP = 2000;
+
+function capReason(v) {
+  const t = text(v);
+  if (t.length <= REWORK_REASON_CAP) return t;
+  return `${t.slice(0, REWORK_REASON_CAP)}\n… [truncated for the review scope — ${t.length - REWORK_REASON_CAP} more characters are on the ticket record]`;
+}
+
+// The per-entry cap bounds ONE reason; this bounds the block. They are not the
+// same limit reached twice: the realistic producer is the loop, whose composed
+// reject reason runs ~1-1.5 KB and stays comfortably under the per-entry cap, so
+// a hand re-closing a red branch N times files N entries that are each legal and
+// together unbounded.
+const REWORK_BLOCK_BUDGET = 8000;
+
+// Keeps the MOST RECENT entries: those are the demands the reviewer is being
+// asked to check, while an earlier round's is either already fixed or restated by
+// a later one. Measured over the rendered chunks, so the budget bounds what the
+// scope actually carries rather than what the record holds.
+//
+// One entry always survives a budget of any size — a block that were only a drop
+// notice would tell the reviewer reasons exist and then show it none. Exported
+// so that guard can be exercised directly: every chunk reaching it has been
+// through `capReason` first, and while the per-entry cap is below the budget no
+// single chunk can cross it, so the branch is unreachable through
+// `buildReviewScope` and a test routed that way pins nothing.
+function budgetEntries(chunks) {
+  const kept = [];
+  let total = 0;
+  for (let i = chunks.length - 1; i >= 0; i -= 1) {
+    total += chunks[i].length;
+    if (kept.length && total > REWORK_BLOCK_BUDGET) break;
+    kept.unshift(chunks[i]);
+  }
+  return kept;
+}
+
 // `ticket` is the record; `diffPath` is where the materialized diff was written.
 // Callers pass the diff path rather than the diff itself: the diff is unbounded
 // and the scope rides a system prompt, so the reviewer is pointed at the file.
@@ -169,6 +211,44 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
     out.push('');
   }
 
+  // Kept SEPARATE from the MUST-FIX block above, which is the load-bearing part:
+  // that block is what the previous REVIEWER found, this is what the lead or the
+  // loop said when it sent the ticket back afterwards. Merging them would
+  // attribute one party's words to the other — the confusion this block exists
+  // to remove.
+  //
+  // Gated on the field being present and non-empty so a record without it renders
+  // byte for byte as it did before: every ticket minted before this field existed
+  // is such a record, and a scope that changed shape for them would be a
+  // migration.
+  const reasons = Array.isArray(t.reworkReasons) ? t.reworkReasons.filter((r) => r && text(r.reason)) : [];
+  if (reasons.length) {
+    out.push('REWORK REASONS ON RECORD — what the lead or the loop said when this ticket was sent back, '
+      + 'verbatim. These are NOT the previous round\'s MUST-FIX items: those are what a reviewer found, '
+      + 'these are what whoever reopened the ticket asked for afterwards, and they are the only record of '
+      + 'why the ticket came back at all. Each is labelled with the rework round it was sent during; more '
+      + 'than one under the same round means further must-fixes went to a seat already holding that round.');
+    out.push('');
+    const chunks = reasons.map((r) => {
+      const who = text(r.by) || '(unattributed)';
+      return `Rework round ${Number(r.round) || 1} — from ${who}:\n\n${capReason(r.reason)}`;
+    });
+    const kept = budgetEntries(chunks);
+    const dropped = chunks.length - kept.length;
+    // The same rule the per-entry cap follows: a truncation must be visible as
+    // one. Stated ABOVE the entries, because a reviewer that reads them first has
+    // already taken the block for the whole history.
+    if (dropped) {
+      out.push(`[${dropped} EARLIER rework reason${dropped === 1 ? '' : 's'} on this ticket ${dropped === 1 ? 'is' : 'are'} not shown here — this block is `
+        + `bounded and carries the ${kept.length} most recent. The full record is on the ticket.]`);
+      out.push('');
+    }
+    for (const chunk of kept) {
+      out.push(chunk);
+      out.push('');
+    }
+  }
+
   out.push('Report your verdict in exactly this shape:');
   out.push('');
   out.push(VERDICT_GRAMMAR);
@@ -176,4 +256,4 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
   return out.join('\n');
 }
 
-module.exports = { buildReviewScope, VERDICT_GRAMMAR };
+module.exports = { buildReviewScope, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET };

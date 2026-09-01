@@ -377,6 +377,10 @@ function createVoiceSubmitWatcher(terminal, {
   // every other path here is unchanged — the marker is an annotation on a
   // submit, never a precondition for one.
   markVoiceOrigin = null,
+  // Withdraws a marker whose submit stood down. Absent, an abandoned submit
+  // leaves its marker live for the rest of its TTL and the next turn inside
+  // that window is labelled spoken whether or not it was.
+  unmarkVoiceOrigin = null,
   // Reports the CLI's recording indicator to main, which defers injection while
   // it is lit. Resent on every poll that sees it, never paired with an off —
   // main expires the stamp, so a watcher disposed mid-utterance releases the
@@ -481,6 +485,11 @@ function createVoiceSubmitWatcher(terminal, {
   // When the recorder was last seen lit, anchoring the dictated-draft report.
   let lastLitAt = 0;
   let marks = 0;
+  // A marker is armed for a submit that has not gone out yet. Spans the WHOLE
+  // window from the arm to the submit byte, not just the deferral: the arm sits
+  // ahead of the erase, so the ENTER_SETTLE_MS gap is inside it too.
+  let markPending = false;
+  let unmarks = 0;
   // What the gates saw on their last look, for DISPLAY only. Derived from the
   // same rows in the same pass as `observed` below, never re-scraped: a second
   // read would be a second opinion, and a display that can disagree with the
@@ -678,7 +687,12 @@ function createVoiceSubmitWatcher(terminal, {
 
     let attention = null;
     try { attention = getAttention(); } catch { attention = 'permission'; }
-    if (!shouldFire({ enabled: cfg.enabled, attention })) return;
+    // Unwound HERE and not beside the cancel above, because the fall-through
+    // may re-arm the same id: a disarm posted next to that arm races it off the
+    // register over the loopback, and the marker this match legitimately needs
+    // is the one that loses. Every path out of this function either submits,
+    // arms afresh, or passes through one of these two unwinds.
+    if (!shouldFire({ enabled: cfg.enabled, attention })) { unmarkPending(); return; }
 
     fires += 1;
     // BEFORE the writes, and that ordering is the whole of it: the marker has
@@ -696,7 +710,13 @@ function createVoiceSubmitWatcher(terminal, {
       // Consumed, so one utterance marks one submit. A second submit needs its
       // own evidence rather than inheriting this one.
       voiceEvidenceAt = null;
+      markPending = true;
       try { markVoiceOrigin(); } catch {}
+    } else {
+      // A match with no microphone evidence, superseding a deferral that HAD
+      // some. Without this the stale marker is still live and this submit —
+      // typed, by construction, since nothing evidenced a mic — takes it.
+      unmarkPending();
     }
     // WHICH BYTE STOPS THE RECORDER, read here at match time and before any
     // write.
@@ -741,6 +761,9 @@ function createVoiceSubmitWatcher(terminal, {
       // trigger phrase ships inside the message.
       if (litAtMatch && tapTrigger()) { keyStops += 1; deferSubmit(); return; }
       write('\r');
+      // The submit went out, so the marker is spent rather than stale: it rides
+      // this turn, which is what it was armed for.
+      markPending = false;
     }, ENTER_SETTLE_MS);
   }
 
@@ -771,8 +794,11 @@ function createVoiceSubmitWatcher(terminal, {
         submitTimer = setTimeout(poll, submitPollMs);
         return;
       }
-      if (!deferredSubmitAllowed()) return;
+      // EVERY stand-down here abandons the submit for good — none of them
+      // reschedules — so the marker armed for it has to come off with it.
+      if (!deferredSubmitAllowed()) { unmarkPending(); return; }
       write('\r');
+      markPending = false;
       deferredSubmits += 1;
     };
     submitTimer = setTimeout(poll, stopSettleMs);
@@ -781,6 +807,23 @@ function createVoiceSubmitWatcher(terminal, {
   function cancelDeferredSubmit() {
     if (submitTimer) clearTimeout(submitTimer);
     submitTimer = null;
+  }
+
+  // Withdraws the marker when the submit it was armed for is not going to
+  // happen. `once` bounds it to one delivery but NOT to the right one, so a
+  // marker left armed is taken by whatever turn comes next — and that turn is
+  // often typed, which is the case the payload is actively harmful in: it tells
+  // the reader to treat deliberately chosen words as probable mis-transcriptions.
+  //
+  // NEVER on a path that submits. The flag is cleared beside each `\r` rather
+  // than here, so the marker on a submit that DOES go out is untouched and keeps
+  // the ordering its arm site depends on.
+  function unmarkPending() {
+    if (!markPending) return;
+    markPending = false;
+    unmarks += 1;
+    if (!unmarkVoiceOrigin) return;
+    try { unmarkVoiceOrigin(); } catch {}
   }
 
   // Re-read at WRITE time, never inherited from the match. Deferring the submit
@@ -1396,6 +1439,11 @@ function createVoiceSubmitWatcher(terminal, {
     // send in the middle of a sentence he was still writing cannot be taken
     // back. Same trade, and the same direction, as the unreadable screen at
     // `deferredSubmitAllowed`.
+    //
+    // The unwind is gated on a deferral being IN FLIGHT. A keystroke inside the
+    // ENTER_SETTLE_MS gap cancels nothing — that `\r` is still coming — and
+    // withdrawing there would strip the marker off a submit that happens.
+    if (submitTimer) unmarkPending();
     cancelDeferredSubmit();
     voiceEvidenceAt = null;
     mutedByTyping = true;
@@ -1505,7 +1553,12 @@ function createVoiceSubmitWatcher(terminal, {
     commitCount: () => commits,
     commitFailureCount: () => commitFailures,
     markCount: () => marks,
+    unmarkCount: () => unmarks,
     dispose() {
+      // BEFORE the flag, which every path here reads as a reason to do nothing.
+      // A seat switched or a window closed mid-deferral abandons the submit as
+      // surely as the gates do, and main is still live to receive the withdrawal.
+      unmarkPending();
       disposed = true;
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);

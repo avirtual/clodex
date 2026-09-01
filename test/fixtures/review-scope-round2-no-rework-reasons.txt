@@ -1,0 +1,43 @@
+You are reviewing ticket t42.
+
+WORK IN: /home/u/projects/repo-t42 (git worktree, branch t42-widget) — cd there first. Read only; do not commit, merge, push or edit anything in that tree.
+
+REVIEW RANGE: abc1234..HEAD on branch t42-widget. The base abc1234 is what the spec was written against — anything already in it is NOT yours to review.
+
+DIFF: the full diff of that range is materialized at /tmp/d.diff. Read it first; it is the authoritative statement of what changed.
+
+TASK DIR: /home/u/.clodex/projects/p/tasks/widget
+
+SPEC — what this ticket was asked to do:
+
+THE SPEC BODY: make the widget idempotent.
+
+IMPLEMENTER'S REPORT — clodex-hand-42's own account of the work, verbatim and unedited. It is a claim, not evidence: verify it against the diff. Pay particular attention to anywhere it says it guessed, deviated from the spec, assumed, or deferred — those are the author telling you where to look, and they are not recoverable from the diff alone.
+
+Changed widget.js. Suite green at 4999. I GUESSED the retry bound.
+
+SUITE: the loop RAN the full test suite on this branch and it was GREEN before you were spawned — a red suite is rejected to the implementer and never reaches a reviewer. So do NOT ask for a suite digest, and do NOT treat a missing or stale one in the report as a fault: that claim is already verified and is not yours to re-check. What a green suite does NOT prove is yours: whether each new test measures what it claims, whether it would still pass against the unfixed code, and whether the change is the right one. A test that passes while asserting nothing is green and worthless, and the run cannot tell you which it was.
+
+THIS IS ROUND 2. Round 1 returned ACCEPT, and the lead sent it back anyway. The MUST-FIX items on record from round 1 were, verbatim:
+
+(none)
+
+Round 1 raised nothing else against this change. Review whether those MUST-FIX items are now genuinely fixed, plus any NEW defect the fixes introduced. Do not re-open settled ground: raising a fresh MUST-FIX against code round 1 already passed, and which this round did not touch, is out of scope.
+
+Report your verdict in exactly this shape:
+
+Emit your verdict as the LAST thing you do, with the four sections below as its body:
+
+    [agent:review-done] <your full verdict, in the format below>
+    [agent:end]
+
+That single intent delivers the verdict and retires you. A pass that never emits
+it reports to nobody.
+
+- **VERDICT**: ACCEPT | REWORK — one line, unambiguous.
+- **MUST-FIX**: each blocking defect as its own item, with a `file:line` anchor
+  and why it is wrong (the failing interleaving / the unmet case / the broken
+  invariant). Empty section if none.
+- **NITS**: non-blocking improvements, `file:line` where it helps. Empty if none.
+- **CHECKED**: what you actually verified (files read, tests traced, cases
+  reasoned through) — so the pass's real coverage is visible.

@@ -2200,6 +2200,18 @@ function createSessionManager(deps) {
       try { voiceOriginArm.arm(this._armCtx(s)); } catch {}
     }
 
+    // The submit that marker was armed for stood down. Same shape as its
+    // neighbour for the same reason — the renderer calls this from paths the
+    // operator's own keystroke runs on.
+    //
+    // A seat that is gone needs no unwind: the marker is one-shot and dies with
+    // its TTL, and there is no next turn on a dead seat to mislabel.
+    unmarkVoiceOrigin(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return;
+      try { voiceOriginArm.disarm(this._armCtx(s)); } catch {}
+    }
+
     // The renderer saw the CLI's recording indicator lit on this seat. Stamped
     // as a LEVEL the renderer keeps refreshing, not an edge, and the difference
     // is what bounds the failure: an edge-shaped signal whose "stopped" event is

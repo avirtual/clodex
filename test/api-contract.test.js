@@ -109,6 +109,9 @@ const PINNED_NAMES = [
   'getVoiceMode',
   'setVoiceMode',
   'markVoiceOrigin',
+  // The withdrawal of that marker when the submit it was armed for stands down.
+  // A send like its neighbour: the abandon paths are keystroke paths too.
+  'unmarkVoiceOrigin',
   // The renderer telling main the CLI's recorder is lit, so the inject
   // quiet-gate defers while the operator is DICTATING as it already does while
   // he types. A send and repeated on the level, so main can expire it.
@@ -211,8 +214,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 272-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 272, 'pinned list is the full 272-method surface');
+test('contract covers exactly the pinned 273-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 273, 'pinned list is the full 273-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -236,7 +239,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 272, 'window.api has exactly 272 methods');
+    assert.equal(generated.length, 273, 'window.api has exactly 273 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

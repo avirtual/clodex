@@ -3339,6 +3339,11 @@ function stopHarness({
   submitAbandonMs = TEST_SUBMIT_ABANDON_MS,
 } = {}) {
   const writes = [];
+  // The marker seam, recorded into a SECOND list that also carries the writes.
+  // `writes` stays raw so the byte-order pins above are untouched; `events` is
+  // the only place the marker's position RELATIVE to those bytes exists, and
+  // that ordering is the property half the tests below are about.
+  const events = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
   const env = { config, attention, trigger, micTarget: true, appFocused: true };
   const watcher = track(createVoiceSubmitWatcher(term, {
@@ -3354,7 +3359,13 @@ function stopHarness({
     // `onWrite` fires INSIDE the write, so a test can change the world at an
     // exact point in the sequence. A real timer racing the watcher's own is the
     // alternative, and the margins here are inside this file's observed jitter.
-    write: (d) => { writes.push(d); if (env.onWrite) env.onWrite(d); },
+    write: (d) => {
+      writes.push(d);
+      events.push(d === '\r' ? 'ENTER' : (d.startsWith('\x7f') ? 'ERASE' : `KEY(${d})`));
+      if (env.onWrite) env.onWrite(d);
+    },
+    markVoiceOrigin: () => events.push('MARK'),
+    unmarkVoiceOrigin: () => events.push('UNMARK'),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
     pollMs: 1,
@@ -3363,7 +3374,7 @@ function stopHarness({
     submitAbandonMs,
   }));
   return {
-    term, watcher, writes, env,
+    term, watcher, writes, events, env,
     // Both stages of a LIT submit: the quiet window, the erase/key gap, and the
     // deferred `\r` behind the stop settle. A `done()` that stopped at the key
     // would assert on a half-finished sequence and pass over a missing submit.
@@ -3793,6 +3804,201 @@ test('dispose during the wait writes nothing: no submit into a dead terminal', a
 
   assert.deepStrictEqual(h.writes, [ERASE, ' ']);
   assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+});
+
+// ------------------------- the marker and the submit it was armed for
+
+// THE MARKER IS ARMED AT THE MATCH AND THE TAP PATH SUBMITS SECONDS LATER, so
+// every way that submit can stand down is a way to leave a marker live with no
+// message to attach to. It is one-shot but not aimed: the NEXT turn takes it,
+// and that turn is usually typed -- at which point the payload tells the reader
+// to treat deliberately chosen words as probable mis-transcriptions.
+//
+// Both directions are pinned here, because a fix for one breaks the other: the
+// unwind must reach every abandon path, and must reach NO path that submits.
+
+test('ABANDONED at the dialog gate: the marker is withdrawn, not left live', async () => {
+  // The red test. Against the unfixed watcher `events` ends [MARK, ERASE, KEY]
+  // with no UNMARK -- the marker stays armed for the rest of its TTL and the
+  // next turn to reach the model takes it.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )'],
+    'ENTER: the marker must have been ARMED and the submit still deferred');
+  assert.strictEqual(h.watcher.markCount(), 1);
+
+  // The dialog opens while the CLI transcribes, then the footer clears -- the
+  // release point, and the only moment a surviving deferral is observable.
+  h.env.attention = 'permission';
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 60);
+
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )', 'UNMARK'],
+    'the abandoned submit must take its marker with it');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0, 'ENTER: the submit must have stood down');
+  assert.strictEqual(h.watcher.unmarkCount(), 1);
+  h.watcher.dispose();
+  // Disposing an already-unwound marker must not withdraw a second time: the
+  // register is shared, and a spurious clear after a LATER arm would delete it.
+  assert.strictEqual(h.watcher.unmarkCount(), 1, 'the unwind is once per marker');
+});
+
+test('ABANDONED by an emptied composer, and by the config going away', async () => {
+  // The other two gates in `deferredSubmitAllowed`, each reached on its own.
+  // One fix covering only the dialog above passes that test and fails these.
+  for (const stand of ['empty', 'config']) {
+    const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+    h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+    litThenProcessing(h);
+    await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+    assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )'], `ENTER: armed and deferred (${stand})`);
+
+    if (stand === 'config') h.env.config = null;
+    const composer = stand === 'empty' ? EMPTY_COMPOSER : DRAFT;
+    h.term.write({ text: composer, cursor: true }, ' agents \u00b7 tap to talk');
+    await settle(TEST_SUBMIT_POLL_MS + 80);
+
+    assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )', 'UNMARK'], stand);
+    assert.strictEqual(h.watcher.deferredSubmitCount(), 0, `ENTER: stood down (${stand})`);
+    h.watcher.dispose();
+  }
+});
+
+test('ABANDONED by an UNREADABLE screen: the marker comes off there too', async () => {
+  // `composerHasDraftRows` declines on doubt, so a screen that goes unreadable
+  // inside the window abandons the submit -- deliberately, and it is the one
+  // stand-down that leaves the erased draft sitting in the composer. The
+  // marker must not outlive it either.
+  // Its own abandon deadline, because an unreadable screen reads as BUSY at the
+  // footer (`processingObserved(null)` is true) -- so nothing clears this wait
+  // and the deadline is what ends it. Long enough to set the screen unreadable
+  // inside the window, short enough for the test to wait it out.
+  const h = stopHarness({
+    rows: [{ text: '❯ ', cursor: true }, REC_ROW],
+    submitAbandonMs: 300,
+  });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )'], 'ENTER: armed and deferred');
+
+  // A full-screen program takes the buffer: every read here answers null, and
+  // `composerHasDraftRows` declines on doubt.
+  h.term._state.type = 'alternate';
+  await settle(300 + TEST_SUBMIT_POLL_MS + 80);
+
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )', 'UNMARK']);
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0, 'ENTER: the submit must have stood down');
+  h.watcher.dispose();
+});
+
+test('ABANDONED by a keystroke, and by DISPOSE: both withdraw the marker', async () => {
+  // Neither of these runs through `deferredSubmitAllowed` at all -- the
+  // keystroke kills the timer outright and dispose drops it -- so a fix placed
+  // only in that guard leaves both live.
+  for (const how of ['keystroke', 'dispose']) {
+    const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+    h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+    litThenProcessing(h);
+    await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+    assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )'], `ENTER: armed and deferred (${how})`);
+
+    if (how === 'keystroke') h.watcher.noteInput('n'); else h.watcher.dispose();
+    assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )', 'UNMARK'], how);
+
+    h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+    await settle(TEST_SUBMIT_POLL_MS + 60);
+    assert.strictEqual(h.watcher.deferredSubmitCount(), 0, `ENTER: no submit followed (${how})`);
+    h.watcher.dispose();
+  }
+});
+
+test('a MOUSE REPORT withdraws nothing: the submit is still coming', async () => {
+  // The positive control for the keystroke half. The cancel sits behind
+  // `isHumanPtyInput`, and so must the unwind -- withdrawing on a scroll would
+  // strip the marker off a submit that goes out one poll later.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+
+  h.watcher.noteInput('\x1b[<0;10;5M');
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 80);
+
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )', 'ENTER'],
+    'the marker must still be on the submit that went out');
+  assert.strictEqual(h.watcher.unmarkCount(), 0);
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 1);
+  h.watcher.dispose();
+});
+
+test('THE SUBMIT THAT HAPPENS keeps its marker, and the marker still LEADS', async () => {
+  // Invariant 2, on the deferred path -- the half a careless fix breaks. The
+  // marker must precede the erase (so it is registered before the submitted
+  // text can reach the model) and must survive all the way to the `\r` that
+  // goes out seconds later.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 80);
+
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )', 'ENTER'],
+    'the marker leads the erase and survives to the deferred submit');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 1, 'ENTER: the submit must have gone out');
+  assert.strictEqual(h.watcher.markCount(), 1);
+  assert.strictEqual(h.watcher.unmarkCount(), 0, 'nothing may withdraw a marker whose submit fired');
+  h.watcher.dispose();
+});
+
+test('a keystroke inside the ENTER gap does not strip the marker off the `\\r`', async () => {
+  // The narrow window the unwind must NOT reach: between the erase and the
+  // submit byte there is no deferral to cancel and the `\r` is already
+  // scheduled, so an unwind keyed on the keystroke alone would withdraw a
+  // marker whose submit goes out 30ms later. DARK at the match, so this takes
+  // the immediate branch and never defers.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  // The recorder is lit long enough to stamp the evidence, then goes dark
+  // BEFORE the match -- which is how a dictated draft the operator paused over
+  // reaches the immediate branch.
+  await settle(10);
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_QUIET_MS + 5);
+  h.watcher.noteInput('x');
+  await settle(ENTER_SETTLE_MS + 40);
+
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER'],
+    'ENTER: the immediate branch must have submitted, marker intact');
+  assert.strictEqual(h.watcher.unmarkCount(), 0);
+  h.watcher.dispose();
+});
+
+test('a SECOND match with no evidence withdraws the first marker', async () => {
+  // The interleaving where the stale marker would land on a TYPED submit that
+  // is visible in the same fixture. Deferral #1 carries a marker; the second
+  // sign-off is typed (the recorder reads dark through the CLI's processing
+  // footer), so it cancels #1 and submits on its own -- and without the unwind
+  // the live marker rides exactly that turn.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )'], 'ENTER: #1 armed and deferred');
+
+  const DRAFT2 = '\u276f a second thought over and out';
+  h.term.write({ text: DRAFT2, cursor: true }, PROCESSING_ROW);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 60);
+
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'KEY( )', 'UNMARK', 'ERASE', 'ENTER'],
+    'the stale marker comes off BEFORE the typed submit it would have ridden');
+  assert.strictEqual(h.watcher.fireCount(), 2, 'ENTER: both matches must have fired');
+  assert.strictEqual(h.watcher.markCount(), 1, 'the second submit is not marked: no evidence');
+  h.watcher.dispose();
 });
 
 test('processingObserved is its OWN polarity, not either neighbour', () => {

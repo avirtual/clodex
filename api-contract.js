@@ -375,6 +375,10 @@ const API_CONTRACT = [
   // round trip in front of the operator's Enter, so there is no result to wait
   // for and a failure costs the annotation alone.
   { name: 'markVoiceOrigin', kind: 'send', channel: 'voice:markOrigin' },
+  // The deferred submit that marker was armed for stood down, so the marker is
+  // withdrawn before an unrelated turn takes it. A SEND on the same rule as its
+  // neighbour: the paths that abandon a submit are keystroke paths too.
+  { name: 'unmarkVoiceOrigin', kind: 'send', channel: 'voice:unmarkOrigin' },
   // The operator is dictating RIGHT NOW — the recording indicator is lit on
   // this seat — so the inject quiet-gate must defer as it does for typing.
   //

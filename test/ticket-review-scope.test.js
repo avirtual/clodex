@@ -8,7 +8,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { buildReviewScope, VERDICT_GRAMMAR } = require('../ticket-review-scope');
+const {
+  buildReviewScope, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET,
+} = require('../ticket-review-scope');
+const fsReal = require('node:fs');
+const pathReal = require('node:path');
 
 function ticket(over = {}) {
   return {
@@ -228,4 +232,189 @@ test('a wholly absent ticket still produces an answerable scope', () => {
   const s = buildReviewScope({});
   assert.match(s, /reviewing ticket \(unknown\)/);
   assert.ok(s.includes(VERDICT_GRAMMAR));
+});
+
+
+// ── t618: the rework reasons the record now carries ────────────────────────
+//
+// Grepped before writing: the round>=2 subjects above claim the MUST-FIX block,
+// the derived opener and the no-mustFix fallback, and nothing above claims
+// anything about what the LEAD said when it sent the ticket back. That gap is
+// what these add — the reader of the round-2 scope could see what the previous
+// reviewer found and never what it was reopened for.
+
+// The golden is rendered from `ticket-review-scope.js` AT THE BASE COMMIT this
+// change was written against, not from the current module: a golden captured
+// from the post-change code would agree with itself and could not detect the
+// migration this subject exists to forbid. The live board carries 617 tickets
+// and none of them have the field.
+const GOLDEN_NO_REWORK = fsReal.readFileSync(
+  pathReal.join(__dirname, 'fixtures', 'review-scope-round2-no-rework-reasons.txt'), 'utf8');
+
+test('a ticket with NO rework reasons renders byte for byte as it did before the field existed', () => {
+  const t = ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)' });
+  const s = buildReviewScope({
+    ticket: t, diffPath: '/tmp/d.diff', taskDir: '/home/u/.clodex/projects/p/tasks/widget',
+  });
+  // The WHOLE string, not a regex over it: a regex asserting the absence of the
+  // new heading would pass over any other shape change the field's arrival made
+  // to the 617 records that do not have it.
+  assert.strictEqual(s, GOLDEN_NO_REWORK,
+    'the scope for a record without the field must be unchanged, to the byte');
+});
+
+test('an EMPTY rework-reasons array is the same non-event as an absent one', () => {
+  // Reached in production by a reject whose reason was whitespace, and by any
+  // record a future writer initialises eagerly. A heading over nothing tells the
+  // reviewer a reason exists and then shows it none.
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)', reworkReasons: [] }),
+    diffPath: '/tmp/d.diff', taskDir: '/home/u/.clodex/projects/p/tasks/widget',
+  });
+  assert.strictEqual(s, GOLDEN_NO_REWORK);
+});
+
+test('recorded rework reasons render verbatim, attributed, and SEPARATELY from MUST-FIX', () => {
+  const s = buildReviewScope({
+    ticket: ticket({
+      reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)',
+      reworkReasons: [
+        { round: 1, at: 1, by: 'clodex', reason: 'the retry bound is off by one and the empty case is untested' },
+        { round: 2, at: 2, by: 'ticket-loop', reason: 'SUITE RED: widget.test.js' },
+      ],
+    }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(s.includes('the retry bound is off by one and the empty case is untested'),
+    'the first reason appears verbatim');
+  assert.ok(s.includes('SUITE RED: widget.test.js'), 'and so does the second');
+  assert.match(s, /Rework round 1 — from clodex:/, 'attributed to who sent it, under its round');
+  assert.match(s, /Rework round 2 — from ticket-loop:/, 'the loop is named as itself, not as the lead');
+
+  // The load-bearing separation: the MUST-FIX block is what the previous
+  // REVIEWER found, the rework block is what the lead or the loop said
+  // afterwards. Merging them attributes one party's words to the other, which is
+  // the confusion this whole ticket removes — so the ordering is asserted, not
+  // merely the presence of both.
+  const mf = s.indexOf('The MUST-FIX items on record from round 1 were');
+  const rw = s.indexOf('REWORK REASONS ON RECORD');
+  assert.ok(mf !== -1 && rw !== -1, 'ENTER: both blocks rendered — otherwise the ordering below is vacuous');
+  assert.ok(mf < rw, 'the two blocks are distinct and ordered, never interleaved');
+  assert.ok(!s.slice(mf, rw).includes('SUITE RED: widget.test.js'),
+    'no rework reason may fall inside the block attributed to the previous reviewer');
+});
+
+test('the round-2 opener and MUST-FIX block are untouched by the new block', () => {
+  // The new block is ADDITIVE. Without this, a change that moved a reason into
+  // the existing block would satisfy every subject above.
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'REWORK', mustFix: '- widget.js:12 off by one', reworkReasons: [{ round: 1, at: 1, by: 'clodex', reason: 'r' }] }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.match(s, /THIS IS ROUND 2\. Round 1 returned REWORK\./);
+  assert.ok(s.includes('- widget.js:12 off by one'));
+});
+
+test('an over-long reason is truncated VISIBLY at render, and only at render', () => {
+  // The cap lives in the renderer because the scope rides a system prompt while
+  // the record must keep what was actually said. A silent cut would let a
+  // reviewer read a truncated demand as the whole of one.
+  const long = `START${'x'.repeat(5000)}END`;
+  const t = ticket({ reviewRound: 1, verdict: 'ACCEPT', reworkReasons: [{ round: 1, at: 1, by: 'clodex', reason: long }] });
+  const s = buildReviewScope({ ticket: t, diffPath: '/tmp/d.diff' });
+  assert.ok(s.includes('START'), 'the head of the reason survives');
+  assert.ok(!s.includes('END'), 'ENTER: the reason really was long enough to be cut');
+  assert.match(s, /\[truncated for the review scope — \d+ more characters are on the ticket record\]/,
+    'and the cut is visible as one, naming where the rest is');
+  assert.strictEqual(t.reworkReasons[0].reason, long,
+    'the RECORD is not mutated by rendering it — the cap is the scope\'s, not the store\'s');
+});
+
+// ── t621: the block is bounded in AGGREGATE, not only per entry ────────────
+//
+// Grepped before writing: the t618 subjects above pin the per-entry cap, the
+// verbatim/attributed rendering and the separation from MUST-FIX. None of them
+// constrains how many entries render, which is the gap these close.
+
+// Sized off the real producer named in the review: the loop's composed reject
+// reason runs ~1-1.5 KB, so each of these is a legal entry under the per-entry
+// cap and the pressure comes from their number alone.
+const loopReason = (tag) => `${tag} SUITE RED: ${'widget.test.js '.repeat(80)}`;
+
+test('every entry renders while the block is UNDER the aggregate budget', () => {
+  // The other direction of the pin below. Without it, a budget of zero — or one
+  // that dropped every entry but the last — would satisfy the over-budget
+  // subject and silently discard reasons a reviewer needs.
+  const reasons = [1, 2, 3].map((n) => ({ round: n, at: n, by: 'ticket-loop', reason: loopReason(`ENTRY${n}`) }));
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)', reworkReasons: reasons }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(s.length < 8000, 'ENTER: these three entries really are under the budget');
+  for (const n of [1, 2, 3]) {
+    assert.ok(s.includes(`ENTRY${n}`), `entry ${n} renders in full while there is budget for it`);
+  }
+  assert.ok(!/not shown here/.test(s), 'and nothing is announced as dropped when nothing was');
+});
+
+test('over the budget the block keeps the most RECENT entries and says how many it dropped', () => {
+  const reasons = Array.from({ length: 12 }, (_, i) => ({
+    round: i + 1, at: i + 1, by: 'ticket-loop', reason: loopReason(`ENTRY${i + 1}`),
+  }));
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)', reworkReasons: reasons }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(!s.includes('ENTRY1 '), 'ENTER: the block really was over budget — the oldest entry was dropped');
+  assert.ok(s.includes('ENTRY12'), 'the newest entry survives: it is the one the reviewer is asked to check');
+
+  // The count is asserted against the entries that actually rendered rather than
+  // against a hardcoded number, because it is the CONSISTENCY of the two that
+  // matters: a drop line naming a count the block contradicts is worse than none.
+  const shown = reasons.filter((r, i) => s.includes(`ENTRY${i + 1} `)).length;
+  const m = s.match(/\[(\d+) EARLIER rework reasons? on this ticket (?:is|are) not shown here/);
+  assert.ok(m, 'the drop is visible as one — the same rule the per-entry cap follows');
+  assert.strictEqual(Number(m[1]), 12 - shown, 'and the number it names is the number actually withheld');
+
+  // Ordering: a reviewer that meets the entries first has already read the block
+  // as the whole history by the time it learns otherwise.
+  assert.ok(s.indexOf(m[0]) < s.indexOf('ENTRY12'), 'the drop notice precedes the entries it qualifies');
+});
+
+// Driven through `budgetEntries` rather than through `buildReviewScope`, because
+// the case cannot be constructed through the renderer: every chunk it passes has
+// already been through `capReason`, so while REWORK_REASON_CAP < REWORK_BLOCK_BUDGET
+// no single chunk can exceed the budget and the guard's branch is never entered.
+// A subject routed through the renderer asserts only that one small entry fits,
+// and stays green with the guard deleted — measured, not assumed.
+//
+// The relationship between the two constants is what decides reachability, so it
+// is asserted rather than assumed: if a later change puts the budget below the
+// cap, the guard becomes reachable from the renderer too and this ENTER says so.
+test('budgetEntries keeps a lone chunk that is larger than the whole budget', () => {
+  assert.ok(REWORK_BLOCK_BUDGET < 20000,
+    'ENTER: the synthetic chunk below really does exceed the budget');
+  const huge = 'x'.repeat(20000);
+  assert.deepStrictEqual(budgetEntries([huge]), [huge],
+    'the sole entry survives: a block that were only a drop notice would tell the '
+    + 'reviewer reasons exist and then show it none');
+});
+
+test('budgetEntries drops the oldest of several over-budget chunks but never the last', () => {
+  // The guard is "keep at least one", not "keep everything": without this, a
+  // budgetEntries that ignored the budget entirely would satisfy the subject above.
+  const chunks = [1, 2, 3].map((n) => `E${n}${'x'.repeat(20000)}`);
+  const kept = budgetEntries(chunks);
+  assert.strictEqual(kept.length, 1, 'over budget, only the newest chunk is kept');
+  assert.strictEqual(kept[0], chunks[2], 'and it is the most recent one');
+});
+
+test('a malformed rework entry degrades rather than leaking undefined into the scope', () => {
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', reworkReasons: [null, { reason: '' }, { reason: 'the real one' }] }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(s.includes('the real one'), 'ENTER: the well-formed entry still renders');
+  assert.ok(!/undefined/.test(s), 'no entry may leak "undefined" into the scope');
+  assert.match(s, /Rework round 1 — from \(unattributed\):/, 'a missing author is stated as unknown, not blank');
 });

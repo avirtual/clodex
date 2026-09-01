@@ -1190,6 +1190,7 @@ function createTerminal(name, peer = null) {
     // A `send`, so this returns immediately and the erase/Enter that follow it
     // are never waiting on the proxy.
     markVoiceOrigin: () => window.api.markVoiceOrigin(name),
+    unmarkVoiceOrigin: () => window.api.unmarkVoiceOrigin(name),
     // Deliberately NOT gated on voiceSubmitConfig.enabled, which getConfig above
     // requires: he dictates into claude seats whether or not hands-free submit
     // is switched on, and the quiet-gate protection is owed to him either way.

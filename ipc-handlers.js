@@ -1920,6 +1920,13 @@ function registerIpcHandlers(deps) {
     manager.markVoiceOrigin(String(name || ''));
   });
 
+  // The submit it was armed for stood down. Carries no id for the same reason
+  // the arm carries no text: which hint is withdrawn is decided in
+  // voice-origin-arm.js, so a doctored payload cannot clear a different one.
+  on('voice:unmarkOrigin', (_e, name) => {
+    manager.unmarkVoiceOrigin(String(name || ''));
+  });
+
   // The recorder is lit on this seat, resent while it stays lit. Carries no
   // timestamp: main stamps its own clock, so a renderer cannot hold a seat's
   // injection open by reporting a future time.
