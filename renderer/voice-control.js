@@ -192,9 +192,10 @@ function createVoiceControl({ core }) {
 
   function paint(snap) {
     const { state, pending, mode, force } = snap;
-    // Never move the selection out from under an open/keyboard-driven picker: a
-    // session-row repaint fires this on its own schedule, and rewriting `value`
-    // mid-interaction would drag the operator's highlighted option elsewhere.
+    // Never move the selection out from under an open/keyboard-driven picker:
+    // the 15s poll and a window-focus refresh fire this on their own schedule,
+    // and rewriting `value` mid-interaction would drag the operator's
+    // highlighted option elsewhere.
     if (force || document.activeElement !== sel) {
       sel.value = core.isMode(mode) ? mode : '';
     }

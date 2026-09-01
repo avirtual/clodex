@@ -10,8 +10,8 @@
 // suite green each time. The states, not the lines, are what went unexercised.
 //
 // NO jsdom, and none is needed: t517 extracted `createVoiceCore`, which never
-// touches `document`. Its whole environment is two stubs below. What that
-// leaves untested is deliberate: everything `document`-bound lives in
+// touches `document`. Its whole environment is the one `window` stub below.
+// What that leaves untested is deliberate: everything `document`-bound lives in
 // `createVoiceControl`.
 
 const { test } = require('node:test');
@@ -29,7 +29,7 @@ function fileSays(effective, extra = {}) {
   return { ok: true, source: 'voice', mode: effective, enabled: true, legacy: null, effective, ...extra };
 }
 
-// Installs the two globals the core closes over, builds it, and records every
+// Installs the one global the core closes over, builds it, and records every
 // emitted snapshot. Returns the knobs a test drives plus `emits`.
 function harness({ voice = null, write } = {}) {
   const calls = { getVoiceMode: 0, setVoiceMode: [], focusListeners: 0 };

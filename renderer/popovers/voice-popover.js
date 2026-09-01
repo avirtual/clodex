@@ -239,8 +239,8 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     const r = anchor.getBoundingClientRect();
     renderRows();
     pop.classList.remove('hidden');
-    // Only while open. The core's own emits are driven by mode changes and the
-    // session list, neither of which moves when the microphone does, so the
+    // Only while open. The core's own emits are driven by mode changes, the poll
+    // and window focus, none of which moves when the microphone does, so the
     // reading needs a tick of its own — and closing must take it back, or a
     // dismissed popover keeps polling for the life of the window.
     stopRecorderTick();
@@ -292,7 +292,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
   // an unconditional repaint rebuilds #proxy-actions via innerHTML on emits that
   // change nothing, destroying every .px-action between a mousedown and its
   // mouseup and silently eating clicks across the bar — the "3 clicks to open"
-  // mechanism. Do not relax this gate by making the key coarser.
+  // mechanism.
   //
   // Not in `emit()`: only a SURFACE knows whether it declined to paint. The
   // Preferences row skips its `sel.value` write while the picker holds focus and

@@ -16,8 +16,8 @@
 //                     t517 r1 regression, and a COUNT is how t517 proved it.
 //   transient throw — must still self-heal on the next identical emit. Latching
 //                     on the first failure reintroduces t519 nit 3.
-//   permanent throw — must stop repainting after the SECOND failure, or the
-//                     >=1 Hz emit stream rebuilds #proxy-actions once a second.
+//   permanent throw — must stop repainting after the SECOND failure, or every
+//                     emit rebuilds #proxy-actions.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -161,7 +161,7 @@ test('permanent throw: repainting stops after the second failure', () => {
 
     for (let i = 0; i < 60; i++) h.emit(s);
     assert.strictEqual(h.paintCount(), 2,
-      '60 further identical emits — a full minute at the 1 Hz badge tick — must not rebuild the bar');
+      '60 further identical emits must not rebuild the bar');
   } finally { h.restore(); }
 });
 
@@ -175,7 +175,7 @@ test('permanent throw: the console diagnostic is bounded, not silenced', () => {
     let escaped = 0;
     for (let i = 0; i < 60; i++) if (h.emit(s)) escaped++;
     assert.strictEqual(escaped, 2,
-      'a permanent throw must not log once per second for the life of the window');
+      'a permanent throw must not log once per emit for the life of the window');
 
     // A REAL state change is still allowed through, and still reports. This is
     // the recovery path: the latch suppresses only IDENTICAL emits, so it can
