@@ -3668,6 +3668,60 @@ test('a SECOND match cancels the first deferred `\\r`: one composer, one submit'
   h.watcher.dispose();
 });
 
+test('a KEYSTROKE during the wait cancels the deferred `\\r`', async () => {
+  // THE WINDOW THE DEFERRAL OPENED, and it is seconds wide where the immediate
+  // write's was 30ms. Transcription runs; he reads the interim text and types a
+  // correction into the composer; the footer clears. Every gate the submit
+  // re-reads passes -- his edit IS a draft -- so without this cancel the `\r`
+  // sends him mid-sentence.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '],
+    'ENTER: the key must have gone out with its submit still deferred');
+
+  // He types into the composer while the CLI is still transcribing.
+  h.watcher.noteInput('n');
+  h.watcher.noteInput('o');
+
+  // The footer clears and the composer holds his edit. THIS is the release
+  // point: a deferral that survived fires exactly here, which is what makes the
+  // absence below an observation rather than a test that ran out of time.
+  h.term.write({ text: '❯ finish the report no wait', cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + TEST_STOP_SETTLE_MS + 80);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'the `\\r` would have submitted mid-sentence');
+  assert.strictEqual(h.watcher.keyStopCount(), 1, 'the stop still happened; only the submit stood down');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+  h.watcher.dispose();
+});
+
+test('a MOUSE REPORT during the wait does not cancel it: only keystrokes do', async () => {
+  // The other half of the same gate, and the reason the cancel sits behind
+  // `isHumanPtyInput` rather than on every byte. onData also carries mouse
+  // reports and query replies; cancelling on those would strand the submit on a
+  // scroll, which looks exactly like the feature silently not working.
+  //
+  // This is also the POSITIVE CONTROL for the test above: same shape, same
+  // release point, and the `\r` DOES come out -- so a cancel test passing
+  // because it never reached the window cannot hide here.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the key must have gone out first');
+
+  h.watcher.noteInput('\x1b[<0;10;5M'); // an SGR mouse report, not a keystroke
+
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 80);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', '\r'], 'a scroll must not strand the submit');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 1);
+  h.watcher.dispose();
+});
+
 test('dispose during the wait writes nothing: no submit into a dead terminal', async () => {
   const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
   h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
