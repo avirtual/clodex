@@ -3424,10 +3424,10 @@ function litThenProcessing(h, row = PROCESSING_ROW) {
 }
 
 test('the deferred `\\r` WAITS for `Voice: processing` to clear', async () => {
-  // The wait is the reason this is deferred rather than written straight behind
-  // the key. The CLI's own submit runs from `onTranscript`, i.e. after the
-  // footer clears; sending at the keystroke submits the INTERIM transcript that
-  // is on screen at that instant.
+  // The wait is what gives the submit a read before it writes: it is the only
+  // window `deferredSubmitAllowed` can run in, and every stand-down below --
+  // the dialog, the emptied composer, the keystroke -- is decided inside it.
+  // Written straight behind the key, there is nothing to re-read yet.
   const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
   h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
   // LIT at the match, `Voice: processing` only once the key has stopped it --
