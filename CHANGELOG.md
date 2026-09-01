@@ -18,8 +18,8 @@ blocks a release.
   the old one listening in the window you had just left — up to about fifteen
   seconds of the room going to the CLI before it timed out on its own, with
   nothing on screen to tell you. The seat that loses the microphone is now
-  stopped as it loses it. It cannot always: a seat with un-sent text
-  already in its composer keeps recording, because the key that stops the
+  stopped as it loses it. It cannot always manage it: a seat with un-sent
+  text already in its composer keeps recording, because the key that stops the
   recorder also sends whatever is sitting there, and sending a half-written
   message to an agent you just walked away from is the worse of the two. That
   one still runs out on the CLI's own timeout.
