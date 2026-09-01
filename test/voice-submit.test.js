@@ -3450,10 +3450,10 @@ test('the deferred `\\r` WAITS for `Voice: processing` to clear', async () => {
 });
 
 test('processing that NEVER clears still submits, at the abandon deadline', async () => {
-  // A wedged transcription, a footer scrape that stopped matching, a screen gone
-  // unreadable: all present as processing forever. The erase has already run, so
-  // giving up strands the operator's words in a composer with the phrase cut off
-  // -- he cannot even re-trigger it. The deadline fires the submit instead.
+  // A wedged transcription, or a footer scrape that stopped matching: both
+  // present as processing forever. The erase has already run, so giving up
+  // strands the operator's words in a composer with the phrase cut off -- he
+  // cannot even re-trigger it. The deadline fires the submit instead.
   const h = stopHarness({
     rows: [{ text: '❯ ', cursor: true }, PROCESSING_ROW],
     submitAbandonMs: TEST_STOP_SETTLE_MS + 30,
@@ -3753,8 +3753,7 @@ test('processingObserved is its OWN polarity, not either neighbour', () => {
   assert.strictEqual(processingObserved([]), false);
   // UNREADABLE is BUSY here -- the opposite of `recordingObserved`, which reads
   // it as dark. The caller is holding a `\r`, and firing it into a screen
-  // nobody could read is the mistake that cannot be taken back; the abandon
-  // deadline is what stops that costing more than latency.
+  // nobody could read is the mistake that cannot be taken back.
   assert.strictEqual(processingObserved(null), true);
   assert.strictEqual(recordingObserved(null), false);
 });

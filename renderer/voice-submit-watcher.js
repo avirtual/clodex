@@ -754,9 +754,9 @@ function createVoiceSubmitWatcher(terminal, {
       submitTimer = null;
       if (disposed) return;
       // The deadline is checked BEFORE the indicator, so a footer that never
-      // clears — a wedged transcription, a scrape that stopped matching, a
-      // screen gone unreadable — still submits rather than stranding the
-      // operator's words in a composer he can no longer see the phrase in.
+      // clears — a wedged transcription, a scrape that stopped matching — still
+      // submits rather than stranding the operator's words in a composer he can
+      // no longer see the phrase in.
       if (now() < deadline && processingObserved(indicatorRows())) {
         submitTimer = setTimeout(poll, submitPollMs);
         return;

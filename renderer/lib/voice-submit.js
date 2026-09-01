@@ -399,8 +399,7 @@ function recordingObserved(rows) {
 //
 // UNREADABLE reads as STILL BUSY, the opposite of `recordingObserved` beside it.
 // The caller is waiting to send a submit, and firing into a screen nobody could
-// read is the mistake that cannot be taken back; a deadline at the call site
-// bounds the wait, so doubt costs latency here and nothing else.
+// read is the mistake that cannot be taken back.
 function processingObserved(rows) {
   if (!Array.isArray(rows)) return true;
   return rows.some((row) => typeof row === 'string' && PROCESSING.test(row));
