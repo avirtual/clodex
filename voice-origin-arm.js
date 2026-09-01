@@ -12,11 +12,12 @@
 // transcript bytes and cannot accrete turn over turn.
 //
 // `once` bounds the marker to ONE delivery, NOT to the right one: a marker
-// armed for a submit that never reaches the model is still live until its TTL,
-// and the next turn inside that window takes it. What puts it on the intended
-// turn is the ORDERING at the call site (armed before the Enter that submits
-// the text it describes); the TTL only bounds how long a mis-armed one can
-// linger, which is why it is short.
+// armed for a submit that never reaches the model would be taken by the next
+// turn inside its TTL. What puts it on the intended turn is the ORDERING at the
+// call site (armed before the Enter that submits the text it describes), and
+// what keeps it OFF an unintended one is `disarm`, which the caller owes on
+// every path that abandons the submit it armed for. The TTL is only the
+// backstop for a disarm the proxy never received.
 //
 // ITS OWN ID, NEVER hint-arm.js's. That register is a fixed-id REGISTER whose
 // empty pass CLEARS it, and the operator's typing rewrites it continuously; a
@@ -31,15 +32,23 @@
 
 'use strict';
 
-// One-shot, so the proxy requires a TTL — and THE TTL IS THE MISLABEL EXPOSURE
-// WINDOW, which is what sets it. An armed marker whose submit never reached the
-// model stays live until it expires, and the next turn inside that window is
-// labelled as spoken whether or not it was.
+// One-shot, so the proxy requires a TTL. It is bounded from BOTH sides and the
+// lower bound is the surprising one.
 //
-// The only gap it legitimately has to cover is erase + Enter + the CLI's
-// dispatch, which is sub-second. So this is already two orders of magnitude of
-// headroom over what the feature needs, and every second beyond that buys
-// nothing while widening the window in which a typed message can be mislabelled.
+// FLOOR: the tap path does not submit beside the arm. It stops the recorder,
+// then waits for the CLI's transcription to finish before writing `\r` — a
+// first read one repaint after the key, then a poll to its own abandon
+// deadline. That is the gap the marker has to survive, and it is seconds, not
+// the sub-second erase+Enter this once covered. A TTL under it expires the
+// marker before the submit it belongs to goes out, which loses the annotation
+// on exactly the dictated messages the feature is for. The watcher owns those
+// two numbers; do not re-derive this one from them, and do not shorten this
+// toward what the immediate path needs.
+//
+// CEILING: the TTL is the mislabel exposure window. `disarm` unwinds a marker
+// whose submit stood down, so the window is normally closed at the abandon
+// rather than waited out — but the disarm is a POST that a dead proxy never
+// receives, and this is what bounds the leak when it fails.
 const VOICE_TTL_S = 20;
 
 // Distinct from hint-arm.js's HINT_ID and selection-hint.js's PEEK_ID; the
@@ -63,9 +72,10 @@ const VOICE_TEXT = 'The message that follows was SPOKEN by the operator and '
 // second pref would be one more thing to leave off by accident.
 //
 // deps:
-//   armHints ({base, route, id, text, ttl_s, turn_start_only, once}) -> Promise
-//   log      optional
-function createVoiceOriginArm({ armHints, log = null, ttlS = VOICE_TTL_S }) {
+//   armHints   ({base, route, id, text, ttl_s, turn_start_only, once}) -> Promise
+//   clearHints ({base, route, id}) -> Promise   (optional; absent = no disarm)
+//   log        optional
+function createVoiceOriginArm({ armHints, clearHints = null, log = null, ttlS = VOICE_TTL_S }) {
   const debug = (msg) => { try { if (log && log.debug) log.debug('voice-hint', msg); } catch {} };
 
   // Fire and forget by construction: the promise is consumed HERE rather than
@@ -95,7 +105,31 @@ function createVoiceOriginArm({ armHints, log = null, ttlS = VOICE_TTL_S }) {
     return true;
   }
 
-  return { arm };
+  // Unwinds a marker whose submit stood down. `once` bounds the marker to one
+  // delivery but not to the RIGHT one, so an armed-and-abandoned marker is
+  // taken by the next turn — which may be typed, and which the payload then
+  // tells the reader to second-guess.
+  //
+  // Idempotent at the proxy (clearing an absent hint is a 200), so this never
+  // reads before it writes and a disarm racing the marker's own expiry is not
+  // an error. Fire-and-forget on the same rule as `arm`: this runs on paths the
+  // operator's keystroke also runs on, and a dead wirescope must cost the
+  // unwind, never the key. A failure leaves today's behaviour, bounded by the
+  // TTL.
+  function disarm(ctx) {
+    const { base, route } = ctx || {};
+    if (!base || !route || !clearHints) return false;
+    try {
+      Promise.resolve(clearHints({ base, route, id: VOICE_ID }))
+        .catch((e) => debug(`disarm failed for ${route}: ${e.message}`));
+    } catch (e) {
+      debug(`disarm threw for ${route}: ${e.message}`);
+      return false;
+    }
+    return true;
+  }
+
+  return { arm, disarm };
 }
 
 module.exports = { createVoiceOriginArm, VOICE_ID, VOICE_TTL_S, VOICE_TEXT };
