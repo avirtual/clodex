@@ -26,10 +26,19 @@
 // premiums: 5m=1.25x, 1h=2x; reads=0.10x of input.
 // NOTE: opus REPRICED at 4.5 — $15/$75 is 4.0/4.1 ONLY; 4.5+ is $5/$25.
 const PRICES = {
+  // fable 5.1 BREAKS THE UNIVERSAL 0.1x READ MULTIPLIER: reads are 0.025x base
+  // ($0.25/MTok), everything else identical to 5.0. This row must stay separate
+  // from the bare 'claude-fable-5' one and must never be folded into it —
+  // 'claude-fable-5' IS a prefix of 'claude-fable-5-1', so without it 5.1
+  // traffic prices at the 5.0 read rate (4x over) with NO unpriced warning to
+  // catch it. The inverse of the opus-5 trap below: there the legacy row was too
+  // short to match, here the legacy row matches too much.
+  'claude-fable-5-1': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 0.25 },
   'claude-fable-5':  { in: 10.0, out: 50.0, cache_write_5m: 12.5,  cache_write_1h: 20.0, cache_read: 1.00 },
-  // Intro rate, superseded on 2026-09-01 by PRICES_DATED — no hand-edit due on
-  // the flip day, and editing this row instead would retro-reprice traffic
-  // billed before it.
+  // The vendor also carries claude-mythos-5-1 / claude-mythos-5. Both are
+  // omitted deliberately: we never route mythos, and unpriced-and-loud beats
+  // priced-and-unverified. Port BOTH or neither — a bare 'claude-mythos-5' on
+  // its own would swallow 'claude-mythos-5-1' exactly as fable-5 did above.
   'claude-sonnet-5': { in: 2.0,  out: 10.0, cache_write_5m: 2.50,  cache_write_1h: 4.0,  cache_read: 0.20 },
   'claude-opus-4-5': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-6': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
@@ -80,8 +89,12 @@ const PRICES_SPEED_FAST = {
 // is correct: it records what was charged.
 // Mirrors proxylab billing.py PRICES_DATED; keep the two in lock-step.
 const PRICES_DATED = {
-  // sonnet-5 intro rate ends 2026-08-31; standard (== sonnet-4) after.
-  'claude-sonnet-5': [['2026-09-01', { in: 3.0, out: 15.0, cache_write_5m: 3.75, cache_write_1h: 6.0, cache_read: 0.30 }]],
+  // WITHDRAWN 2026-09-01: the scheduled sonnet-5 rise to $3/$15 WILL NOT OCCUR —
+  // the $2/$10 "introductory" rate became the standard price. The entry had
+  // already fired (today is past its effective date), so every sonnet-5 receipt
+  // priced through it was 1.5x over. Empty rather than deleted: the mechanism is
+  // still wanted for the next real repricing. The base PRICES row is now simply
+  // correct — do NOT reprice it to $3/$15 to "fix" a symptom this table caused.
 };
 
 // Local calendar date, mirroring the vendor's time.strftime("%Y-%m-%d",

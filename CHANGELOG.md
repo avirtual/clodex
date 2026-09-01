@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Cost reporting corrected for Fable 5.1 and Sonnet 5.** v5.21.0 updated the
+  bundled wirescope table, but Clodex's own pricing is a port of it rather than
+  a copy, so the two corrections never reached the numbers you see. Fable 5.1
+  cached reads were costed 4x over (its read rate is a quarter of Fable 5's,
+  and 5.1 traffic was being priced by the Fable 5 row), and every Sonnet 5
+  receipt was costed 1.5x over from 2026-09-01 by a rate rise that was
+  announced and then withdrawn. Both are now right; nothing else repriced.
+
 ## 5.21.0 — 2026-09-02
 
 - **Bundled wirescope updated to v0.6.57**, which corrects two prices in its own
