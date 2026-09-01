@@ -2437,43 +2437,33 @@ function createSessionManager(deps) {
       if (raise || (this._appFocusReported && !this._appFocused)) {
         try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
       }
-      // The tap must arm a recorder whatever mode the file is in, and in `hold`
-      // it does not: that arm expects a HELD key, so it starts recording and
-      // arms a release timer through an auto-repeat fallback. Our tap is ONE
-      // synthetic keystroke with no auto-repeat, the fallback fires, and the
-      // recording stops before he can speak.
+      // In `hold` the tap arms nothing: that arm expects a HELD key, so it
+      // starts recording and sets a release timer through an auto-repeat
+      // fallback, and one synthetic keystroke has no auto-repeat.
       //
-      // AFTER `_voiceRoute`, with the retarget: a tap that routes nowhere must
-      // change no box-wide setting, so this cannot move above the declines.
+      // BELOW every decline, so a tap that routes nowhere changes no box-wide
+      // setting. The mode is NOT restored afterwards: restoring races his
+      // dictation, and `mode hold` is the deliberate stand-down verb.
       //
-      // The mode is NOT restored afterwards — restoring races his dictation,
-      // and `mode hold` is the deliberate stand-down verb.
-      // ONLY WHEN IT IS NOT ALREADY TAP, and the read is what buys that. The
-      // renderer must wait ~1s for the CLI to observe a mode change before the
-      // key is worth writing, so writing unconditionally would put that delay on
-      // every tap — including the common case, where the mode is already right
-      // and there is nothing to wait for.
+      // READ FIRST, so an already-tap file is left alone. The renderer owes a
+      // ~1s wait after a CHANGE, and writing unconditionally would put that
+      // delay on every tap he makes.
       //
       // `effective`, not `mode`: with voice switched off the file still names
       // tap or hold beside the flag, and the tap has to turn voice back ON.
       let changed = false;
       const cur = readVoiceMode();
       if (!cur || cur.effective !== 'tap') {
-        // The mode is NOT restored afterwards. Restoring races his dictation,
-        // and `mode hold` is already the deliberate stand-down verb.
         const w = writeVoiceMode('tap');
-        // Reported, not fatal: an unwritable settings file still leaves the tap
-        // worth routing, since the mode it could not change may already suit.
+        // Reported, not fatal: the mode it could not change may already suit,
+        // so the tap is still worth routing.
         if (w.ok) changed = true;
         else log.warn('voice', `tap could not set mode: ${w.error}`);
       }
-      // AFTER `_voiceRoute` and its declines, so a tap that routes nowhere
-      // changes no box-wide setting.
-      //
       // `changed` rides the frame because only this side knows a write just
       // happened: the renderer can read the mode but cannot tell a file that was
-      // always tap from one set a millisecond ago, and that is exactly what
-      // decides whether it owes the wait.
+      // always tap from one set a millisecond ago, and that is what decides
+      // whether it owes the wait.
       this._sendToSession(name, 'voice-tap', name, changed);
       return { ok: true, name };
     }

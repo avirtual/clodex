@@ -1069,19 +1069,14 @@ function createVoiceSubmitWatcher(terminal, {
   // for; here the operator asked, out loud, which is the entire event.
   //
   // `modeJustChanged` says main set the mode to `tap` immediately before routing
-  // this, so the CLI has not observed it yet and the key must wait — see
-  // VOICE_TAP_MODE_SETTLE_MS. Deferring makes this arm ASYNCHRONOUS, and every
-  // gate below deliberately sits AFTER the wait: they read the screen as it is
-  // when the key actually lands, not as it was 1.5s earlier. A recorder that
-  // lit, or a draft he began typing, during the wait must still stop the write.
+  // this, so the key must wait for the CLI to observe it — see
+  // VOICE_TAP_MODE_SETTLE_MS. Every gate below sits AFTER that wait on purpose:
+  // they must read the screen as it is when the key LANDS, so a recorder that
+  // lit, or a draft he began typing, during the wait still stops the write.
   function externalTap(modeJustChanged = false) {
     if (disposed) return false;
     if (modeJustChanged) {
       return new Promise((resolve) => {
-        // Tracked like every other timer here, and in a SET rather than a
-        // variable: a second tap arriving inside the window would otherwise
-        // overwrite the first's handle, leaving that promise unresolved for
-        // good. Dispose settles each one false instead of dropping it.
         const t = setTimeout(() => {
           modeSettleTimers.delete(t);
           resolve(externalTap(false));
