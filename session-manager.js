@@ -601,6 +601,11 @@ function createSessionManager(deps) {
       // there is no window to bring forward and the attempt only fans a
       // `focus-hint` nobody asked for.
       this._appFocusReported = false;
+      // When the spoken tap last set the voice mode, box-wide. The CLI observes
+      // that write on a delay, so this is what tells a tap arriving inside the
+      // window that it must wait too — see voiceTap. Starts 0: nothing has been
+      // written, so no tap owes a wait for it.
+      this._lastVoiceModeWriteAt = 0;
       // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
       // per-seat field of the same name because audio has no seat.
       this._lastVoiceRecordingTs = 0;
