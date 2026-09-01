@@ -21015,6 +21015,33 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/mic-handoff.js
+  var require_mic_handoff = __commonJS({
+    "renderer/lib/mic-handoff.js"(exports, module) {
+      "use strict";
+      function createMicHandoff({ mirror, watcherFor }) {
+        return function onMicTarget(next) {
+          const lost = mirror.read();
+          mirror.note(next);
+          if (!lost || lost === mirror.read()) return false;
+          let w = null;
+          try {
+            w = watcherFor(lost);
+          } catch {
+            w = null;
+          }
+          if (!w || typeof w.tapOff !== "function") return false;
+          try {
+            return w.tapOff() === true;
+          } catch {
+            return false;
+          }
+        };
+      }
+      module.exports = { createMicHandoff };
+    }
+  });
+
   // renderer/lib/web-notify.js
   var require_web_notify = __commonJS({
     "renderer/lib/web-notify.js"(exports, module) {
@@ -32263,6 +32290,7 @@ ${detail}` });
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
       var { createMirrorLatch } = require_mirror_latch();
+      var { createMicHandoff } = require_mic_handoff();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
@@ -35485,7 +35513,16 @@ Click for live activity`;
       var micTargetMirror = createMirrorLatch(null, {
         normalize: (name) => typeof name === "string" ? name : null
       });
-      window.api.onMicTarget((name) => micTargetMirror.note(name));
+      var noteMicTarget = createMicHandoff({
+        mirror: micTargetMirror,
+        // Resolved at call time against this window's own map, so a seat in another
+        // window resolves to nothing here and is stopped by its own window's handler.
+        watcherFor: (name) => {
+          const entry = name ? sessions.get(name) : null;
+          return entry && entry.voiceSubmit || null;
+        }
+      });
+      window.api.onMicTarget((name) => noteMicTarget(name));
       window.api.micTarget().then((name) => micTargetMirror.pull(name)).catch(() => {
       });
       var appFocusedMirror = createMirrorLatch(false, { normalize: (on) => on === true });

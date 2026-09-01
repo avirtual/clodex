@@ -860,6 +860,16 @@ Own state + DOM, `init*(deps)`:
   backgrounded app — the value cannot double as the flag. Read by the two
   microphone mirrors in renderer.js, which has no harness: that is why the rule
   lives out here where `test/mirror-latch.test.js` can reach it.
+- **lib/mic-handoff.js** — what a window does when the microphone moves OFF one
+  of its seats: notes the mirror above, then STOPS that seat's recorder through
+  the watcher's ensure-off. The broadcast alone only made losers stop re-ARMING,
+  so a seat already recording kept streaming the room until the CLI's ~15s
+  silence auto-finish, in a window the operator had switched away from. The
+  mirror is noted BEFORE the stop, because the loser's re-arm timer can fire
+  during the handoff and decides on that same mirror — noting after would let it
+  re-light the recorder just stopped. Reuses `tapOff` rather than writing the
+  trigger byte itself, so the rule that only a LIT recorder over an empty
+  composer is written to is inherited rather than re-derived.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a

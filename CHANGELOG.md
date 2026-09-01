@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **Moving the microphone now stops the recorder it moved away from.** Saying
+  `select` while a seat was recording switched you to the named seat but left
+  the old one listening in the window you had just left — up to about fifteen
+  seconds of the room going to the CLI before it timed out on its own, with
+  nothing on screen to tell you. The seat that loses the microphone is now
+  stopped as it loses it. It cannot always: a seat with un-sent text
+  already in its composer keeps recording, because the key that stops the
+  recorder also sends whatever is sitting there, and sending a half-written
+  message to an agent you just walked away from is the worse of the two. That
+  one still runs out on the CLI's own timeout.
+
 - **Only the seat you are working with speaks its replies.** With spoken
   replies on, every agent finishing a turn narrated it, so a few background
   agents ending near each other produced a chorus — and since a new reply cuts
