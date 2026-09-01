@@ -23982,14 +23982,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }) {
         let timer = null;
         let enterTimer = null;
-        let stopTimer = null;
         let pollTimer = null;
         const modeSettleTimers = /* @__PURE__ */ new Map();
         let lastTriggerWriteAt = 0;
         let disposed = false;
         let answered = null;
         let fires = 0;
-        let stops = 0;
+        let keySubmits = 0;
         let externalTaps = 0;
         let offTaps = 0;
         let voiceEvidenceAt = null;
@@ -24091,18 +24090,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
             } catch {
             }
           }
+          const litAtMatch = recordingObserved(indicatorRows());
           write("\x7F".repeat(found.erase));
           enterTimer = setTimeout(() => {
             enterTimer = null;
             if (disposed) return;
+            if (litAtMatch && tapTrigger()) {
+              keySubmits += 1;
+              return;
+            }
             write("\r");
-            stopTimer = setTimeout(() => {
-              stopTimer = null;
-              if (disposed) return;
-              if (!recordingObserved(indicatorRows())) return;
-              if (!composerIsEmpty(cursorRow())) return;
-              if (tapTrigger()) stops += 1;
-            }, STOP_SETTLE_MS);
           }, ENTER_SETTLE_MS);
         }
         function forgetPending() {
@@ -24403,7 +24400,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           // paint could answer differently from the decision it is describing.
           recorderReading: () => reading,
           fireCount: () => fires,
-          stopCount: () => stops,
+          keySubmitCount: () => keySubmits,
           rearmCount: () => rearms,
           externalTapCount: () => externalTaps,
           offTapCount: () => offTaps,
@@ -24414,7 +24411,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
             disposed = true;
             if (timer) clearTimeout(timer);
             if (enterTimer) clearTimeout(enterTimer);
-            if (stopTimer) clearTimeout(stopTimer);
             if (pollTimer) clearInterval(pollTimer);
             if (rearmTimer) clearTimeout(rearmTimer);
             for (const [t, resolve] of modeSettleTimers) {
@@ -24425,7 +24421,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
             speechDeferredSince = 0;
             timer = null;
             enterTimer = null;
-            stopTimer = null;
             pollTimer = null;
             rearmTimer = null;
             for (const s of subs) s.dispose();
