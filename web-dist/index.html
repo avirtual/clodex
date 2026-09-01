@@ -35500,11 +35500,9 @@ Click for live activity`;
       }
       window.addEventListener("focus", reportFocusedSession);
       window.api.onVoiceTap(async (name, modeSettling) => {
-        if (modeSettling) {
-          try {
-            await voiceCore.refresh();
-          } catch {
-          }
+        try {
+          await voiceCore.refresh();
+        } catch {
         }
         const sess = sessions.get(name);
         if (sess && sess.voiceSubmit) await sess.voiceSubmit.externalTap(modeSettling);

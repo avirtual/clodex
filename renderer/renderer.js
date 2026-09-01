@@ -3674,18 +3674,23 @@ window.addEventListener('focus', reportFocusedSession);
 // read the recording indicator; the watcher makes the decision and owns the
 // polarity rule that an unreadable screen writes nothing.
 //
-// `modeSettling` says the voice mode was set to `tap` too recently for the CLI
-// to have observed it — by THIS tap or by one moments before it. Two things
-// follow, and neither is optional. The watcher owes the CLI a settle delay
-// before its key is worth writing; and voiceCore must be REFRESHED, since the
-// watcher's own mode gate reads it and its reading is a 15s POLL — without this
-// the core still reports `hold` and `tapTrigger` writes NOTHING. The watcher's
-// delay cannot cover that: it is sized to the CLI's file watcher, a different
-// clock, and no fixed delay covers a 15s poll.
+// voiceCore must be REFRESHED before the arm, since the watcher's own mode gate
+// reads it and its reading is a 15s POLL — without this the core still reports
+// `hold` and `tapTrigger` writes NOTHING.
+//
+// UNCONDITIONALLY, not only when `modeSettling`. The stale read is not caused by
+// this tap's write: a `/voice tap` typed straight into a terminal leaves the file
+// already on tap, so main writes nothing and reports no settle, and a core that
+// has not polled since still says `hold` — no byte, which is the symptom this
+// whole path exists to remove. It costs one already-live IPC on a path that may
+// be about to wait a second and a half anyway.
+//
+// `modeSettling` says the mode was set to `tap` too recently for the CLI to have
+// observed it — by THIS tap or by one moments before it — so the watcher owes it
+// a settle delay before its key is worth writing. That delay cannot cover the
+// poll above: it is sized to the CLI's file watcher, a different clock.
 window.api.onVoiceTap(async (name, modeSettling) => {
-  if (modeSettling) {
-    try { await voiceCore.refresh(); } catch { /* the watcher's own gate still declines on a stale read */ }
-  }
+  try { await voiceCore.refresh(); } catch { /* the watcher's own gate still declines on a stale read */ }
   const sess = sessions.get(name);
   if (sess && sess.voiceSubmit) await sess.voiceSubmit.externalTap(modeSettling);
 });

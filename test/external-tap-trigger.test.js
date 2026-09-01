@@ -1846,6 +1846,14 @@ test('MODE-INDEPENDENT: the tap handler REFRESHES the mode cache before arming',
   // the arm runs against the cache it was supposed to replace.
   assert.match(handler, /await voiceCore\.refresh\(\)/,
     'and it is awaited, or the arm races the read');
+  // UNCONDITIONAL. Gating it on `modeSettling` leaves the stale read this pin
+  // exists for: a `/voice tap` typed into a terminal leaves the file already on
+  // tap, so main writes nothing and flags no settle, and a core that has not
+  // polled in 15s still reports `hold` — the tap declines and writes no byte.
+  // The refresh must not sit inside any `if`.
+  const guard = handler.slice(0, refreshAt);
+  assert.ok(!/\bif\s*\(/.test(guard),
+    'the refresh runs on every tap — a condition in front of it reinstates the stale-cache decline');
 });
 
 // THE COMPRESSION BAND the deferral opens, and the reason it is not academic.
