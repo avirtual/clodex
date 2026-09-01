@@ -3704,8 +3704,8 @@ const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
 voiceBarActionHtml = voiceActionHtml;
 // The bar holds the core open for the life of the window: unlike the
 // Preferences row, its label is on screen with no dialog to open, so the poll
-// and the row observer behind it must keep running. Preferences takes a second,
-// refcounted hold while its dialog is up.
+// behind it must keep running. Preferences takes a second, refcounted hold
+// while its dialog is up.
 voiceCore.start();
 
 
@@ -5745,9 +5745,9 @@ async function openPrefs() {
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
-  // Starts the island's poll + session-row observer and does the open-time read:
-  // the row lives in this dialog, so neither has anything to watch while it is
-  // closed. Reading here rather than trusting the 15s poll matters because a
+  // Starts the island's poll and does the open-time read: the row lives in this
+  // dialog, so the poll has nothing to serve while it is closed. Reading here
+  // rather than trusting the 15s poll matters because a
   // `/voice` typed in a terminal would otherwise show stale for up to that long,
   // on the one screen that claims to say what the mode IS.
   voiceControl.start();

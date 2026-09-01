@@ -124,7 +124,7 @@ test('pending: the pick is published as pending and overrides the file\'s mode',
 // THE POINT OF THE SWAP, and the case most likely to regress silently. The
 // setting is box-wide and the file is writable with nothing open, so a picker
 // keyed to a live seat refused a write that was always possible.
-test('a mode can be set with NO session to inject into', async () => {
+test('a pick is accepted, shown as pending, and the debounced write goes out', async () => {
   const h = harness({ voice: fileSays('tap') });
   try {
     await h.core.refresh();
