@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.21.0 — 2026-09-02
+
 - **Bundled wirescope updated to v0.6.57**, which corrects two prices in its own
   table. Fable 5.1 breaks the cached-read multiplier every other model follows,
   so its reads were being costed at four times the real rate; and a rate rise
