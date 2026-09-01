@@ -376,6 +376,7 @@ function createSessionManager(deps) {
     composeDigest,
     digestTiers,
     ctxReminderFor,
+    ctxThresholdsFor,
     bakePrompt,
     promptCacheDir,
     readCache,
@@ -1919,7 +1920,15 @@ function createSessionManager(deps) {
               // needs. Suppressed HERE, not inside ctxReminderFor, which stays
               // pure. Read off the persistence record, never re-derived from the
               // name shape.
-              let warn = ctxReminderFor(c.tok);
+              //
+              // The operator's override map is read per tick rather than
+              // memoized: get() re-reads ui-settings.json, so a threshold edited
+              // in Preferences takes effect on the next poll instead of at the
+              // next session start. A failed read resolves to the shipped
+              // defaults, never to no reminder.
+              let ctxOverrides = null;
+              try { ctxOverrides = getUiSettings().get().ctxReminderThresholds; } catch {}
+              let warn = ctxReminderFor(c.tok, ctxThresholdsFor(c.model, ctxOverrides));
               // Read lazily at the first over-threshold tick, not eagerly at
               // create: get() re-parses the whole of sessions.json and _load()
               // can WRITE it (the workspaceId backfill), while the record may be

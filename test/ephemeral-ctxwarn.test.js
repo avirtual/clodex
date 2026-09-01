@@ -23,13 +23,14 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { promptCacheDir } = require('../ipc-prompt-cache');
 const { parseCtxFile } = require('../argv-merge');
-const { ctxReminderFor, CTX_REMINDER_NUDGE_TOKENS } = require('../ctx-reminder');
+const { ctxReminderFor, ctxThresholdsFor, CTX_REMINDER_NUDGE_TOKENS } = require('../ctx-reminder');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t433-')); }
 
 // One fixture; `ephemeral` is the only thing either call varies. The real
-// ctxReminderFor and parseCtxFile are injected, not spied: a stubbed decision
-// would pin the harness's copy of the threshold rather than the shipped one.
+// ctxReminderFor, ctxThresholdsFor and parseCtxFile are injected, not spied: a
+// stubbed decision would pin the harness's copy of the threshold rather than the
+// shipped one.
 function harness(t, { ephemeral = false, getThrows = false } = {}) {
   const root = tmp();
   // Three tmp trees leaked per run without this.
@@ -61,6 +62,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     appVersion: '5.12.0',
     parseCtxFile,
     ctxReminderFor,
+    ctxThresholdsFor,
     versionNoticeFor: () => null,
     enqueueNotice: () => true,
     clearNotices: () => {},
@@ -141,7 +143,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     // otherwise fs.watch-driven, which is not synchronous enough to assert on.
     writeCtx: (tokens) => {
       fs.mkdirSync(runDirFor(root, 'seat'), { recursive: true });
-      fs.writeFileSync(pathFor(root, 'seat', 'ctx'), `50\t${tokens}\t400000\tclaude-fable-5`);
+      fs.writeFileSync(pathFor(root, 'seat', 'ctx'), `50\t${tokens}\t400000\t${FIXTURE_MODEL}`);
     },
     spawn: async () => {
       try {
@@ -164,7 +166,22 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   };
 }
 
-const OVER = CTX_REMINDER_NUDGE_TOKENS + 10_000;
+// The fixture's model is claude-fable-5, which since t619 carries its own,
+// HIGHER thresholds — so the baseline nudge is no longer over threshold for it.
+// Computed from the model's own row, not hardcoded: this is the INPUT that has
+// to reach the over-threshold state, and a stale literal here would silently
+// stop reaching it and vacuum out the ENTER that every skip assertion below
+// leans on.
+const FIXTURE_MODEL = 'claude-fable-5';
+const FIXTURE_THRESHOLDS = ctxThresholdsFor(FIXTURE_MODEL, {});
+const OVER = FIXTURE_THRESHOLDS.nudge + 10_000;
+
+test('the fixture is over threshold for the model it names, not merely for the baseline', () => {
+  assert.strictEqual(FIXTURE_THRESHOLDS.source, 'builtin-model',
+    'the fixture model has its own row; if that ever changes OVER must be rechecked');
+  assert.ok(OVER > CTX_REMINDER_NUDGE_TOKENS, 'and it clears the baseline too');
+  assert.ok(ctxReminderFor(OVER, FIXTURE_THRESHOLDS), 'the decision fires at this count');
+});
 
 test('a NON-ephemeral seat over threshold gets the ctxwarn file', async (t) => {
   const h = harness(t, { ephemeral: false });
@@ -174,7 +191,7 @@ test('a NON-ephemeral seat over threshold gets the ctxwarn file', async (t) => {
   // this token count, in this fixture, on this path. Without it the skip below
   // is satisfied by a create() that never reached the ctx poll at all.
   assert.ok(fs.existsSync(h.warnPath()), 'the reminder must fire for an ordinary seat');
-  assert.strictEqual(fs.readFileSync(h.warnPath(), 'utf8'), ctxReminderFor(OVER),
+  assert.strictEqual(fs.readFileSync(h.warnPath(), 'utf8'), ctxReminderFor(OVER, FIXTURE_THRESHOLDS),
     'the file carries the pure decision verbatim — the write site suppresses, it does not reword');
 });
 
@@ -190,8 +207,14 @@ test('the pure decision is untouched — it still calls an ephemeral seat heavy'
   // The suppression is the CALLER's, deliberately: "is this context heavy" and
   // "should we act on it" decay separately, and fusing them into the pure
   // function would make the threshold untestable without a seat identity.
-  assert.ok(ctxReminderFor(OVER), 'ctxReminderFor takes tokens only and knows nothing of seats');
-  assert.strictEqual(ctxReminderFor.length, 1, 'signature unchanged: no ephemeral parameter crept in');
+  assert.ok(ctxReminderFor(OVER, FIXTURE_THRESHOLDS), 'ctxReminderFor knows nothing of seats');
+  // Tokens and the resolved thresholds, and nothing else: t619 added the second
+  // parameter, so the count alone no longer says what this is guarding. What it
+  // guards is that no seat identity was added alongside it — the suppression
+  // stays the caller's.
+  assert.strictEqual(ctxReminderFor.length, 2, 'tokens + thresholds; no seat parameter crept in');
+  assert.ok(ctxReminderFor(OVER, ctxThresholdsFor(null, {})),
+    'the threshold-aware call is the same decision for a model with no row');
 });
 
 test('an ephemeral seat that was PREVIOUSLY nudged has its stale file removed', async (t) => {

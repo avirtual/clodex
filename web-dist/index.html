@@ -6988,6 +6988,21 @@ body {
           <span>Bake transcripts on resume</span>
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
+        <h5>Context pressure reminders</h5>
+        <p class="hint-text">Clodex tells an agent its context is heavy once it passes the first threshold, and switches to sterner wording past the second &mdash; a note attached to its next prompt, never an interruption. The agent picks its own moment to run <code>[agent:context compact]</code>. Thresholds are absolute input tokens, not a share of the window: every turn re-sends the whole conversation, so a 250k conversation is expensive even on a 1M-window model. One-ticket seats are never nudged.</p>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Nudge at</span>
+          <input type="number" id="prefs-ctx-nudge" min="50000" max="2000000" step="10000" placeholder="200000" style="flex: none; width: 110px;">
+          <span class="hint-text">tokens</span>
+        </div>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Escalate at</span>
+          <input type="number" id="prefs-ctx-escalate" min="50000" max="2000000" step="10000" placeholder="250000" style="flex: none; width: 110px;">
+          <span class="hint-text">tokens</span>
+        </div>
+        <span class="hint-text" style="display: block; margin-top: 6px;">Leave both empty for the shipped values. Escalate is held at least 25,000 above nudge &mdash; closer and the second warning never gets its own moment. The default nudge is 200,000 because tickets land agents in the 140&ndash;180k band, and a lower one fires in the middle of ordinary work.</span>
+        <div id="prefs-ctx-models" class="hint-text" style="margin-top: 8px;"></div>
+
         <h5>Contextual memory hints</h5>
         <p class="hint-text">On a pause in your typing, match the draft against the agent's own memories and the common store, and attach the best matches to that turn as an ephemeral hint the agent may ignore. Units already in its context are skipped, and the same unit is not re-offered for ten minutes. Wirescope is what attaches the hint, so nothing is matched or sent when it is off.</p>
         <label class="prefs-check">
@@ -36001,6 +36016,9 @@ Click for live activity`;
       var prefsSpeakReplies = document.getElementById("prefs-speak-replies");
       var prefsSpeakVoice = document.getElementById("prefs-speak-voice");
       var prefsSpeakRate = document.getElementById("prefs-speak-rate");
+      var prefsCtxNudge = document.getElementById("prefs-ctx-nudge");
+      var prefsCtxEscalate = document.getElementById("prefs-ctx-escalate");
+      var prefsCtxModels = document.getElementById("prefs-ctx-models");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
@@ -37597,6 +37615,27 @@ ${res.stderr}` : "");
           el.checked = el.value === want;
         }
       }
+      function setCtxThresholds(s) {
+        const shipped = s.ctxThresholdDefaults || {};
+        const base = shipped.default || {};
+        const cur = (s.ctxReminderThresholds || {}).default;
+        if (prefsCtxNudge) {
+          prefsCtxNudge.placeholder = base.nudge != null ? String(base.nudge) : "";
+          prefsCtxNudge.value = cur && Number.isInteger(cur.nudge) ? String(cur.nudge) : "";
+        }
+        if (prefsCtxEscalate) {
+          prefsCtxEscalate.placeholder = base.escalate != null ? String(base.escalate) : "";
+          prefsCtxEscalate.value = cur && Number.isInteger(cur.escalate) ? String(cur.escalate) : "";
+        }
+        if (!prefsCtxModels) return;
+        const overrides = s.ctxReminderThresholds || {};
+        const rows = (Array.isArray(shipped.models) ? shipped.models : []).map((m) => {
+          const o = overrides[m.family];
+          const v = o || m;
+          return `${m.family}: ${v.nudge.toLocaleString()} / ${v.escalate.toLocaleString()}` + (o ? " (your override)" : "");
+        });
+        prefsCtxModels.textContent = rows.length ? `Models with their own thresholds, which the baseline above does not change \u2014 ${rows.join("; ")}.` : "";
+      }
       function setSpeakSettings(s) {
         if (prefsSpeakReplies) prefsSpeakReplies.checked = s.speakReplies === true;
         if (prefsSpeakRate && Number.isInteger(s.speakRate)) prefsSpeakRate.value = String(s.speakRate);
@@ -37608,6 +37647,15 @@ ${res.stderr}` : "");
           return `<option value="${esc(n)}"${n === want ? " selected" : ""}>${esc(v ? `${n} (${v.locale})` : n)}</option>`;
         });
         prefsSpeakVoice.innerHTML = opts.join("");
+      }
+      function readCtxThresholdPair() {
+        const n = prefsCtxNudge.value.trim();
+        const e = prefsCtxEscalate.value.trim();
+        if (!n && !e) return null;
+        const nudge = Number(n);
+        if (!Number.isInteger(nudge)) return null;
+        const escalate = Number(e);
+        return { nudge, escalate: Number.isInteger(escalate) ? escalate : 0 };
       }
       function readTerminalReports() {
         if (!prefsTerminalReports) return "off";
@@ -37630,6 +37678,7 @@ ${res.stderr}` : "");
         if (prefsVoiceSubmitRearm) prefsVoiceSubmitRearm.checked = s.voiceSubmitRearm === true;
         if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || "";
         setSpeakSettings(s);
+        setCtxThresholds(s);
         setTerminalReports(s.terminalReports);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
@@ -37689,6 +37738,10 @@ ${res.stderr}` : "");
           // not silently overwrite what the popover set.
           ...prefsSpeakVoice && prefsSpeakVoice.value ? { speakVoice: prefsSpeakVoice.value } : {},
           ...prefsSpeakRate && prefsSpeakRate.value ? { speakRate: Number(prefsSpeakRate.value) } : {},
+          // A blank pair sends `default: null`, which the store's sanitizer drops —
+          // that is how the operator gets the shipped values back, and it is why this
+          // key is not omitted when the boxes are empty the way speakVoice is.
+          ...prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {},
           terminalReports: readTerminalReports(),
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked

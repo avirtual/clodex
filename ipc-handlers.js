@@ -22,6 +22,13 @@ const { feedSince } = require('./subagent-ring');
 // peer:import handlers below).
 const peerImport = require('./peer-import');
 const { wireSeatFor } = require('./peer-shell');
+// The shipped thresholds, read from the module that DECIDES with them rather
+// than restated here: Preferences shows them as the values in force when the
+// operator has set nothing, and a second copy would show a number the reminder
+// does not use.
+const {
+  CTX_MODEL_THRESHOLDS, CTX_REMINDER_NUDGE_TOKENS, CTX_REMINDER_ESCALATE_TOKENS,
+} = require('./ctx-reminder');
 
 function registerIpcHandlers(deps) {
   const {
@@ -941,6 +948,11 @@ function registerIpcHandlers(deps) {
       wirescopePort: s.wirescopePort,
       disableClaudeDesignMcp: s.disableClaudeDesignMcp,
       compactOnResume: s.compactOnResume,
+      ctxReminderThresholds: s.ctxReminderThresholds,
+      ctxThresholdDefaults: {
+        default: { nudge: CTX_REMINDER_NUDGE_TOKENS, escalate: CTX_REMINDER_ESCALATE_TOKENS },
+        models: [...CTX_MODEL_THRESHOLDS].map(([family, v]) => ({ family, ...v })),
+      },
       contextHints: s.contextHints,
       semanticHints: s.semanticHints,
       selectionHints: s.selectionHints,

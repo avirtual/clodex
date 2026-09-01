@@ -100,7 +100,7 @@ test('effectiveWindowSize: 1M-suffix and fable get bumped, never shrunk', () => 
 });
 
 test('parseCtxFile: legacy single-field stays parseable', () => {
-  assert.deepStrictEqual(parseCtxFile('42'), { pct: 42, tok: null, size: null, cost: null, modelName: null });
+  assert.deepStrictEqual(parseCtxFile('42'), { pct: 42, tok: null, size: null, model: null, cost: null, modelName: null });
 });
 
 test('parseCtxFile: full record recomputes pct against the corrected window', () => {
@@ -113,12 +113,18 @@ test('parseCtxFile: full record recomputes pct against the corrected window', ()
 
 test('parseCtxFile: no override keeps the reported pct/size (no cost/model → null)', () => {
   const r = parseCtxFile('35\t70000\t200000\tclaude-sonnet-5');
-  assert.deepStrictEqual(r, { pct: 35, tok: 70000, size: 200000, cost: null, modelName: null });
+  assert.deepStrictEqual(r, { pct: 35, tok: 70000, size: 200000, model: 'claude-sonnet-5', cost: null, modelName: null });
 });
 
 test('parseCtxFile: trailing cost + model fields parse (wire-off cost/model)', () => {
   const r = parseCtxFile('7\t14497\t200000\tus.anthropic.claude-sonnet-4-6\t0.0342\tSonnet 4.6');
-  assert.deepStrictEqual(r, { pct: 7, tok: 14497, size: 200000, cost: 0.0342, modelName: 'Sonnet 4.6' });
+  assert.deepStrictEqual(r, {
+    pct: 7, tok: 14497, size: 200000,
+    // The ID and the display name are BOTH returned and are different strings:
+    // anything priced per model keys on the id, and this row is what makes a
+    // consumer that reached for the prose name visible.
+    model: 'us.anthropic.claude-sonnet-4-6', cost: 0.0342, modelName: 'Sonnet 4.6',
+  });
   // a zero cost round-trips as 0 (not null) so the UI can distinguish
   // "reported zero" from "field absent"
   assert.strictEqual(parseCtxFile('7\t14497\t200000\tmodel\t0').cost, 0);
