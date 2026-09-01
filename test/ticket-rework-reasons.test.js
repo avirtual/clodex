@@ -209,7 +209,7 @@ function mkFixture() {
   m.kill = async (name) => { killed.push(name); persistence.remove(name); m.sessions.delete(name); };
   // Stubbed for the same reason kill() is: the real archive() arms a 5s
   // `process.kill(pid, 'SIGKILL')` against this fixture's fake `pid: 1`, which is
-  // init. It records the state the not-merged accept arm is asserted on.
+  // init.
   m.archive = async (name) => { archived.push(name); persistence.setArchived(name, true); };
   const seat = (name, cwd = repoDir) => {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
@@ -230,11 +230,8 @@ function mkFixture() {
 // is what makes the shortcut honest.
 function reviewingTicket(f, id = 't1') {
   f.seat('lead'); f.seat('team-hand');
-  // The hand is a seat the LOOP minted, and since t482 the accept arms only
-  // archive/destroy a seat whose record says so (_spawnTicketSeat stamps it on
-  // every seat it mints). Without the record the hand reads as the operator's
-  // standing seat, which accept deliberately leaves alone — and the hand-vs-
-  // reviewer teardown assertions below would pass or fail for the wrong reason.
+  // The seat record the loop stamps on a hand it minted (_spawnTicketSeat), so
+  // the board here is the shape the reject paths under test actually run against.
   f.persistence.upsert({ name: 'team-hand', ephemeral: true });
   f.tstore.save(f.team.root, [{
     id, state: 'done', spec: `spec for ${id}`, assignee: 'team-hand', role: 'hand',
@@ -248,28 +245,8 @@ function reviewingTicket(f, id = 't1') {
   return t;
 }
 
-function spawnReviewer(f, ticketId) {
-  const before = new Set(f.persistence.list().map((e) => e.name));
-  f.m._handleTeamReview(f.m.sessions.get('lead'), `review the diff for ${ticketId}`, { ticketId });
-  const rec = f.persistence.list().find((e) => !before.has(e.name));
-  assert.ok(rec, 'ENTER: a reviewer seat was reserved — otherwise there is no seat to assert about');
-  assert.strictEqual(rec.reviewTicket, ticketId, 'ENTER: it carries the ticket link the resolver matches on');
-  f.seat(rec.name);
-  return rec;
-}
-
-// The resolver the fix routes on, so an ENTER can show the seat was findable as
-// this ticket's reviewer BEFORE the transition — every absence assertion below
-// is equally true of a seat that was never resolvable at all.
-const liveFor = (f, id) => f.m._liveReviewSeatsFor(f.team, id).map((s) => s.name);
-
 const reject = (f, id, reason = 'the guard is inverted') =>
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'reject', id, who: null, body: reason });
-
-const accept = (f, id, note = '') =>
-  f.m._taskAccept(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'accept', id, who: null, body: note },
-    (msg) => f.injected.push(msg));
-
 
 test('mkFixture injects every dep team-tickets.js reads', () => {
   const f = mkFixture();
@@ -378,7 +355,8 @@ test('a follow-up that never reached the seat records nothing', () => {
 
   assert.match(f.injected.join('\n'), /did NOT reach/, 'ENTER: the delivery-failure arm was taken');
   assert.strictEqual(f.one('t1').reworkReasons.length, before,
-    'a reason the seat never received must not sit on the record as one it was asked to fix');
+    'the FOLLOW-UP path changes no state, so an undelivered reason leaves no trace either — '
+    + 'unlike the two reopening paths, which record whether or not a seat was told');
 });
 
 // ── the store helper itself ────────────────────────────────────────────────
