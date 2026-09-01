@@ -124,7 +124,8 @@ popovers the owner will answer.
   byte-sensitive, test-pinned.
 - **Ctx reminders** (ctx-reminder.js): absolute thresholds (nudge 200k,
   escalate 250k — cost scales with absolute context size, not window %),
-  per-model and operator-overridable. `ctxThresholdsFor` resolves settings-model
+  per-model-capable and operator-overridable (no model ships a differentiated
+  row today). `ctxThresholdsFor` resolves settings-model
   > builtin-model > settings-default > builtin-default and names which layer
   answered, so a lookup that found nothing is distinguishable from one that
   found the baseline. Models are keyed by the family `modelFamily` derives from

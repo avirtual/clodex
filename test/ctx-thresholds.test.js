@@ -65,17 +65,22 @@ const SWEEP = [
 
 // Every model that is NOT the one this ticket changes must behave identically to
 // the pre-change module, byte for byte in the returned reminder.
+// EVERY model, Fable included: the shipped table has no differentiated row, so
+// nothing may move by default. Fable is the interesting row — it is the model
+// the ticket was raised about, and the one a reinstated table row would change.
 const UNCHANGED_MODELS = [
   null,
   'claude-opus-5',
   'us.anthropic.claude-sonnet-4-6',
   'claude-sonnet-5',
   'claude-haiku-4-5',
+  'claude-fable-5',
+  'claude-fable-5-1',
   'claude-3-5-sonnet-20241022',
   'something-that-is-not-a-model',
 ];
 
-test('invariant 4: with no settings key, every unchanged model reproduces the base commit byte for byte', (t) => {
+test('invariant 4: with no settings key, EVERY model reproduces the base commit byte for byte', (t) => {
   const base = loadBaseModule(t);
   // ENTER: the base module must actually be the pre-change one, or "identical"
   // is a comparison of this file against itself.
@@ -154,30 +159,76 @@ test('modelFamily: each id reduces to the family literal its row names', () => {
   }
 });
 
-test('invariant 3: no model id reaches a table row belonging to another family', () => {
-  const families = [...CTX_MODEL_THRESHOLDS.keys()];
-  // ENTER: the property is vacuous over an empty table, and it would stay green
-  // for every id if the table lost its only row.
-  assert.ok(families.length > 0, 'the per-model table must have rows to protect');
+// A differentiated row per family in FAMILY_CASES, so the property has something
+// to be violated over. Values are spaced far apart and are literals: if an id
+// reached a row it does not own, the nudge it gets identifies WHICH row.
+const FIXTURE_TABLE = {
+  'fable-5': { nudge: 250_000, escalate: 310_000 },
+  'fable-6': { nudge: 260_000, escalate: 320_000 },
+  'fable-51': { nudge: 270_000, escalate: 330_000 },
+  'opus-5': { nudge: 280_000, escalate: 340_000 },
+  'opus-4': { nudge: 290_000, escalate: 350_000 },
+  'sonnet-4': { nudge: 300_000, escalate: 360_000 },
+  'sonnet-5': { nudge: 310_000, escalate: 370_000 },
+  'haiku-4': { nudge: 320_000, escalate: 380_000 },
+};
 
-  for (const [id] of FAMILY_CASES) {
-    const got = ctxThresholdsFor(id, {});
-    const own = modelFamily(id);
-    for (const fam of families) {
-      if (fam === own) continue;
-      assert.notStrictEqual(got.source, 'builtin-model',
-        `${JSON.stringify(id)} (family ${own}) must not land on a model row`);
-    }
-    if (own && CTX_MODEL_THRESHOLDS.has(own)) {
+test('invariant 3: no model id reaches a row belonging to another family', () => {
+  // ENTER: the property is vacuous unless the table actually has rows AND some
+  // id actually hits one. Both are asserted before the sweep below trusts it.
+  const hits = FAMILY_CASES.filter(([id]) => ctxThresholdsFor(id, FIXTURE_TABLE).source === 'settings-model');
+  assert.ok(Object.keys(FIXTURE_TABLE).length >= 8, 'the fixture table must have rows to protect');
+  assert.ok(hits.length >= 8, 'and real ids must reach them, or nothing is being tested');
+
+  for (const [id, family] of FAMILY_CASES) {
+    const got = ctxThresholdsFor(id, FIXTURE_TABLE);
+    if (family && FIXTURE_TABLE[family]) {
       assert.deepStrictEqual(
         { nudge: got.nudge, escalate: got.escalate },
-        CTX_MODEL_THRESHOLDS.get(own),
-        `${JSON.stringify(id)} must get exactly its own row`);
+        FIXTURE_TABLE[family],
+        `${JSON.stringify(id)} must get the ${family} row and no other`);
+      assert.strictEqual(got.source, 'settings-model');
     } else {
       assert.strictEqual(got.source, 'builtin-default',
         `${JSON.stringify(id)} owns no row and must land on the baseline`);
+      assert.strictEqual(got.nudge, CTX_REMINDER_NUDGE_TOKENS);
     }
   }
+});
+
+// The shipped table is empty today, so the builtin-model arm has no live row to
+// exercise. Ships-with-no-row is a DEFAULTS decision, not a mechanism decision:
+// this inserts a row to prove the arm resolves and that the decision uses what
+// it returns, which is what makes reinstating a row a data change.
+test('the per-model mechanism works even though no model differs by default', () => {
+  assert.strictEqual(CTX_MODEL_THRESHOLDS.size, 0,
+    'no differentiated row ships: the >200k surcharge question is unanswered');
+  assert.ok(!CTX_MODEL_THRESHOLDS.has('fable-5'), 'fable in particular is at the baseline');
+
+  const restore = new Map(CTX_MODEL_THRESHOLDS);
+  try {
+    CTX_MODEL_THRESHOLDS.set('fable-5', { nudge: 250_000, escalate: 310_000 });
+    const fable = ctxThresholdsFor('claude-fable-5-1', {});
+    assert.strictEqual(fable.source, 'builtin-model');
+    assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate },
+      { nudge: 250_000, escalate: 310_000 });
+    // The decision USES it, not merely reports it.
+    assert.strictEqual(ctxReminderFor(210_000, fable), null, 'a raised row defers the nudge');
+    assert.ok(ctxReminderFor(260_000, fable).includes('getting heavy'));
+    assert.ok(ctxReminderFor(310_000, fable).includes('very heavy'));
+    // And it does not leak to a model that does not own it.
+    const opus = ctxThresholdsFor('claude-opus-5', {});
+    assert.strictEqual(opus.source, 'builtin-default');
+    assert.ok(ctxReminderFor(210_000, opus), 'opus still nudges at the baseline');
+    // A settings row still outranks a shipped one.
+    const over = ctxThresholdsFor('claude-fable-5-1', { 'fable-5': { nudge: 400_000, escalate: 500_000 } });
+    assert.strictEqual(over.source, 'settings-model');
+    assert.strictEqual(over.nudge, 400_000);
+  } finally {
+    CTX_MODEL_THRESHOLDS.clear();
+    for (const [k, v] of restore) CTX_MODEL_THRESHOLDS.set(k, v);
+  }
+  assert.strictEqual(CTX_MODEL_THRESHOLDS.size, 0, 'the fixture row is not left behind');
 });
 
 test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () => {
@@ -198,18 +249,17 @@ test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () =
 // The ENTER for the whole file: the mechanism is live.
 // ---------------------------------------------------------------------------
 
-test('ENTER: fable-5 is nudged later than the baseline, and the shipped numbers are the ruled ones', () => {
-  assert.deepStrictEqual(CTX_MODEL_THRESHOLDS.get('fable-5'), { nudge: 250_000, escalate: 310_000 });
+test('ENTER: the shipped baseline is the ruled one, and it applies to every model', () => {
   assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 200_000);
   assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 250_000);
-
-  const fable = ctxThresholdsFor('claude-fable-5-1', {});
-  const opus = ctxThresholdsFor('claude-opus-5', {});
-  assert.strictEqual(ctxReminderFor(210_000, opus) === null, false, 'opus is nudged at 210k');
-  assert.strictEqual(ctxReminderFor(210_000, fable), null, 'fable is not yet nudged at 210k');
-  assert.ok(ctxReminderFor(260_000, fable).includes('getting heavy'), 'fable nudges at 260k');
-  assert.ok(ctxReminderFor(260_000, opus).includes('very heavy'), 'opus has already escalated at 260k');
-  assert.ok(ctxReminderFor(310_000, fable).includes('very heavy'), 'fable escalates at 310k');
+  for (const id of ['claude-fable-5-1', 'claude-opus-5', 'us.anthropic.claude-sonnet-4-6']) {
+    const r = ctxThresholdsFor(id, {});
+    assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
+      { nudge: 200_000, escalate: 250_000 }, id);
+    assert.strictEqual(ctxReminderFor(199_999, r), null, `${id} is not nudged below 200k`);
+    assert.ok(ctxReminderFor(200_000, r).includes('getting heavy'), `${id} nudges at 200k`);
+    assert.ok(ctxReminderFor(250_000, r).includes('very heavy'), `${id} escalates at 250k`);
+  }
 });
 
 test('ENTER: an operator override reaches the decision and outranks the shipped row', () => {
@@ -222,13 +272,22 @@ test('ENTER: an operator override reaches the decision and outranks the shipped 
   const fable = ctxThresholdsFor('claude-fable-5-1', ov);
   assert.strictEqual(fable.source, 'settings-model');
   assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate }, { nudge: 400_000, escalate: 500_000 });
+  assert.strictEqual(ctxReminderFor(390_000, fable), null, 'and the decision uses it');
 });
 
 test('a baseline override does not move a model that has its own row', () => {
-  const ov = { default: { nudge: 100_000, escalate: 400_000 } };
-  const fable = ctxThresholdsFor('claude-fable-5', ov);
-  assert.strictEqual(fable.source, 'builtin-model');
-  assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate }, { nudge: 250_000, escalate: 310_000 });
+  const restore = new Map(CTX_MODEL_THRESHOLDS);
+  try {
+    CTX_MODEL_THRESHOLDS.set('fable-5', { nudge: 250_000, escalate: 310_000 });
+    const fable = ctxThresholdsFor('claude-fable-5', { default: { nudge: 100_000, escalate: 400_000 } });
+    assert.strictEqual(fable.source, 'builtin-model');
+    assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate },
+      { nudge: 250_000, escalate: 310_000 },
+      'most specific wins: a baseline edit must not silently erase per-model tuning');
+  } finally {
+    CTX_MODEL_THRESHOLDS.clear();
+    for (const [k, v] of restore) CTX_MODEL_THRESHOLDS.set(k, v);
+  }
 });
 
 // ---------------------------------------------------------------------------

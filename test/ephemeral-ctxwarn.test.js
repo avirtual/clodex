@@ -166,20 +166,16 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   };
 }
 
-// The fixture's model is claude-fable-5, which carries its own HIGHER
-// thresholds — so the baseline nudge is not over threshold for it.
-// Computed from the model's own row, not hardcoded: this is the INPUT that has
-// to reach the over-threshold state, and a stale literal here would silently
-// stop reaching it and vacuum out the ENTER that every skip assertion below
-// leans on.
+// Derived from the thresholds in force for the fixture's OWN model rather than
+// from the baseline constant. They are the same today — no model ships a
+// differentiated row — but this is the INPUT that has to reach the
+// over-threshold state, and a per-model row added later would silently stop it
+// reaching it, vacuuming out the ENTER every skip assertion below leans on.
 const FIXTURE_MODEL = 'claude-fable-5';
 const FIXTURE_THRESHOLDS = ctxThresholdsFor(FIXTURE_MODEL, {});
 const OVER = FIXTURE_THRESHOLDS.nudge + 10_000;
 
-test('the fixture is over threshold for the model it names, not merely for the baseline', () => {
-  assert.strictEqual(FIXTURE_THRESHOLDS.source, 'builtin-model',
-    'the fixture model has its own row; if that ever changes OVER must be rechecked');
-  assert.ok(OVER > CTX_REMINDER_NUDGE_TOKENS, 'and it clears the baseline too');
+test('the fixture is over threshold for the model it names', () => {
   assert.ok(ctxReminderFor(OVER, FIXTURE_THRESHOLDS), 'the decision fires at this count');
 });
 

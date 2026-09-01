@@ -13,15 +13,13 @@ blocks a release.
 
 ## Unreleased
 
-- **Context-pressure thresholds are now yours to set, and Fable gets its own.**
-  Clodex tells an agent its context is heavy at 200,000 tokens and escalates the
-  wording at 250,000. Both numbers are now editable in Settings ▸ Traffic
-  optimization, and both persist. Fable 5.x now ships with higher thresholds of
-  its own — 250,000 and 310,000 — because its output tokens cost twice what
-  Opus 5's do while its cached reads cost half, so compacting a Fable session
-  early is the expensive move and carrying it one more warm turn is the cheap
-  one. Every other model behaves exactly as before, and so does an install where
-  you never open the setting.
+- **Context-pressure thresholds are now yours to set.** Clodex tells an agent
+  its context is heavy at 200,000 tokens and escalates the wording at 250,000.
+  Both numbers are now editable in Settings ▸ Traffic optimization, and both
+  persist. The shipped values are unchanged for every model, so an install where
+  you never open the setting behaves exactly as before. Models can now also be
+  given thresholds of their own, which is the groundwork for tuning a model
+  whose token prices make compacting early the expensive move.
 
 - **Cost reporting corrected for Fable 5.1 and Sonnet 5.** v5.21.0 updated the
   bundled wirescope table, but Clodex's own pricing is a port of it rather than

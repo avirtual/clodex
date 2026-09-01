@@ -39,15 +39,19 @@ const CTX_REMINDER_ESCALATE_TOKENS = 250_000;
 
 // Per-model thresholds, keyed by the family `modelFamily` derives. Keyed on the
 // model ID, never the display name: the display name is vendor prose ("Sonnet
-// 4.6") and is not what the price table is indexed by.
+// 4.6") and is not what a threshold priced per model can be indexed by.
 //
-// Fable 5.x: its output token costs 2x Opus 5's while its cached read costs
-// half, so a compact is the expensive move and carrying one more warm turn is
-// the cheap one — the ordering that justifies a later threshold. The values
-// hold the operator's requested ratio (1.233) against the 200k baseline.
-const CTX_MODEL_THRESHOLDS = new Map([
-  ['fable-5', { nudge: 250_000, escalate: 310_000 }],
-]);
+// EMPTY ON PURPOSE, and not dead code. A model whose read price is low enough
+// genuinely wants to compact later — a compact's cost is nearly all fixed while
+// the per-turn saving scales with the read rate — but the measured payback at
+// the 200k baseline is already threefold, so raising a model buys a margin
+// rather than averting a loss. Against that sits a possible long-context
+// surcharge at exactly 200k: if one applies, every turn spent in a raised band
+// is billed at a higher rate and the optimisation inverts. A usage receipt
+// carries token counts and never a rate, so nothing here can detect it. The
+// costs of being wrong are asymmetric, so the shipped values stay on the safe
+// side and the settings map is what makes a correction free.
+const CTX_MODEL_THRESHOLDS = new Map();
 
 // A nudge below this fires on a session that has merely loaded its system prompt
 // and tools, which trains the agent to ignore it; above the ceiling it can never
