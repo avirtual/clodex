@@ -168,10 +168,10 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
     } catch { continue; }
     const m = text.match(/^\[agent:from ([^\]]+)\]\s?([\s\S]*)$/);
     const from = m ? m[1] : '?';
-    // previewLine is called WITHOUT a max: its own clamp is a bare slice with no
-    // ellipsis, so passing snipLen would truncate silently and the length test
-    // below could never fire. The ellipsis budget stays here, where it can spend
-    // one char of snipLen on the '…'.
+    // previewLine is called WITHOUT a max, so the whole line comes back. The
+    // ellipsis budget is spent here, where it can pay one char of snipLen for
+    // the '…'; passing snipLen would truncate twice and leave the clamp below
+    // dead, so the length test that documents it could never fire.
     let body = previewLine(m ? m[2] : text);
     if (body.length > snipLen) body = body.slice(0, snipLen - 1).trimEnd() + '…';
     out.push({ from, snippet: body });

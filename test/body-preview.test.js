@@ -427,8 +427,12 @@ test('previewLine marks a cut line, and never overruns the width it was given', 
   assert.strictEqual(previewLine('aaaa bbbb cccc', 11), 'aaaa bbbb…');
 
   // Degenerate widths have no room for both a character and its mark; returning
-  // a mark alone would claim a preview where none fits.
+  // a mark alone would claim a preview where none fits. max 1 is the case that
+  // shipped wrong: it has room for the mark ALONE, which is exactly the value
+  // this rule forbids, so the guard is `< 2` and not `< 1`.
   assert.strictEqual(previewLine('anything', 0), '');
+  assert.strictEqual(previewLine('anything', 1), '');
+  assert.strictEqual(previewLine('anything', 2), 'a…', 'max 2 is the narrowest width that fits both');
 });
 
 test('the no-max path is unchanged, which is pending-store.js\'s contract', () => {

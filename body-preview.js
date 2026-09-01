@@ -24,15 +24,16 @@
 
 // A cut line ends in '…' and the result never exceeds max: the callers' widths
 // are layout budgets, so an ellipsis added on top of max trades this defect for
-// an overflow. That is what `max - 1` buys. Below max 1 there is no room for a
-// character and its mark together, so no return value could be both.
+// an overflow. That is what `max - 1` buys. Below max 2 there is no room for a
+// content character and its mark together, and a lone mark would claim a
+// preview where none fits.
 function previewLine(text, max) {
   if (typeof text !== 'string') return '';
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (max === undefined) return trimmed;
-    if (max < 1) return '';
+    if (max < 2) return '';
     if (trimmed.length <= max) return trimmed;
     return trimmed.slice(0, max - 1).trimEnd() + '…';
   }
