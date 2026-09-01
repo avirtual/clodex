@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Talking to your agents
 
 - **Moving the microphone now stops the recorder it moved away from.** Saying
   `select` while a seat was recording switched you to the named seat but left
