@@ -45,7 +45,7 @@ const QUIET_MS = 1200;
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
 
-// How long the external tap waits, after main has just set the voice mode to
+// How long the external tap waits, when the voice mode was recently set to
 // `tap`, before it may write the trigger key — so the CLI has OBSERVED the new
 // mode and handles the key under it. Under the old `hold` the key takes the arm
 // that expects a HELD key: it starts recording and arms a release timer through
@@ -62,8 +62,8 @@ const ENTER_SETTLE_MS = 30;
 // a loopback POST inside this app, this one covers a vendor file watcher. They
 // share no cause, so neither number may be computed from the other.
 //
-// Paid ONLY when main reports it actually changed the mode. A tap that found the
-// file already on `tap` has nothing to wait for and writes immediately.
+// Paid ONLY when main reports the mode may still be settling. A tap arriving
+// when the CLI has long since observed `tap` writes immediately.
 const VOICE_TAP_MODE_SETTLE_MS = 1500;
 
 // The gap between the submit's `\r` and the trigger key that stops the recorder.
@@ -1068,18 +1068,24 @@ function createVoiceSubmitWatcher(terminal, {
   // That gate exists because arming mid-turn is a live microphone nobody asked
   // for; here the operator asked, out loud, which is the entire event.
   //
-  // `modeJustChanged` says main set the mode to `tap` immediately before routing
-  // this, so the key must wait for the CLI to observe it — see
-  // VOICE_TAP_MODE_SETTLE_MS. Every gate below sits AFTER that wait on purpose:
-  // they must read the screen as it is when the key LANDS, so a recorder that
-  // lit, or a draft he began typing, during the wait still stops the write.
-  function externalTap(modeJustChanged = false) {
+  // `modeSettling` says the voice mode was set to `tap` too recently for the CLI
+  // to have observed it, so the key must wait — see VOICE_TAP_MODE_SETTLE_MS.
+  // Main decides that, since it owns the write and this side cannot see it.
+  // Every gate below sits AFTER the wait on purpose: they must read the screen
+  // as it is when the key LANDS, so a recorder that lit, or a draft he began
+  // typing, during the wait still stops the write.
+  function externalTap(modeSettling = false) {
     if (disposed) return false;
-    if (modeJustChanged) {
+    if (modeSettling) {
       return new Promise((resolve) => {
         const t = setTimeout(() => {
           modeSettleTimers.delete(t);
-          resolve(externalTap(false));
+          // `cursorRow()` is the one gate below with no try/catch of its own, so
+          // a throw here would leave this promise — and the caller awaiting it —
+          // pending for the life of the page. Declining is the safe direction:
+          // an unwritten byte costs a repeated phrase, a stuck await costs the
+          // handler.
+          try { resolve(externalTap(false)); } catch { resolve(false); }
         }, modeSettleMs);
         modeSettleTimers.set(t, resolve);
       });

@@ -69,6 +69,16 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 // settings, the re-park follows, and the T+150s rung lands after the render.
 const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
 
+// How long after setting the voice mode the CLI may still be acting on the old
+// one, so a tap arriving inside this window must wait it out like the tap that
+// set it. The measurement, the observable and why the number is what it is live
+// with the wait itself — VOICE_TAP_MODE_SETTLE_MS in
+// renderer/voice-submit-watcher.js — and this must not drift from it: this side
+// decides who waits, that side performs the wait, and a shorter value here
+// silently stops arming the wait it is naming. Pinned equal in
+// test/external-tap-trigger.test.js.
+const VOICE_MODE_SETTLE_MS = 1500;
+
 // How long the pane must have been untouched before the forced flush is allowed
 // to fire. Comfortably longer than INJECT_QUIET_MS (2s), which is tuned to not
 // cut mid-WORD: this one has to clear a pause mid-COMPOSITION, and stopping to
@@ -2446,25 +2456,32 @@ function createSessionManager(deps) {
       // dictation, and `mode hold` is the deliberate stand-down verb.
       //
       // READ FIRST, so an already-tap file is left alone. The renderer owes a
-      // ~1s wait after a CHANGE, and writing unconditionally would put that
-      // delay on every tap he makes.
+      // ~1s wait whenever the CLI may not have caught up, and paying it on every
+      // tap would delay the common case for nothing.
       //
       // `effective`, not `mode`: with voice switched off the file still names
       // tap or hold beside the flag, and the tap has to turn voice back ON.
-      let changed = false;
       const cur = readVoiceMode();
       if (!cur || cur.effective !== 'tap') {
         const w = writeVoiceMode('tap');
         // Reported, not fatal: the mode it could not change may already suit,
         // so the tap is still worth routing.
-        if (w.ok) changed = true;
+        if (w.ok) this._lastVoiceModeWriteAt = Date.now();
         else log.warn('voice', `tap could not set mode: ${w.error}`);
       }
-      // `changed` rides the frame because only this side knows a write just
-      // happened: the renderer can read the mode but cannot tell a file that was
-      // always tap from one set a millisecond ago, and that is what decides
-      // whether it owes the wait.
-      this._sendToSession(name, 'voice-tap', name, changed);
+      // THE QUESTION IS "HAS THE CLI OBSERVED TAP YET", NOT "DID I JUST WRITE".
+      // Those differ for the tap that matters most: he says the phrase, sees
+      // nothing happen, and says it again. The second one reads a file the first
+      // already set to tap, so a did-I-write flag reports nothing to wait for
+      // and sends its byte under the mode the CLI is still on — the blink, back,
+      // on the repeat he made BECAUSE of the blink.
+      //
+      // So it is the age of the last write that decides, and any tap inside that
+      // window inherits the wait. The memo is the only state this needs, and it
+      // lives here because the renderer cannot see the write at all.
+      const settling = this._lastVoiceModeWriteAt
+        && (Date.now() - this._lastVoiceModeWriteAt) < VOICE_MODE_SETTLE_MS;
+      this._sendToSession(name, 'voice-tap', name, !!settling);
       return { ok: true, name };
     }
 
