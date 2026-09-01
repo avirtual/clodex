@@ -38,7 +38,12 @@ const PROCESSING_ROW = ' agents Voice: processing\u2026';
 // `indicatorUnreadable` throws from the ROW COUNT, which is the one thing the
 // indicator scan reads and the composer read does not — the only way to put the
 // watcher in "cannot see the recorder, can see the composer".
-function fakeTerminal({ rows = [''], type = 'normal', indicatorUnreadable = false } = {}) {
+//
+// `bufferThrows` throws from `buffer.active` itself, which is the OTHER unreadable
+// cause and reaches a different catch: `onNormalBuffer`'s, one level above the row
+// scan. The two produce the identical reading, so distinguishing them is exactly
+// what the cause below is for and no existing fixture reached this one.
+function fakeTerminal({ rows = [''], type = 'normal', indicatorUnreadable = false, bufferThrows = false } = {}) {
   const state = { rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)), type };
   const cursorIndex = () => {
     const marked = state.rows.findIndex((r) => r && r.cursor);
@@ -51,6 +56,7 @@ function fakeTerminal({ rows = [''], type = 'normal', indicatorUnreadable = fals
     },
     buffer: {
       get active() {
+        if (bufferThrows) throw new Error('cannot access dom');
         return {
           type: state.type,
           baseY: 0,
@@ -71,6 +77,7 @@ function fakeTerminal({ rows = [''], type = 'normal', indicatorUnreadable = fals
       },
     },
     onWriteParsed() { return { dispose() {} }; },
+    _state: state,
   };
 }
 
@@ -90,6 +97,7 @@ function harness({
   voiceMode = 'tap',
   trigger = ' ',
   indicatorUnreadable = false,
+  bufferThrows = false,
   // Null config AND no recorder scope is the out-of-scope seat. Both are
   // needed: `inScope` is their OR, so switching off only one still scans.
   config = { enabled: true, rearm: true, phrase: 'over and out' },
@@ -97,7 +105,8 @@ function harness({
 } = {}) {
   const writes = [];
   const env = { attention, voiceMode, trigger };
-  const watcher = createVoiceSubmitWatcher(fakeTerminal({ rows, type, indicatorUnreadable }), {
+  const term = fakeTerminal({ rows, type, indicatorUnreadable, bufferThrows });
+  const watcher = createVoiceSubmitWatcher(term, {
     getConfig: () => config,
     getAttention: () => env.attention,
     getVoiceMode: () => env.voiceMode,
@@ -110,7 +119,9 @@ function harness({
     write: (d) => writes.push(d),
   });
   live.push(watcher);
-  return { watcher, writes, env };
+  // The fake reads `type` off its own state on every access, so flipping it here
+  // moves the screen under a LIVE watcher — which is what the clearing case needs.
+  return { watcher, writes, env, setType: (t) => { term._state.type = t; } };
 }
 
 const tick = () => new Promise((res) => setTimeout(res, 12));
@@ -138,6 +149,54 @@ for (const [name, fixture, expected] of [
     assert.strictEqual(h.watcher.recorderReading(), expected);
   });
 }
+
+// ----------------------------------------------------------- the cause
+
+// THE POINT OF THE CAUSE: all three rows report the SAME reading, and that
+// collapse is the defect — one of them is a feature declining correctly and two
+// are broken scrapes. Each row carries its expected substring as a literal, so
+// the table can express the difference the reading cannot.
+//
+// The reading is asserted alongside on every row, because a cause that were only
+// reachable by changing the reading would be a second detector — the one thing
+// the popover's header forbids.
+for (const [name, fixture, expected] of [
+  ['the ALTERNATE buffer', { type: 'alternate' }, 'alternate screen buffer is active'],
+  ['a throw reading buffer.active', { bufferThrows: true }, 'reading terminal.buffer.active threw: cannot access dom'],
+  ['a throw in the ROW SCAN', { indicatorUnreadable: true }, 'scanning the indicator rows threw: screen unreadable'],
+]) {
+  test(`${name} is reported as its own cause, not as one label`, async () => {
+    const h = harness(fixture);
+    await tick();
+    assert.strictEqual(h.watcher.recorderReading(), 'unreadable',
+      'the reading must NOT move — every consumer and every gate keeps its answer');
+    assert.match(h.watcher.recorderCause(), new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+}
+
+// A cause left over from an earlier unreadable tick would describe a screen that
+// is now perfectly readable, which is worse than no cause at all: it is a stale
+// claim on a live surface.
+test('the cause CLEARS when the screen becomes readable again', async () => {
+  const rows = [{ text: EMPTY_COMPOSER, cursor: true }, { text: IDLE_ROW }];
+  const h = harness({ rows, type: 'alternate' });
+  await tick();
+  assert.strictEqual(h.watcher.recorderCause(), 'alternate screen buffer is active (a full-screen program is up)');
+  h.setType('normal');
+  await tick();
+  assert.strictEqual(h.watcher.recorderReading(), 'off');
+  assert.strictEqual(h.watcher.recorderCause(), null,
+    'a cause outliving its unreadable reading would describe a screen nobody is failing to read');
+});
+
+// The states that are not 'unreadable' have no cause to report, and inventing
+// one would make the popover print a reason for a screen it read fine.
+test('a READABLE screen reports no cause at all', async () => {
+  const h = harness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, REC_ROW] });
+  await tick();
+  assert.strictEqual(h.watcher.recorderReading(), 'lit');
+  assert.strictEqual(h.watcher.recorderCause(), null);
+});
 
 // NOT merely 'off'. The scan does not run on a seat nothing is looking at, so
 // there is no reading to report — and painting 'off' would be a claim that a

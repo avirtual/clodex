@@ -89,7 +89,7 @@ const RECORDER_STATES = {
   off: { cls: 'rec-off', text: 'Not recording', hint: 'Clodex sees no recorder running' },
 };
 
-function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffRecorder }) {
+function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder }) {
   const pop = document.getElementById('voice-popover');
   const body = document.getElementById('voice-popover-body');
   if (!pop || !body) return { actionHtml: () => '', closeVoicePopover() {}, openVoicePopover() {} };
@@ -102,10 +102,26 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     try { return getRecorderReading(); } catch { return 'out'; }
   }
 
+  // Read through the injected getter for the same reason, and it is the same
+  // read: the watcher samples the cause beside the reading on one poll, so this
+  // cannot report a cause from a tick the state above did not come from.
+  function cause() {
+    try { return (getRecorderCause && getRecorderCause()) || null; } catch { return null; }
+  }
+
+  // The cause moves while the reading does not — three causes share the one
+  // 'unreadable' state — so a repaint keyed on the state alone would leave the
+  // first cause on screen describing the second.
+  function readingKey() {
+    return `${reading()}|${cause() || ''}`;
+  }
+
   function recorderHtml() {
     const st = RECORDER_STATES[reading()];
     if (!st) return '';
-    return `<div class="rec-state ${st.cls}" data-rec title="${esc(st.hint)}">`
+    const c = cause();
+    const hint = c ? `${st.hint}. Cause: ${c}` : st.hint;
+    return `<div class="rec-state ${st.cls}" data-rec title="${esc(hint)}">`
       + '<span class="rec-dot"></span>'
       + `<span class="rec-text">${esc(st.text)}</span></div>`;
   }
@@ -118,7 +134,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
   let recTimer = null;
   let lastReading = null;
   function paintRecorder() {
-    const now = reading();
+    const now = readingKey();
     if (now === lastReading) return;
     lastReading = now;
     const host = body.querySelector('.rec-host');
@@ -172,7 +188,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
       + `<div class="rec-host">${recorderHtml()}</div>`
       + `<div class="cost-note">${note}</div>`
       + `<div class="speak-host">${speakHtml()}</div>`;
-    lastReading = reading();
+    lastReading = readingKey();
     // The settings read is async and the rows above are not: painting the shell
     // first and filling it on arrival keeps the picker instant, and a failed
     // read simply leaves the section absent rather than blocking the popover.
@@ -244,7 +260,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     // reading needs a tick of its own — and closing must take it back, or a
     // dismissed popover keeps polling for the life of the window.
     stopRecorderTick();
-    lastReading = reading();
+    lastReading = readingKey();
     recTimer = setInterval(paintRecorder, RECORDER_TICK_MS);
     const w = pop.offsetWidth;
     pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;

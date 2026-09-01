@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **"Cannot read the screen" now says WHY.** The voice popover's unreadable
+  reading covered three different situations with one sentence: a full-screen
+  program legitimately covering the composer, and two separate ways the screen
+  read can break. The first is normal and clears itself; the other two mean the
+  feature is dead until you restart the session, and there was no way to tell
+  which one you had. The reading now carries the cause in its tooltip, and the
+  scripted voice tap — which fails at the same read, writing nothing and saying
+  nothing — logs the cause to the console instead of declining silently. What
+  Clodex will and will not write is unchanged.
+
 - **Hands-free voice submit now ends the recording as it sends, instead of
   leaving the mic lit.** When you finish a spoken message with the submit
   phrase, Clodex sends it with your push-to-talk key rather than a plain Enter.
