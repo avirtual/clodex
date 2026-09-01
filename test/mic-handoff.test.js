@@ -183,16 +183,30 @@ test('THE POLARITY: a seat that loses the microphone while DARK is not written t
     'a byte on a dark recorder arms the background seat — the failure inverted');
 });
 
-// The key stops AND SUBMITS beside a lit indicator, so a draft he never asked
-// to send would go to an agent as he switches away from it. Inherited from
-// tapOff rather than restated, which is the reason the stop reuses it.
-test('a LIT recorder over a draft is left alone — the stop would SEND it', () => {
+// THE RESIDUAL, and this case pins its PRICE rather than a safe outcome: the
+// recorder is NOT stopped here and goes on streaming until the CLI's ~15s
+// auto-finish. What the decline buys is only that the draft is not SENT — the
+// key stops AND SUBMITS beside a lit indicator, so a half-written message would
+// go to an agent as he switches away from it.
+//
+// Whether this is a corner or the MODAL path is an open question this suite
+// cannot settle: if the CLI paints interim transcript into the composer while
+// recording, the composer is non-empty exactly when a select arrives, and the
+// stop declines in the case it was written for. See the ticket journal.
+test('a LIT recorder over a draft keeps recording — the stop would SEND the draft', async () => {
   const h = windowWith({
     A: { rows: [{ text: DRAFT_COMPOSER, cursor: true }, REC_ROW] },
     B: { rows: [{ text: EMPTY_COMPOSER, cursor: true }, IDLE_ROW] },
   }, { initial: 'A' });
+  await tick();
+  // ENTER: lit, so the decline below is the COMPOSER rule and not an unlit
+  // fixture. Without this the case passes on a screen where nothing was
+  // recording, and it would then defend the residual against a future fix.
+  assert.strictEqual(h.watchers.get('A').recorderReading(), 'lit',
+    'ENTER: the recorder is genuinely running, so only the composer can decline');
   h.onMicTarget('B');
-  assert.deepStrictEqual(h.bytes('A'), [], 'his unsent draft was not submitted on his way out');
+  assert.deepStrictEqual(h.bytes('A'), [],
+    'not stopped — what is pinned is that his unsent draft was not SENT, not that this is safe');
 });
 
 // A seat in ANOTHER window resolves to no watcher here. Each window runs this
@@ -205,6 +219,12 @@ test('a loser this window does not hold is a silent no-op', () => {
   h.onMicTarget('B');
   assert.strictEqual(h.mirror.read(), 'B', 'the mirror still moved');
   assert.deepStrictEqual(h.bytes('B'), []);
+  // The byte check alone would read identically if `watcherFor` had THROWN on
+  // every lookup — the catch swallows it and nothing writes either way. This
+  // says the seat this window does hold was reached and declined to stop, which
+  // is the intended path rather than the absence of any path.
+  assert.strictEqual(h.watchers.get('B').offTapCount(), 0,
+    'B was resolvable here; it is the LOSER that was not, and no stop was attempted on it');
 });
 
 // The microphone RELEASED, not handed on — main broadcasts null. The loser is

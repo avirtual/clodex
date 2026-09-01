@@ -29,9 +29,13 @@ function createMicHandoff({ mirror, watcherFor }) {
     if (!w || typeof w.tapOff !== 'function') return false;
     // ENSURE-OFF, reused rather than reimplemented: it already owns the rule
     // that only a LIT recorder is written to, and that an unreadable screen or
-    // a non-empty composer writes nothing. A stop open-coded here would be the
-    // fifth writer of the trigger byte and would have to re-derive that
-    // polarity — which is how this subsystem's inverted-write bugs started.
+    // a non-empty composer writes nothing.
+    //
+    // WHAT THE REUSE COSTS, since the gain is the obvious half: its composer
+    // rule declines here too, so a seat holding un-sent text is NOT stopped and
+    // records on to the CLI's own timeout. Bought deliberately — the key that
+    // stops the recorder also SENDS that text — but it is a real gap, and
+    // whether it is the common case is unmeasured.
     try { return w.tapOff() === true; } catch { return false; }
   };
 }
