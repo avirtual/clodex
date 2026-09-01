@@ -165,7 +165,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     }).join('');
     const note = snap.pending
       ? `Switching to ${esc(snap.pending)}…`
-      : 'One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.';
+      : 'One setting for every Claude session on this machine.';
     // The reading rides in its own host node so the tick can replace it without
     // touching the picker rows around it.
     body.innerHTML = `<div class="voice-rows">${rows}</div>`

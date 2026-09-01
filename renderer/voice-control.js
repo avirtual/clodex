@@ -151,8 +151,7 @@ function createVoiceCore({ sessionList, showToast }) {
   // `anyClaudeRow` is a function of the session ROWS, and the core owns that
   // watch rather than being re-rendered from a call site in renderer.js: a
   // session can die with no focus change and no user action (a PTY exit needs
-  // neither), and the surfaces' note about sessions on this box would then
-  // describe a sidebar that has changed underneath it.
+  // neither), so nothing else would emit.
   const observer = new MutationObserver(() => emit());
 
   // REFCOUNTED because the two surfaces have different lifetimes: Preferences

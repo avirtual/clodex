@@ -213,9 +213,10 @@ bundle), whose packaged form is the Docker image under
   (Bedrock / Vertex) the wire tee cannot see.
 - **voice-settings.js** — the box-wide voice-input mode the Claude CLI persists
   in `~/.claude/settings.json` (`voice.mode` / `voice.enabled`), behind the
-  Preferences voice selector, and the WRITE behind the `mode` voice verb
-  (`writeVoiceMode` mirrors the CLI's own `/voice` handler: read-modify-write
-  preserving unrelated keys, `enabled: true`, atomic). A running CLI does pick
+  Preferences voice selector, and the WRITE behind the `mode` voice verb and
+  both voice-mode UI surfaces (`writeVoiceMode` mirrors the CLI's own `/voice`
+  handler: read-modify-write preserving unrelated keys, atomic, with `enabled`
+  tracking the mode — `off` clears it and leaves `mode` alone). A running CLI does pick
   up an external write — it reads the mode through a live selector and watches
   the settings directory. The legacy `voiceEnabled` sibling is reported and
   never merged.
@@ -739,10 +740,9 @@ Own state + DOM, `init*(deps)`:
   exactly one copy, and keeping the core DOM-free is what lets
   `test/voice-core.test.js` pin it with no jsdom. `start`/`stop` are REFCOUNTED:
   the bar holds for the window's life, Preferences only while its dialog is
-  open. The Preferences row is never hidden, only disabled when there is no
-  session to inject into (a row that vanishes from a settings dialog reads as a
-  missing feature); the bar button is absent outright for a non-Claude seat,
-  since Codex has no `/voice`.
+  open. The Preferences row is never hidden and never disabled — the file is
+  writable with no session open; the bar button is absent outright for a
+  non-Claude seat, since Codex has no `/voice`.
 - **voice-submit-watcher.js** + **lib/voice-submit.js** — hands-free submit: one
   watcher per local Claude terminal sends Enter when the composer ENDS with the
   configured trigger phrase. The composer is read from `terminal.buffer.active`

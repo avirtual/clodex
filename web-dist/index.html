@@ -27426,7 +27426,7 @@ helper=${d.helperPath}`;
             const mark = i.mode === mode ? "\u25CF" : "\u25CB";
             return `<div class="voice-row${on}" data-mode="${i.mode}"><span class="voice-row-mark">${mark}</span><span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span><span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
           }).join("");
-          const note = snap.pending ? `Switching to ${esc(snap.pending)}\u2026` : "One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.";
+          const note = snap.pending ? `Switching to ${esc(snap.pending)}\u2026` : "One setting for every Claude session on this machine.";
           body.innerHTML = `<div class="voice-rows">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
           lastReading = reading();
           refreshSpeakSection();
