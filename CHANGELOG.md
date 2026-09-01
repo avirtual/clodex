@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **The spoken tap now works whatever voice mode you left the CLI in.** In
+  `hold` it used to start a recording that stopped itself before you could
+  speak, so you had to say `mode tap` first and tap again — two phrases, and no
+  way to see from across the room which mode you were in. The tap sets the mode
+  itself now and waits for the CLI to notice before sending the key. It does not
+  put the mode back afterwards: `mode hold` is still how you stand it down.
+
 - **`clodex-voice-tap` now takes named actions, not just a seat.**
   `clodex-voice-tap.js select <seat>` switches to that seat — always bringing
   its workspace window to the front, including when Clodex is already the app
