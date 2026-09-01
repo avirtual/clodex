@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **Bundled wirescope updated to v0.6.57**, which corrects two prices in its own
+  table. Fable 5.1 breaks the cached-read multiplier every other model follows,
+  so its reads were being costed at four times the real rate; and a rate rise
+  for Sonnet 5 that was announced, dated and then withdrawn had been left in
+  place, overstating every Sonnet 5 receipt by half again. Both are estimation
+  only — nobody was charged anything, but the cost figures Clodex showed for
+  those models were wrong. It also reads usage off a non-streaming response,
+  which previously went uncounted.
+
 - **A dictated message ending in the trigger phrase is sent again.** On the tap
   path the trigger key stopped the recorder but submitted nothing, so a spoken
   phrase was erased and the message left sitting in the composer. The CLI's own

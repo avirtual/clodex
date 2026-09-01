@@ -1101,13 +1101,20 @@ def _block_label(b):
 def _system_label(sb, i):
     """Tag a system[i] block: the standard layout is [0]=billing header,
     [1]='You are Claude Code' (tools+preamble marker), [2]=the harness/system
-    prompt. Fall back to the block's first line."""
+    prompt. Fall back to the block's first line.
+
+    The billing header is marked OUT-OF-BAND: it precedes every cache_control
+    marker and is excluded from the hashed prefix by the server and by our own
+    fingerprints alike (warmth._stable_sys_text). Naming it `system[0]` with no
+    qualifier implied it led the cached prefix, which made a cc_version bump
+    look like a bust cause — it isn't (wire-proven 2026-08-26: 17/17 requests
+    hit cache across a version change while the TTL was still live)."""
     if not (0 <= i < len(sb)) or not isinstance(sb[i], dict):
         return f"system[{i}]"
     t = sb[i].get("text") or ""
     head = t.strip().splitlines()[0][:48] if t.strip() else ""
     if _is_billing_block(sb[i]):
-        return f"system[{i}] billing-header"
+        return f"system[{i}] billing-header (out-of-band, not cached)"
     return f"system[{i}] {head}".rstrip()
 
 

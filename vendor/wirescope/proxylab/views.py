@@ -97,6 +97,10 @@ tr:nth-child(even) td{background:#191c21}
 .bad{color:#e06c75}.warn{color:#e5c07b}.dim{color:#69707d}
 .badge{border:1px solid #2a2e36;border-radius:3px;padding:0 .35em;margin-right:.3em}
 .on{color:#7ec699}.off{color:#69707d}
+/* out-of-band block: present on the wire, ahead of every cache marker and
+   absent from the hashed prefix — dimmed + dashed so it reads as "not part of
+   the cached prefix" rather than as the prefix's first element. */
+.oob{opacity:.62;border-left:2px dashed #2a2e36}
 .subagent{color:#c8a0e0;font-size:12px}.subagent a{color:#c8a0e0;text-decoration:underline}
 code{color:#9aa3b2}
 """
@@ -1444,6 +1448,7 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
         # tools -> system -> messages; _prefix_tokens priced each one against
         # this turn's receipt, so `cal["cum"][n]` is the prefix that divider
         # closes (and the LAST one is measured, not estimated).
+        from proxylab import report as report_mod        # lazy: avoid import cycle
         mark_n = 0
         if tools:
             trs = "".join(
@@ -1470,6 +1475,22 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                      if cc else "")
             heads = _MD_HEADING_RE.findall(txt)
             hl = " · ".join(e(h.lstrip("# ")) for h in heads[:12])
+            # The billing header is OUT-OF-BAND: it sits ahead of every cache
+            # marker and is excluded from the hashed prefix (server-side AND from
+            # our own fingerprints — warmth._stable_sys_text drops it). Labelling
+            # it `system[0]` like any other block implied it led the cached
+            # prefix, so a version bump read as a bust cause; wire-proven
+            # otherwise 2026-08-26 (17/17 cache hits across a cc_version change
+            # under a live TTL). Say so in the row.
+            if report_mod._is_billing_block(b):
+                sb.append(f'<div class="blk sysb oob">'
+                          f'<span class="sz">{len(txt):,} ch</span>'
+                          f'<span class="role">system[{i}]</span> '
+                          f'<span class="badge off">out-of-band · not cached</span> '
+                          f'<span class="dim">billing header — excluded from the '
+                          f'cache key, a version bump does not bust</span>'
+                          f'{_prevu(txt, cap=160)}</div>')
+                continue
             sb.append(f'<div class="blk sysb"><span class="sz">{len(txt):,} ch</span>'
                       f'<span class="role">system[{i}]</span> {badge} '
                       f'<span class="dim">{hl}</span>{_prevu(txt, cap=160)}</div>')
