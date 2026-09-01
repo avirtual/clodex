@@ -23997,6 +23997,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let lastLitAt = 0;
         let marks = 0;
         let reading = "out";
+        let readingCause = null;
         let pending = null;
         let pendingAt = 0;
         let committed = null;
@@ -24011,10 +24012,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let lastWriteAt = 0;
         let rearmDeadline = 0;
         let speechDeferredSince = 0;
+        let unreadable = null;
+        function why(e) {
+          try {
+            return e && e.message || String(e);
+          } catch {
+            return "unknown";
+          }
+        }
         function onNormalBuffer() {
           try {
-            return terminal.buffer.active.type === "normal";
-          } catch {
+            if (terminal.buffer.active.type === "normal") return true;
+            unreadable = "alternate screen buffer is active (a full-screen program is up)";
+            return false;
+          } catch (e) {
+            unreadable = `reading terminal.buffer.active threw: ${why(e)}`;
             return false;
           }
         }
@@ -24034,8 +24046,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
               const line = buf.getLine(buf.baseY + y);
               if (line) out.push(line.translateToString(true));
             }
+            unreadable = null;
             return out;
-          } catch {
+          } catch (e) {
+            unreadable = `scanning the indicator rows threw: ${why(e)}`;
             return null;
           }
         }
@@ -24132,6 +24146,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           else if (observed) reading = "lit";
           else if (recorderBlocksRearm(indRows)) reading = "busy";
           else reading = "off";
+          readingCause = reading === "unreadable" ? unreadable : null;
           if (observed && noteVoiceRecording) {
             try {
               noteVoiceRecording();
@@ -24329,7 +24344,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (attention === "permission") return false;
           if (lastTriggerWriteAt && now() - lastTriggerWriteAt < STOP_SETTLE_MS) return false;
           const rows = indicatorRows();
-          if (!Array.isArray(rows)) return false;
+          if (!Array.isArray(rows)) {
+            try {
+              console.warn("[voice] external tap declined \u2014 cannot read the screen:", unreadable);
+            } catch {
+            }
+            return false;
+          }
           if (recorderBlocksRearm(rows)) return false;
           if (!composerIsEmpty(cursorRow())) return false;
           if (!tapTrigger()) return false;
@@ -24399,6 +24420,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           // display must report what the gates last saw, and a fresh read on every
           // paint could answer differently from the decision it is describing.
           recorderReading: () => reading,
+          // Beside the reading and from the same poll, never a scan of its own, for
+          // the reason above it.
+          recorderCause: () => readingCause,
           fireCount: () => fires,
           keySubmitCount: () => keySubmits,
           rearmCount: () => rearms,
@@ -27407,7 +27431,7 @@ helper=${d.helperPath}`;
         unreadable: { cls: "rec-unreadable", text: "Cannot read the screen", hint: "Clodex cannot see the indicator, so it will not write \u2014 a re-arm is blocked while this shows" },
         off: { cls: "rec-off", text: "Not recording", hint: "Clodex sees no recorder running" }
       };
-      function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffRecorder }) {
+      function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder }) {
         const pop = document.getElementById("voice-popover");
         const body = document.getElementById("voice-popover-body");
         if (!pop || !body) return { actionHtml: () => "", closeVoicePopover() {
@@ -27420,15 +27444,27 @@ helper=${d.helperPath}`;
             return "out";
           }
         }
+        function cause() {
+          try {
+            return getRecorderCause && getRecorderCause() || null;
+          } catch {
+            return null;
+          }
+        }
+        function readingKey() {
+          return `${reading()}|${cause() || ""}`;
+        }
         function recorderHtml() {
           const st = RECORDER_STATES[reading()];
           if (!st) return "";
-          return `<div class="rec-state ${st.cls}" data-rec title="${esc(st.hint)}"><span class="rec-dot"></span><span class="rec-text">${esc(st.text)}</span></div>`;
+          const c = cause();
+          const hint = c ? `${st.hint}. Cause: ${c}` : st.hint;
+          return `<div class="rec-state ${st.cls}" data-rec title="${esc(hint)}"><span class="rec-dot"></span><span class="rec-text">${esc(st.text)}</span></div>`;
         }
         let recTimer = null;
         let lastReading = null;
         function paintRecorder() {
-          const now = reading();
+          const now = readingKey();
           if (now === lastReading) return;
           lastReading = now;
           const host = body.querySelector(".rec-host");
@@ -27464,7 +27500,7 @@ helper=${d.helperPath}`;
           }).join("");
           const note = snap.pending ? `Switching to ${esc(snap.pending)}\u2026` : "One setting for every Claude session on this machine.";
           body.innerHTML = `<div class="voice-rows">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
-          lastReading = reading();
+          lastReading = readingKey();
           refreshSpeakSection();
         }
         let speak = null;
@@ -27496,7 +27532,7 @@ helper=${d.helperPath}`;
           renderRows();
           pop.classList.remove("hidden");
           stopRecorderTick();
-          lastReading = reading();
+          lastReading = readingKey();
           recTimer = setInterval(paintRecorder, RECORDER_TICK_MS);
           const w = pop.offsetWidth;
           pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
@@ -35550,6 +35586,10 @@ Click for live activity`;
         getRecorderReading: () => {
           const vs = activeVoiceSubmit();
           return vs ? vs.recorderReading() : "out";
+        },
+        getRecorderCause: () => {
+          const vs = activeVoiceSubmit();
+          return vs ? vs.recorderCause() : null;
         },
         tapOffRecorder: () => {
           const vs = activeVoiceSubmit();

@@ -454,6 +454,8 @@ function createVoiceSubmitWatcher(terminal, {
   // scan does not run then — reporting 'off' there would claim a dark recorder
   // was measured on a seat nothing looked at.
   let reading = 'out';
+  // The cause behind an 'unreadable' reading, null for every other state.
+  let readingCause = null;
 
   // The composition half's own state. `pending` is the composed text as of the
   // last sample and `pendingAt` when it last CHANGED, which together are the
@@ -503,6 +505,28 @@ function createVoiceSubmitWatcher(terminal, {
   // When the CURRENT speech deferral began, or 0 when not deferring.
   let speechDeferredSince = 0;
 
+  // WHY the last indicator read produced nothing, captured at the catch that
+  // discards it. Three distinct causes paint one label on screen, and two of
+  // them are defects, so without this nobody can tell the feature declining
+  // correctly on a full-screen program from a scrape that is broken.
+  //
+  // REPORTING ONLY. No gate reads it, and the polarities it sits beside are
+  // load-bearing: `recorderBlocksRearm(null)` stays true, `recordingObserved(null)`
+  // stays false, whatever this says.
+  //
+  // Written by `onNormalBuffer` and by `indicatorRows`, so it is meaningful only
+  // immediately after an `indicatorRows()` call — the composer and cursor reads
+  // share the guard and overwrite it. `pollComposition` samples it beside the
+  // `reading` it belongs to, which is what stops the two describing different
+  // ticks.
+  let unreadable = null;
+
+  // A non-Error throw has no `.message`, which would report the cause as
+  // "threw: undefined" — the exact uninformative string this exists to replace.
+  function why(e) {
+    try { return (e && e.message) || String(e); } catch { return 'unknown'; }
+  }
+
   // The cursor row alone, truncated at the cursor column. The phrase ends the
   // utterance, so it is on the row the cursor is on even when the draft wrapped.
   // While the alternate buffer is active it IS buffer.active — a full-screen
@@ -512,7 +536,14 @@ function createVoiceSubmitWatcher(terminal, {
   // half never reads the buffer, so it would inherit no decline from a check
   // that lives in the buffer read.
   function onNormalBuffer() {
-    try { return terminal.buffer.active.type === 'normal'; } catch { return false; }
+    try {
+      if (terminal.buffer.active.type === 'normal') return true;
+      unreadable = 'alternate screen buffer is active (a full-screen program is up)';
+      return false;
+    } catch (e) {
+      unreadable = `reading terminal.buffer.active threw: ${why(e)}`;
+      return false;
+    }
   }
 
   function cursorRow() {
@@ -543,8 +574,12 @@ function createVoiceSubmitWatcher(terminal, {
         const line = buf.getLine(buf.baseY + y);
         if (line) out.push(line.translateToString(true));
       }
+      unreadable = null;
       return out;
-    } catch { return null; }
+    } catch (e) {
+      unreadable = `scanning the indicator rows threw: ${why(e)}`;
+      return null;
+    }
   }
 
   // The composer rows ending at the CURSOR's row, top→bottom, each read WHOLE.
@@ -714,6 +749,11 @@ function createVoiceSubmitWatcher(terminal, {
     else if (observed) reading = 'lit';
     else if (recorderBlocksRearm(indRows)) reading = 'busy';
     else reading = 'off';
+    // Sampled from the read above rather than asked for separately: a cause
+    // fetched by a second scrape could describe a different tick than the
+    // reading it is printed beside, which is the disagreement this whole
+    // surface exists to expose rather than to manufacture.
+    readingCause = reading === 'unreadable' ? unreadable : null;
     // Reported on the LEVEL, every poll it stays lit, because main expires the
     // stamp rather than waiting for an off. Before the bail for the reason
     // above: this is the operator's protection from being spliced mid-sentence,
@@ -1104,14 +1144,20 @@ function createVoiceSubmitWatcher(terminal, {
     if (lastTriggerWriteAt && (now() - lastTriggerWriteAt) < STOP_SETTLE_MS) return false;
 
     const rows = indicatorRows();
-    // REDUNDANT TODAY AND KEPT ON PURPOSE: `recorderBlocksRearm(null)` is true,
-    // so the line below already declines here and DELETING THIS LEAVES THE
-    // SUITE GREEN. It stays because it states the polarity rule where the
-    // decision is made rather than one file away, and because it is the defence
-    // if that predicate is ever swapped for one whose null answers the other
-    // way. Unpinned by construction — no fixture where the two predicates
-    // disagree exists, and inventing one would pin an unreachable state.
-    if (!Array.isArray(rows)) return false;      // unreadable: never write
+    // THE SCRIPT TAP DIES HERE, silently, and that is what the report is for.
+    // The gate below would decline anyway — `recorderBlocksRearm(null)` is true
+    // — so declining is not this branch's job; being AUDIBLE is. This path
+    // writes nothing and opens no surface, so a broken scrape leaves
+    // `scripts/clodex-voice-tap.js` simply dead for an operator who has no
+    // reason to open the popover.
+    //
+    // It also states the polarity rule where the decision is made rather than
+    // one file away, and is the defence if that predicate is ever swapped for
+    // one whose null answers the other way.
+    if (!Array.isArray(rows)) {
+      try { console.warn('[voice] external tap declined — cannot read the screen:', unreadable); } catch {}
+      return false;      // unreadable: never write
+    }
     // BUSY, not merely lit — two reasons, and the second is not obvious from
     // here. A lit recorder means ensure-on is already met. But the CLI REPLACES
     // the lit indicator with `Voice: processing…` rather than adding to it, and
@@ -1293,6 +1339,9 @@ function createVoiceSubmitWatcher(terminal, {
     // display must report what the gates last saw, and a fresh read on every
     // paint could answer differently from the decision it is describing.
     recorderReading: () => reading,
+    // Beside the reading and from the same poll, never a scan of its own, for
+    // the reason above it.
+    recorderCause: () => readingCause,
     fireCount: () => fires,
     keySubmitCount: () => keySubmits,
     rearmCount: () => rearms,

@@ -3726,6 +3726,10 @@ const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
     const vs = activeVoiceSubmit();
     return vs ? vs.recorderReading() : 'out';
   },
+  getRecorderCause: () => {
+    const vs = activeVoiceSubmit();
+    return vs ? vs.recorderCause() : null;
+  },
   tapOffRecorder: () => {
     const vs = activeVoiceSubmit();
     return vs ? vs.tapOff() : false;
