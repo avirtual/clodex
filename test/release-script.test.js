@@ -107,7 +107,7 @@ test('release preflight: rejects BEHIND, permits AHEAD', () => {
     'the old equality check is back: it cannot tell "ahead" (fine) from "behind" (unsafe)');
 });
 
-// Quiet mode (t608). A release run through clodex-monitor injected every printed
+// Quiet mode. A release run through clodex-monitor injected every printed
 // line as a separate message — each one an API round trip — so the script gained
 // a mode that keeps milestones on stdout and routes the verbose middle to a log.
 // These pin the SHAPE of that routing, since the script itself runs only at ship
