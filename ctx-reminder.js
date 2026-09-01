@@ -71,7 +71,8 @@ const CTX_ESCALATE_MIN_GAP = 25_000;
 // SILENTLY when it does. Here the
 // grammar is anchored and the lookup is exact equality on its output, so a rule
 // is structurally incapable of matching a model another rule owns: two ids share
-// thresholds only when they reduce to the same family string.
+// thresholds only when they reduce to the same family string, and the reduction
+// keeps every component the vendor prices separately.
 function modelFamily(modelId) {
   if (!modelId) return null;
   const id = String(modelId).trim().toLowerCase()
@@ -79,8 +80,16 @@ function modelFamily(modelId) {
     .replace(/\[1m\]$/, '')
     // Bedrock/Vertex qualify the id with a routing prefix ("us.anthropic.").
     .replace(/^.*claude-/, 'claude-');
-  const m = /^claude-([a-z]+)-(\d+)(?:-\d+)*(?:-v\d+(?::\d+)?|@\d+)?$/.exec(id);
-  return m ? `${m[1]}-${m[2]}` : null;
+  // The MINOR version is kept, because it is the axis this vendor's prices move
+  // on: claude-fable-5-1 reads at a quarter of claude-fable-5's rate, so a
+  // grammar that folded them together could not express the one difference the
+  // per-model table exists for. A release date and a routing version are dropped
+  // instead — those name a build, not an economic difference, and keeping them
+  // would fragment one model across every date it ever shipped under. The two
+  // are told apart by width: a date is 8 digits, a version component is 1-3.
+  const m = /^claude-([a-z]+)-(\d{1,3})(?:-(\d{1,3}))?(?:-\d{8})?(?:-v\d+(?::\d+)?|@\d+)?$/.exec(id);
+  if (!m) return null;
+  return m[3] ? `${m[1]}-${m[2]}-${m[3]}` : `${m[1]}-${m[2]}`;
 }
 
 // Coerce one persisted {nudge, escalate} pair, or null if unusable.
@@ -108,7 +117,7 @@ function sanitizeCtxThresholds(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out = {};
   for (const key of Object.keys(raw)) {
-    if (key !== 'default' && !/^[a-z]+-\d+$/.test(key)) continue;
+    if (key !== 'default' && !/^[a-z]+-\d{1,3}(?:-\d{1,3})?$/.test(key)) continue;
     const pair = sanitizeThresholdPair(raw[key]);
     if (pair) out[key] = pair;
   }

@@ -132,19 +132,32 @@ test('invariant 4: a real settings file lacking the key resolves to the shipped 
 // modelFamily would make every row true by construction and leave the table
 // unable to express the exception it exists to catch.
 const FAMILY_CASES = [
+  // The pair this ticket exists for. Their cached-read prices differ 4x
+  // (wire/billing.js), so folding them together would make the table unable to
+  // express the only case it was built for.
+  ['claude-fable-5-1', 'fable-5-1'],
   ['claude-fable-5', 'fable-5'],
-  ['claude-fable-5-1', 'fable-5'],
+  // A release date names a build, not an economic difference: it is dropped, so
+  // one model does not fragment across every date it shipped under.
+  ['claude-fable-5-1-20260901', 'fable-5-1'],
+  ['claude-fable-5-20260601', 'fable-5'],
+  // The normalisations that must survive the minor version being kept.
+  ['claude-fable-5-1[1m]', 'fable-5-1'],
   ['claude-fable-5[1m]', 'fable-5'],
-  ['CLAUDE-FABLE-5-1', 'fable-5'],
-  ['us.anthropic.claude-fable-5-1-v1:0', 'fable-5'],
+  ['CLAUDE-FABLE-5-1', 'fable-5-1'],
+  ['us.anthropic.claude-fable-5-1-v1:0', 'fable-5-1'],
+  ['claude-fable-5-1@20260901', 'fable-5-1'],
   ['claude-fable-6', 'fable-6'],
   ['claude-fable-51', 'fable-51'],
   ['claude-opus-5', 'opus-5'],
-  ['claude-opus-4-1', 'opus-4'],
-  ['us.anthropic.claude-sonnet-4-6', 'sonnet-4'],
+  ['claude-opus-4-1', 'opus-4-1'],
+  ['claude-opus-4-1-20250805', 'opus-4-1'],
+  ['us.anthropic.claude-sonnet-4-6', 'sonnet-4-6'],
   ['claude-sonnet-5', 'sonnet-5'],
-  ['claude-haiku-4-5', 'haiku-4'],
+  ['claude-haiku-4-5', 'haiku-4-5'],
+  ['claude-haiku-4-5-20251001', 'haiku-4-5'],
   ['claude-3-5-sonnet-20241022', null],
+  ['claude-sonnet-5-introductory-pricing', null],
   ['gpt-5-codex', null],
   ['', null],
   [null, null],
@@ -163,14 +176,17 @@ test('modelFamily: each id reduces to the family literal its row names', () => {
 // to be violated over. Values are spaced far apart and are literals: if an id
 // reached a row it does not own, the nudge it gets identifies WHICH row.
 const FIXTURE_TABLE = {
-  'fable-5': { nudge: 250_000, escalate: 310_000 },
+  // The row pair that would have caught the collapse: if 5.0 ever reached 5.1's
+  // row (or the reverse), the nudge it comes back with names WHICH row leaked.
+  'fable-5-1': { nudge: 250_000, escalate: 310_000 },
+  'fable-5': { nudge: 500_000, escalate: 600_000 },
   'fable-6': { nudge: 260_000, escalate: 320_000 },
   'fable-51': { nudge: 270_000, escalate: 330_000 },
   'opus-5': { nudge: 280_000, escalate: 340_000 },
-  'opus-4': { nudge: 290_000, escalate: 350_000 },
-  'sonnet-4': { nudge: 300_000, escalate: 360_000 },
+  'opus-4-1': { nudge: 290_000, escalate: 350_000 },
+  'sonnet-4-6': { nudge: 300_000, escalate: 360_000 },
   'sonnet-5': { nudge: 310_000, escalate: 370_000 },
-  'haiku-4': { nudge: 320_000, escalate: 380_000 },
+  'haiku-4-5': { nudge: 320_000, escalate: 380_000 },
 };
 
 test('invariant 3: no model id reaches a row belonging to another family', () => {
@@ -203,11 +219,11 @@ test('invariant 3: no model id reaches a row belonging to another family', () =>
 test('the per-model mechanism works even though no model differs by default', () => {
   assert.strictEqual(CTX_MODEL_THRESHOLDS.size, 0,
     'no differentiated row ships: the >200k surcharge question is unanswered');
-  assert.ok(!CTX_MODEL_THRESHOLDS.has('fable-5'), 'fable in particular is at the baseline');
+  assert.ok(!CTX_MODEL_THRESHOLDS.has('fable-5-1'), 'fable 5.1 in particular is at the baseline');
 
   const restore = new Map(CTX_MODEL_THRESHOLDS);
   try {
-    CTX_MODEL_THRESHOLDS.set('fable-5', { nudge: 250_000, escalate: 310_000 });
+    CTX_MODEL_THRESHOLDS.set('fable-5-1', { nudge: 250_000, escalate: 310_000 });
     const fable = ctxThresholdsFor('claude-fable-5-1', {});
     assert.strictEqual(fable.source, 'builtin-model');
     assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate },
@@ -221,7 +237,7 @@ test('the per-model mechanism works even though no model differs by default', ()
     assert.strictEqual(opus.source, 'builtin-default');
     assert.ok(ctxReminderFor(210_000, opus), 'opus still nudges at the baseline');
     // A settings row still outranks a shipped one.
-    const over = ctxThresholdsFor('claude-fable-5-1', { 'fable-5': { nudge: 400_000, escalate: 500_000 } });
+    const over = ctxThresholdsFor('claude-fable-5-1', { 'fable-5-1': { nudge: 400_000, escalate: 500_000 } });
     assert.strictEqual(over.source, 'settings-model');
     assert.strictEqual(over.nudge, 400_000);
   } finally {
@@ -229,6 +245,56 @@ test('the per-model mechanism works even though no model differs by default', ()
     for (const [k, v] of restore) CTX_MODEL_THRESHOLDS.set(k, v);
   }
   assert.strictEqual(CTX_MODEL_THRESHOLDS.size, 0, 'the fixture row is not left behind');
+});
+
+// The defect this file exists to prevent, stated over the SHIPPED price table
+// rather than as a case: any two ids the vendor prices differently must be
+// independently addressable, or the per-model table cannot express the
+// difference that justifies a per-model threshold in the first place. Driven off
+// wire/billing.js so a future price split fails HERE rather than silently
+// inheriting a neighbour's thresholds.
+test('invariant 3: two models with different shipped prices never share a family', () => {
+  const { PRICES } = require('../wire/billing');
+  const ids = Object.keys(PRICES).filter((id) => modelFamily(id));
+  // ENTER: the property is vacuous if the grammar rejects every priced id, and
+  // it must actually cover the pair the reviewer caught.
+  assert.ok(ids.length >= 5, 'the price table must contribute ids the grammar accepts');
+  assert.ok(ids.includes('claude-fable-5-1') && ids.includes('claude-fable-5'),
+    'the 4x cached-read split is the case this property is for');
+
+  const byFamily = new Map();
+  for (const id of ids) {
+    const fam = modelFamily(id);
+    if (!byFamily.has(fam)) byFamily.set(fam, []);
+    byFamily.get(fam).push(id);
+  }
+  for (const [fam, sharing] of byFamily) {
+    if (sharing.length < 2) continue;
+    const [first, ...rest] = sharing;
+    for (const other of rest) {
+      assert.deepStrictEqual(PRICES[other], PRICES[first],
+        `${other} and ${first} both reduce to "${fam}" but are priced differently — `
+        + 'one row would silently govern both');
+    }
+  }
+
+  // The specific collapse, named: these two differ 4x on cached reads.
+  assert.notStrictEqual(PRICES['claude-fable-5-1'].cache_read, PRICES['claude-fable-5'].cache_read);
+  assert.notStrictEqual(modelFamily('claude-fable-5-1'), modelFamily('claude-fable-5'));
+});
+
+test('a threshold set for fable-5-1 does not move fable-5', () => {
+  const ov = { 'fable-5-1': { nudge: 250_000, escalate: 310_000 } };
+  const newer = ctxThresholdsFor('claude-fable-5-1', ov);
+  const older = ctxThresholdsFor('claude-fable-5', ov);
+  assert.strictEqual(newer.source, 'settings-model');
+  assert.deepStrictEqual({ nudge: newer.nudge, escalate: newer.escalate },
+    { nudge: 250_000, escalate: 310_000 });
+  assert.strictEqual(older.source, 'builtin-default', 'fable 5.0 owns no row and must not inherit one');
+  assert.strictEqual(older.nudge, CTX_REMINDER_NUDGE_TOKENS);
+  // And the decision acts on the split, not merely reports it.
+  assert.strictEqual(ctxReminderFor(210_000, newer), null, '5.1 defers past the baseline');
+  assert.ok(ctxReminderFor(210_000, older), '5.0 still nudges at the baseline');
 });
 
 test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () => {
@@ -263,7 +329,7 @@ test('ENTER: the shipped baseline is the ruled one, and it applies to every mode
 });
 
 test('ENTER: an operator override reaches the decision and outranks the shipped row', () => {
-  const ov = { default: { nudge: 120_000, escalate: 300_000 }, 'fable-5': { nudge: 400_000, escalate: 500_000 } };
+  const ov = { default: { nudge: 120_000, escalate: 300_000 }, 'fable-5-1': { nudge: 400_000, escalate: 500_000 } };
   const opus = ctxThresholdsFor('claude-opus-5', ov);
   assert.deepStrictEqual({ ...opus }, { nudge: 120_000, escalate: 300_000, family: 'opus-5', source: 'settings-default' });
   assert.ok(ctxReminderFor(130_000, opus), 'the lowered baseline fires where the shipped one would not');
@@ -278,8 +344,8 @@ test('ENTER: an operator override reaches the decision and outranks the shipped 
 test('a baseline override does not move a model that has its own row', () => {
   const restore = new Map(CTX_MODEL_THRESHOLDS);
   try {
-    CTX_MODEL_THRESHOLDS.set('fable-5', { nudge: 250_000, escalate: 310_000 });
-    const fable = ctxThresholdsFor('claude-fable-5', { default: { nudge: 100_000, escalate: 400_000 } });
+    CTX_MODEL_THRESHOLDS.set('fable-5-1', { nudge: 250_000, escalate: 310_000 });
+    const fable = ctxThresholdsFor('claude-fable-5-1', { default: { nudge: 100_000, escalate: 400_000 } });
     assert.strictEqual(fable.source, 'builtin-model');
     assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate },
       { nudge: 250_000, escalate: 310_000 },
@@ -345,9 +411,24 @@ test('the clamp band is expressed as literals', () => {
   assert.deepStrictEqual(sanitizeCtxThresholds({ default: { nudge: 2_000_001, escalate: 3_000_000 } }), {});
 });
 
+// Two independent expressions of the family shape — the grammar that EMITS one
+// and the settings guard that ACCEPTS one — drift apart silently: a family the
+// guard rejects becomes an override dropped on load, with the operator's edit
+// vanishing and no error anywhere. Driven off FAMILY_CASES so widening the
+// grammar without widening the guard fails here.
+test('every family the grammar can emit survives the settings-key guard', () => {
+  const families = [...new Set(FAMILY_CASES.map(([id]) => modelFamily(id)).filter(Boolean))];
+  assert.ok(families.length >= 8, 'ENTER: the cases must actually produce families to check');
+  for (const fam of families) {
+    const kept = sanitizeCtxThresholds({ [fam]: { nudge: 300_000, escalate: 400_000 } });
+    assert.deepStrictEqual(kept, { [fam]: { nudge: 300_000, escalate: 400_000 } },
+      `"${fam}" is a family the grammar emits, so an override keyed by it must survive`);
+  }
+});
+
 test('an override for a family this build ships no row for survives sanitizing', () => {
-  const ov = sanitizeCtxThresholds({ 'sonnet-9': { nudge: 300_000, escalate: 400_000 } });
-  assert.deepStrictEqual(ov, { 'sonnet-9': { nudge: 300_000, escalate: 400_000 } });
+  const ov = sanitizeCtxThresholds({ 'sonnet-9-2': { nudge: 300_000, escalate: 400_000 } });
+  assert.deepStrictEqual(ov, { 'sonnet-9-2': { nudge: 300_000, escalate: 400_000 } });
   const r = ctxThresholdsFor('claude-sonnet-9-2', ov);
   assert.strictEqual(r.source, 'settings-model');
   assert.strictEqual(r.nudge, 300_000);
