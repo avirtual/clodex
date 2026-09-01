@@ -16,7 +16,7 @@
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert');
 
-const { createVoiceSubmitWatcher } = require('../renderer/voice-submit-watcher');
+const { createVoiceSubmitWatcher, STOP_SETTLE_MS } = require('../renderer/voice-submit-watcher');
 const { API_CONTRACT } = require('../api-contract');
 
 // Measured off a live seat 2026-08-31 (CLI 2.1.251), same literals as
@@ -110,7 +110,7 @@ function tapHarness({
   modeSettleMs = 5,
 } = {}) {
   const writes = [];
-  const env = { attention, voiceMode, trigger };
+  const env = { attention, voiceMode, trigger, writeThrows: false };
   const term = fakeTerminal({ rows, type, indicatorUnreadable });
   // A CONTROLLED CLOCK, so the repaint band can be crossed without sleeping
   // through it and without making the assertion depend on wall-clock timing.
@@ -124,7 +124,10 @@ function tapHarness({
     getAttention: () => env.attention,
     getVoiceMode: () => env.voiceMode,
     getTriggerKey: () => env.trigger,
-    write: (d) => writes.push(d),
+    write: (d) => {
+      if (env.writeThrows) throw new Error('pty gone');
+      writes.push(d);
+    },
     modeSettleMs,
   });
   live.push(watcher);
@@ -133,6 +136,9 @@ function tapHarness({
     // Arms the cursor read to throw, for the one case that needs a gate to fail
     // AFTER the settle wait rather than before it.
     throwFromCursor: () => { term._state.cursorXThrows = true; },
+    // Arms the WRITE to throw, which is the other side of the guard the sync
+    // path draws: the read declines, the write must still propagate.
+    throwFromWrite: () => { env.writeThrows = true; },
   };
 }
 
@@ -1750,6 +1756,41 @@ test('MODE-INDEPENDENT: a gate that THROWS after the wait settles, never hangs',
   h.throwFromCursor();
   assert.strictEqual(await pending, false, 'it declines instead of hanging');
   assert.deepStrictEqual(h.writes, []);
+});
+
+// THE SYNCHRONOUS TWIN of the case above, and the one the deferred path's guard
+// did not cover. `onVoiceTap` in renderer.js awaits `externalTap(modeSettling)`
+// unguarded, so before this the throw rejected that handler: the tap was lost
+// AND every gate after the throwing read was skipped. The deferred branch had
+// its catch from the start; this path is the box-wide one — the wake word and
+// `scripts/clodex-voice-tap.js` both land on it with no mode change to defer.
+test('a composer read that THROWS on the SYNC path declines rather than escaping', () => {
+  const h = tapHarness();
+  // ENTER: the same harness taps successfully when the read does not throw, or
+  // the decline below is one this fixture would have produced anyway.
+  assert.strictEqual(h.watcher.externalTap(), true);
+  assert.deepStrictEqual(h.writes, [' ']);
+  // PAST THE REPAINT BAND that the tap above just opened. Without this the
+  // second call declines on `lastTriggerWriteAt` before it ever reaches the
+  // composer read, and this test passes against the unguarded version.
+  h.clock.t += STOP_SETTLE_MS + 1;
+
+  h.throwFromCursor();
+  assert.strictEqual(h.watcher.externalTap(), false, 'it declines instead of throwing');
+  assert.deepStrictEqual(h.writes, [' '], 'and writes nothing beyond the tap that already landed');
+  assert.strictEqual(h.watcher.externalTapCount(), 1);
+});
+
+// WHERE THE GUARD'S EDGE IS. The catch covers the screen read that GATES the
+// write, never the write itself: a `write` that throws means the byte did not go
+// out, and reporting `true` for it — or `false`, silently — would make the one
+// unrecoverable outcome on this path indistinguishable from a gate declining.
+test('a WRITE that throws is NOT swallowed by the read guard', () => {
+  const h = tapHarness();
+  h.throwFromWrite();
+  assert.throws(() => h.watcher.externalTap(), /pty gone/);
+  assert.strictEqual(h.watcher.externalTapCount(), 0,
+    'and nothing is counted for a byte that never reached the pty');
 });
 
 test('MODE-INDEPENDENT: a watcher disposed during the wait settles rather than hanging', async () => {

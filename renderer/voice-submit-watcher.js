@@ -1109,11 +1109,15 @@ function createVoiceSubmitWatcher(terminal, {
       return new Promise((resolve) => {
         const t = setTimeout(() => {
           modeSettleTimers.delete(t);
-          // `cursorRow()` is the one gate below with no try/catch of its own, so
-          // a throw here would leave this promise — and the caller awaiting it —
-          // pending for the life of the page. Declining is the safe direction:
-          // an unwritten byte costs a repeated phrase, a stuck await costs the
-          // handler.
+          // A throw inside a timer callback settles nothing, so it would leave
+          // this promise — and the caller awaiting it — pending for the life of
+          // the page. Declining is the safe direction: an unwritten byte costs
+          // a repeated phrase, a stuck await costs the handler.
+          //
+          // BROADER THAN THE SYNC PATH'S CATCH, which covers its screen read
+          // and leaves the write to propagate. The trade differs: there a
+          // throwing write reaches the caller as a rejection, here it would
+          // reach nobody at all, and a hang is worse than a swallowed report.
           try { resolve(externalTap(false)); } catch { resolve(false); }
         }, modeSettleMs);
         modeSettleTimers.set(t, resolve);
@@ -1170,7 +1174,29 @@ function createVoiceSubmitWatcher(terminal, {
     // The CLI's tap handler bails on a NON-EMPTY composer BEFORE it swallows
     // the key, so the character would be inserted into his draft and arm
     // nothing — the same read the re-arm makes, for the same reason.
-    if (!composerIsEmpty(cursorRow())) return false;
+    //
+    // THE CATCH COVERS THE READ ONLY, and the write below is deliberately
+    // outside it. `cursorRow()` is the one gate here with no try/catch of its
+    // own, and this path's caller — renderer.js's `onVoiceTap` — awaits it
+    // unguarded, so a throw rejects that handler and skips every gate after it.
+    // A catch drawn wide enough to include `tapTrigger()` would instead hide a
+    // failure to put the byte out, which is the one thing on this path that
+    // must stay loud: declining is recoverable, a silently unwritten byte
+    // reported as written is not.
+    //
+    // `null` on the throw, not `''`: it lands on the same decline an
+    // unreadable screen already takes, since `composerIsEmpty(null)` is false.
+    let row = null;
+    let threw = null;
+    try { row = cursorRow(); } catch (e) { threw = why(e); }
+    if (threw !== null) {
+      // Audible for the reason the indicator decline above is: this path is
+      // reached by `scripts/clodex-voice-tap.js` and by the Voice Control wake
+      // word, neither of which has a surface that would show a silent decline.
+      try { console.warn('[voice] external tap declined — the composer read threw:', threw); } catch {}
+      return false;
+    }
+    if (!composerIsEmpty(row)) return false;
 
     if (!tapTrigger()) return false;
     externalTaps += 1;

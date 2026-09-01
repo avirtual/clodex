@@ -24352,7 +24352,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return false;
           }
           if (recorderBlocksRearm(rows)) return false;
-          if (!composerIsEmpty(cursorRow())) return false;
+          let row = null;
+          let threw = null;
+          try {
+            row = cursorRow();
+          } catch (e) {
+            threw = why(e);
+          }
+          if (threw !== null) {
+            try {
+              console.warn("[voice] external tap declined \u2014 the composer read threw:", threw);
+            } catch {
+            }
+            return false;
+          }
+          if (!composerIsEmpty(row)) return false;
           if (!tapTrigger()) return false;
           externalTaps += 1;
           return true;
