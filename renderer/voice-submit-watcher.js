@@ -1373,6 +1373,18 @@ function createVoiceSubmitWatcher(terminal, {
   function noteInput(data) {
     if (disposed) return;
     if (!isHumanPtyInput(data)) return;
+    // A KEYSTROKE KILLS THE DEFERRED SUBMIT, and it is abandoned rather than
+    // rescheduled. Transcription runs for seconds; a correction typed into the
+    // composer while it does passes every gate the submit re-reads — his edit
+    // IS a draft — and the `\r` would send him mid-sentence.
+    //
+    // Do NOT "fix" the stranded submit by re-arming on the next quiet moment.
+    // The asymmetry is the whole argument: he is AT THE KEYBOARD when this
+    // fires, so a stranded draft is visible and one keypress from sent, while a
+    // send in the middle of a sentence he was still writing cannot be taken
+    // back. Same trade, and the same direction, as the unreadable screen at
+    // `deferredSubmitAllowed`.
+    cancelDeferredSubmit();
     voiceEvidenceAt = null;
     mutedByTyping = true;
   }
