@@ -159,6 +159,12 @@ test('release --quiet: the flag does not displace the positional bump and notes 
   }
 });
 
+test('release --quiet: a notes path containing a space survives the arg filter', () => {
+  const { stdout } = withPrologue(['--quiet', 'minor', 'my notes.md'], PROBE);
+  assert.match(stdout, /parsed: bump=minor notes=my notes\.md quiet=1/,
+    'the filtered array was re-expanded unquoted, so a spaced notes path split into two args');
+});
+
 test('release: default (no flag) behaviour is unchanged — everything on stdout, no log', () => {
   const { stdout, log } = withPrologue(['patch'], PROBE);
   for (const shown of ['RELEASE-URL', 'PREVIOUS-TAG', 'BUILDING', 'BUILD-OUTPUT']) {
@@ -205,4 +211,40 @@ test('release --quiet: the log lives outside dist/, which the build step rm -rf 
   assert.match(src, /rm -rf dist/, 'the rm this test exists to avoid is still in the script');
   assert.ok(!/trap '[^']*\$LOG/.test(src),
     'the log must not be on the EXIT trap — deleting it on the failure path destroys the evidence');
+});
+
+// The milestones are the whole point of quiet mode: each of these is a line the
+// operator acts on, so wrapping one in `run` or `note` would hide it behind a log
+// path on the one run they are watching. Pinned as source shape because the script
+// itself runs only at ship time.
+test('release: the operator-facing milestones stay on stdout', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  for (const line of [
+    'say "built: $DMG"',
+    'say "pushed master and $TAG to origin"',
+    'say "$(gh release view "$TAG" --json url -q .url)"',
+  ]) {
+    assert.ok(src.includes(`\n${line}\n`) || src.includes(`\n  ${line}\n`),
+      `${line} is no longer emitted through say — a milestone the operator acts on would be buried in the log`);
+  }
+});
+
+// The release URL reached stdout but never the log, so the log of a successful
+// quiet release did not name what it released.
+test('release: the release URL reaches the log too, not just stdout', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  assert.match(src, /say "\$\(gh release view "\$TAG" --json url -q \.url\)"/,
+    'the URL must go through say — a bare gh invocation bypasses the log entirely');
+});
+
+// publish-image.sh owns the registry address and pushes :latest alongside the
+// version. Restating the address here means reporting one the release may not
+// have published to.
+test('release: the image milestone does not restate the registry address', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const m = src.match(/^\s*say "image published: (.*)"$/m);
+  assert.ok(m, 'the image publish success milestone is gone — silence is not a result');
+  assert.ok(!m[1].includes('ghcr.io'),
+    'the registry address is duplicated from publish-image.sh; state the fact, not a second copy');
+  assert.match(m[1], /latest/, 'publish-image.sh pushes :latest too — a report naming only the version is incomplete');
 });

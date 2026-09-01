@@ -278,11 +278,11 @@ run "$(dirname "$0")/prune-releases.sh" --delete || say "warn: prune failed (rel
 # hello carries no webHost, so features simply appear missing).
 step "Publishing container image $NEW_VERSION"
 if run "$(dirname "$0")/publish-image.sh" "$NEW_VERSION"; then
-  say "image published: ghcr.io/avirtual/clodex:$NEW_VERSION"
+  say "image published: $NEW_VERSION (+latest)"
 else
   say "warn: image publish failed (GitHub release is fine); run scripts/publish-image.sh $NEW_VERSION manually"
 fi
 
 step "Done"
 say "released $TAG"
-gh release view "$TAG" --json url -q .url
+say "$(gh release view "$TAG" --json url -q .url)"
