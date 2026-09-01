@@ -54,17 +54,13 @@ const CHOICE_DEBOUNCE_MS = 250;
 
 // The shared state machine. Surfaces subscribe; the core never touches a
 // surface's DOM.
-function createVoiceCore({ sessionList, showToast }) {
+function createVoiceCore({ showToast }) {
   let state = null;        // the last read of settings.json
   let pending = null;      // a mode written but not yet observed in the file
   let writeTimer = null;   // debounce handle: only the final choice is sent
   let pollTimer = null;    // runs only while a surface holds the core open
   let holds = 0;           // start/stop refcount — see start()
   const listeners = new Set();
-
-  function anyClaudeRow() {
-    return !!sessionList.querySelector('.session-item[data-type="claude"]');
-  }
 
   function isMode(m) { return VOICE_ITEMS.some((i) => i.mode === m); }
 
@@ -74,7 +70,6 @@ function createVoiceCore({ sessionList, showToast }) {
     return {
       state, pending,
       mode: pending || (state && state.effective),
-      anyClaudeRow: anyClaudeRow(),
       force: false,
     };
   }
@@ -83,7 +78,6 @@ function createVoiceCore({ sessionList, showToast }) {
     const snap = {
       state, pending,
       mode: pending || (state && state.effective),
-      anyClaudeRow: anyClaudeRow(),
       force,
     };
     // Per-listener guard: the surfaces are notified in subscription order, so an
@@ -148,22 +142,13 @@ function createVoiceCore({ sessionList, showToast }) {
     return true;
   }
 
-  // `anyClaudeRow` is a function of the session ROWS, and the core owns that
-  // watch rather than being re-rendered from a call site in renderer.js: a
-  // session can die with no focus change and no user action (a PTY exit needs
-  // neither), so nothing else would emit.
-  const observer = new MutationObserver(() => emit());
-
   // REFCOUNTED because the two surfaces have different lifetimes: Preferences
   // holds only while its dialog is open, the bar holds for the life of the
   // window. The dialog closing must not stop the poll under the bar, which is
   // on screen the whole time and whose label is a claim about the file.
   function start() {
     holds++;
-    if (holds === 1) {
-      if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
-      observer.observe(sessionList, { childList: true, subtree: true });
-    }
+    if (holds === 1 && !pollTimer) pollTimer = setInterval(refresh, POLL_MS);
     refresh();
   }
 
@@ -171,7 +156,6 @@ function createVoiceCore({ sessionList, showToast }) {
     if (holds > 0) holds--;
     if (holds > 0) return;
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-    observer.disconnect();
   }
 
   function subscribe(fn) {
@@ -230,7 +214,7 @@ function createVoiceControl({ core }) {
   sel.addEventListener('change', () => { core.choose(sel.value); });
 
   // The value write above is skipped while the picker holds focus, so whatever
-  // arrived meanwhile — a failed injection reverting the pick, or an external
+  // arrived meanwhile — a failed write reverting the pick, or an external
   // `/voice` the poll read — is unpainted until something repaints. Blur is that
   // moment; without it the row can sit showing a mode the file contradicts.
   sel.addEventListener('blur', () => core.repaint());

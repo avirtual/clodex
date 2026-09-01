@@ -3591,7 +3591,7 @@ createTermTab({
 
 createInboxDrawer({ openFilePeek, showToast });
 
-const voiceCore = createVoiceCore({ sessionList, showToast });
+const voiceCore = createVoiceCore({ showToast });
 
 // Cached because the watcher consults it on every quiet-window expiry, per
 // terminal — an invoke per tick would put IPC on a timer. Refreshed by the two

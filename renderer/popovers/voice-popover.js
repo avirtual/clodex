@@ -288,14 +288,11 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
   // and the operator must see it queued rather than see nothing happen.
   //
   // GATED ON AN ACTUAL CHANGE, and the gate must live HERE rather than in the
-  // core. Emits arrive at >=1 Hz for the life of the window — the core's
-  // sessionList observer is held open permanently by the bar, and the sidebar's
-  // 1 s badge tick rewrites `textContent`, whose setter is replace-all and so
-  // queues a childList record even when the string is identical. An
-  // unconditional repaint here rebuilds #proxy-actions via innerHTML once a
-  // second, which destroys every .px-action between a mousedown and its mouseup
-  // and silently eats clicks across the whole bar — the same mechanism as the
-  // "3 clicks to open" bug, five times faster.
+  // core. The poll and every window focus emit whether or not the file moved, so
+  // an unconditional repaint rebuilds #proxy-actions via innerHTML on emits that
+  // change nothing, destroying every .px-action between a mousedown and its
+  // mouseup and silently eating clicks across the bar — the "3 clicks to open"
+  // mechanism. Do not relax this gate by making the key coarser.
   //
   // Not in `emit()`: only a SURFACE knows whether it declined to paint. The
   // Preferences row skips its `sel.value` write while the picker holds focus and
@@ -307,12 +304,12 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
   // Consecutive-failure latch. The subscriber has no try/catch of its own by
   // default: a throw from either painter escapes to the core's per-listener
   // guard, so `lastKey = key` is never reached and the gate above never closes.
-  // On a painter that throws EVERY time, that turns the >=1 Hz emit stream into
-  // a 1 Hz innerHTML rebuild of #proxy-actions — the click-eating mechanism the
-  // gate exists to prevent, arrived at from the other side.
+  // On a painter that throws EVERY time, that leaves every emit rebuilding
+  // #proxy-actions — the click-eating mechanism the gate exists to prevent,
+  // arrived at from the other side.
   let failedOnce = false;
   core.subscribe((snap) => {
-    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.anyClaudeRow}`;
+    const key = `${snap.pending || ''}|${snap.mode || ''}`;
     if (key === lastKey) return;
     try {
       // Equally a no-op rebuild of a live picker: the rows are detached under the

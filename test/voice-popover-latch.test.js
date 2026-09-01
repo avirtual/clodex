@@ -24,12 +24,12 @@ const assert = require('node:assert');
 
 const { initVoicePopover } = require('../renderer/popovers/voice-popover');
 
-// A snapshot as the core really emits one. Only the three fields the
-// subscriber's key is built from matter; `pending` is spelled out because it is
-// the field a real pick moves, and a fixture that omitted it would make every
-// "real state change" case below indistinguishable from a no-change one.
-function snap({ pending = null, mode = 'tap', anyClaudeRow = true } = {}) {
-  return { pending, mode, anyClaudeRow };
+// A snapshot as the core really emits one. Only the two fields the subscriber's
+// key is built from matter; `pending` is spelled out because it is the field a
+// real pick moves, and a fixture that omitted it would make every "real state
+// change" case below indistinguishable from a no-change one.
+function snap({ pending = null, mode = 'tap' } = {}) {
+  return { pending, mode };
 }
 
 // The two elements `initVoicePopover` resolves by id, plus the close button. The
