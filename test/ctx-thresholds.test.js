@@ -68,11 +68,13 @@ const SWEEP = [
   1_000_000,
 ];
 
-// Every model that is NOT the one this ticket changes must behave identically to
-// the pre-change module, byte for byte in the returned reminder.
-// EVERY model, Fable included: the shipped table has no differentiated row, so
-// nothing may move by default. Fable is the interesting row — it is the model
-// the ticket was raised about, and the one a reinstated table row would change.
+// The model axis is REAL here: each id is resolved through ctxThresholdsFor with
+// no overrides, so the loop asserts that every one of them lands on the same
+// baseline pair. That is the claim worth making — the shipped table is empty, so
+// no model may resolve anywhere else — and it is what would fail if a row were
+// added without a decision to add it. Fable is the interesting id: it is the
+// model the ticket was raised about, and the pair 5.1/5.0 must resolve alike
+// while remaining independently addressable.
 const UNCHANGED_MODELS = [
   null,
   'claude-opus-5',
@@ -96,11 +98,27 @@ test('invariant 4: fed the base commit\'s thresholds, the decision reproduces it
   assert.strictEqual(typeof base.ctxThresholdsFor, 'undefined',
     'the base module predates the per-model resolver');
 
+  // Shape first: no model may resolve away from the shipped baseline while the
+  // table is empty. This is what makes the sweep below a statement about every
+  // model rather than about one pair checked nine times.
+  for (const model of UNCHANGED_MODELS) {
+    const r = ctxThresholdsFor(model, {});
+    assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
+      { nudge: CTX_REMINDER_NUDGE_TOKENS, escalate: CTX_REMINDER_ESCALATE_TOKENS },
+      `${model} must resolve to the shipped baseline while no row ships`);
+    assert.strictEqual(r.source, 'builtin-default', `${model} reached a table row it should not have`);
+  }
+
+  // Then wording and boundaries: fed the base module's own numbers, each model's
+  // resolved decision reproduces it exactly. Substituting only the thresholds is
+  // what isolates the retune from a reword or a moved boundary.
   const asBase = { nudge: base.CTX_REMINDER_NUDGE_TOKENS, escalate: base.CTX_REMINDER_ESCALATE_TOKENS };
   for (const model of UNCHANGED_MODELS) {
+    const resolved = ctxThresholdsFor(model, {});
+    const atBase = { ...resolved, ...asBase };
     for (const tok of SWEEP) {
       assert.strictEqual(
-        ctxReminderFor(tok, asBase),
+        ctxReminderFor(tok, atBase),
         base.ctxReminderFor(tok),
         `model=${model} tokens=${tok}: only the numbers may have moved`);
     }

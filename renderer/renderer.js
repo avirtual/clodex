@@ -5732,10 +5732,6 @@ function setTerminalReports(value) {
   }
 }
 
-// The SAME store fields the voice popover writes, read here rather than
-// mirrored into a second source of truth — the operator went looking in
-// Settings first, and a copy that could disagree with the popover is worse than
-// not having the row.
 // Baseline only. The per-model rows are rendered read-only rather than left out:
 // a surface that showed one pair while the code ran on another would read as the
 // whole truth. Editing them is a settings-file edit, and the store's merge keeps
@@ -5765,6 +5761,10 @@ function setCtxThresholds(s) {
     : '';
 }
 
+// The SAME store fields the voice popover writes, read here rather than
+// mirrored into a second source of truth — the operator went looking in
+// Settings first, and a copy that could disagree with the popover is worse than
+// not having the row.
 function setSpeakSettings(s) {
   if (prefsSpeakReplies) prefsSpeakReplies.checked = s.speakReplies === true;
   if (prefsSpeakRate && Number.isInteger(s.speakRate)) prefsSpeakRate.value = String(s.speakRate);

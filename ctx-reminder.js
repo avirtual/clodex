@@ -144,7 +144,12 @@ function ctxThresholdsFor(modelId, overrides) {
   const family = modelFamily(modelId);
   if (family && ov[family]) return { ...ov[family], family, source: 'settings-model' };
   if (family && CTX_MODEL_THRESHOLDS.has(family)) {
-    return { ...CTX_MODEL_THRESHOLDS.get(family), family, source: 'builtin-model' };
+    // Through the same clamp an operator row takes. A shipped row is authored,
+    // not typed, so this is not distrust of the value — it is that the gap rule
+    // the escalate wording depends on must hold on the path the table exists to
+    // be extended on, not only on the path that already has a guard.
+    const built = sanitizeThresholdPair(CTX_MODEL_THRESHOLDS.get(family));
+    if (built) return { ...built, family, source: 'builtin-model' };
   }
   if (ov.default) return { ...ov.default, family, source: 'settings-default' };
   return {
