@@ -45,6 +45,27 @@ const QUIET_MS = 1200;
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
 
+// How long the external tap waits, after main has just set the voice mode to
+// `tap`, before it may write the trigger key — so the CLI has OBSERVED the new
+// mode and handles the key under it. Under the old `hold` the key takes the arm
+// that expects a HELD key: it starts recording and arms a release timer through
+// an auto-repeat fallback, and one synthetic keystroke has no auto-repeat, so
+// the recording stops before he can speak.
+//
+// MEASURED on this box against a real CLI 2.1.252 on a pty, reading the settings
+// store on an EVENT, which is the shape of a keypress: the OLD value is still
+// live at 1000ms and the NEW one at 1050ms — three trials each, and the edge did
+// not move with six CPU hogs running. A ~1s debounce in the vendor's watcher,
+// not jitter, so anything under ~1100ms reinstates the defect.
+//
+// NOT derived from ENTER_SETTLE_MS and not comparable to it: that margin covers
+// a loopback POST inside this app, this one covers a vendor file watcher. They
+// share no cause, so neither number may be computed from the other.
+//
+// Paid ONLY when main reports it actually changed the mode. A tap that found the
+// file already on `tap` has nothing to wait for and writes immediately.
+const VOICE_TAP_MODE_SETTLE_MS = 1500;
+
 // The gap between the submit's `\r` and the trigger key that stops the recorder.
 //
 // Its own write for the same reason ENTER_SETTLE_MS exists: a chunk carrying
@@ -333,6 +354,7 @@ function createVoiceSubmitWatcher(terminal, {
   getTriggerKey = () => null,
   rearmMs = REARM_SETTLE_MS,
   abandonMs = REARM_ABANDON_MS,
+  modeSettleMs = VOICE_TAP_MODE_SETTLE_MS,
   speechAbandonMs = SPEECH_ABANDON_MS,
   // Marks the submit as voice-originated. Absent, the feature is simply off and
   // every other path here is unchanged — the marker is an annotation on a
@@ -386,6 +408,10 @@ function createVoiceSubmitWatcher(terminal, {
   let enterTimer = null;
   let stopTimer = null;
   let pollTimer = null;
+  // Handle -> its promise's resolve, for taps waiting out the mode settle. A
+  // MAP of them, not one handle: two taps can overlap inside that window, and a
+  // single variable would strand the earlier promise unresolved for good.
+  const modeSettleTimers = new Map();
   let disposed = false;
   // The composer CONTENT a match was already answered for, not a bare boolean.
   // A boolean makes a second deliberate "over and out" dead for the rest of the
@@ -1041,8 +1067,28 @@ function createVoiceSubmitWatcher(terminal, {
   // Deliberately NOT gated on the turn-end edge the re-arm confines itself to.
   // That gate exists because arming mid-turn is a live microphone nobody asked
   // for; here the operator asked, out loud, which is the entire event.
-  function externalTap() {
+  //
+  // `modeJustChanged` says main set the mode to `tap` immediately before routing
+  // this, so the CLI has not observed it yet and the key must wait — see
+  // VOICE_TAP_MODE_SETTLE_MS. Deferring makes this arm ASYNCHRONOUS, and every
+  // gate below deliberately sits AFTER the wait: they read the screen as it is
+  // when the key actually lands, not as it was 1.5s earlier. A recorder that
+  // lit, or a draft he began typing, during the wait must still stop the write.
+  function externalTap(modeJustChanged = false) {
     if (disposed) return false;
+    if (modeJustChanged) {
+      return new Promise((resolve) => {
+        // Tracked like every other timer here, and in a SET rather than a
+        // variable: a second tap arriving inside the window would otherwise
+        // overwrite the first's handle, leaving that promise unresolved for
+        // good. Dispose settles each one false instead of dropping it.
+        const t = setTimeout(() => {
+          modeSettleTimers.delete(t);
+          resolve(externalTap(false));
+        }, modeSettleMs);
+        modeSettleTimers.set(t, resolve);
+      });
+    }
     // A byte written into an open permission dialog ANSWERS it. The re-arm
     // declines there through `shouldRearm` and this owes the same interlock,
     // which it cannot inherit — the re-arm's gate also requires hands-free
@@ -1256,6 +1302,11 @@ function createVoiceSubmitWatcher(terminal, {
       if (stopTimer) clearTimeout(stopTimer);
       if (pollTimer) clearInterval(pollTimer);
       if (rearmTimer) clearTimeout(rearmTimer);
+      // SETTLED false, not merely cleared: each of these owns a promise an
+      // awaiting caller is still holding, and dropping the timer alone would
+      // leave that await hanging for the life of the page.
+      for (const [t, resolve] of modeSettleTimers) { clearTimeout(t); resolve(false); }
+      modeSettleTimers.clear();
       speechDeferredSince = 0;
       timer = null;
       enterTimer = null;

@@ -3673,9 +3673,20 @@ window.addEventListener('focus', reportFocusedSession);
 // word, over the agent socket). Main routed it here because only this side can
 // read the recording indicator; the watcher makes the decision and owns the
 // polarity rule that an unreadable screen writes nothing.
-window.api.onVoiceTap((name) => {
+//
+// `modeChanged` says main just set the voice mode to `tap` for this tap. Two
+// things follow, and neither is optional. The watcher owes the CLI a settle
+// delay before its key is worth writing; and voiceCore must be REFRESHED, since
+// the watcher's own mode gate reads it and its reading is a 15s POLL — without
+// this the core still reports `hold` and `tapTrigger` writes NOTHING. The
+// watcher's delay cannot cover that: it is sized to the CLI's file watcher, a
+// different clock, and no fixed delay covers a 15s poll.
+window.api.onVoiceTap(async (name, modeChanged) => {
+  if (modeChanged) {
+    try { await voiceCore.refresh(); } catch { /* the watcher's own gate still declines on a stale read */ }
+  }
   const sess = sessions.get(name);
-  if (sess && sess.voiceSubmit) sess.voiceSubmit.externalTap();
+  if (sess && sess.voiceSubmit) await sess.voiceSubmit.externalTap(modeChanged);
 });
 const voiceControl = createVoiceControl({ core: voiceCore });
 
