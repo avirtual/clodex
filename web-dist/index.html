@@ -23958,6 +23958,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let stopTimer = null;
         let pollTimer = null;
         const modeSettleTimers = /* @__PURE__ */ new Map();
+        let lastTriggerWriteAt = 0;
         let disposed = false;
         let answered = null;
         let fires = 0;
@@ -24277,6 +24278,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (typeof key !== "string" || key.length !== 1) return false;
           write(key);
+          lastTriggerWriteAt = now();
           return true;
         }
         function externalTap(modeSettling = false) {
@@ -24301,6 +24303,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             attention = "permission";
           }
           if (attention === "permission") return false;
+          if (lastTriggerWriteAt && now() - lastTriggerWriteAt < STOP_SETTLE_MS) return false;
           const rows = indicatorRows();
           if (!Array.isArray(rows)) return false;
           if (recorderBlocksRearm(rows)) return false;

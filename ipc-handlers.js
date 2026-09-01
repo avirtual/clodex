@@ -906,7 +906,12 @@ function registerIpcHandlers(deps) {
   // Box-wide for the same reason as the read, and takes no session name for a
   // second one: the write goes to the file, not into a seat, so it is the one
   // path that still works with zero Claude sessions open.
-  handle('settings:setVoiceMode', (_e, mode) => writeVoiceMode(mode));
+  // THROUGH THE MANAGER, not straight to the writer, so this write stamps the
+  // settle memo like the spoken verb does. The CLI observes any of these writes
+  // on a delay, and a tap that follows one must wait however the mode got there
+  // — picking `tap` in Preferences and then saying the tap phrase is the same
+  // race as saying `mode tap` first.
+  handle('settings:setVoiceMode', (_e, mode) => manager.voiceMode(mode));
 
   handle('settings:toolCatalogFor', (_e, cwd) => {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };

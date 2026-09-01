@@ -112,7 +112,11 @@ function tapHarness({
   const writes = [];
   const env = { attention, voiceMode, trigger };
   const term = fakeTerminal({ rows, type, indicatorUnreadable });
+  // A CONTROLLED CLOCK, so the repaint band can be crossed without sleeping
+  // through it and without making the assertion depend on wall-clock timing.
+  const clock = { t: 1_000_000 };
   const watcher = createVoiceSubmitWatcher(term, {
+    now: () => clock.t,
     // The external tap is deliberately NOT gated on the hands-free-submit
     // config, so this returns one enabled: a harness that switched it off would
     // pass every silence assertion below for the wrong reason.
@@ -125,7 +129,7 @@ function tapHarness({
   });
   live.push(watcher);
   return {
-    watcher, writes, env,
+    watcher, writes, env, clock,
     // Arms the cursor read to throw, for the one case that needs a gate to fail
     // AFTER the settle wait rather than before it.
     throwFromCursor: () => { term._state.cursorXThrows = true; },
@@ -1775,8 +1779,8 @@ test('MODE-INDEPENDENT: the settle default is above the measured visibility edge
     path.join(__dirname, '..', 'renderer', 'voice-submit-watcher.js'), 'utf-8');
   const m = src.match(/const VOICE_TAP_MODE_SETTLE_MS = (\d+);/);
   assert.ok(m, 'the constant is still named and still a literal');
-  // 1100 is where the measurement first read NEW, three trials, unchanged under
-  // load. Anything at or below 1000 read OLD every time.
+  // 1100 is where NEW was confirmed over three trials, unchanged under load; the
+  // first NEW reading was a single trial at 1050. 1000 read OLD three times.
   assert.ok(Number(m[1]) >= 1100,
     `the settle must clear the ~1066ms edge; found ${m[1]}ms`);
 
@@ -1842,4 +1846,91 @@ test('MODE-INDEPENDENT: the tap handler REFRESHES the mode cache before arming',
   // the arm runs against the cache it was supposed to replace.
   assert.match(handler, /await voiceCore\.refresh\(\)/,
     'and it is awaited, or the arm races the read');
+});
+
+// THE COMPRESSION BAND the deferral opens, and the reason it is not academic.
+//
+// Tap 1 from `hold` waits out the mode settle. He sees nothing happen — which is
+// the whole reason he says the phrase again — so tap 2 arrives just after the
+// boundary and lands ~100ms behind tap 1's byte instead of the 1.5s later it was
+// spoken. The CLI has not repainted `⏺REC` yet, so the indicator still reads
+// DARK and the ensure-on gate would happily write a second byte, which STOPS the
+// recording tap 1 just started. Worse than the blink this ticket removes: the
+// repeat phrase actively undoes the tap.
+test('MODE-INDEPENDENT: a tap in the REPAINT band after a written byte declines', async () => {
+  const h = tapHarness();
+  // Tap 1 writes, exactly as the deferred arm does when the settle ends.
+  assert.strictEqual(await h.watcher.externalTap(true), true);
+  assert.deepStrictEqual(h.writes, [' '], 'ENTER: a byte really did go out');
+
+  // Tap 2, inside the repaint window. The screen still shows the pre-byte state
+  // — that is the whole trap, and the fixture leaves it dark deliberately.
+  h.clock.t += 100;
+  assert.strictEqual(h.watcher.externalTap(), false,
+    'the screen cannot be trusted yet, so it must not write');
+  assert.deepStrictEqual(h.writes, [' '],
+    'no second byte — it would STOP the recording the first one started');
+});
+
+test('MODE-INDEPENDENT: once the repaint band has passed, a tap writes again', () => {
+  // The other half, or the pin above passes for a gate that blocks every tap
+  // after the first one forever — which would break the ordinary repeat.
+  const h = tapHarness();
+  assert.strictEqual(h.watcher.externalTap(), true);
+  assert.deepStrictEqual(h.writes, [' ']);
+
+  h.clock.t += 5000;
+  assert.strictEqual(h.watcher.externalTap(), true,
+    'well past the repaint, the screen is trustworthy again');
+  assert.deepStrictEqual(h.writes, [' ', ' ']);
+});
+
+// THE OTHER WRITERS. `mode tap` followed by the tap phrase is the exact
+// two-phrase workflow this ticket replaces, so the tap that follows it must wait
+// for the CLI just as it does after the tap's own write. Leaving one writer
+// stamped and the others not is also the asymmetry a later reader "harmonises"
+// in whichever direction they guess.
+test('MODE-INDEPENDENT: the spoken mode verb arms the settle window too', () => {
+  const { m, writes } = mkTapMode({ mode: 'hold' });
+  const win = seat(m, 'A');
+  reportFrom(m, win, 'A');
+
+  assert.deepStrictEqual(m.voiceMode('tap'), { ok: true, mode: 'tap' });
+  assert.deepStrictEqual(writes, ['tap'], 'ENTER: the verb really did write the file');
+
+  // The tap phrase, right behind it. It finds the file already on `tap` and
+  // writes nothing — so only the memo can tell it the CLI is still catching up.
+  m.voiceTap('A');
+  assert.deepStrictEqual(writes, ['tap'], 'no second write — the file is already right');
+  assert.deepStrictEqual(win.sent.at(-1), ['voice-tap', 'A', true],
+    'but the wait is owed, because the CLI has not observed the verb yet');
+});
+
+test('MODE-INDEPENDENT: moving to hold or off arms no wait of its own', () => {
+  // The wait exists to let the CLI catch up to TAP, so a move AWAY from tap
+  // stamps nothing. Asserted on the memo rather than on a following tap: such a
+  // tap finds the file on hold/off and writes `tap` itself, which arms the wait
+  // for its OWN write — a true `true` that says nothing about this stamp.
+  for (const mode of ['hold', 'off']) {
+    const { m } = mkTapMode({ mode: 'tap' });
+    assert.strictEqual(m._lastVoiceModeWriteAt, 0, `${mode}: ENTER: nothing stamped yet`);
+    m.voiceMode(mode);
+    assert.strictEqual(m._lastVoiceModeWriteAt, 0, `${mode}: and still nothing`);
+  }
+  // The positive control, in the same shape: `tap` DOES stamp, so the two
+  // assertions above are about the mode and not about a memo nothing ever sets.
+  const { m } = mkTapMode({ mode: 'hold' });
+  m.voiceMode('tap');
+  assert.ok(m._lastVoiceModeWriteAt > 0, 'tap stamps, so the pair above is not vacuous');
+});
+
+// The Preferences row and the bar popover write through the same IPC channel,
+// and it must reach the manager rather than the writer directly — picking `tap`
+// in the UI and then speaking the tap phrase is the same race as the verb above.
+test('MODE-INDEPENDENT: the settings write routes through the manager, not past it', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf-8');
+  assert.match(src, /handle\('settings:setVoiceMode',[^)]*\)\s*=>\s*manager\.voiceMode\(mode\)\)/,
+    'the UI write goes through the manager, so it stamps the settle memo');
 });

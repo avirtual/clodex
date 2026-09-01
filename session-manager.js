@@ -2354,7 +2354,14 @@ function createSessionManager(deps) {
     // Switch the CLI's push-to-talk mode by WRITING the settings file it reads.
     // A running CLI picks that up: the mode is read through a live store
     // selector rather than cached at startup, and the CLI watches the settings
-    // directory. Observed directly — an external edit moved a live session.
+    // directory. Observed directly — an external edit moved a live session. Not
+    // immediately, though: that watcher debounces ~1s, which is why the write
+    // stamps `_lastVoiceModeWriteAt` and a tap inside the window waits it out.
+    //
+    // BOTH WRITE SURFACES land here — the spoken verb and the Preferences /
+    // popover row over `settings:setVoiceMode`. That is what keeps the stamp
+    // above true of every write: a surface reaching past this to the writer
+    // would move the mode without arming the wait it creates.
     //
     // NOT AN INJECTION, and not a spawned CLI either. Injection dragged in the
     // composer, the inject queue, the quiet gate and `parkable` — and a PARKED
@@ -2375,6 +2382,16 @@ function createSessionManager(deps) {
         log.warn('voice', `mode ${mode} failed: ${r.error}`);
         return r;
       }
+      // SAME MEMO AS THE TAP'S OWN WRITE, and it has to be: `mode tap` followed
+      // by the tap phrase is the exact two-phrase workflow this ticket replaces,
+      // and without this stamp the tap that follows sends its byte under a mode
+      // the CLI has not observed — the blink, on the way out of the blink.
+      //
+      // `tap` only. Moving to `hold` or `off` arms nothing, so a tap that
+      // followed one has no reason to wait: the wait exists to let the CLI catch
+      // up to TAP, and stamping here for a mode that will not arm would delay a
+      // later tap for nothing.
+      if (mode === 'tap') this._lastVoiceModeWriteAt = Date.now();
       log.info('voice', `mode ${mode}`);
       return { ok: true, mode };
     }

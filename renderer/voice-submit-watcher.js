@@ -54,9 +54,10 @@ const ENTER_SETTLE_MS = 30;
 //
 // MEASURED on this box against a real CLI 2.1.252 on a pty, reading the settings
 // store on an EVENT, which is the shape of a keypress: the OLD value is still
-// live at 1000ms and the NEW one at 1050ms — three trials each, and the edge did
-// not move with six CPU hogs running. A ~1s debounce in the vendor's watcher,
-// not jitter, so anything under ~1100ms reinstates the defect.
+// live at 1000ms over three trials, the NEW one first appears at 1050ms, and is
+// confirmed over three trials at 1100ms — where the edge did not move with six
+// CPU hogs running. A ~1s debounce in the vendor's watcher, not jitter, so
+// anything under ~1100ms reinstates the defect.
 //
 // NOT derived from ENTER_SETTLE_MS and not comparable to it: that margin covers
 // a loopback POST inside this app, this one covers a vendor file watcher. They
@@ -412,6 +413,9 @@ function createVoiceSubmitWatcher(terminal, {
   // MAP of them, not one handle: two taps can overlap inside that window, and a
   // single variable would strand the earlier promise unresolved for good.
   const modeSettleTimers = new Map();
+  // When a trigger byte last went out, so a tap arriving before the CLI has
+  // repainted cannot read the screen as dark and write a second one. 0 = never.
+  let lastTriggerWriteAt = 0;
   let disposed = false;
   // The composer CONTENT a match was already answered for, not a bare boolean.
   // A boolean makes a second deliberate "over and out" dead for the rest of the
@@ -1044,6 +1048,11 @@ function createVoiceSubmitWatcher(terminal, {
     try { key = getTriggerKey(); } catch { key = null; }
     if (typeof key !== 'string' || key.length !== 1) return false;
     write(key);
+    // STAMPED HERE because this is the only place a trigger byte is written, so
+    // every caller stamps by construction and a fifth one cannot forget to.
+    // What reads it is the external tap, whose indicator read is worthless until
+    // the CLI has repainted — see the check in `externalTap`.
+    lastTriggerWriteAt = now();
     return true;
   }
 
@@ -1097,6 +1106,22 @@ function createVoiceSubmitWatcher(terminal, {
     let attention = null;
     try { attention = getAttention(); } catch { attention = 'permission'; }
     if (attention === 'permission') return false;
+
+    // A BYTE WE JUST WROTE IS NOT YET ON THE SCREEN, and every gate below reads
+    // the screen. The CLI takes ~a repaint to paint `⏺REC`, so a tap arriving in
+    // that gap reads the recorder as DARK and writes again — and the second byte
+    // STOPS the recording the first one just started, which is worse than the
+    // blink this feature removes.
+    //
+    // The deferral is what opens the gap: tap 1 waits out the mode settle, he
+    // sees nothing happen and says the phrase again — which is exactly why he
+    // repeats it — and tap 2 lands just behind tap 1's byte instead of the 1.5s
+    // later it was spoken. Declining costs him one repeated phrase; not
+    // declining costs him the recording.
+    //
+    // ABOVE the indicator read on purpose: that read is the thing that cannot be
+    // trusted here, so this cannot be expressed as a condition on it.
+    if (lastTriggerWriteAt && (now() - lastTriggerWriteAt) < STOP_SETTLE_MS) return false;
 
     const rows = indicatorRows();
     // REDUNDANT TODAY AND KEPT ON PURPOSE: `recorderBlocksRearm(null)` is true,
