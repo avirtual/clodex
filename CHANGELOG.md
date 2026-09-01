@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **Hands-free voice submit now ends the recording as it sends, instead of
+  leaving the mic lit.** When you finish a spoken message with the submit
+  phrase, Clodex sends it with your push-to-talk key rather than a plain Enter.
+  The CLI treats that key as send-and-stop in one go, so the recording
+  indicator goes out immediately. Enter alone never stopped it — the mic stayed
+  lit for the rest of its 15-second silence timeout, and the follow-up tap that
+  was supposed to clear it read the screen too late and usually declined,
+  silently. Typing the phrase rather than speaking it still submits with Enter:
+  with the mic dark that key would switch it ON, which is the one thing this
+  must never do.
+
 - **Truncated previews now end in `…`, so a cut line stops reading as a whole
   one.** `[agent:remind list]`, `[agent:memory list]`, the memory index and
   `notify-user`'s notification all shorten a long body to fit their column, and

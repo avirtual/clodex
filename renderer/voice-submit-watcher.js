@@ -39,10 +39,11 @@ const { isHumanPtyInput } = require('../proxy-util');
 // out a gap between machine-emitted segments.
 const QUIET_MS = 1200;
 
-// The Enter is a separate write from the backspaces for the reason inject-queue
-// documents at CTRLU_SETTLE_MS: one chunk carrying control chars and a trailing
-// \r is read as a single paste-like event, which leaves the \r in the buffer as
-// a literal instead of submitting. Merging these two writes reintroduces that.
+// The submit byte is a separate write from the backspaces for the reason
+// inject-queue documents at CTRLU_SETTLE_MS: one chunk carrying control chars
+// and a trailing byte is read as a single paste-like event, which leaves that
+// byte in the buffer as a literal instead of submitting. Merging these two
+// writes reintroduces that, for the trigger key as much as for \r.
 const ENTER_SETTLE_MS = 30;
 
 // How long the external tap waits, when the voice mode was recently set to
@@ -67,28 +68,16 @@ const ENTER_SETTLE_MS = 30;
 // when the CLI has long since observed `tap` writes immediately.
 const VOICE_TAP_MODE_SETTLE_MS = 1500;
 
-// The gap between the submit's `\r` and the trigger key that stops the recorder.
+// How long a trigger byte WE wrote takes to become readable on the screen, and
+// so how long the external tap must refuse to trust its own indicator read.
 //
-// Its own write for the same reason ENTER_SETTLE_MS exists: a chunk carrying
-// `\r` with a character behind it is read as one paste-like event, which leaves
-// the `\r` in the buffer as a literal and the key riding in with it.
+// The CLI takes about a repaint to paint `\u23faREC`. A tap landing inside that
+// gap reads the recorder as dark and writes a second byte, and that byte STOPS
+// the recording the first one just started.
 //
-// Much longer than that 30ms floor, and the extra is for the READ, not the
-// write. The gate re-reads the indicator to decide whether to send this key at
-// all, and the cells it reads are the ones painted BEFORE our Enter until the
-// CLI repaints. A stale lit `\u23faREC` read there sends the key into a recorder
-// that has already stopped, which ARMS a new recording — the inverted failure
-// this design exists to avoid. The turn is running and the composer is empty,
-// so waiting costs nothing.
-//
-// This does NOT widen ENTER_SETTLE_MS, which is 30 for the erase/Enter pair;
-// it is a second gap AFTER the Enter, so nothing above it is delayed.
-//
-// COUPLED TO REARM_ABANDON_MS, which a tuning pass would not guess: if the
-// CLI's post-Enter repaint ever lags past this gap, the composer still holds
-// the draft at the read below and the stop silently never fires. What recovers
-// the mic then is the abandon deadline outlasting the recorder's own timeout.
-// Shortening that deadline and this gap independently is what removes both.
+// Much longer than ENTER_SETTLE_MS's 30ms floor and not comparable to it: that
+// one is a WRITE ordering margin inside the CLI's input loop, this one waits on
+// a full repaint before a READ. Neither may be computed from the other.
 const STOP_SETTLE_MS = 250;
 
 // How long a consumed prefix outlives the composition it came from.
@@ -158,11 +147,11 @@ const REARM_SETTLE_MS = 3000;
 //
 // The deadline is the recording-hazard exposure window, which is why it was cut
 // in the first place: for as long as it stands, one idle edge can still reschedule
-// an attempt. Raising it is safe here only because the submit-time stop above
-// removes the case that made a long window dangerous — the recorder is stopped at
-// the submit, so the usual path never reaches turn end lit at all, and this is
-// the net for the paths that do. It is still bounded, and every gate is
-// re-evaluated when the timer lands.
+// an attempt. Raising it is safe here only because a recorder lit at submit time
+// is stopped BY the submit — the trigger key sends the draft and stops the
+// recorder in one keystroke — so the spoken path never reaches turn end lit at
+// all, and this is the net for the paths that do. It is still bounded, and every
+// gate is re-evaluated when the timer lands.
 //
 // The trailing window below re-arms its own timer on every paint, so without a
 // deadline a terminal that never goes quiet — a spinner, a tailing log, an agent
@@ -407,7 +396,6 @@ function createVoiceSubmitWatcher(terminal, {
 }) {
   let timer = null;
   let enterTimer = null;
-  let stopTimer = null;
   let pollTimer = null;
   // Handle -> its promise's resolve, for taps waiting out the mode settle. A
   // MAP of them, not one handle: two taps can overlap inside that window, and a
@@ -426,7 +414,7 @@ function createVoiceSubmitWatcher(terminal, {
   let answered = null;
   let fires = 0;
   // Submits that found the recorder still lit afterwards and stopped it.
-  let stops = 0;
+  let keySubmits = 0;
   // Taps written for an EXTERNAL ensure-on request, counted apart from the
   // re-arm's: the two answer different questions about the same byte, and one
   // number could not say which of them wrote it.
@@ -610,8 +598,8 @@ function createVoiceSubmitWatcher(terminal, {
     // to be registered at the proxy before the submitted text reaches the
     // model, or it rides the wrong turn — or no turn. It is not awaited (it
     // must never delay the keystroke), so what buys the margin is the
-    // ENTER_SETTLE_MS gap that already sits between the erase and the \r, plus
-    // the CLI's own time from Enter to its request. Measured against a live
+    // ENTER_SETTLE_MS gap that sits between the erase and the submit byte, plus
+    // the CLI's own time from that byte to its request. Measured against a live
     // proxy the arm POST is a median 0.45ms and a p95 4.6ms on loopback,
     // against a 30ms floor. Do NOT widen ENTER_SETTLE_MS to buy more: it is 30
     // for a different reason (t566) and merging those writes breaks the submit.
@@ -623,50 +611,40 @@ function createVoiceSubmitWatcher(terminal, {
       voiceEvidenceAt = null;
       try { markVoiceOrigin(); } catch {}
     }
+    // WHICH BYTE SUBMITS, read here at match time and before any write.
+    //
+    // LIT is the phrase having been SPOKEN, and the trigger key submits there:
+    // the CLI swallows it, sends the draft and stops the recorder in one
+    // keystroke, so no lit recorder survives the submit to be chased afterwards.
+    //
+    // DARK is the phrase having been TYPED, and the same key does not submit
+    // there — it ARMS a microphone nobody asked for. That branch submits with
+    // `\r` and attempts no stop, there being nothing lit to stop.
+    //
+    // `recordingObserved`, so an UNREADABLE screen reads as dark and takes the
+    // `\r`. That polarity is inverted from the re-arm's gate on purpose: a
+    // missed indicator here costs a recorder left lit until its own timeout,
+    // which the operator can see and tap; a phantom one costs him a live mic he
+    // never asked for and cannot see.
+    const litAtMatch = recordingObserved(indicatorRows());
+    // FIRST IN EVERY BRANCH: the submit sends the composer's raw content, so
+    // without this the trigger phrase ships inside the message.
     write('\x7f'.repeat(found.erase));
+    // Its own write, never merged with the erase, for the reason
+    // ENTER_SETTLE_MS gives — and the trigger key needs that separation at
+    // least as much as `\r` did. The CLI swallows the key in its KEY handler,
+    // so a byte arriving inside a paste-like chunk is not swallowed at all: it
+    // lands in the draft as a literal, submits nothing, and the non-empty
+    // composer it leaves behind blocks every later re-arm and every later tap.
     enterTimer = setTimeout(() => {
       enterTimer = null;
       if (disposed) return;
+      // `tapTrigger()` declines hold mode and a trigger key that is not a single
+      // character, and declines WITHOUT writing, so both fall through to the
+      // `\r` below. Routed through it rather than an inlined write so the
+      // `lastTriggerWriteAt` stamp stays impossible to forget.
+      if (litAtMatch && tapTrigger()) { keySubmits += 1; return; }
       write('\r');
-      // AFTER the Enter, never merged into it, and never at turn end.
-      //
-      // A recorder still lit after our Enter would otherwise stay lit for the
-      // rest of its 15000ms silence timeout, and the re-arm cannot clear it:
-      // writing the trigger key into what looks like a live recording would
-      // stop the operator mid-sentence, so the gate declines and the mic sits
-      // stuck until it is tapped by hand.
-      //
-      // Stopping it HERE is what makes that safe, and the safety is positional,
-      // not a heuristic: at this instant the operator has just completed an
-      // utterance ending in the trigger phrase, so the recording is complete BY
-      // CONSTRUCTION and the key can cut nothing off. The same write at turn end
-      // is forbidden — there a lit indicator is indistinguishable from the
-      // operator mid-sentence, and cutting them off loses what they are saying.
-      //
-      // The turn-end re-arm then taps it back through its existing path; this
-      // adds no second way to arm the recorder.
-      stopTimer = setTimeout(() => {
-        stopTimer = null;
-        if (disposed) return;
-        // Read LATE, not at match time: the CLI may have stopped the recorder
-        // itself in the meantime, and this must reflect the screen as it is when
-        // the key would land.
-        //
-        // `recordingObserved`, NOT the re-arm's gate: unreadable must read as
-        // NOT lit here. The two mistakes are inverted relative to the re-arm —
-        // there a missed indicator stops a live recording, here a phantom one
-        // ARMS a recording the operator never asked for, and an armed mic that
-        // nobody knows is running is worse than the stuck state this fixes.
-        if (!recordingObserved(indicatorRows())) return;
-        // The "complete BY CONSTRUCTION" argument above has one hole: the
-        // operator can keep talking past the trigger phrase, and interim
-        // transcript for the NEW utterance lands after our `\r`. Stopping then
-        // would cut them off mid-sentence. An empty composer is the evidence
-        // that nothing new has arrived; anything else and we skip the stop and
-        // inherit the pre-t587 behaviour, which is the safe direction.
-        if (!composerIsEmpty(cursorRow())) return;
-        if (tapTrigger()) stops += 1;
-      }, STOP_SETTLE_MS);
     }, ENTER_SETTLE_MS);
   }
 
@@ -1026,7 +1004,7 @@ function createVoiceSubmitWatcher(terminal, {
   }
 
   // THE ONLY PLACE A TRIGGER CHARACTER IS WRITTEN. Four callers reach the
-  // recorder through it — the turn-end re-arm, the submit-time stop, the
+  // recorder through it — the turn-end re-arm, the tap-path submit, the
   // external ensure-on tap, and the operator's ensure-off click — and each
   // carries its OWN screen gate, which is the part that differs between them
   // and must stay at the call site. What is shared is only
@@ -1314,7 +1292,7 @@ function createVoiceSubmitWatcher(terminal, {
     // paint could answer differently from the decision it is describing.
     recorderReading: () => reading,
     fireCount: () => fires,
-    stopCount: () => stops,
+    keySubmitCount: () => keySubmits,
     rearmCount: () => rearms,
     externalTapCount: () => externalTaps,
     offTapCount: () => offTaps,
@@ -1325,7 +1303,6 @@ function createVoiceSubmitWatcher(terminal, {
       disposed = true;
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
-      if (stopTimer) clearTimeout(stopTimer);
       if (pollTimer) clearInterval(pollTimer);
       if (rearmTimer) clearTimeout(rearmTimer);
       // SETTLED false, not merely cleared: each of these owns a promise an
@@ -1336,7 +1313,6 @@ function createVoiceSubmitWatcher(terminal, {
       speechDeferredSince = 0;
       timer = null;
       enterTimer = null;
-      stopTimer = null;
       pollTimer = null;
       rearmTimer = null;
       for (const s of subs) s.dispose();

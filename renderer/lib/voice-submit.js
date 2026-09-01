@@ -360,10 +360,10 @@ function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
 
 // Whether the screen shows the CLI recording RIGHT NOW. Deliberately NOT widened
 // to the processing state the way `recorderBlocksRearm` is, and the asymmetry is
-// the point: this one answers "is a recording live enough that one key would STOP
-// it", and during processing the recorder has ALREADY stopped — a key written
-// then ARMS a recording nobody asked for, which is the inverted failure the
-// submit-time stop must never produce.
+// the point: this one answers "is a recording live enough that one key would
+// SUBMIT and stop it", and during processing the recorder has ALREADY stopped —
+// a key written then ARMS a recording nobody asked for and submits nothing,
+// which is the inverted failure the tap-path submit must never produce.
 //
 // Same pattern and same rows as `recorderBlocksRearm`, opposite failure
 // handling: this one feeds a marker rather than an interlock, so an unreadable
