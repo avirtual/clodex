@@ -160,10 +160,24 @@ test('the recording read reports what is there, and an unreadable screen is NOT 
   // one guards a write into a live recording and so must assume the worst on an
   // unreadable screen. This one feeds an annotation, so the same input is
   // simply an absence of evidence.
-  assert.strictEqual(recordingObserved([' agents ⏺REC · tap to send']), true);
-  assert.strictEqual(recordingObserved(['⏺REC']), true);
+  assert.strictEqual(recordingObserved([' agents ⏺ REC · tap to send']), true);
+  assert.strictEqual(recordingObserved(['⏺ REC']), true);
   assert.strictEqual(recordingObserved(null), false, 'unreadable is not evidence');
   assert.strictEqual(recordingObserved([]), false);
   assert.strictEqual(recordingObserved(['⏺ Bash(ls)']), false, 'an ordinary tool bullet');
   assert.strictEqual(recordingObserved(['Read(RECOVERY.md)']), false, 'the word RECOVERY');
+
+  // The indicator SHARES its row with the permission banner in the real footer,
+  // so nothing may anchor on the bullet starting the row. Bytes below are the
+  // captured row, U+23F5 twice included: a near neighbour of the bullet that a
+  // widened U+23Fx class would swallow.
+  assert.strictEqual(recordingObserved(
+    ['  ⏵⏵ bypass permissions on (shift+tab to cycle)          ⏺ REC · tap to send']), true,
+    'the indicator sharing a row with the banner');
+
+  // THE COLLISIONS the space cost us, and the reason the rule ends in (?!\w):
+  // a bullet whose next word merely STARTS with REC is not a lit recorder, and a
+  // phantom one arms a mic nobody asked for.
+  assert.strictEqual(recordingObserved(['⏺ RECOVERY.md']), false, 'a bullet on a file named RECOVERY');
+  assert.strictEqual(recordingObserved(['⏺ RECORD the thing']), false, 'the word RECORD after a bullet');
 });

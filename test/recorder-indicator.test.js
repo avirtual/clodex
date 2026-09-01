@@ -26,7 +26,7 @@ const { createVoiceSubmitWatcher } = require('../renderer/voice-submit-watcher')
 // feature dead and the suite green.
 const EMPTY_COMPOSER = '\u276f\u00a0';
 const DRAFT_COMPOSER = '\u276f\u00a0stop recording';
-const REC_ROW = ' agents \u23faREC \u00b7 tap to send';
+const REC_ROW = ' agents \u23fa\u0020REC \u00b7 tap to send';
 const IDLE_ROW = ' agents \u00b7 tap to talk';
 const PROCESSING_ROW = ' agents Voice: processing\u2026';
 

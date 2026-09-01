@@ -23808,7 +23808,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return false;
       }
-      var RECORDING = /\u23faREC/u;
+      var RECORDING = /\u23fa\u0020REC(?!\w)/u;
       var PROCESSING = /Voice:\s*processing/i;
       function recorderBlocksRearm(rows) {
         if (!Array.isArray(rows)) return true;

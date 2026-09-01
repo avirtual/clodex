@@ -29,7 +29,7 @@ const { API_CONTRACT } = require('../api-contract');
 // NON-BREAKING space, and an ASCII one here makes every empty-composer fixture
 // read as a draft — the feature dead and the suite green.
 const EMPTY_COMPOSER = '\u276f\u00a0';
-const REC_ROW = ' agents \u23faREC \u00b7 tap to send';
+const REC_ROW = ' agents \u23fa\u0020REC \u00b7 tap to send';
 const IDLE_ROW = ' agents \u00b7 tap to talk';
 
 // Cursor on the LAST row unless a row carries `cursor: true` — so a fixture
@@ -1861,7 +1861,7 @@ test('MODE-INDEPENDENT: the tap handler REFRESHES the mode cache before arming',
 // Tap 1 from `hold` waits out the mode settle. He sees nothing happen — which is
 // the whole reason he says the phrase again — so tap 2 arrives just after the
 // boundary and lands ~100ms behind tap 1's byte instead of the 1.5s later it was
-// spoken. The CLI has not repainted `⏺REC` yet, so the indicator still reads
+// spoken. The CLI has not repainted `⏺ REC` yet, so the indicator still reads
 // DARK and the ensure-on gate would happily write a second byte, which STOPS the
 // recording tap 1 just started. Worse than the blink this ticket removes: the
 // repeat phrase actively undoes the tap.

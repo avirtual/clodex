@@ -264,26 +264,38 @@ function composerHasDraftRows(rows) {
   return false;
 }
 
-// The CLI's own recording indicator, as it lands in the BUFFER. Measured
-// 2026-08-31 through a real xterm replaying the painted spans (CLI 2.1.251):
-// the row reads ` agents ⏺REC · tap to send`, and the bullet and
-// `REC` are ADJACENT — U+23FA is width 1 in xterm's UnicodeV6 table (it is in
-// none of the wide ranges), so the two spans the DOM shows separately occupy
-// consecutive cells with nothing between them. Do not write a space into this
-// pattern: there is no cell there to match. Spelled as an escape because a
-// pasted glyph is one editor normalisation away from a rule that matches
-// nothing, and this one cannot be seen by eye.
+// The CLI's own recording indicator, as it lands in the BUFFER:
+// `⏺ REC · tap to send`, with a U+0020 between the bullet and `REC`.
+// Ground truth is the outerHTML of a LIVE recording row captured on two separate
+// boxes; the indicator bytes are identical on both, U+23FA U+0020 R E C.
 //
-// The adjacency IS the anchor, and it is chosen over the alternatives on
-// measured collisions rather than taste. U+23FA alone opens EVERY tool-call
-// bullet (`⏺ Bash(ls)`) and matches arbitrary transcript; `REC` alone
-// matches ordinary words (`RECORD`, `Read(RECOVERY.md)`); both were confirmed
-// to hit real rows. The bullet followed IMMEDIATELY by `REC` hit none of them,
-// because every ordinary bullet paints a space after itself.
-const RECORDING = /\u23faREC/u;
+// The DOM splits the bullet into its own span ONLY to carry a different
+// letter-spacing (a width correction for the wide glyph), and the space sits
+// inside the ` REC` span at normal spacing. That span split is a STYLING
+// boundary, NOT a cell boundary. Reading it as cell adjacency is what produced
+// the earlier space-less rule, which therefore matched nothing for its whole
+// life: every gate asking "is the recorder lit" answered false while the mic was
+// live. Do not close the space again.
+//
+// The trailing `(?!\w)` is what makes the space safe, and it is why this must
+// not be relaxed to `\u23fa\s*REC`. Measured against real rows, the bare-space
+// and `\s*` forms both also match `⏺ RECOVERY.md` and `⏺ RECORD the
+// thing`, and a phantom lit recorder arms a mic nobody asked for. Ordinary tool
+// bullets (`⏺ Bash(ls)`, `⏺ Read(RECOVERY.md)`) are rejected by every
+// candidate; the word boundary is the only thing that also separates the
+// indicator from a bullet whose next word merely STARTS with `REC`.
+//
+// Bullet and space are both spelled as escapes: a pasted glyph is one editor
+// normalisation away from a rule that matches nothing, and the space most of all
+// — it is the byte this rule was wrong about, and a literal one cannot be
+// reviewed by eye.
+//
+// U+23FA is the MACOS glyph; every other platform paints U+25CF. Clodex ships
+// macOS-only, so no branch is written here and this rule is dark off macos.
+const RECORDING = /\u23fa\u0020REC(?!\w)/u;
 
 // The CLI's PROCESSING indicator, which REPLACES the lit one rather than joining
-// it: the moment recording stops, `\u23faREC` is gone and this is painted in its
+// it: the moment recording stops, `\u23fa REC` is gone and this is painted in its
 // place, while the CLI finishes transcribing.
 //
 // That replacement is why this pattern has to exist, and the harm it prevents is

@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **Clodex can see the recorder again — every voice gate that reads it has been
+  answering "not recording" while the mic was live.** The check looked for the
+  CLI's indicator with no space between the dot and `REC`, but the CLI paints
+  `⏺ REC · tap to send`, with a space. Nothing matched, ever. The voice popover
+  reported "Not recording" during a real recording, the automatic re-arm read the
+  mic as dark, and the click-to-stop declined. The check now matches what the CLI
+  actually paints, and it still ignores ordinary tool output that merely starts
+  with those letters, so a lit reading means a lit recorder.
+
 - **"Cannot read the screen" now says WHY.** The voice popover's unreadable
   reading covered three different situations with one sentence: a full-screen
   program legitimately covering the composer, and two separate ways the screen
