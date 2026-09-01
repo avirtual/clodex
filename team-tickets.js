@@ -12,7 +12,7 @@
 //      test/ticket-mixin-surface.test.js gates the seam instead: deleting a core
 //      method these bodies call is a runtime TypeError only that gate catches.
 
-const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
+const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
@@ -5487,6 +5487,10 @@ function createTicketMethods(deps, shared) {
         // marker set in only one of the two transitions would make that answer
         // depend on WHO rejected — the asymmetry this pair exists to prevent.
         ticket.reworkRound = (Number(ticket.reworkRound) || 0) + 1;
+        // AFTER the bump, so the reason is filed under the round it opens rather
+        // than the one it ends — the same ordering `_taskReject` uses, and the
+        // pair this header calls never-diverging.
+        appendReworkReason(ticket, { round: ticket.reworkRound, by: 'ticket-loop', reason });
         delete ticket.loopStep;
         ticketsStore.save(team.root, tickets);
         // The reviewer goes with the step, exactly as it does in `_taskReject`.
@@ -5622,6 +5626,17 @@ function createTicketMethods(deps, shared) {
       }
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
+      // The CURRENT round, not a bumped one: this path opens no round (see this
+      // function's header), so its entries deliberately share a round number with
+      // the reject that did open one. That grouping is the whole point — these
+      // must-fixes were sent into a round already running, and inventing a round
+      // nobody opened would tell the next reviewer it was sent back once more
+      // than it was.
+      //
+      // Stamped only once the follow-up is AWAY, for the same reason the two
+      // stamps above are: a record of a rework reason nobody received would send
+      // the next reviewer looking for a fix that was never asked for.
+      appendReworkReason(ticket, { round: Number(ticket.reworkRound) || 1, by: session.name, reason });
       ticketsStore.save(team.root, tickets);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || seat, body: `ticket ${ticket.id} follow-up must-fixes` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → follow-up to ${seat} (already open for rework)`);
@@ -6347,6 +6362,10 @@ function createTicketMethods(deps, shared) {
       // Distinct from `reviewRound` and deliberately so: a loop rejection spawns
       // no reviewer, so no review round happens on this path.
       ticket.reworkRound = (Number(ticket.reworkRound) || 0) + 1;
+      // AFTER the bump: the reason belongs to the round it opens, so the next
+      // reviewer reads it against the round it is reviewing rather than the one
+      // that just ended. `_rejectTicketFromLoop` files its own the same way.
+      appendReworkReason(ticket, { round: ticket.reworkRound, by: session.name, reason });
       // Reopening ends the loop's hold for the same reason accept does: the
       // ticket is `open` again, so the sweep tracks it on the ordinary path and a
       // stale step would otherwise let a late verdict land on a ticket the lead
