@@ -1175,17 +1175,12 @@ function createVoiceSubmitWatcher(terminal, {
     // the key, so the character would be inserted into his draft and arm
     // nothing — the same read the re-arm makes, for the same reason.
     //
-    // THE CATCH COVERS THE READ ONLY, and the write below is deliberately
+    // THE CATCH COVERS THE READ ONLY, and `tapTrigger()` below is deliberately
     // outside it. `cursorRow()` is the one gate here with no try/catch of its
-    // own, and this path's caller — renderer.js's `onVoiceTap` — awaits it
-    // unguarded, so a throw rejects that handler and skips every gate after it.
-    // A catch drawn wide enough to include `tapTrigger()` would instead hide a
-    // failure to put the byte out, which is the one thing on this path that
-    // must stay loud: declining is recoverable, a silently unwritten byte
-    // reported as written is not.
-    //
-    // `null` on the throw, not `''`: it lands on the same decline an
-    // unreadable screen already takes, since `composerIsEmpty(null)` is false.
+    // own, and this path's caller awaits it unguarded, so a throw rejected that
+    // handler and skipped every gate after it. Widening the catch to include
+    // the write would instead hide a byte that never reached the pty — the one
+    // outcome on this path that is not recoverable by declining.
     let row = null;
     let threw = null;
     try { row = cursorRow(); } catch (e) { threw = why(e); }
