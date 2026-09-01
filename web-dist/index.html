@@ -24101,6 +24101,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (answered === found.content) return;
           answered = found.content;
+          cancelDeferredSubmit();
           let attention = null;
           try {
             attention = getAttention();
@@ -24118,7 +24119,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
           }
           const litAtMatch = recordingObserved(indicatorRows());
-          cancelDeferredSubmit();
           write("\x7F".repeat(found.erase));
           enterTimer = setTimeout(() => {
             enterTimer = null;
