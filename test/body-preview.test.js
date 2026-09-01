@@ -201,8 +201,13 @@ test('previewLine picks the first NON-EMPTY line, which is the whole fix', () =>
   assert.strictEqual(previewLine('\n        indented body', 60), 'indented body');
   assert.strictEqual(previewLine('\ntrailing spaces   ', 60), 'trailing spaces');
 
-  // The cap applies AFTER the trim, and is measured on the real line.
-  assert.strictEqual(previewLine('\n' + 'x'.repeat(100), 60), 'x'.repeat(60));
+  // The cap applies AFTER the trim, and is measured on the real line. This
+  // asserted a bare `'x'.repeat(60)` — no mark — until the cut became visible.
+  // That expectation was wrong in the same class as the blank preview this file
+  // exists for, reporting partial data as complete instead of present data as
+  // absent. Do not restore it: on a path the unmarked fragment stays
+  // syntactically valid and reads as a shorter path that was never in the body.
+  assert.strictEqual(previewLine('\n' + 'x'.repeat(100), 60), 'x'.repeat(59) + '…');
   assert.strictEqual(previewLine('\nabc'), 'abc', 'an omitted max returns the whole line');
 
   // Non-strings reach this from stores whose records predate a field.
@@ -387,4 +392,50 @@ test('notify-user trims before the store, so its OS preview is immune', () => {
     assert.strictEqual(f.notified[0].body, 'first real line',
       'the OS notification previews the first real line, not the generic fallback');
   } finally { f.cleanup(); }
+});
+
+// ── t609: a truncation with no mark reads as a complete line ────────────────
+//
+// The blank preview above reports present data as absent. This is the same class
+// in the other direction: partial data as complete. A path is the worst case,
+// because the fragment stays syntactically valid — the reported row cut inside
+// "tasks" and read as an instruction naming a directory nowhere in the body.
+
+test('previewLine marks a cut line, and never overruns the width it was given', () => {
+  // The reported body, verbatim. It ends at a FILE; the readout ended at a
+  // directory, and the reader acted on the readout.
+  const FIELD = 'Read @/Users/bogdan/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/reboot-baseline/live.md — the lead\'s state file: ...';
+  const out = previewLine(FIELD, 60);
+
+  // Hardcoded, not recomputed by the rule under test: an expectation built with
+  // `slice(0, 59) + '…'` would assert only that the code agrees with itself.
+  assert.strictEqual(out, 'Read @/Users/bogdan/.clodex/projects/wb-wrap-ui-5bc8ce0a/ta…');
+  assert.strictEqual(out.length, 60, 'the mark is spent INSIDE the budget, not added to it');
+
+  // The two ways to get this wrong, each with its own assertion so a failure
+  // names the property that broke rather than just the value.
+  assert.ok(out.endsWith('…'), 'no mark: a bare slice(0, max) reds here');
+  assert.ok(out.length <= 60, 'overrun: slice(0, max) + the mark reds here');
+
+  // The boundary. Exactly max is NOT a truncation, so it must not be marked —
+  // a fix that ellipsizes at `>=` corrupts a line that fit.
+  assert.strictEqual(previewLine('x'.repeat(60), 60), 'x'.repeat(60));
+  assert.strictEqual(previewLine('x'.repeat(61), 60), 'x'.repeat(59) + '…');
+
+  // Trailing space is eaten before the mark so a cut at a word boundary does not
+  // render as 'word …'.
+  assert.strictEqual(previewLine('aaaa bbbb cccc', 11), 'aaaa bbbb…');
+
+  // Degenerate widths have no room for both a character and its mark; returning
+  // a mark alone would claim a preview where none fits.
+  assert.strictEqual(previewLine('anything', 0), '');
+});
+
+test('the no-max path is unchanged, which is pending-store.js\'s contract', () => {
+  // pending-store.js calls previewLine with NO max and spends its own ellipsis
+  // budget (its comment names the double-truncation hazard). If this path ever
+  // starts clamping, peekPending truncates twice and its length assertion reds.
+  const long = 'y'.repeat(200);
+  assert.strictEqual(previewLine(long), long, 'no max returns the WHOLE line, unmarked');
+  assert.strictEqual(previewLine(`\n${long}`), long);
 });

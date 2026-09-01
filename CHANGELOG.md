@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **Truncated previews now end in `…`, so a cut line stops reading as a whole
+  one.** `[agent:remind list]`, `[agent:memory list]`, the memory index and
+  `notify-user`'s notification all shorten a long body to fit their column, and
+  they used to cut it with no mark at all. A reminder whose body named a file
+  showed up as a row ending at a directory — a fragment that still read as a
+  complete, sensible instruction, so there was nothing to tell you the rest had
+  been cut. The mark is spent inside each readout's width rather than added on
+  top, so nothing got wider.
+
 - **`scripts/release.sh --quiet` prints milestones and nothing else.** A release
   run through an agent's monitor sent back every line the script printed as a
   separate message — the notes preview alone, a changelog you had just written,
