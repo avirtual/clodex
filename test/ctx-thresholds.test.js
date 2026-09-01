@@ -4,12 +4,17 @@
 //
 // Three things are worth pinning here and each one has a shape it needs.
 //
-// THE PRE-CHANGE PIN. "An operator who never opened the setting sees today's
+// THE PRE-CHANGE PIN. "An operator who never opened the setting sees the shipped
 // behaviour" cannot be checked against a fixture captured from this code — that
 // asserts only that the code agrees with itself. So the old module is checked
-// out from the base commit into a temp file and RUN, and the two are compared
-// across a token sweep. It is the only assertion here that can fail if the new
-// default resolution quietly moved.
+// out from the base commit into a temp file and RUN.
+//
+// The baseline NUMBERS moved deliberately (200k/250k -> 150k/200k), so byte
+// equality at equal token counts is no longer the claim. What must still hold is
+// that only the numbers moved: fed the base module's OWN thresholds, the new
+// decision reproduces it exactly — same boundaries, same wording, same rounding.
+// A change that reworded the reminder or moved a boundary relative to its
+// threshold fails here; a retune does not.
 //
 // THE TABLE PROPERTY. The failure this repo has twice paid for is not a lookup
 // that misses, it is a lookup that HITS THE WRONG ROW — silent by construction,
@@ -80,7 +85,7 @@ const UNCHANGED_MODELS = [
   'something-that-is-not-a-model',
 ];
 
-test('invariant 4: with no settings key, EVERY model reproduces the base commit byte for byte', (t) => {
+test('invariant 4: fed the base commit\'s thresholds, the decision reproduces it byte for byte', (t) => {
   const base = loadBaseModule(t);
   // ENTER: the base module must actually be the pre-change one, or "identical"
   // is a comparison of this file against itself.
@@ -91,16 +96,34 @@ test('invariant 4: with no settings key, EVERY model reproduces the base commit 
   assert.strictEqual(typeof base.ctxThresholdsFor, 'undefined',
     'the base module predates the per-model resolver');
 
+  const asBase = { nudge: base.CTX_REMINDER_NUDGE_TOKENS, escalate: base.CTX_REMINDER_ESCALATE_TOKENS };
   for (const model of UNCHANGED_MODELS) {
-    for (const settings of [undefined, null, {}, { unrelatedKey: 1 }]) {
-      for (const tok of SWEEP) {
-        assert.strictEqual(
-          ctxReminderFor(tok, ctxThresholdsFor(model, settings)),
-          base.ctxReminderFor(tok),
-          `model=${model} settings=${JSON.stringify(settings)} tokens=${tok}`);
-      }
+    for (const tok of SWEEP) {
+      assert.strictEqual(
+        ctxReminderFor(tok, asBase),
+        base.ctxReminderFor(tok),
+        `model=${model} tokens=${tok}: only the numbers may have moved`);
     }
   }
+  // ENTER for the sweep itself: it must span both boundaries, or "identical"
+  // is a comparison over a region where both modules return null.
+  assert.ok(SWEEP.some((t2) => base.ctxReminderFor(t2) === null), 'the sweep covers the silent band');
+  assert.ok(SWEEP.some((t2) => (base.ctxReminderFor(t2) || '').includes('getting heavy')), 'and the nudge band');
+  assert.ok(SWEEP.some((t2) => (base.ctxReminderFor(t2) || '').includes('very heavy')), 'and the escalate band');
+});
+
+// The retune itself, stated as the behaviour change it is: a standing seat is
+// now nudged 50k earlier. Literals on both sides — reading the constants would
+// make this true of any retune, including back to the values it corrects.
+test('the baseline retune fires 50k earlier than the base commit did', (t) => {
+  const base = loadBaseModule(t);
+  const now = ctxThresholdsFor('claude-opus-5', {});
+  assert.deepStrictEqual({ nudge: now.nudge, escalate: now.escalate },
+    { nudge: 150_000, escalate: 200_000 });
+  assert.strictEqual(base.ctxReminderFor(150_000), null, 'the base module was silent at 150k');
+  assert.ok(ctxReminderFor(150_000, now).includes('getting heavy'), 'and this one nudges there');
+  assert.ok(ctxReminderFor(200_000, now).includes('very heavy'),
+    'what the base module nudged at, this one escalates at');
 });
 
 test('invariant 4: a real settings file lacking the key resolves to the shipped default', (t) => {
@@ -115,13 +138,14 @@ test('invariant 4: a real settings file lacking the key resolves to the shipped 
   assert.deepStrictEqual(s.ctxReminderThresholds, {},
     'an absent key reads as no overrides, never as undefined');
 
-  const base = loadBaseModule(t);
-  for (const tok of SWEEP) {
-    assert.strictEqual(
-      ctxReminderFor(tok, ctxThresholdsFor('claude-opus-5', s.ctxReminderThresholds)),
-      base.ctxReminderFor(tok),
-      `tokens=${tok}`);
-  }
+  // Absent key resolves to the SHIPPED constants — not to null, not to a
+  // hardcoded copy that could drift from the module that decides.
+  const r = ctxThresholdsFor('claude-opus-5', s.ctxReminderThresholds);
+  assert.strictEqual(r.source, 'builtin-default');
+  assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
+    { nudge: CTX_REMINDER_NUDGE_TOKENS, escalate: CTX_REMINDER_ESCALATE_TOKENS });
+  assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
+    { nudge: 150_000, escalate: 200_000 }, 'and those are the ruled values');
 });
 
 // ---------------------------------------------------------------------------
@@ -304,7 +328,7 @@ test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () =
   assert.strictEqual(r.nudge, CTX_REMINDER_NUDGE_TOKENS);
   // A row whose values happen to equal the baseline is distinguishable from a
   // miss — which is the whole difference a silent lookup would erase.
-  const named = ctxThresholdsFor('claude-opus-5', { 'opus-5': { nudge: 200_000, escalate: 250_000 } });
+  const named = ctxThresholdsFor('claude-opus-5', { 'opus-5': { nudge: 150_000, escalate: 200_000 } });
   assert.strictEqual(named.source, 'settings-model');
   assert.deepStrictEqual(
     { nudge: named.nudge, escalate: named.escalate },
@@ -316,15 +340,15 @@ test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () =
 // ---------------------------------------------------------------------------
 
 test('ENTER: the shipped baseline is the ruled one, and it applies to every model', () => {
-  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 200_000);
-  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 250_000);
+  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 150_000);
+  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 200_000);
   for (const id of ['claude-fable-5-1', 'claude-opus-5', 'us.anthropic.claude-sonnet-4-6']) {
     const r = ctxThresholdsFor(id, {});
     assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
-      { nudge: 200_000, escalate: 250_000 }, id);
-    assert.strictEqual(ctxReminderFor(199_999, r), null, `${id} is not nudged below 200k`);
-    assert.ok(ctxReminderFor(200_000, r).includes('getting heavy'), `${id} nudges at 200k`);
-    assert.ok(ctxReminderFor(250_000, r).includes('very heavy'), `${id} escalates at 250k`);
+      { nudge: 150_000, escalate: 200_000 }, id);
+    assert.strictEqual(ctxReminderFor(149_999, r), null, `${id} is not nudged below 150k`);
+    assert.ok(ctxReminderFor(150_000, r).includes('getting heavy'), `${id} nudges at 150k`);
+    assert.ok(ctxReminderFor(200_000, r).includes('very heavy'), `${id} escalates at 200k`);
   }
 });
 

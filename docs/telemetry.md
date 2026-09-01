@@ -122,8 +122,8 @@ popovers the owner will answer.
   source of the context-window SIZE). `rebuildAllStatusScripts` (main.js)
   re-renders on preference changes. The template is a bash heredoc —
   byte-sensitive, test-pinned.
-- **Ctx reminders** (ctx-reminder.js): absolute thresholds (nudge 200k,
-  escalate 250k — cost scales with absolute context size, not window %),
+- **Ctx reminders** (ctx-reminder.js): absolute thresholds (nudge 150k,
+  escalate 200k — cost scales with absolute context size, not window %),
   per-model-capable and operator-overridable (no model ships a differentiated
   row today). `ctxThresholdsFor` resolves settings-model
   > builtin-model > settings-default > builtin-default and names which layer

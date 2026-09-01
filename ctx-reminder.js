@@ -28,14 +28,20 @@
 // Nudge once context passes this; escalate the wording past the second. Cache-
 // warm reads are discounted but not free, and the discount lapses.
 //
-// The nudge was tuned before the ticket loop existed. Tickets land hands in the
-// 140-180k band, so a 150k threshold fires mid-ticket on ordinary work rather
-// than on a genuinely heavy context; 200k keeps a real backstop while clearing
-// the band a normal ticket occupies. That narrows the gap to escalate on
-// purpose: a seat reaching 200k on a ticket is already anomalous, so the
-// sterner wording should follow sooner after the first warning.
-const CTX_REMINDER_NUDGE_TOKENS = 200_000;
-const CTX_REMINDER_ESCALATE_TOKENS = 250_000;
+// DO NOT RAISE THESE so that ticket seats are not nudged mid-ticket. That change
+// has already been made once, on that reasoning, and it was redundant: a seat
+// spawned for one ticket is never nudged AT ANY THRESHOLD, because the ctx tick
+// drops the warning for a session whose persistence record is `ephemeral`. The
+// raise bought its stated beneficiary nothing and moved every STANDING seat 50k
+// deeper, which is where the compacting actually happens. The exemption is
+// `ephemeral`, not the threshold — reach for that, or for a per-model row below,
+// not for these.
+//
+// 150k also keeps every nudged seat under 200k, the point a long-context
+// surcharge would begin if the vendor applies one to a model we route. That
+// costs nothing if no such wall exists.
+const CTX_REMINDER_NUDGE_TOKENS = 150_000;
+const CTX_REMINDER_ESCALATE_TOKENS = 200_000;
 
 // Per-model thresholds, keyed by the family `modelFamily` derives. Keyed on the
 // model ID, never the display name: the display name is vendor prose ("Sonnet
@@ -43,14 +49,14 @@ const CTX_REMINDER_ESCALATE_TOKENS = 250_000;
 //
 // EMPTY ON PURPOSE, and not dead code. A model whose read price is low enough
 // genuinely wants to compact later — a compact's cost is nearly all fixed while
-// the per-turn saving scales with the read rate — but the measured payback at
-// the 200k baseline is already threefold, so raising a model buys a margin
-// rather than averting a loss. Against that sits a possible long-context
-// surcharge at exactly 200k: if one applies, every turn spent in a raised band
-// is billed at a higher rate and the optimisation inverts. A usage receipt
-// carries token counts and never a rate, so nothing here can detect it. The
-// costs of being wrong are asymmetric, so the shipped values stay on the safe
-// side and the settings map is what makes a correction free.
+// the per-turn saving scales with the read rate — but the measured payback was
+// already several-fold at a threshold higher than the one shipped here, so
+// raising a model buys a margin rather than averting a loss. Against that sits a
+// possible long-context surcharge beginning at 200k: if one applies, every turn
+// a raised row spends above that line is billed at a higher rate and the
+// optimisation inverts. A usage receipt carries token counts and never a rate,
+// so nothing here can detect it. The costs of being wrong are asymmetric, so no
+// row ships and the settings map is what makes a correction free.
 const CTX_MODEL_THRESHOLDS = new Map();
 
 // A nudge below this fires on a session that has merely loaded its system prompt

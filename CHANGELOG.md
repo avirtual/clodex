@@ -13,13 +13,15 @@ blocks a release.
 
 ## Unreleased
 
-- **Context-pressure thresholds are now yours to set.** Clodex tells an agent
-  its context is heavy at 200,000 tokens and escalates the wording at 250,000.
-  Both numbers are now editable in Settings ▸ Traffic optimization, and both
-  persist. The shipped values are unchanged for every model, so an install where
-  you never open the setting behaves exactly as before. Models can now also be
-  given thresholds of their own, which is the groundwork for tuning a model
-  whose token prices make compacting early the expensive move.
+- **Agents are told their context is heavy at 150,000 tokens again, and you can
+  now change that.** The threshold had been raised to 200,000 so that seats
+  spawned for a single ticket would not be nudged mid-task — but those seats are
+  never nudged at any threshold, by a separate rule, so the raise only pushed
+  long-running sessions 50,000 tokens deeper before they were told anything. The
+  sterner second warning moves with it, to 200,000. Both numbers are now editable
+  in Settings ▸ Traffic optimization and persist across restarts, so this is a
+  starting point rather than a fixed one. Models can also be given thresholds of
+  their own, which is groundwork: none differs today.
 
 - **Cost reporting corrected for Fable 5.1 and Sonnet 5.** v5.21.0 updated the
   bundled wirescope table, but Clodex's own pricing is a port of it rather than
