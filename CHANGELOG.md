@@ -32,6 +32,22 @@ blocks a release.
   `clodex-voice-tap.js <seat>` behave exactly as before, including for a seat
   named `tap`, `select`, `mode` or `speech`.
 
+- **The voice-mode picker works with no agent running.** Both places you can
+  set the mode — the Voice row in Settings and the 🎤 button on the session bar
+  — used to change it by typing `/voice <mode>` into one of your Claude
+  sessions, so with none running they refused: the row was greyed out and the
+  popover's rows could not be picked, on a setting that is box-wide and lives in
+  a file you can write with nothing open at all. They now write that file
+  directly, like `clodex-voice-tap mode` already did. Three things follow. The
+  picker works with zero sessions open. A pick made while an agent is mid-turn
+  applies immediately, instead of waiting for it to be between turns. And
+  nothing is typed into your agents any more — choosing a mode used to leave a
+  `/voice` command sitting in whichever session Clodex picked. Clodex no longer
+  checks what the CLI checks before recording — an account that can stream
+  voice, a recording tool, microphone permission — so a mode can now be stored
+  on a box that cannot record; the CLI still checks all of it when recording
+  actually starts, and says so then.
+
 - **The microphone opens only when Clodex is in front.** With Clodex in the
   background — a browser over it, a video playing — an agent finishing a turn
   re-armed the recorder, and the audio in the room was transcribed into its

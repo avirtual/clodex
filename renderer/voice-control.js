@@ -7,34 +7,37 @@
 // the seat I am looking at going to do", read at a glance without opening a
 // dialog; Preferences is where the box-wide setting is stated in full, with the
 // hint text explaining that it is box-wide at all. The setting itself is one per
-// machine either way — `/voice` writes `~/.claude/settings.json`, which every
-// Claude session here shares — so the bar button carries the same value the
-// dialog does, and neither surface may keep its own copy of it.
+// machine either way — it lives in `~/.claude/settings.json`, which every Claude
+// session here shares — so the bar button carries the same value the dialog
+// does, and neither surface may keep its own copy of it.
 //
-// The core is what must not be duplicated: the pending/quiet-gate/focus-guard
-// reconciliation below is subtle enough that a second copy would diverge. A
-// surface owns only its own painting.
-//
-// STATE COMES FROM THE FILE, never from what we last injected. The user can type
-// `/voice hold` in any terminal, so a last-injected mirror goes stale with no
+// STATE COMES FROM THE FILE, never from what we last wrote. The user can type
+// `/voice hold` in any terminal, so a last-written mirror goes stale with no
 // event to correct it; the read is re-run on window focus and on a slow poll.
 // The label reflects the FILE rather than claiming per-session truth the
 // renderer cannot have: a session the CLI is not watching (it watches only
 // directories that had a settings file when that session started) can sit on a
 // mode the file no longer names.
 //
-// The WRITE is an injection so the CLI's own `/voice` performs it, owning the
-// merge and the schema. Injection is quiet-gated (inject-queue parks it until
-// the agent is quiet), so every surface must carry a pending affordance —
-// mid-turn the command is queued, not lost, and a control that looked dead
-// meanwhile would invite a second choice that queues a second command.
+// The WRITE goes STRAIGHT TO THE FILE through `settings:setVoiceMode`, the same
+// writer the `voice mode` verb uses. There is no session in the path: the
+// setting is box-wide and the file is writable with none open, so a control
+// keyed to a live seat would refuse a write that was always possible.
 //
-// The Preferences row is never HIDDEN, only disabled: it lives in a modal
-// settings dialog that opens with no live Claude session at all, and a row that
-// vanishes from a settings dialog reads as a missing feature rather than an
-// unavailable one. The BAR button is the opposite case and is absent for a
-// non-Claude seat — an always-present bar button would claim the seat under it
-// has a voice mode when Codex has no `/voice` at all.
+// WE SKIP THE FOUR GATES the CLI runs before its own `/voice` write (recording
+// availability, voice-stream entitlement, audio-tool dependencies, microphone
+// permission). Accepted deliberately: a mode is a stored PREFERENCE, the CLI
+// re-checks all four when recording actually starts, so the worst case is a
+// preference persisted on a box that cannot record — recoverable and honest. Do
+// NOT re-implement any of them here; that would be a second, drifting copy of a
+// vendor policy we cannot see.
+//
+// The Preferences row is never HIDDEN: it lives in a modal settings dialog that
+// opens with no live Claude session at all, and a row that vanishes from a
+// settings dialog reads as a missing feature rather than an unavailable one. The
+// BAR button is the opposite case and is absent for a non-Claude seat — an
+// always-present bar button would claim the seat under it has a voice mode when
+// Codex has no `/voice` at all.
 //
 // `createVoiceCore` is DOM-free and unit-tested in test/voice-core.test.js; only
 // `createVoiceControl`'s paint is DOM-bound per the R1 rule. The read behind
@@ -51,30 +54,13 @@ const CHOICE_DEBOUNCE_MS = 250;
 
 // The shared state machine. Surfaces subscribe; the core never touches a
 // surface's DOM.
-function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
+function createVoiceCore({ sessionList, showToast }) {
   let state = null;        // the last read of settings.json
-  let pending = null;      // a mode injected but not yet observed in the file
-  let pendingTarget = null; // the session `pending` was queued into
-  let injectTimer = null;  // debounce handle: only the final choice is sent
+  let pending = null;      // a mode written but not yet observed in the file
+  let writeTimer = null;   // debounce handle: only the final choice is sent
   let pollTimer = null;    // runs only while a surface holds the core open
   let holds = 0;           // start/stop refcount — see start()
   const listeners = new Set();
-
-  // Which live LOCAL Claude session to inject into: the active tab when it is
-  // one, else the first in the sidebar. A peer row is skipped — its `/voice`
-  // would move the OTHER machine's settings, which this control does not claim
-  // to reflect — as are archived and failed rows, which have no process to type
-  // into.
-  function injectTarget() {
-    const active = getActiveSession();
-    if (active && sessionTypeOf(active) === 'claude') return active;
-    for (const el of sessionList.querySelectorAll('.session-item[data-type="claude"]')) {
-      if (el.dataset.peerUi || el.dataset.failed) continue;
-      if (el.classList.contains('archived') || el.classList.contains('peer-item')) continue;
-      if (el.dataset.name) return el.dataset.name;
-    }
-    return null;
-  }
 
   function anyClaudeRow() {
     return !!sessionList.querySelector('.session-item[data-type="claude"]');
@@ -83,35 +69,21 @@ function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToa
   function isMode(m) { return VOICE_ITEMS.some((i) => i.mode === m); }
 
   // A PURE read, for a surface that must paint synchronously (the bar button is
-  // built inside renderSessionActions). It reports the pending that `emit` would
-  // keep, without performing the drop itself — reconciling here would let
-  // whichever surface happened to read first consume `pickJustDied` and leave
-  // the other one painting a stale pick.
+  // built inside renderSessionActions).
   function snapshot() {
-    const target = injectTarget();
-    const live = target === pendingTarget ? pending : null;
     return {
-      target, state, pending: live,
-      mode: live || (state && state.effective),
+      state, pending,
+      mode: pending || (state && state.effective),
       anyClaudeRow: anyClaudeRow(),
-      pickJustDied: false,
       force: false,
     };
   }
 
-  // The one place the pending/target reconciliation happens, so it happens once
-  // per change no matter how many surfaces are mounted.
   function emit(force = false) {
-    const target = injectTarget();
-    // The pick no longer points at the session the command is parked in, so the
-    // affordance can no longer describe anything a surface can observe.
-    const hadPending = pending !== null;
-    if (target !== pendingTarget) { pending = null; pendingTarget = null; }
     const snap = {
-      target, state, pending,
+      state, pending,
       mode: pending || (state && state.effective),
       anyClaudeRow: anyClaudeRow(),
-      pickJustDied: hadPending && pending === null,
       force,
     };
     // Per-listener guard: the surfaces are notified in subscription order, so an
@@ -129,63 +101,57 @@ function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToa
     try { r = await window.api.getVoiceMode(); } catch { r = null; }
     if (r && r.ok) {
       state = r;
-      // The file caught up with what we injected — drop the pending affordance.
-      // Only an EQUAL reading clears it: a differing one means the command has
-      // not landed yet, not that it was rejected.
-      if (pending && r.effective === pending) { pending = null; pendingTarget = null; }
+      // The file caught up with what we wrote — drop the pending affordance.
+      // Only an EQUAL reading clears it: a differing one means the write has not
+      // landed yet, not that it was rejected.
+      if (pending && r.effective === pending) pending = null;
     }
     emit();
   }
 
   async function sendMode(mode) {
-    const target = injectTarget();
-    if (!target) { pending = null; pendingTarget = null; emit(); return; }
     let r = null;
-    try { r = await window.api.injectPrompt(target, `/voice ${mode}`); } catch (err) { r = { ok: false, error: err.message }; }
+    try { r = await window.api.setVoiceMode(mode); } catch (err) { r = { ok: false, error: err.message }; }
     if (!r || !r.ok) {
-      // Only the injection that still OWNS `pending` may clear it. A slow first
+      // Only the write that still OWNS `pending` may clear it. A slow first
       // attempt can fail after a second choice has already been made and sent;
       // without this it would wipe the live one's affordance and toast a mode
       // the operator has already moved on from.
       if (pending !== mode) return;
       pending = null;
-      pendingTarget = null;
       emit(true);
       showToast(`Setting voice to ${mode} failed: ${(r && r.error) || 'unknown error'}`);
       return;
     }
-    // The injection is quiet-gated, so the file changes only once the CLI has
-    // actually run the command. Re-read on a short delay AND leave the poll to
-    // catch a parked one; the pending affordance stands until a read agrees.
-    setTimeout(refresh, 1500);
+    // Re-read rather than trusting the write: `effective` is the read's own fold
+    // over the two keys, and the poll would otherwise own retiring the
+    // affordance 15s later.
+    refresh();
   }
 
   // Returns false when the pick was not actionable, so a surface can repaint
   // itself out of a selection the core is not going to honour.
   function choose(mode) {
-    // "Not set" is a READING of the file, not a mode — there is no `/voice ` to
-    // send for it, so re-picking it is a no-op rather than an injection.
+    // "Not set" is a READING of the file, not a mode — there is nothing to write
+    // for it, so re-picking it is a no-op.
     if (!isMode(mode)) { emit(true); return false; }
-    const target = injectTarget();
-    if (!target) { emit(true); return false; }
     pending = mode;
-    pendingTarget = target;
     emit();
     // Coalesce to the FINAL value. On the platforms the web-dist frontend is
     // served to, a closed <select> cycles through its options on arrow keys and
-    // fires `change` at each one — so keyboard selection would otherwise inject
-    // a slash command per option passed over, landing real commands in a live
-    // agent's transcript. Converging eventually is not enough when the
-    // intermediate states are things someone has to read in their session.
-    if (injectTimer) clearTimeout(injectTimer);
-    injectTimer = setTimeout(() => { injectTimer = null; sendMode(mode); }, CHOICE_DEBOUNCE_MS);
+    // fires `change` at each one — so keyboard selection would otherwise perform
+    // one atomic write of the user's global settings file per option passed
+    // over. Converging eventually is not enough when each intermediate step
+    // rewrites a file the operator shares with every Claude session on the box.
+    if (writeTimer) clearTimeout(writeTimer);
+    writeTimer = setTimeout(() => { writeTimer = null; sendMode(mode); }, CHOICE_DEBOUNCE_MS);
     return true;
   }
 
-  // Enablement is a function of the session ROWS, and the core owns that watch
-  // rather than being re-rendered from a call site in renderer.js: a session can
-  // die with no focus change and no user action (a PTY exit needs neither), and
-  // a surface would then keep offering a target that is gone.
+  // `anyClaudeRow` is a function of the session ROWS, and the core owns that
+  // watch rather than being re-rendered from a call site in renderer.js: a
+  // session can die with no focus change and no user action (a PTY exit needs
+  // neither), so nothing else would emit.
   const observer = new MutationObserver(() => emit());
 
   // REFCOUNTED because the two surfaces have different lifetimes: Preferences
@@ -241,25 +207,15 @@ function createVoiceControl({ core }) {
   if (!sel || !stateEl) return { start() {}, stop() {} };
 
   function paint(snap) {
-    const { target, state, pending, mode, pickJustDied, force } = snap;
+    const { state, pending, mode, force } = snap;
     // Never move the selection out from under an open/keyboard-driven picker: a
     // session-row repaint fires this on its own schedule, and rewriting `value`
     // mid-interaction would drag the operator's highlighted option elsewhere.
-    // The exception is the pick dying UNDER the operator — where skipping the
-    // write would leave that dead pick on screen beneath a line saying the value
-    // came from the file.
-    if (force || document.activeElement !== sel || pickJustDied) {
+    if (force || document.activeElement !== sel) {
       sel.value = core.isMode(mode) ? mode : '';
     }
-    sel.disabled = !target;
-    // The two unreachable cases are told apart because the remedy differs: start
-    // a Claude session, versus wait for the one you have. Both keep the row.
-    if (!target) {
-      stateEl.textContent = snap.anyClaudeRow
-        ? 'No Claude session can be reached right now — the mode is shown from the file but cannot be changed from here.'
-        : 'No Claude session on this machine — start one to change the mode. The value shown is read from the settings file.';
-    } else if (pending) {
-      stateEl.textContent = `Switching to ${pending} — queued until ${target} is between turns.`;
+    if (pending) {
+      stateEl.textContent = `Switching to ${pending}…`;
     } else if (!core.isMode(mode)) {
       stateEl.textContent = state && state.source === 'legacy'
         ? 'Only the legacy voiceEnabled key is set in the settings file — pick a mode to set one.'

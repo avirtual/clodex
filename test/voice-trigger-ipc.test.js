@@ -101,8 +101,6 @@ test('the renderer core resolves that same payload to the chord — no re-arm wi
         api: { async getVoiceMode() { return handler(); } },
       };
       const core = createVoiceCore({
-        getActiveSession: () => 'a',
-        sessionTypeOf: () => 'claude',
         sessionList: { querySelectorAll: () => [], querySelector: () => null },
         showToast: () => {},
       });
