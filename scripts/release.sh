@@ -2,7 +2,7 @@
 #
 # Clodex release pipeline — one command, no babysitting.
 #
-#   scripts/release.sh <patch|minor|major|X.Y.Z> [notes-file]
+#   scripts/release.sh [--quiet] <patch|minor|major|X.Y.Z> [notes-file]
 #
 # Bumps the version, builds the arm64 DMG, commits + tags + pushes, and cuts
 # the GitHub release. Every step is mechanical; the only judgement call is the
@@ -19,13 +19,50 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-die() { printf '\n\033[31mrelease: %s\033[0m\n' "$1" >&2; exit 1; }
-step() { printf '\n\033[36m==> %s\033[0m\n' "$1"; }
-
 # --- args ------------------------------------------------------------------
+# --quiet is filtered OUT of the positional args before they are read, so it may
+# sit anywhere on the line without displacing the bump or the notes file.
+QUIET=0
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    -q|--quiet) QUIET=1 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+if [ -n "${CI:-}" ]; then QUIET=1; fi
+set -- ${ARGS[@]+"${ARGS[@]}"}
+
+# The log must survive the `rm -rf dist` at the build step and must exist before
+# the version is known (both smoke tests run before the bump), so it lives
+# outside the tree and is named by timestamp rather than by version. It is
+# deliberately NOT on the EXIT trap: a log deleted on the failure path is
+# useless exactly when it is the only record of what failed.
+LOG=""
+if [ "$QUIET" = 1 ]; then
+  LOG="${RELEASE_LOG:-${TMPDIR:-/tmp}/clodex-release-$(date +%Y%m%d-%H%M%S).log}"
+  : > "$LOG" || { printf 'release: cannot write log %s\n' "$LOG" >&2; exit 1; }
+fi
+
+die() {
+  printf '\n\033[31mrelease: %s\033[0m\n' "$1" >&2
+  if [ -n "$LOG" ]; then printf 'release: full log at %s\n' "$LOG" >&2; fi
+  exit 1
+}
+# say = milestone, always on stdout. note = detail, stdout only when verbose.
+# step = section header. run = a child command whose output is verbose middle.
+say()  { printf '%s\n' "$1"; if [ -n "$LOG" ]; then printf '%s\n' "$1" >>"$LOG"; fi; }
+note() { if [ "$QUIET" = 1 ]; then printf '%s\n' "$1" >>"$LOG"; else printf '%s\n' "$1"; fi; }
+step() {
+  if [ "$QUIET" = 1 ]; then printf '\n==> %s\n' "$1" >>"$LOG"
+  else printf '\n\033[36m==> %s\033[0m\n' "$1"; fi
+}
+run()  { if [ "$QUIET" = 1 ]; then "$@" >>"$LOG" 2>&1; else "$@"; fi; }
+
 BUMP="${1:-}"
 NOTES_FILE="${2:-}"
-[ -n "$BUMP" ] || die "usage: scripts/release.sh <patch|minor|major|X.Y.Z> [notes-file]"
+[ -n "$BUMP" ] || die "usage: scripts/release.sh [--quiet] <patch|minor|major|X.Y.Z> [notes-file]"
+if [ -n "$LOG" ]; then say "quiet mode — verbose output at $LOG"; fi
 if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then
   die "notes file not found: $NOTES_FILE"
 fi
@@ -63,22 +100,22 @@ fi
 # node --test can't see BoringSSL gaps (the blake2b512 incident, 3297835);
 # this is the only preflight step that runs in the runtime we actually ship.
 step "Electron runtime smoke (wire/)"
-node scripts/electron-smoke.js || die "electron smoke failed — wire/ uses something Electron's runtime lacks"
+run node scripts/electron-smoke.js || die "electron smoke failed — wire/ uses something Electron's runtime lacks"
 
 # Renderer startup smoke: the unit suite reasons about the renderer as text and
 # so shipped v5.5.0 with a renderer that threw on load and drew nothing. This
 # step is the only one that opens a window.
 step "Renderer startup smoke (index.html)"
-node scripts/renderer-smoke.js || die "renderer smoke failed — the renderer throws on startup or never renders the sidebar"
+run node scripts/renderer-smoke.js || die "renderer smoke failed — the renderer throws on startup or never renders the sidebar"
 
 PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-echo "previous tag: ${PREV_TAG:-<none>}"
+note "previous tag: ${PREV_TAG:-<none>}"
 
 # --- compute the new version (writes package.json + lock, no commit/tag) ---
 step "Bumping version ($BUMP)"
 NEW_VERSION="$(npm version "$BUMP" --no-git-tag-version | tail -1 | sed 's/^v//')"
 TAG="v$NEW_VERSION"
-echo "new version: $NEW_VERSION  ->  tag $TAG"
+say "new version: $NEW_VERSION  ->  tag $TAG"
 
 git tag | grep -qx "$TAG" && die "tag $TAG already exists"
 
@@ -122,7 +159,7 @@ sync_pin() {
   sed -E -i '' "s|$anchor|$want|" "$file"
   n="$(grep -cFx "$want" "$file" || true)"
   [ "$n" = "1" ] || die "deploy asset $file: after the edit the expected line appeared $n times, expected exactly 1 — the substitution did not produce what it claimed"
-  echo "  pinned $file"
+  note "  pinned $file"
 }
 sync_pin cli/deploy/helm/clodex/values.yaml \
   '^  tag: "[^"]+"$' "  tag: \"$NEW_VERSION\""
@@ -167,7 +204,7 @@ elif [ -n "$CHANGELOG_BODY" ]; then
     { print }
   ' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
   grep -qF "$STAMP" "$CHANGELOG" || die "changelog stamp failed — $STAMP is not in $CHANGELOG"
-  echo "  changelog: stamped $STAMP"
+  note "  changelog: stamped $STAMP"
 else
   {
     echo "## What's changed"
@@ -181,16 +218,23 @@ else
   } > "$NOTES"
 fi
 printf '%s' "$FOOTER" >> "$NOTES"
-echo "--- notes preview ---"; cat "$NOTES"; echo "---------------------"
+# The preview echoes a file the operator just wrote, so quiet mode reports its
+# shape instead of its content and keeps the full text in the log.
+if [ "$QUIET" = 1 ]; then
+  { echo "--- notes preview ---"; cat "$NOTES"; echo "---------------------"; } >>"$LOG"
+  say "notes: $TITLE ($(grep -c '^- ' "$NOTES" || true) bullets)"
+else
+  echo "--- notes preview ---"; cat "$NOTES"; echo "---------------------"
+fi
 
 # --- build -----------------------------------------------------------------
 step "Building arm64 DMG"
 rm -rf dist
-npm run dist:mac || die "build failed (try: npx electron-rebuild)"
+run npm run dist:mac || die "build failed (try: npx electron-rebuild)"
 
 DMG="$(ls dist/*.dmg 2>/dev/null | head -1 || true)"
 [ -n "$DMG" ] || die "no .dmg produced in dist/"
-echo "built: $DMG"
+say "built: $DMG"
 case "$DMG" in
   *"$NEW_VERSION"*) ;;
   *) die "dmg name ($DMG) does not contain version $NEW_VERSION" ;;
@@ -203,14 +247,15 @@ esac
 # them reading bytes that are not the ones shipping, and they would read green
 # precisely when the two disagree.
 step "Commit + tag + push"
-git commit -am "$TAG" || die "commit failed"
+run git commit -am "$TAG" || die "commit failed"
 git tag "$TAG"
-git push origin master || die "git push failed"
-git push origin "$TAG"  || die "git push tag failed"
+run git push origin master || die "git push failed"
+run git push origin "$TAG"  || die "git push tag failed"
+say "pushed master and $TAG to origin"
 
 # --- publish ---------------------------------------------------------------
 step "Creating GitHub release $TAG"
-gh release create "$TAG" "$DMG" \
+run gh release create "$TAG" "$DMG" \
   --title "$TITLE" \
   --notes-file "$NOTES" \
   || die "gh release create failed (tag/commit are already pushed — fix and re-run just the gh step)"
@@ -222,7 +267,7 @@ gh release create "$TAG" "$DMG" \
 # The retention count lives in prune-releases.sh (KEEP, default 5); don't
 # duplicate the number here — the prune script reports its own effective KEEP.
 step "Pruning old release assets"
-"$(dirname "$0")/prune-releases.sh" --delete || echo "warn: prune failed (release is fine); run scripts/prune-releases.sh --delete manually"
+run "$(dirname "$0")/prune-releases.sh" --delete || say "warn: prune failed (release is fine); run scripts/prune-releases.sh --delete manually"
 
 # --- publish the sandbox image --------------------------------------------
 # Folded in after two manual runs proved it stable. Non-fatal for the same
@@ -232,9 +277,12 @@ step "Pruning old release assets"
 # versions behind, which is undiagnosable from a deployed box (an old image's
 # hello carries no webHost, so features simply appear missing).
 step "Publishing container image $NEW_VERSION"
-"$(dirname "$0")/publish-image.sh" "$NEW_VERSION" \
-  || echo "warn: image publish failed (GitHub release is fine); run scripts/publish-image.sh $NEW_VERSION manually"
+if run "$(dirname "$0")/publish-image.sh" "$NEW_VERSION"; then
+  say "image published: ghcr.io/avirtual/clodex:$NEW_VERSION"
+else
+  say "warn: image publish failed (GitHub release is fine); run scripts/publish-image.sh $NEW_VERSION manually"
+fi
 
 step "Done"
-echo "released $TAG"
+say "released $TAG"
 gh release view "$TAG" --json url -q .url

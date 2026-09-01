@@ -106,3 +106,103 @@ test('release preflight: rejects BEHIND, permits AHEAD', () => {
   assert.ok(!/\[ "\$\(git rev-parse HEAD\)" = "\$\(git rev-parse @\{u\}\)" \]/.test(src),
     'the old equality check is back: it cannot tell "ahead" (fine) from "behind" (unsafe)');
 });
+
+// Quiet mode. A release run through clodex-monitor injected every printed
+// line as a separate message — each one an API round trip — so the script gained
+// a mode that keeps milestones on stdout and routes the verbose middle to a log.
+// These pin the SHAPE of that routing, since the script itself runs only at ship
+// time: the prologue is extracted and exercised, so a helper that stops honouring
+// the flag reds here rather than during a release.
+const PROLOGUE = (() => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const m = src.match(/^# --- args -+\n([\s\S]*?\nif \[ -n "\$LOG" \]; then say [^\n]*\n)/m);
+  assert.ok(m, 'the arg/logging prologue was not found in release.sh — quiet mode was restructured '
+    + 'and these tests are no longer pinning the code that actually runs');
+  return m[1];
+})();
+
+// Runs the real prologue, then whatever probe lines the caller adds, and reports
+// what reached stdout versus what reached the log.
+function withPrologue(argv, probe, env = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-release-log-'));
+  const log = path.join(dir, 'verbose.log');
+  try {
+    const stdout = execFileSync('bash', ['-c', `set -euo pipefail\n${PROLOGUE}\n${probe}`, '--', ...argv],
+      { encoding: 'utf-8', env: { ...process.env, CI: '', RELEASE_LOG: log, ...env } });
+    return { stdout, log: fs.existsSync(log) ? fs.readFileSync(log, 'utf-8') : null };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+const PROBE = [
+  'say "RELEASE-URL"',
+  'note "PREVIOUS-TAG"',
+  'step "BUILDING"',
+  'run echo "BUILD-OUTPUT"',
+  'echo "parsed: bump=$BUMP notes=$NOTES_FILE quiet=$QUIET"',
+].join('\n');
+
+test('release --quiet: milestones on stdout, verbose middle in the log', () => {
+  const { stdout, log } = withPrologue(['--quiet', 'minor'], PROBE);
+  assert.match(stdout, /RELEASE-URL/,
+    'the release URL is a milestone — quieting it leaves the operator with nothing to open');
+  for (const hidden of ['PREVIOUS-TAG', 'BUILDING', 'BUILD-OUTPUT']) {
+    assert.ok(!stdout.includes(hidden), `${hidden} must not reach stdout in quiet mode`);
+    assert.ok(log.includes(hidden), `${hidden} must reach the log — quiet must not mean discarded`);
+  }
+});
+
+test('release --quiet: the flag does not displace the positional bump and notes args', () => {
+  for (const argv of [['--quiet', 'minor', 'n.md'], ['minor', '--quiet', 'n.md'], ['minor', 'n.md', '-q']]) {
+    const { stdout } = withPrologue(argv, PROBE);
+    assert.match(stdout, /parsed: bump=minor notes=n\.md quiet=1/,
+      `${argv.join(' ')}: the flag was consumed as a positional, so the release would bump the wrong thing`);
+  }
+});
+
+test('release: default (no flag) behaviour is unchanged — everything on stdout, no log', () => {
+  const { stdout, log } = withPrologue(['patch'], PROBE);
+  for (const shown of ['RELEASE-URL', 'PREVIOUS-TAG', 'BUILDING', 'BUILD-OUTPUT']) {
+    assert.ok(stdout.includes(shown), `${shown} must still print when the flag is absent`);
+  }
+  assert.match(stdout, /parsed: bump=patch notes= quiet=0/);
+  assert.strictEqual(log, null, 'no log file is created for a verbose run');
+});
+
+test('release: a non-empty CI forces quiet without the flag', () => {
+  const { stdout, log } = withPrologue(['patch'], PROBE, { CI: '1' });
+  assert.match(stdout, /parsed: .*quiet=1/);
+  assert.ok(!stdout.includes('BUILD-OUTPUT'), 'CI runs must not stream child output');
+  assert.ok(log.includes('BUILD-OUTPUT'));
+});
+
+// The log names the failure that produced it, so quiet mode must not swallow the
+// one message the operator needs, nor make them guess where the detail went.
+test('release --quiet: die() prints the message AND the log path, and exits nonzero', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-release-die-'));
+  const log = path.join(dir, 'verbose.log');
+  try {
+    let status = 0, stderr = '';
+    try {
+      execFileSync('bash', ['-c', `set -euo pipefail\n${PROLOGUE}\ndie "build failed"`, '--', '--quiet', 'minor'],
+        { encoding: 'utf-8', env: { ...process.env, CI: '', RELEASE_LOG: log }, stdio: 'pipe' });
+    } catch (e) { status = e.status; stderr = String(e.stderr); }
+    assert.notStrictEqual(status, 0, 'die must exit nonzero or a failed release reads as a success');
+    assert.match(stderr, /build failed/, 'the failure message must survive quiet mode');
+    assert.ok(stderr.includes(log), 'die must name the log path — it is the only record of what failed');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Chosen over the suggested dist/release-<version>.log for two reasons, both
+// load-bearing: `rm -rf dist` at the build step would delete everything logged
+// before it, and the version is not known until the bump, which is after both
+// smoke tests. A log that vanishes on a build failure is empty exactly when it
+// is the only evidence.
+test('release --quiet: the log lives outside dist/, which the build step rm -rf s', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const m = src.match(/^\s*LOG="\$\{RELEASE_LOG:-(.*)\}"$/m);
+  assert.ok(m, 'the log path assignment was not found — quiet mode no longer takes a RELEASE_LOG override');
+  assert.ok(!m[1].includes('dist'), 'the log must not sit under dist/ — the build step deletes it');
+  assert.match(src, /rm -rf dist/, 'the rm this test exists to avoid is still in the script');
+  assert.ok(!/trap '[^']*\$LOG/.test(src),
+    'the log must not be on the EXIT trap — deleting it on the failure path destroys the evidence');
+});
