@@ -431,7 +431,6 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
 // Canonical start_proxy.sh defaults — bare uvicorn leaves them OFF.
 // `?? '…'` mirrors the script's ${VAR-default}: an explicitly exported 0
 // sticks (`||` would silently re-enable the default).
-            STRIP_COMPACT_CACHE: process.env.STRIP_COMPACT_CACHE ?? '1',
             WARMTH_BLOCK_COLD_PING: process.env.WARMTH_BLOCK_COLD_PING ?? '1',
             WARMTH_LOG_FILE: process.env.WARMTH_LOG_FILE ?? '1',
             WS_SPAWNER_HINT: process.env.WS_SPAWNER_HINT ?? '1',

@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **Bundled wirescope updated to v0.6.58, which retires the compact-cache
+  strip.** The proxy used to drop the cache marker from a compaction request
+  when it judged the session cold, on the theory that re-caching a summary you
+  will not reuse is waste. Measured over 14 days it lost money: the judgement
+  was wrong 60 times out of 87, and each wrong call re-sent about 175k tokens
+  of history at full price instead of a tenth of it — a net loss of roughly $42.
+  The cause is structural rather than a threshold worth tuning, so the strip is
+  now off in code and the environment variable that enabled it is ignored.
+  Clodex no longer sets that variable. **A proxy already running keeps the old
+  behaviour until Clodex is restarted.**
+
 - **A typed message is no longer labelled as dictated.** Clodex tells the
   receiving agent when a message came out of a microphone, so it can read a
   garbled word for intent instead of taking it literally. That marker is armed

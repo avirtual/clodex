@@ -1680,9 +1680,30 @@ def _sort_tools(obj):
 #
 # We strip ONLY the MESSAGE-level marker(s) (the discarded history breakpoint) and
 # KEEP the system markers (tools+system is legitimately reused by the post-compact
-# turns and the fleet). Enable with STRIP_COMPACT_CACHE=1; force the decision either
-# way with STRIP_COMPACT_FORCE=0/1 (experiments / the warm decline-to-strip control).
-STRIP_COMPACT_CACHE = os.environ.get("STRIP_COMPACT_CACHE") in ("1", "yes", "on", "true")
+# turns and the fleet). Force the decision either way with STRIP_COMPACT_FORCE=0/1
+# (experiments / the warm decline-to-strip control).
+#
+# *** RETIRED 2026-09-02 (v0.6.58): HARD-OFF, the env flag is IGNORED. ***
+# Measured on the live 14-day corpus (122 compacts, all 5m TTL): the gate said
+# not-warm 87 times; 60 of those came <5 min after a turn that had just cached
+# >50k tokens -- i.e. WARM, and the strip re-shipped ~175k of history at 1.0x
+# instead of a 0.1x read. Net of the feature: -$42 (saved $4.72 on the 27 truly
+# cold compacts, lost $46.74 on the 60 false-colds). The predicate is structurally
+# blind: the ledger stamps each request at its FULL depth, but a compact body
+# always differs from the previous request in its last 1-2 messages (the CLI
+# appends the compaction prompt INSIDE the last user message; the strip removes the
+# last assistant's thinking), so no depth ever matches and 'absent' fires on a warm
+# prefix. The asymmetry kills it even fixed: at 5m TTL a right call saves 0.25x of
+# the history, a wrong call costs 0.9x (opus-5) / 0.975x (fable-5-1) -- break-even
+# needs <1 wrong per 4 right; measured 60:27. Ceiling of a PERFECT gate at 5m is
+# ~$10/month across the fleet. Re-evaluate only if compacting sessions move to 1h
+# TTL (premium 2x -> the asymmetry drops to ~1:1) -- then the honest predicate is
+# the SESSION HEAD's warmth (was this session's previous request warm), never a
+# depth match, and the test must use the real wire tail shape (prompt appended
+# inside the last message), which the old fixture did not. Code kept for the
+# experiment harness; the server gate below returns None unconditionally.
+STRIP_COMPACT_CACHE = False
+_STRIP_COMPACT_CACHE_ENV = os.environ.get("STRIP_COMPACT_CACHE") in ("1", "yes", "on", "true")
 
 # Stable anchors from the Claude Code compaction prompt (require >=2 -> ~0 FPs).
 # Version-fragile by nature; the canary tracks wire shape, but if the CLI rewords
