@@ -201,8 +201,13 @@ test('previewLine picks the first NON-EMPTY line, which is the whole fix', () =>
   assert.strictEqual(previewLine('\n        indented body', 60), 'indented body');
   assert.strictEqual(previewLine('\ntrailing spaces   ', 60), 'trailing spaces');
 
-  // The cap applies AFTER the trim, and is measured on the real line.
-  assert.strictEqual(previewLine('\n' + 'x'.repeat(100), 60), 'x'.repeat(60));
+  // The cap applies AFTER the trim, and is measured on the real line. This line
+  // asserted `'x'.repeat(60)` until t609: a bare slice, no mark. That expectation
+  // was wrong in the same class as the blank-preview bug this file was written
+  // for — it reports PARTIAL data as COMPLETE. The field case severed a path
+  // mid-word and the fragment stayed syntactically valid, so it read as an
+  // instruction naming a directory that was never in the body.
+  assert.strictEqual(previewLine('\n' + 'x'.repeat(100), 60), 'x'.repeat(59) + '…');
   assert.strictEqual(previewLine('\nabc'), 'abc', 'an omitted max returns the whole line');
 
   // Non-strings reach this from stores whose records predate a field.
@@ -387,4 +392,51 @@ test('notify-user trims before the store, so its OS preview is immune', () => {
     assert.strictEqual(f.notified[0].body, 'first real line',
       'the OS notification previews the first real line, not the generic fallback');
   } finally { f.cleanup(); }
+});
+
+// ── t609: a truncation with no mark reads as a complete line ────────────────
+//
+// The blank-preview defect above reports PRESENT data as ABSENT. This is the
+// same class in the other direction: PARTIAL data as COMPLETE. It is worse on a
+// path, because the fragment stays syntactically valid — the field case cut
+// inside "tasks" and left a row that reads as a whole instruction naming a
+// directory that is nowhere in the stored body.
+
+test('previewLine marks a cut line, and never overruns the width it was given', () => {
+  // The field case, verbatim from reminders.json id 6ead6l. Its stored body ends
+  // at a FILE; the readout ended at a directory and Bogdan acted on the readout.
+  const FIELD = 'Read @/Users/bogdan/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/reboot-baseline/live.md — the lead\'s state file: ...';
+  const out = previewLine(FIELD, 60);
+
+  // Hardcoded, not recomputed by the rule under test: an expectation built with
+  // `slice(0, 59) + '…'` would assert only that the code agrees with itself.
+  assert.strictEqual(out, 'Read @/Users/bogdan/.clodex/projects/wb-wrap-ui-5bc8ce0a/ta…');
+  assert.strictEqual(out.length, 60, 'the mark is spent INSIDE the budget, not added to it');
+
+  // The two mutants the ticket names, each pinned by its own assertion so a
+  // failure says which property broke.
+  assert.ok(out.endsWith('…'), 'MUTANT (no mark): a bare slice(0, max) reds here');
+  assert.ok(out.length <= 60, 'MUTANT (max + 1): slice(0, max) + "…" reds here');
+
+  // The boundary. Exactly max is NOT a truncation, so it must not be marked —
+  // a fix that ellipsizes at `>=` corrupts a line that fit.
+  assert.strictEqual(previewLine('x'.repeat(60), 60), 'x'.repeat(60));
+  assert.strictEqual(previewLine('x'.repeat(61), 60), 'x'.repeat(59) + '…');
+
+  // Trailing space is eaten before the mark so a cut at a word boundary does not
+  // render as 'word …'.
+  assert.strictEqual(previewLine('aaaa bbbb cccc', 11), 'aaaa bbbb…');
+
+  // Degenerate widths have no room for both a character and its mark; returning
+  // a mark alone would claim a preview where none fits.
+  assert.strictEqual(previewLine('anything', 0), '');
+});
+
+test('the no-max path is unchanged, which is pending-store.js\'s contract', () => {
+  // pending-store.js calls previewLine with NO max and spends its own ellipsis
+  // budget (its comment names the double-truncation hazard). If this path ever
+  // starts clamping, peekPending truncates twice and its length assertion reds.
+  const long = 'y'.repeat(200);
+  assert.strictEqual(previewLine(long), long, 'no max returns the WHOLE line, unmarked');
+  assert.strictEqual(previewLine(`\n${long}`), long);
 });

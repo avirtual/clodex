@@ -22,11 +22,19 @@
 // line genuinely has nothing to show, so blank is the honest answer there and
 // the caller's own `|| fallback` can take over.
 
+// A cut line ends in '…' and the result never EXCEEDS max: the callers' widths
+// are layout budgets, so an ellipsis added on top of max trades this defect for
+// an overflow. That is what `max - 1` buys. max < 1 has no room for the mark, so
+// nothing it could return would be both marked and within budget.
 function previewLine(text, max) {
   if (typeof text !== 'string') return '';
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
-    if (trimmed) return max === undefined ? trimmed : trimmed.slice(0, max);
+    if (!trimmed) continue;
+    if (max === undefined) return trimmed;
+    if (max < 1) return '';
+    if (trimmed.length <= max) return trimmed;
+    return trimmed.slice(0, max - 1).trimEnd() + '…';
   }
   return '';
 }
