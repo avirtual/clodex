@@ -413,7 +413,9 @@ function createVoiceSubmitWatcher(terminal, {
   // stays killed.
   let answered = null;
   let fires = 0;
-  // Submits that found the recorder still lit afterwards and stopped it.
+  // Submits the trigger key made, the recorder having been lit at MATCH time.
+  // Read before any write, so this counts a decision rather than an outcome: the
+  // key submits and stops in one keystroke, there being no later read to confirm.
   let keySubmits = 0;
   // Taps written for an EXTERNAL ensure-on request, counted apart from the
   // re-arm's: the two answer different questions about the same byte, and one
