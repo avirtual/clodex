@@ -45,6 +45,19 @@ function text(v) {
   return String(v == null ? '' : v).trim();
 }
 
+// Applied HERE and not where the reason is stored: the record keeps what the
+// lead actually said, and only this rendering is bounded — the scope rides a
+// system prompt and a reason is unbounded lead prose. A cut is rendered as a
+// visible marker rather than silently, so a reviewer never mistakes a truncated
+// demand for the whole of one.
+const REWORK_REASON_CAP = 2000;
+
+function capReason(v) {
+  const t = text(v);
+  if (t.length <= REWORK_REASON_CAP) return t;
+  return `${t.slice(0, REWORK_REASON_CAP)}\n… [truncated for the review scope — ${t.length - REWORK_REASON_CAP} more characters are on the ticket record]`;
+}
+
 // `ticket` is the record; `diffPath` is where the materialized diff was written.
 // Callers pass the diff path rather than the diff itself: the diff is unbounded
 // and the scope rides a system prompt, so the reviewer is pointed at the file.
@@ -167,6 +180,33 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
       + 'genuinely fixed, plus any NEW defect the fixes introduced. Do not re-open settled ground: raising a fresh '
       + `MUST-FIX against code round ${round} already passed, and which this round did not touch, is out of scope.`);
     out.push('');
+  }
+
+  // Kept SEPARATE from the MUST-FIX block above, which is the load-bearing part:
+  // that block is what the previous REVIEWER found, this is what the lead or the
+  // loop said when it sent the ticket back afterwards. Merging them would
+  // attribute one party's words to the other — the confusion this block exists
+  // to remove.
+  //
+  // Gated on the field being present and non-empty so a record without it renders
+  // byte for byte as it did before: every ticket minted before this field existed
+  // is such a record, and a scope that changed shape for them would be a
+  // migration.
+  const reasons = Array.isArray(t.reworkReasons) ? t.reworkReasons.filter((r) => r && text(r.reason)) : [];
+  if (reasons.length) {
+    out.push('REWORK REASONS ON RECORD — what the lead or the loop said when this ticket was sent back, '
+      + 'verbatim. These are NOT the previous round\'s MUST-FIX items: those are what a reviewer found, '
+      + 'these are what whoever reopened the ticket asked for afterwards, and they are the only record of '
+      + 'why the ticket came back at all. Each is labelled with the rework round it was sent during; more '
+      + 'than one under the same round means further must-fixes went to a seat already holding that round.');
+    out.push('');
+    for (const r of reasons) {
+      const who = text(r.by) || '(unattributed)';
+      out.push(`Rework round ${Number(r.round) || 1} — from ${who}:`);
+      out.push('');
+      out.push(capReason(r.reason));
+      out.push('');
+    }
   }
 
   out.push('Report your verdict in exactly this shape:');

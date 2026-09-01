@@ -9,6 +9,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const { buildReviewScope, VERDICT_GRAMMAR } = require('../ticket-review-scope');
+const fsReal = require('node:fs');
+const pathReal = require('node:path');
 
 function ticket(over = {}) {
   return {
@@ -228,4 +230,110 @@ test('a wholly absent ticket still produces an answerable scope', () => {
   const s = buildReviewScope({});
   assert.match(s, /reviewing ticket \(unknown\)/);
   assert.ok(s.includes(VERDICT_GRAMMAR));
+});
+
+
+// ── t618: the rework reasons the record now carries ────────────────────────
+//
+// Grepped before writing: the round>=2 subjects above claim the MUST-FIX block,
+// the derived opener and the no-mustFix fallback, and nothing above claims
+// anything about what the LEAD said when it sent the ticket back. That gap is
+// what these add — the reader of the round-2 scope could see what the previous
+// reviewer found and never what it was reopened for.
+
+// The golden is rendered from `ticket-review-scope.js` AT THE BASE COMMIT this
+// change was written against, not from the current module: a golden captured
+// from the post-change code would agree with itself and could not detect the
+// migration this subject exists to forbid. The live board carries 617 tickets
+// and none of them have the field.
+const GOLDEN_NO_REWORK = fsReal.readFileSync(
+  pathReal.join(__dirname, 'fixtures', 'review-scope-round2-no-rework-reasons.txt'), 'utf8');
+
+test('a ticket with NO rework reasons renders byte for byte as it did before the field existed', () => {
+  const t = ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)' });
+  const s = buildReviewScope({
+    ticket: t, diffPath: '/tmp/d.diff', taskDir: '/home/u/.clodex/projects/p/tasks/widget',
+  });
+  // The WHOLE string, not a regex over it: a regex asserting the absence of the
+  // new heading would pass over any other shape change the field's arrival made
+  // to the 617 records that do not have it.
+  assert.strictEqual(s, GOLDEN_NO_REWORK,
+    'the scope for a record without the field must be unchanged, to the byte');
+});
+
+test('an EMPTY rework-reasons array is the same non-event as an absent one', () => {
+  // Reached in production by a reject whose reason was whitespace, and by any
+  // record a future writer initialises eagerly. A heading over nothing tells the
+  // reviewer a reason exists and then shows it none.
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)', reworkReasons: [] }),
+    diffPath: '/tmp/d.diff', taskDir: '/home/u/.clodex/projects/p/tasks/widget',
+  });
+  assert.strictEqual(s, GOLDEN_NO_REWORK);
+});
+
+test('recorded rework reasons render verbatim, attributed, and SEPARATELY from MUST-FIX', () => {
+  const s = buildReviewScope({
+    ticket: ticket({
+      reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)',
+      reworkReasons: [
+        { round: 1, at: 1, by: 'clodex', reason: 'the retry bound is off by one and the empty case is untested' },
+        { round: 2, at: 2, by: 'ticket-loop', reason: 'SUITE RED: widget.test.js' },
+      ],
+    }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(s.includes('the retry bound is off by one and the empty case is untested'),
+    'the first reason appears verbatim');
+  assert.ok(s.includes('SUITE RED: widget.test.js'), 'and so does the second');
+  assert.match(s, /Rework round 1 — from clodex:/, 'attributed to who sent it, under its round');
+  assert.match(s, /Rework round 2 — from ticket-loop:/, 'the loop is named as itself, not as the lead');
+
+  // The load-bearing separation: the MUST-FIX block is what the previous
+  // REVIEWER found, the rework block is what the lead or the loop said
+  // afterwards. Merging them attributes one party's words to the other, which is
+  // the confusion this whole ticket removes — so the ordering is asserted, not
+  // merely the presence of both.
+  const mf = s.indexOf('The MUST-FIX items on record from round 1 were');
+  const rw = s.indexOf('REWORK REASONS ON RECORD');
+  assert.ok(mf !== -1 && rw !== -1, 'ENTER: both blocks rendered — otherwise the ordering below is vacuous');
+  assert.ok(mf < rw, 'the two blocks are distinct and ordered, never interleaved');
+  assert.ok(!s.slice(mf, rw).includes('SUITE RED: widget.test.js'),
+    'no rework reason may fall inside the block attributed to the previous reviewer');
+});
+
+test('the round-2 opener and MUST-FIX block are untouched by the new block', () => {
+  // The new block is ADDITIVE. Without this, a change that moved a reason into
+  // the existing block would satisfy every subject above.
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'REWORK', mustFix: '- widget.js:12 off by one', reworkReasons: [{ round: 1, at: 1, by: 'clodex', reason: 'r' }] }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.match(s, /THIS IS ROUND 2\. Round 1 returned REWORK\./);
+  assert.ok(s.includes('- widget.js:12 off by one'));
+});
+
+test('an over-long reason is truncated VISIBLY at render, and only at render', () => {
+  // The cap lives in the renderer because the scope rides a system prompt while
+  // the record must keep what was actually said. A silent cut would let a
+  // reviewer read a truncated demand as the whole of one.
+  const long = `START${'x'.repeat(5000)}END`;
+  const t = ticket({ reviewRound: 1, verdict: 'ACCEPT', reworkReasons: [{ round: 1, at: 1, by: 'clodex', reason: long }] });
+  const s = buildReviewScope({ ticket: t, diffPath: '/tmp/d.diff' });
+  assert.ok(s.includes('START'), 'the head of the reason survives');
+  assert.ok(!s.includes('END'), 'ENTER: the reason really was long enough to be cut');
+  assert.match(s, /\[truncated for the review scope — \d+ more characters are on the ticket record\]/,
+    'and the cut is visible as one, naming where the rest is');
+  assert.strictEqual(t.reworkReasons[0].reason, long,
+    'the RECORD is not mutated by rendering it — the cap is the scope\'s, not the store\'s');
+});
+
+test('a malformed rework entry degrades rather than leaking undefined into the scope', () => {
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', reworkReasons: [null, { reason: '' }, { reason: 'the real one' }] }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(s.includes('the real one'), 'ENTER: the well-formed entry still renders');
+  assert.ok(!/undefined/.test(s), 'no entry may leak "undefined" into the scope');
+  assert.match(s, /Rework round 1 — from \(unattributed\):/, 'a missing author is stated as unknown, not blank');
 });

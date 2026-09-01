@@ -224,6 +224,27 @@ function countMustFix(mustFixText) {
   return n > 0 ? n : (text.trim() ? 1 : 0);
 }
 
+// Append-only, and the array is the point: a later rework reason never
+// overwrites an earlier one, because what the next reviewer needs is the
+// SEQUENCE of what it was sent back for.
+//
+// `round` is passed rather than derived from `ticket.reworkRound` here: the
+// three reject paths disagree about it deliberately, and the two that bump the
+// counter call this after the bump while the follow-up path — which bumps
+// nothing — passes the round already open. Deriving it here would make the
+// caller's deliberate choice unstatable.
+function appendReworkReason(ticket, { round, by, reason, at } = {}) {
+  const text = String(reason == null ? '' : reason).trim();
+  if (!ticket || !text) return;
+  if (!Array.isArray(ticket.reworkReasons)) ticket.reworkReasons = [];
+  ticket.reworkReasons.push({
+    round: Number(round) || 1,
+    at: Number(at) || Date.now(),
+    by: String(by == null ? '' : by),
+    reason: text,
+  });
+}
+
 // The KEY'S PRESENCE is the format discriminator, which is why `_taskAdd` writes
 // `startedAt: null` explicitly: an unstarted ticket holds the key with null and a
 // pre-upgrade record has no key. Absent defaults to started because the errors are
@@ -261,4 +282,4 @@ function ticketTerminalReason(ticket) {
 
 const ticketTerminal = (ticket) => ticketTerminalReason(ticket) !== null;
 
-module.exports = { createTicketsStore, nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, appendReworkReason, nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };
