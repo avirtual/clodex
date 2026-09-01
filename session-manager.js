@@ -3911,7 +3911,9 @@ function createSessionManager(deps) {
         // per-seat one: the recorder is reported only for the active seat, so
         // `s.lastVoiceRecordingTs` is undefined on every background seat and a
         // gate reading it would pass exactly when he is dictating into another
-        // pane. One microphone, one speaker, one gate.
+        // pane. The microphone and the speaker are both box-wide, and this reads
+        // box-wide with them — unlike the holder gate above, which is per-seat
+        // because it answers a different question.
         //
         // Absent evidence reads as NOT recording, matching the inject gate's
         // polarity — the cost of a wrong "quiet" here is one narration he can

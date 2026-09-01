@@ -436,11 +436,15 @@ test('constructing the engine does not spawn the voice enumeration', () => {
 
 // THE BOX-WIDE INTERLOCK, through the real SessionManager wiring.
 //
-// The failing case is the ordinary one: he dictates into the seat he is looking
-// at while a BACKGROUND seat finishes a turn. The renderer only ever reports the
-// ACTIVE seat's recorder, so the background seat's own stamp is undefined
-// forever — a per-seat gate passes and `say` narrates into the open microphone.
-// One microphone, one speaker, one gate.
+// The renderer only ever reports the ACTIVE seat's recorder, so any other seat's
+// own stamp is undefined forever and a per-seat read would pass exactly while he
+// is dictating elsewhere. The microphone and the speaker are both box-wide, and
+// this gate reads box-wide with them.
+//
+// Reaching that read now takes a seat that has already cleared the holder gate,
+// which is why the recorder tests below hand one the microphone first: a seat
+// silenced for not holding it never evaluates the stamp at all, and the
+// assertion would hold for the wrong reason.
 // `speakReplies` is a PARAMETER, not a constant, and that is the whole reason
 // this helper exists in this shape: with it hardcoded true, the gate in
 // _maybeSpeak could be deleted outright and the suite stayed green — an unpinned
