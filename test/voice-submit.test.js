@@ -3697,6 +3697,60 @@ test('a KEYSTROKE during the wait cancels the deferred `\\r`', async () => {
   h.watcher.dispose();
 });
 
+test('a match BLOCKED by a dialog still cancels the pending submit', async () => {
+  // THE PHRASE-SHIPPING PATH, and it is the one interleaving where a stale
+  // deferral submits text that was never erased.
+  //
+  // The second sign-off arrives while a dialog is up. It latches `answered` and
+  // bails before any erase -- so if deferral #1 survives that bail, its `\r`
+  // fires once the dialog clears and submits draft #2 with `over and out` still
+  // sitting in it. The cancel therefore cannot live with the writes; it has to
+  // run on every path that abandons a match.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: stop #1 out, its submit still deferred');
+
+  // The dialog opens, and he signs off again into it. Still transcribing, so
+  // this match is blocked at the gate rather than by the footer.
+  h.env.attention = 'permission';
+  const DRAFT2 = '\u276f a second thought over and out';
+  h.term.write({ text: DRAFT2, cursor: true }, PROCESSING_ROW);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the blocked match must not have written');
+
+  // He answers the dialog by hand; the footer clears with draft #2 in place,
+  // phrase and all. A surviving deferral #1 releases into exactly this.
+  h.env.attention = null;
+  h.term.write({ text: DRAFT2, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + TEST_STOP_SETTLE_MS + 80);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' '],
+    'the `\\r` would have submitted a draft still containing the trigger phrase');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+  h.watcher.dispose();
+});
+
+test('the CONFIG going null during the wait stands the submit down', async () => {
+  // He switches hands-free submit off, or clicks to another seat, while the CLI
+  // transcribes. `getConfig()` then returns null and the submit must not go out
+  // -- the same stand-down as the dialog, on the gate above it.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the key must have gone out first');
+
+  h.env.config = null;
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 80);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' ']);
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+  h.watcher.dispose();
+});
+
 test('a MOUSE REPORT during the wait does not cancel it: only keystrokes do', async () => {
   // The other half of the same gate, and the reason the cancel sits behind
   // `isHumanPtyInput` rather than on every byte. onData also carries mouse
