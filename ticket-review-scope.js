@@ -58,6 +58,31 @@ function capReason(v) {
   return `${t.slice(0, REWORK_REASON_CAP)}\n… [truncated for the review scope — ${t.length - REWORK_REASON_CAP} more characters are on the ticket record]`;
 }
 
+// The per-entry cap bounds ONE reason; this bounds the block. They are not the
+// same limit reached twice: the realistic producer is the loop, whose composed
+// reject reason runs ~1-1.5 KB and stays comfortably under the per-entry cap, so
+// a hand re-closing a red branch N times files N entries that are each legal and
+// together unbounded.
+const REWORK_BLOCK_BUDGET = 8000;
+
+// Keeps the MOST RECENT entries: those are the demands the reviewer is being
+// asked to check, while an earlier round's is either already fixed or restated by
+// a later one. Measured over the rendered chunks, so the budget bounds what the
+// scope actually carries rather than what the record holds.
+//
+// One entry always survives a budget of any size — a block that were only a drop
+// notice would tell the reviewer reasons exist and then show it none.
+function budgetEntries(chunks) {
+  const kept = [];
+  let total = 0;
+  for (let i = chunks.length - 1; i >= 0; i -= 1) {
+    total += chunks[i].length;
+    if (kept.length && total > REWORK_BLOCK_BUDGET) break;
+    kept.unshift(chunks[i]);
+  }
+  return kept;
+}
+
 // `ticket` is the record; `diffPath` is where the materialized diff was written.
 // Callers pass the diff path rather than the diff itself: the diff is unbounded
 // and the scope rides a system prompt, so the reviewer is pointed at the file.
@@ -200,11 +225,22 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
       + 'why the ticket came back at all. Each is labelled with the rework round it was sent during; more '
       + 'than one under the same round means further must-fixes went to a seat already holding that round.');
     out.push('');
-    for (const r of reasons) {
+    const chunks = reasons.map((r) => {
       const who = text(r.by) || '(unattributed)';
-      out.push(`Rework round ${Number(r.round) || 1} — from ${who}:`);
+      return `Rework round ${Number(r.round) || 1} — from ${who}:\n\n${capReason(r.reason)}`;
+    });
+    const kept = budgetEntries(chunks);
+    const dropped = chunks.length - kept.length;
+    // The same rule the per-entry cap follows: a truncation must be visible as
+    // one. Stated ABOVE the entries, because a reviewer that reads them first has
+    // already taken the block for the whole history.
+    if (dropped) {
+      out.push(`[${dropped} EARLIER rework reason${dropped === 1 ? '' : 's'} on this ticket ${dropped === 1 ? 'is' : 'are'} not shown here — this block is `
+        + `bounded and carries the ${kept.length} most recent. The full record is on the ticket.]`);
       out.push('');
-      out.push(capReason(r.reason));
+    }
+    for (const chunk of kept) {
+      out.push(chunk);
       out.push('');
     }
   }

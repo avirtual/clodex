@@ -328,6 +328,72 @@ test('an over-long reason is truncated VISIBLY at render, and only at render', (
     'the RECORD is not mutated by rendering it — the cap is the scope\'s, not the store\'s');
 });
 
+// ── t621: the block is bounded in AGGREGATE, not only per entry ────────────
+//
+// Grepped before writing: the t618 subjects above pin the per-entry cap, the
+// verbatim/attributed rendering and the separation from MUST-FIX. None of them
+// constrains how many entries render, which is the gap these close.
+
+// Sized off the real producer named in the review: the loop's composed reject
+// reason runs ~1-1.5 KB, so each of these is a legal entry under the per-entry
+// cap and the pressure comes from their number alone.
+const loopReason = (tag) => `${tag} SUITE RED: ${'widget.test.js '.repeat(80)}`;
+
+test('every entry renders while the block is UNDER the aggregate budget', () => {
+  // The other direction of the pin below. Without it, a budget of zero — or one
+  // that dropped every entry but the last — would satisfy the over-budget
+  // subject and silently discard reasons a reviewer needs.
+  const reasons = [1, 2, 3].map((n) => ({ round: n, at: n, by: 'ticket-loop', reason: loopReason(`ENTRY${n}`) }));
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)', reworkReasons: reasons }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(s.length < 8000, 'ENTER: these three entries really are under the budget');
+  for (const n of [1, 2, 3]) {
+    assert.ok(s.includes(`ENTRY${n}`), `entry ${n} renders in full while there is budget for it`);
+  }
+  assert.ok(!/not shown here/.test(s), 'and nothing is announced as dropped when nothing was');
+});
+
+test('over the budget the block keeps the most RECENT entries and says how many it dropped', () => {
+  const reasons = Array.from({ length: 12 }, (_, i) => ({
+    round: i + 1, at: i + 1, by: 'ticket-loop', reason: loopReason(`ENTRY${i + 1}`),
+  }));
+  const s = buildReviewScope({
+    ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)', reworkReasons: reasons }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(!s.includes('ENTRY1 '), 'ENTER: the block really was over budget — the oldest entry was dropped');
+  assert.ok(s.includes('ENTRY12'), 'the newest entry survives: it is the one the reviewer is asked to check');
+
+  // The count is asserted against the entries that actually rendered rather than
+  // against a hardcoded number, because it is the CONSISTENCY of the two that
+  // matters: a drop line naming a count the block contradicts is worse than none.
+  const shown = reasons.filter((r, i) => s.includes(`ENTRY${i + 1} `)).length;
+  const m = s.match(/\[(\d+) EARLIER rework reasons? on this ticket (?:is|are) not shown here/);
+  assert.ok(m, 'the drop is visible as one — the same rule the per-entry cap follows');
+  assert.strictEqual(Number(m[1]), 12 - shown, 'and the number it names is the number actually withheld');
+
+  // Ordering: a reviewer that meets the entries first has already read the block
+  // as the whole history by the time it learns otherwise.
+  assert.ok(s.indexOf(m[0]) < s.indexOf('ENTRY12'), 'the drop notice precedes the entries it qualifies');
+});
+
+test('a single over-budget entry is still rendered, never replaced by the drop notice alone', () => {
+  // The degenerate case: one entry so long it exceeds the whole block budget by
+  // itself. Dropping it would leave a heading and a notice saying reasons exist,
+  // showing the reviewer none of them.
+  const s = buildReviewScope({
+    ticket: ticket({
+      reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)',
+      reworkReasons: [{ round: 1, at: 1, by: 'clodex', reason: `HEAD${'x'.repeat(20000)}` }],
+    }),
+    diffPath: '/tmp/d.diff',
+  });
+  assert.ok(s.includes('HEAD'), 'the sole entry renders');
+  assert.ok(!/not shown here/.test(s), 'and nothing is claimed dropped');
+});
+
 test('a malformed rework entry degrades rather than leaking undefined into the scope', () => {
   const s = buildReviewScope({
     ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', reworkReasons: [null, { reason: '' }, { reason: 'the real one' }] }),
