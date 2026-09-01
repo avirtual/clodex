@@ -64,7 +64,7 @@ const CTX_ESCALATE_MIN_GAP = 25_000;
 //
 // This is deliberately NOT the ordered-prefix-regex shape MODEL_WINDOWS uses in
 // argv-merge.js. A prefix rule reaches rows it was never meant to own and fails
-// SILENTLY when it does — the failure t615 and t617 were both spent on. Here the
+// SILENTLY when it does. Here the
 // grammar is anchored and the lookup is exact equality on its output, so a rule
 // is structurally incapable of matching a model another rule owns: two ids share
 // thresholds only when they reduce to the same family string.

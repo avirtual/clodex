@@ -166,8 +166,8 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   };
 }
 
-// The fixture's model is claude-fable-5, which since t619 carries its own,
-// HIGHER thresholds — so the baseline nudge is no longer over threshold for it.
+// The fixture's model is claude-fable-5, which carries its own HIGHER
+// thresholds — so the baseline nudge is not over threshold for it.
 // Computed from the model's own row, not hardcoded: this is the INPUT that has
 // to reach the over-threshold state, and a stale literal here would silently
 // stop reaching it and vacuum out the ENTER that every skip assertion below
@@ -208,10 +208,9 @@ test('the pure decision is untouched — it still calls an ephemeral seat heavy'
   // "should we act on it" decay separately, and fusing them into the pure
   // function would make the threshold untestable without a seat identity.
   assert.ok(ctxReminderFor(OVER, FIXTURE_THRESHOLDS), 'ctxReminderFor knows nothing of seats');
-  // Tokens and the resolved thresholds, and nothing else: t619 added the second
-  // parameter, so the count alone no longer says what this is guarding. What it
-  // guards is that no seat identity was added alongside it — the suppression
-  // stays the caller's.
+  // Tokens and the resolved thresholds, and nothing else. The count alone does
+  // not say what this guards: it is that no seat identity was added alongside
+  // them — the suppression stays the caller's.
   assert.strictEqual(ctxReminderFor.length, 2, 'tokens + thresholds; no seat parameter crept in');
   assert.ok(ctxReminderFor(OVER, ctxThresholdsFor(null, {})),
     'the threshold-aware call is the same decision for a model with no row');
