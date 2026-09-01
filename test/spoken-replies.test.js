@@ -465,8 +465,20 @@ function bootSpeakingManager({ speakReplies = true, speakRate } = {}) {
   return { m, spoken, opts };
 }
 
+// Hand a seat the microphone by the REAL entry points. The two box-wide facts
+// are what _setMicTarget demands, and reaching past them by assigning
+// `_micTarget` would let a rewrite that moves the authority elsewhere keep every
+// pin below green.
+function giveMic(m, name) {
+  m.noteAppFocused(true);
+  m.noteFocusedSession(name, { isFocused: () => true });
+}
+
 test('speakReplies false speaks NOTHING, which is what default-off rests on', () => {
   const { m, spoken } = bootSpeakingManager({ speakReplies: false });
+  // Otherwise the seat is silent for want of the microphone and this asserts
+  // nothing about the setting.
+  giveMic(m, 'seatB');
   m._maybeSpeak('seatB', 'this must stay silent', true);
   assert.deepStrictEqual(spoken, [],
     'the setting is the only guard between a fresh install and a talking box');
@@ -474,6 +486,7 @@ test('speakReplies false speaks NOTHING, which is what default-off rests on', ()
 
 test('the operator-chosen rate reaches the speaker, per turn', () => {
   const { m, opts } = bootSpeakingManager({ speakRate: 210 });
+  giveMic(m, 'seatB');
   m._maybeSpeak('seatB', 'read this at the chosen speed', true);
   assert.strictEqual(opts.length, 1);
   assert.strictEqual(opts[0].rate, 210, 'a rate read but never passed is a setting that does nothing');
@@ -482,6 +495,10 @@ test('the operator-chosen rate reaches the speaker, per turn', () => {
 
 test('the recorder on ONE seat silences a turn ending on ANOTHER', () => {
   const { m, spoken } = bootSpeakingManager();
+  // seatB holds the microphone, so it clears the holder gate and the recorder
+  // stamp is the only thing left to silence it. Without this the seat is mute
+  // either way and the box-wide read below is asserted vacuously.
+  giveMic(m, 'seatB');
   // The renderer reports the seat he is looking at — by its real entry point.
   m.noteVoiceRecording('seatA');
   m._maybeSpeak('seatB', 'a background seat just finished', true);
@@ -489,11 +506,66 @@ test('the recorder on ONE seat silences a turn ending on ANOTHER', () => {
     'a background turn must not narrate into a microphone lit on another seat');
 });
 
-test('with no recorder anywhere, a turn end speaks', () => {
+test('with no recorder anywhere, the seat holding the microphone speaks', () => {
   const { m, spoken } = bootSpeakingManager();
+  giveMic(m, 'seatB');
+  assert.strictEqual(m.micTarget(), 'seatB', 'ENTER: the holder gate is satisfied');
   m._maybeSpeak('seatB', 'all quiet here', true);
   assert.deepStrictEqual(spoken, ['all quiet here'],
     'absent evidence reads as not recording — doubt must speak, never wedge');
+});
+
+// THE CHORUS. speak() kills the previous utterance, so an ungated background
+// seat does not merely add a voice — it truncates the holder's reply too.
+test('a seat that does not hold the microphone is silent while another holds it', () => {
+  const { m, spoken } = bootSpeakingManager();
+  giveMic(m, 'seatA');
+  assert.strictEqual(m.micTarget(), 'seatA', 'ENTER: someone else holds it');
+  m._maybeSpeak('seatB', 'a background seat narrating over the holder', true);
+  assert.deepStrictEqual(spoken, [], 'only the seat holding control may speak');
+  m._maybeSpeak('seatA', 'the holder speaks', true);
+  assert.deepStrictEqual(spoken, ['the holder speaks'],
+    'and the holder still does — a gate that silences everyone is the other bug');
+});
+
+// _micTarget moves only while Clodex is frontmost, so a strict read of it alone
+// would make the feature dead on a box he alt-tabbed away from before naming a
+// seat. _focusedSession is the seat he is LOOKING at and updates regardless.
+test('with no microphone target, the seat he is looking at speaks', () => {
+  const { m, spoken } = bootSpeakingManager();
+  m.noteFocusedSession('seatB', { isFocused: () => true });
+  assert.strictEqual(m.micTarget(), null, 'ENTER: the app was never frontmost, so nothing targeted');
+  assert.strictEqual(m._focusedSession, 'seatB');
+  m._maybeSpeak('seatA', 'not the seat he is looking at', true);
+  assert.deepStrictEqual(spoken, [], 'the fallback is a fallback, not an open door');
+  m._maybeSpeak('seatB', 'the seat he is looking at', true);
+  assert.deepStrictEqual(spoken, ['the seat he is looking at']);
+});
+
+test('with NOBODY holding control, nobody speaks', () => {
+  const { m, spoken } = bootSpeakingManager();
+  assert.strictEqual(m.micTarget(), null);
+  assert.strictEqual(m._focusedSession, null, 'ENTER: both records are empty');
+  m._maybeSpeak('seatA', 'nobody asked for this', true);
+  m._maybeSpeak('seatB', 'nor this', true);
+  assert.deepStrictEqual(spoken, []);
+});
+
+// The two records must not be collapsed into one. An external tap moves the
+// microphone and deliberately does NOT move the focus record, so a "simplifying"
+// merge silently re-points background tap routing at the last seat he named.
+test('the microphone holder outranks the focused seat when they differ', () => {
+  const { m, spoken } = bootSpeakingManager();
+  giveMic(m, 'seatA');
+  // A background window reporting its own active seat: routing follows, the
+  // microphone does not.
+  m.noteFocusedSession('seatB', { isFocused: () => false });
+  assert.strictEqual(m.micTarget(), 'seatA');
+  assert.strictEqual(m._focusedSession, 'seatB', 'ENTER: the two records genuinely disagree');
+  m._maybeSpeak('seatB', 'the focused seat is not the holder', true);
+  assert.deepStrictEqual(spoken, [], 'the fallback applies only when nothing holds the microphone');
+  m._maybeSpeak('seatA', 'the holder still speaks', true);
+  assert.deepStrictEqual(spoken, ['the holder still speaks']);
 });
 
 test('the per-seat recorder field survives alongside the box-wide one', () => {

@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Only the seat you are working with speaks its replies.** With spoken
+  replies on, every agent finishing a turn narrated it, so a few background
+  agents ending near each other produced a chorus — and since a new reply cuts
+  off the one playing rather than waiting behind it, you heard the first few
+  words of several and none of them whole. Now only the seat holding the
+  microphone speaks, falling back to the seat you are looking at when no seat
+  holds it; when neither is set, nothing speaks.
+
 - **`clodex-voice-tap` now takes named actions, not just a seat.**
   `clodex-voice-tap.js select <seat>` switches to that seat — always bringing
   its workspace window to the front, including when Clodex is already the app
