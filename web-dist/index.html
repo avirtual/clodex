@@ -22852,16 +22852,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
       ];
       var POLL_MS = 15e3;
       var CHOICE_DEBOUNCE_MS = 250;
-      function createVoiceCore({ sessionList, showToast }) {
+      function createVoiceCore({ showToast }) {
         let state = null;
         let pending = null;
         let writeTimer = null;
         let pollTimer = null;
         let holds = 0;
         const listeners = /* @__PURE__ */ new Set();
-        function anyClaudeRow() {
-          return !!sessionList.querySelector('.session-item[data-type="claude"]');
-        }
         function isMode(m) {
           return VOICE_ITEMS.some((i) => i.mode === m);
         }
@@ -22870,7 +22867,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
             state,
             pending,
             mode: pending || state && state.effective,
-            anyClaudeRow: anyClaudeRow(),
             force: false
           };
         }
@@ -22879,7 +22875,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
             state,
             pending,
             mode: pending || state && state.effective,
-            anyClaudeRow: anyClaudeRow(),
             force
           };
           for (const fn of [...listeners]) {
@@ -22933,13 +22928,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }, CHOICE_DEBOUNCE_MS);
           return true;
         }
-        const observer = new MutationObserver(() => emit());
         function start() {
           holds++;
-          if (holds === 1) {
-            if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
-            observer.observe(sessionList, { childList: true, subtree: true });
-          }
+          if (holds === 1 && !pollTimer) pollTimer = setInterval(refresh, POLL_MS);
           refresh();
         }
         function stop() {
@@ -22949,7 +22940,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
             clearInterval(pollTimer);
             pollTimer = null;
           }
-          observer.disconnect();
         }
         function subscribe(fn) {
           listeners.add(fn);
@@ -27496,7 +27486,7 @@ helper=${d.helperPath}`;
         let lastKey = null;
         let failedOnce = false;
         core.subscribe((snap) => {
-          const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.anyClaudeRow}`;
+          const key = `${snap.pending || ""}|${snap.mode || ""}`;
           if (key === lastKey) return;
           try {
             if (!pop.classList.contains("hidden")) renderRows();
@@ -35447,7 +35437,7 @@ Click for live activity`;
         }
       });
       createInboxDrawer({ openFilePeek, showToast });
-      var voiceCore = createVoiceCore({ sessionList, showToast });
+      var voiceCore = createVoiceCore({ showToast });
       var voiceSubmitConfig = {
         enabled: false,
         composition: false,

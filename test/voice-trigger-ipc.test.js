@@ -91,8 +91,6 @@ test('settings:voiceMode carries the push-to-talk chord at trigger.binding — t
 // a re-arm that declines forever and says nothing.
 test('the renderer core resolves that same payload to the chord — no re-arm without it', async () => {
   const prevWindow = global.window;
-  const prevObserver = global.MutationObserver;
-  global.MutationObserver = class { observe() {} disconnect() {} };
   try {
     await withHome(async (home) => {
       const handler = voiceModeHandler(home);
@@ -100,15 +98,11 @@ test('the renderer core resolves that same payload to the chord — no re-arm wi
         addEventListener() {},
         api: { async getVoiceMode() { return handler(); } },
       };
-      const core = createVoiceCore({
-        sessionList: { querySelectorAll: () => [], querySelector: () => null },
-        showToast: () => {},
-      });
+      const core = createVoiceCore({ showToast: () => {} });
       await core.refresh();
       assert.deepStrictEqual(core.triggerBinding(), PARSED);
     });
   } finally {
     global.window = prevWindow;
-    global.MutationObserver = prevObserver;
   }
 });

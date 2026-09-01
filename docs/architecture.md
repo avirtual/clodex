@@ -216,10 +216,10 @@ bundle), whose packaged form is the Docker image under
   Preferences voice selector, and the WRITE behind the `mode` voice verb and
   both voice-mode UI surfaces (`writeVoiceMode` mirrors the CLI's own `/voice`
   handler: read-modify-write preserving unrelated keys, atomic, with `enabled`
-  tracking the mode — `off` clears it and leaves `mode` alone). A running CLI does pick
-  up an external write — it reads the mode through a live selector and watches
-  the settings directory. The legacy `voiceEnabled` sibling is reported and
-  never merged.
+  tracking the mode — `off` clears it and leaves `mode` alone). A running CLI
+  does pick up an external write — it reads the mode through a live selector and
+  watches the settings directory. The legacy `voiceEnabled` sibling is reported
+  and never merged.
 - **env-scopes.js** — merges the GUI-managed environment scopes over the base
   process env for a wrapper PTY, and is the single source for the canonical
   precedence. Pure fs/path, no electron.
@@ -731,17 +731,16 @@ Own state + DOM, `init*(deps)`:
 - **voice-control.js** — the voice-mode state machine (off · tap · hold),
   reading `voice-settings.js` over `getVoiceMode` and writing the settings file
   directly over `setVoiceMode` — no session in the path, so both surfaces work
-  with none open. `createVoiceCore` owns all of it —
-  state, the pending affordance, the poll and the row
-  observer — and publishes snapshots; `createVoiceControl` (the Preferences row)
-  and `popovers/voice-popover.js` (the session bar's 🎤 button) are surfaces over
-  it that own only their own painting. The setting is box-wide, so both surfaces
-  show the same value; the split exists because that reconciliation must have
-  exactly one copy, and keeping the core DOM-free is what lets
-  `test/voice-core.test.js` pin it with no jsdom. `start`/`stop` are REFCOUNTED:
-  the bar holds for the window's life, Preferences only while its dialog is
-  open. The Preferences row is never hidden and never disabled — the file is
-  writable with no session open; the bar button is absent outright for a
+  with none open. `createVoiceCore` owns all of it — state, the pending
+  affordance and the poll — and publishes snapshots; `createVoiceControl` (the
+  Preferences row) and `popovers/voice-popover.js` (the session bar's 🎤 button)
+  are surfaces over it that own only their own painting. The setting is box-wide,
+  so both surfaces show the same value; the split exists because that
+  reconciliation must have exactly one copy, and keeping the core DOM-free is
+  what lets `test/voice-core.test.js` pin it with no jsdom. `start`/`stop` are
+  REFCOUNTED: the bar holds for the window's life, Preferences only while its
+  dialog is open. The Preferences row is never hidden and never disabled — the
+  file is writable with no session open; the bar button is absent outright for a
   non-Claude seat, since Codex has no `/voice`.
 - **voice-submit-watcher.js** + **lib/voice-submit.js** — hands-free submit: one
   watcher per local Claude terminal sends Enter when the composer ENDS with the
