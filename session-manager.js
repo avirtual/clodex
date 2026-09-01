@@ -69,6 +69,16 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 // settings, the re-park follows, and the T+150s rung lands after the render.
 const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
 
+// How long after setting the voice mode the CLI may still be acting on the old
+// one, so a tap arriving inside this window must wait it out like the tap that
+// set it. The measurement, the observable and why the number is what it is live
+// with the wait itself — VOICE_TAP_MODE_SETTLE_MS in
+// renderer/voice-submit-watcher.js — and this must not drift from it: this side
+// decides who waits, that side performs the wait, and a shorter value here
+// silently stops arming the wait it is naming. Pinned equal in
+// test/external-tap-trigger.test.js.
+const VOICE_MODE_SETTLE_MS = 1500;
+
 // How long the pane must have been untouched before the forced flush is allowed
 // to fire. Comfortably longer than INJECT_QUIET_MS (2s), which is tuned to not
 // cut mid-WORD: this one has to clear a pause mid-COMPOSITION, and stopping to
@@ -457,6 +467,7 @@ function createSessionManager(deps) {
     termExec: termExecDep,
     whichBin,
     writeClaudeDigestFile,
+    readVoiceMode,
     writeVoiceMode,
     writeSkillPlugin,
     writeAgentPlugin,
@@ -590,6 +601,11 @@ function createSessionManager(deps) {
       // there is no window to bring forward and the attempt only fans a
       // `focus-hint` nobody asked for.
       this._appFocusReported = false;
+      // When the spoken tap last set the voice mode, box-wide. The CLI observes
+      // that write on a delay, so this is what tells a tap arriving inside the
+      // window that it must wait too — see voiceTap. Starts 0: nothing has been
+      // written, so no tap owes a wait for it.
+      this._lastVoiceModeWriteAt = 0;
       // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
       // per-seat field of the same name because audio has no seat.
       this._lastVoiceRecordingTs = 0;
@@ -2338,7 +2354,14 @@ function createSessionManager(deps) {
     // Switch the CLI's push-to-talk mode by WRITING the settings file it reads.
     // A running CLI picks that up: the mode is read through a live store
     // selector rather than cached at startup, and the CLI watches the settings
-    // directory. Observed directly — an external edit moved a live session.
+    // directory. Observed directly — an external edit moved a live session. Not
+    // immediately, though: that watcher debounces ~1s, which is why the write
+    // stamps `_lastVoiceModeWriteAt` and a tap inside the window waits it out.
+    //
+    // BOTH WRITE SURFACES land here — the spoken verb and the Preferences /
+    // popover row over `settings:setVoiceMode`. That is what keeps the stamp
+    // above true of every write: a surface reaching past this to the writer
+    // would move the mode without arming the wait it creates.
     //
     // NOT AN INJECTION, and not a spawned CLI either. Injection dragged in the
     // composer, the inject queue, the quiet gate and `parkable` — and a PARKED
@@ -2359,6 +2382,16 @@ function createSessionManager(deps) {
         log.warn('voice', `mode ${mode} failed: ${r.error}`);
         return r;
       }
+      // SAME MEMO AS THE TAP'S OWN WRITE, and it has to be: `mode tap` followed
+      // by the tap phrase is the exact two-phrase workflow this ticket replaces,
+      // and without this stamp the tap that follows sends its byte under a mode
+      // the CLI has not observed — the blink, on the way out of the blink.
+      //
+      // `tap` only. Moving to `hold` or `off` arms nothing, so a tap that
+      // followed one has no reason to wait: the wait exists to let the CLI catch
+      // up to TAP, and stamping here for a mode that will not arm would delay a
+      // later tap for nothing.
+      if (mode === 'tap') this._lastVoiceModeWriteAt = Date.now();
       log.info('voice', `mode ${mode}`);
       return { ok: true, mode };
     }
@@ -2436,7 +2469,41 @@ function createSessionManager(deps) {
       if (raise || (this._appFocusReported && !this._appFocused)) {
         try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
       }
-      this._sendToSession(name, 'voice-tap', name);
+      // In `hold` the tap arms nothing: that arm expects a HELD key, so it
+      // starts recording and sets a release timer through an auto-repeat
+      // fallback, and one synthetic keystroke has no auto-repeat.
+      //
+      // BELOW every decline, so a tap that routes nowhere changes no box-wide
+      // setting. The mode is NOT restored afterwards: restoring races his
+      // dictation, and `mode hold` is the deliberate stand-down verb.
+      //
+      // READ FIRST, so an already-tap file is left alone. The renderer owes a
+      // ~1s wait whenever the CLI may not have caught up, and paying it on every
+      // tap would delay the common case for nothing.
+      //
+      // `effective`, not `mode`: with voice switched off the file still names
+      // tap or hold beside the flag, and the tap has to turn voice back ON.
+      const cur = readVoiceMode();
+      if (!cur || cur.effective !== 'tap') {
+        const w = writeVoiceMode('tap');
+        // Reported, not fatal: the mode it could not change may already suit,
+        // so the tap is still worth routing.
+        if (w.ok) this._lastVoiceModeWriteAt = Date.now();
+        else log.warn('voice', `tap could not set mode: ${w.error}`);
+      }
+      // THE QUESTION IS "HAS THE CLI OBSERVED TAP YET", NOT "DID I JUST WRITE".
+      // Those differ for the tap that matters most: he says the phrase, sees
+      // nothing happen, and says it again. The second one reads a file the first
+      // already set to tap, so a did-I-write flag reports nothing to wait for
+      // and sends its byte under the mode the CLI is still on — the blink, back,
+      // on the repeat he made BECAUSE of the blink.
+      //
+      // So it is the age of the last write that decides, and any tap inside that
+      // window inherits the wait. The memo is the only state this needs, and it
+      // lives here because the renderer cannot see the write at all.
+      const settling = this._lastVoiceModeWriteAt
+        && (Date.now() - this._lastVoiceModeWriteAt) < VOICE_MODE_SETTLE_MS;
+      this._sendToSession(name, 'voice-tap', name, !!settling);
       return { ok: true, name };
     }
 

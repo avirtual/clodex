@@ -730,8 +730,9 @@ Own state + DOM, `init*(deps)`:
   modal and toasts the same miss a path click in the terminal does.
 - **voice-control.js** — the voice-mode state machine (off · tap · hold),
   reading `voice-settings.js` over `getVoiceMode` and writing the settings file
-  directly over `setVoiceMode` — no session in the path, so both surfaces work
-  with none open. `createVoiceCore` owns all of it — state, the pending
+  over `setVoiceMode`, which routes through the manager's `voiceMode` so the
+  write stamps the voice-mode settle memo — no session in the path, so both
+  surfaces work with none open. `createVoiceCore` owns all of it — state, the pending
   affordance and the poll — and publishes snapshots; `createVoiceControl` (the
   Preferences row) and `popovers/voice-popover.js` (the session bar's 🎤 button)
   are surfaces over it that own only their own painting. The setting is box-wide,

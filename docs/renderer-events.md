@@ -63,7 +63,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
 | `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
-| `voice-tap` | `name` (ensure-on request from an outside script; the renderer decides whether a key is written, since only it can read the recording indicator) | session-manager `voiceTap` |
+| `voice-tap` | `name, modeSettling` (ensure-on request from an outside script; the renderer decides whether a key is written, since only it can read the recording indicator. `modeSettling` says the voice mode was set to `tap` too recently for the CLI to have observed it, so the renderer waits before writing the key) | session-manager `voiceTap` |
 
 ## B. Broadcast channels (via `_broadcast`)
 

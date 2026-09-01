@@ -19,10 +19,12 @@
 // directories that had a settings file when that session started) can sit on a
 // mode the file no longer names.
 //
-// The WRITE goes STRAIGHT TO THE FILE through `settings:setVoiceMode`, the same
-// writer the `voice mode` verb uses. There is no session in the path: the
-// setting is box-wide and the file is writable with none open, so a control
-// keyed to a live seat would refuse a write that was always possible.
+// The WRITE goes through `settings:setVoiceMode`, which shares the `voice mode`
+// verb's path down to the same single writer. NO SEAT is involved: the setting
+// is box-wide and the file is writable with none open, so a control keyed to a
+// live seat would refuse a write that was always possible. The shared path also
+// stamps the settle memo, so a spoken tap that follows a pick made HERE waits
+// for the CLI to observe it like any other.
 //
 // WE SKIP THE FOUR GATES the CLI runs before its own `/voice` write (recording
 // availability, voice-stream entitlement, audio-tool dependencies, microphone

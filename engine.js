@@ -1079,6 +1079,7 @@ const SessionManager = createSessionManager({
     termExec,
     whichBin,
     writeClaudeDigestFile,
+    readVoiceMode,
     writeVoiceMode,
     writeSkillPlugin,
     writeAgentPlugin,
