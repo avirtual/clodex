@@ -3900,11 +3900,10 @@ function createSessionManager(deps) {
         // utterance rather than queueing it, so several seats narrating their
         // own turn ends complete NO reply between them.
         //
-        // Do not reduce this to _micTarget alone. That record stays null until a
-        // focus report lands while Clodex is frontmost, so the strict read
-        // silences the feature outright on a box he alt-tabbed away from before
-        // naming a seat. Both null is nobody holding control, and then nobody
-        // speaks.
+        // Do not reduce this to _micTarget alone. It is null on a box he
+        // alt-tabbed away from before naming a seat, and the strict read
+        // silences the feature outright there. Both null is nobody holding
+        // control, and then nobody speaks.
         const holder = this._micTarget || this._focusedSession;
         if (!holder || name !== holder) return;
         // DO NOT TALK OVER A LIVE MICROPHONE. Read the BOX-WIDE stamp, never the
@@ -3912,8 +3911,7 @@ function createSessionManager(deps) {
         // `s.lastVoiceRecordingTs` is undefined on every background seat and a
         // gate reading it would pass exactly when he is dictating into another
         // pane. The microphone and the speaker are both box-wide, and this reads
-        // box-wide with them — unlike the holder gate above, which is per-seat
-        // because it answers a different question.
+        // box-wide with them.
         //
         // Absent evidence reads as NOT recording, matching the inject gate's
         // polarity — the cost of a wrong "quiet" here is one narration he can

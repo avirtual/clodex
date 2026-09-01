@@ -445,6 +445,7 @@ test('constructing the engine does not spawn the voice enumeration', () => {
 // which is why the recorder tests below hand one the microphone first: a seat
 // silenced for not holding it never evaluates the stamp at all, and the
 // assertion would hold for the wrong reason.
+//
 // `speakReplies` is a PARAMETER, not a constant, and that is the whole reason
 // this helper exists in this shape: with it hardcoded true, the gate in
 // _maybeSpeak could be deleted outright and the suite stayed green — an unpinned
