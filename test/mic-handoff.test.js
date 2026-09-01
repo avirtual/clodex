@@ -106,11 +106,18 @@ function windowWith(seats, { initial = null } = {}) {
   const mirror = createMirrorLatch(initial, {
     normalize: (name) => (typeof name === 'string' ? name : null),
   });
+  // Every name the handoff asked about, in order. The byte assertions cannot
+  // tell "the loser was looked up and declined" from "nothing was looked up at
+  // all" — both write nothing — so the lookup itself has to be observable.
+  const lookups = [];
   const onMicTarget = createMicHandoff({
     mirror,
-    watcherFor: (name) => watchers.get(name) || null,
+    watcherFor: (name) => {
+      lookups.push(name);
+      return watchers.get(name) || null;
+    },
   });
-  return { mirror, onMicTarget, watchers, writes, bytes: (n) => writes.get(n) };
+  return { mirror, onMicTarget, watchers, writes, lookups, bytes: (n) => writes.get(n) };
 }
 
 // THE TICKET. Everything else in this file is a way of failing to do it.
@@ -219,12 +226,13 @@ test('a loser this window does not hold is a silent no-op', () => {
   h.onMicTarget('B');
   assert.strictEqual(h.mirror.read(), 'B', 'the mirror still moved');
   assert.deepStrictEqual(h.bytes('B'), []);
-  // The byte check alone would read identically if `watcherFor` had THROWN on
-  // every lookup — the catch swallows it and nothing writes either way. This
-  // says the seat this window does hold was reached and declined to stop, which
-  // is the intended path rather than the absence of any path.
-  assert.strictEqual(h.watchers.get('B').offTapCount(), 0,
-    'B was resolvable here; it is the LOSER that was not, and no stop was attempted on it');
+  // The byte check alone would read identically if the handoff had looked up
+  // nothing at all, so this pins WHICH name it asked about: the LOSER, never
+  // the seat that just gained the microphone. Asserting the whole list is what
+  // makes it a discrimination — a lookup of 'B' would fail here, and a stop
+  // aimed at the new holder is the one wrong turn this path could take.
+  assert.deepStrictEqual(h.lookups, ['elsewhere'],
+    'the loser was the name resolved, and it is not one this window holds');
 });
 
 // The microphone RELEASED, not handed on — main broadcasts null. The loser is
