@@ -37,11 +37,21 @@
 // `ephemeral`, not the threshold — reach for that, or for a per-model row below,
 // not for these.
 //
-// 150k also keeps every nudged seat under 200k, the point a long-context
-// surcharge would begin if the vendor applies one to a model we route. That
-// costs nothing if no such wall exists.
-const CTX_REMINDER_NUDGE_TOKENS = 150_000;
-const CTX_REMINDER_ESCALATE_TOKENS = 200_000;
+// The exact value is a measured trade, not a natural constant, and the two facts
+// that decide it are the SHAPE of the cost curve, not the number: replaying a
+// real 25-day stream under each cap, everything from 150k to 175k costs within
+// ~1% (the region is flat, so buying fewer compacts there is nearly free), and
+// the curve only bends upward past 200k. 175k takes the fewer-compacts end of
+// that flat region.
+//
+// The nudge also stays UNDER 200k, the point a long-context surcharge would
+// begin if the vendor applies one to a model we route. The nudge is what asks a
+// seat to act, so it must get to act before crossing that line; the escalate at
+// 225k is only the backstop for a seat that ignored it and is already past.
+// Reason from the curve and that line, not from the number — reasoning from the
+// number is how this reached 200k the first time.
+const CTX_REMINDER_NUDGE_TOKENS = 175_000;
+const CTX_REMINDER_ESCALATE_TOKENS = 225_000;
 
 // Per-model thresholds, keyed by the family `modelFamily` derives. Keyed on the
 // model ID, never the display name: the display name is vendor prose ("Sonnet

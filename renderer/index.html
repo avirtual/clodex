@@ -968,12 +968,12 @@
         <p class="hint-text">Clodex tells an agent its context is heavy once it passes the first threshold, and switches to sterner wording past the second &mdash; a note attached to its next prompt, never an interruption. The agent picks its own moment to run <code>[agent:context compact]</code>. Thresholds are absolute input tokens, not a share of the window: every turn re-sends the whole conversation, so a 250k conversation is expensive even on a 1M-window model. One-ticket seats are never nudged.</p>
         <div class="prefs-row" style="margin-top: 6px;">
           <span>Nudge at</span>
-          <input type="number" id="prefs-ctx-nudge" min="50000" max="2000000" step="10000" placeholder="150000" style="flex: none; width: 110px;">
+          <input type="number" id="prefs-ctx-nudge" min="50000" max="2000000" step="10000" placeholder="175000" style="flex: none; width: 110px;">
           <span class="hint-text">tokens</span>
         </div>
         <div class="prefs-row" style="margin-top: 6px;">
           <span>Escalate at</span>
-          <input type="number" id="prefs-ctx-escalate" min="50000" max="2000000" step="10000" placeholder="200000" style="flex: none; width: 110px;">
+          <input type="number" id="prefs-ctx-escalate" min="50000" max="2000000" step="10000" placeholder="225000" style="flex: none; width: 110px;">
           <span class="hint-text">tokens</span>
         </div>
         <span class="hint-text" style="display: block; margin-top: 6px;">Leave both empty for the shipped values. Each must be between 50,000 and 2,000,000 &mdash; outside that the entry is discarded and the shipped value returns. Escalate is held at least 25,000 above nudge &mdash; closer and the second warning never gets its own moment. These apply to every model. Sessions spawned for a single ticket are never nudged whatever you set here, so raising the threshold on their account has no effect.</span>

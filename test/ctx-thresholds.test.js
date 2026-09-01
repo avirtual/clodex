@@ -133,15 +133,18 @@ test('invariant 4: fed the base commit\'s thresholds, the decision reproduces it
 // The retune itself, stated as the behaviour change it is: a standing seat is
 // now nudged 50k earlier. Literals on both sides — reading the constants would
 // make this true of any retune, including back to the values it corrects.
-test('the baseline retune fires 50k earlier than the base commit did', (t) => {
+test('the baseline retune fires 25k earlier than the base commit did', (t) => {
   const base = loadBaseModule(t);
   const now = ctxThresholdsFor('claude-opus-5', {});
   assert.deepStrictEqual({ nudge: now.nudge, escalate: now.escalate },
-    { nudge: 150_000, escalate: 200_000 });
-  assert.strictEqual(base.ctxReminderFor(150_000), null, 'the base module was silent at 150k');
-  assert.ok(ctxReminderFor(150_000, now).includes('getting heavy'), 'and this one nudges there');
-  assert.ok(ctxReminderFor(200_000, now).includes('very heavy'),
-    'what the base module nudged at, this one escalates at');
+    { nudge: 175_000, escalate: 225_000 });
+  assert.strictEqual(base.ctxReminderFor(175_000), null, 'the base module was silent at 175k');
+  assert.ok(ctxReminderFor(175_000, now).includes('getting heavy'), 'and this one nudges there');
+  // The nudge stays under 200k, where a long-context surcharge would begin: the
+  // nudge is what asks a seat to act, so it must fire before that line.
+  assert.ok(now.nudge < 200_000, 'the nudge must not cross the surcharge line');
+  assert.ok(ctxReminderFor(199_999, now).includes('getting heavy'),
+    'a seat is still only nudged, not escalated, just under the line');
 });
 
 test('invariant 4: a real settings file lacking the key resolves to the shipped default', (t) => {
@@ -163,7 +166,7 @@ test('invariant 4: a real settings file lacking the key resolves to the shipped 
   assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
     { nudge: CTX_REMINDER_NUDGE_TOKENS, escalate: CTX_REMINDER_ESCALATE_TOKENS });
   assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
-    { nudge: 150_000, escalate: 200_000 }, 'and those are the ruled values');
+    { nudge: 175_000, escalate: 225_000 }, 'and those are the ruled values');
 });
 
 // ---------------------------------------------------------------------------
@@ -346,7 +349,7 @@ test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () =
   assert.strictEqual(r.nudge, CTX_REMINDER_NUDGE_TOKENS);
   // A row whose values happen to equal the baseline is distinguishable from a
   // miss — which is the whole difference a silent lookup would erase.
-  const named = ctxThresholdsFor('claude-opus-5', { 'opus-5': { nudge: 150_000, escalate: 200_000 } });
+  const named = ctxThresholdsFor('claude-opus-5', { 'opus-5': { nudge: 175_000, escalate: 225_000 } });
   assert.strictEqual(named.source, 'settings-model');
   assert.deepStrictEqual(
     { nudge: named.nudge, escalate: named.escalate },
@@ -358,15 +361,15 @@ test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () =
 // ---------------------------------------------------------------------------
 
 test('ENTER: the shipped baseline is the ruled one, and it applies to every model', () => {
-  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 150_000);
-  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 200_000);
+  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 175_000);
+  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 225_000);
   for (const id of ['claude-fable-5-1', 'claude-opus-5', 'us.anthropic.claude-sonnet-4-6']) {
     const r = ctxThresholdsFor(id, {});
     assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
-      { nudge: 150_000, escalate: 200_000 }, id);
-    assert.strictEqual(ctxReminderFor(149_999, r), null, `${id} is not nudged below 150k`);
-    assert.ok(ctxReminderFor(150_000, r).includes('getting heavy'), `${id} nudges at 150k`);
-    assert.ok(ctxReminderFor(200_000, r).includes('very heavy'), `${id} escalates at 200k`);
+      { nudge: 175_000, escalate: 225_000 }, id);
+    assert.strictEqual(ctxReminderFor(174_999, r), null, `${id} is not nudged below 175k`);
+    assert.ok(ctxReminderFor(175_000, r).includes('getting heavy'), `${id} nudges at 175k`);
+    assert.ok(ctxReminderFor(225_000, r).includes('very heavy'), `${id} escalates at 225k`);
   }
 });
 
