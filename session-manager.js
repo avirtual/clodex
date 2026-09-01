@@ -1921,10 +1921,9 @@ function createSessionManager(deps) {
               // pure. Read off the persistence record, never re-derived from the
               // name shape.
               //
-              // The operator's override map is read per tick rather than
-              // memoized: get() re-reads ui-settings.json, so a threshold edited
-              // in Preferences takes effect on the next poll instead of at the
-              // next session start. A failed read resolves to the shipped
+              // Read here rather than memoized at create: get() re-reads
+              // ui-settings.json, so an edited threshold applies to a running
+              // session without a restart. A failed read resolves to the shipped
               // defaults, never to no reminder.
               let ctxOverrides = null;
               try { ctxOverrides = getUiSettings().get().ctxReminderThresholds; } catch {}
