@@ -23823,6 +23823,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!Array.isArray(rows)) return false;
         return rows.some((row) => typeof row === "string" && RECORDING.test(row));
       }
+      function processingObserved(rows) {
+        if (!Array.isArray(rows)) return true;
+        return rows.some((row) => typeof row === "string" && PROCESSING.test(row));
+      }
       function resolveTriggerKey(binding) {
         if (!binding || typeof binding !== "object") return null;
         if (binding.ctrl || binding.alt || binding.shift || binding.meta || binding.super) return null;
@@ -23854,6 +23858,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         recorderBlocksRearm,
         isVoiceOriginated,
         recordingObserved,
+        processingObserved,
         resolveTriggerKey,
         readVoiceSubmitSettings
       };
@@ -23872,13 +23877,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
         composerHasDraftRows,
         recorderBlocksRearm,
         isVoiceOriginated,
-        recordingObserved
+        recordingObserved,
+        processingObserved
       } = require_voice_submit();
       var { isHumanPtyInput } = require_proxy_util();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
       var VOICE_TAP_MODE_SETTLE_MS = 1500;
       var STOP_SETTLE_MS = 250;
+      var SUBMIT_POLL_MS = 100;
+      var SUBMIT_ABANDON_MS = 8e3;
       var CONSUMED_IDLE_MS = 9e4;
       var COMPOSITION_POLL_MS = 300;
       var REARM_SETTLE_MS = 3e3;
@@ -23930,6 +23938,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         getTriggerKey = () => null,
         rearmMs = REARM_SETTLE_MS,
         abandonMs = REARM_ABANDON_MS,
+        stopSettleMs = STOP_SETTLE_MS,
+        submitPollMs = SUBMIT_POLL_MS,
+        submitAbandonMs = SUBMIT_ABANDON_MS,
         modeSettleMs = VOICE_TAP_MODE_SETTLE_MS,
         speechAbandonMs = SPEECH_ABANDON_MS,
         // Marks the submit as voice-originated. Absent, the feature is simply off and
@@ -23982,13 +23993,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }) {
         let timer = null;
         let enterTimer = null;
+        let submitTimer = null;
         let pollTimer = null;
         const modeSettleTimers = /* @__PURE__ */ new Map();
         let lastTriggerWriteAt = 0;
         let disposed = false;
         let answered = null;
         let fires = 0;
-        let keySubmits = 0;
+        let keyStops = 0;
+        let deferredSubmits = 0;
         let externalTaps = 0;
         let offTaps = 0;
         let voiceEvidenceAt = null;
@@ -24105,16 +24118,54 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
           }
           const litAtMatch = recordingObserved(indicatorRows());
+          cancelDeferredSubmit();
           write("\x7F".repeat(found.erase));
           enterTimer = setTimeout(() => {
             enterTimer = null;
             if (disposed) return;
             if (litAtMatch && tapTrigger()) {
-              keySubmits += 1;
+              keyStops += 1;
+              deferSubmit();
               return;
             }
             write("\r");
           }, ENTER_SETTLE_MS);
+        }
+        function deferSubmit() {
+          const deadline = now() + submitAbandonMs;
+          const poll = () => {
+            submitTimer = null;
+            if (disposed) return;
+            if (now() < deadline && processingObserved(indicatorRows())) {
+              submitTimer = setTimeout(poll, submitPollMs);
+              return;
+            }
+            if (!deferredSubmitAllowed()) return;
+            write("\r");
+            deferredSubmits += 1;
+          };
+          submitTimer = setTimeout(poll, stopSettleMs);
+        }
+        function cancelDeferredSubmit() {
+          if (submitTimer) clearTimeout(submitTimer);
+          submitTimer = null;
+        }
+        function deferredSubmitAllowed() {
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg) return false;
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (!shouldFire({ enabled: cfg.enabled, attention })) return false;
+          return composerHasDraftRows(composerRows());
         }
         function forgetPending() {
           pending = null;
@@ -24438,7 +24489,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           // the reason above it.
           recorderCause: () => readingCause,
           fireCount: () => fires,
-          keySubmitCount: () => keySubmits,
+          keyStopCount: () => keyStops,
+          deferredSubmitCount: () => deferredSubmits,
           rearmCount: () => rearms,
           externalTapCount: () => externalTaps,
           offTapCount: () => offTaps,
@@ -24449,6 +24501,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             disposed = true;
             if (timer) clearTimeout(timer);
             if (enterTimer) clearTimeout(enterTimer);
+            if (submitTimer) clearTimeout(submitTimer);
             if (pollTimer) clearInterval(pollTimer);
             if (rearmTimer) clearTimeout(rearmTimer);
             for (const [t, resolve] of modeSettleTimers) {
@@ -24459,6 +24512,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             speechDeferredSince = 0;
             timer = null;
             enterTimer = null;
+            submitTimer = null;
             pollTimer = null;
             rearmTimer = null;
             for (const s of subs) s.dispose();
@@ -24472,6 +24526,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         QUIET_MS,
         ENTER_SETTLE_MS,
         STOP_SETTLE_MS,
+        SUBMIT_POLL_MS,
+        SUBMIT_ABANDON_MS,
         COMPOSITION_POLL_MS,
         CONSUMED_IDLE_MS,
         REARM_SETTLE_MS,

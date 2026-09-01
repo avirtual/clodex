@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **A dictated message ending in the trigger phrase is sent again.** On the tap
+  path the trigger key stopped the recorder but submitted nothing, so a spoken
+  phrase was erased and the message left sitting in the composer. The CLI's own
+  auto-submit cannot cover it: that submit is disabled the moment we erase the
+  trigger phrase out of the draft, which we must do or the phrase ships inside
+  the message. Clodex now sends the Enter itself, once the CLI has finished
+  transcribing — and stands down if a permission dialog opened while it waited,
+  or if the composer no longer holds the draft. A transcription that never
+  finishes sends after eight seconds rather than stranding the message.
+
 - **A voice tap no longer disappears when the composer read fails.** The external
   ensure-on tap — the Voice Control wake word and `scripts/clodex-voice-tap.js`
   — read the composer through a call that could throw, and on the immediate path

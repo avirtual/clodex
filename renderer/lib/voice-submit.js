@@ -387,6 +387,25 @@ function recordingObserved(rows) {
   return rows.some((row) => typeof row === 'string' && RECORDING.test(row));
 }
 
+// Is the CLI still TRANSCRIBING — the third reading of the same footer rows, and
+// the third polarity, which is why it is not folded into either neighbour.
+//
+// `recorderBlocksRearm` is RECORDING-or-PROCESSING and answers "may I write a
+// trigger character"; `recordingObserved` is RECORDING-only and answers "would
+// one key submit or arm". Neither answers "has the transcript landed yet", and
+// substituting one for it breaks a different thing in each direction: the
+// blocking one never clears while a re-armed recorder is lit, and the lit one
+// reads processing as finished on the very tick it is running.
+//
+// UNREADABLE reads as STILL BUSY, the opposite of `recordingObserved` beside it.
+// The caller is waiting to send a submit, and firing into a screen nobody could
+// read is the mistake that cannot be taken back; a deadline at the call site
+// bounds the wait, so doubt costs latency here and nothing else.
+function processingObserved(rows) {
+  if (!Array.isArray(rows)) return true;
+  return rows.some((row) => typeof row === 'string' && PROCESSING.test(row));
+}
+
 // The character that arms the recorder, or null when no character can.
 //
 // The CLI resolves its own trigger the same way: it takes the Chat-context
@@ -439,6 +458,7 @@ module.exports = {
   recorderBlocksRearm,
   isVoiceOriginated,
   recordingObserved,
+  processingObserved,
   resolveTriggerKey,
   readVoiceSubmitSettings,
 };
