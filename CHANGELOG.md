@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A typed message is no longer labelled as dictated.** Clodex tells the
+  receiving agent when a message came out of a microphone, so it can read a
+  garbled word for intent instead of taking it literally. That marker is armed
+  just before the Enter that submits the dictated text — but if the submit then
+  stood down (a permission dialog opened, the composer no longer held the
+  draft, or you started typing), the marker was left armed and the next message
+  you typed inherited it. The agent was then told your carefully typed text
+  might be a mis-transcription. The marker is now withdrawn on every path that
+  abandons a submit; its expiry is only a backstop for a withdrawal that never
+  reached the proxy.
+
 - **Cost reporting corrected for Fable 5.1 and Sonnet 5.** v5.21.0 updated the
   bundled wirescope table, but Clodex's own pricing is a port of it rather than
   a copy, so the two corrections never reached the numbers you see. Fable 5.1
