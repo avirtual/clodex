@@ -2370,3 +2370,54 @@ test('a voice armer that THROWS cannot escape into the ipc handler', async () =>
     assert.doesNotThrow(() => h.m.markVoiceOrigin('a'));
   } finally { h.stop('a'); }
 });
+
+test('unmarkVoiceOrigin disarms through the SAME ctx the arm used', async () => {
+  // The withdrawal has to reach the route the marker was armed on, or it clears
+  // nothing and the stale marker rides the next turn anyway. Asserted as an
+  // EQUALITY against the arm's own ctx rather than field by field: a second base
+  // resolution inside the disarm is exactly the bug that would leave a marker
+  // armed on one route and cleared on another.
+  const armed = [];
+  const cleared = [];
+  const h = mkManager({
+    extraDeps: {
+      voiceOriginArm: {
+        arm: (ctx) => { armed.push(ctx); return true; },
+        disarm: (ctx) => { cleared.push(ctx); return true; },
+      },
+    },
+  });
+  await spawned(h, 'a');
+  try {
+    h.m.markVoiceOrigin('a');
+    h.m.unmarkVoiceOrigin('a');
+    assert.strictEqual(armed.length, 1, 'ENTER: the arm must have been REACHED');
+    assert.strictEqual(cleared.length, 1, 'ENTER: the disarm must have been REACHED');
+    assert.deepStrictEqual(cleared[0], armed[0]);
+  } finally { h.stop('a'); }
+});
+
+test('unmarkVoiceOrigin on a dead or unknown session is a no-op, and a throw cannot escape', async () => {
+  // Same two properties as the arm's, for the same reason: it is called from an
+  // ipc `send` with no reply channel. A seat that is gone needs no withdrawal —
+  // the marker is one-shot and there is no next turn on it to mislabel.
+  const cleared = [];
+  const h = mkManager({
+    extraDeps: { voiceOriginArm: { arm: () => true, disarm: (ctx) => { cleared.push(ctx); return true; } } },
+  });
+  const s = await spawned(h, 'a');
+  try {
+    s._dead = true;
+    h.m.unmarkVoiceOrigin('a');
+    h.m.unmarkVoiceOrigin('never-existed');
+    assert.deepStrictEqual(cleared, []);
+  } finally { h.stop('a'); }
+
+  const t = mkManager({
+    extraDeps: { voiceOriginArm: { arm: () => true, disarm: () => { throw new Error('proxy is down'); } } },
+  });
+  await spawned(t, 'a');
+  try {
+    assert.doesNotThrow(() => t.m.unmarkVoiceOrigin('a'));
+  } finally { t.stop('a'); }
+});

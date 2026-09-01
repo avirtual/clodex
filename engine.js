@@ -484,6 +484,7 @@ const hintArm = createHintArm({
 const voiceOriginArm = createVoiceOriginArm({
   armHints: ({ base, route, id, text, ttl_s, turn_start_only, once }) =>
     ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),
+  clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
   log,
 });
 

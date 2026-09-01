@@ -28,10 +28,17 @@ const { isVoiceOriginated, recordingObserved } = require('../renderer/lib/voice-
 
 function recorder({ throws = false, rejects = false } = {}) {
   const calls = [];
+  const cleared = [];
   return {
     calls,
+    cleared,
     armHints: (payload) => {
       calls.push(payload);
+      if (throws) throw new Error('proxy is down');
+      return rejects ? Promise.reject(new Error('proxy refused')) : Promise.resolve({ ok: true });
+    },
+    clearHints: (payload) => {
+      cleared.push(payload);
       if (throws) throw new Error('proxy is down');
       return rejects ? Promise.reject(new Error('proxy refused')) : Promise.resolve({ ok: true });
     },
@@ -180,4 +187,95 @@ test('the recording read reports what is there, and an unreadable screen is NOT 
   // phantom one arms a mic nobody asked for.
   assert.strictEqual(recordingObserved(['⏺ RECOVERY.md']), false, 'a bullet on a file named RECOVERY');
   assert.strictEqual(recordingObserved(['⏺ RECORD the thing']), false, 'the word RECORD after a bullet');
+});
+
+// ------------------------------------------------------- withdrawing the marker
+
+// `once` bounds the marker to ONE delivery, not to the RIGHT one: the tap path
+// arms at the match and submits seconds later, so a submit that stands down
+// leaves the marker live for the rest of its TTL and the next turn takes it.
+// Pointed at typed text the payload is actively harmful -- it instructs the
+// reader to second-guess words the operator chose deliberately.
+
+test('the disarm clears THIS marker by id, and nothing else on the route', () => {
+  // The whole payload. The register is shared -- hint-arm.js and the selection
+  // peek live on the same route -- so a disarm that omitted the id would clear
+  // the operator's contextual hint along with this one, which is hazard 1 in
+  // the withdraw direction.
+  const r = recorder();
+  const arm = createVoiceOriginArm({ armHints: r.armHints, clearHints: r.clearHints });
+  assert.strictEqual(arm.disarm(CTX), true);
+  assert.deepStrictEqual(r.cleared, [{ base: CTX.base, route: CTX.route, id: VOICE_ID }]);
+  assert.deepStrictEqual(r.calls, [], 'a disarm must not arm anything');
+});
+
+test('the disarm never reaches the keystroke: throw, reject and no-base all swallowed', async () => {
+  // Hazard 2, and it applies to the unwind exactly as the module header applies
+  // it to the arm: the paths that abandon a submit are keystroke paths too, so a
+  // dead wirescope must cost the withdrawal and never the key. The failure is
+  // bounded rather than unbounded -- the TTL still expires the marker.
+  const t = recorder({ throws: true });
+  assert.strictEqual(
+    createVoiceOriginArm({ armHints: t.armHints, clearHints: t.clearHints }).disarm(CTX), false,
+    'a throw must not escape into the submit path');
+  assert.strictEqual(t.cleared.length, 1, 'ENTER: it must have TRIED to clear');
+
+  const j = recorder({ rejects: true });
+  assert.strictEqual(
+    createVoiceOriginArm({ armHints: j.armHints, clearHints: j.clearHints }).disarm(CTX), true);
+  await new Promise((res) => setTimeout(res, 10));
+  assert.strictEqual(j.cleared.length, 1, 'the rejection is caught, not left unhandled');
+
+  for (const ctx of [null, {}, { base: null, route: 'r' }, { base: 'b', route: null }]) {
+    const r = recorder();
+    const arm = createVoiceOriginArm({ armHints: r.armHints, clearHints: r.clearHints });
+    assert.strictEqual(arm.disarm(ctx), false, JSON.stringify(ctx));
+    assert.deepStrictEqual(r.cleared, [], JSON.stringify(ctx));
+  }
+});
+
+test('the disarm returns synchronously, like the arm', () => {
+  // Same rule, same reason: no value to await means no caller can be written
+  // that puts the proxy in front of the operator's key.
+  let settled = false;
+  const arm = createVoiceOriginArm({
+    armHints: () => Promise.resolve({}),
+    clearHints: () => new Promise((res) => setTimeout(() => { settled = true; res({}); }, 50)),
+  });
+  const out = arm.disarm(CTX);
+  assert.strictEqual(typeof out, 'boolean');
+  assert.strictEqual(settled, false, 'the disarm must not have waited for the proxy');
+});
+
+test('a host that wires no clearHints degrades to the TTL, it does not throw', () => {
+  // The unwind is optional at the seam. Absent it, the marker expires on its own
+  // -- today's behaviour, bounded by VOICE_TTL_S -- and no caller sees an error.
+  const r = recorder();
+  const arm = createVoiceOriginArm({ armHints: r.armHints });
+  assert.strictEqual(arm.disarm(CTX), false);
+  assert.deepStrictEqual(r.cleared, []);
+});
+
+// ------------------------------------------------------------------- the TTL
+
+test('the TTL outlasts the tap path\'s own wait, which is what the marker must survive', () => {
+  // THE FLOOR, and it is the counter-intuitive bound. The tap path stops the
+  // recorder, then waits for transcription before writing `\r`: a first read one
+  // STOP_SETTLE_MS after the key, then polling to SUBMIT_ABANDON_MS. A TTL under
+  // that expires the marker before the submit it belongs to goes out, losing the
+  // annotation on exactly the dictated messages the feature exists for.
+  //
+  // The watcher's constants are imported rather than restated: this bound is a
+  // RELATION between two modules, and a copied number would keep this passing
+  // after the watcher's own numbers moved.
+  const {
+    STOP_SETTLE_MS: STOP, SUBMIT_ABANDON_MS: ABANDON,
+  } = require('../renderer/voice-submit-watcher');
+  const worstCaseMs = STOP + ABANDON;
+  assert.ok(VOICE_TTL_S * 1000 > worstCaseMs,
+    `TTL ${VOICE_TTL_S}s must outlast the deferred submit's ${worstCaseMs}ms worst case`);
+  // And it is not so far above it that an abandoned marker whose DISARM failed
+  // sits on the register for minutes. The disarm is the primary bound; this is
+  // the backstop when the proxy never receives it.
+  assert.ok(VOICE_TTL_S <= 30, `TTL ${VOICE_TTL_S}s is the failed-disarm exposure window`);
 });
