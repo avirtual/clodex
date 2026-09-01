@@ -5747,9 +5747,9 @@ async function openPrefs() {
   applyPrefsGate();
   // Starts the island's poll and does the open-time read: the row lives in this
   // dialog, so the poll has nothing to serve while it is closed. Reading here
-  // rather than trusting the 15s poll matters because a
-  // `/voice` typed in a terminal would otherwise show stale for up to that long,
-  // on the one screen that claims to say what the mode IS.
+  // rather than trusting the 15s poll matters because a `/voice` typed in a
+  // terminal would otherwise show stale for up to that long, on the one screen
+  // that claims to say what the mode IS.
   voiceControl.start();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
