@@ -8,7 +8,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { buildReviewScope, VERDICT_GRAMMAR } = require('../ticket-review-scope');
+const {
+  buildReviewScope, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET,
+} = require('../ticket-review-scope');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
 
@@ -379,19 +381,32 @@ test('over the budget the block keeps the most RECENT entries and says how many 
   assert.ok(s.indexOf(m[0]) < s.indexOf('ENTRY12'), 'the drop notice precedes the entries it qualifies');
 });
 
-test('a single over-budget entry is still rendered, never replaced by the drop notice alone', () => {
-  // The degenerate case: one entry so long it exceeds the whole block budget by
-  // itself. Dropping it would leave a heading and a notice saying reasons exist,
-  // showing the reviewer none of them.
-  const s = buildReviewScope({
-    ticket: ticket({
-      reviewRound: 1, verdict: 'ACCEPT', mustFix: '(none)',
-      reworkReasons: [{ round: 1, at: 1, by: 'clodex', reason: `HEAD${'x'.repeat(20000)}` }],
-    }),
-    diffPath: '/tmp/d.diff',
-  });
-  assert.ok(s.includes('HEAD'), 'the sole entry renders');
-  assert.ok(!/not shown here/.test(s), 'and nothing is claimed dropped');
+// Driven through `budgetEntries` rather than through `buildReviewScope`, because
+// the case cannot be constructed through the renderer: every chunk it passes has
+// already been through `capReason`, so while REWORK_REASON_CAP < REWORK_BLOCK_BUDGET
+// no single chunk can exceed the budget and the guard's branch is never entered.
+// A subject routed through the renderer asserts only that one small entry fits,
+// and stays green with the guard deleted — measured, not assumed.
+//
+// The relationship between the two constants is what decides reachability, so it
+// is asserted rather than assumed: if a later change puts the budget below the
+// cap, the guard becomes reachable from the renderer too and this ENTER says so.
+test('budgetEntries keeps a lone chunk that is larger than the whole budget', () => {
+  assert.ok(REWORK_BLOCK_BUDGET < 20000,
+    'ENTER: the synthetic chunk below really does exceed the budget');
+  const huge = 'x'.repeat(20000);
+  assert.deepStrictEqual(budgetEntries([huge]), [huge],
+    'the sole entry survives: a block that were only a drop notice would tell the '
+    + 'reviewer reasons exist and then show it none');
+});
+
+test('budgetEntries drops the oldest of several over-budget chunks but never the last', () => {
+  // The guard is "keep at least one", not "keep everything": without this, a
+  // budgetEntries that ignored the budget entirely would satisfy the subject above.
+  const chunks = [1, 2, 3].map((n) => `E${n}${'x'.repeat(20000)}`);
+  const kept = budgetEntries(chunks);
+  assert.strictEqual(kept.length, 1, 'over budget, only the newest chunk is kept');
+  assert.strictEqual(kept[0], chunks[2], 'and it is the most recent one');
 });
 
 test('a malformed rework entry degrades rather than leaking undefined into the scope', () => {

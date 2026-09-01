@@ -71,7 +71,11 @@ const REWORK_BLOCK_BUDGET = 8000;
 // scope actually carries rather than what the record holds.
 //
 // One entry always survives a budget of any size — a block that were only a drop
-// notice would tell the reviewer reasons exist and then show it none.
+// notice would tell the reviewer reasons exist and then show it none. Exported
+// so that guard can be exercised directly: every chunk reaching it has been
+// through `capReason` first, and while the per-entry cap is below the budget no
+// single chunk can cross it, so the branch is unreachable through
+// `buildReviewScope` and a test routed that way pins nothing.
 function budgetEntries(chunks) {
   const kept = [];
   let total = 0;
@@ -252,4 +256,4 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
   return out.join('\n');
 }
 
-module.exports = { buildReviewScope, VERDICT_GRAMMAR };
+module.exports = { buildReviewScope, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET };
