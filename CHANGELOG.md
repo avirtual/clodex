@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **A voice tap no longer disappears when the composer read fails.** The external
+  ensure-on tap — the Voice Control wake word and `scripts/clodex-voice-tap.js`
+  — read the composer through a call that could throw, and on the immediate path
+  that throw escaped into the renderer's tap handler unguarded: the tap was lost
+  and every check after it was skipped, silently. It now declines the way the
+  deferred path already did, and says so in the console. A failure to write the
+  key itself is still reported, not swallowed.
+
 - **Clodex can see the recorder again — every voice gate that reads it has been
   answering "not recording" while the mic was live.** The check looked for the
   CLI's indicator with no space between the dot and `REC`, but the CLI paints
