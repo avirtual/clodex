@@ -20,7 +20,8 @@ const assert = require('node:assert');
 const {
   DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
   foldConfusables, shouldFire, readVoiceSubmitSettings,
-  shouldRearm, composerIsEmpty, recorderBlocksRearm, recordingObserved, resolveTriggerKey,
+  shouldRearm, composerIsEmpty, recorderBlocksRearm, recordingObserved, processingObserved,
+  resolveTriggerKey,
 } = require('../renderer/lib/voice-submit');
 const {
   createVoiceSubmitWatcher, readComposition, commitComposition, CONSUMED_IDLE_MS,
@@ -3321,11 +3322,21 @@ test('recordingObserved stays REC-ONLY, so processing never draws the stop key',
 // not carry. Writes are recorded RAW into ONE list: WHICH byte submits, and that
 // the erase leads it, is the entire property under test, and a substring check
 // or two separate lists cannot express it.
+// Small enough that a test waits out real time, large enough to sit outside this
+// file's observed timer jitter -- the same trade TEST_QUIET_MS makes.
+const TEST_STOP_SETTLE_MS = 20;
+const TEST_SUBMIT_POLL_MS = 5;
+// The deadline default is deliberately LONGER than `done()` waits, so a test that
+// does not name it asserts the processing-cleared path and never the abandon one.
+// The abandon tests pass their own.
+const TEST_SUBMIT_ABANDON_MS = 5000;
+
 function stopHarness({
   rows = [''],
   config = { enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE },
   attention = null,
   trigger = ' ',
+  submitAbandonMs = TEST_SUBMIT_ABANDON_MS,
 } = {}) {
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
@@ -3347,10 +3358,16 @@ function stopHarness({
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
     pollMs: 1,
+    stopSettleMs: TEST_STOP_SETTLE_MS,
+    submitPollMs: TEST_SUBMIT_POLL_MS,
+    submitAbandonMs,
   }));
   return {
     term, watcher, writes, env,
-    done: () => settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 40),
+    // Both stages of a LIT submit: the quiet window, the erase/key gap, and the
+    // deferred `\r` behind the stop settle. A `done()` that stopped at the key
+    // would assert on a half-finished sequence and pass over a missing submit.
+    done: () => settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 60),
   };
 }
 
@@ -3359,13 +3376,18 @@ const DRAFT = '\u276f finish the report over and out';
 // it. A literal, not a recomputation of the rule under test.
 const ERASE = '\x7f'.repeat(13);
 
-test('recorder LIT at submit: the trigger key IS the submit, and there is no \r', async () => {
-  // t610 CHANGED THIS PIN, deliberately. It used to assert [ERASE, '\r', ' '] --
-  // submit, then chase the still-lit recorder with a late gated key. Bogdan
-  // measured both halves at a live mic: plain Enter does NOT stop the recorder
-  // (it lingers out its own 15s timeout), and the trigger key submits AND stops
-  // atomically. So on the spoken path the key is the whole submit and the `\r`
-  // is not written at all.
+test('recorder LIT at submit: the key STOPS and our own `\\r` submits behind it', async () => {
+  // THE DEFECT, in one assertion. This pin used to be [ERASE, ' '] -- the key
+  // called the whole submit. At a live mic that key stopped the recorder and
+  // submitted NOTHING, leaving the spoken phrase erased and the draft sitting
+  // in the composer. Dropping the `\r` back out of this array restores that.
+  //
+  // The key does not submit because the CLI's submit is not in its key handler:
+  // it is in `onTranscript`, behind a gate comparing the composer against the
+  // voice module's private mirror of it. Our ERASE moves the composer and not
+  // the mirror, so that gate declines. Nothing we can write makes the CLI submit
+  // once the erase has run, and the erase cannot go -- without it the trigger
+  // phrase ships inside the message. So the submit has to be OURS.
   const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
   // `cursor: true` on the DRAFT row: write() REPLACES the row set and the cursor
   // defaults to the LAST row -- without this the composer read lands on the
@@ -3374,15 +3396,83 @@ test('recorder LIT at submit: the trigger key IS the submit, and there is no \r'
   await h.done();
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit itself must have fired');
-  // THE WHOLE ARRAY, because what is absent is the property: a `\r` anywhere in
-  // here is the old three-write path coming back, and the erase must still lead
-  // or the trigger phrase ships inside the message.
-  assert.deepStrictEqual(h.writes, [ERASE, ' ']);
-  assert.strictEqual(h.watcher.keySubmitCount(), 1, 'exactly one key, not a repeat');
+  // THE WHOLE ARRAY AND ITS ORDER. The erase must LEAD or the phrase ships
+  // inside the message; the key must PRECEDE the `\r` or it arms a recorder
+  // after the submit instead of stopping the one that is running; and the `\r`
+  // must be there at all, which is the entire defect.
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', '\r']);
+  assert.strictEqual(h.watcher.keyStopCount(), 1, 'exactly one key, not a repeat');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 1);
   h.watcher.dispose();
 });
 
-test('recorder DARK at submit: `\\r` submits and the key is never written', async () => {
+// The spoken path's real ORDER, as a fixture: the recorder is lit when the
+// phrase matches, and `Voice: processing` replaces it only after our key stops
+// it. `onWrite` fires inside the write, so the repaint lands between the erase
+// and the key -- which is where the CLI puts it.
+//
+// ONCE, and that is load-bearing for the two-match test: re-firing on a SECOND
+// erase would repaint the FIRST draft over the second one and hold its
+// processing footer up for good.
+function litThenProcessing(h, row = PROCESSING_ROW) {
+  let armed = true;
+  h.env.onWrite = (d) => {
+    if (!armed || !d.startsWith('\x7f')) return;
+    armed = false;
+    h.term.write({ text: DRAFT, cursor: true }, row);
+  };
+}
+
+test('the deferred `\\r` WAITS for `Voice: processing` to clear', async () => {
+  // The wait is the reason this is deferred rather than written straight behind
+  // the key. The CLI's own submit runs from `onTranscript`, i.e. after the
+  // footer clears; sending at the keystroke submits the INTERIM transcript that
+  // is on screen at that instant.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  // LIT at the match, `Voice: processing` only once the key has stopped it --
+  // the real order, and the only one that reaches the deferral at all. Painting
+  // processing at match time instead makes `recordingObserved` read DARK, so the
+  // test would run down the typed branch it is not about and assert nothing.
+  litThenProcessing(h);
+  // Long enough that a `\r` written on the first read would already be here.
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 60);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '],
+    'ENTER: the key must have gone out, and the `\\r` must NOT have followed it yet');
+
+  // Transcription finishes: the footer clears and the final text is in place.
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 60);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', '\r'], 'the poll releases the submit');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 1);
+  h.watcher.dispose();
+});
+
+test('processing that NEVER clears still submits, at the abandon deadline', async () => {
+  // A wedged transcription, a footer scrape that stopped matching, a screen gone
+  // unreadable: all present as processing forever. The erase has already run, so
+  // giving up strands the operator's words in a composer with the phrase cut off
+  // -- he cannot even re-trigger it. The deadline fires the submit instead.
+  const h = stopHarness({
+    rows: [{ text: '❯ ', cursor: true }, PROCESSING_ROW],
+    submitAbandonMs: TEST_STOP_SETTLE_MS + 30,
+  });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  // LIT at the match, `Voice: processing` only once the key has stopped it --
+  // the real order, and the only one that reaches the deferral at all. Painting
+  // processing at match time instead makes `recordingObserved` read DARK, so the
+  // test would run down the typed branch it is not about and assert nothing.
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 140);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', '\r'],
+    'the deadline submits rather than stranding the erased draft');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 1);
+  h.watcher.dispose();
+});
+
+test('recorder DARK at submit: `\\r` submits alone and the key is never written', async () => {
   // THE LOAD-BEARING BRANCH. A dark recorder means the phrase was TYPED, and
   // there the key does not submit -- it ARMS a microphone nobody asked for.
   const idle = ' agents · tap to talk';
@@ -3392,7 +3482,11 @@ test('recorder DARK at submit: `\\r` submits and the key is never written', asyn
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');
   assert.deepStrictEqual(h.writes, [ERASE, '\r']);
-  assert.strictEqual(h.watcher.keySubmitCount(), 0);
+  assert.strictEqual(h.watcher.keyStopCount(), 0);
+  // NO deferred submit on this branch: the `\r` above IS the submit, and a
+  // second one behind it would send an empty composer or the operator's next
+  // draft.
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
   h.watcher.dispose();
 });
 
@@ -3405,21 +3499,19 @@ test('the PROCESSING row submits with `\\r` too: the recorder has already stoppe
   await h.done();
 
   assert.deepStrictEqual(h.writes, [ERASE, '\r']);
-  assert.strictEqual(h.watcher.keySubmitCount(), 0);
+  assert.strictEqual(h.watcher.keyStopCount(), 0);
   h.watcher.dispose();
 });
 
-test('still talking past the phrase: the key still submits, on a 30ms window', async () => {
-  // A DOCUMENTED NARROWING, not an oversight. The old path read the composer
-  // again 250ms after the `\r` and skipped its stop when new interim transcript
-  // had landed. There is no late read left to gate on: the key is the submit, so
-  // declining it would mean not submitting at all.
+test('still talking past the phrase: the key still stops, and the submit follows', async () => {
+  // A DOCUMENTED EXPOSURE, not an oversight. The operator can keep talking past
+  // the trigger phrase, and interim transcript for the NEW utterance lands
+  // behind our erase. Declining then would mean not submitting at all -- he
+  // ended an utterance with a sign-off and is owed a submit for it.
   //
-  // What replaces that gate is the window's width. Interim transcript now has
-  // ENTER_SETTLE_MS (30ms) to arrive between the erase and the key, where it had
-  // ENTER_SETTLE_MS + STOP_SETTLE_MS (280ms) to arrive before the stop. The
-  // exposure is an order of magnitude smaller, and the operator gets a submit
-  // for the utterance he ended -- which is what he asked for by saying it.
+  // The draft gate on the deferred `\r` does NOT catch this and is not meant
+  // to: it asks whether a draft is still there, and a new utterance is one. What
+  // bounds the exposure is the width of the window, not a read.
   const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
   h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
   // The new utterance's interim transcript paints right behind the erase.
@@ -3429,8 +3521,8 @@ test('still talking past the phrase: the key still submits, on a 30ms window', a
   await h.done();
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');
-  assert.deepStrictEqual(h.writes, [ERASE, ' ']);
-  assert.strictEqual(h.watcher.keySubmitCount(), 1);
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', '\r']);
+  assert.strictEqual(h.watcher.keyStopCount(), 1);
   h.watcher.dispose();
 });
 
@@ -3447,7 +3539,7 @@ test('HOLD mode falls back to `\\r`: the character would land in the draft', asy
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');
   assert.deepStrictEqual(h.writes, [ERASE, '\r']);
-  assert.strictEqual(h.watcher.keySubmitCount(), 0);
+  assert.strictEqual(h.watcher.keyStopCount(), 0);
   h.watcher.dispose();
 });
 
@@ -3461,17 +3553,17 @@ test('no single-character trigger key falls back to `\\r`, lit or not', async ()
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');
   assert.deepStrictEqual(h.writes, [ERASE, '\r']);
-  assert.strictEqual(h.watcher.keySubmitCount(), 0);
+  assert.strictEqual(h.watcher.keyStopCount(), 0);
   h.watcher.dispose();
 });
 
-test('after a key submit, the turn-end re-arm still taps the key back', async () => {
-  // The two halves compose: the key's submit leaves the recorder stopped, and
-  // the EXISTING turn-end path arms it again. This adds no second way to arm.
+test('after a key stop, the turn-end re-arm still taps the key back', async () => {
+  // The two halves compose: the key leaves the recorder stopped, and the
+  // EXISTING turn-end path arms it again. This adds no second way to arm.
   const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
   h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
   await h.done();
-  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the key submit must have happened');
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', '\r'], 'ENTER: the key stop must have happened');
 
   // The recorder is now off and the composer empty, exactly as after a real
   // key submit.
@@ -3480,10 +3572,137 @@ test('after a key submit, the turn-end re-arm still taps the key back', async ()
   h.watcher.noteActivity('idle', true);
   await settle(TEST_REARM_MS + TEST_QUIET_MS + 60);
 
-  assert.deepStrictEqual(h.writes, [ERASE, ' ', ' '],
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', '\r', ' '],
     'the turn-end re-arm taps the key back through its own existing path');
   assert.strictEqual(h.watcher.rearmCount(), 1);
   h.watcher.dispose();
+});
+
+test('THE INTERLOCK, DEFERRED: a dialog opened during the wait gets no `\\r`', async () => {
+  // THE COST OF DEFERRING, and the reason the write re-reads its gates instead
+  // of inheriting tick()'s. `shouldFire` was TRUE at the match; seconds later a
+  // permission dialog is up, and this `\r` would ANSWER it. A submit written
+  // 30ms behind the match had barely any window for that; this one is open for
+  // as long as transcription runs, which is what makes the re-read load-bearing
+  // rather than defensive.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  // LIT at the match, `Voice: processing` only once the key has stopped it --
+  // the real order, and the only one that reaches the deferral at all. Painting
+  // processing at match time instead makes `recordingObserved` read DARK, so the
+  // test would run down the typed branch it is not about and assert nothing.
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the key must have gone out first');
+
+  // The dialog opens WHILE the CLI is still transcribing, then the footer
+  // clears -- which without the re-read releases the submit into the dialog.
+  h.env.attention = 'permission';
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 60);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'the `\\r` would have answered the dialog');
+  assert.strictEqual(h.watcher.keyStopCount(), 1, 'the stop still happened; only the submit stood down');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+  h.watcher.dispose();
+});
+
+test('an EMPTY composer at release gets no `\\r`: something already submitted it', async () => {
+  // The stray-submit case the spec names. If the composer is empty when the wait
+  // ends, the draft has gone -- the operator sent it by hand, or a CLI version
+  // whose gate we mis-modelled submitted it itself. Our `\r` would then land in
+  // an empty composer or a fresh draft, which is a submit nobody asked for.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  // LIT at the match, `Voice: processing` only once the key has stopped it --
+  // the real order, and the only one that reaches the deferral at all. Painting
+  // processing at match time instead makes `recordingObserved` read DARK, so the
+  // test would run down the typed branch it is not about and assert nothing.
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the key must have gone out first');
+
+  h.term.write({ text: EMPTY_COMPOSER, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 60);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' ']);
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+  h.watcher.dispose();
+});
+
+test('a SECOND match cancels the first deferred `\\r`: one composer, one submit', async () => {
+  // Two `\r` for one composer is what the cancel prevents: the first submits
+  // the draft, the second lands in whatever it left behind. The content latch
+  // does NOT cover this -- it keys on the composer's content, and a second
+  // utterance is different content, so it re-arms by design.
+  //
+  // THE SHAPE IS WHAT MAKES THIS PIN ANYTHING, and getting it wrong is silent:
+  // a version of this test that stopped after the second match passed with the
+  // cancel DELETED, because the first deferral was still sitting behind an
+  // uncleared footer and its `\r` simply had not come out yet. So the footer
+  // has to CLEAR afterwards -- that is the moment a surviving deferral fires,
+  // and the only moment its absence can be observed.
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the first stop, its submit still waiting');
+
+  // He signs off again before the CLI finished the first. Still transcribing, so
+  // this match reads the recorder as DARK and submits with its own `\r`.
+  const DRAFT2 = '\u276f a second thought over and out';
+  h.term.write({ text: DRAFT2, cursor: true }, PROCESSING_ROW);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', ERASE, '\r'],
+    'ENTER: the second match must have submitted on its own');
+
+  // Transcription finishes and he starts a THIRD draft, unfinished and with no
+  // sign-off. A first deferral that survived releases into exactly this.
+  h.term.write({ text: '❯ something else entirely', cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + TEST_STOP_SETTLE_MS + 80);
+
+  assert.strictEqual(h.watcher.fireCount(), 2, 'ENTER: exactly the two matches, no third');
+  assert.deepStrictEqual(h.writes, [ERASE, ' ', ERASE, '\r'],
+    'the first deferred submit is cancelled, never released into the next draft');
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+  h.watcher.dispose();
+});
+
+test('dispose during the wait writes nothing: no submit into a dead terminal', async () => {
+  const h = stopHarness({ rows: [{ text: '❯ ', cursor: true }, REC_ROW] });
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  // LIT at the match, `Voice: processing` only once the key has stopped it --
+  // the real order, and the only one that reaches the deferral at all. Painting
+  // processing at match time instead makes `recordingObserved` read DARK, so the
+  // test would run down the typed branch it is not about and assert nothing.
+  litThenProcessing(h);
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + TEST_STOP_SETTLE_MS + 40);
+  assert.deepStrictEqual(h.writes, [ERASE, ' '], 'ENTER: the key must have gone out first');
+
+  h.watcher.dispose();
+  h.term.write({ text: DRAFT, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_SUBMIT_POLL_MS + 60);
+
+  assert.deepStrictEqual(h.writes, [ERASE, ' ']);
+  assert.strictEqual(h.watcher.deferredSubmitCount(), 0);
+});
+
+test('processingObserved is its OWN polarity, not either neighbour', () => {
+  // Three readings of one footer, and unifying any two breaks a different thing.
+  assert.strictEqual(processingObserved([PROCESSING_ROW]), true);
+  assert.strictEqual(processingObserved([PROCESSING_ROW_ASCII]), true);
+  // A LIT recorder is not processing. Widened to match `recorderBlocksRearm`,
+  // the wait would never end while the turn-end re-arm has the mic lit again,
+  // and every deferred submit would go out at the abandon deadline instead.
+  assert.strictEqual(processingObserved([REC_ROW]), false);
+  assert.strictEqual(processingObserved([' agents \u00b7 tap to talk']), false);
+  assert.strictEqual(processingObserved([]), false);
+  // UNREADABLE is BUSY here -- the opposite of `recordingObserved`, which reads
+  // it as dark. The caller is holding a `\r`, and firing it into a screen
+  // nobody could read is the mistake that cannot be taken back; the abandon
+  // deadline is what stops that costing more than latency.
+  assert.strictEqual(processingObserved(null), true);
+  assert.strictEqual(recordingObserved(null), false);
 });
 
 test('a recorder that clears LATE is still recovered, not abandoned first', async () => {

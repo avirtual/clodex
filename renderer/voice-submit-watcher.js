@@ -25,6 +25,7 @@
 const {
   findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
   composerHasDraftRows, recorderBlocksRearm, isVoiceOriginated, recordingObserved,
+  processingObserved,
 } = require('./lib/voice-submit');
 // The SAME classifier the main process and typeToTakeControl use. A second
 // predicate here would drift from the one that already decides what counts as a
@@ -79,6 +80,29 @@ const VOICE_TAP_MODE_SETTLE_MS = 1500;
 // one is a WRITE ordering margin inside the CLI's input loop, this one waits on
 // a full repaint before a READ. Neither may be computed from the other.
 const STOP_SETTLE_MS = 250;
+
+// How often, after the trigger key stopped the recorder, the footer is re-read
+// to see whether transcription has finished and our `\r` may go out.
+//
+// The CLI's own submit fires from `onTranscript`, so the composer is not ready
+// at the keystroke — it is ready when `Voice: processing` clears. The first read
+// is one STOP_SETTLE_MS after the key, for the repaint reason that constant
+// already names, and this is the interval after that.
+const SUBMIT_POLL_MS = 100;
+
+// When the deferred `\r` goes out even though `Voice: processing` never cleared.
+//
+// The submit MUST NOT be abandoned silently: the erase has already run, so the
+// draft is sitting in the composer with the trigger phrase stripped, and a wait
+// with no end leaves it there for good. So this fires rather than gives up.
+//
+// It is also why the write re-reads its gates instead of trusting the ones tick()
+// passed: at this distance from the match the operator may have started a new
+// draft or the CLI may have opened a permission dialog, and a `\r` sent into
+// either is worse than a late submit. Long enough to outlast a slow
+// transcription, short enough that the composer it lands in is still the one the
+// operator spoke into.
+const SUBMIT_ABANDON_MS = 8000;
 
 // How long a consumed prefix outlives the composition it came from.
 //
@@ -344,6 +368,9 @@ function createVoiceSubmitWatcher(terminal, {
   getTriggerKey = () => null,
   rearmMs = REARM_SETTLE_MS,
   abandonMs = REARM_ABANDON_MS,
+  stopSettleMs = STOP_SETTLE_MS,
+  submitPollMs = SUBMIT_POLL_MS,
+  submitAbandonMs = SUBMIT_ABANDON_MS,
   modeSettleMs = VOICE_TAP_MODE_SETTLE_MS,
   speechAbandonMs = SPEECH_ABANDON_MS,
   // Marks the submit as voice-originated. Absent, the feature is simply off and
@@ -396,6 +423,10 @@ function createVoiceSubmitWatcher(terminal, {
 }) {
   let timer = null;
   let enterTimer = null;
+  // The `\r` owed after a trigger-key stop, waiting out the CLI's transcription.
+  // Separate from `enterTimer`, which is the 30ms write-ordering gap: this one
+  // spans seconds and is cancelled by a NEW match, which that one never is.
+  let submitTimer = null;
   let pollTimer = null;
   // Handle -> its promise's resolve, for taps waiting out the mode settle. A
   // MAP of them, not one handle: two taps can overlap inside that window, and a
@@ -413,10 +444,15 @@ function createVoiceSubmitWatcher(terminal, {
   // stays killed.
   let answered = null;
   let fires = 0;
-  // Submits the trigger key made, the recorder having been lit at MATCH time.
-  // Read before any write, so this counts a decision rather than an outcome: the
-  // key submits and stops in one keystroke, there being no later read to confirm.
-  let keySubmits = 0;
+  // Recorders the trigger key stopped, the recorder having been lit at MATCH
+  // time. Read before any write, so this counts a decision rather than an
+  // outcome: there is no later read confirming the recorder went down.
+  let keyStops = 0;
+  // Deferred `\r`s actually written after such a stop. Counted apart from the
+  // stops because the two DIVERGE — that is the whole point of the number: a
+  // stop whose submit was abandoned at the guard, or whose watcher was disposed
+  // first, increments the first and not this one.
+  let deferredSubmits = 0;
   // Taps written for an EXTERNAL ensure-on request, counted apart from the
   // re-arm's: the two answer different questions about the same byte, and one
   // number could not say which of them wrote it.
@@ -648,28 +684,32 @@ function createVoiceSubmitWatcher(terminal, {
       voiceEvidenceAt = null;
       try { markVoiceOrigin(); } catch {}
     }
-    // WHICH BYTE SUBMITS, read here at match time and before any write.
+    // WHICH BYTE STOPS THE RECORDER, read here at match time and before any
+    // write.
     //
-    // LIT is the phrase having been SPOKEN, and the trigger key submits there:
-    // the CLI swallows it, sends the draft and stops the recorder in one
-    // keystroke, so no lit recorder survives the submit to be chased afterwards.
+    // LIT is the phrase having been SPOKEN, and the trigger key stops the
+    // recorder there in one keystroke — measured at a live mic, where plain
+    // Enter does not stop it and it lingers out its own 15s timeout.
     //
-    // DARK is the phrase having been TYPED, and the same key does not submit
-    // there — it ARMS a microphone nobody asked for. That branch submits with
-    // `\r` and attempts no stop, there being nothing lit to stop.
+    // DARK is the phrase having been TYPED, and the same key stops nothing —
+    // it ARMS a microphone nobody asked for. That branch writes `\r` alone.
     //
     // `recordingObserved`, so an UNREADABLE screen reads as dark and takes the
-    // `\r`. That polarity is inverted from the re-arm's gate on purpose: a
+    // bare `\r`. That polarity is inverted from the re-arm's gate on purpose: a
     // missed indicator here costs a recorder left lit until its own timeout,
     // which the operator can see and tap; a phantom one costs him a live mic he
     // never asked for and cannot see.
     const litAtMatch = recordingObserved(indicatorRows());
+    // A pending deferred submit belongs to the draft being replaced here, and
+    // that draft was never sent. Leaving it armed sends TWO `\r` for one
+    // composer — the second into whatever the first left behind.
+    cancelDeferredSubmit();
     // FIRST IN EVERY BRANCH: the submit sends the composer's raw content, so
     // without this the trigger phrase ships inside the message.
     write('\x7f'.repeat(found.erase));
     // Its own write, never merged with the erase, for the reason
     // ENTER_SETTLE_MS gives — and the trigger key needs that separation at
-    // least as much as `\r` did. The CLI swallows the key in its KEY handler,
+    // least as much as `\r` does. The CLI swallows the key in its KEY handler,
     // so a byte arriving inside a paste-like chunk is not swallowed at all: it
     // lands in the draft as a literal, submits nothing, and the non-empty
     // composer it leaves behind blocks every later re-arm and every later tap.
@@ -680,9 +720,78 @@ function createVoiceSubmitWatcher(terminal, {
       // character, and declines WITHOUT writing, so both fall through to the
       // `\r` below. Routed through it rather than an inlined write so the
       // `lastTriggerWriteAt` stamp stays impossible to forget.
-      if (litAtMatch && tapTrigger()) { keySubmits += 1; return; }
+      //
+      // THE KEY IS THE STOP, NOT THE SUBMIT. Its tap branch finishes the
+      // recording and returns; the CLI's own submit lives in `onTranscript`,
+      // behind a gate comparing the composer against the voice module's private
+      // mirror of it. Our erase moves one and not the other, so that gate
+      // declines and the CLI submits nothing — which is why the `\r` below is
+      // still owed after a successful stop, and why deleting the erase to
+      // restore the CLI's submit is not an option: without it the spoken
+      // trigger phrase ships inside the message.
+      if (litAtMatch && tapTrigger()) { keyStops += 1; deferSubmit(); return; }
       write('\r');
     }, ENTER_SETTLE_MS);
+  }
+
+  // The `\r` owed after the trigger key stopped the recorder, held until the CLI
+  // has finished transcribing.
+  //
+  // WHY NOT IMMEDIATELY: at the keystroke the composer holds INTERIM transcript;
+  // the CLI paints `Voice: processing` and finishes the text afterwards. Sending
+  // then submits a half-formed sentence for no gain, the operator having spoken
+  // a sign-off he expects to be sent whole.
+  //
+  // The first read waits STOP_SETTLE_MS for the same reason that constant
+  // already names — a byte we wrote takes about a repaint to become readable, so
+  // an earlier read sees the state BEFORE our key and answers about the wrong
+  // moment.
+  function deferSubmit() {
+    const deadline = now() + submitAbandonMs;
+    const poll = () => {
+      submitTimer = null;
+      if (disposed) return;
+      // The deadline is checked BEFORE the indicator, so a footer that never
+      // clears — a wedged transcription, a scrape that stopped matching, a
+      // screen gone unreadable — still submits rather than stranding the
+      // operator's words in a composer he can no longer see the phrase in.
+      if (now() < deadline && processingObserved(indicatorRows())) {
+        submitTimer = setTimeout(poll, submitPollMs);
+        return;
+      }
+      if (!deferredSubmitAllowed()) return;
+      write('\r');
+      deferredSubmits += 1;
+    };
+    submitTimer = setTimeout(poll, stopSettleMs);
+  }
+
+  function cancelDeferredSubmit() {
+    if (submitTimer) clearTimeout(submitTimer);
+    submitTimer = null;
+  }
+
+  // Re-read at WRITE time, never inherited from the match. Deferring the submit
+  // moved it seconds away from the decision tick() made, and both gates can flip
+  // inside that gap: the operator can switch the feature off, and the CLI can
+  // open a permission dialog that this `\r` would ANSWER — the same interlock
+  // `shouldFire` enforces at the match, enforced again where the byte goes out.
+  //
+  // The draft read is the third gate and the one specific to deferral: it
+  // answers "is the composer still holding what he spoke". An empty composer
+  // means something already submitted it, and an unreadable screen answers false
+  // here too — `composerHasDraftRows` declines on doubt, so the submit is
+  // abandoned rather than sent blind. That is the edge this guard deliberately
+  // does not cover: a screen that goes unreadable inside the window leaves the
+  // erased draft sitting in the composer for the operator to send by hand.
+  function deferredSubmitAllowed() {
+    let cfg = null;
+    try { cfg = getConfig(); } catch { cfg = null; }
+    if (!cfg) return false;
+    let attention = null;
+    try { attention = getAttention(); } catch { attention = 'permission'; }
+    if (!shouldFire({ enabled: cfg.enabled, attention })) return false;
+    return composerHasDraftRows(composerRows());
   }
 
   // Reset rather than remember whenever there is nothing to watch, so the text
@@ -1364,7 +1473,8 @@ function createVoiceSubmitWatcher(terminal, {
     // the reason above it.
     recorderCause: () => readingCause,
     fireCount: () => fires,
-    keySubmitCount: () => keySubmits,
+    keyStopCount: () => keyStops,
+    deferredSubmitCount: () => deferredSubmits,
     rearmCount: () => rearms,
     externalTapCount: () => externalTaps,
     offTapCount: () => offTaps,
@@ -1375,6 +1485,7 @@ function createVoiceSubmitWatcher(terminal, {
       disposed = true;
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
+      if (submitTimer) clearTimeout(submitTimer);
       if (pollTimer) clearInterval(pollTimer);
       if (rearmTimer) clearTimeout(rearmTimer);
       // SETTLED false, not merely cleared: each of these owns a promise an
@@ -1385,6 +1496,7 @@ function createVoiceSubmitWatcher(terminal, {
       speechDeferredSince = 0;
       timer = null;
       enterTimer = null;
+      submitTimer = null;
       pollTimer = null;
       rearmTimer = null;
       for (const s of subs) s.dispose();
@@ -1394,6 +1506,7 @@ function createVoiceSubmitWatcher(terminal, {
 
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
-  QUIET_MS, ENTER_SETTLE_MS, STOP_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
+  QUIET_MS, ENTER_SETTLE_MS, STOP_SETTLE_MS, SUBMIT_POLL_MS, SUBMIT_ABANDON_MS,
+  COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
   REARM_SETTLE_MS, REARM_ABANDON_MS, SPEECH_ABANDON_MS, VOICE_EVIDENCE_MS,
 };
