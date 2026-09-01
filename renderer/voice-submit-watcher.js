@@ -734,13 +734,15 @@ function createVoiceSubmitWatcher(terminal, {
     }, ENTER_SETTLE_MS);
   }
 
-  // The `\r` owed after the trigger key stopped the recorder, held until the CLI
-  // has finished transcribing.
+  // The `\r` owed after the trigger key stopped the recorder, held while
+  // `Voice: processing` is on screen.
   //
-  // WHY NOT IMMEDIATELY: at the keystroke the composer holds INTERIM transcript;
-  // the CLI paints `Voice: processing` and finishes the text afterwards. Sending
-  // then submits a half-formed sentence for no gain, the operator having spoken
-  // a sign-off he expects to be sent whole.
+  // WHY NOT IMMEDIATELY: the wait is what gives the submit a READ before it
+  // writes. A `\r` beside the key commits to submitting on evidence gathered
+  // before the key landed — and if the CLI does submit on its own, that `\r`
+  // goes into an emptied composer or his next draft. `deferredSubmitAllowed`
+  // is that read, and it has nowhere else to live: at +30ms there is nothing
+  // to re-read yet.
   //
   // The first read waits STOP_SETTLE_MS for the same reason that constant
   // already names — a byte we wrote takes about a repaint to become readable, so

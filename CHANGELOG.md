@@ -20,8 +20,10 @@ blocks a release.
   trigger phrase out of the draft, which we must do or the phrase ships inside
   the message. Clodex now sends the Enter itself, once the CLI has finished
   transcribing — and stands down if a permission dialog opened while it waited,
-  or if the composer no longer holds the draft. A transcription that never
-  finishes sends after eight seconds rather than stranding the message.
+  if the composer no longer holds the draft, or if you start typing while it
+  waits, which leaves the message one Enter from sent rather than submitting a
+  correction mid-sentence. A transcription that never finishes sends after eight
+  seconds rather than stranding the message.
 
 - **A voice tap no longer disappears when the composer read fails.** The external
   ensure-on tap — the Voice Control wake word and `scripts/clodex-voice-tap.js`
