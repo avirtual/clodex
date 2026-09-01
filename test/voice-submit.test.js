@@ -1810,15 +1810,15 @@ test('composerIsEmpty: ornament is empty, a draft is not, unreadable is not', ()
   }
 });
 
-// THE MEASURED INDICATOR ROW, spelled as escapes. Captured 2026-08-31 by
-// replaying the CLI's painted spans (CLI 2.1.251) through a REAL xterm and
-// reading the buffer back: ` agents ⏺REC · tap to send`. The bullet and `REC`
-// arrive in ADJACENT cells — U+23FA is width 1 in xterm's UnicodeV6 table — so
-// there is no separator between them in the buffer, whatever the DOM's
-// negative letter-spacing suggests. A pasted glyph here would be one editor
-// normalisation away from a fixture that agrees with a broken rule — the
-// failure mode where the suite is green and the feature is dead.
-const REC_ROW = ' agents \u23faREC \u00b7 tap to send';
+// THE INDICATOR ROW AS THE CLI PAINTS IT, spelled as escapes. Ground truth is the
+// outerHTML of a live recording row, captured on two boxes: the bullet, a U+0020,
+// then `REC`. An earlier fixture here omitted that space to agree with the rule
+// instead of the CLI, so every test in this file confirmed our own assumption and
+// the feature was dead while the suite was green — do not close the space to make
+// a failing rule pass. The space is written \u0020 for the same reason the bullet
+// is escaped: it is the byte the rule was wrong about, and a literal one cannot be
+// reviewed by eye.
+const REC_ROW = ' agents \u23fa\u0020REC \u00b7 tap to send';
 
 test('recorderBlocksRearm: the measured indicator row blocks, ordinary output does not', () => {
   // The case the whole gate exists for, first and by itself.
@@ -1831,7 +1831,8 @@ test('recorderBlocksRearm: the measured indicator row blocks, ordinary output do
   for (const row of [
     '\u23fa Bash(ls -la)',
     '\u23fa Read(RECOVERY.md)',
-    '\u23fa REC',
+    '\u23fa RECOVERY.md',
+    '\u23fa RECORD the thing',
     'RECORD',
     'tap to send',
     '\u276f\u00a0',
@@ -2143,7 +2144,7 @@ test('the indicator scan reads BELOW the cursor and never above it', async () =>
 test('the indicator is seen even though it paints RIGHT of the cursor', async () => {
   // The composer read truncates at cursorX, so a scan reusing that read would
   // never see an indicator on the cursor's own row. Measured through a real
-  // xterm: full row `❯  agents ⏺REC · tap to send`, cursorX 2.
+  // xterm: full row `❯  agents ⏺ REC · tap to send`, cursorX 2.
   //
   // The two cases are a PAIR and neither is meaningful alone. Silence is
   // produced just as well by a composer read that broke and saw a non-empty
@@ -3033,7 +3034,7 @@ test('the CLI recording indicator is evidence too, and it marks the submit', asy
   // The CLI's own voice mode produces no composition: it transcribes straight
   // into the composer, so the indicator is the only moment the microphone is
   // visible from here.
-  const h = markHarness({ rows: ['❯ ', ' agents ⏺REC · tap to send'] });
+  const h = markHarness({ rows: ['❯ ', ' agents ⏺ REC · tap to send'] });
   await settle(10); // one poll, to observe the indicator
   h.term.write('❯ finish the report over and out');
   await h.done();
@@ -3045,7 +3046,7 @@ test('the CLI recording indicator is evidence too, and it marks the submit', asy
 test('evidence goes STALE, and a later submit is unmarked', async () => {
   // The staleness bound: evidence cannot outlive the utterance that produced it
   // and mark a message typed long afterwards.
-  const h = markHarness({ rows: ['❯ ', ' agents ⏺REC · tap to send'], evidenceMs: 1 });
+  const h = markHarness({ rows: ['❯ ', ' agents ⏺ REC · tap to send'], evidenceMs: 1 });
   await settle(10);
   h.term.write('❯ ', ' agents · tap to speak'); // the recorder stopped
   await settle(20); // longer than evidenceMs
@@ -3094,7 +3095,7 @@ test('a lit indicator does NOT mark a TYPED submit: typing is evidence of not-vo
   // passed for exactly that reason, because the indicator had vanished rather
   // than because the code was right. A live recording composer shows both rows,
   // and the recorder stays lit for ~15s of silence after the re-arm lights it.
-  const REC = ' agents \u23faREC \u00b7 tap to send';
+  const REC = ' agents \u23fa\u0020REC \u00b7 tap to send';
   const h = markHarness({ rows: ['\u276f ', REC] });
   return (async () => {
     await settle(10); // the indicator is observed and stamps evidence
@@ -3118,7 +3119,7 @@ test('terminal chatter is not typing: a mouse report must not clear voice eviden
   // preserve. xterm's onData also carries mouse reports and query replies — the
   // Claude pane enables tracking — so an ungated clear would wipe the stamp on
   // scroll alone and silently un-mark genuinely spoken text.
-  const h = markHarness({ rows: ['\u276f ', ' agents \u23faREC \u00b7 tap to send'] });
+  const h = markHarness({ rows: ['\u276f ', ' agents \u23fa\u0020REC \u00b7 tap to send'] });
   await settle(10);
   h.watcher.noteInput('\x1b[<0;10;5M'); // an SGR mouse report, not a keystroke
   h.term.write('\u276f finish the report over and out');
@@ -3136,7 +3137,7 @@ test('the tap keypress clears evidence, and the indicator re-stamps it', async (
   // that follows submits MARKED.
   const h = markHarness({ rows: ['\u276f ', ' agents \u00b7 tap to speak'] });
   h.watcher.noteInput(' '); // the tap keypress itself
-  h.term.write('\u276f ', ' agents \u23faREC \u00b7 tap to send'); // the recorder lights
+  h.term.write('\u276f ', ' agents \u23fa\u0020REC \u00b7 tap to send'); // the recorder lights
   await settle(10); // the poll re-stamps from the indicator
   h.term.write('\u276f finish the report over and out'); // the transcription lands
   await h.done();
@@ -3156,7 +3157,7 @@ test('a LONG utterance keeps refreshing: the level stamp is not a rising edge', 
   // silent loss of the feature on exactly the long dictations it is for. The
   // level stamp refreshes it on every poll; nothing here types, so the mute
   // never engages.
-  const REC = ' agents \u23faREC \u00b7 tap to send';
+  const REC = ' agents \u23fa\u0020REC \u00b7 tap to send';
   const h = markHarness({ rows: ['\u276f ', REC], evidenceMs: 25 });
   // Lit throughout, and polled well past the window with no fresh RISE.
   await settle(80);
@@ -3173,7 +3174,7 @@ test('typing MUTES the lit indicator for the whole draft, not just one poll', as
   // re-stamped 300ms later, so a draft typed over several seconds under a lit
   // recorder ended up marked anyway. The mute has to survive the GAPS between
   // keystrokes, which is what a single-keystroke test cannot show.
-  const REC = ' agents \u23faREC \u00b7 tap to send';
+  const REC = ' agents \u23fa\u0020REC \u00b7 tap to send';
   const h = markHarness({ rows: ['\u276f ', REC] });
   await settle(10);
   h.watcher.noteInput('f');
@@ -3218,7 +3219,7 @@ test('a marker that THROWS cannot cost the operator the submit', async () => {
     readComposition: () => null,
   }));
   // Force evidence through the indicator path, then submit.
-  term.write('❯ ', ' agents ⏺REC · tap to send');
+  term.write('❯ ', ' agents ⏺ REC · tap to send');
   await settle(10);
   term.write('❯ finish the report over and out');
   await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25);

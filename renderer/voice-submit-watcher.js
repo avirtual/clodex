@@ -71,7 +71,7 @@ const VOICE_TAP_MODE_SETTLE_MS = 1500;
 // How long a trigger byte WE wrote takes to become readable on the screen, and
 // so how long the external tap must refuse to trust its own indicator read.
 //
-// The CLI takes about a repaint to paint `\u23faREC`. A tap landing inside that
+// The CLI takes about a repaint to paint `\u23fa REC`. A tap landing inside that
 // gap reads the recorder as dark and writes a second byte, and that byte STOPS
 // the recording the first one just started.
 //
@@ -1128,7 +1128,7 @@ function createVoiceSubmitWatcher(terminal, {
     if (attention === 'permission') return false;
 
     // A BYTE WE JUST WROTE IS NOT YET ON THE SCREEN, and every gate below reads
-    // the screen. The CLI takes ~a repaint to paint `⏺REC`, so a tap arriving in
+    // the screen. The CLI takes ~a repaint to paint `⏺ REC`, so a tap arriving in
     // that gap reads the recorder as DARK and writes again — and the second byte
     // STOPS the recording the first one just started, which is worse than the
     // blink this feature removes.

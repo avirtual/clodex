@@ -32,7 +32,7 @@ const { createMicHandoff } = require('../renderer/lib/mic-handoff');
 // every empty-composer fixture read as a draft — the stop dead, the suite green.
 const EMPTY_COMPOSER = '\u276f\u00a0';
 const DRAFT_COMPOSER = '\u276f\u00a0half a sentence';
-const REC_ROW = ' agents \u23faREC \u00b7 tap to send';
+const REC_ROW = ' agents \u23fa\u0020REC \u00b7 tap to send';
 const IDLE_ROW = ' agents \u00b7 tap to talk';
 
 // Cursor on the LAST row unless a row carries `cursor: true`. The real footer
