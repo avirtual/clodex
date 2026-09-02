@@ -387,7 +387,6 @@ function sanitizeSpeakRate(raw) {
 function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
-  let launchBakTaken = false;
   const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
   const TEMPLATES_DIR = path.join(registryDir, 'library', 'templates');
   const WORKSPACES_FILE = path.join(userDataPath, 'workspaces.json');
@@ -401,6 +400,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   const AGENTS_DIR = path.join(registryDir, 'agents');
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
   const EXEC_DIR = path.join(registryDir, 'library', 'exec');
+
+  let launchBakTaken = false;
 
   const persistence = {
     _load() {
