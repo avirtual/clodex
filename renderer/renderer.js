@@ -3290,7 +3290,16 @@ setInterval(() => {
 (() => {
   const bar = document.getElementById('proxy-bar');
   if (!bar) return;
-  bar.addEventListener('click', async (e) => {
+  const openPopoverOnPress = (e) => {
+    if (e.button !== 0 || !activeSession) return;
+    const ctxSeg = e.target.closest('[data-act="ctx"]');
+    if (ctxSeg) { openContextPopover(activeSession, ctxSeg); return; }
+    const costSeg = e.target.closest('[data-act="cost"]');
+    if (costSeg) { openCostPopover(activeSession, costSeg); return; }
+    const bustSeg = e.target.closest('[data-act="bust"]');
+    if (bustSeg) { openBustPopover(activeSession, bustSeg); return; }
+  };
+  const runBarActionOnClick = async (e) => {
     const link = e.target.closest('.px-link');
     if (link && link.dataset.url) {
       e.preventDefault();
@@ -3302,12 +3311,6 @@ setInterval(() => {
       }
       return;
     }
-    const ctxSeg = e.target.closest('[data-act="ctx"]');
-    if (ctxSeg && activeSession) { openContextPopover(activeSession, ctxSeg); return; }
-    const costSeg = e.target.closest('[data-act="cost"]');
-    if (costSeg && activeSession) { openCostPopover(activeSession, costSeg); return; }
-    const bustSeg = e.target.closest('[data-act="bust"]');
-    if (bustSeg && activeSession) { openBustPopover(activeSession, bustSeg); return; }
     // Plugin segments (namespaced data-act on a .px-seg) — checked before the
     // .px-action chain because a plugin segment is a span, not a button.
     const pluginSeg = e.target.closest('.px-seg.px-plugin[data-act]');
@@ -3340,7 +3343,9 @@ setInterval(() => {
     if (!btn || !activeSession || btn.dataset.act !== 'warm-menu') return;
     if (isWarmMenuOpen()) closeWarmMenu();
     else openWarmMenu(btn, btn.dataset.held === '1');
-  });
+  };
+  bar.addEventListener('mousedown', openPopoverOnPress);
+  bar.addEventListener('click', runBarActionOnClick);
 })();
 
 const {

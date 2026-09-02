@@ -35398,7 +35398,25 @@ Click for live activity`;
       (() => {
         const bar = document.getElementById("proxy-bar");
         if (!bar) return;
-        bar.addEventListener("click", async (e) => {
+        const openPopoverOnPress = (e) => {
+          if (e.button !== 0 || !activeSession) return;
+          const ctxSeg = e.target.closest('[data-act="ctx"]');
+          if (ctxSeg) {
+            openContextPopover(activeSession, ctxSeg);
+            return;
+          }
+          const costSeg2 = e.target.closest('[data-act="cost"]');
+          if (costSeg2) {
+            openCostPopover(activeSession, costSeg2);
+            return;
+          }
+          const bustSeg = e.target.closest('[data-act="bust"]');
+          if (bustSeg) {
+            openBustPopover(activeSession, bustSeg);
+            return;
+          }
+        };
+        const runBarActionOnClick = async (e) => {
           const link = e.target.closest(".px-link");
           if (link && link.dataset.url) {
             e.preventDefault();
@@ -35408,21 +35426,6 @@ Click for live activity`;
               const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg");
               window.api.openWirescope(link.dataset.url, bg);
             }
-            return;
-          }
-          const ctxSeg = e.target.closest('[data-act="ctx"]');
-          if (ctxSeg && activeSession) {
-            openContextPopover(activeSession, ctxSeg);
-            return;
-          }
-          const costSeg2 = e.target.closest('[data-act="cost"]');
-          if (costSeg2 && activeSession) {
-            openCostPopover(activeSession, costSeg2);
-            return;
-          }
-          const bustSeg = e.target.closest('[data-act="bust"]');
-          if (bustSeg && activeSession) {
-            openBustPopover(activeSession, bustSeg);
             return;
           }
           const pluginSeg = e.target.closest(".px-seg.px-plugin[data-act]");
@@ -35455,7 +35458,9 @@ Click for live activity`;
           if (!btn || !activeSession || btn.dataset.act !== "warm-menu") return;
           if (isWarmMenuOpen()) closeWarmMenu();
           else openWarmMenu(btn, btn.dataset.held === "1");
-        });
+        };
+        bar.addEventListener("mousedown", openPopoverOnPress);
+        bar.addEventListener("click", runBarActionOnClick);
       })();
       var {
         openWarmMenu,
