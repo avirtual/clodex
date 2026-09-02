@@ -124,6 +124,7 @@ const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
+const { didGrow } = require('./stall-evidence');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -5539,7 +5540,18 @@ function createSessionManager(deps) {
       // is by definition not the wedged shape this catches.
       if (s.activityState !== 'idle') return;
       const fifo = s._dmUnconfirmed || (s._dmUnconfirmed = []);
-      fifo.push({ sender: senderName, at: Date.now() });
+      // `since` is where the transcript ended at WRITE time — the baseline
+      // _checkDmConfirm compares against. Taken at the same instant as the state
+      // read above, which is what separates bytes the seat had already produced
+      // from bytes that can only have arrived after this write.
+      //
+      // Stored RAW: -1 (no transcript, unreadable link) is NOT normalised to 0.
+      // `didGrow` refuses -1 at either end, so an unreadable seat yields "no
+      // growth" and the check falls through to the behaviour it had before this
+      // baseline existed. _armSpecConfirm's opposite choice answers a different
+      // question — a byte offset to search FROM, where 0 means the whole file —
+      // and copying it here would let a seat's first written byte read as growth.
+      fifo.push({ sender: senderName, at: Date.now(), since: this._seatTranscriptSize(targetName) });
       while (fifo.length > DM_LATCH_CAP) this._overflowDmEntry(s, fifo.shift());
       // Pegged to the OLDEST outstanding unit and never restarted by a later
       // one. Restarting on each push starves the detector into silence in
@@ -5630,6 +5642,41 @@ function createSessionManager(deps) {
         this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
         return;
       }
+      // Second look before spending a report, for the reason _checkSpecConfirm
+      // re-probes at its own deadline: the activity edge that would have cleared
+      // this latch RACES the CLI's transcript append on a wire-routed seat, so a dm
+      // that was read can still be sitting here armed. By the deadline the bytes
+      // are on disk, which makes this the reliable read and the edge the eager one.
+      //
+      // GROWTH, never a content match. A dm has no per-unit anchor —
+      // _buildDeliveryText gives every dm from a peer the same `[agent:from
+      // <sender>]` prefix — so a marker-style search would clear the latch over a
+      // transcript merely holding an EARLIER dm from that sender, suppressing a
+      // real swallow. That direction must not be traded for this one. Attribution
+      // would buy nothing here regardless: a non-idle edge already clears the whole
+      // fifo unattributed, and per-unit confirmation is what _armDmConfirm refuses.
+      //
+      // MAX, not min: growth must beat the NEWEST write's baseline, so a stream of
+      // dms cannot have an old low anchor vouch for the recent ones. `since`
+      // missing reads as -1, which `didGrow` refuses at either end — like an
+      // unreadable transcript, it suppresses nothing. This can only ever subtract a
+      // report, never manufacture one.
+      const anchor = Math.max(...ripe.map((e) => (typeof e.since === 'number' ? e.since : -1)));
+      if (didGrow(anchor, this._seatTranscriptSize(session.name))) {
+        log.info('intent', `dm confirmation for ${session.name} withdrawn — its transcript grew past ${anchor} bytes since the write, so the seat consumed input and the activity edge was simply missed`);
+        // BOTH residues go, for one reason: growth refutes the seat's silence, and
+        // anything still describing that silence would be spent on refuted
+        // evidence. Overflow records are older than everything ripe by
+        // construction, so they would be reported one window later. And
+        // `_dmUnconfirmedLast` outlives its own report by design — it is what
+        // _dmLatchEvidence hands the stall sweep — so a report fired at an earlier
+        // window survives into this one and has the sweep attribute the seat's
+        // quiet to a swallowed dm that this branch just proved was read.
+        session._dmOverflow = null;
+        session._dmUnconfirmedLast = null;
+        if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
+        return;
+      }
       // Overflow records are attributed to THIS report: they are older than
       // everything surviving in the fifo by construction, so they are ripe
       // whenever anything is.
@@ -5646,9 +5693,10 @@ function createSessionManager(deps) {
       // window rather than one report ever. The repetition is the feature: it is
       // how a sender whose message arrived after an earlier report gets told.
       if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
-      // Kept, not discarded, and cleared only by a turn: this is what lets the
-      // stall sweep attribute a silent seat to a swallowed dm rather than to
-      // stalled work, which is the misattribution the sweep makes today.
+      // Kept, not discarded: this is what lets the stall sweep attribute a silent
+      // seat to a swallowed dm rather than to stalled work, which is the
+      // misattribution the sweep makes today. Cleared by a turn, and by the
+      // withdrawal above — both are proof the seat was not silent after all.
       // ACCUMULATES across reports — a sustained wedge fires repeatedly, and
       // replacing here would shrink the evidence to the last window during
       // exactly the stall the attribution exists for.
@@ -5719,7 +5767,8 @@ function createSessionManager(deps) {
     // Evidence for the stall sweep: has this seat a live or recently-expired
     // unconfirmed-dm latch? Both sets are returned as one span because they are
     // the same silence — `_dmUnconfirmedLast` holds what a fired report covered
-    // and is cleared by a turn, so anything in it is still unaccounted for.
+    // and is cleared by anything that refutes that silence (a turn, or the
+    // deadline check's growth withdrawal), so what remains is still unaccounted for.
     _dmLatchEvidence(seatName) {
       const s = this.sessions.get(seatName);
       if (!s) return null;
