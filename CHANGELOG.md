@@ -16,10 +16,13 @@ blocks a release.
 - **Cmd+W no longer archives the session hidden behind a dialog.** With
   Preferences, Edit Session, Peers, Plugins, Sandbox or any other modal open,
   Cmd+W went straight past it and archived whatever session was behind it —
-  only the New Session dialog was ever consulted. Cmd+T, Cmd+1..9 and Cmd+F had
-  the same hole, as did their Alt twins in the browser frontend. Every chord now
-  checks every overlay: with a dialog open they do nothing, and Cmd+W still
-  closes the New Session dialog when that is the only thing open.
+  only the New Session dialog was ever consulted. The other window chords read
+  that same single dialog, so they shared the cause without sharing the symptom:
+  Cmd+T opened a second dialog on top of the one already up, and Cmd+1..9, Cmd+F
+  and the cycle chords switched or searched the terminal underneath. The browser
+  frontend's Alt equivalents behaved the same way. Every chord now checks every
+  overlay: with a dialog open they do nothing, and Cmd+W still closes the New
+  Session dialog when that is the only thing open.
 
 - **The sessions.json backup now holds the state from before the app started,
   not from one write ago.** The `.bak` beside your session list used to be
