@@ -6203,7 +6203,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       addFailedSessionToSidebar(entry);
       continue;
     }
-    const { terminal } = createTerminal(entry.name);
+    const { terminal, fitAddon } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
@@ -6216,8 +6216,12 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         item.dataset.attention = entry.attention.kind;
         item.dataset.attentionMsg = entry.attention.message || '';
       }
-      if (entry.ticket) item.dataset.ticket = entry.ticket; // open ticket badge (Task 25)
+      if (entry.ticket) item.dataset.ticket = entry.ticket;
     }
+    try {
+      fitAddon.fit();
+      window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
+    } catch {}
     if (entry.replay) terminal.write(entry.replay);
     if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
     if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
