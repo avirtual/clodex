@@ -24,7 +24,7 @@ blocks a release.
   that, its assignee — but a ticket addressed to a seat NAME carries no role, so
   the suggestion named a seat that had since died, and a role key removed from
   the team since the ticket was filed named a role that no longer exists.
-  `assign` refused both. All five replies now name a target only when `assign`
+  `assign` refused both. All four replies now name a target only when `assign`
   would accept it, and otherwise say `<role|name>` rather than pointing at a
   command that cannot work.
 
