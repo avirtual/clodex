@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **Restored background tabs no longer come back garbled.** After a relaunch,
+  every restored tab except the one that opened focused replayed its buffered
+  output into a terminal still sized at 80x24, while the agent behind it was
+  running at the real window size. Wrapped text sorted itself out when you
+  clicked the tab; a redraw that positions its own cursor — which the Claude
+  composer does — did not, so the tab stayed scrambled until the CLI next
+  repainted it. Each restored terminal is now measured before its output is
+  replayed into it.
+
 - **The sessions.json backup now holds the state from before the app started,
   not from one write ago.** The `.bak` beside your session list used to be
   refreshed on every single field write — so a build that dropped or emptied
