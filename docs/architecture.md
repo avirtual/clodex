@@ -1021,10 +1021,10 @@ which is why the judgement worth testing is pushed down here.
 - **web-shortcuts.js** — the pure map from a keydown to a browser Alt-chord
   action. A tab reserves Cmd+T/W/1-9 for its own chrome, so the desktop Cmd
   shortcuts silently fail in-tab.
-- **chord-guard.js** — which top-level overlays are open, and what Cmd+W /
-  Alt+W should therefore do. Both chord handlers in renderer.js consult it;
-  before it, they consulted `#dialog-overlay` alone and archived the session
-  behind Preferences.
+- **chord-guard.js** — which top-level modal overlays are open, and what Cmd+W /
+  Alt+W should therefore do. The overlay list is data here rather than a chain of
+  checks in the two handlers, because a modal missing from it is a session
+  archived behind a dialog the operator is looking at.
 
 ## Tests
 
