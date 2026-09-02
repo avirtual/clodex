@@ -435,6 +435,33 @@ test('a payload whose cost the wire never observed does not DISCARD the recorded
     'ENTER: the overlay branch is reachable with these ids — so the 4.2 above is the cost check, not a missed gate');
 });
 
+test('a NaN cost is not applied either', async () => {
+  // The same discard through a narrower door. NaN passes `typeof === "number"`,
+  // and num() then coerces it to 0 while `known` still increments — so an
+  // applied NaN overlay publishes a confident zero for a spend that was
+  // recorded, which is the false-zero-with-resolved-true the null case above
+  // removed. Number.isFinite is what closes it, and it matches num()'s own rule.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 4.2, requests: 40, turns: 12 }) });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-r1', cost: { usd: NaN, requests: NaN }, turns: NaN, refusals: 0,
+      tokens: { input: NaN, output: NaN, cacheRead: NaN, cacheWrite: NaN },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.usd, 4.2, 'the recorded spend survived; an applied NaN overlay publishes 0 here');
+  assert.strictEqual(r.requests, 40);
+  assert.strictEqual(r.turns, 12);
+  assert.strictEqual(r.sessions.resolved, true, 'the file answered, so the round IS priced');
+});
+
 // ── the honest-absence half ────────────────────────────────────────────────
 
 test('a reviewer with NO findable ledger reports null, never a false zero', async () => {
@@ -470,12 +497,11 @@ test('a seat whose wire saw NO cost and whose file has no row publishes null, no
   reviewingTicket(f);
   const rec = spawnReviewer(f, 't1', 'sess-r1');
   writeTotals(f, { 'some-other-session': row() });
-  f.m._wireTelemetry = {
-    payload: () => ({
-      sessionId: 'sess-r1', cost: { usd: null, requests: null }, turns: null, refusals: 0,
-      tokens: { input: null, output: null, cacheRead: null, cacheWrite: null },
-    }),
+  const nulled = {
+    sessionId: 'sess-r1', cost: { usd: null, requests: null }, turns: null, refusals: 0,
+    tokens: { input: null, output: null, cacheRead: null, cacheWrite: null },
   };
+  f.m._wireTelemetry = { payload: () => nulled };
 
   await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
   assertReaped(f, rec.name);
@@ -487,6 +513,21 @@ test('a seat whose wire saw NO cost and whose file has no row publishes null, no
   assert.strictEqual(r.requests, null);
   assert.strictEqual(r.turns, null);
   assert.deepStrictEqual(r.tokens, { input: null, output: null, cacheRead: null, cacheWrite: null, cachedFraction: null });
+
+  // ENTER: the absence above is the cost check, not a fixture that missed the
+  // id gate — which would assert the same `resolved: false` with no gate at
+  // all, there being no file row here either. Same ids, cost swapped for a
+  // number: it overrides, and the round prices off the overlay alone.
+  const g = mkFixture();
+  reviewingTicket(g);
+  const grec = spawnReviewer(g, 't1', 'sess-r1');
+  writeTotals(g, { 'some-other-session': row() });
+  g.m._wireTelemetry = { payload: () => ({ ...nulled, cost: { usd: 3.5, requests: 20 }, turns: 6 }) };
+  await g.m._handleReviewDone(g.m.sessions.get(grec.name), 'VERDICT: ACCEPT');
+  const gr = readRows(g, 't1')[0];
+  assert.strictEqual(gr.usd, 3.5,
+    'ENTER: the overlay branch is reachable with these ids — so the null above was refused, not missed');
+  assert.strictEqual(gr.sessions.resolved, true, 'ENTER: and an applied overlay does resolve the round');
 });
 
 test('an UNPARSED verdict still books its round — the seat is reaped either way', async () => {

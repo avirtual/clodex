@@ -1024,12 +1024,11 @@ function createTicketMethods(deps, shared) {
     // refinement here; without it every review is undercounted by its final turn.
     //
     // The overlay is applied ONLY when the wire agrees with the record on the
-    // session id AND reports a cost it actually observed. The id half is the
-    // rule ipc-handlers' session:info read uses: a reviewer that falls back to
-    // the `<team>-reviewer-<n>` counter name reuses names across rounds, and
-    // _wireTelemetry's per-name map is pruned on poller ticks rather than at
-    // kill — so an ungated read can bill a dead round's ledger to a live seat
-    // that happens to hold the name.
+    // session id AND reports a cost it actually observed. The id half: a
+    // reviewer that falls back to the `<team>-reviewer-<n>` counter name reuses
+    // names across rounds, and _wireTelemetry's per-name map is pruned on poller
+    // ticks rather than at kill — so an ungated read can bill a dead round's
+    // ledger to a live seat that happens to hold the name.
     _reviewLedger(seatName, rec) {
       const sessionIds = entrySessionIds(rec);
       let totals = null;
@@ -1047,9 +1046,12 @@ function createTicketMethods(deps, shared) {
         // `sessionTotals`. Overlaying that discards a recorded spend and
         // publishes it as resolved-and-zero, rather than merely failing to
         // freshen it; falling through to the file is right whether or not a row
-        // is there.
+        // is there. Number.isFinite, not typeof: NaN and Infinity pass typeof,
+        // and num() then coerces them to 0 while `known` still increments —
+        // publishing a confident zero for an unknown spend through a narrower
+        // door than the null case above.
         if (w && w.sessionId && w.sessionId === currentId
-            && typeof (w.cost && w.cost.usd) === 'number') {
+            && Number.isFinite(w.cost && w.cost.usd)) {
           // Flattened to a wire-totals ROW, which is the only shape sumSessions
           // reads. Passing the payload itself would land `cost` as an object and
           // every field would coerce to a silent zero.
