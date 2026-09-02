@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 // task-ledger — read-only per-task cost attribution over Claude Code
-// transcripts (teams-design.md [internal design doc, not in this repo], "Making the number real"). Third clodex
-// analysis tool after transcript-stats + clodex-monitor; shares transcript-
-// stats' corpus facts and dedup discipline.
+// transcripts. Third clodex analysis tool after transcript-stats +
+// clodex-monitor; shares transcript-stats' corpus facts and dedup discipline.
 //
 // The convention it reads (teams v1; Bogdan ruling 2026-07-19 — NO clodex
 // resource lives inside project repos, so task artifacts moved OUT of the repo

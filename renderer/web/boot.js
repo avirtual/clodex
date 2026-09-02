@@ -10,7 +10,7 @@
 const shim = require('./api-shim');
 const osShim = require('./os-shim');
 const menubar = require('./menubar');
-// The build-generated id→module map for plugin renderer halves (§4 W8, GAP G7).
+// The build-generated id→module map for plugin renderer halves.
 // The browser cannot `require()` a runtime path the way the Electron renderer
 // does, so the modules are baked in and looked up by id instead.
 const pluginRegistry = require('./plugin-registry');

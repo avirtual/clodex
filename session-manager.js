@@ -5604,7 +5604,7 @@ function createSessionManager(deps) {
     // A turn started, so the seat's composer submitted. For a multi-entry FIFO
     // the earlier entries were Ctrl-U-destroyed INTO the submitted line's
     // history — either way nothing is still sitting eaten, and finer
-    // discrimination is exactly what DESIGN.md §3 established cannot be had.
+    // discrimination cannot be had.
     // `_dmUnconfirmedLast` goes too: it exists to attribute a seat's SILENCE,
     // and a seat that took a turn is not silent.
     _clearDmConfirm(session) {

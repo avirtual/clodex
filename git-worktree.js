@@ -310,9 +310,9 @@ async function listWorktrees(cwd) {
   return { ok: true, repo, worktrees };
 }
 
-// Commits a ticket branch added on top of its base — waste counter (a) of
-// DESIGN.md §7.3 reads this to find worktrees minted for tickets that closed
-// having produced nothing.
+// Commits a ticket branch added on top of its base — the zero-commit waste
+// counter reads this to find worktrees minted for tickets that closed having
+// produced nothing.
 //
 // `base..branch` counts commits reachable from the branch and NOT from the
 // base, so base-side movement while the ticket was open cannot inflate it; an

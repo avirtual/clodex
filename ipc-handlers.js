@@ -379,8 +379,8 @@ function registerIpcHandlers(deps) {
   });
 
   // The fourteen scm:/worktree:/fs: rows that used to live here moved into
-  // plugins/workbench/engine.js (plugin-plan.md [internal design doc, not in this repo] §4 W6) — the workbench is a
-  // plugin now and reaches its own data over the plugin transport. Their
+  // plugins/workbench/engine.js — the workbench is a plugin now and reaches
+  // its own data over the plugin transport. Their
   // `sessionCwd` helper went with them: the host's `sessions.fsScope(name)` is
   // the same guarantee, offered to every plugin instead of re-implemented per
   // handler, which is what stops a plugin widening locality by accident.
@@ -989,7 +989,7 @@ function registerIpcHandlers(deps) {
       // the one direction the indicator must never be wrong in.
       peerShellEnabled: s.peerShellEnabled,
       remoteHasToken: typeof hasRemoteToken === 'function' ? hasRemoteToken() : false,
-      // Peer auth token is WRITE-ONLY (remote-auth-plan.md [internal design doc, not in this repo] §4): the renderer
+      // Peer auth token is WRITE-ONLY: the renderer
       // sees only a `hasToken` boolean, never the value. The Peers dialog saves
       // the array back, so an omitted `token` carries forward in sanitizePeers —
       // the value never has to round-trip through the UI.

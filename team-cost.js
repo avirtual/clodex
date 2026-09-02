@@ -46,8 +46,8 @@ function wireLabelFor({ team, ticketId, role }) {
 
 // `<team>.<ticket-id>.review-r<N>` — a reviewer spawn. The round is what makes
 // two reviews of the same ticket separable in the rollup; without it round 2's
-// spend lands on round 1's label and the cache-ordering claim of DESIGN.md §4
-// becomes unmeasurable.
+// spend lands on round 1's label and the cache-ordering claim becomes
+// unmeasurable.
 function reviewWireLabelFor({ team, ticketId, round }) {
   const n = Number(round);
   const r = Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
@@ -194,8 +194,8 @@ function sumSessions(totals, sessionIds, { currentId = null, live = null } = {})
 }
 
 // cache-read / all input the turn was billed for. Separately load-bearing:
-// DESIGN.md §4's stable-prefix ordering predicts a HIGH fraction on round-2
-// packed reviews, and a low one falsifies it. null (never 0) when no input was
+// stable-prefix ordering predicts a HIGH fraction on round-2 packed reviews,
+// and a low one falsifies it. null (never 0) when no input was
 // billed at all — "no data" and "nothing was cached" are different claims.
 function cachedFraction({ inputTokens, cacheReadTokens, cacheWriteTokens }) {
   const denom = num(inputTokens) + num(cacheReadTokens) + num(cacheWriteTokens);
@@ -209,7 +209,7 @@ const COST_VERSION = 1;
 // The per-ticket rollup written at close. Every argument is already-read data;
 // this decides only the shape.
 //
-// `zeroCommit` is waste counter (a) of DESIGN.md §7.3 — a worktree minted for a
+// `zeroCommit` is the zero-commit waste counter — a worktree minted for a
 // ticket that closed with no commits. It is only meaningful when a tree was
 // actually minted, so it is null (not false) for a ticket that never had one:
 // counting an un-minted ticket as "not wasted" would dilute the rate the Phase

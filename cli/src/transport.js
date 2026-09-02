@@ -7,7 +7,7 @@
 //             close kill the child's PROCESS GROUP (detached spawn + kill(-pid)
 //             — cloud CLIs fork helpers a plain child-kill would orphan).
 //   ssh     — sugar over `tunnel`: a built-in argv template around the system
-//             `ssh` binary. One code path, two entry shapes (spec §Contexts).
+//             `ssh` binary. One code path, two entry shapes.
 //
 // Standalone by construction: node:* only, never require()s an app file.
 // peer-tunnel.js is the pattern reference, not a dependency.

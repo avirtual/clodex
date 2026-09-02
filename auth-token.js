@@ -1,7 +1,7 @@
 // auth-token.js — the single operator-token predicate shared by both HTTP hosts
 // (web-host.js and remote.js). One place decides "does this request carry the
-// configured secret", so the two wires can't drift apart (remote-auth-plan.md [internal design doc, not in this repo]
-// §1). Pure leaf: no electron, no I/O, no host state — just a token string in and
+// configured secret", so the two wires can't drift apart.
+// Pure leaf: no electron, no I/O, no host state — just a token string in and
 // a { check, fromReq } pair out. NEW module — deliberately NOT in the leak-scanner
 // lists; it isn't a coordinator extraction, it's a fresh shared primitive.
 'use strict';

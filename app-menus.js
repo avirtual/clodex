@@ -377,7 +377,7 @@ function createAppMenus(deps) {
     return items;
   }
 
-  // The top-level Plugins menu (T5, plugin-plan.md [internal design doc, not in this repo] §2.5). Returns null when
+  // The top-level Plugins menu. Returns null when
   // there is nothing to show, and the caller then splices NOTHING into the
   // template — an empty "Plugins" menu is worse than no menu, because it looks
   // like a broken feature rather than an absent one. Two ways to get null:

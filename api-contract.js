@@ -23,7 +23,7 @@
 
 const API_CONTRACT = [
   { name: 'createSession', kind: 'invoke', channel: 'session:create' },
-  // Teams front door (teams-design.md [internal design doc, not in this repo]): write the team manifest, then spawn.
+  // Teams front door: write the team manifest, then spawn.
   // teamCreate adopts the new session as lead; teamJoin adds a role + spawns a seat.
   { name: 'teamCreate', kind: 'invoke', channel: 'team:create' },
   { name: 'teamJoin', kind: 'invoke', channel: 'team:join' },
@@ -66,8 +66,8 @@ const API_CONTRACT = [
   { name: 'cwdSuggestions', kind: 'invoke', channel: 'session:cwdSuggestions' },
   { name: 'noteCwd', kind: 'invoke', channel: 'session:noteCwd' },
   // The workbench's fourteen rows (scm:* ×9, worktree:list/remove, fs:* ×3) were
-  // here until plugin-plan.md [internal design doc, not in this repo] §4 W6. The workbench is a PLUGIN now: it
-  // registers those rows itself and they ride the one multiplexed plugin
+  // here until it moved out. The workbench is a PLUGIN now: it registers
+  // those rows itself and they ride the one multiplexed plugin
   // transport, so the contract shrank by fourteen instead of growing by them.
   // That is the whole point of the pilot — the surface a feature costs core
   // should go to zero when the feature moves out, not stay as a permanent tax.
@@ -189,8 +189,8 @@ const API_CONTRACT = [
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
   // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
   // exactly like the peers row above — NOT a plugin transport row (the plugin
-  // transport is the five plugin:* rows, frozen by plan §1; a plugin never sees
-  // this channel).
+  // transport is the five plugin:* rows, frozen; a plugin never sees this
+  // channel).
   { name: 'onRequestOpenPluginsDialog', kind: 'on', channel: 'request-open-plugins-dialog' },
   // t288: the Teams menu's two menu→renderer open requests. The popover and the
   // create dialog are renderer-side surfaces, so the menu can only ask for them.
@@ -440,7 +440,7 @@ const API_CONTRACT = [
   { name: 'envScopesGet', kind: 'invoke', channel: 'envScopes:get' },
   { name: 'envScopesSet', kind: 'invoke', channel: 'envScopes:set' },
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
-  // Plugin transport (plugin-plan.md [internal design doc, not in this repo] §1, §3.4). EXACTLY these five rows —
+  // Plugin transport. EXACTLY these five rows —
   // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
   // multiplexed channel over an engine-owned dispatch Map: the injected
   // transport has no removeHandler, so per-plugin channels could never be
@@ -453,7 +453,7 @@ const API_CONTRACT = [
   { name: 'pluginSetEnabled', kind: 'invoke', channel: 'plugin:setEnabled' },
   { name: 'onPluginEvent', kind: 'on', channel: 'plugin-event' },
   // The intent catalog served over IPC rather than statically required by the
-  // renderer (plan §2.3 R-INT-4): once plugins can register verbs, a renderer
+  // renderer: once plugins can register verbs, a renderer
   // that reads its own frozen copy of intent-catalog.js is reading a stale
   // catalog — and the web bundle's copy is frozen at build time.
   { name: 'getIntentCatalog', kind: 'invoke', channel: 'intents:catalog' },

@@ -36,7 +36,7 @@ function hasRemoteEnvToken(userDataPath) {
   return !!readRemoteEnvToken(userDataPath);
 }
 
-// Effective gate token, precedence per remote-auth-plan.md [internal design doc, not in this repo] §2 and the brief:
+// Effective gate token, precedence:
 // an explicit process.env.CLODEX_REMOTE_TOKEN WINS (operator override; also keeps
 // every existing env-var deployment working), else the GUI-managed file token,
 // else null (localhost-trust). A named helper so the precedence is test-pinnable

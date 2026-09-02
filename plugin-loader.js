@@ -474,7 +474,7 @@ function createPluginLoader(deps) {
     return { rendererPath: rec.rendererPath, css };
   }
 
-  // What the §2.5 settings section renders: one row per DISCOVERED plugin —
+  // What the settings Plugins section renders: one row per DISCOVERED plugin —
   // present on disk, whatever its state — plus the directories that failed
   // validation. A plugin that is quarantined must still appear, otherwise the
   // only UI that could clear it is the one that hides it.

@@ -1,4 +1,4 @@
-// Agent memory store (spec §10 — the intent-driven MANAGEMENT layer) + the
+// Agent memory store (the intent-driven MANAGEMENT layer) + the
 // boot digest composer. Extracted from main.js so the store and digest policy
 // are testable without Electron (same move as attention.js / proxy-util.js).
 //
