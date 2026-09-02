@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **Codex sessions no longer mistake Clodex's own hook file for your
+  `.codex/hooks.json`.** Clodex writes its hook config into your project's
+  `.codex/hooks.json`, moving any file already there to a `.wb-wrap-backup`
+  slot it restores on exit. If a quit skipped that restore, the next launch
+  found Clodex's own hook file sitting there and backed *it* up as if it were
+  yours — a later cleanup would then "restore" Clodex's hook as your config and
+  leave it there for good. Your own config was never overwritten or deleted;
+  only the backup slot was ever written. Setup now refuses to back up a file
+  that holds Clodex's own bytes, and clears a backup slot already poisoned that
+  way, so cleanup removes the hook instead of enshrining it.
+
 - **The sessions.json backup now holds the state from before the app started,
   not from one write ago.** The `.bak` beside your session list used to be
   refreshed on every single field write — so a build that dropped or emptied
