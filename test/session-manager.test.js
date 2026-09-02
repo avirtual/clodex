@@ -6059,13 +6059,13 @@ test('t94 the real suffix stays SILENT when nothing changed under the host', () 
 test('t93 a throwing stale check never breaks the reply it rides on', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
-  // Exercises the REAL method (not a stub), so the try/catch inside it is what
-  // is under test. Pins the contract that instrumentation cannot take down the
-  // ticket protocol: the worst a broken stamp may do is say nothing.
+  // Exercises the REAL method (not a stub). Pins the contract that
+  // instrumentation cannot take down the ticket protocol: the worst a broken
+  // stamp may do is say nothing.
   const realSuffix = Object.getPrototypeOf(f.m)._staleHostSuffix;
   assert.strictEqual(typeof realSuffix, 'function', 'ENTER: the real method exists to be exercised');
   assert.strictEqual(realSuffix.call(f.m, Date.now(), quietHostSeams()), '',
-    'no stamp under runRoot and nothing changed under dir ⇒ silent, per fail-closed');
+    'no stamp under runRoot and nothing changed under dir ⇒ silent');
 
   // And the whole ticket path still works while the check is throwing.
   f.m._staleHostSuffix = () => { throw new Error('stamp read exploded'); };
@@ -6209,9 +6209,8 @@ test('t82 a DELIVERED spec still confirms cleanly, with no scary NOTE appended',
   f.seat('lead'); f.seat('team-hand');
   // _handleTask calls this internally with no arguments, so the seams cannot be
   // passed at the call site — they are bound here instead. This is NOT a stub:
-  // the REAL method runs and computes a real notice, so the silence asserted
-  // below is the fail-closed path deciding to say nothing. Replacing it with
-  // `() => ''` would assert only that the fixture is quiet.
+  // the REAL method runs. Replacing it with `() => ''` would assert only that
+  // the fixture is quiet.
   const realSuffix = Object.getPrototypeOf(f.m)._staleHostSuffix;
   const seams = quietHostSeams();
   f.m._staleHostSuffix = () => realSuffix.call(f.m, Date.now(), seams);
