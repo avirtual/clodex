@@ -8241,10 +8241,11 @@ function parkAssignTarget(said, id) {
   return m[1];
 }
 
-// Started before parking, because `start` is what records `role` alongside the
-// seat pin — a park-at-add ticket carries only the bare role key in `assignee`
-// and could not distinguish the two legs of the helper's fallback chain.
-function startedThenParkedTicket(f) {
+// STARTED, not parked — each subject parks it itself. `start` is what records
+// `role` alongside the seat pin, and a park-at-add ticket carries only the bare
+// role key in `assignee`, which could not tell the two legs of the helper's
+// fallback chain apart.
+function startedTicket(f) {
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
@@ -8258,7 +8259,7 @@ function startedThenParkedTicket(f) {
 
 test('t632: park on a ticket carrying a REMOVED role key names a target that resolves', () => {
   const f = mkTasks();
-  startedThenParkedTicket(f);
+  startedTicket(f);
 
   // `team role-remove` deletes the key outright (team-manifest.js), so a ticket
   // outliving its role needs no fixture surgery to reach.
@@ -8277,7 +8278,7 @@ test('t632: park on a ticket carrying a REMOVED role key names a target that res
 
 test('t632: park still names the ROLE when it resolves, so "always emit the placeholder" reds', () => {
   const f = mkTasks();
-  startedThenParkedTicket(f);
+  startedTicket(f);
   assert.strictEqual(f.m._resolveAssignee(f.team, 'hand'), 'hand', 'ENTER: the role is intact here — the anti-degenerate half');
 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
