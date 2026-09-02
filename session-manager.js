@@ -124,6 +124,7 @@ const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
+const { didGrow } = require('./stall-evidence');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -5538,8 +5539,20 @@ function createSessionManager(deps) {
       // waited in the gates got it into a live turn, and a seat already working
       // is by definition not the wedged shape this catches.
       if (s.activityState !== 'idle') return;
+      // Where the seat's transcript ended at WRITE time — the baseline the deadline
+      // check compares against. Taken here for the same reason the state read above
+      // is: this instant is what separates bytes the seat had already produced from
+      // bytes that can only have come after this write.
+      //
+      // Stored RAW, and -1 (no transcript, unreadable link) is kept rather than
+      // normalised to 0. `_seatTranscriptSize` refuses to collapse those two, and
+      // `didGrow` refuses -1 at either end, so an unreadable seat yields "no growth"
+      // and the check falls through to the behaviour it had before this baseline
+      // existed. The spec latch's opposite choice (_armSpecConfirm anchors at 0)
+      // answers a different question — a byte offset to search FROM, where 0 is the
+      // whole file — and copying it here would turn a blind probe into evidence.
       const fifo = s._dmUnconfirmed || (s._dmUnconfirmed = []);
-      fifo.push({ sender: senderName, at: Date.now() });
+      fifo.push({ sender: senderName, at: Date.now(), since: this._seatTranscriptSize(targetName) });
       while (fifo.length > DM_LATCH_CAP) this._overflowDmEntry(s, fifo.shift());
       // Pegged to the OLDEST outstanding unit and never restarted by a later
       // one. Restarting on each push starves the detector into silence in
@@ -5628,6 +5641,39 @@ function createSessionManager(deps) {
       while (fifo.length && now - fifo[0].at >= SPEC_CONFIRM_MS) ripe.push(fifo.shift());
       if (!ripe.length) {
         this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
+        return;
+      }
+      // Second look before spending a report, and the sibling spec latch
+      // (_checkSpecConfirm) does the same thing at the same deadline for the same
+      // reason: the activity edge that would have cleared this latch can RACE the
+      // CLI's transcript append on a wire-routed seat, so a dm that really was read
+      // can still be sitting here armed. By the deadline the CLI's bytes are long
+      // since on disk, which makes this the reliable read and the edge the eager one.
+      //
+      // Growth, not a content match, and that is not a weaker version of the spec
+      // probe — it is the same proposition this latch already runs on. A dm has no
+      // per-unit anchor to match: `_buildDeliveryText` prefixes every dm from a peer
+      // with the same `[agent:from <sender>]`, so a marker-style search would clear
+      // the latch over a transcript merely holding an EARLIER dm from that sender —
+      // suppressing a real swallow, which is the direction that must not be traded
+      // for this one. And nothing here would use the attribution anyway: a non-idle
+      // edge already clears the whole fifo without attributing (_clearDmConfirm),
+      // and per-unit confirmation is what _armDmConfirm's header rules out.
+      //
+      // So this cannot introduce a false negative the latch did not already accept:
+      // an unrelated turn inside the window clears the fifo at the edge today, and
+      // growth reaches only the reports that edge MISSED. `didGrow` refuses -1 at
+      // either end, so an unreadable transcript is not growth and this suppresses
+      // nothing — the probe can subtract a report, never manufacture one.
+      const anchor = Math.max(...ripe.map((e) => (typeof e.since === 'number' ? e.since : -1)));
+      if (didGrow(anchor, this._seatTranscriptSize(session.name))) {
+        log.info('intent', `dm confirmation for ${session.name} withdrawn — its transcript grew past ${anchor} bytes since the write, so the seat consumed input and the activity edge was simply missed`);
+        // Dropped with the ripe set, not carried into a later report: overflow
+        // records are older than everything ripe by construction, so the growth
+        // that vindicates the ripe set covers them too. Keeping them would report
+        // the same silence one window later with the evidence already refuted.
+        session._dmOverflow = null;
+        if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
         return;
       }
       // Overflow records are attributed to THIS report: they are older than

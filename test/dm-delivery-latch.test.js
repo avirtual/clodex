@@ -167,7 +167,7 @@ function boot(opts = {}) {
     }
   };
   return {
-    m, spawn, stop, casts,
+    m, spawn, stop, casts, home,
     seen: (name) => writes.get(name) || '',
     // How many parked entries MATCH, never how many exist: "nothing reached the
     // PTY" is equally true of a park that THREW, so a park must be proven
@@ -219,6 +219,11 @@ async function swallowed(opts = {}) {
   const app = boot({ deps: { specConfirmMs: 60_000, ...(opts.deps || {}) } });
   const sender = await app.spawn('sender');
   const target = await app.spawn('target');
+  // Runs AFTER the seat exists and BEFORE the dm, which is the only window in
+  // which a transcript baseline can be established: the latch reads the seat's
+  // size at write time, so a file created afterwards anchors at -1 and every
+  // growth assertion below would measure the blind spot instead.
+  if (opts.prepare) await opts.prepare(app, target);
   app.m._handleIntent('sender', dm('target', 'THE ORIGINAL MESSAGE'));
   const got = await settled(app, 'target', /THE ORIGINAL MESSAGE/);
   assert.match(got, /THE ORIGINAL MESSAGE/,
@@ -936,5 +941,200 @@ test('t388: an injected window reaches BOTH consumers, so neither can be silentl
       'and the SAME injected value reaches the ticket latch through the shared bag — a re-derivation on either '
       + 'side would show up here as one consumer honouring the injection and the other falling back to 90s');
     clearTimeout(target._specConfirmTimer);
+  } finally { app.stop(); }
+});
+
+// ── t616: the deadline re-probe ─────────────────────────────────────────────
+//
+// The false alarm this closes: a seat that HAD read the dm and replied at length
+// was still reported, because the fire condition was "no observed non-idle
+// transition within 90s" — a different proposition from "the seat did not consume
+// the input". On a wire-routed seat the activity edge races the CLI's transcript
+// append, so the edge can be missed while the bytes reach disk.
+//
+// It is not merely noise: the notice tells the sender to resend `urgent`, which
+// lands immediately into a seat that is mid-turn, where concurrent writes
+// overwrite one another's unsubmitted text. The false alarm manufactures the
+// exact failure it warns about.
+//
+// Every test here must reach the busy-seat condition and then vary ONE thing —
+// the transcript. An absence assertion is true of a fixture that never armed, so
+// each drives `swallowed()`, whose own ENTER assertions prove the latch armed
+// before anything below can measure a report that did not happen.
+
+// A REAL transcript at the seat's registry path, sized `bytes`. The size is what
+// the latch reads at write time, so this must run before the dm — `swallowed`'s
+// `prepare` hook is that instant.
+function transcript(app, name, bytes) {
+  const target = path.join(app.home, `${name}-transcript.jsonl`);
+  fs.writeFileSync(target, 'x'.repeat(bytes));
+  fs.mkdirSync(runDirFor(app.home, name), { recursive: true });
+  const link = pathFor(app.home, name, 'transcript');
+  try { fs.unlinkSync(link); } catch {}
+  fs.symlinkSync(target, link);
+  return {
+    path: target,
+    grow: (n) => fs.writeFileSync(target, 'x'.repeat(bytes + n)),
+    unreadable: () => { try { fs.unlinkSync(target); } catch {} },
+  };
+}
+
+test('t616: a seat whose transcript GREW since the write is not reported — the edge was simply missed', async () => {
+  let tx;
+  const { app, target } = await swallowed({ prepare: (a, t) => { tx = transcript(a, t.name, 100); } });
+  try {
+    assert.strictEqual(target._dmUnconfirmed[0].since, 100,
+      'ENTER: the entry must carry the WRITE-TIME size. Anchored at -1 (no transcript at arm) `didGrow` '
+      + 'refuses both ends and this test would measure the blind spot while claiming to measure the probe');
+    // The seat consumed the dm and produced a turn; only its activity edge was
+    // lost. That is the whole false-alarm shape, and nothing else here differs
+    // from the reported case.
+    tx.grow(500);
+    const before = app.seen('sender');
+    const beforeCasts = app.casts.length;
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('sender'), before,
+      'the sender must NOT be told: its message reached a seat that demonstrably consumed input afterwards, '
+      + 'and the notice would send it resending `urgent` into a seat mid-turn — manufacturing the overwrite '
+      + 'the notice itself warns about');
+    assert.strictEqual(app.casts.slice(beforeCasts)
+      .filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').length, 0,
+      'and no broadcast either: the operator log is the other half of the same false report, and a probe that '
+      + 'silenced only the dm would leave the alarm in the place Bogdan actually reads it');
+  } finally { app.stop(); }
+});
+
+test('t616: a FLAT transcript still reports — the mechanism is narrowed, not deleted', async () => {
+  const { app, target } = await swallowed({ prepare: (a, t) => transcript(a, t.name, 100) });
+  try {
+    // Deliberately NOT grown. A genuinely swallowed dm is a real failure this
+    // catches, and a probe that suppressed here would delete the mechanism under
+    // cover of fixing it — which every other test in this section would pass.
+    const before = app.seen('sender');
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    const notice = await settled(app, 'sender', /has not started a turn/);
+    assert.ok(notice.length > before.length,
+      'a seat that wrote NOTHING since the dm is still reported: that is the case the latch exists for, and '
+      + 'the transcript is positive evidence of it rather than an absence of evidence');
+    assert.strictEqual(app.casts
+      .filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').length, 1,
+      'and the broadcast still fires');
+  } finally { app.stop(); }
+});
+
+test('t616: an UNREADABLE transcript reports — the probe must not suppress out of its own blind spot', async () => {
+  let tx;
+  const { app, target } = await swallowed({ prepare: (a, t) => { tx = transcript(a, t.name, 100); } });
+  try {
+    assert.strictEqual(target._dmUnconfirmed[0].since, 100,
+      'ENTER: readable at ARM, so the -1 below comes from the DEADLINE read. Unreadable at both ends is a '
+      + 'different case that would pass this test while exercising neither');
+    tx.unreadable();
+    assert.strictEqual(app.m._seatTranscriptSize('target'), -1,
+      'ENTER: the deadline read must genuinely fail — with a readable 100 this is the flat case again');
+    const before = app.seen('sender');
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    const notice = await settled(app, 'sender', /has not started a turn/);
+    assert.ok(notice.length > before.length,
+      '`didGrow` refuses -1 at either end, so a probe that cannot answer falls through to reporting. The '
+      + 'inverse — reading -1 as "no growth measured, assume fine" — is how a real swallow goes silent, and '
+      + 'it is the direction that must never be traded for the false alarm');
+  } finally { app.stop(); }
+});
+
+test('t616: a seat with NO transcript at all reports, at both ends of the window', async () => {
+  const { app, target } = await swallowed();
+  try {
+    assert.strictEqual(target._dmUnconfirmed[0].since, -1,
+      'ENTER: -1 is kept RAW on the entry, not normalised to 0. Normalised, a seat that then wrote one byte '
+      + 'would satisfy `0 -> 1` and read as growth — a fresh seat that swallowed its first dm, silenced');
+    const before = app.seen('sender');
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    const notice = await settled(app, 'sender', /has not started a turn/);
+    assert.ok(notice.length > before.length,
+      'the no-transcript seat is the population the latch protects — a codex seat writes no transcript.jsonl '
+      + 'at all — so it must report exactly as it did before the probe existed');
+  } finally { app.stop(); }
+});
+
+test('t616: the anchor is the size at WRITE time, so bytes already there are not growth', async () => {
+  const { app, target } = await swallowed({ prepare: (a, t) => transcript(a, t.name, 4096) });
+  try {
+    assert.strictEqual(target._dmUnconfirmed[0].since, 4096,
+      'ENTER: the entry anchors at the seat`s EXISTING size. Anchored at 0 the pre-existing 4096 bytes would '
+      + 'themselves satisfy `didGrow` and every swallow at a seat with any history would be silenced');
+    const before = app.seen('sender');
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    const notice = await settled(app, 'sender', /has not started a turn/);
+    assert.ok(notice.length > before.length,
+      'a long-lived seat that swallows a dm is reported like any other: the probe asks what arrived AFTER the '
+      + 'write, which is the only reading that separates consumption from history');
+  } finally { app.stop(); }
+});
+
+test('t616: growth withdraws the whole ripe set and its overflow, not one entry', async () => {
+  let tx;
+  const { app, target } = await swallowed({ prepare: (a, t) => { tx = transcript(a, t.name, 10); } });
+  try {
+    const other = await app.spawn('other');
+    app.m._handleIntent('other', dm('target', 'A SECOND SENDER MESSAGE'));
+    await settled(app, 'target', /A SECOND SENDER MESSAGE/);
+    assert.strictEqual(target._dmUnconfirmed.length, 2,
+      'ENTER: two units from two senders — with one, "the whole ripe set" is indistinguishable from "the one '
+      + 'entry" and this test names a property it cannot see');
+    // A dropped unit from a third sender. Overflow records are older than
+    // everything ripe by construction, so the growth that vindicates the ripe set
+    // covers them — and a sender left in overflow would be told one window later
+    // with evidence already refuted.
+    app.m._overflowDmEntry(target, { sender: 'starved', at: Date.now() - 120_000 });
+    assert.ok(target._dmOverflow && target._dmOverflow.size === 1,
+      'ENTER: an overflow record must exist, or the drop below is asserted over an empty map');
+
+    tx.grow(64);
+    const beforeCasts = app.casts.length;
+    const beforeSender = app.seen('sender');
+    const beforeOther = app.seen('other');
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('sender'), beforeSender, 'neither sender is told');
+    assert.strictEqual(app.seen('other'), beforeOther,
+      'and the second sender is not told either: one seat`s transcript answers for every unit written into '
+      + 'it, so a per-entry verdict would be the per-unit confirmation the design refuses');
+    assert.strictEqual(app.casts.slice(beforeCasts)
+      .filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').length, 0,
+      'and no broadcast');
+    assert.strictEqual(target._dmOverflow, null,
+      'the overflow records are dropped with the ripe set rather than surviving into a later report');
+    assert.strictEqual(target._dmUnconfirmedLast, null,
+      'and nothing is recorded as reported: `_dmUnconfirmedLast` feeds the stall sweep`s attribution, so a '
+      + 'withdrawn report left there would have the sweep blame a swallowed dm for a seat that read it');
+  } finally { app.stop(); }
+});
+
+test('t616: a young unit survives the withdrawal and keeps its own window', async () => {
+  let tx;
+  const { app, target } = await swallowed({ prepare: (a, t) => { tx = transcript(a, t.name, 10); } });
+  try {
+    // Only the FIRST is ripened below, so this one is judged on its own deadline.
+    app.m._armDmConfirm('target', 'sender', 'injected');
+    assert.strictEqual(target._dmUnconfirmed.length, 2,
+      'ENTER: two units, and only one will be ripe — with both ripe the re-arm below is unreachable');
+    tx.grow(64);
+    target._dmUnconfirmed[0].at -= 61_000;
+    app.m._checkDmConfirm(target);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(target._dmUnconfirmed.length, 1,
+      'the ripe unit is drained by the withdrawal, exactly as a report would drain it — leaving it in the '
+      + 'fifo would re-judge it every window forever');
+    assert.ok(target._dmConfirmTimer,
+      'and the window is RE-ARMED for the young remainder. Returning without re-arming is the mutant that '
+      + 'goes permanently silent on the very next dm to this seat, and it passes every other test here');
   } finally { app.stop(); }
 });
