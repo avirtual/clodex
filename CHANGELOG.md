@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.22.0 — 2026-09-02
+
 - **Agents are told their context is heavy at 175,000 tokens, and you can now
   change that.** The threshold had been raised to 200,000 so that seats spawned
   for a single ticket would not be nudged mid-task — but those seats are never
