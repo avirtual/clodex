@@ -196,8 +196,8 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
     return `<div class="ctx-util">${head}${conf}${body}</div>`;
   }
-  // NOTHING AT ALL when there are no MCP tools — not an empty section, not a
-  // zero row. "Surface them when they are there" is the requirement, and a user
+  // The MCP block renders NOTHING AT ALL when there are no MCP tools — not an
+  // empty section, not a zero row. "Surface them when they are there" is the requirement, and a user
   // with no MCP servers must see no new UI whatsoever.
   //
   // Deliberately NOT a config inventory: this is what the session is CARRYING

@@ -11,8 +11,6 @@
 // payload; getActiveSession reads the live active tab (a reassigned core let).
 // isWarmMenuOpen/isStripMenuOpen let the bar's toggle dispatch query open-state
 // without touching the element (the subagent-popover predicate idiom).
-//
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
 const { esc, shortTs } = require('../lib/format');
 const { STRIP_LEVELS } = require('../lib/constants');
