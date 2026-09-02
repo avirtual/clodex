@@ -1112,7 +1112,10 @@ test('t616: growth withdraws the whole ripe set and its overflow, not one entry'
       'and no broadcast');
     assert.strictEqual(target._dmOverflow, null,
       'the overflow records are dropped with the ripe set rather than surviving into a later report');
-    assert.strictEqual(target._dmUnconfirmedLast, null,
+    // Falsy, not `null`: the withdrawal never touches this field, so its pristine
+    // `undefined` is the passing state and pinning the literal would assert that
+    // the withdrawal WRITES a null it has no reason to write.
+    assert.ok(!target._dmUnconfirmedLast,
       'and nothing is recorded as reported: `_dmUnconfirmedLast` feeds the stall sweep`s attribution, so a '
       + 'withdrawn report left there would have the sweep blame a swallowed dm for a seat that read it');
   } finally { app.stop(); }
