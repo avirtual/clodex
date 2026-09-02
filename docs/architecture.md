@@ -1021,6 +1021,15 @@ which is why the judgement worth testing is pushed down here.
 - **web-shortcuts.js** — the pure map from a keydown to a browser Alt-chord
   action. A tab reserves Cmd+T/W/1-9 for its own chrome, so the desktop Cmd
   shortcuts silently fail in-tab.
+- **chord-guard.js** — what Cmd+W / Alt+W should do given which modals are open.
+  It probes BOTH ways a modal exists here: by id for the ones `index.html`
+  declares, and by class for the ones script builds at runtime (`promptText`'s
+  backdrop, plugin overlays, the web frontend's `clx-modal-bg`), which no scan of
+  the markup can see. Membership is decided by what the CSS does — a
+  `position:fixed; inset:0` backdrop over the session — not by whether the name
+  contains "overlay"; four `-editor` modals were missed on exactly that. A modal
+  missing from either list is a session archived behind a dialog the operator is
+  looking at.
 
 ## Tests
 

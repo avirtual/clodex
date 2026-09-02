@@ -21485,6 +21485,66 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/chord-guard.js
+  var require_chord_guard = __commonJS({
+    "renderer/lib/chord-guard.js"(exports, module) {
+      "use strict";
+      var MODAL_OVERLAY_IDS = [
+        "dialog-overlay",
+        "peer-session-overlay",
+        "discovery-overlay",
+        "args-overlay",
+        "prefs-overlay",
+        "plugins-overlay",
+        "peers-overlay",
+        "sandbox-overlay",
+        "file-peek-overlay",
+        "report-overlay",
+        "prompt-editor",
+        "agent-editor",
+        "skill-editor",
+        "exec-editor"
+      ];
+      var MODAL_OVERLAY_CLASSES = [
+        "prompt-modal-overlay",
+        "plugin-overlay",
+        "clx-modal-bg"
+      ];
+      function openOverlayIds({ byId, byClass }) {
+        const open = [];
+        for (const id of MODAL_OVERLAY_IDS) {
+          const el = byId(id);
+          if (el && el.classList && !el.classList.contains("hidden")) open.push(id);
+        }
+        for (const cls of MODAL_OVERLAY_CLASSES) {
+          const els = byClass && byClass(cls) || [];
+          if (els.some((el) => el && el.classList && !el.classList.contains("hidden"))) open.push(cls);
+        }
+        return open;
+      }
+      function anyOverlayOpen(probes) {
+        return openOverlayIds(probes).length > 0;
+      }
+      function performCloseChord({ byId, byClass, activeSession, peerOf }, { closeNewSessionDialog, hidePeerRow, archiveSession }) {
+        const open = openOverlayIds({ byId, byClass });
+        if (open.length === 1 && open[0] === "dialog-overlay") {
+          closeNewSessionDialog();
+          return "closed-new-session-dialog";
+        }
+        if (open.length > 0) return "overlay-open-nothing-closed";
+        if (!activeSession) return "no-active-session";
+        const peer = peerOf(activeSession);
+        if (peer) {
+          hidePeerRow(peer);
+          return "hid-peer-row";
+        }
+        archiveSession(activeSession);
+        return "archived-active-session";
+      }
+      module.exports = { MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, anyOverlayOpen, performCloseChord };
+    }
+  });
+
   // renderer/lib/env-edit.js
   var require_env_edit = __commonJS({
     "renderer/lib/env-edit.js"(exports, module) {
@@ -32474,6 +32534,7 @@ ${detail}` });
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { prefsGate } = require_prefs_gate();
       var { planNewSession } = require_focus_policy();
+      var { anyOverlayOpen, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
@@ -35809,31 +35870,40 @@ Click for live activity`;
       var resizeObserver = new ResizeObserver(refitActiveTerminal);
       resizeObserver.observe(terminalContainer);
       window.api.onZoomNudge(refitActiveTerminal);
+      var overlayElementById = (id) => document.getElementById(id);
+      var overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
+      var overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClass };
+      function runCloseChord() {
+        return performCloseChord({
+          ...overlayProbes,
+          activeSession,
+          peerOf: (name) => {
+            const entry = sessions.get(name);
+            return entry && entry.peer || null;
+          }
+        }, {
+          closeNewSessionDialog: closeDialog,
+          hidePeerRow: (peer) => peerHideFromList(peer.id, peer.name),
+          archiveSession: archiveSessionRow
+        });
+      }
       document.addEventListener("keydown", (e) => {
         if (!e.metaKey || e.altKey || e.ctrlKey) return;
         if (drawerHost.hasFocus()) return;
+        const overlaysOpen = anyOverlayOpen(overlayProbes);
         if (e.key === "t") {
           e.preventDefault();
           e.stopPropagation();
-          if (dialogOverlay.classList.contains("hidden")) openDialog();
+          if (!overlaysOpen) openDialog();
           return;
         }
         if (e.key === "w") {
           e.preventDefault();
           e.stopPropagation();
-          if (!dialogOverlay.classList.contains("hidden")) {
-            closeDialog();
-          } else if (activeSession) {
-            const target = activeSession;
-            const entry = sessions.get(target);
-            if (entry && entry.peer) {
-              peerHideFromList(entry.peer.id, entry.peer.name);
-            } else {
-              archiveSessionRow(target);
-            }
-          }
+          runCloseChord();
           return;
         }
+        if (overlaysOpen) return;
         if (/^[1-9]$/.test(e.key)) {
           const idx = parseInt(e.key, 10) - 1;
           const items = Array.from(sessionList.querySelectorAll(".session-item"));
@@ -35869,24 +35939,16 @@ Click for live activity`;
         if (drawerHost.hasFocus()) return;
         e.preventDefault();
         e.stopPropagation();
+        const overlaysOpen = anyOverlayOpen(overlayProbes);
         if (action.type === "new") {
-          if (dialogOverlay.classList.contains("hidden")) openDialog();
+          if (!overlaysOpen) openDialog();
           return;
         }
         if (action.type === "close") {
-          if (!dialogOverlay.classList.contains("hidden")) {
-            closeDialog();
-          } else if (activeSession) {
-            const target = activeSession;
-            const entry = sessions.get(target);
-            if (entry && entry.peer) {
-              peerHideFromList(entry.peer.id, entry.peer.name);
-            } else {
-              archiveSessionRow(target);
-            }
-          }
+          runCloseChord();
           return;
         }
+        if (overlaysOpen) return;
         if (action.type === "switch") {
           const items = Array.from(sessionList.querySelectorAll(".session-item"));
           if (items[action.index]) switchSession(items[action.index].dataset.name);

@@ -35,6 +35,7 @@ const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldR
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
+const { anyOverlayOpen, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
@@ -3796,6 +3797,22 @@ resizeObserver.observe(terminalContainer);
 window.api.onZoomNudge(refitActiveTerminal);
 
 
+const overlayElementById = (id) => document.getElementById(id);
+const overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
+const overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClass };
+
+function runCloseChord() {
+  return performCloseChord({
+    ...overlayProbes,
+    activeSession,
+    peerOf: (name) => { const entry = sessions.get(name); return (entry && entry.peer) || null; },
+  }, {
+    closeNewSessionDialog: closeDialog,
+    hidePeerRow: (peer) => peerHideFromList(peer.id, peer.name),
+    archiveSession: archiveSessionRow,
+  });
+}
+
 // Capture at document level (capture phase) so xterm doesn't swallow them
 document.addEventListener('keydown', (e) => {
   if (!e.metaKey || e.altKey || e.ctrlKey) return;
@@ -3804,29 +3821,23 @@ document.addEventListener('keydown', (e) => {
   // archive an unrelated session.
   if (drawerHost.hasFocus()) return;
 
+  const overlaysOpen = anyOverlayOpen(overlayProbes);
+
   if (e.key === 't') {
     e.preventDefault();
     e.stopPropagation();
-    if (dialogOverlay.classList.contains('hidden')) openDialog();
+    if (!overlaysOpen) openDialog();
     return;
   }
 
   if (e.key === 'w') {
     e.preventDefault();
     e.stopPropagation();
-    if (!dialogOverlay.classList.contains('hidden')) {
-      closeDialog();
-    } else if (activeSession) {
-      const target = activeSession;
-      const entry = sessions.get(target);
-      if (entry && entry.peer) {
-        peerHideFromList(entry.peer.id, entry.peer.name);
-      } else {
-        archiveSessionRow(target);
-      }
-    }
+    runCloseChord();
     return;
   }
+
+  if (overlaysOpen) return;
 
   if (/^[1-9]$/.test(e.key)) {
     const idx = parseInt(e.key, 10) - 1;
@@ -3872,25 +3883,19 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   e.stopPropagation();
 
+  const overlaysOpen = anyOverlayOpen(overlayProbes);
+
   if (action.type === 'new') {
-    if (dialogOverlay.classList.contains('hidden')) openDialog();
+    if (!overlaysOpen) openDialog();
     return;
   }
 
   if (action.type === 'close') {
-    if (!dialogOverlay.classList.contains('hidden')) {
-      closeDialog();
-    } else if (activeSession) {
-      const target = activeSession;
-      const entry = sessions.get(target);
-      if (entry && entry.peer) {
-        peerHideFromList(entry.peer.id, entry.peer.name);
-      } else {
-        archiveSessionRow(target);
-      }
-    }
+    runCloseChord();
     return;
   }
+
+  if (overlaysOpen) return;
 
   if (action.type === 'switch') {
     const items = Array.from(sessionList.querySelectorAll('.session-item'));
