@@ -36,17 +36,17 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // Armed only while the shell is silent; the first byte makes it inert for good.
   const ABANDON_ACK_MS = 250;
   // One repeat of the abandon, and only into a shell that answered the first with a
-  // redraw carrying no interrupt status. Must stay comfortably under ABANDON_MAX_MS:
-  // its whole purpose is to convert the blind write below into an acked one, so it
-  // needs room for the elicited prompt to arrive first (measured: it arrives ~1ms
-  // after the repeat).
+  // redraw carrying no interrupt status. Must stay under ABANDON_MAX_MS with room to
+  // spare: its whole purpose is to convert the blind write into an acked one, so the
+  // elicited prompt has to arrive before the cap fires (measured: ~1ms after the
+  // repeat). Unlike the two below it types nothing, so it is not a backstop.
   const ABANDON_NUDGE_MS = 400;
   // Later than any plausible flush, and not evidence that the interrupt landed.
   const ABANDON_MAX_MS = 1000;
   // An A mark reporting 130 proves only that the last command to finish exited
   // 128+SIGINT: `$?` is latched and re-reports on every prompt cycle until a command
-  // runs, so a stale or in-flight pair can arrive inside our race window. The three
-  // clocks above are the only thing standing behind that.
+  // runs, so a stale or in-flight pair can arrive inside our race window. The clocks
+  // above are the only thing standing behind that.
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';

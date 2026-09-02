@@ -351,8 +351,8 @@ test('NO amount of shell output releases the command — bytes arm no timer', ()
   // Asserted on the TIMER LIST rather than only on the writes, because those are
   // different claims: a window that is armed but never fired in this test would
   // satisfy `written` and still be the defect, waiting to fire under a real
-  // clock. The only timers an exec may arm are the silence deadline, the cap,
-  // and the two-minute settle deadline.
+  // clock. What the assertion pins is that a BYTE arms nothing — the count is
+  // compared against the exec's own, whatever clocks it arms.
   const { w, spawn, timers } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'ls');
@@ -539,10 +539,10 @@ test('an interrupt status does not carry across an intervening prompt', () => {
 // This state — the shell spoke, drew a prompt, and none of it carried an
 // interrupt status — is where every measured corruption happened. Correlated
 // over 256 execs against a real bash at 32 concurrent shells: all 254 that saw
-// an interrupt-acked prompt after the ^C arrived intact, and both that saw none
-// lost their leading byte. The predictor is the MISSING PROMPT, not the elapsed
-// time, which is why the repair is a second signal rather than a longer wait —
-// a fixed 3s gap between the two writes still lost the byte 2 times in 192.
+// an A mark after the ^C arrived intact, and both that saw none lost their
+// leading byte. The predictor is the MISSING PROMPT, not the elapsed time, which
+// is why the repair is a second signal rather than a longer wait — a fixed 3s
+// gap between the two writes still lost the byte 2 times in 192.
 
 test('a shell that spoke without acking is re-abandoned, not typed into', () => {
   const { w, spawn, timers } = mk();
@@ -614,18 +614,39 @@ test('the nudge cannot signal a LATER exec', () => {
   // Same identity hazard the typing path guards: by the time this fires, the
   // exec that armed it may be settled and a second one running. A ^C then lands
   // on a command this exec does not own.
+  //
+  // REACHING the identity check is the whole difficulty, and an earlier version
+  // of this test did not: it settled the first exec with an interrupt mark, which
+  // releases the command and sets `armed`, so the callback short-circuited on
+  // `armed` and the guard below was never executed. The route that gets there has
+  // to settle `pending` while leaving BOTH `armed` false and `spoke` true.
+  //
+  // This is that route, and it is the operator's own line rather than ours: an
+  // `A` with no `D;130` before it reports `interrupted: false`, so it does not
+  // release our command — but when it lands on an OPEN command it abandons it
+  // first (term-marks.js fires onAbandon before onPrompt), which settles our
+  // record. `pending` clears, `armed` never set.
   const { w, spawn, timers, results } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'first');
   const proc = spawn.spawned[0];
+
+  // A redraw: the shell speaks without acking, which is what arms the nudge.
   proc.emit(A);
   const nudge = timers.filter((t) => t.ms === NUDGE_MS)[0];
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: the command is NOT out — a released command would set `armed` and hide the guard');
 
-  // The first command runs and ends, so the seat is free for a second exec.
-  proc.emit(`${INTR}`);
-  proc.emit(`${C('first')}${D(0)}${A}`);
-  assert.strictEqual(results.length, 1, 'ENTER: the first exec settled');
-  assert.strictEqual(w.exec('ws-1', 'alice', 'second').ok, true, 'ENTER: a second was accepted');
+  // The operator types their own line and it is abandoned, taking our pending
+  // record with it. No `D;130` anywhere, so nothing here releases our command.
+  proc.emit(C('theirs'));
+  proc.emit(A);
+  assert.strictEqual(results.length, 1, 'ENTER: our exec settled');
+  assert.strictEqual(results[0][1].status, 'abandoned', 'ENTER: settled by the abandon, not by a release');
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: still nothing typed, so `armed` is false and the nudge can still fire');
+
+  assert.strictEqual(w.exec('ws-1', 'alice', 'second').ok, true, 'ENTER: a second exec was accepted');
   const before = proc.written.slice();
 
   nudge.fn();
