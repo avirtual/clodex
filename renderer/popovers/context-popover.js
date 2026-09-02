@@ -12,6 +12,9 @@
 
 const { esc, fmtTokens } = require('../lib/format');
 const { groupMcpTools, mcpTotalTokens } = require('../lib/mcp-group');
+const { placeAboveAnchor } = require('../lib/popover-place');
+
+const CTX_SEG = '#proxy-bar [data-act="ctx"]';
 
 function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf }) {
   // --- Context-breakdown popover -------------------------------------------
@@ -28,11 +31,11 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     ctxPopover.dataset.name = '';
   }
 
+  // Every call downstream of the fetch below re-places on the SAME anchor object,
+  // and a renderProxyBar landing during that fetch detaches it — so the live seg
+  // is re-queried here rather than trusted from the caller's reference.
   function placeCtxPopover(anchor) {
-    const r = anchor.getBoundingClientRect();
-    const w = ctxPopover.offsetWidth;
-    ctxPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    ctxPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(ctxPopover, anchor, CTX_SEG);
   }
 
   function renderCompositionLine(a, stripLevel = 0) {
@@ -193,11 +196,6 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
     return `<div class="ctx-util">${head}${conf}${body}</div>`;
   }
-  // MCP servers, grouped out of the same per_tool roster (t46). MCP is usually
-  // the largest single thing a user adds to their per-turn carriage, and it was
-  // the one big contributor this popover could not name: its tools rendered as
-  // individual rows with nothing tying them to the server they came from.
-  //
   // NOTHING AT ALL when there are no MCP tools — not an empty section, not a
   // zero row. "Surface them when they are there" is the requirement, and a user
   // with no MCP servers must see no new UI whatsoever.
@@ -376,7 +374,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     if (!name) return;
     if (reportLink) { openReportPanel(name); return; }
     // Anchor the target popover to the live ctx seg (still visible in the bar).
-    const anchor = document.querySelector('#proxy-bar [data-act="ctx"]');
+    const anchor = document.querySelector(CTX_SEG);
     if (!anchor) return;
     if (toolsLink) openToolsPopover(name, anchor);
     else openSkillsPopover(name, anchor);

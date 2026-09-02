@@ -1002,6 +1002,10 @@ which is why the judgement worth testing is pushed down here.
 - **popover-drag.js** — make a `position:fixed` popover draggable by its title
   bar; openers call `resetDrag()` so a fresh open re-anchors instead of
   inheriting the last drag offset.
+- **popover-place.js** — where a bar-anchored popover goes: the live-anchor
+  re-query and the clamped above-the-button geometry, with an all-zero (detached)
+  anchor rect falling back to the viewport's bottom-left corner instead of off
+  the top.
 - **peer-collapse.js** — per-workspace fold state for peer headers. The state
   lives outside the DOM because `renderPeers()` rebuilds every row. The
   persisted set names the peers the operator EXPANDED, never the folded ones.

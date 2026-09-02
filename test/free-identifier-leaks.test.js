@@ -285,6 +285,10 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/checklists.js',
   'renderer/lib/team-roles.js',
   'renderer/lib/popover-drag.js',
+  // The bar-popover placement leaf. A pure leaf read by four DOM-bound islands,
+  // and its whole job is to reach for document/window — so the guard that it
+  // reaches for NOTHING ELSE is what keeps the reach auditable.
+  'renderer/lib/popover-place.js',
   'renderer/lib/args-model.js',
   'renderer/lib/session-actions.js',
   'renderer/lib/name-suggest.js',

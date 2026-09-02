@@ -17,6 +17,13 @@
 const { esc, shortTs } = require('../lib/format');
 const { STRIP_LEVELS } = require('../lib/constants');
 const { sessionMenuEntries } = require('../lib/session-actions');
+const { liveAnchor, placeAboveAnchor } = require('../lib/popover-place');
+
+const BAR_ANCHOR = {
+  warm: '#proxy-bar [data-act="warm-menu"]',
+  strip: '#proxy-bar [data-act="strip-menu"]',
+  session: '#proxy-bar [data-act="session-menu"]',
+};
 
 function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession }) {
   // --- Keep-warm duration dropdown ----------------------------------------
@@ -76,11 +83,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       else await doWarmHold(name, { hours: Number(item.dataset.hours) });
     });
     document.body.appendChild(warmMenu);
-    // Anchor above the button, clamped to the viewport.
-    const r = anchorBtn.getBoundingClientRect();
-    const w = warmMenu.offsetWidth;
-    warmMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    warmMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(warmMenu, anchorBtn, BAR_ANCHOR.warm);
   }
 
   // off:true disarms; otherwise arms/extends for opts.hours. Mirrors the prior
@@ -183,10 +186,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       // New level shows on the next poll (≤5s).
     });
     document.body.appendChild(stripMenu);
-    const r = anchorBtn.getBoundingClientRect();
-    const w = stripMenu.offsetWidth;
-    stripMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    stripMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(stripMenu, anchorBtn, BAR_ANCHOR.strip);
   }
 
   document.addEventListener('click', (e) => {
@@ -259,11 +259,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       if (snapType) { createTerminal(name); addSessionToSidebar(name, snapType, snapCwd, null); switchSession(name); }
     });
     document.body.appendChild(historyMenu);
-    // Anchor above the button, clamped to the viewport (mirrors the warm menu).
-    const r = anchorBtn.getBoundingClientRect();
-    const w = historyMenu.offsetWidth;
-    historyMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    historyMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(historyMenu, anchorBtn, BAR_ANCHOR.session);
   }
   document.addEventListener('click', (e) => {
     if (!historyMenu) return;
@@ -299,13 +295,9 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
   }
 
   // --- Consolidated session-actions menu (the `⚙ session ▾` bar button) ------
-  // Replaces the old row of standalone launcher buttons (tools/skills/agents/
-  // edit/history/reload) with one button + this menu, freeing the proxy bar for
-  // dynamic state (📄 files, keep-warm, context/cost). Entries come from the pure
-  // session-actions leaf (type-conditioned); picking one fires onPick(act) — the
-  // core (renderer.js) owns the act→opener routing because the openers span two
-  // islands (checklist-popovers + this one) plus a core dialog. Same transient-
-  // menu idiom as the strip/history menus.
+  // Picking an entry fires onPick(act, anchor) — the core (renderer.js) owns the
+  // act→opener routing because the openers span two islands (checklist-popovers
+  // + this one) plus a core dialog.
   let sessionMenu = null;
   function closeSessionMenu() { if (sessionMenu) { sessionMenu.remove(); sessionMenu = null; } }
 
@@ -326,13 +318,14 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       if (!item) return;
       const act = item.dataset.act;
       closeSessionMenu();
-      if (typeof onPick === 'function') onPick(act, anchorBtn);
+      // Resolved at PICK time, not captured at open: renderSessionActions rebuilds
+      // #proxy-actions by innerHTML on every proxy event, so the button clicked
+      // seconds ago is usually detached — and a detached rect is all zeros, which
+      // opens the picked popover above the viewport top.
+      if (typeof onPick === 'function') onPick(act, liveAnchor(anchorBtn, BAR_ANCHOR.session));
     });
     document.body.appendChild(sessionMenu);
-    const r = anchorBtn.getBoundingClientRect();
-    const w = sessionMenu.offsetWidth;
-    sessionMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    sessionMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(sessionMenu, anchorBtn, BAR_ANCHOR.session);
   }
 
   document.addEventListener('click', (e) => {

@@ -30,6 +30,13 @@ const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util'
 const { parseSkillFrontmatter } = require('../../skills-util');
 const { esc } = require('../lib/format');
 const { makeDraggable, resetDrag } = require('../lib/popover-drag');
+const { placeAboveAnchor } = require('../lib/popover-place');
+
+// All four open from the ⚙ session menu, and each awaits its config read first —
+// long enough for renderSessionActions to have replaced the button. A peer skills
+// open anchors to a sidebar row instead, where this selector finds nothing and
+// the captured row (still attached) is used.
+const BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
 const { grantsForUnlistedPlugins, mergeGrants } = require('../../plugin-api');
 
 // Names auto-INCLUDED for `session` by `sessions:` scope, for a scoped checklist.
@@ -80,11 +87,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     toolsPopover.dataset.name = name;
     resetDrag(toolsPopover); // a fresh open re-anchors; drop any prior drag offset
     toolsPopover.classList.remove('hidden');
-    // Anchor above the button, clamped to the viewport.
-    const r = anchorBtn.getBoundingClientRect();
-    const w = toolsPopover.offsetWidth;
-    toolsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    toolsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(toolsPopover, anchorBtn, BAR_ANCHOR);
   }
 
   document.getElementById('tools-popover-cancel').addEventListener('click', closeToolsPopover);
@@ -171,16 +174,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     skillsPopover.dataset.name = name;
     resetDrag(skillsPopover); // a fresh open re-anchors; drop any prior drag offset
     skillsPopover.classList.remove('hidden');
-    const r = anchorBtn.getBoundingClientRect();
-    const w = skillsPopover.offsetWidth;
-    skillsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    // Bottom-anchored; clamp so the top stays on-screen. The local ⚙ anchor sits
-    // in the bottom bar where the clamp is a no-op; a peer sidebar ROW anchor can
-    // sit high enough that the unclamped bottom would push the popover past the
-    // viewport top.
-    const wantBottom = Math.max(8, window.innerHeight - r.top + 6);
-    const maxBottom = Math.max(8, window.innerHeight - skillsPopover.offsetHeight - 8);
-    skillsPopover.style.bottom = `${Math.min(wantBottom, maxBottom)}px`;
+    placeAboveAnchor(skillsPopover, anchorBtn, BAR_ANCHOR);
   }
 
   document.getElementById('skills-popover-cancel').addEventListener('click', closeSkillsPopover);
@@ -276,10 +270,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     agentsPopover.dataset.name = name;
     resetDrag(agentsPopover); // a fresh open re-anchors; drop any prior drag offset
     agentsPopover.classList.remove('hidden');
-    const r = anchorBtn.getBoundingClientRect();
-    const w = agentsPopover.offsetWidth;
-    agentsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    agentsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(agentsPopover, anchorBtn, BAR_ANCHOR);
   }
 
   document.getElementById('agents-popover-cancel').addEventListener('click', closeAgentsPopover);
@@ -387,7 +378,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     refreshExecReadoutInertState();
   }
 
-  // --- Plugin Access (t190) -------------------------------------------------
+  // --- Plugin Access -------------------------------------------------
   // Same storage rule as the intent gate and the same strict semantics, but its
   // own block and its own header: "Intents" is what this seat may EMIT, a grant
   // is what a plugin may READ of it, and an operator scanning for "who can see
@@ -461,10 +452,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     intentsPopover.dataset.name = name;
     resetDrag(intentsPopover); // a fresh open re-anchors; drop any prior drag offset
     intentsPopover.classList.remove('hidden');
-    const r = anchorBtn.getBoundingClientRect();
-    const w = intentsPopover.offsetWidth;
-    intentsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    intentsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    placeAboveAnchor(intentsPopover, anchorBtn, BAR_ANCHOR);
   }
 
   document.getElementById('intents-popover-cancel').addEventListener('click', closeIntentsPopover);
