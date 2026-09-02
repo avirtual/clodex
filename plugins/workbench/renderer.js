@@ -970,6 +970,5 @@ module.exports.activate = (rhost) => {
 
 module.exports.deactivate = () => {
   // Nothing to do: the overlay container, its interior, the wrapped document
-  // listeners and the injected <style> are all host-held and removed wholesale
-  // (Law 3 / MUST-FIX 6).
+  // listeners and the injected <style> are all host-held and removed wholesale.
 };
