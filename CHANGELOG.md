@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.23.0 — 2026-09-02
+
 - **A command an agent runs in a workbench terminal can no longer lose its first
   character and run as something else.** Under load, a command sent to a drawer
   terminal could arrive with its leading byte missing — `echo a; echo b` reaching
