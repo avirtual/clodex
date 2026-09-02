@@ -1486,7 +1486,7 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
   assert.match(hand, /never by line number/,
     'which carries the line-number rot rule onto notes, where the sweep patterns do not reach');
   assert.match(hand, /Prefer DELETING a stale or over-wide comment to rewriting it/,
-    'hand prompt keeps deletion over rewriting — a rewrite moves no line count');
+    'hand prompt keeps deletion over rewriting — an equal-length rewrite moves no line count');
   const reviewer = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-reviewer.md'), 'utf-8');
   assert.match(reviewer, /DELETING IS THE DEFAULT REPAIR/,
     'reviewer prompt makes deletion the default repair for an over-wide comment');
