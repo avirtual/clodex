@@ -72,10 +72,11 @@ test('with each overlay open in turn, Cmd+W archives NOTHING', () => {
   }
 });
 
-test('the five overlays the shipped guard never consulted', () => {
-  // Named as literals, not derived from the list above: these are the ids the
-  // t634 report verified as live archive paths, and a future edit that drops
-  // one from MODAL_OVERLAY_IDS must red HERE, not silently shrink the loop.
+test('the five overlays the pre-fix guard never consulted', () => {
+  // Named as literals, not derived from the list above: the loop overhead is
+  // MODAL_OVERLAY_IDS itself, so an edit that dropped an id from it would shrink
+  // that loop silently while staying green. These five are the ones the defect
+  // was verified on, and dropping any of them has to red HERE.
   for (const id of ['prefs-overlay', 'args-overlay', 'peers-overlay', 'plugins-overlay', 'sandbox-overlay']) {
     assert.ok(MODAL_OVERLAY_IDS.includes(id), `${id} must be consulted`);
     const [calls, actions] = spies();
@@ -85,10 +86,10 @@ test('the five overlays the shipped guard never consulted', () => {
   }
 });
 
-test('the four overlays the ticket itself did not list are consulted too', () => {
+test('the four less obvious overlays are consulted too', () => {
   // discovery / peer-session / file-peek / report are modal by the same CSS and
-  // were archive paths for the same reason. Found by reading index.html, not
-  // from the ticket's list.
+  // were archive paths for the same reason, but none of them is a Settings-style
+  // dialog anyone thinks of first. Same literal-not-derived reason as above.
   for (const id of ['discovery-overlay', 'peer-session-overlay', 'file-peek-overlay', 'report-overlay']) {
     assert.ok(MODAL_OVERLAY_IDS.includes(id), `${id} must be consulted`);
     const [calls, actions] = spies();
