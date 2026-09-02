@@ -19,8 +19,9 @@ blocks a release.
   to the money it spent — the spend itself was kept, but with nothing on it
   naming the ticket, the round or the reviewer, so it could not be added up. Each
   review round now appends a line to `REVIEW-COST.jsonl` in the ticket's own task
-  directory as the verdict lands, carrying that round's cost, tokens, cached
-  fraction, verdict and must-fix count. Rounds accumulate rather than overwrite,
+  directory as the review round ends, carrying that round's cost, tokens, cached
+  fraction, verdict and must-fix count — including a round that ends without a
+  verdict at all, because the lead rejected, accepted or retired it by hand. Rounds accumulate rather than overwrite,
   and a round whose cost genuinely could not be read is written as unknown rather
   than as zero, so an expensive review can never be mistaken for a free one.
   Applies to reviews from here on; past reviews cannot be reconstructed.
