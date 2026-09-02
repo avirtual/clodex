@@ -26,6 +26,11 @@
 // premiums: 5m=1.25x, 1h=2x; reads=0.10x of input.
 // NOTE: opus REPRICED at 4.5 — $15/$75 is 4.0/4.1 ONLY; 4.5+ is $5/$25.
 const PRICES = {
+  // The vendor also carries claude-mythos-5-1 / claude-mythos-5. Both are
+  // omitted deliberately: we never route mythos, and unpriced-and-loud beats
+  // priced-and-unverified. Port BOTH or neither — a bare 'claude-mythos-5' on
+  // its own would swallow 'claude-mythos-5-1' exactly as a bare 'claude-fable-5'
+  // would swallow 'claude-fable-5-1' without the pair below.
   // fable 5.1 BREAKS THE UNIVERSAL 0.1x READ MULTIPLIER: reads are 0.025x base
   // ($0.25/MTok), everything else identical to 5.0. This row must stay separate
   // from the bare 'claude-fable-5' one and must never be folded into it —
@@ -35,10 +40,6 @@ const PRICES = {
   // short to match, here the legacy row matches too much.
   'claude-fable-5-1': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 0.25 },
   'claude-fable-5':  { in: 10.0, out: 50.0, cache_write_5m: 12.5,  cache_write_1h: 20.0, cache_read: 1.00 },
-  // The vendor also carries claude-mythos-5-1 / claude-mythos-5. Both are
-  // omitted deliberately: we never route mythos, and unpriced-and-loud beats
-  // priced-and-unverified. Port BOTH or neither — a bare 'claude-mythos-5' on
-  // its own would swallow 'claude-mythos-5-1' exactly as fable-5 did above.
   'claude-sonnet-5': { in: 2.0,  out: 10.0, cache_write_5m: 2.50,  cache_write_1h: 4.0,  cache_read: 0.20 },
   'claude-opus-4-5': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-6': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },

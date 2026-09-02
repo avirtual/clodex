@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const { PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, priceFor, round6, billing, billingOpenai, newTotals, bump, Ledger } = require('../wire/billing');
 
 // Both sides of the WITHDRAWN sonnet-5 repricing's old effective date, as LOCAL
@@ -38,9 +40,9 @@ test('priceFor: longest prefix wins (opus-4-8 must not hit legacy opus-4)', () =
   assert.equal(priceFor('claude-opus-4-8-20260115').in, 5.0);
   assert.equal(priceFor('claude-opus-4-1-20250805').in, 15.0); // legacy pricing
   assert.equal(priceFor('claude-fable-5').in, 10.0);
-  // sonnet-4.x must still fall through to the sonnet-4 entry.
   assert.equal(priceFor('claude-sonnet-5', { now: BEFORE_FLIP }).in, 2.0);
   assert.equal(priceFor('claude-sonnet-5-20260601', { now: BEFORE_FLIP }).cache_read, 0.20);
+  // sonnet-4.x must still fall through to the sonnet-4 entry.
   assert.equal(priceFor('claude-sonnet-4-5-20250929').in, 3.0);
   assert.equal(priceFor('unknown-model'), null);
   assert.equal(priceFor(null), null);
@@ -418,4 +420,168 @@ test('Ledger: global and per-session totals accumulate independently', () => {
   led.forget('sess-a');
   assert.equal(led.session('sess-a').requests, 0); // fresh after forget
   assert.equal(led.totals.requests, 2);            // global untouched
+});
+
+// --- PREFIX-SHADOW AUDIT ------------------------------------------------------
+//
+// A too-SHORT row is LOUD: nothing matches, warnUnpriced fires, est_usd is null
+// and unpriced_requests ticks. A too-GREEDY row is SILENT: longest-prefix
+// SUCCEEDS on the wrong row and every signal above stays quiet. The mode flips
+// the day a vendor ships an `X-1` after an `X`, so the trigger is a vendor
+// release, not an edit of ours — no diff to review, no test to re-run.
+//
+// Live today: priceFor('claude-sonnet-5-1') returns the sonnet-5 row (object
+// identity, not merely equal rates). Fable 5.1 already broke the universal 0.1x
+// read multiplier; a sonnet 5.1 doing the same misprices from its first receipt.
+//
+// TWO properties, because this ticket's own remedy causes the second:
+//   (a) no vendor row strictly EXTENDS one of our PRICES keys while we lack it —
+//       that is precisely our row swallowing traffic the vendor prices apart;
+//   (b) no PRICES key strictly EXTENDS a PRICES_SPEED_FAST / PRICES_DATED key —
+//       both overlays are keyed on the EXACT winning prefix, so a longer PRICES
+//       row silently orphans the overlay. Adding an `X-1` row is what fixing (a)
+//       DOES, which is why (b) has to be asserted alongside it.
+//
+// Rates are deliberately NOT compared against the vendor: that would make this
+// file a third copy of the table (test/diff-argv-single-source.test.js's header
+// for why a third copy is worse than two). Keys alone carry the shadow property.
+
+const VENDOR_BILLING_PY = path.join(__dirname, '..', 'vendor', 'wirescope', 'proxylab', 'billing.py');
+
+// Keys of a top-level `NAME = { ... }` dict literal in the vendored Python.
+// Throws rather than returning [] when the table moves or is renamed: an
+// extractor that quietly finds nothing is green forever on a file it never read.
+function vendorTableKeys(src, name) {
+  const head = `\n${name} = {\n`;
+  const start = src.indexOf(head);
+  if (start === -1) throw new Error(`vendor table ${name} not found`);
+  const bodyStart = start + head.length;
+  const end = src.indexOf('\n}\n', bodyStart);
+  if (end === -1) throw new Error(`vendor table ${name} is unterminated`);
+  return src.slice(bodyStart, end).split('\n')
+    .map((line) => line.match(/^\s*"([^"]+)"\s*:/))
+    .filter(Boolean).map((m) => m[1]);
+}
+
+// Pairs [ours, theirs] where a vendor key strictly extends one of ours and we
+// do not carry it — the shadow. A vendor key unrelated to every key of ours is
+// NOT reported: that model is unpriced-and-loud here, which is a decision, not a
+// defect. This is why mythos needs no exception entry — we hold neither mythos
+// row, so nothing of ours can swallow them.
+function shadowedRows(ourKeys, theirKeys) {
+  const ours = new Set(ourKeys);
+  const out = [];
+  for (const theirs of theirKeys) {
+    if (ours.has(theirs)) continue;
+    for (const mine of ourKeys) {
+      if (theirs.length > mine.length && theirs.startsWith(mine)) out.push([mine, theirs]);
+    }
+  }
+  return out;
+}
+
+// Pairs [overlayKey, pricesKey] where a PRICES key strictly extends an overlay
+// key, so traffic winning on the longer prefix never sees the overlay.
+function orphanedOverlayRows(priceKeys, overlayKeys) {
+  const out = [];
+  for (const ok of overlayKeys) {
+    for (const pk of priceKeys) {
+      if (pk.length > ok.length && pk.startsWith(ok)) out.push([ok, pk]);
+    }
+  }
+  return out;
+}
+
+// Both detectors above answer "is this set empty?", and an empty set satisfies
+// an emptiness assertion for the boring reason as readily as the correct one —
+// including when the detector is broken and finds nothing anywhere. So each one
+// is driven RED against a synthetic table before any real table is handed to it.
+test('prefix-shadow audit: the detectors are red on a table that has the defect', () => {
+  // (a) the half-port the mythos comment in wire/billing.js warns about: take
+  // the bare row and not the -1, and 5.1 traffic prices at the 5.0 read rate.
+  assert.deepEqual(
+    shadowedRows(['claude-mythos-5', 'claude-haiku-4'],
+      ['claude-mythos-5', 'claude-mythos-5-1', 'claude-haiku-4']),
+    [['claude-mythos-5', 'claude-mythos-5-1']]);
+  // A vendor row extending nothing of ours is unpriced-and-loud, not a shadow.
+  assert.deepEqual(shadowedRows(['claude-haiku-4'], ['claude-mythos-5-1']), []);
+  // Carrying the longer row ourselves is the fix, and must read as clean.
+  assert.deepEqual(
+    shadowedRows(['claude-mythos-5', 'claude-mythos-5-1'],
+      ['claude-mythos-5', 'claude-mythos-5-1']), []);
+
+  // (b) exactly what fixing (a) for a fast-mode model would do.
+  assert.deepEqual(
+    orphanedOverlayRows(['claude-opus-5', 'claude-opus-5-1'], ['claude-opus-5']),
+    [['claude-opus-5', 'claude-opus-5-1']]);
+  assert.deepEqual(orphanedOverlayRows(['claude-opus-5'], ['claude-opus-5']), []);
+
+  // The parser must throw, not return [], when it cannot find its table.
+  assert.throws(() => vendorTableKeys('PRICES = {\n    "a": 1,\n}\n', 'NOPE'), /not found/);
+  assert.throws(() => vendorTableKeys('\nPRICES = {\n    "a": 1,\n', 'PRICES'), /unterminated/);
+  assert.deepEqual(vendorTableKeys('\nT = {\n    # "commented": 1,\n    "a-1": {},\n}\n', 'T'), ['a-1']);
+});
+
+// (a) The vendor is the oracle here for a reason worth stating: the defect is an
+// ABSENCE — the longer row we do not have. Every strict-prefix pair we DO carry
+// (fable-5/fable-5-1, opus-4/opus-4-N) is longest-prefix working as intended, so
+// a check reading only our own table has no failure mode and cannot see this
+// class at all. Agreeing with the vendored Python converts "what will the vendor
+// ship next?" into "do these two files still agree?", and a re-vendor that adds
+// an `X-1` row we lack turns this red on the commit that lands it.
+test('prefix-shadow audit: no vendor row is swallowed by a shorter row of ours', () => {
+  const src = fs.readFileSync(VENDOR_BILLING_PY, 'utf8');
+  const theirs = vendorTableKeys(src, 'PRICES');
+
+  // ENTER: the parse reached the real rows, and specifically the rows this audit
+  // exists to reason about. Asserted as literals — a count alone would pass on
+  // thirteen keys read out of the wrong table.
+  assert.ok(theirs.includes('claude-mythos-5') && theirs.includes('claude-mythos-5-1'),
+    `vendor PRICES parse missed the mythos pair: ${JSON.stringify(theirs)}`);
+  assert.ok(theirs.includes('claude-fable-5-1'), 'vendor PRICES parse missed fable-5-1');
+
+  assert.deepEqual(shadowedRows(Object.keys(PRICES), theirs), [],
+    'a vendor row extends one of ours that we do not carry: our shorter row ' +
+    'swallows it by longest prefix, priced and silent');
+
+  // The openai axis is the same class on the same matching rule, and it has a
+  // live strict-prefix pair (gpt-5.4 / gpt-5.4-mini) that is only correct
+  // because we carry both — dropping the longer one prices mini traffic 3x over.
+  const theirsOpenai = vendorTableKeys(src, 'PRICES_OPENAI');
+  assert.ok(theirsOpenai.includes('gpt-5.4-mini'), 'vendor PRICES_OPENAI parse missed gpt-5.4-mini');
+  assert.deepEqual(shadowedRows(Object.keys(PRICES_OPENAI), theirsOpenai), []);
+});
+
+// (b) has no vendor analogue to lean on — the vendor keys its overlays on the
+// winning prefix exactly as we do, so agreement between the two ports says
+// nothing about it. It is checkable against ourselves alone, and must be,
+// because it is the defect this ticket's own remedy introduces.
+test('prefix-shadow audit: no PRICES row strictly extends a fast-mode overlay key', () => {
+  assert.deepEqual(
+    orphanedOverlayRows(Object.keys(PRICES), Object.keys(PRICES_SPEED_FAST)), [],
+    'a PRICES row extends a PRICES_SPEED_FAST key: fast traffic wins on the ' +
+    'longer prefix, the premium overlay never applies, and it bills 2x UNDER ' +
+    'at standard rates with no warning');
+});
+
+// PRICES_DATED is empty, so running the detector over it live asserts nothing.
+// withDated puts a real schedule on 'claude-opus-4' — which four opus-4-N rows
+// already extend — so the orphan is not synthetic: were that schedule real, every
+// opus-4.5+ receipt would miss the repricing while legacy opus-4.0/4.1 took it.
+test('prefix-shadow audit: the dated overlay is checked on the same rule, and the check bites', () => {
+  const schedule = [['2026-09-01', { in: 9.0, out: 45.0, cache_write_5m: 11.25, cache_write_1h: 18.0, cache_read: 0.9 }]];
+  withDated('claude-opus-4', schedule, () => {
+    assert.deepEqual(
+      orphanedOverlayRows(Object.keys(PRICES), Object.keys(PRICES_DATED)),
+      [['claude-opus-4', 'claude-opus-4-5'], ['claude-opus-4', 'claude-opus-4-6'],
+        ['claude-opus-4', 'claude-opus-4-7'], ['claude-opus-4', 'claude-opus-4-8']]);
+    // The orphaning is real, not just a name-shape finding: opus-4-5 keeps the
+    // base rate on a date its schedule has passed, while bare opus-4 takes it.
+    assert.equal(priceFor('claude-opus-4-5', { now: AFTER_FLIP }).in, 5.0);
+    assert.equal(priceFor('claude-opus-4-1-20250805', { now: AFTER_FLIP }).in, 9.0);
+  });
+  // Live, with the registry empty again, the audit is clean — and vacuous, which
+  // is why the bite above is asserted inside the block rather than trusted here.
+  assert.deepEqual(
+    orphanedOverlayRows(Object.keys(PRICES), Object.keys(PRICES_DATED)), []);
 });
