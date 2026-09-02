@@ -1463,26 +1463,38 @@ test('seed: shipped team prompts brief their load-bearing protocol verbs', () =>
   assert.match(reviewer, /review-done/, 'reviewer prompt briefs the review-done closing intent');
 });
 
-// The comment rule lived only in .claude/CLAUDE.md, which is gitignored and absent
-// from every ticket worktree — so no hand had ever received it, and comment density
-// in the 31 files a July decomment pass stripped went 9.8% -> 22.3%. Pinned in BOTH
-// prompts because they cover different halves: the hand must not write them, and the
-// reviewer must not prescribe growing them. The reviewer half is the load-bearing
-// one — asking for qualifiers instead of a deletion is what grew the files while the
-// code stood still.
+// The prompts are still the only comment guidance a hand receives: the rule's other
+// home, .claude/CLAUDE.md, is gitignored and absent from every ticket worktree. What
+// changed is the division of labour. `test/comment-ratchet.test.js` now carries the
+// QUANTITY half mechanically, so the prompts keep only what a line count cannot see:
+// the criterion a surviving comment must meet, the escape hatch that stops a hand
+// reading the zero budget and a real need as a contradiction, and — the load-bearing
+// half — deletion rather than qualification as the repair, on both sides. A reviewer
+// asking for qualifiers is what grew the files while the code stood still, and it
+// moves no line count, so no gate reaches it.
 test('seed: shipped team prompts carry the comment rule, in both directions', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   assert.match(hand, /A comment earns\s+its place only by naming a WRONG CHANGE it prevents/,
     'hand prompt states the earns-its-place bar');
-  assert.match(hand, /Never restate in English what the line above says in code/,
-    'hand prompt forbids the code-and-English duplication');
-  assert.match(hand, /it belongs in `docs\/`, not in the source/,
-    'hand prompt routes long explanation to docs/ rather than the source');
+  assert.match(hand, /comment-ratchet\.test\.js/,
+    'hand prompt names the gate that now enforces the quantity half');
+  assert.match(hand, /a file new on\s+your branch ships with zero/,
+    'and the budget a new file gets, which is the arm a hand hits first');
+  assert.match(hand, /docs\/notes\/<module>\.md/,
+    'hand prompt gives the escape hatch for a fact the code cannot express');
+  assert.match(hand, /never by line number/,
+    'which carries the line-number rot rule onto notes, where the sweep patterns do not reach');
+  assert.match(hand, /Prefer DELETING a stale or over-wide comment to rewriting it/,
+    'hand prompt keeps deletion over rewriting — a rewrite moves no line count');
   const reviewer = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-reviewer.md'), 'utf-8');
   assert.match(reviewer, /DELETING IS THE DEFAULT REPAIR/,
     'reviewer prompt makes deletion the default repair for an over-wide comment');
   assert.match(reviewer, /Qualifying is the exception/,
     'reviewer prompt marks qualifying as the exception, not the reflex');
+  assert.match(reviewer, /A comment ADDED\s+in a touched hunk, or one KEPT there that the changed code no longer backs, is\s+a finding/,
+    'reviewer prompt makes an added or falsified comment in a touched hunk a finding');
+  assert.match(reviewer, /counts lines and cannot read them/,
+    'and says why it reaches only the reviewer: an equal-length swap passes the ratchet');
 });
 
 // Both halves reach defects a code-identity check and a cold review cannot: the

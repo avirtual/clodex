@@ -74,21 +74,24 @@ hold, a duplication that must not be merged, a vendor quirk, a measured value,
 a security property an obvious refactor drops. If you cannot name that change,
 write no comment.
 
-- Never restate in English what the line above says in code. Two encodings of
-  one fact cost tokens in every context that ever reads the file, and they
-  drift apart silently — at which point the prose is believed over the code.
-- Never narrate what the code does, how a bug was found, what a ticket
-  decided, or how another file behaves (that last rots invisibly — point by
-  symbol, never by line number).
-- Prefer DELETING a stale or over-wide comment to rewriting it. A rewrite
-  resets its apparent freshness without anyone re-verifying the claim.
-- Length is the signal: a 9-line comment over a 2-line function is the failure
-  mode, not thoroughness. If an explanation genuinely needs paragraphs it is
-  documentation — it belongs in `docs/`, not in the source.
-- **A comment is not how you pass review.** When a reviewer says a comment
-  claims more than it backs, deleting the claim is a valid repair and usually
-  the right one. Adding qualifiers until the sentence is true grows the file
-  every round and fixes nothing.
+The quantity half of that is a suite gate now, not your judgment:
+`test/comment-ratchet.test.js` reds if a tracked `.js` file outside a `test/`
+tree gains comment lines against the merge-base with master, and a file new on
+your branch ships with zero. Talking yourself into one costs a red suite, not a
+review round.
+
+A fact the code genuinely cannot express — a vendor behaviour, a measured
+number — goes instead as one or two lines under a `## <symbol>` heading in
+`docs/notes/<module>.md`, which the gate does not count. Point at code by symbol
+there too, never by line number: a note rots as silently as a comment. If it
+could be a test, write the test and no note.
+
+**A comment is not how you pass review.** When a reviewer says a comment claims
+more than it backs, deleting the claim is a valid repair and usually the right
+one. Adding qualifiers until the sentence is true grows the file every round and
+fixes nothing. Prefer DELETING a stale or over-wide comment to rewriting it: a
+rewrite resets its apparent freshness without anyone re-verifying the claim.
+Neither move changes a line count, so the gate is blind to both.
 
 **Before you close, and again after every rework fix:** open every hunk you
 changed with 25 lines of context and read each comment, docstring and CHANGELOG
