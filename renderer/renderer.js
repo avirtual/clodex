@@ -6211,7 +6211,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         item.dataset.attention = entry.attention.kind;
         item.dataset.attentionMsg = entry.attention.message || '';
       }
-      if (entry.ticket) item.dataset.ticket = entry.ticket; // open ticket badge (Task 25)
+      if (entry.ticket) item.dataset.ticket = entry.ticket;
     }
     try {
       fitAddon.fit();
