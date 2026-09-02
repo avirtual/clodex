@@ -5664,11 +5664,16 @@ function createSessionManager(deps) {
       const anchor = Math.max(...ripe.map((e) => (typeof e.since === 'number' ? e.since : -1)));
       if (didGrow(anchor, this._seatTranscriptSize(session.name))) {
         log.info('intent', `dm confirmation for ${session.name} withdrawn — its transcript grew past ${anchor} bytes since the write, so the seat consumed input and the activity edge was simply missed`);
-        // Dropped with the ripe set rather than carried forward: overflow records
-        // are older than everything ripe by construction, so the growth that
-        // vindicates the ripe set covers them too. Kept, they would report the same
-        // silence one window later on evidence already refuted.
+        // BOTH residues go, for one reason: growth refutes the seat's silence, and
+        // anything still describing that silence would be spent on refuted
+        // evidence. Overflow records are older than everything ripe by
+        // construction, so they would be reported one window later. And
+        // `_dmUnconfirmedLast` outlives its own report by design — it is what
+        // _dmLatchEvidence hands the stall sweep — so a report fired at an earlier
+        // window survives into this one and has the sweep attribute the seat's
+        // quiet to a swallowed dm that this branch just proved was read.
         session._dmOverflow = null;
+        session._dmUnconfirmedLast = null;
         if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
         return;
       }
@@ -5688,9 +5693,10 @@ function createSessionManager(deps) {
       // window rather than one report ever. The repetition is the feature: it is
       // how a sender whose message arrived after an earlier report gets told.
       if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
-      // Kept, not discarded, and cleared only by a turn: this is what lets the
-      // stall sweep attribute a silent seat to a swallowed dm rather than to
-      // stalled work, which is the misattribution the sweep makes today.
+      // Kept, not discarded: this is what lets the stall sweep attribute a silent
+      // seat to a swallowed dm rather than to stalled work, which is the
+      // misattribution the sweep makes today. Cleared by a turn, and by the
+      // withdrawal above — both are proof the seat was not silent after all.
       // ACCUMULATES across reports — a sustained wedge fires repeatedly, and
       // replacing here would shrink the evidence to the last window during
       // exactly the stall the attribution exists for.
@@ -5761,7 +5767,8 @@ function createSessionManager(deps) {
     // Evidence for the stall sweep: has this seat a live or recently-expired
     // unconfirmed-dm latch? Both sets are returned as one span because they are
     // the same silence — `_dmUnconfirmedLast` holds what a fired report covered
-    // and is cleared by a turn, so anything in it is still unaccounted for.
+    // and is cleared by anything that refutes that silence (a turn, or the
+    // deadline check's growth withdrawal), so what remains is still unaccounted for.
     _dmLatchEvidence(seatName) {
       const s = this.sessions.get(seatName);
       if (!s) return null;

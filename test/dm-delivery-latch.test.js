@@ -1009,9 +1009,9 @@ test('t616: a seat whose transcript GREW since the write is not reported — the
 test('t616: a FLAT transcript still reports — the mechanism is narrowed, not deleted', async () => {
   const { app, target } = await swallowed({ prepare: (a, t) => transcript(a, t.name, 100) });
   try {
-    // Deliberately NOT grown. A genuinely swallowed dm is a real failure this
-    // catches, and a probe that suppressed here would delete the mechanism under
-    // cover of fixing it — which every other test in this section would pass.
+    // Deliberately NOT grown. A genuinely swallowed dm is a real failure the latch
+    // exists to catch, and a probe that suppressed here would delete the mechanism
+    // under cover of fixing it.
     const before = app.seen('sender');
     ripen(target);
     app.m._checkDmConfirm(target);
@@ -1112,12 +1112,40 @@ test('t616: growth withdraws the whole ripe set and its overflow, not one entry'
       'and no broadcast');
     assert.strictEqual(target._dmOverflow, null,
       'the overflow records are dropped with the ripe set rather than surviving into a later report');
-    // Falsy, not `null`: the withdrawal never touches this field, so its pristine
-    // `undefined` is the passing state and pinning the literal would assert that
-    // the withdrawal WRITES a null it has no reason to write.
-    assert.ok(!target._dmUnconfirmedLast,
-      'and nothing is recorded as reported: `_dmUnconfirmedLast` feeds the stall sweep`s attribution, so a '
-      + 'withdrawn report left there would have the sweep blame a swallowed dm for a seat that read it');
+  } finally { app.stop(); }
+});
+
+test('t616: a withdrawal clears the residue of an EARLIER report, or the stall sweep keeps citing it', async () => {
+  let tx;
+  const { app, target } = await swallowed({ prepare: (a, t) => { tx = transcript(a, t.name, 10); } });
+  try {
+    // Window 1: no growth, so the report really fires and sets the residue. This
+    // has to be CONSTRUCTED — the withdrawal branch never writes this field and
+    // the fixture never sets it, so asserting over a pristine `undefined` would
+    // be vacuous and would pass against code that clears nothing.
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    await settled(app, 'sender', /has not started a turn/);
+    assert.ok(target._dmUnconfirmedLast && target._dmUnconfirmedLast.entries.length === 1,
+      'ENTER: window 1 must leave a REAL residue — it outlives its own report by design, which is the whole '
+      + 'reason a later withdrawal has something to clear');
+    assert.ok(app.m._dmLatchEvidence('target'),
+      'ENTER: and the stall sweep can see it — this is the consumer the property is about, so a fixture where '
+      + 'the evidence is already absent would pin nothing');
+
+    // Window 2: a second dm, and this time the seat demonstrably consumed input.
+    app.m._armDmConfirm('target', 'sender', 'injected');
+    tx.grow(64);
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(target._dmUnconfirmedLast, null,
+      'the withdrawal must clear the earlier report`s residue. Left there, `_dmLatchEvidence` keeps returning '
+      + 'it and the stall sweep attributes the seat`s quiet to a swallowed dm on evidence this very branch '
+      + 'just refuted — the same argument that already drops `_dmOverflow` three lines above it');
+    assert.strictEqual(app.m._dmLatchEvidence('target'), null,
+      'and the sweep`s own accessor now reports nothing outstanding: the field is only interesting through '
+      + 'this consumer, so asserting the field alone would not show the misattribution closing');
   } finally { app.stop(); }
 });
 
@@ -1131,14 +1159,38 @@ test('t616: a young unit survives the withdrawal and keeps its own window', asyn
       'ENTER: two units, and only one will be ripe — with both ripe the re-arm below is unreachable');
     tx.grow(64);
     target._dmUnconfirmed[0].at -= 61_000;
+    // The young unit is aged 10s of its 60s window, so a correct re-arm lands near
+    // 50s and a fresh full window lands at 60s. Left at zero age the two are ~60s
+    // apart by less than a millisecond and the band below cannot separate them.
+    target._dmUnconfirmed[1].at -= 10_000;
+    // Production reaches the check from _armDmConfirmTimer's callback, which nulls
+    // the field BEFORE calling it. Calling the check directly leaves the original
+    // delivery's 60s timer live, and every re-arm assertion below would be
+    // satisfied by that stale object without the withdrawal arming anything.
+    clearTimeout(target._dmConfirmTimer);
+    target._dmConfirmTimer = null;
+    const beforeSender = app.seen('sender');
+    const beforeCasts = app.casts.length;
     app.m._checkDmConfirm(target);
     await new Promise((r) => setTimeout(r, 40));
+    // The discriminating pair: the REPORT path also drains the ripe entry and
+    // re-arms, so every assertion below is true of a fired report too. Without
+    // these two this test cannot tell the withdrawal from the thing it replaces.
+    assert.strictEqual(app.seen('sender'), beforeSender,
+      'the ripe unit was WITHDRAWN, not reported — the sender hears nothing');
+    assert.strictEqual(app.casts.slice(beforeCasts)
+      .filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').length, 0,
+      'and no broadcast: the report path drains and re-arms exactly as this branch does, so the drain and the '
+      + 're-arm alone are not evidence of which path ran');
     assert.strictEqual(target._dmUnconfirmed.length, 1,
-      'the ripe unit is drained by the withdrawal, exactly as a report would drain it — leaving it in the '
-      + 'fifo would re-judge it every window forever');
+      'the ripe unit is drained by the withdrawal — leaving it in the fifo would re-judge it every window '
+      + 'forever');
     assert.ok(target._dmConfirmTimer,
       'and the window is RE-ARMED for the young remainder. Returning without re-arming is the mutant that '
-      + 'goes permanently silent on the very next dm to this seat, and it passes every other test here');
+      + 'goes permanently silent on the very next dm to this seat');
+    assert.ok(target._dmConfirmTimer._idleTimeout <= 50_000 && target._dmConfirmTimer._idleTimeout > 45_000,
+      'for the REMAINDER of the young unit\'s 60s window (~50s, since it is 10s old), not a fresh full one — '
+      + 'a full-window re-arm would give that unit two windows before anyone is told');
   } finally { app.stop(); }
 });
 
