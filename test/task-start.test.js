@@ -815,3 +815,112 @@ test('t550: a DELIVERED ticket whose seat died reaches the same holderless sente
   assert.doesNotMatch(said, /reached no seat/,
     'and never the miss wording: this spec was delivered, and telling the lead otherwise sends it looking for a dispatch bug that is not there');
 });
+
+// ── t629: the refusal must not name a recovery that bounces ─────────────────
+//
+// `_resolveAssignee` accepts exactly two things — a key of `team.roles`, or a
+// name in `_teamLiveSeatNames`. Both already-started refusals used to
+// interpolate `ticket.role || assignee` raw, and neither of those fields is
+// constrained to be one of the two: a NAME-addressed ticket carries no `role`
+// and falls through to a seat name that is dead by the time this refusal runs,
+// and a role key can be removed from team.json (`team role-remove`) while
+// tickets still carry it. Either way the reply handed the lead a command
+// `assign` then bounces — the same unusable-recovery failure `_taskPark`'s
+// reply already guards against.
+//
+// The fix reads no field's PRESENCE. It asks the resolver, in order, whether
+// `role` then `assignee` is something assign would accept, and falls back to
+// the placeholder the file's other assign suggestions already use. That is why
+// the assertions below run the emitted target back through `_resolveAssignee`
+// rather than matching its spelling: a rewording that reintroduces a bouncing
+// target reds regardless of how it is phrased, which pinning the sentence
+// alone would not catch.
+
+// The target out of `[agent:task assign <id> <target>]`. Deliberately not a
+// loose scan for the seat name anywhere in the reply — the sentence names the
+// dead seat legitimately elsewhere ("`team-hand` holds it"), so a whole-reply
+// match would be satisfied by a bouncing command and by an honest one alike.
+function assignTarget(said, id) {
+  const m = said.match(new RegExp(`\\[agent:task assign ${id} ([^\\]]+)\\]`));
+  assert.ok(m, `the refusal should still name an assign command for ${id} — got: ${said}`);
+  return m[1];
+}
+
+test('t629: a NAME-addressed ticket whose seat died names no assign target rather than the dead name', () => {
+  const f = mkStart();
+  f.seat('lead'); f.seat('team-hand');
+  // Addressed to the SEAT NAME, not the role: `_resolveAssignee` takes a live
+  // seat name too, so this is a supported way to file a ticket and it writes
+  // `assignee: 'team-hand'` with no `role`.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand', id: null, body: 'the spec' });
+  assert.strictEqual(f.one('t1').assignee, 'team-hand',
+    'ENTER: the ticket is pinned to the NAME — a fixture that resolved `who` to the role would test the role path instead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the spec reached team-hand');
+  assert.strictEqual(f.one('t1').role, undefined,
+    'ENTER: and NO role was recorded — that absence is what made the old fallback reach for the seat name');
+
+  f.m.sessions.delete('team-hand');
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), null,
+    'ENTER: nothing resolves now, so the holderless arm is the one under test');
+  // ENTER: the old target really would bounce. Without this the subject passes
+  // on a team where `team-hand` happens to still be acceptable, and the
+  // assertions below would be measuring nothing.
+  assert.strictEqual(f.m._resolveAssignee(f.team, 'team-hand'), null,
+    'ENTER: `assign t1 team-hand` is exactly what the resolver refuses');
+
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const said = f.notes();
+  assert.match(said, /no live seat holds it now/, 'ENTER: the holderless refusal, not an earlier one');
+  const target = assignTarget(said, 't1');
+  assert.strictEqual(target, '<role|name>',
+    'with nothing recoverable to name, the refusal names the PLACEHOLDER — stopping short beats pointing the lead at a command that bounces');
+  // Guessing `hand` from the `team-hand` prefix would resolve and would read as
+  // a fix. It is not one: the seat's role is not what the lead filed, and a seat
+  // whose name does not decompose has no prefix to guess from at all.
+  assert.doesNotMatch(target, /^hand$/, 'and it is not a role guessed out of the dead seat`s name');
+});
+
+test('t629: a role-addressed ticket with no live seat still names the ROLE, which resolves', () => {
+  const f = mkStart();
+  f.seat('lead');   // no team-hand — the role has nothing to resolve to
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.deepStrictEqual(f.gated, [], 'ENTER: the dispatch found nobody, so this ticket is holderless');
+
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const target = assignTarget(f.notes(), 't1');
+  // The half that keeps the fix from being "always print the placeholder": a
+  // recoverable target exists here and must still be named, because a lead handed
+  // `<role|name>` for a ticket whose role is right there has to go look it up.
+  assert.ok(f.m._resolveAssignee(f.team, target) != null,
+    `the named target must be one assign accepts — got ${target}`);
+  assert.strictEqual(target, 'hand', 'and it is the role the ticket was filed under');
+});
+
+test('t629: a live holder whose ticket carries a REMOVED role key falls through to the seat', () => {
+  const f = mkStart();
+  opened(f);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.one('t1').role, 'hand',
+    'ENTER: start re-pinned to the seat and recorded the role it was filed under');
+  assert.strictEqual(f.one('t1').assignee, 'team-hand', 'ENTER: and the pin is the live seat');
+
+  // `team role-remove` deletes the key outright (team-manifest.js), so a ticket
+  // outliving its role is reachable without hand-editing a record.
+  delete f.team.roles.hand;
+  assert.strictEqual(f.m._resolveAssignee(f.team, 'hand'), null,
+    'ENTER: `assign t1 hand` now bounces — the state the old raw `ticket.role` walked into');
+
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const said = f.notes();
+  assert.match(said, /holds it/, 'ENTER: the LIVE-holder arm, which is the second of the two that interpolated the raw field');
+  const target = assignTarget(said, 't1');
+  assert.ok(f.m._resolveAssignee(f.team, target) != null,
+    `the named target must be one assign accepts — got ${target}`);
+  assert.strictEqual(target, 'team-hand',
+    'the live seat is the recoverable target, and it is the seat the same sentence names as the holder');
+});
