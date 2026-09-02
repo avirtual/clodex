@@ -1913,14 +1913,11 @@ function createTicketMethods(deps, shared) {
       // Nothing is destroyed while the seat stays live, so booking nothing there
       // is correct rather than merely safe.
       //
-      // The `booked` latch is defensive only, and currently unexercised: it is a
-      // per-INVOCATION flag, so it guards against two kill sites firing in one
-      // call, which no arm here does — the re-fire is a second invocation with a
-      // fresh closure, and placement alone is what stops it. Removing the latch
-      // breaks no test today. It is kept for the direction it fails in: a future
-      // arm that reaps and books twice writes a WRONG number, while one that
-      // forgets to book loses a row, and a missing number is honest where a wrong
-      // one is not — the same rule the `resolved: false` arm encodes.
+      // The `booked` latch is defensive and currently unexercised — it is
+      // per-INVOCATION, so placement is what stops the re-fire (a second call
+      // with a fresh closure), and removing the latch breaks no test today. Kept
+      // for the direction it fails in: booking twice writes a WRONG number,
+      // forgetting to book loses a row.
       //
       // Runs on the UNPARSED-verdict arm too, deliberately: that seat spent real
       // money and is reaped like any other, so skipping it would make the ledger
