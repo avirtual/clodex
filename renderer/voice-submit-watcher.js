@@ -580,6 +580,18 @@ function createVoiceSubmitWatcher(terminal, {
   // ask, which is why it is not folded back into cursorRow(): the composition
   // half never reads the buffer, so it would inherit no decline from a check
   // that lives in the buffer read.
+  //
+  // THE CLI'S OWN FULLSCREEN RENDERER TRIPS THIS, PERMANENTLY, and it is the
+  // only cause that does not clear itself. `/tui fullscreen` (or
+  // CLAUDE_CODE_NO_FLICKER=1) moves the whole Claude TUI onto the alternate
+  // buffer and is sticky across restarts, so every screen read here declines
+  // for as long as it is set: the popover reads 'Cannot read the screen' and
+  // scripts/clodex-voice-tap.js writes nothing. Voice verbs that never scrape
+  // — mode, speech, select — keep working, which is what makes the fault look
+  // like a broken tap rather than a blind renderer. Confirmed against a live
+  // seat 2026-09-02. Do not weaken this decline to accommodate it: the fix is
+  // the operator switching renderers, and a scrape of that buffer would read a
+  // repainted TUI, not a composer.
   function onNormalBuffer() {
     try {
       if (terminal.buffer.active.type === 'normal') return true;

@@ -85,7 +85,12 @@ const RECORDER_TICK_MS = COMPOSITION_POLL_MS;
 const RECORDER_STATES = {
   lit: { cls: 'rec-lit', text: 'Recording', hint: 'Clodex sees the recorder running — click to stop it (declines while a draft is in the composer, since the key would SEND it)' },
   busy: { cls: 'rec-busy', text: 'Processing', hint: 'The CLI is finishing the last utterance — Clodex will not write to it now' },
-  unreadable: { cls: 'rec-unreadable', text: 'Cannot read the screen', hint: 'Clodex cannot see the indicator, so it will not write — a re-arm is blocked while this shows' },
+  // The REMEDY, not just the cause: the alternate-buffer cause is usually the
+  // CLI's own fullscreen renderer, which is sticky across restarts, so an
+  // operator reading only the mechanism has no reason to suspect a setting he
+  // can change and every reason to think the feature is broken. Measured on a
+  // live seat: it cost hours.
+  unreadable: { cls: 'rec-unreadable', text: 'Cannot read the screen', hint: 'Clodex cannot see the indicator, so it will not write — a re-arm is blocked while this shows. If the CLI is in fullscreen mode (/tui fullscreen), /tui switches back' },
   off: { cls: 'rec-off', text: 'Not recording', hint: 'Clodex sees no recorder running' },
 };
 

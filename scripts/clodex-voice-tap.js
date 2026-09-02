@@ -39,6 +39,16 @@
 // STOPS it, and losing the sentence the operator is speaking is far worse than
 // making him say a wake word twice.
 //
+// SO A SUCCESSFUL RUN OF THIS SCRIPT IS NOT A TAP. It exits 0 once the envelope
+// is delivered; whether a key followed is the renderer's call and is not
+// reported back. The one cause seen in the field is the Claude CLI's fullscreen
+// renderer (`/tui fullscreen`, or CLAUDE_CODE_NO_FLICKER=1), which puts the TUI
+// on the alternate screen buffer and is sticky across restarts — the screen read
+// then declines forever and this script is silently dead, while `select`, `mode`
+// and `speech` keep working because they never scrape. `/tui` switches back.
+// Diagnose from the voice popover: it reads 'Cannot read the screen' and its
+// tooltip names the cause.
+//
 // Node builtins only, by the same rule as scripts/clodex-team.js: this runs
 // from a shortcut with no install step and no dependency on the app's tree.
 
