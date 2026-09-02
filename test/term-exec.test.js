@@ -453,6 +453,88 @@ test('a bare prompt mark does not type — a redraw is not our interrupt', () =>
     'the command still goes out on the cap — rejected, not wedged');
 });
 
+test('a prompt mark whose status is NOT an interrupt does not type', () => {
+  // The same shape with the status present and wrong: the previous command
+  // finished normally and its precmd drew a prompt while our signal was still
+  // in flight. `D;0` says a command ended well — it says nothing about a SIGINT,
+  // and treating any D+A pair as the acknowledgement would readmit the whole
+  // race under a longer name.
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+
+  proc.emit(`${D(0)}${A}`);
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'a prompt reporting a clean exit is filtered out — only 128+SIGINT passes');
+
+  // And the real one still works afterwards — the guard rejects the impostor
+  // without wedging the exec, which would trade a rare corruption for a hang.
+  proc.emit(INTR);
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'the interrupt mark that follows still releases the command');
+});
+
+// KNOWN LIMITATION, PINNED DELIBERATELY. This test asserts the CURRENT
+// behaviour, and that behaviour is a race we chose not to close — read it as a
+// record of the gap, not as a property worth preserving.
+//
+// `$?` is latched: after any interrupt the shim re-emits `D;130` then `A` on
+// every prompt cycle until a command actually runs. Measured on real zsh and
+// bash — a ^C followed by three bare Enters reports 130 all four times, and
+// only running `true` clears it to 0. So a pair that has nothing to do with our
+// ^C can arrive after we write it (the operator pressing Enter is enough) and
+// releases the command exactly as the real acknowledgement would.
+//
+// Nothing in this file distinguished those two cases before, and that absence is
+// what let "a token that cannot predate the signal" stand in the prose for two
+// rounds. The claim was only ever measured in the direction ^C -> 130; it was
+// never measured 130 -> ^C.
+//
+// NOT closed on purpose: the only fix that would work is refusing the fast path
+// whenever a 130 is ambiguous, which means paying the silence deadline on every
+// exec that follows an interrupt, to buy a window the clocks already backstop.
+// A shim-side nonce could close it properly; that is a larger change than this
+// ticket, and the clocks make it a latency question rather than a correctness
+// one.
+test('a STALE interrupt status still releases the command — the residual race', () => {
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: our ^C is out and unprocessed — nothing typed yet');
+
+  // A prompt cycle that is NOT our interrupt's: the latch re-reporting an older
+  // 130. Indistinguishable from the real reply on arrival, which is the point.
+  proc.emit(INTR);
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'the stale pair releases the command — the residual window this fix does NOT close');
+});
+
+test('an interrupt status does not carry across an intervening prompt', () => {
+  // The status is only good for the A that belongs to it. A `130` left standing
+  // would make the NEXT unrelated redraw look like an interrupt's — the same
+  // defect one prompt later, and the one a naive "remember we saw 130" would
+  // introduce. Both marks arrive here in one read, which is how a real shell
+  // sends them: measured 30/30 prompt cycles on zsh and bash, D and A never
+  // split across reads.
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  const proc = spawn.spawned[0];
+
+  // An interrupt BEFORE our exec — the operator's own ^C, its 130 already in
+  // the stream when we write ours.
+  proc.emit(INTR);
+  w.exec('ws-1', 'alice', 'ls');
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: our signal is out and nothing is typed yet — the stale 130 predates it');
+
+  proc.emit(A);
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'the earlier interrupt does not vouch for this prompt');
+});
+
 // ── the NUDGE ───────────────────────────────────────────────────────────────
 // This state — the shell spoke, drew a prompt, and none of it carried an
 // interrupt status — is where every measured corruption happened. Correlated
@@ -549,88 +631,6 @@ test('the nudge cannot signal a LATER exec', () => {
   nudge.fn();
   assert.deepStrictEqual(proc.written, before,
     "the stale nudge writes nothing — a ^C here would abandon the second exec's line");
-});
-
-test('a prompt mark whose status is NOT an interrupt does not type', () => {
-  // The same shape with the status present and wrong: the previous command
-  // finished normally and its precmd drew a prompt while our signal was still
-  // in flight. `D;0` says a command ended well — it says nothing about a SIGINT,
-  // and treating any D+A pair as the acknowledgement would readmit the whole
-  // race under a longer name.
-  const { w, spawn } = mk();
-  w.spawn('ws-1', 'alice', {});
-  w.exec('ws-1', 'alice', 'ls');
-  const proc = spawn.spawned[0];
-
-  proc.emit(`${D(0)}${A}`);
-  assert.deepStrictEqual(proc.written, [CTRL_C],
-    'a prompt reporting a clean exit is filtered out — only 128+SIGINT passes');
-
-  // And the real one still works afterwards — the guard rejects the impostor
-  // without wedging the exec, which would trade a rare corruption for a hang.
-  proc.emit(INTR);
-  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
-    'the interrupt mark that follows still releases the command');
-});
-
-// KNOWN LIMITATION, PINNED DELIBERATELY. This test asserts the CURRENT
-// behaviour, and that behaviour is a race we chose not to close — read it as a
-// record of the gap, not as a property worth preserving.
-//
-// `$?` is latched: after any interrupt the shim re-emits `D;130` then `A` on
-// every prompt cycle until a command actually runs. Measured on real zsh and
-// bash — a ^C followed by three bare Enters reports 130 all four times, and
-// only running `true` clears it to 0. So a pair that has nothing to do with our
-// ^C can arrive after we write it (the operator pressing Enter is enough) and
-// releases the command exactly as the real acknowledgement would.
-//
-// Nothing in this file distinguished those two cases before, and that absence is
-// what let "a token that cannot predate the signal" stand in the prose for two
-// rounds. The claim was only ever measured in the direction ^C -> 130; it was
-// never measured 130 -> ^C.
-//
-// NOT closed on purpose: the only fix that would work is refusing the fast path
-// whenever a 130 is ambiguous, which means paying the silence deadline on every
-// exec that follows an interrupt, to buy a window the clocks already backstop.
-// A shim-side nonce could close it properly; that is a larger change than this
-// ticket, and the clocks make it a latency question rather than a correctness
-// one.
-test('a STALE interrupt status still releases the command — the residual race', () => {
-  const { w, spawn } = mk();
-  w.spawn('ws-1', 'alice', {});
-  w.exec('ws-1', 'alice', 'ls');
-  const proc = spawn.spawned[0];
-  assert.deepStrictEqual(proc.written, [CTRL_C],
-    'ENTER: our ^C is out and unprocessed — nothing typed yet');
-
-  // A prompt cycle that is NOT our interrupt's: the latch re-reporting an older
-  // 130. Indistinguishable from the real reply on arrival, which is the point.
-  proc.emit(INTR);
-  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
-    'the stale pair releases the command — the residual window this fix does NOT close');
-});
-
-test('an interrupt status does not carry across an intervening prompt', () => {
-  // The status is only good for the A that belongs to it. A `130` left standing
-  // would make the NEXT unrelated redraw look like an interrupt's — the same
-  // defect one prompt later, and the one a naive "remember we saw 130" would
-  // introduce. Both marks arrive here in one read, which is how a real shell
-  // sends them: measured 30/30 prompt cycles on zsh and bash, D and A never
-  // split across reads.
-  const { w, spawn } = mk();
-  w.spawn('ws-1', 'alice', {});
-  const proc = spawn.spawned[0];
-
-  // An interrupt BEFORE our exec — the operator's own ^C, its 130 already in
-  // the stream when we write ours.
-  proc.emit(INTR);
-  w.exec('ws-1', 'alice', 'ls');
-  assert.deepStrictEqual(proc.written, [CTRL_C],
-    'ENTER: our signal is out and nothing is typed yet — the stale 130 predates it');
-
-  proc.emit(A);
-  assert.deepStrictEqual(proc.written, [CTRL_C],
-    'the earlier interrupt does not vouch for this prompt');
 });
 
 test('the command is typed exactly once when the mark AND the clocks both fire', () => {
