@@ -11,11 +11,16 @@ const MODAL_OVERLAY_IDS = [
   'sandbox-overlay',
   'file-peek-overlay',
   'report-overlay',
+  'prompt-editor',
+  'agent-editor',
+  'skill-editor',
+  'exec-editor',
 ];
 
 const MODAL_OVERLAY_CLASSES = [
   'prompt-modal-overlay',
   'plugin-overlay',
+  'clx-modal-bg',
 ];
 
 function openOverlayIds({ byId, byClass }) {

@@ -17,11 +17,18 @@
 // see it. The source-shape subjects at the bottom cover what no fixture can —
 // what renderer.js actually passes and calls.
 //
-// The first fix here derived the modal population from index.html and shipped a
-// hole: that file holds the modals the markup DECLARES, not the ones script
-// builds, and both runtime-created families were live archive paths while this
-// file was green. Hence two completeness subjects over two different input sets.
-// A guarded reducer over the wrong input set still measures nothing.
+// The completeness subjects are where this file has failed before, twice, the
+// same way: a check derived a population and was believed, while the population
+// was smaller than the thing it claimed to cover. First it read only index.html
+// — the modals the markup DECLARES, not the ones script builds. Then, widened,
+// it read only two directories and matched only the token "overlay", so a
+// backdrop in renderer/web/ named clx-modal-bg was invisible twice over.
+//
+// So every scan below names BOTH of its input sets and floors each: the files it
+// reads AND the pattern it matches. Guarding one is a green suite over a live
+// defect. The id scan takes its evidence from the CSS (position:fixed; inset:0)
+// rather than from the name, because four -editor modals were missed by a name
+// that simply did not contain the word.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -88,9 +95,9 @@ test('with each overlay open in turn, Cmd+W archives NOTHING', () => {
   // Table-driven over the real population rather than a handful of spot checks:
   // the population is the thing that was wrong, so a test naming three ids by
   // hand would have passed at the base commit for the three it named.
-  assert.ok(MODAL_OVERLAY_IDS.length >= 10,
-    `ENTER: the overlay list must still hold every declared modal, got ${MODAL_OVERLAY_IDS.length}`);
-  assert.ok(MODAL_OVERLAY_CLASSES.length >= 2,
+  assert.ok(MODAL_OVERLAY_IDS.length >= 14,
+    `ENTER: the declared-modal list must not shrink, got ${MODAL_OVERLAY_IDS.length}`);
+  assert.ok(MODAL_OVERLAY_CLASSES.length >= 3,
     `ENTER: the runtime-created modal families must be in the population, got ${MODAL_OVERLAY_CLASSES.length}`);
 
   for (const id of [...MODAL_OVERLAY_IDS, ...MODAL_OVERLAY_CLASSES]) {
@@ -180,6 +187,45 @@ test('a plugin overlay that is present but HIDDEN does not block the chord', () 
   assert.deepStrictEqual(calls.archived, ['clodex'], 'a closed plugin overlay must not block anything');
 });
 
+test('a web-frontend dialog box blocks the archive', () => {
+  // api-shim's clx-modal-bg: the browser frontend's stand-in for every native
+  // dialog — peer restart/update confirmations, the transcript save box, the
+  // directory picker degraded to a typed path. Removed on dismiss, like the
+  // prompt family, so the same !hidden arm covers it.
+  const [calls, actions] = spies();
+  const result = performCloseChord({ ...localSession, ...fakeDom(['clx-modal-bg']) }, actions);
+  assert.deepStrictEqual(calls.archived, [],
+    'Alt+W meaning "dismiss this box" archived the session behind it');
+  assert.strictEqual(result, 'overlay-open-nothing-closed');
+});
+
+test('a web dialog raised FROM the New Session dialog closes neither', () => {
+  // The sibling of the prompt sub-case, through a door the first two rounds did
+  // not check: btn-browse inside the New Session dialog is NOT hidden on the web
+  // frontend, so it raises a clx-modal-bg path box over the open dialog. With
+  // only the id census the open set was ['dialog-overlay'] alone and Cmd+W hid
+  // the dialog underneath the box being typed into.
+  const [calls, actions] = spies();
+  const result = performCloseChord(
+    { ...localSession, ...fakeDom(['dialog-overlay', 'clx-modal-bg']) }, actions);
+  assert.deepStrictEqual(calls.closed, [], 'the dialog under the box must stay put');
+  assert.deepStrictEqual(calls.archived, []);
+  assert.strictEqual(result, 'overlay-open-nothing-closed');
+});
+
+test('each library editor blocks the archive', () => {
+  // Declared in index.html and toggled `hidden` like any id overlay, but named
+  // `-editor`, so the id census's own token predicate could not see them. Each
+  // is position:fixed inset:0 at z-index 200 — a full-screen modal over the
+  // session the chord would archive.
+  for (const id of ['prompt-editor', 'agent-editor', 'skill-editor', 'exec-editor']) {
+    assert.ok(MODAL_OVERLAY_IDS.includes(id), `${id} must be consulted`);
+    const [calls, actions] = spies();
+    performCloseChord({ ...localSession, ...fakeDom([id]) }, actions);
+    assert.deepStrictEqual(calls.archived, [], `Cmd+W with #${id} open archived behind it`);
+  }
+});
+
 // ── the anti-degenerate half ────────────────────────────────────────────────
 
 test('with NO overlay open, Cmd+W still archives the active session', () => {
@@ -235,7 +281,7 @@ test('the New Session dialog UNDER another overlay is NOT closed', () => {
 
 test('anyOverlayOpen is false only when every overlay is hidden', () => {
   assert.strictEqual(anyOverlayOpen(fakeDom([])), false);
-  for (const id of MODAL_OVERLAY_IDS) {
+  for (const id of [...MODAL_OVERLAY_IDS, ...MODAL_OVERLAY_CLASSES]) {
     assert.strictEqual(anyOverlayOpen(fakeDom([id])), true, `#${id} open must count as open`);
   }
 });
@@ -258,85 +304,162 @@ test('openOverlayIds reports every open overlay, so a stack is visible as a stac
 
 // ── the list is complete against index.html ─────────────────────────────────
 
-test('every STATICALLY DECLARED overlay in index.html is in MODAL_OVERLAY_IDS', () => {
-  // The bug was a POPULATION bug, so the population is checked against the
-  // markup rather than against a hand-kept second copy of the same list. This
-  // half sees only what index.html declares; the script-built families are the
-  // companion subject's job, and neither scan covers the other's input. Nesting
-  // is read from indentation: a top-level modal sits at two spaces under <body>,
-  // and #new-session-tool-overlay is deeper because it lives INSIDE the New
-  // Session dialog — it cannot be visible while the dialog is not.
-  const html = read('renderer/index.html').split('\n');
-  const found = [];
-  for (const line of html) {
-    const m = /^(\s*)<div id="([a-z0-9-]*overlay)"/.exec(line);
-    if (m && m[1].length <= 2) found.push(m[2]);
-  }
-  assert.ok(found.length >= 10,
-    `ENTER: the markup scan must still find the overlays, got ${found.length}: ${found.join(',')}`);
-  assert.ok(found.includes('prefs-overlay') && found.includes('report-overlay'),
-    'ENTER: the scan reaches both ends of the file');
+// The markup's own two input sets, same discipline as the class scan: WHICH
+// nodes it reads (top-level divs) and WHICH ids it treats as a modal. The second
+// one was `[a-z0-9-]*overlay` and hid four full-screen editors that simply are
+// not spelled "overlay" — so the id is no longer the evidence. The CSS is:
+// a rule that makes the node position:fixed with inset:0 is what puts it over
+// the session, whatever it is called.
+const EXCLUDED_IDS = {
+  'new-session-tool-overlay': 'nested INSIDE #dialog-overlay, so it cannot be up while the dialog is not',
+};
 
-  const missing = found.filter((id) => !MODAL_OVERLAY_IDS.includes(id));
+function fixedInsetIds() {
+  // Comments are stripped BEFORE the rules are split: a `/* … */` sitting above a
+  // rule is absorbed into the preceding selector chunk, which silently defeats an
+  // anchored `#id` match and makes this scan find nothing. The ENTER below is
+  // what caught that, on this scan's first run.
+  const css = read('renderer/styles.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const ids = new Set();
+  for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const body = m[2];
+    if (!/position:\s*fixed/.test(body) || !/inset:\s*0/.test(body)) continue;
+    for (const sel of m[1].split(',')) {
+      const id = /^\s*#([a-z0-9-]+)\s*$/.exec(sel);
+      if (id) ids.add(id[1]);
+    }
+  }
+  return ids;
+}
+
+test('every STATICALLY DECLARED modal in index.html is in MODAL_OVERLAY_IDS', () => {
+  // The population is checked against the markup and the stylesheet rather than
+  // a hand-kept second copy of the list. A top-level div whose id the CSS makes
+  // a full-viewport backdrop IS a modal, regardless of what it is named — that
+  // is the evidence the previous name-matching version lacked, and four editors
+  // (#prompt-editor, #agent-editor, #skill-editor, #exec-editor: fixed, inset:0,
+  // z-index 200) were live archive paths behind it.
+  const html = read('renderer/index.html').split('\n');
+  const topLevel = [];
+  for (const line of html) {
+    const m = /^(\s*)<div id="([a-z0-9-]+)"/.exec(line);
+    if (m && m[1].length <= 2) topLevel.push(m[2]);
+  }
+  const backdrops = fixedInsetIds();
+  assert.ok(topLevel.length >= 20,
+    `ENTER: the markup scan must not collapse, got ${topLevel.length}`);
+  assert.ok(backdrops.size >= 6,
+    `ENTER: the stylesheet scan must find the backdrop rules, got ${backdrops.size}`);
+  for (const id of ['prefs-overlay', 'report-overlay', 'prompt-editor']) {
+    assert.ok(topLevel.includes(id), `ENTER: ${id} must survive the markup scan`);
+  }
+  assert.ok(backdrops.has('prompt-editor'),
+    'ENTER: the CSS evidence must reach an id that is not spelled "overlay"');
+
+  const found = topLevel.filter((id) => backdrops.has(id) || id.endsWith('-overlay'));
+
+  // The CSS evidence must be what SELECTS the population, not merely computed
+  // beside it. Asserted on `found` itself rather than on a set built alongside
+  // it: dropping the `backdrops.has(id)` arm leaves `missing` empty — and this
+  // subject green — for exactly as long as every backdrop happens to be guarded,
+  // which is the state that makes the check look unnecessary right up until it
+  // is needed.
+  const cssOnly = found.filter((id) => !id.endsWith('-overlay'));
+  assert.ok(cssOnly.length >= 4,
+    `ENTER: the CSS arm must put ids in the population the name arm cannot, got ${cssOnly.join(',') || 'none'}`);
+
+  const missing = found.filter((id) => !MODAL_OVERLAY_IDS.includes(id) && !(id in EXCLUDED_IDS));
   assert.deepStrictEqual(missing, [],
     'a modal in the markup that no chord consults is a session archived behind it');
 });
 
-// A class token is EXCLUDED only with a reason, and a reason that would stop
-// being true is the kind this map exists to make visible. A token here that is
-// also guarded, or that no longer appears in the source, reds below.
+// The class scan's counterpart map. A token here that is also guarded, or that
+// no longer appears in the source, reds below.
+//
+// THE LINE BEING DRAWN, stated so it is not re-derived wrongly: a modal is a
+// FULL-VIEWPORT BACKDROP (position:fixed; inset:0) covering the session the
+// chord would act on. An anchored popover or dropdown is not — it is dismissed
+// by clicking away, what is behind it stays visible, and guarding one would
+// deaden the chords for a surface that never hid anything.
 const EXCLUDED_CLASSES = {
   'tool-overlay-tool': 'a row inside the new-session tool notice, not a backdrop',
   'tool-overlay-cmd': 'ditto — the install command line inside that notice',
   'team-create-overlay': 'a modifier ON a prompt-modal-overlay node, which is itself guarded',
+  'prompt-modal': 'the panel INSIDE prompt-modal-overlay; the backdrop is what is guarded',
+  'clx-modal': 'the panel inside clx-modal-bg — same shape, web frontend',
+  'clx-modal-btns': 'a button row inside clx-modal, two levels below the backdrop',
 };
 
+// Both of this check's input sets are named here, because guarding one and
+// leaving the other unguarded is a green suite over a live defect — which is how
+// clx-modal-bg survived a round twice over: it sat in a directory the sweep did
+// not read, AND it is not spelled "overlay".
+const CLASS_SCAN_DIRS = ['renderer', 'renderer/popovers', 'renderer/web'];
+const BACKDROP_TOKEN = /overlay|modal|backdrop|scrim/;
+
 function overlayClassTokens() {
-  const files = [
-    ...fs.readdirSync(path.join(ROOT, 'renderer'))
-      .filter((f) => f.endsWith('.js')).map((f) => path.join('renderer', f)),
-    ...fs.readdirSync(path.join(ROOT, 'renderer', 'popovers'))
-      .filter((f) => f.endsWith('.js')).map((f) => path.join('renderer', 'popovers', f)),
-  ];
+  const files = [];
+  for (const d of CLASS_SCAN_DIRS) {
+    for (const f of fs.readdirSync(path.join(ROOT, d))) {
+      if (f.endsWith('.js')) files.push(path.join(d, f));
+    }
+  }
   const found = new Map();
   for (const f of files) {
     const src = read(f);
-    for (const m of src.matchAll(/className\s*=\s*['"`]([^'"`]*)['"`]/g)) {
+    const literals = [
+      ...src.matchAll(/className\s*=\s*['"`]([^'"`]*)['"`]/g),
+      ...src.matchAll(/class=\\?["']([^"'\\]*)/g),
+    ];
+    for (const m of literals) {
       for (const tok of m[1].split(/\s+/)) {
-        if (tok.includes('overlay') && !found.has(tok)) found.set(tok, f);
+        if (BACKDROP_TOKEN.test(tok) && !found.has(tok)) found.set(tok, f);
       }
     }
   }
   return { files, found };
 }
 
-test('every overlay class CREATED IN SCRIPT is guarded or excluded with a reason', () => {
-  // The companion to the index.html scan, and the one the first round lacked.
-  // index.html is not the population of modals — it is the population of
-  // STATICALLY DECLARED ones, so a scan over it alone is structurally unable to
-  // see a backdrop that document.createElement builds. Both dynamic families
-  // were live archive paths while that scan sat green.
+test('every modal class CREATED IN SCRIPT is guarded or excluded with a reason', () => {
+  // index.html is not the population of modals — it is the population of the
+  // STATICALLY DECLARED ones, so a scan over it alone cannot see a backdrop that
+  // document.createElement builds.
+  //
+  // This scan's own two input sets are floored below, in the order they failed:
+  // the DIRECTORIES it reads (renderer/web/ was outside them) and the PATTERN it
+  // matches (`includes('overlay')` cannot see `clx-modal-bg`). A floor on one is
+  // not a floor on the other.
   const { files, found } = overlayClassTokens();
-  assert.ok(files.length >= 20,
-    `ENTER: the renderer file sweep must not collapse, got ${files.length}`);
-  assert.ok(found.has('prompt-modal-overlay') && found.has('plugin-overlay'),
-    `ENTER: both runtime-created modal families must be FOUND by this scan, got ${[...found.keys()].join(',')}`);
+  assert.ok(files.length >= 28,
+    `ENTER: the file sweep must not collapse, got ${files.length}`);
+  for (const d of CLASS_SCAN_DIRS) {
+    assert.ok(files.some((f) => path.dirname(f) === d),
+      `ENTER: ${d} contributed no files — a dropped directory is a silent blind spot`);
+  }
+  for (const cls of ['prompt-modal-overlay', 'plugin-overlay', 'clx-modal-bg']) {
+    assert.ok(found.has(cls),
+      `ENTER: ${cls} must be FOUND by this scan, got ${[...found.keys()].join(',')}`);
+  }
 
   const unaccounted = [...found.keys()]
     .filter((c) => !MODAL_OVERLAY_CLASSES.includes(c) && !(c in EXCLUDED_CLASSES));
   assert.deepStrictEqual(unaccounted, [],
-    'an overlay class built in script that no chord consults is a session archived behind it');
+    'a modal class built in script that no chord consults is a session archived behind it');
 });
 
 test('no exclusion is stale, and none shadows a guarded class', () => {
   // A stale escape hatch is rot wearing the shape of a rule: an excluded token
-  // that no longer exists stops documenting anything, and one that is ALSO
-  // guarded reads as a decision not to guard it.
+  // that no longer exists documents nothing, and one that is ALSO guarded reads
+  // as a decision not to guard it.
   const { found } = overlayClassTokens();
   for (const [cls, why] of Object.entries(EXCLUDED_CLASSES)) {
     assert.ok(found.has(cls), `${cls} is excluded but no longer appears in the source — drop the exclusion`);
     assert.ok(!MODAL_OVERLAY_CLASSES.includes(cls), `${cls} is both guarded and excluded`);
     assert.ok(why.length > 20, `${cls} needs a reason, not a placeholder`);
+  }
+  for (const [id, why] of Object.entries(EXCLUDED_IDS)) {
+    assert.ok(!MODAL_OVERLAY_IDS.includes(id), `${id} is both guarded and excluded`);
+    assert.ok(why.length > 20, `${id} needs a reason, not a placeholder`);
   }
 });
 
@@ -385,6 +508,16 @@ test('renderer.js hands the guard BOTH probes, not just the id lookup', () => {
   assert.ok(probes, 'ENTER: the probes object is still assembled in one place');
   assert.match(probes[0], /byId:/);
   assert.match(probes[0], /byClass:/, 'without byClass the runtime-created modals are invisible again');
+
+  // The literal being right is not the same as the call sites USING it whole: a
+  // site that destructures a subset (`{ byId: overlayProbes.byId, … }`) restores
+  // the blind spot while this object still reads correctly.
+  const closeChord = src.match(/function runCloseChord\(\)[\s\S]*?\n\}/);
+  assert.ok(closeChord, 'ENTER: runCloseChord is still the single close-chord entry point');
+  assert.match(closeChord[0], /\.\.\.overlayProbes/, 'the close chord must spread the probes, not pick from them');
+  const calls = [...src.matchAll(/anyOverlayOpen\(([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.deepStrictEqual(calls, ['overlayProbes', 'overlayProbes'],
+    'both handlers must pass the probes object whole');
 });
 
 test('Cmd+T and the switch/search chords are guarded too, not just Cmd+W', () => {

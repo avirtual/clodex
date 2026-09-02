@@ -14,10 +14,11 @@ blocks a release.
 ## Unreleased
 
 - **Cmd+W no longer archives the session hidden behind a dialog.** With
-  Preferences, Edit Session, Peers, Plugins, Sandbox, a plugin's own window, or a
-  name-entry box like Save as Template or Create Team open, Cmd+W went straight
-  past it and archived whatever session was behind it — only the New Session
-  dialog was ever consulted. The other window chords read
+  Preferences, Edit Session, Peers, Plugins, Sandbox, a prompt/agent/skill/exec
+  editor, a plugin's own window, or a name-entry box like Save as Template or
+  Create Team open, Cmd+W went straight past it and archived whatever session was
+  behind it — only the New Session dialog was ever consulted. In the browser
+  frontend the same was true of every confirmation and file box. The other window chords read
   that same single dialog, so they shared the cause without sharing the symptom:
   Cmd+T opened a second dialog on top of the one already up, and Cmd+1..9, Cmd+F
   and the cycle chords switched or searched the terminal underneath. The browser
