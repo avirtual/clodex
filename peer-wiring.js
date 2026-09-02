@@ -185,7 +185,7 @@ function createPeerWiring(deps) {
     for (const p of s.peers || []) {
       if (p.disabled) continue;   // paused: PeerManager.sync sheds it (no connection)
       // Carry the operator auth token so the peer client presents Bearer on a
-      // tokened remote wire (remote-auth-plan.md [internal design doc, not in this repo] §4). Absent for untokened
+      // tokened remote wire. Absent for untokened
       // peers, so the wire to them is unchanged. Tunneled peers hit loopback on
       // the far side and usually need no token — but if that node sets one, it
       // rides through here too.

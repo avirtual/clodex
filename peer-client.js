@@ -114,7 +114,7 @@ class PeerConnection {
     this.id = id;
     this.label = label;
     this.url = url.replace(/\/+$/, '');
-    // Operator auth token for a tokened remote wire (remote-auth-plan.md [internal design doc, not in this repo] §4).
+    // Operator auth token for a tokened remote wire.
     // Presented as `Authorization: Bearer <token>` on every request + SSE stream;
     // null = no header (loopback / untokened peer, unchanged). A token change is a
     // peer restart (PeerManager.sync), so it's fixed for a connection's lifetime.

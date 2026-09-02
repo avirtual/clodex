@@ -1,8 +1,8 @@
 'use strict';
-// plugins/workbench/renderer.js — the workbench pilot's RENDERER half
-// (plugin-plan.md [internal design doc, not in this repo] §4, steps W1-W6). The whole "Workbench" surface: Files
-// (lazy tree + editor), Source Control (git status/stage/discard/commit/branch/
-// remote), and Worktrees, for a chosen session.
+// plugins/workbench/renderer.js — the workbench pilot's RENDERER half.
+// The whole "Workbench" surface: Files (lazy tree + editor), Source Control
+// (git status/stage/discard/commit/branch/remote), and Worktrees, for a
+// chosen session.
 //
 // Everything scopes to the SELECTED session's working directory (dropdown at the
 // top; default = the ACTIVE session), resolved ENGINE-side by name through the

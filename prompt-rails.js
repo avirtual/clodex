@@ -1,6 +1,6 @@
-// prompt-rails.js — rail classification for library system prompts
-// (teams-design.md [internal design doc, not in this repo] "Front door"). Pure leaf: no fs, no electron — the
-// caller supplies { name, body } rows; this only parses strings.
+// prompt-rails.js — rail classification for library system prompts.
+// Pure leaf: no fs, no electron — the caller supplies { name, body } rows;
+// this only parses strings.
 //
 // THE MODEL. The prompt library mixes RAILS: a full replace-class system prompt
 // (the whole prompt) vs an APPEND delta that composes onto the append rail. The

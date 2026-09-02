@@ -1,6 +1,6 @@
 'use strict';
-// plugin-api.js — the pure leaf both plugin-host halves share (plugin-plan.md [internal design doc, not in this repo]
-// §1, §3.1). Constants, id rules, the kill switch, and the invoke error envelope
+// plugin-api.js — the pure leaf both plugin-host halves share. Constants, id
+// rules, the kill switch, and the invoke error envelope
 // live HERE so the engine host, the renderer host, the loader, and the tests all
 // agree by construction instead of by three copies of a string.
 //

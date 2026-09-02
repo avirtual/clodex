@@ -1,8 +1,8 @@
 'use strict';
-// sandbox-view.js — pure presentation decisions for the Sandbox dialog
-// (sandbox-plan.md [internal design doc, not in this repo] M2). Kept as a leaf (no DOM, no window.api) so the
-// copy-selection logic — which is the part with real branches — is unit-tested
-// directly; renderer.js does only the DOM plumbing around these returns.
+// sandbox-view.js — pure presentation decisions for the Sandbox dialog.
+// Kept as a leaf (no DOM, no window.api) so the copy-selection logic — which
+// is the part with real branches — is unit-tested directly; renderer.js does
+// only the DOM plumbing around these returns.
 //
 // NEW module (not a renderer.js extraction), so it is deliberately NOT added to
 // test/free-identifier-leaks.test.js RENDERER_SCANNED_MODULES — that guard gates

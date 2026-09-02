@@ -27,14 +27,14 @@
 // The diff stream remains the evidence for the reviewer's cutover condition
 // (CLODEUX-PLAN.md): est cost within 1%, warmth verdicts exact. The remaining
 // cutover work is pointing the renderer at payload() outright and retiring the
-// 9 poll-era guards (w2-glue-inventory.md [internal design doc, not in this repo]).
+// 9 poll-era guards.
 //
 // Contract with the wire (fable's, wire/proxy.js header):
 //   - consume events only; NOTHING here may touch the client byte path.
 //   - every public method swallows its own errors (a telemetry bug must
 //     degrade to a missing diff line, never to a broken wire listener).
 //
-// Field parity notes (w2-telemetry-flow.md [internal design doc, not in this repo]):
+// Field parity notes:
 //   - cost/turns/refusals/requests: sessionTotals snapshot off ANY
 //     turn.completed for the agent (side-calls and subagents bill into the
 //     same session key, matching the poll record's per-session totals).

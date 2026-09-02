@@ -1,7 +1,7 @@
 'use strict';
-// placement.js — pure decisions for the New Session "Run in" placement selector
-// (sandbox-plan.md [internal design doc, not in this repo] M3, generalized to N boxes in M6b P3). A placement is
-// either 'host' (this Mac) or a sandbox BOX ID: the selector carries the box id as
+// placement.js — pure decisions for the New Session "Run in" placement selector.
+// A placement is either 'host' (this Mac) or a sandbox BOX ID: the selector
+// carries the box id as
 // its <option> value, and everything box-side (create routing, catalogs, cwd) is
 // keyed by that id. 'host' is reserved and can never be a box id (guarded at box
 // create + in the store's sanitizer), so the two value-spaces never collide. A box
