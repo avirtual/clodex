@@ -1138,3 +1138,33 @@ test('t616: a young unit survives the withdrawal and keeps its own window', asyn
       + 'goes permanently silent on the very next dm to this seat, and it passes every other test here');
   } finally { app.stop(); }
 });
+
+test('t616: the anchor is the NEWEST ripe baseline, so old growth cannot vouch for a later dm', async () => {
+  let tx;
+  const { app, target } = await swallowed({ prepare: (a, t) => { tx = transcript(a, t.name, 100); } });
+  try {
+    // The seat consumed dm #1 and wrote 500 bytes doing it — growth that is real,
+    // and that genuinely vindicates dm #1.
+    tx.grow(500);
+    // dm #2 arrives AFTER that growth, so it anchors above it. Armed directly:
+    // the point is the baseline, and a second real delivery would race nothing
+    // useful here.
+    app.m._armDmConfirm('target', 'sender', 'injected');
+    assert.deepStrictEqual(
+      target._dmUnconfirmed.map((e) => e.since), [100, 600],
+      'ENTER: the two units must carry DIFFERENT baselines straddling the growth — equal baselines make max '
+      + 'and min the same number and this test cannot see the property it names');
+    // Nothing since dm #2. It really was swallowed.
+    const before = app.seen('sender');
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    await settled(app, 'sender', /has not started a turn/);
+    assert.ok(app.seen('sender').length > before.length,
+      'the report must still fire. Under `min` the anchor would be 100, the 600-byte transcript would clear '
+      + '`didGrow`, and dm #2 — a genuine swallow — would be withdrawn on the strength of bytes written '
+      + 'BEFORE it was ever sent. That is the false-negative direction this whole design refuses');
+    assert.match(app.seen('sender').slice(before.length), /2 messages were outstanding/,
+      'and both units are reported: the withdrawal is all-or-nothing over the ripe set, so a surviving '
+      + 'anchor means the whole set survives');
+  } finally { app.stop(); }
+});
