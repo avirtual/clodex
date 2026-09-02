@@ -82,8 +82,11 @@ review round.
 
 A fact the code genuinely cannot express — a vendor behaviour, a measured
 number — goes instead as one or two lines under a `## <symbol>` heading in
-`docs/notes/<module>.md`, which the gate does not count. Point at code by symbol
-there too, never by line number: a note rots as silently as a comment. If it
+`docs/notes/<module>.md`, which the gate does not count. `<module>` is the source
+path with its separators flattened to hyphens — `renderer/lib/format.js` is
+`docs/notes/renderer-lib-format.md` — and every `## ` heading must name an
+identifier that file really contains, or the same gate reds on the note. Point at
+code by symbol, never by line number: a note rots as silently as a comment. If it
 could be a test, write the test and no note.
 
 **A comment is not how you pass review.** When a reviewer says a comment claims
@@ -91,7 +94,6 @@ more than it backs, deleting the claim is a valid repair and usually the right
 one. Adding qualifiers until the sentence is true grows the file every round and
 fixes nothing. Prefer DELETING a stale or over-wide comment to rewriting it: a
 rewrite resets its apparent freshness without anyone re-verifying the claim.
-Neither move changes a line count, so the gate is blind to both.
 
 **Before you close, and again after every rework fix:** open every hunk you
 changed with 25 lines of context and read each comment, docstring and CHANGELOG

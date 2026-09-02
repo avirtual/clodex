@@ -1470,8 +1470,7 @@ test('seed: shipped team prompts brief their load-bearing protocol verbs', () =>
 // the criterion a surviving comment must meet, the escape hatch that stops a hand
 // reading the zero budget and a real need as a contradiction, and — the load-bearing
 // half — deletion rather than qualification as the repair, on both sides. A reviewer
-// asking for qualifiers is what grew the files while the code stood still, and it
-// moves no line count, so no gate reaches it.
+// asking for qualifiers is what grew the files while the code stood still.
 test('seed: shipped team prompts carry the comment rule, in both directions', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   assert.match(hand, /A comment earns\s+its place only by naming a WRONG CHANGE it prevents/,
@@ -1482,6 +1481,8 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
     'and the budget a new file gets, which is the arm a hand hits first');
   assert.match(hand, /docs\/notes\/<module>\.md/,
     'hand prompt gives the escape hatch for a fact the code cannot express');
+  assert.match(hand, /separators flattened to hyphens/,
+    'and the note-naming convention the same gate resolves, so the hatch does not red on an orphan');
   assert.match(hand, /never by line number/,
     'which carries the line-number rot rule onto notes, where the sweep patterns do not reach');
   assert.match(hand, /Prefer DELETING a stale or over-wide comment to rewriting it/,
@@ -1491,9 +1492,9 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
     'reviewer prompt makes deletion the default repair for an over-wide comment');
   assert.match(reviewer, /Qualifying is the exception/,
     'reviewer prompt marks qualifying as the exception, not the reflex');
-  assert.match(reviewer, /A comment ADDED\s+in a touched hunk, or one KEPT there that the changed code no longer backs, is\s+a finding/,
-    'reviewer prompt makes an added or falsified comment in a touched hunk a finding');
-  assert.match(reviewer, /counts lines and cannot read them/,
+  assert.match(reviewer, /A comment ADDED\s+in a touched source hunk, or one KEPT there that the changed code no longer\s+backs, is a finding/,
+    'reviewer prompt makes an added or falsified comment in a touched SOURCE hunk a finding — test/ prose is out of ratchet scope by design');
+  assert.match(reviewer, /counts lines and cannot read\s+them/,
     'and says why it reaches only the reviewer: an equal-length swap passes the ratchet');
 });
 
