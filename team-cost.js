@@ -140,14 +140,28 @@ function confineUnder(root, target) {
 
 function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : 0; }
 
-// Sum the persisted per-session ledger across the seat's session history.
+// Sum the per-session ledger across the seat's session history.
 //
 // `known` is reported rather than hidden for the same reason session-info.js
 // reports it: wire-totals.json keeps only the newest 500 sessions, so an old
 // seat's earliest spend is genuinely gone and a total that silently omitted it
 // would read as authoritative. For a ticket seat — minted, used, closed — known
 // should equal total, and a shortfall is the signal that the rollup is a floor.
-function sumSessions(totals, sessionIds) {
+//
+// `live` overrides the file's row for `currentId`, for the reason session-info's
+// sumAgentCost takes the same pair: wire-totals.json is written on a 1s debounce
+// (wire-telemetry `_scheduleSave`), so at any moment reachable from an intent
+// handler the file trails the in-process ledger by the turn that just ended. A
+// rollup taken at a seat's LAST turn — which is what a review close is — would
+// otherwise omit its most expensive turn every single time, and the shortfall
+// would be invisible because `known` counts the id, not its freshness.
+//
+// `live` is a wire-totals ROW (`{cost, requests, inputTokens, …}`), not a
+// WireTelemetry payload — those nest cost under `cost.usd` and tokens under
+// `tokens.input`, and handing one straight in reads every field as absent and
+// contributes a silent zero. The caller converts; this stays a projection of
+// one shape.
+function sumSessions(totals, sessionIds, { currentId = null, live = null } = {}) {
   const sessions = (totals && totals.sessions) || {};
   const out = {
     usd: 0, requests: 0, turns: 0, refusals: 0,
@@ -156,7 +170,7 @@ function sumSessions(totals, sessionIds) {
     tokensKnown: 0,
   };
   for (const sid of (sessionIds || [])) {
-    const v = sessions[sid];
+    const v = (live && currentId && sid === currentId) ? live : sessions[sid];
     if (!v) continue;
     out.known++;
     // Counted separately from `known` because the token fields were added to
@@ -273,6 +287,70 @@ function costRecord({
   };
 }
 
+const REVIEW_COST_FILE = 'REVIEW-COST.jsonl';
+const REVIEW_COST_VERSION = 1;
+
+// One review round's spend, captured at review close.
+//
+// Separate from COST.json rather than a field on it, and the split is the whole
+// mechanism: COST.json is written once per ticket at close from the ledger of a
+// seat that still has a persistence record, while a reviewer's record is DELETED
+// the moment the review ends (kill() on both arms of _handleReviewDone, and
+// sweepReviewerGraveyard behind it). By the time the ticket closes there is no
+// name left to look the reviewer's sessionIds up under, so the number has to be
+// taken at the one instant both the label and the sessionId are still known.
+//
+// JSONL, one row per round, APPENDED — never a rewritten object. A rejected
+// ticket is re-reviewed by a fresh seat under a fresh label, so rounds repeat
+// and a whole-file rewrite would have each one clobber the last. Append also
+// means a crash between rounds costs the rows not yet written, never the rows
+// already there.
+//
+// `resolved: false` says the seat's ledger could not be read at all, and every
+// measured field then goes null rather than zero — the same rule costRecord
+// states at length and for the same reason: a review that burned real money must
+// never be indistinguishable from a free one. This is the likelier arm here than
+// it is for a hand, because a Codex reviewer or a seat whose wire never saw a
+// main-line turn has no ledger row to find.
+function reviewCostRecord({
+  ticket, team, round, seat, wireLabel = null, verdict = null, mustFix = null,
+  ledger = null, resolved = true, now = Date.now(),
+}) {
+  const l = ledger || sumSessions(null, []);
+  const measured = (v) => (resolved ? v : null);
+  const n = Number(round);
+  return {
+    version: REVIEW_COST_VERSION,
+    ticket: ticket || null,
+    team: team || null,
+    round: Number.isFinite(n) && n > 0 ? Math.floor(n) : null,
+    seat: seat || null,
+    wireLabel: wireLabel || null,
+    verdict: verdict || null,
+    // The count, not the prose: the reviewer-efficiency guardrail grades on
+    // must-fix count per verdict, and the prose is already durable beside this
+    // file in the verdict body. Copying it here would put the same text in two
+    // places that drift.
+    mustFix: typeof mustFix === 'number' ? mustFix : null,
+    closedAt: now,
+    sessions: {
+      ids: l.ids || [], known: l.known, total: l.total,
+      tokensKnown: num(l.tokensKnown), resolved: !!resolved,
+    },
+    tokens: {
+      input: measured(l.inputTokens),
+      output: measured(l.outputTokens),
+      cacheRead: measured(l.cacheReadTokens),
+      cacheWrite: measured(l.cacheWriteTokens),
+      cachedFraction: measured(cachedFraction(l)),
+    },
+    usd: measured(l.usd),
+    requests: measured(l.requests),
+    turns: measured(l.turns),
+    refusals: measured(l.refusals),
+  };
+}
+
 // A ticket seat's branch, as _mintTicketSeat spells it: `<ticket-id>` or
 // `<ticket-id>-<slug>`.
 const TICKET_BRANCH_RE = /^t\d+(-[a-zA-Z0-9._-]+)?$/;
@@ -332,6 +410,7 @@ function orphanedCheckouts({ worktrees, records, real = null }) {
 
 module.exports = {
   COST_FILE, COST_VERSION, MAX_LABEL, TICKET_BRANCH_RE,
+  REVIEW_COST_FILE, REVIEW_COST_VERSION,
   wireLabelFor, reviewWireLabelFor, ticketIdFromScope, resolveTaskDir,
-  sumSessions, cachedFraction, costRecord, orphanedCheckouts,
+  sumSessions, cachedFraction, costRecord, reviewCostRecord, orphanedCheckouts,
 };

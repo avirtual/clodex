@@ -24,6 +24,20 @@ blocks a release.
   re-sends the interrupt to draw out the acknowledgement rather than typing
   blind. Same load, after: 0 of 320.
 
+- **What a ticket's code reviews cost is now recorded, and survives the reviewer
+  being cleaned up.** Reviewer seats are discarded the moment they report a
+  verdict, and the record discarded with them was the only thing linking a review
+  to the money it spent — the spend itself was kept, but with nothing on it
+  naming the ticket, the round or the reviewer, so it could not be added up. Each
+  review round now appends a line to `REVIEW-COST.jsonl` in the ticket's own task
+  directory as the review round ends, carrying that round's cost, tokens, cached
+  fraction, verdict and must-fix count — including a round that ends without a
+  verdict at all, because the lead rejected, accepted or retired it by hand.
+  Rounds accumulate rather than overwrite,
+  and a round whose cost genuinely could not be read is written as unknown rather
+  than as zero, so an expensive review can never be mistaken for a free one.
+  Applies to reviews from here on; past reviews cannot be reconstructed.
+
 - **Agents are no longer told a message was swallowed by a seat that plainly
   read it.** The "your message was written into its terminal 90s ago and it has
   not started a turn since" notice fired whenever Clodex had not *observed* the
