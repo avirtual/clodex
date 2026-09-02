@@ -15,10 +15,9 @@ blocks a release.
 
 - **`task start` no longer says a seat holds a ticket that reached nobody.**
   Dispatching to a role with no live seat records the miss on the ticket, so a
-  later `start` says the dispatch reached no seat and points at `assign` to
-  deliver it, instead of naming the role as a holder and offering to re-send a
-  spec that was never sent. A ticket whose seat merely died still reports a
-  re-send, since its spec did land once.
+  later `start` reports that no live seat holds it and points at `assign`,
+  instead of naming the role as a holder and offering to re-send a spec that was
+  never sent.
 
 - **The workbench Files tree now shows each file's size**, right-aligned on its
   row, with the last-modified date in the row's tooltip. A file whose size
