@@ -1,7 +1,7 @@
 'use strict';
 
-// Keep-warm driver: port of proxylab/pinger.py + hold.py (W2 step 5,
-// CLODEUX-PLAN.md). Two halves, same as the Python:
+// Keep-warm driver: port of proxylab/pinger.py + hold.py. Two halves,
+// same as the Python:
 //   PING answers HOW to keep a prefix warm: the wire already saw the exact
 //   last request of every session — the precise bytes the backend
 //   content-addressed — so keeping it warm collapses to replaying that

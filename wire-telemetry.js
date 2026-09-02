@@ -24,10 +24,10 @@
 // the same commit — the contract below is what makes a telemetry bug merely a
 // missing diff line, and it is load-bearing precisely because the module is on.
 //
-// The diff stream remains the evidence for the reviewer's cutover condition
-// (CLODEUX-PLAN.md): est cost within 1%, warmth verdicts exact. The remaining
-// cutover work is pointing the renderer at payload() outright and retiring the
-// 9 poll-era guards.
+// The diff stream remains the evidence for the reviewer's cutover condition:
+// est cost within 1%, warmth verdicts exact. The remaining cutover work is
+// pointing the renderer at payload() outright and retiring the 9 poll-era
+// guards.
 //
 // Contract with the wire (fable's, wire/proxy.js header):
 //   - consume events only; NOTHING here may touch the client byte path.
@@ -79,7 +79,7 @@ class WireTelemetry {
     this._agents = new Map();   // name -> { sessionId, model, totals, inputTokens, ts }
     this._lastDiff = new Map(); // name -> JSON of last logged diff (dedupe)
     this._baseline = new Map(); // name -> co-observation epoch base (see diffPoll)
-    // Lifetime-totals continuity (full-independence ledger, CLODEUX-PLAN.md):
+    // Lifetime-totals continuity (full-independence ledger):
     // the wire's sessionTotals are per-app-launch; wirescope's poll payload
     // carried PERSISTED session-lifetime totals. `persist` ({read, write})
     // stores lifetime = base + launch-ledger per session_id so the bar's
@@ -265,7 +265,7 @@ class WireTelemetry {
   //
   // Known semantic change, deliberate: wire cost/requests/turns totals are
   // per-app-launch (in-process ledger), not wirescope's persisted session-
-  // lifetime totals. Recorded in CLODEUX-PLAN.md with the validation readout.
+  // lifetime totals.
   //
   // Returns the poll payload untouched when the wire has no main-line
   // identity for the agent yet (Codex sessions, pre-first-turn) — degradation

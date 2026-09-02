@@ -1,10 +1,10 @@
 'use strict';
 
-// Prefix-warmth ledger: port of proxylab/warmth.py (W2 step 2,
-// CLODEUX-PLAN.md). Warmth lives on the CONTENT-ADDRESSED prefix the
-// backend caches, not on the session — a forked keep-warm ping shares the
-// prefix but never writes the original session's transcript, so warmth is
-// LEARNED from response receipts and stored here.
+// Prefix-warmth ledger: port of proxylab/warmth.py. Warmth lives on the
+// CONTENT-ADDRESSED prefix the backend caches, not on the session — a
+// forked keep-warm ping shares the prefix but never writes the original
+// session's transcript, so warmth is LEARNED from response receipts and
+// stored here.
 //
 // TWO-STATE SEMANTICS (proxylab decision 2026-06-09): the expiry predicate
 // IS the answer. warm = row exists AND expires_at > now; everything else
