@@ -25,8 +25,11 @@ function safeResolve(root, rel) {
 const NOISE = new Set(['.git', 'node_modules', '.DS_Store']);
 
 // List one directory (non-recursive — the tree lazy-loads children on expand).
-// Returns { ok, dir (rel), entries:[{ name, rel, type:'dir'|'file', size }] },
+// Returns { ok, dir (rel), entries:[{ name, rel, type:'dir'|'file', size, mtime }] },
 // dirs first then files, alphabetical. `rel` is relative to root ('' = root).
+// `size`/`mtime` are null for directories (never stat'd) and for a file whose
+// stat failed. Null is "unknown", never 0: 0 is a size an empty file really has,
+// so a consumer that defaults one to the other asserts something nobody measured.
 function listDir(root, rel = '') {
   const abs = safeResolve(root, rel);
   if (!abs) return { ok: false, error: 'Path outside session directory' };
@@ -39,8 +42,15 @@ function listDir(root, rel = '') {
     const childRel = path.join(rel, d.name);
     const isDir = d.isDirectory();
     let size = null;
-    if (!isDir) { try { size = fs.statSync(path.join(abs, d.name)).size; } catch {} }
-    entries.push({ name: d.name, rel: childRel, type: isDir ? 'dir' : 'file', size });
+    let mtime = null;
+    if (!isDir) {
+      try {
+        const st = fs.statSync(path.join(abs, d.name));
+        size = st.size;
+        mtime = st.mtimeMs;
+      } catch {}
+    }
+    entries.push({ name: d.name, rel: childRel, type: isDir ? 'dir' : 'file', size, mtime });
   }
   entries.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;

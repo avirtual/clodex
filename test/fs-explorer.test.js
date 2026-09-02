@@ -37,6 +37,46 @@ test('listDir: descends into a subdir by rel path', () => {
   assert.strictEqual(r.entries[0].rel, path.join('sub', 'nested.txt'));
 });
 
+test('listDir: files carry size and mtime off ONE stat; dirs carry neither', () => {
+  const root = makeRoot();
+  fs.writeFileSync(path.join(root, 'empty.bin'), '');
+  const before = Date.now();
+  const r = fse.listDir(root, '');
+  const byName = new Map(r.entries.map((e) => [e.name, e]));
+
+  assert.ok(byName.has('sub') && byName.has('a.js'), 'ENTER: both a dir and a file survived the listing');
+
+  // A genuinely empty file is 0, not null: the renderer tells the two apart and
+  // shows nothing for null, so a listing that conflated them would erase the
+  // distinction before the renderer ever saw it.
+  assert.strictEqual(byName.get('empty.bin').size, 0);
+  assert.strictEqual(byName.get('a.js').size, 5);
+  for (const name of ['a.js', 'empty.bin']) {
+    const mt = byName.get(name).mtime;
+    assert.strictEqual(typeof mt, 'number', `${name}: mtime should be epoch ms`);
+    assert.ok(mt > 0 && mt <= before + 5000, `${name}: mtime ${mt} is not a plausible write time`);
+  }
+
+  // Directories are deliberately never stat'd — a directory's size is not the
+  // size of its contents and its mtime moves on an unrelated child rename.
+  assert.strictEqual(byName.get('sub').size, null);
+  assert.strictEqual(byName.get('sub').mtime, null);
+});
+
+test('listDir: an entry whose stat fails keeps size and mtime NULL, and still lists', () => {
+  // A broken symlink readdir's fine and statSync's ENOENT — the shape a failed
+  // stat takes in practice. Null must survive to the renderer as "unknown",
+  // never collapse to 0, which is a real size a real file has.
+  const root = makeRoot();
+  fs.symlinkSync(path.join(root, 'nothing-here'), path.join(root, 'dangling.txt'));
+  const r = fse.listDir(root, '');
+  const ent = r.entries.find((e) => e.name === 'dangling.txt');
+  assert.ok(ent, 'ENTER: the dangling symlink is listed rather than dropped');
+  assert.strictEqual(ent.type, 'file');
+  assert.strictEqual(ent.size, null);
+  assert.strictEqual(ent.mtime, null);
+});
+
 test('readFile: returns text content + eol', () => {
   const root = makeRoot();
   const r = fse.readFile(root, 'b.txt');

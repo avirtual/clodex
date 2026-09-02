@@ -9745,6 +9745,23 @@ ${p.root}` : p.key;
     </div>
   </div>
 </div>`;
+      function fmtSize(n) {
+        if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "";
+        const u = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0, v = n;
+        while (v >= 1024 && i < u.length - 1) {
+          v /= 1024;
+          i++;
+        }
+        return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+      }
+      function fmtWhen(ms) {
+        if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
+        const d = new Date(ms);
+        if (Number.isNaN(d.getTime())) return "";
+        const pad = (x) => String(x).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
       module.exports.activate = (rhost) => {
         let openFor = null;
         const surface = rhost.ui.surfaces.overlay({
@@ -10119,7 +10136,11 @@ ${p.root}` : p.key;
               row.dataset.rel = ent.rel;
               row.dataset.type = ent.type;
               const isOpen = ent.type === "dir" && expExpanded.has(ent.rel);
-              row.innerHTML = `<span class="explorer-twisty">${ent.type === "dir" ? isOpen ? "\u25BE" : "\u25B8" : ""}</span><span class="explorer-icon">${ent.type === "dir" ? "\u{1F4C1}" : "\u{1F4C4}"}</span><span class="explorer-name">${esc(ent.name)}</span>`;
+              const size = ent.type === "dir" ? "" : fmtSize(ent.size);
+              const when = ent.type === "dir" ? "" : fmtWhen(ent.mtime);
+              row.innerHTML = `<span class="explorer-twisty">${ent.type === "dir" ? isOpen ? "\u25BE" : "\u25B8" : ""}</span><span class="explorer-icon">${ent.type === "dir" ? "\u{1F4C1}" : "\u{1F4C4}"}</span><span class="explorer-name">${esc(ent.name)}</span>` + (size ? `<span class="explorer-meta">${esc(size)}</span>` : "");
+              row.title = when ? `${ent.name}
+Modified ${when}` : ent.name;
               if (ent.rel === editingRel) row.classList.add("selected");
               container.appendChild(row);
               row.addEventListener("click", async () => {

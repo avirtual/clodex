@@ -86,8 +86,8 @@ function makeDom() {
 // ── A fake rhost ────────────────────────────────────────────────────────────
 // `mount` is captured rather than called: the host calls it at first open, and
 // the test drives that moment itself.
-function makeRhost() {
-  const state = { mount: null, toasts: [], invokes: [] };
+function makeRhost({ answers = {}, sessions = [] } = {}) {
+  const state = { mount: null, onOpen: null, toasts: [], invokes: [] };
   const rhost = {
     workspaceId: 'default',
     setTimeout(fn) { return 0; },
@@ -96,12 +96,14 @@ function makeRhost() {
     clearInterval() {},
     invoke(method, ...args) {
       state.invokes.push({ method, args });
-      return Promise.resolve({ ok: true });
+      const canned = answers[method];
+      return Promise.resolve(
+        typeof canned === 'function' ? canned(...args) : (canned || { ok: true }));
     },
     log: { info() {}, error() {}, warn() {} },
     sessions: {
       active: () => null,
-      listWorkspace: () => Promise.resolve([]),
+      listWorkspace: () => Promise.resolve(sessions),
       onChange: () => () => {},
 availability: () => ({}),
     },
@@ -112,6 +114,7 @@ availability: () => ({}),
       surfaces: {
         overlay(spec) {
           state.mount = spec.mount;
+          state.onOpen = spec.onOpen;
           return { open() {}, close() {}, isOpen: () => false };
         },
       },
@@ -129,21 +132,29 @@ availability: () => ({}),
 // Mount the plugin with `window.__CLODEX_WEB__` set to `web`, and report whether
 // wire() ran to completion. Globals are set for the duration and restored, so
 // this cannot leak into another test file sharing the process.
+function installGlobals({ web, dom, created }) {
+  global.window = { __CLODEX_WEB__: web, addEventListener() {}, removeEventListener() {} };
+  global.document = {
+    createElement: () => {
+      const el = {
+        style: {}, dataset: {}, classList: { add() {}, remove() {} },
+        appendChild() {}, addEventListener() {}, textContent: '', innerHTML: '', value: '',
+      };
+      created.push(el);
+      return el;
+    },
+    addEventListener() {}, removeEventListener() {},
+    querySelector: dom.resolve, getElementById: (id) => dom.resolve(`#${id}`),
+  };
+}
+
 function mountWorkbench({ web }) {
   const savedWindow = global.window;
   const savedDocument = global.document;
   const dom = makeDom();
   const { rhost, state } = makeRhost();
 
-  global.window = { __CLODEX_WEB__: web, addEventListener() {}, removeEventListener() {} };
-  global.document = {
-    createElement: () => ({
-      style: {}, dataset: {}, classList: { add() {}, remove() {} },
-      appendChild() {}, addEventListener() {}, textContent: '', innerHTML: '', value: '',
-    }),
-    addEventListener() {}, removeEventListener() {},
-    querySelector: dom.resolve, getElementById: (id) => dom.resolve(`#${id}`),
-  };
+  installGlobals({ web, dom, created: [] });
 
   try {
     delete require.cache[require.resolve(PLUGIN)];
@@ -156,6 +167,39 @@ function mountWorkbench({ web }) {
     global.window = savedWindow;
     global.document = savedDocument;
   }
+}
+
+// Mount AND drive the host's open on the Files tab, against a canned `fs.list`.
+// The globals must stay installed across the open (it creates the tree rows), so
+// unlike mountWorkbench this cannot restore them before returning.
+async function openFilesTab(entries) {
+  const savedWindow = global.window;
+  const savedDocument = global.document;
+  const dom = makeDom();
+  const created = [];
+  const { rhost, state } = makeRhost({
+    sessions: [{ name: 'seat', cwd: '/tmp/seat' }],
+    answers: {
+      'fs.list': (name, rel) => ({ ok: true, dir: rel, entries: rel === '' ? entries : [] }),
+      'wt.selected': { ok: true, selected: null },
+    },
+  });
+
+  installGlobals({ web: false, dom, created });
+  try {
+    delete require.cache[require.resolve(PLUGIN)];
+    require(PLUGIN).activate(rhost);
+    state.mount(dom.rootEl);
+    await state.onOpen({ tab: 'files' });
+    // setTab -> refreshTab -> renderExplorer is fired, not awaited; drain the
+    // microtask chain behind its two fs.list round trips.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  } finally {
+    global.window = savedWindow;
+    global.document = savedDocument;
+  }
+  const rows = created.filter((el) => String(el.className || '').includes('explorer-row'));
+  return { rows, state };
 }
 
 test('the overlay wires completely on the WEB frontend', () => {
@@ -225,4 +269,83 @@ test('the web build still attaches the browse listeners, to the DETACHED nodes',
   const ids = new Set(dom.listeners.map((l) => l.id));
   assert.ok(ids.has('wb-files-goto'),
     'ENTER: the goto listener is still attached (to the detached node) on web');
+});
+
+// ── File-row meta: size, and the null-vs-zero distinction ───────────────────
+const MTIME = Date.UTC(2026, 0, 2, 3, 4, 5);
+
+test('a file row draws its size; a directory row draws no meta at all', async () => {
+  const { rows } = await openFilesTab([
+    { name: 'sub', rel: 'sub', type: 'dir', size: null, mtime: null },
+    { name: 'big.bin', rel: 'big.bin', type: 'file', size: 2048, mtime: MTIME },
+  ]);
+  assert.equal(rows.length, 2, 'ENTER: both the dir and the file rows were painted');
+
+  const [dir, file] = rows;
+  assert.match(file.innerHTML, /<span class="explorer-meta">2\.0 KB<\/span>/,
+    `the file row should carry its size: ${file.innerHTML}`);
+  assert.doesNotMatch(dir.innerHTML, /explorer-meta/,
+    `a directory's size is not the size of what it holds: ${dir.innerHTML}`);
+});
+
+test('a FAILED stat renders nothing, a genuinely EMPTY file renders 0 B', async () => {
+  // The whole point of the feature: `size === null` means "could not tell", and
+  // showing 0 B for it would assert a fact about the file that nobody measured.
+  const { rows } = await openFilesTab([
+    { name: 'dangling.txt', rel: 'dangling.txt', type: 'file', size: null, mtime: null },
+    { name: 'empty.log', rel: 'empty.log', type: 'file', size: 0, mtime: MTIME },
+  ]);
+  assert.equal(rows.length, 2, 'ENTER: both the unreadable and the empty file were painted');
+
+  const [failed, empty] = rows;
+  assert.doesNotMatch(failed.innerHTML, /explorer-meta/,
+    `an unreadable file must show no size at all: ${failed.innerHTML}`);
+  assert.match(empty.innerHTML, /<span class="explorer-meta">0 B<\/span>/,
+    `an empty file legitimately shows 0 B: ${empty.innerHTML}`);
+});
+
+test('the modified date rides the row tooltip, and a null mtime leaves the name alone', async () => {
+  const { rows } = await openFilesTab([
+    { name: 'dated.txt', rel: 'dated.txt', type: 'file', size: 10, mtime: MTIME },
+    { name: 'undated.txt', rel: 'undated.txt', type: 'file', size: null, mtime: null },
+  ]);
+  assert.equal(rows.length, 2, 'ENTER: both the dated and the undated file were painted');
+
+  const [dated, undated] = rows;
+  // Local time, so pin the shape and the components rather than a fixed string:
+  // a literal would encode the machine's zone and fail elsewhere.
+  const d = new Date(MTIME);
+  const pad = (x) => String(x).padStart(2, '0');
+  assert.equal(dated.title,
+    `dated.txt\nModified ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+    + `${pad(d.getHours())}:${pad(d.getMinutes())}`);
+  assert.equal(undated.title, 'undated.txt',
+    'with no readable mtime the tooltip is the bare filename, not a "Modified" line with nothing after it');
+});
+
+test('a file size never reaches innerHTML unescaped by luck — the formatter is total', async () => {
+  // fmtSize/fmtWhen are interpolated into innerHTML, so a non-numeric size
+  // arriving from a future payload change must yield '' rather than its own
+  // string form. Each row's expected output is a literal, not a re-application
+  // of the formatter's rule.
+  const cases = [
+    [undefined, ''],
+    [NaN, ''],
+    [-1, ''],
+    ['12', ''],
+    [0, '0 B'],
+    [999, '999 B'],
+    [1024, '1.0 KB'],
+    [1024 * 1024 * 3, '3.0 MB'],
+  ];
+  const { rows } = await openFilesTab(cases.map(([size], i) => (
+    { name: `f${i}.txt`, rel: `f${i}.txt`, type: 'file', size, mtime: MTIME })));
+  assert.equal(rows.length, cases.length, 'ENTER: every case row was painted');
+
+  for (let i = 0; i < cases.length; i++) {
+    const [, expected] = cases[i];
+    const m = /<span class="explorer-meta">([^<]*)<\/span>/.exec(rows[i].innerHTML);
+    assert.equal(m ? m[1] : '', expected,
+      `size ${JSON.stringify(cases[i][0])} should render as ${JSON.stringify(expected)}: ${rows[i].innerHTML}`);
+  }
 });
