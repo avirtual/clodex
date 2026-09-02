@@ -96,6 +96,54 @@ test('setupCodexHook: writes a WB_WRAP_NAME-routed script + project hooks.json, 
   assert.strictEqual(backup.orig, true);
 });
 
+test('setupCodexHook: refuses to back up a hooks.json that is already OUR config', () => {
+  const REGISTRY_DIR = tmp();
+  const cwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  const hooksPath = path.join(cwd, '.codex', 'hooks.json');
+  const backupPath = hooksPath + '.wb-wrap-backup';
+
+  // The state a quit that skipped cleanup leaves behind: our hook on disk, no
+  // backup slot. Produced by a real setup rather than hand-written bytes, so the
+  // subject cannot drift away from what setupCodexHook actually writes.
+  h.setupCodexHook('cx', cwd);
+  fs.rmSync(backupPath, { force: true });
+  const ours = fs.readFileSync(hooksPath, 'utf8');
+
+  h.setupCodexHook('cx', cwd);
+
+  assert.ok(!fs.existsSync(backupPath),
+    'our own hook config must never be preserved as if it were the user\'s');
+  assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), ours);
+});
+
+test('setupCodexHook: removes a backup slot that already holds our config', () => {
+  const REGISTRY_DIR = tmp();
+  const cwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  const hooksPath = path.join(cwd, '.codex', 'hooks.json');
+  const backupPath = hooksPath + '.wb-wrap-backup';
+  fs.mkdirSync(path.join(cwd, '.codex'), { recursive: true });
+  fs.writeFileSync(hooksPath, '{"orig":true}');
+
+  h.setupCodexHook('cx', cwd);
+  // Poison the slot the way a second setup over an unbacked-up hook did: the
+  // user's file is gone from it and ours sits there instead.
+  fs.copyFileSync(hooksPath, backupPath);
+
+  // ENTER: the poisoned state must really be poisoned — a backup slot holding
+  // the user's '{"orig":true}' would make the removal below the wrong assertion.
+  assert.strictEqual(fs.readFileSync(backupPath, 'utf8'), fs.readFileSync(hooksPath, 'utf8'));
+
+  h.setupCodexHook('cx', cwd);
+  assert.ok(!fs.existsSync(backupPath), 'a backup slot holding our own bytes must be dropped');
+
+  // The consequence the repair exists for: cleanup now removes our hook instead
+  // of restoring it as the user's config.
+  h.cleanupCodexHook('cx', cwd);
+  assert.ok(!fs.existsSync(hooksPath), 'cleanup must not leave our hook behind as the user\'s config');
+});
+
 test('cleanupCodexHook: restores the backed-up hooks.json', () => {
   const REGISTRY_DIR = tmp();
   const cwd = tmp();

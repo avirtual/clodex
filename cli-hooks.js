@@ -20,7 +20,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
   // The interpreter every generated hook shells out to: the app's own Electron
   // binary run as Node (`ELECTRON_RUN_AS_NODE=1 "<nodeInterp>"`), baked absolute
   // so a Finder/Dock-launched packaged .app never depends on an ambient python3
-  // or on launchd's stripped PATH (Task 9). Electron honors the env var;
+  // or on launchd's stripped PATH. Electron honors the env var;
   // plain node ignores it, so the same bytes run under node in tests.
   const INTERP = `ELECTRON_RUN_AS_NODE=1 "${nodeInterp}"`;
   // The roster rides HERE, not in the system prompt's team block: composition
@@ -520,16 +520,23 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     const backupPath = hooksPath + '.wb-wrap-backup';
 
     fs.mkdirSync(codexDir, { recursive: true });
-    if (fs.existsSync(hooksPath) && !fs.existsSync(backupPath)) {
+    const body = codexHooksBody(scriptPath);
+    const holdsOurs = (p) => {
+      try { return fs.readFileSync(p, 'utf8') === body; } catch { return false; }
+    };
+    // Our bytes in either slot are not a user config: backing them up hands the
+    // next cleanup our hook to restore as theirs.
+    if (holdsOurs(backupPath)) {
+      try { fs.unlinkSync(backupPath); } catch {}
+    }
+    if (fs.existsSync(hooksPath) && !fs.existsSync(backupPath) && !holdsOurs(hooksPath)) {
       fs.copyFileSync(hooksPath, backupPath);
     }
-    fs.writeFileSync(hooksPath, codexHooksBody(scriptPath));
+    fs.writeFileSync(hooksPath, body);
   }
 
-  // The bytes setupCodexHook writes. Cleanup reconstructs them to prove the
-  // file on disk is still OURS before removing it — see cleanupCodexHook.
-  // Every codex seat in a cwd produces the SAME bytes (the hook script is
-  // shared and routed by $WB_WRAP_NAME), so the comparison is exact.
+  // Every codex seat in a cwd produces the SAME bytes (the hook script is shared
+  // and routed by $WB_WRAP_NAME), so the ours-comparisons are exact.
   function codexHooksBody(scriptPath) {
     return JSON.stringify({
       hooks: {
