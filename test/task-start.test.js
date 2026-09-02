@@ -630,3 +630,188 @@ test('t431: a dispatched task-dir-less ticket can still REPLAY to a respawned se
   assert.deepStrictEqual(f.gated.map((g) => g.target), ['team-hand'],
     'the replay still reaches the seat — the gate is on the dispatch verbs, not on the funnel');
 });
+
+// ── t550: a dispatch that reached nobody ───────────────────────────────────
+//
+// `startedAt` is stamped above all three delivery sites, so a dispatch to a role
+// with no live seat is recorded as started — and that is CORRECT and deliberate:
+// `_openTicketsFor` filters on `ticketStarted`, so a stamped ticket is picked up
+// by `_replayOpenTickets` the moment a seat of that role spawns, and the stall
+// sweep's orphan arm alarms about it exactly once. Rolling the stamp back would
+// buy silence on both. What was wrong is the PROSE the record drives: nothing
+// distinguished the miss from a real delivery, so every later reader described a
+// spec no seat received as work a seat is doing.
+
+test('t550: a dispatch to a role with no live seat is recorded as undelivered', () => {
+  const f = mkStart();
+  f.seat('lead');   // no team-hand — nothing for the role to resolve to
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.strictEqual(f.one('t1').undeliveredAt, undefined,
+    'ENTER: add attempts no delivery, so the stamp below is the DISPATCH`s and not a leftover from filing');
+  const before = Date.now();
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  // ENTER: the dispatch really found nobody. A fixture that quietly had a seat
+  // would make the absence of a stamp the expected outcome, and this whole
+  // subject would pass while measuring the delivered path.
+  assert.deepStrictEqual(f.gated, [], 'ENTER: nothing was delivered');
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: and it is still stamped started — the rollback this ticket declined');
+
+  const t = f.one('t1');
+  assert.ok(typeof t.undeliveredAt === 'number' && t.undeliveredAt >= before,
+    'the miss is on the RECORD, so a reader after the dispatching turn can still tell it happened — '
+    + 'the delivery-time NOTE says so once, into that turn`s reply, and is gone');
+});
+
+test('t550: assign records the same miss, and a later delivery clears it', () => {
+  const f = mkStart();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+  assert.deepStrictEqual(f.gated, [], 'ENTER: assign found nobody either');
+  assert.ok(f.one('t1').undeliveredAt != null, 'assign is the OTHER dispatch path, so it records the miss too');
+
+  // The seat comes up and the lead re-sends. The field answers for the LAST
+  // dispatch: left stamped, the refusal and the board would keep reporting a miss
+  // that has since been made good — the defect this ticket fixes, inverted.
+  f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: this time it landed');
+  assert.strictEqual(f.one('t1').undeliveredAt, undefined,
+    'and the stamp is GONE — a stale one would describe a ticket whose spec is now in a seat as one that reached nobody');
+});
+
+// The arm most likely to be got wrong and least likely to be noticed: `held` and
+// `parked` are NOT misses. A seat EXISTS in both — parked drains on its next
+// turn, held clears — so recording either as undelivered would tell the lead no
+// seat ever got the spec about a seat that has it.
+test('t550: held and parked are not recorded as undelivered — a seat exists in both', () => {
+  for (const [label, ret] of [['held', { held: 'busy' }], ['parked', { parked: '/tmp/x', reason: 'quiet' }]]) {
+    const f = mkStart();
+    f.seat('lead'); f.seat('team-hand');
+    f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return ret; };
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    // ENTER: the delivery was ATTEMPTED and came back in the shape under test.
+    // Without this the assertion below is equally true of a dispatch that never
+    // reached _deliverTicketSpec at all.
+    assert.strictEqual(f.gated.length, 1, `ENTER (${label}): the spec reached the delivery funnel`);
+    assert.match(f.notes(), label === 'held' ? /spec NOT delivered/ : /spec parked/,
+      `ENTER (${label}): and the funnel returned the ${label} shape, not a plain queue`);
+    assert.strictEqual(f.one('t1').undeliveredAt, undefined,
+      `${label} must not be recorded as undelivered: a seat exists and ${label === 'parked' ? 'the spec drains on its next turn' : 'it sees the spec when it clears'}`);
+  }
+});
+
+// `self` is the third non-miss: the lead assigned the ticket to itself, so there
+// is no seat to reach and nothing missing.
+test('t550: a ticket the lead keeps is not recorded as undelivered', () => {
+  const f = mkStart();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'lead', id: null, body: 'mine' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.one('t1').assignee, 'lead', 'ENTER: it really is the lead`s own ticket');
+  assert.deepStrictEqual(f.gated, [], 'ENTER: nothing is delivered to the lead — it wrote the spec');
+  assert.strictEqual(f.one('t1').undeliveredAt, undefined,
+    'the lead holding its own ticket is not a delivery that failed');
+});
+
+test('t550: a DELIVERED dispatch records no miss, and its refusal text is unchanged', () => {
+  const f = mkStart();
+  opened(f);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: it landed');
+  assert.strictEqual(f.one('t1').undeliveredAt, undefined, 'a delivered dispatch stamps nothing');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.match(f.notes(), /already started — team-hand holds it/,
+    'and the holder arm is untouched: it names the seat that has the work');
+  assert.match(f.notes(), /\[agent:task assign t1 hand\] re-sends the spec to it/,
+    'including the re-send, which is true when a seat holds it');
+});
+
+// The concrete instance the ticket was filed on. Before this, `holder` fell back
+// to the ROLE KEY when nothing resolved, so the reply named "hand" as a holder
+// and offered a re-send — both false in exactly the case the fallback existed for.
+test('t550: the start refusal on an undelivered ticket claims neither a holder nor a re-send', () => {
+  const f = mkStart();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.deepStrictEqual(f.gated, [], 'ENTER: the dispatch reached nobody');
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: and start refuses it from here on');
+  f.injected.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const said = f.notes();
+  assert.match(said, /already started/, 'ENTER: this is the already-started refusal and not some earlier one');
+  // The two false phrases, pinned individually. Not "the message is truthful":
+  // what is checked is the absence of a holder claim and the absence of a
+  // re-send promise, so that is what the messages say.
+  assert.doesNotMatch(said, /hand holds it/,
+    'it must not name the ROLE as a holder — no seat ever received this spec');
+  assert.doesNotMatch(said, /re-sends the spec/,
+    'and must not offer a RE-send: there was no first send to repeat');
+  assert.match(said, /no live seat holds it now/, 'it reports the liveness, which is what it can see');
+  assert.match(said, /\[agent:task assign t1 hand\] sends the spec/,
+    'and still points at assign, which is the verb that gets the spec to a seat');
+});
+
+// ONE holderless sentence, not two. An earlier round split it on `undeliveredAt`
+// so a delivered-then-died ticket could still be offered a re-send — but that
+// field records the last DISPATCH, and replay, advance and respec all deliver
+// without touching it. Discriminating on it made the refusal assert delivery
+// history it cannot know. This is the trace that broke it, and it is this
+// ticket's own headline scenario.
+test('t550: a spec delivered by REPLAY is never described as having reached no seat', () => {
+  const f = mkStart();
+  f.seat('lead');   // no team-hand yet
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.ok(f.one('t1').undeliveredAt != null, 'ENTER: the dispatch missed, and the record says so');
+
+  // The seat spawns and replay delivers — the outcome the premise section calls
+  // correct and intended, and the one that makes the stamp stale.
+  const s = f.seat('team-hand');
+  s.incarnation = 3;
+  f.gated.length = 0;
+  f.m._replayOpenTickets(s);
+  // ENTER: the replay must actually have DELIVERED. Without this the subject is
+  // equally true of a replay that found nothing to send, and the whole point is
+  // that a real delivery happened after the miss was stamped.
+  assert.deepStrictEqual(f.gated.map((g) => g.target), ['team-hand'],
+    'ENTER: the spec really reached the seat');
+  assert.ok(f.one('t1').undeliveredAt != null,
+    'ENTER: and the stamp is STALE — replay does not clear it, which is why no message may branch on it');
+
+  f.m.sessions.delete('team-hand');
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const said = f.notes();
+  assert.match(said, /already started/, 'ENTER: the already-started refusal, not an earlier one');
+  assert.doesNotMatch(said, /reached no seat/,
+    'a seat received this spec and worked from it — saying the dispatch reached nobody is the false operator-facing claim this ticket exists to retire');
+  assert.match(said, /no live seat holds it now/,
+    'the refusal reports only what it can see: nothing holds it NOW, which is true of both holderless shapes');
+});
+
+// The other holderless shape, reaching the same sentence: this spec was delivered
+// at dispatch and its seat died. One wording covers both because the refusal
+// asserts nothing about delivery history — the property that makes it immune to
+// the staleness above.
+test('t550: a DELIVERED ticket whose seat died reaches the same holderless sentence', () => {
+  const f = mkStart();
+  opened(f);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the spec reached team-hand');
+  assert.strictEqual(f.one('t1').undeliveredAt, undefined, 'ENTER: and no miss was recorded');
+  f.m.sessions.delete('team-hand');
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), null,
+    'ENTER: and now nothing resolves — the same holderless state the miss produces');
+  f.injected.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const said = f.notes();
+  assert.match(said, /no live seat holds it now/, 'it reports the liveness, which is what changed');
+  assert.doesNotMatch(said, /reached no seat/,
+    'and never the miss wording: this spec was delivered, and telling the lead otherwise sends it looking for a dispatch bug that is not there');
+});

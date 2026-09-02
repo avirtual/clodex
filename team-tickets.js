@@ -3244,6 +3244,12 @@ function createTicketMethods(deps, shared) {
       return { queued: true };
     },
 
+    _recordUndeliveredDispatch(team, tickets, ticket, d) {
+      if (!d || !d.undelivered) return;
+      ticket.undeliveredAt = Date.now();
+      ticketsStore.save(team.root, tickets);
+    },
+
     _ticketDeliverySuffix(d, assignee) {
       if (d.undelivered) return ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
       if (d.held) return ` — NOTE: spec NOT delivered (${d.reason || 'held'}); the seat cannot be parked for, so it has not seen the spec — re-send when it clears`;
@@ -4542,9 +4548,14 @@ function createTicketMethods(deps, shared) {
       // dispatch-only marker, right for the shapes that re-pin and wrong for the
       // ones that do not, and start is the one-shot so it must answer for all.
       if (ticketStarted(ticket)) {
+        const holder = this._ticketAssigneeSeat(team, ticket);
+        if (!holder) {
+          reply(`error: ticket ${intent.id} is already started — no live seat holds it now; `
+            + `[agent:task assign ${intent.id} ${ticket.role || assignee}] sends the spec once one is up`);
+          return;
+        }
         // "holds it", not "is held by": the occupancy refusal above owns that
         // phrasing, and the two replies are told apart by it across the suite.
-        const holder = this._ticketAssigneeSeat(team, ticket) || assignee;
         reply(`error: ticket ${intent.id} is already started — ${holder} holds it; [agent:task assign ${intent.id} ${ticket.role || assignee}] re-sends the spec to it`);
         return;
       }
@@ -4555,6 +4566,7 @@ function createTicketMethods(deps, shared) {
       delete ticket.parked;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;   // dispatch starts a fresh stall episode
+      delete ticket.undeliveredAt;
       // Stamped above BOTH arms and above every save below, so no path can
       // dispatch without recording that it did — an unstamped dispatched ticket
       // is startable a second time, which is the tree collision this fixes.
@@ -4585,6 +4597,7 @@ function createTicketMethods(deps, shared) {
       if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
       ticketsStore.save(team.root, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+      this._recordUndeliveredDispatch(team, tickets, ticket, d);
       const suffix = this._ticketDeliverySuffix(d, roleKey);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
@@ -4685,6 +4698,7 @@ function createTicketMethods(deps, shared) {
       // delivered yet still invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
       delete ticket.parked;
+      delete ticket.undeliveredAt;
       // Assign is the OTHER dispatch path, so it records the dispatch for the same
       // reason start does — an assigned-but-unstamped ticket is still `start`able,
       // and starting it mints a second seat onto the tree this assign just sent a
@@ -4698,6 +4712,7 @@ function createTicketMethods(deps, shared) {
         ticket.assignee = ownSeat;
         ticketsStore.save(team.root, tickets);
         const d2 = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+        this._recordUndeliveredDispatch(team, tickets, ticket, d2);
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: ownSeat, body: `ticket ${ticket.id} re-sent` });
         log.info('intent', `task assign by ${session.name}: ${ticket.id} re-sent to its own seat ${ownSeat}`);
@@ -4729,6 +4744,7 @@ function createTicketMethods(deps, shared) {
       if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
       ticketsStore.save(team.root, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true, false, false, null, !prev);
+      this._recordUndeliveredDispatch(team, tickets, ticket, d);
       const suffix = this._ticketDeliverySuffix(d, assignee);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
