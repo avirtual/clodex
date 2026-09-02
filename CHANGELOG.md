@@ -13,6 +13,21 @@ blocks a release.
 
 ## Unreleased
 
+- **Agents are no longer told a message was swallowed by a seat that plainly
+  read it.** The "your message was written into its terminal 90s ago and it has
+  not started a turn since" notice fired whenever Clodex had not *observed* the
+  receiving seat start a turn — which is not the same as the seat not having
+  read the message, because that signal can arrive after the CLI has already
+  recorded the turn. Seats that had read a message and replied at length were
+  reported anyway, increasingly often. The check now looks at the receiving
+  seat's own transcript before reporting, and stays quiet if the seat
+  demonstrably consumed input after the message was written. A seat that really
+  did swallow one is reported exactly as before, and so is a seat whose
+  transcript cannot be read — the check can only ever withdraw a report, never
+  invent one. This mattered beyond noise: the notice tells the sender to resend
+  with `urgent`, which lands immediately into a seat that may be mid-turn, where
+  concurrent writes overwrite one another's unsubmitted text.
+
 ## 5.22.0 — 2026-09-02
 
 - **Agents are told their context is heavy at 175,000 tokens, and you can now
