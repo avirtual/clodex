@@ -142,6 +142,27 @@ const ROWS = [
     ].join('\n'),
   },
   {
+    name: 'a /* */ inside a template BODY is text, but inside a ${} it is a comment',
+    expected: 1,
+    src: [
+      'const body = `/* not a comment */`;',
+      'const expr = `${ /* a real comment */ x }`;',
+    ].join('\n'),
+  },
+  {
+    name: 'an unterminated string does not swallow the rest of the file',
+    expected: 1,
+    src: [
+      "const broken = 'oops",
+      'const after = 1; // still counted',
+    ].join('\n'),
+  },
+  {
+    name: 'CRLF line endings still resolve to one comment line',
+    expected: 1,
+    src: '// a comment\r\nconst b = 1;\r\n',
+  },
+  {
     name: 'a blank source counts nothing',
     expected: 0,
     src: '',
