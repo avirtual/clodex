@@ -90,6 +90,21 @@ write no comment.
   the right one. Adding qualifiers until the sentence is true grows the file
   every round and fixes nothing.
 
+**Before you close, and again after every rework fix:** open every hunk you
+changed with 25 lines of context and read each comment, docstring and CHANGELOG
+sentence in or beside it as a claim against the code as it now stands. A fix
+that moves a bail, renames a field, or changes an ordering falsifies the
+sentence above it more often than not — measured on this loop, 15 of 27
+later-round findings were exactly that, and each one cost a full review round.
+Delete what the code no longer backs. Do not qualify it.
+
+The sentence that breaks is rarely the one you were editing: it is the
+NEIGHBOUR, left behind by the insertion. So the question to ask of anything you
+added is not what it says but what it now sits BETWEEN — a comment separated
+from the code it described, a table row shadowed by a longer key, an overlay
+keyed on a prefix a new entry now wins. Three separate defects of that exact
+shape shipped in one night here.
+
 ### Decommenting: sweep by category, then check what survives
 
 A cold reviewer reads the DIFF, so a comment you never opened appears nowhere

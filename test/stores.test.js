@@ -1572,6 +1572,34 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
     'lead prompt points worktree cleanup at accept, not at the lead');
 });
 
+// Stage A of the reviewer-efficiency design, and the two halves are a PAIR that
+// only works closed: the hand is told to catch its own orphaned prose before the
+// review, and the lead is told not to buy a second cold review over the prose
+// that survives. Landing one without the other is worse than neither — A1 alone
+// leaves the lead still rejecting ACCEPTs, A2 alone merges prose nothing swept.
+// Measured baselines are IN the prompts on purpose (39% of later rounds followed
+// an ACCEPT; 15 of 27 later-round findings were a fix falsifying its neighbour):
+// a bare instruction reads as taste and is the first thing an agent trades away
+// under time pressure. The carve-outs are the load-bearing half of A2 — without
+// them it reads as "never reject prose", which would merge a false coverage
+// claim, the one kind of prose whose reader cannot check it.
+test('seed: Stage A — hands sweep their own hunks, leads let prose nits ride along', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(hand, /Before you close, and again after every rework fix/,
+    'A1 fires at both points the fix can falsify a neighbour, not only at close');
+  assert.match(hand, /what it now sits BETWEEN/,
+    'A1 names the orphaning mechanism: the neighbour breaks, not the line you edited');
+  assert.match(lead, /An ACCEPT whose nits are comment or CHANGELOG sentences is an ACCEPT/,
+    'A2 states the default: an ACCEPT with prose nits is merged');
+  assert.match(lead, /asserting COVERAGE/,
+    'A2 keeps carve-out 1 — a false coverage claim is still a reject');
+  assert.match(lead, /false USER-FACING claim/,
+    'A2 keeps carve-out 2 — a false user-facing CHANGELOG line is still a reject');
+  assert.match(lead, /A reject outside those two carve-outs is a process defect on your side/,
+    'A2 closes the list: the carve-outs are exhaustive, not examples');
+});
+
 // t454: the accept paragraph described a two-outcome verb (merged → cleanup,
 // not merged → nothing removed), while `_taskAccept` distinguishes FOUR and the
 // two that matter to a lead are indistinguishable by count alone. A lead that

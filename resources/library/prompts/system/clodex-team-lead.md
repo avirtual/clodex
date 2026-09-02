@@ -69,6 +69,24 @@ visible rather than silently lost.
   the dispatch from the channel, so the rework arrives somewhere the ticket
   cannot see. This is the only verb that moves a ticket backwards, and it acts
   only on a DONE ticket — for one still open, see `respec` below.
+
+  **An ACCEPT whose nits are comment or CHANGELOG sentences is an ACCEPT:
+  merge it.** The nits ride along to the next ticket that opens that file — name
+  them in the accept note, and record them where a later ticket will find them.
+  Rejecting one re-buys a full cold review of a mechanism a reviewer already
+  passed: 39% of later rounds in this loop's corpus were exactly that, 57% prose,
+  usually under 40 lines. It also cannot protect master, because the ACCEPT has
+  already queued the merge. You keep the right to reject an ACCEPT for exactly
+  TWO kinds of prose and nothing else:
+  1. a claim asserting COVERAGE — "pinned by X", "covered by test Y". The next
+     agent reads it as verification and cannot check it from the code beside it,
+     so a false one is not cosmetic;
+  2. a CHANGELOG line making a false USER-FACING claim — it publishes verbatim.
+
+  A stale comment, a misplaced one, an overclaim about internals: rides along.
+  The trade is deliberate and it is the one the reviewer prompt already makes —
+  a false comment about internals lives until the next ticket touches that file.
+  A reject outside those two carve-outs is a process defect on your side.
 - `[agent:task respec <id>]` — **the correction channel for a ticket that is
   still open**, with the corrected spec as the body. It replaces the spec on the
   record and re-derives the title and task-dir from it. If the ticket has been
