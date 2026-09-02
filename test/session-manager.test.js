@@ -5989,6 +5989,32 @@ test('t93 _staleHostSuffix is computed ONCE per intent, not per reply line', () 
     'the check stats the whole module dir, so a per-reply call would put real IO on every task intent');
 });
 
+// A module dir and runRoot the real _staleHostSuffix reads as a quiet host: no
+// stamp under runRoot, and the one watched module predates this process, so
+// `changedSince` finds nothing and the method returns ''.
+//
+// WRONG CHANGE THIS PREVENTS: calling the real method with no seams. It then
+// defaults `dir` to __dirname and scans the LIVE worktree, comparing every
+// top-level *.js mtime against this process's start time — so any concurrent
+// write to a source file (another seat's commit, an editor save, a
+// byte-identical `cp` restore) appends a NOTE to every reply and turns its
+// callers red. `git status` stays clean, the failure names the touched module
+// rather than the cause, and it does not survive a re-run. Seams here are what
+// keep those subjects independent of ambient mtimes.
+function quietHostSeams() {
+  const root = mkTmpRoot('clodex-quiet-host-');
+  const dir = pathReal.join(root, 'src');
+  const runRoot = pathReal.join(root, 'run');
+  fsReal.mkdirSync(dir); fsReal.mkdirSync(runRoot);
+  const mod = pathReal.join(dir, 'session-manager.js');
+  fsReal.writeFileSync(mod, 'module.exports = {};');
+  // A day old, not merely "now": a write landing in the same filesystem
+  // timestamp tick as the process start would read as changed.
+  const old = Date.now() - 86_400_000;
+  fsReal.utimesSync(mod, new Date(old), new Date(old));
+  return { runRoot, dir };
+}
+
 // ── t94: the in-host suffix on a host with no stamp ─────────────────────────
 // t93's tests all stubbed _staleHostSuffix, so they pinned what _handleTask
 // does with a suffix, never what the method itself computes. A revert that
@@ -6038,7 +6064,8 @@ test('t93 a throwing stale check never breaks the reply it rides on', () => {
   // ticket protocol: the worst a broken stamp may do is say nothing.
   const realSuffix = Object.getPrototypeOf(f.m)._staleHostSuffix;
   assert.strictEqual(typeof realSuffix, 'function', 'ENTER: the real method exists to be exercised');
-  assert.strictEqual(realSuffix.call(f.m), '', 'no stamp on disk in a test env ⇒ silent, per fail-closed');
+  assert.strictEqual(realSuffix.call(f.m, Date.now(), quietHostSeams()), '',
+    'no stamp under runRoot and nothing changed under dir ⇒ silent, per fail-closed');
 
   // And the whole ticket path still works while the check is throwing.
   f.m._staleHostSuffix = () => { throw new Error('stamp read exploded'); };
@@ -6180,6 +6207,16 @@ test('t82 a PARKED spec reads as parked, not delivered — it will arrive, but i
 test('t82 a DELIVERED spec still confirms cleanly, with no scary NOTE appended', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
+  // _handleTask calls this internally with no arguments, so the seams cannot be
+  // passed at the call site — they are bound here instead. This is NOT a stub:
+  // the REAL method runs and computes a real notice, so the silence asserted
+  // below is the fail-closed path deciding to say nothing. Replacing it with
+  // `() => ''` would assert only that the fixture is quiet.
+  const realSuffix = Object.getPrototypeOf(f.m)._staleHostSuffix;
+  const seams = quietHostSeams();
+  f.m._staleHostSuffix = () => realSuffix.call(f.m, Date.now(), seams);
+  assert.strictEqual(f.m._staleHostSuffix(), '',
+    'ENTER: the real method, on these seams, is silent — so a NOTE below could only come from the reply path');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   const note = f.injected.join('\n');
   assert.match(note, /ticket t1 → hand/, 'the ordinary confirmation still reads as before');
