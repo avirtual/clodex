@@ -9,14 +9,14 @@
 // rows) must not be driven by subagent turns. Main line = role "parent" or
 // "unknown"; consumers filter on that plus sideCall=false.
 //
-// PORTING LANDMINE (wirescope, documented in CLODEUX-PLAN.md W1.1): the
-// classification is STATEFUL. The billing header's cc_is_subagent=true
-// flag can leak onto a parent turn together with a recycled
-// x-claude-code-agent-id (wire-confirmed 2026-06-14). The backstop is the
-// cc_version CONTENT fingerprint: the CLI recomputes it every request from
-// the first user message, so a leaked parent turn still carries the
-// parent's fingerprint. RoleClassifier keeps the per-session main-line
-// fingerprint; porting the boolean check alone reintroduces the leak.
+// PORTING LANDMINE (wirescope): the classification is STATEFUL. The
+// billing header's cc_is_subagent=true flag can leak onto a parent turn
+// together with a recycled x-claude-code-agent-id (wire-confirmed
+// 2026-06-14). The backstop is the cc_version CONTENT fingerprint: the CLI
+// recomputes it every request from the first user message, so a leaked
+// parent turn still carries the parent's fingerprint. RoleClassifier keeps
+// the per-session main-line fingerprint; porting the boolean check alone
+// reintroduces the leak.
 
 // Roles assigned to Task-spawned subagents. "subagent" is the generic
 // bucket for a custom agent whose system prompt matched no known signature

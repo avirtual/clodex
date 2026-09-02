@@ -123,8 +123,8 @@ one file). Registry: `~/.clodex/library/exec/clodex-monitor.json`.
 
 ## clodex-team (second tool)
 
-Teams control plane (teams-design.md [internal design doc, not in this repo]). `scripts/clodex-team.js`,
-registry `~/.clodex/library/exec/clodex-team.json`.
+Teams control plane. `scripts/clodex-team.js`, registry
+`~/.clodex/library/exec/clodex-team.json`.
 
 - `roster` (query → replies): resolves the team from the requester's
   registered cwd (registry entries now carry `cwd`; payload `cwd` is the

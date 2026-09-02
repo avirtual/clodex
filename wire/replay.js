@@ -1,14 +1,13 @@
 'use strict';
 
-// Capture-corpus replay: the TS half of the Clodeux verification oracle
-// (CLODEUX-PLAN.md, W2 gate). Feeds proxy-lab captures — the
-// <stem>.request.json body + <stem>.response.sse raw bytes — through the
-// SAME observer pipeline the live tee uses (role classification incl. the
-// per-session fingerprint state, SSE framing, text accumulation, usage
-// collection), and prints one JSON line per pair. The Python driver in
-// proxy-lab tools/ diffs those lines against the corpus's recorded
-// verdicts (<stem>.response.json: role/session_id/usage/meta) and its own
-// re-parse of the SSE text.
+// Capture-corpus replay: the TS half of the Clodeux verification oracle.
+// Feeds proxy-lab captures — the <stem>.request.json body +
+// <stem>.response.sse raw bytes — through the SAME observer pipeline the
+// live tee uses (role classification incl. the per-session fingerprint
+// state, SSE framing, text accumulation, usage collection), and prints one
+// JSON line per pair. The Python driver in proxy-lab tools/ diffs those
+// lines against the corpus's recorded verdicts (<stem>.response.json:
+// role/session_id/usage/meta) and its own re-parse of the SSE text.
 //
 // Adversarial chunking (reviewer condition — byte-boundary fuzzing):
 //   --chunk-size N     fixed N-byte chunks

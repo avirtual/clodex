@@ -3,8 +3,8 @@
 // Pricing + running totals: port of proxylab/billing.py (PRICES tables,
 // _price_for, _billing, _billing_openai, _new_totals, _bump, _accumulate).
 // Semantics matched field-for-field against the Python — the golden gate
-// (CLODEUX-PLAN.md W2 step 3) diffs this module against current proxylab
-// code over the capture corpus, so "close enough" is not enough:
+// diffs this module against current proxylab code over the capture corpus,
+// so "close enough" is not enough:
 //   - output_tokens comes from usage_final ONLY (no usage_start fallback);
 //   - service_tier comes from usage_start ONLY;
 //   - input/cache_read fall back start-ward on KEY ABSENCE (Python

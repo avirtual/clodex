@@ -1,9 +1,9 @@
 'use strict';
 
 // Shadow-mode differ between the wire intent path and the JSONL intent
-// path (CLODEUX-PLAN.md, Phase W1 step 4). Both sides report every intent
-// sighting; the differ pairs them by key and emits artifacts rich enough
-// to judge the cutover — not just semantic equality (reviewer condition):
+// path. Both sides report every intent sighting; the differ pairs them by
+// key and emits artifacts rich enough to judge the cutover — not just
+// semantic equality (reviewer condition):
 //
 //   { type: 'sighting',  source, key, ... }        every report, both sides
 //   { type: 'match',     key, first, latencyMs, dupes, ... }
