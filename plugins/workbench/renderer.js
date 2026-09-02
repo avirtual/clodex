@@ -107,6 +107,27 @@ const WORKBENCH_HTML = `
   </div>
 </div>`;
 
+// Returns '' for an unknown size, never '0 B' — an empty file really is 0 B, so
+// collapsing the two would erase the only distinction these rows are drawn to
+// show. Local, not `renderer/lib/format.js`'s fmtBytes: plugin-boundary.test.js
+// refuses a require leaving the plugin directory, and that one maps null to '0 B'.
+function fmtSize(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return '';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+}
+
+function fmtWhen(ms) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+    + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 module.exports.activate = (rhost) => {
   // Assigned by wire() on first mount. The host calls `mount(el)` before the
   // first `onOpen`, so this is always set by the time it is read.
@@ -577,9 +598,16 @@ module.exports.activate = (rhost) => {
         row.dataset.rel = ent.rel;
         row.dataset.type = ent.type;
         const isOpen = ent.type === 'dir' && expExpanded.has(ent.rel);
+        // Files only: a directory's size is not the size of what it holds, and
+        // its mtime moves when a child is added or renamed, so both read as
+        // answers to a question the row is not asking.
+        const size = ent.type === 'dir' ? '' : fmtSize(ent.size);
+        const when = ent.type === 'dir' ? '' : fmtWhen(ent.mtime);
         row.innerHTML = `<span class="explorer-twisty">${ent.type === 'dir' ? (isOpen ? '▾' : '▸') : ''}</span>`
           + `<span class="explorer-icon">${ent.type === 'dir' ? '📁' : '📄'}</span>`
-          + `<span class="explorer-name">${esc(ent.name)}</span>`;
+          + `<span class="explorer-name">${esc(ent.name)}</span>`
+          + (size ? `<span class="explorer-meta">${esc(size)}</span>` : '');
+        row.title = when ? `${ent.name}\nModified ${when}` : ent.name;
         if (ent.rel === editingRel) row.classList.add('selected');
         container.appendChild(row);
         row.addEventListener('click', async () => {

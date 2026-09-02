@@ -94,7 +94,10 @@
 .explorer-row.selected { background: var(--active-bg); }
 .explorer-twisty { width: 10px; display: inline-block; color: var(--text-dim); }
 .explorer-icon { width: 14px; display: inline-block; text-align: center; opacity: 0.8; }
-.explorer-name { overflow: hidden; text-overflow: ellipsis; }
+.explorer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Unshrinkable, so a deeply indented row clips the filename rather than the
+   size: a half-printed size reads as a wrong number, a clipped name does not. */
+.explorer-meta { flex: 0 0 auto; margin-left: auto; padding-left: 8px; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* Source control */
 .wb-branchbar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex: none; }

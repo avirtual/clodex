@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **The workbench Files tree now shows each file's size**, right-aligned on its
+  row, with the last-modified date in the row's tooltip. A file whose size
+  cannot be read shows nothing rather than `0 B`, so an unreadable file and a
+  genuinely empty one stay tellable apart. Folders show neither.
+
 ## 5.23.0 — 2026-09-02
 
 - **A command an agent runs in a workbench terminal can no longer lose its first
