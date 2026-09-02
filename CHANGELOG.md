@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Cmd+W no longer archives the session hidden behind a dialog.** With
+  Preferences, Edit Session, Peers, Plugins, Sandbox or any other modal open,
+  Cmd+W went straight past it and archived whatever session was behind it —
+  only the New Session dialog was ever consulted. Cmd+T, Cmd+1..9 and Cmd+F had
+  the same hole, as did their Alt twins in the browser frontend. Every chord now
+  checks every overlay: with a dialog open they do nothing, and Cmd+W still
+  closes the New Session dialog when that is the only thing open.
+
 - **The sessions.json backup now holds the state from before the app started,
   not from one write ago.** The `.bak` beside your session list used to be
   refreshed on every single field write — so a build that dropped or emptied
