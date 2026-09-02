@@ -19,13 +19,14 @@ blocks a release.
   instead of naming the role as a holder and offering to re-send a spec that was
   never sent.
 
-- **`task start`'s refusals no longer hand back an `assign` command that
-  bounces.** Both already-started refusals suggested the ticket's recorded role
-  or, failing that, its assignee — but a ticket addressed to a seat NAME carries
-  no role, so the suggestion named a seat that had since died, and `assign`
-  refused it. The refusals now name a target only when `assign` would accept it,
-  and otherwise say `<role|name>` rather than pointing at a command that cannot
-  work.
+- **`task start`, `task park` and `task respec` no longer hand back an `assign`
+  command that bounces.** Each suggested the ticket's recorded role or, failing
+  that, its assignee — but a ticket addressed to a seat NAME carries no role, so
+  the suggestion named a seat that had since died, and a role key removed from
+  the team since the ticket was filed named a role that no longer exists.
+  `assign` refused both. All four replies now name a target only when `assign`
+  would accept it, and otherwise say `<role|name>` rather than pointing at a
+  command that cannot work.
 
 - **The workbench Files tree now shows each file's size**, right-aligned on its
   row, with the last-modified date in the row's tooltip. A file whose size

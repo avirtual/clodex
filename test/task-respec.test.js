@@ -729,3 +729,78 @@ test('respec corrects an UNASSIGNED backlog ticket, reporting no delivery', () =
   // ticket, so naming it here would be an unusable recovery.
   assert.match(f.reply(), /task assign t1/, 'names assign, the verb that files AND dispatches a backlog ticket');
 });
+
+// ── t632: the respec route must not name an assign target that bounces ──────
+//
+// The same defect t629 fixed on `_taskStart`'s two refusals, on this verb's
+// `sendVerb`. The old expression was `ticket.role || ticket.assignee ||
+// '<role|name>'`, and that tail placeholder only covers the EMPTY case. It does
+// nothing for the STALE one: `_resolveAssignee` accepts exactly a key of
+// `team.roles` or a live seat name, and neither field is constrained to be
+// either — `team role-remove` deletes the roles key out from under tickets that
+// still carry it, and a pinned seat dies. Both routes handed the lead a command
+// `assign` then refuses, in the one clause whose entire job is to name the way
+// out of an undelivered respec.
+//
+// Assertions run the emitted target back through `_resolveAssignee` rather than
+// matching its spelling, so a rewording that reintroduces a bouncing target reds
+// however it is phrased.
+
+// The target out of `[agent:task assign <id> <target>]`, deliberately scoped to
+// that bracket. A whole-reply scan for the seat name would be satisfied by a
+// bouncing command and an honest one alike — this verb's replies name the
+// assignee elsewhere in the same sentence.
+function respecAssignTarget(said, id) {
+  const m = said.match(new RegExp(`\\[agent:task assign ${id} ([^\\]]+)\\]`));
+  assert.ok(m, `the respec reply should name an assign command for ${id} — got: ${said}`);
+  return m[1];
+}
+
+// Started, then parked: the only shape that reaches the assign arm of `sendVerb`
+// with both fields populated. `start` is what records `role`, and `parked` is
+// what makes `dispatched` false so the reply carries `sendVerb` at all.
+function startedThenParked(f) {
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec\ntasks/t1-dir — notes' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const t = f.one('t1');
+  assert.strictEqual(t.role, 'hand', 'ENTER: start recorded the role the ticket was filed under');
+  assert.strictEqual(t.assignee, 'team-hand', 'ENTER: and re-pinned the assignee to the live seat');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  assert.strictEqual(f.one('t1').parked, true, 'ENTER: parked, so respec reports NOT dispatched and names a send verb');
+  assert.ok(ticketStarted(f.one('t1')),
+    'ENTER: and STARTED — that is the term routing sendVerb to `assign` rather than `start`, which is the clause under test');
+  f.injected.length = 0;
+  return t;
+}
+
+test('t632: respec on a ticket carrying a REMOVED role key names a target that resolves', () => {
+  const f = mkRespec();
+  startedThenParked(f);
+
+  // `team role-remove` deletes the key outright (team-manifest.js), so a ticket
+  // outliving its role needs no fixture surgery to reach.
+  delete f.team.roles.hand;
+  assert.strictEqual(f.m._resolveAssignee(f.team, 'hand'), null,
+    'ENTER: `assign t1 hand` now bounces — exactly the state the old raw `ticket.role` walked into');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'corrected\ntasks/t1-dir — notes' });
+  const target = respecAssignTarget(f.reply(), 't1');
+  assert.ok(f.m._resolveAssignee(f.team, target) != null,
+    `the named target must be one assign accepts — got ${target}`);
+  assert.strictEqual(target, 'team-hand', 'the live pin is what remains recoverable once the role key is gone');
+});
+
+test('t632: respec still names the ROLE when it resolves, so "always emit the placeholder" reds', () => {
+  const f = mkRespec();
+  startedThenParked(f);
+  assert.strictEqual(f.m._resolveAssignee(f.team, 'hand'), 'hand', 'ENTER: the role is intact here — the anti-degenerate half');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'corrected\ntasks/t1-dir — notes' });
+  const target = respecAssignTarget(f.reply(), 't1');
+  assert.ok(f.m._resolveAssignee(f.team, target) != null,
+    `the named target must be one assign accepts — got ${target}`);
+  // A lead handed `<role|name>` for a ticket whose role is right there has to go
+  // look it up, so degrading to the placeholder is not a safe universal answer.
+  assert.strictEqual(target, 'hand', 'and it is the role the ticket was filed under, not the placeholder');
+});
