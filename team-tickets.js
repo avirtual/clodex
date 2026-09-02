@@ -2178,6 +2178,13 @@ function createTicketMethods(deps, shared) {
       return null;
     },
 
+    _resolvableAssignTarget(team, ticket) {
+      const t = ticket || {};
+      return this._resolveAssignee(team, t.role)
+        || this._resolveAssignee(team, t.assignee)
+        || '<role|name>';
+    },
+
     // A delivery-time pin RECORDS which seat received the work; it must not become
     // the only route back to the ticket. A seat that dies holding a pin would
     // otherwise take its whole queue with it — the tickets name something nothing
@@ -4551,12 +4558,12 @@ function createTicketMethods(deps, shared) {
         const holder = this._ticketAssigneeSeat(team, ticket);
         if (!holder) {
           reply(`error: ticket ${intent.id} is already started — no live seat holds it now; `
-            + `[agent:task assign ${intent.id} ${ticket.role || assignee}] sends the spec once one is up`);
+            + `[agent:task assign ${intent.id} ${this._resolvableAssignTarget(team, ticket)}] sends the spec once one is up`);
           return;
         }
         // "holds it", not "is held by": the occupancy refusal above owns that
         // phrasing, and the two replies are told apart by it across the suite.
-        reply(`error: ticket ${intent.id} is already started — ${holder} holds it; [agent:task assign ${intent.id} ${ticket.role || assignee}] re-sends the spec to it`);
+        reply(`error: ticket ${intent.id} is already started — ${holder} holds it; [agent:task assign ${intent.id} ${this._resolvableAssignTarget(team, ticket)}] re-sends the spec to it`);
         return;
       }
       // Start IS the dispatch, so it unparks — parking means "not started yet",
