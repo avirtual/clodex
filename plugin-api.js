@@ -9,8 +9,8 @@
 // Node test, in the browser bundle, and (critically) inside a plugin's engine
 // half, which must never reach core internals except through the host argument.
 
-// The published host-API version. "1" is FROZEN: the
-// workbench pilot proved the shapes, and the surface is now a published contract
+// The published host-API version. "1" is FROZEN: the workbench pilot proved
+// the shapes, and the surface is now a published contract
 // documented in plugins/plugin-api.md rather than an internal one. "0" — the
 // explicitly-unstable predecessor — is gone; a plugin written against it names a
 // version this host does not serve and is refused by name, which is the whole

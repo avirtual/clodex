@@ -189,8 +189,8 @@ const API_CONTRACT = [
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
   // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
   // exactly like the peers row above — NOT a plugin transport row (the plugin
-  // transport is the five plugin:* rows, frozen; a plugin never sees
-  // this channel).
+  // transport is the five plugin:* rows, frozen; a plugin never sees this
+  // channel).
   { name: 'onRequestOpenPluginsDialog', kind: 'on', channel: 'request-open-plugins-dialog' },
   // t288: the Teams menu's two menu→renderer open requests. The popover and the
   // create dialog are renderer-side surfaces, so the menu can only ask for them.
