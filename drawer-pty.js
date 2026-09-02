@@ -35,6 +35,12 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   const ENTER = String.fromCharCode(0x0d);
   // Armed only while the shell is silent; the first byte makes it inert for good.
   const ABANDON_ACK_MS = 250;
+  // One repeat of the abandon, and only into a shell that answered the first with a
+  // redraw carrying no interrupt status. Must stay comfortably under ABANDON_MAX_MS:
+  // its whole purpose is to convert the blind write below into an acked one, so it
+  // needs room for the elicited prompt to arrive first (measured: it arrives ~1ms
+  // after the repeat).
+  const ABANDON_NUDGE_MS = 400;
   // Later than any plausible flush, and not evidence that the interrupt landed.
   const ABANDON_MAX_MS = 1000;
   // An A mark reporting 130 proves only that the last command to finish exited
@@ -234,10 +240,19 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       try {
         // Abandon the line first: `isBusy()` false says nothing about the line editor,
         // which may hold a half-typed line the C mark would then report as ours.
-        // TWO WRITES, and they must not be merged. ^C is a signal, not an in-band byte:
-        // bash discards pending input when SIGINT lands, so anything sharing this write
-        // can be swallowed — measured at 3 failures in 72 under load, and what came out
-        // was a truncated command that still ran.
+        // TWO WRITES, and they must not be merged: ^C is a signal, not an in-band byte,
+        // so a merged write asks the line discipline to split one buffer across an
+        // interrupt.
+        //
+        // Writing the command while the shell owes us a prompt costs its leading byte,
+        // and the truncated remainder still RUNS — `echo a; echo b` arrives as
+        // `cho a; echo b`. Separating the writes in TIME does not fix that: measured at
+        // 32 concurrent shells with a fixed 3s sleep between them and no handshake at
+        // all, 2 of 192 still lost the byte, so there is no gap wide enough to buy
+        // safety. What predicts the loss is the missing prompt, not the interval — over
+        // 256 execs, every one of the 254 that saw an A mark after the ^C arrived
+        // intact and both that did not were truncated. Hence the release below waits
+        // for that mark rather than for a duration.
         rec.proc.write(ABANDON_LINE);
       } catch (e) {
         rec.pending = null;
@@ -273,6 +288,28 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       const promptAck = (info) => { if (info && info.interrupted) typeCommand(); };
       rec.execPromptAck = promptAck;
       later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
+      // The shell spoke but never acked: it drew a prompt carrying no interrupt status,
+      // which is the exact state the ABANDON_MAX_MS write below then types into and
+      // loses a byte to. Repeat the abandon instead of typing into it — a shell at a
+      // prompt answers a second ^C with a fresh prompt cycle (measured: the elicited A
+      // mark arrives ~1ms later), and that mark releases the command through promptAck
+      // like any other, so the blind write is never reached.
+      //
+      // ONE repeat, not a retry loop: the escape hatch is ABANDON_MAX_MS, and a loop
+      // would keep signalling a foreground program that is legitimately slow to die.
+      // A silent shell must NOT be nudged — it is the ABANDON_ACK_MS case above, which
+      // has already typed, so a second ^C would interrupt that command. `armed` alone
+      // covers it whenever these two timers fire in their nominal order; `spoke` is
+      // read directly so the guard holds without depending on that order.
+      let nudged = false;
+      later(() => {
+        if (armed || nudged || !spoke) return;
+        nudged = true;
+        // Same identity check as typeCommand: `pending` may hold a later exec by now,
+        // and signalling then kills a command this one does not own.
+        if (rec.pending !== p) return;
+        try { rec.proc.write(ABANDON_LINE); } catch {}
+      }, ABANDON_NUDGE_MS);
       // Types eventually whatever the shell does, including for a background job
       // writing to the tty (isBusy() false, so the exec is accepted); without the cap
       // those hang to EXEC_TIMEOUT, reporting a timeout for a command that never ran.
