@@ -772,7 +772,15 @@ function registerIpcHandlers(deps) {
         const w = wt.payload(name);
         // Only when the wire agrees on the session identity — a stale agent
         // record would credit this session with another's ledger.
-        if (w && w.sessionId && w.sessionId === entry.sessionId) {
+        //
+        // The cost check is not a refinement of that gate. sumAgentCost REPLACES
+        // the file's row for the current id with this one, and `cost.usd` is
+        // null whenever wire-telemetry's `_lifetime` had neither a persisted
+        // base nor a turn snapshot to add — so overlaying it drops a recorded
+        // spend out of the total the debounce override above exists to protect.
+        // Number.isFinite, not typeof: NaN passes typeof and sums to NaN here.
+        if (w && w.sessionId && w.sessionId === entry.sessionId
+            && Number.isFinite(w.cost && w.cost.usd)) {
           live = { cost: w.cost && w.cost.usd, requests: w.cost && w.cost.requests, turns: w.turns, refusals: w.refusals };
         }
       }
