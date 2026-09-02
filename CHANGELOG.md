@@ -22,7 +22,7 @@ blocks a release.
   does not bury the log.
 
 - **`task start` no longer says a seat holds a ticket that reached nobody.**
-  Dispatching to a role with no live seat records the miss on the ticket, so a
+  Dispatching to a role with no live seat records the miss on the ticket. A
   later `start` reports that no live seat holds it and points at `assign`,
   instead of naming the role as a holder and offering to re-send a spec that was
   never sent.
@@ -32,9 +32,9 @@ blocks a release.
   that, its assignee — but a ticket addressed to a seat NAME carries no role, so
   the suggestion named a seat that had since died, and a role key removed from
   the team since the ticket was filed named a role that no longer exists.
-  `assign` refused both. All four replies now name a target only when `assign`
-  would accept it, and otherwise say `<role|name>` rather than pointing at a
-  command that cannot work.
+  `assign` refused both. Each of those replies now names a target only when
+  `assign` would accept it, and otherwise says `<role|name>` rather than
+  pointing at a command that cannot work.
 
 - **The workbench Files tree now shows each file's size**, right-aligned on its
   row, with the last-modified date in the row's tooltip. A file whose size
