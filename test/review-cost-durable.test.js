@@ -544,6 +544,8 @@ test('two seats on one round produce two distinguishable rows', async () => {
 
   f.m._retireReviewSeatsFor(f.team, 't1', 'accepted');
 
+  assertReaped(f, a.name);
+  assertReaped(f, b.name);
   const rows = readRows(f, 't1');
   assert.strictEqual(rows.length, 2, 'each seat is priced — collapsing them would lose one seat\'s spend');
   assert.deepStrictEqual(rows.map((r) => r.seat).sort(), [a.name, b.name].sort());
@@ -665,6 +667,35 @@ test('a throwing booking costs neither the verdict nor the seat', async () => {
   assertReaped(f, rec.name);
   assert.ok(f.logs.some((l) => l.level === 'error' && /booking threw/.test(l.msg)),
     'and the throw is logged rather than swallowed into a silent no-op');
+});
+
+test('a throwing store resolve does not strand the seat it was about to reap', async () => {
+  // The booking's own `getPersistence().get` sits ABOVE the kill(), so a throw
+  // there would skip the teardown and leave live exactly the seat this function
+  // exists to reap — a worse outcome than the unpriced round it was trying to
+  // avoid.
+  //
+  // The throw is armed for the SECOND resolve of this name, not the first:
+  // `_liveReviewSeatsFor` resolves the record too, and breaking that one empties
+  // the seat list so the loop body never runs. The probe would then pass on a
+  // teardown that was never attempted — measuring nothing, which is how this
+  // subject failed before it was narrowed.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row() });
+  const realGet = f.persistence.get;
+  let seen = 0;
+  f.persistence.get = (n) => {
+    if (n === rec.name) { seen++; if (seen >= 2) throw new Error('store exploded'); }
+    return realGet(n);
+  };
+
+  f.m._retireReviewSeatsFor(f.team, 't1', 'rejected');
+
+  assert.ok(seen >= 2, 'ENTER: the booking resolve was actually reached — otherwise nothing was tested');
+  assert.deepStrictEqual(f.killed, [rec.name],
+    'the seat was still reaped: an unpriced round is a loss, a stranded reviewer is a leak');
 });
 
 test('an unreadable board on the lead-ended path is logged, not silent', async () => {

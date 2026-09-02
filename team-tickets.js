@@ -1925,6 +1925,10 @@ function createTicketMethods(deps, shared) {
       // the ticket's stamped round PLUS ONE — the verdict did not land, so nothing
       // bumped the counter, and reading it raw would file this round's spend under
       // the previous round's number.
+      //
+      // That plus-one carries the stranded-seat mis-attribution `_retireReviewSeatsFor`
+      // documents: a `keepHold` round-1 seat reaped after round 2's verdict landed
+      // books as round 2. Totals stay right, per-round attribution does not.
       // WRAPPED, and the wrapping is structural rather than a response to a live
       // throw: this now sits between a landed, saved verdict and the kill() that
       // retires the seat — the position _landVerdictOnTicket's own tail warns
@@ -7818,10 +7822,20 @@ function createTicketMethods(deps, shared) {
     // Retire the reviewer seats of a round the LEAD has ended.
     //
     // A reviewer retires ITSELF on the normal path (`_handleReviewDone`); the
-    // only other routes are this one and a hand `[agent:team-retire]`, which
-    // resolves a reviewer as `discard` off `rec.ephemeral` and destroys it. All
-    // three price the round before reaping it. When the lead ends the round
-    // instead —
+    // other TICKET-LOOP routes are this one and a hand `[agent:team-retire]`,
+    // which resolves a reviewer as `discard` off `rec.ephemeral` and destroys it.
+    // Those three price the round before reaping it.
+    //
+    // That is NOT every way a reviewer can die, and the gap is deliberate rather
+    // than pending: an operator-initiated `session:kill` (sidebar Delete Session,
+    // remote kill) or `session:archive` followed by `sweepReviewerGraveyard`
+    // reaps the seat through session-manager primitives that carry no ticket
+    // context, and the round's spend is lost with the record. Booking there would
+    // mean teaching `destroy()` about tickets, which is a different change from
+    // this one. So: a round ended through the loop is priced, a round an operator
+    // ends by hand is not.
+    //
+    // When the lead ends the round instead —
     // `reject` reopens the ticket, `accept` closes it out — nothing did, so the
     // seat stayed live still carrying `reviewTicket`. Its verdict cannot land
     // while the ticket is out of flight, but a rework round re-closes the ticket
@@ -7884,7 +7898,12 @@ function createTicketMethods(deps, shared) {
             // _writeReviewCost's header gives — and `_liveReviewSeatsFor` already
             // gated on it being present, so this cannot be the call that finds it
             // missing.
-            const rec = getPersistence().get(s.name);
+            // Wrapped like every other store resolve on these paths: this sits
+            // ABOVE the kill() below, so a throw here would skip the teardown and
+            // strand the seat this function exists to reap. Null instead falls
+            // into the `else` and warns.
+            let rec = null;
+            try { rec = getPersistence().get(s.name); } catch { rec = null; }
             const ticket = this._loadTicket(team, ticketId);
             if (rec && ticket) {
               const round = (Number(ticket.reviewRound) || 0) + 1;
