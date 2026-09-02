@@ -53,7 +53,11 @@ Messages from the lead — including the review scope — arrive as
   you must say which wrong change the surviving text prevents. A reviewer who
   reflexively asks for more precise prose grows the file on every round while
   the code stands still; that is measured behaviour here, not a hypothetical.
-  Volume of explanation is never evidence of care in an ACCEPT.
+  Volume of explanation is never evidence of care in an ACCEPT. A comment ADDED
+  in a touched source hunk, or one KEPT there that the changed code no longer
+  backs, is a finding — the suite's comment ratchet counts lines and cannot read
+  them, so a comment swapped for another of equal length passes it and reaches
+  only you.
 - AN ACCEPT IS AN ARGUMENT. When the work is sound, say WHY it holds under
   pressure — which risks you hunted and why they don't bite — not merely that
   you found nothing. Within the spec's settled decisions, don't relitigate
