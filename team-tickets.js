@@ -1068,29 +1068,34 @@ function createTicketMethods(deps, shared) {
     //
     // TWO name-resolved lookups die at teardown, which is why this is not
     // deferred the way _writeTicketCost is:
-    //   - `_wireTelemetry.payload(seatName)` resolves by NAME out of a map that
-    //     `prune()` clears for every name no longer in `this.sessions`, and
-    //     kill() deletes the session. After a poller tick the freshest-turn
-    //     overlay is simply gone, silently, leaving the debounced file's stale
-    //     figure as the whole answer.
     //   - `getPersistence().get(seatName)` returns null once kill() has removed
-    //     the record, and `sweepReviewerGraveyard` makes that permanent.
+    //     the record — kill()'s own SYNCHRONOUS effect — and
+    //     `sweepReviewerGraveyard` makes that permanent.
+    //   - `_wireTelemetry.payload(seatName)` resolves by NAME out of a map that
+    //     `prune()` clears for every name absent from `this.sessions`. That drop
+    //     is NOT kill()'s doing and does not race it: the session leaves the map
+    //     in `_cleanup`, on pty exit, and the prune runs on a later poller tick.
+    //     The window is wide, not narrow — but it closes, and once it has, the
+    //     freshest-turn overlay is silently gone and the debounced file's stale
+    //     figure is the whole answer.
     // The seat's record is therefore taken as the `rec` ARGUMENT — an object
     // reference captured before the reap — and must not be re-resolved by name
     // inside here. That is the change this note exists to prevent; it would look
-    // like a tidy-up and would capture nothing.
+    // like a tidy-up and would capture nothing. The seat arrives as a NAME rather
+    // than a session object for the same reason: a session in hand invites
+    // exactly that re-resolution.
     //
     // Best-effort like every other rollup: a review's verdict is the output that
     // matters, and no failure to price it may cost the verdict or strand the
     // seat. Every arm returns rather than throws.
-    _writeReviewCost(session, team, ticket, rec, round, verdict, mustFixCount) {
+    _writeReviewCost(seatName, team, ticket, rec, round, verdict, mustFixCount) {
       try {
         if (!team || !ticket) return { ok: false, path: null, error: 'no ticket' };
         const dest = this._ticketDiffDest(team, ticket);
         if (!dest.ok) return { ok: false, path: null, error: dest.error };
-        const { ledger, resolved } = this._reviewLedger(session.name, rec);
+        const { ledger, resolved } = this._reviewLedger(seatName, rec);
         const row = teamCost.reviewCostRecord({
-          ticket: ticket.id, team: team.name, round, seat: session.name,
+          ticket: ticket.id, team: team.name, round, seat: seatName,
           // Off the RECORD, not recomputed from the ticket's round: the label is
           // what the proxy actually billed under, and re-deriving it here would
           // publish the round this code thinks it is rather than the one the
@@ -1893,19 +1898,40 @@ function createTicketMethods(deps, shared) {
       let landedOn = null;
       if (rec.reviewTicket) landedOn = this._landVerdictOnTicket(session, rec.reviewTicket, verdict);
 
-      // ONE call site, ahead of BOTH arms below, because both end in kill() and
-      // the seat's persistence record is the only thing joining this spend to
-      // this ticket. A copy inside each arm is the shape to avoid: the two arms
-      // are edited for unrelated reasons and the second copy is the one that gets
-      // forgotten, which loses the cost of exactly the reviews that went wrong.
+      // ONE body, called at each kill() below, because both teardowns destroy the
+      // persistence record that is the only thing joining this spend to this
+      // ticket. A copy inside each arm is the shape to avoid: the arms are edited
+      // for unrelated reasons and the second copy is the one that gets forgotten.
       //
-      // Runs on the UNPARSED-verdict arm too, and deliberately: that seat spent
-      // real money and is about to be reaped like any other, so skipping it would
-      // make the ledger cheapest precisely where the loop is least efficient.
-      // That arm's round is the ticket's stamped round PLUS ONE — the verdict did
-      // not land, so nothing bumped the counter, and reading it raw would file
-      // this round's spend under the previous round's number.
-      if (rec.reviewTicket) {
+      // BOUND TO THE KILL, not run once up front, and that placement is the fix
+      // for a double-book. The `_gatedDeliver` failure arm below returns WITHOUT
+      // killing and tells the reviewer to re-fire this very intent — so a booking
+      // taken before the arms runs again on the re-fire, recomputes the same
+      // round (nothing landed, so nothing bumped the counter) and appends a
+      // second row for one review. A consumer summing `usd` then reads that
+      // ticket at ~2x, which is the one number this artifact exists to produce.
+      // Nothing is destroyed while the seat stays live, so booking nothing there
+      // is correct rather than merely safe.
+      //
+      // The `booked` latch is defensive only, and currently unexercised: it is a
+      // per-INVOCATION flag, so it guards against two kill sites firing in one
+      // call, which no arm here does — the re-fire is a second invocation with a
+      // fresh closure, and placement alone is what stops it. Removing the latch
+      // breaks no test today. It is kept for the direction it fails in: a future
+      // arm that reaps and books twice writes a WRONG number, while one that
+      // forgets to book loses a row, and a missing number is honest where a wrong
+      // one is not — the same rule the `resolved: false` arm encodes.
+      //
+      // Runs on the UNPARSED-verdict arm too, deliberately: that seat spent real
+      // money and is reaped like any other, so skipping it would make the ledger
+      // cheapest precisely where the loop is least efficient. That arm's round is
+      // the ticket's stamped round PLUS ONE — the verdict did not land, so nothing
+      // bumped the counter, and reading it raw would file this round's spend under
+      // the previous round's number.
+      let booked = false;
+      const bookReview = () => {
+        if (booked || !rec.reviewTicket) return;
+        booked = true;
         let team = null;
         try { team = resolveTeam(session.cwd); } catch { team = null; }
         const ticket = team ? this._loadTicket(team, rec.reviewTicket) : null;
@@ -1913,13 +1939,13 @@ function createTicketMethods(deps, shared) {
           ? Number(landedOn.reviewRound)
           : (Number(ticket && ticket.reviewRound) || 0) + 1;
         const w = this._writeReviewCost(
-          session, team, ticket, rec, round, landedOn ? landedOn.verdict : null,
+          session.name, team, ticket, rec, round, landedOn ? landedOn.verdict : null,
           landedOn ? countMustFix(landedOn.mustFix) : null,
         );
         if (!w.ok) {
           log.warn('intent', `ticket ${rec.reviewTicket}: review cost for round ${round} not captured (${w.error}) — the seat is about to be reaped, so this round's spend is unrecoverable`);
         }
-      }
+      };
 
       if (landedOn) {
         this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict);
@@ -1930,6 +1956,7 @@ function createTicketMethods(deps, shared) {
         this._sendToSession(session.name, 'session:context-action', {
           action: 'retired', name: session.name, disposition: 'discard',
         });
+        bookReview();
         this.kill(session.name);
         // ACCEPT alone, and fired UNAWAITED — this handler is synchronous and
         // the merge shells out to git and then runs a whole suite, so awaiting
@@ -1965,6 +1992,7 @@ function createTicketMethods(deps, shared) {
       this._sendToSession(session.name, 'session:context-action', {
         action: 'retired', name: session.name, disposition: 'discard',
       });
+      bookReview();
       this.kill(session.name);
     },
 
@@ -7796,8 +7824,11 @@ function createTicketMethods(deps, shared) {
     // preserve.
     //
     // Same shape as review-done's own teardown — `session:context-action`
-    // retired/discard, then kill() — so the record, the sidebar and
-    // `sweepReviewerGraveyard` see one kind of reviewer exit rather than two.
+    // retired/discard, book the round's spend, then kill() — so the record, the
+    // sidebar and `sweepReviewerGraveyard` see one kind of reviewer exit rather
+    // than two. The booking is part of that shape and not an extra: every route
+    // that reaps a reviewer must price it first, or the round is free in the
+    // ledger and nothing says so.
     // DISCARD is right because a reviewer seat is minted with no worktree of its
     // own (`_handleTeamReview` upserts name/ephemeral/reviewFor/reviewTicket and
     // no `worktree`), so there is no tree an archive would preserve.
@@ -7814,6 +7845,32 @@ function createTicketMethods(deps, shared) {
             this._sendToSession(s.name, 'session:context-action', {
               action: 'retired', name: s.name, disposition: 'discard',
             });
+            // The round the LEAD ended is still a round, and this is the only
+            // place it can be priced: kill() below drops the record that joins
+            // this seat's sessions to this ticket. Skipping it would bias the
+            // measurement in the worst possible direction — the rounds that end
+            // here are the wedged and abandoned ones, and `_taskReject` is the
+            // documented recovery for a wedged review, so a reviewer-efficiency
+            // number built on this artifact would silently omit its own most
+            // expensive cases.
+            //
+            // No verdict and no must-fix count, because neither exists: the same
+            // shape review-done's unparsed arm writes. `reviewRound` did not move
+            // (nothing landed), so the round is its value plus one.
+            //
+            // The record is read HERE, before kill(), for the reason
+            // _writeReviewCost's header gives — and `_liveReviewSeatsFor` already
+            // gated on it being present, so this cannot be the call that finds it
+            // missing.
+            const rec = getPersistence().get(s.name);
+            const ticket = this._loadTicket(team, ticketId);
+            if (rec && ticket) {
+              const round = (Number(ticket.reviewRound) || 0) + 1;
+              const w = this._writeReviewCost(s.name, team, ticket, rec, round, null, null);
+              if (!w.ok) {
+                log.warn('ticket', `ticket ${ticketId}: review cost for the ${why} round not captured for ${s.name} (${w.error}) — the seat is about to be reaped, so this round's spend is unrecoverable`);
+              }
+            }
             const r = this.kill(s.name);
             if (r && typeof r.catch === 'function') {
               // Names the SEAT and contradicts the line above in as many words.

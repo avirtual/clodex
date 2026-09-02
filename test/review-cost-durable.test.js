@@ -136,11 +136,14 @@ function mkFixture(extra = {}) {
   m._reconcileTickets = () => {};
   m._queueAutoMerge = () => {};
   m.create = async () => {};
-  // Verbatim what the real kill() leaves behind for a reviewer: the record is
-  // removed and the session leaves the map. Stubbed because the real one
-  // SIGKILLs a pid and these seats carry a fake one — but the STATE is what
-  // every assertion reads, so a teardown that reaped the wrong name cannot pass
-  // by having merely been called.
+  // Stubbed because the real kill() SIGKILLs a pid and these seats carry a fake
+  // one. The STATE it leaves is what every assertion reads, so a teardown that
+  // reaped the wrong name cannot pass by having merely been called.
+  //
+  // The record removal is kill()'s own synchronous effect; dropping the session
+  // from the map is NOT — that happens on pty exit, in _cleanup. This stub
+  // collapses the two because the subject is the join key's lifetime and the
+  // record is the join key. Do not read it as a model of kill()'s timing.
   m.kill = async (name) => { killed.push(name); persistence.remove(name); m.sessions.delete(name); };
   const seat = (name, cwd = '/proj') => {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
@@ -444,6 +447,50 @@ test('an UNPARSED verdict still books its round — the seat is reaped either wa
   assert.strictEqual(r.round, 1);
 });
 
+// ── the booking is bound to the reap, not to the handler ───────────────────
+
+test('an undeliverable verdict books NOTHING while the seat stays live', async () => {
+  // `_gatedDeliver` failing returns without killing and tells the reviewer to
+  // re-fire. Nothing is destroyed, so nothing needs booking yet — and booking
+  // here is what makes the re-fire below double-count.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 3 }) });
+  f.m._gatedDeliver = () => ({ error: 'lead unreachable' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'thoughts, but no verdict line');
+
+  assert.ok(f.persistence.get(rec.name), 'ENTER: the seat is STILL LIVE — this is the arm that does not kill');
+  assert.strictEqual(readRows(f, 't1'), null,
+    'nothing booked: the join key is intact, so the round can still be priced later');
+});
+
+test('a re-fired review-done books the round exactly ONCE', async () => {
+  // The double-book. The handler instructs the reviewer to re-fire, and on the
+  // re-fire `landedOn` is still null and the round recomputes identically — so a
+  // booking taken up front appends a second row and a consumer summing `usd`
+  // reads this ticket's review at ~2x.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 3 }) });
+
+  f.m._gatedDeliver = () => ({ error: 'lead unreachable' });
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'thoughts, but no verdict line');
+  assert.ok(f.persistence.get(rec.name), 'ENTER: the first fire left the seat live, as its reply promised');
+
+  // The lead comes back and the reviewer does what it was told to do.
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { queued: true }; };
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'thoughts, but no verdict line');
+
+  assertReaped(f, rec.name);
+  const rows = readRows(f, 't1');
+  assert.strictEqual(rows.length, 1, 'ONE row for one review — two would report this round at double its cost');
+  assert.strictEqual(rows[0].usd, 3);
+  assert.strictEqual(rows[0].round, 1);
+});
+
 test('an ad-hoc review writes nothing — there is no ticket to attribute it to', async () => {
   const f = mkFixture();
   reviewingTicket(f);
@@ -458,6 +505,73 @@ test('an ad-hoc review writes nothing — there is no ticket to attribute it to'
 
   assert.strictEqual(readRows(f, 't1'), null,
     'no ticket claimed this spend, and inventing one would bill a real ticket for a review it never had');
+});
+
+// ── the round the LEAD ends ────────────────────────────────────────────────
+
+test('a round the lead ends is booked before its seat is reaped', async () => {
+  // `_retireReviewSeatsFor` is the second teardown: reject/accept end the round
+  // and kill the seat without any verdict ever landing. These are the wedged and
+  // abandoned rounds — the expensive ones — so a ledger that skipped them would
+  // be biased exactly against the cases it exists to find.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 6 }) });
+  assert.deepStrictEqual(f.m._liveReviewSeatsFor(f.team, 't1').map((s) => s.name), [rec.name],
+    'ENTER: the seat is findable as this ticket\'s reviewer — every absence below is otherwise vacuous');
+
+  f.m._retireReviewSeatsFor(f.team, 't1', 'rejected');
+
+  assertReaped(f, rec.name);
+  const rows = readRows(f, 't1');
+  assert.ok(rows, 'the round was priced even though nobody ever delivered a verdict');
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].usd, 6);
+  assert.strictEqual(rows[0].round, 1, 'reviewRound never moved, so this round is its value plus one');
+  assert.strictEqual(rows[0].verdict, null, 'no verdict existed — recorded as absent, not invented');
+  assert.strictEqual(rows[0].mustFix, null);
+  assert.strictEqual(rows[0].seat, rec.name);
+});
+
+test('two seats on one round produce two distinguishable rows', async () => {
+  const f = mkFixture();
+  reviewingTicket(f);
+  const a = spawnReviewer(f, 't1', 'sess-a');
+  const b = spawnReviewer(f, 't1', 'sess-b');
+  assert.notStrictEqual(a.name, b.name, 'ENTER: two distinct seats hold the same round');
+  writeTotals(f, { 'sess-a': row({ cost: 2 }), 'sess-b': row({ cost: 5 }) });
+
+  f.m._retireReviewSeatsFor(f.team, 't1', 'accepted');
+
+  const rows = readRows(f, 't1');
+  assert.strictEqual(rows.length, 2, 'each seat is priced — collapsing them would lose one seat\'s spend');
+  assert.deepStrictEqual(rows.map((r) => r.seat).sort(), [a.name, b.name].sort());
+  assert.deepStrictEqual(rows.map((r) => r.usd).sort(), [2, 5]);
+  assert.deepStrictEqual([...new Set(rows.map((r) => r.round))], [1],
+    'both are round 1 — honest, and the seat name is what separates them');
+});
+
+test('no round can be booked by BOTH teardown paths', async () => {
+  // The interaction between the two fixes. `_liveReviewSeatsFor` resolves through
+  // `getPersistence().get`, and kill() removes the record SYNCHRONOUSLY — so a
+  // seat already reaped by review-done cannot be returned here. Pinned rather
+  // than reasoned about: the two paths are edited independently, and the day
+  // that stops holding is the day every accepted ticket double-books.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 4 }) });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assert.strictEqual(readRows(f, 't1').length, 1, 'ENTER: review-done booked the round');
+
+  // The lead's accept follows, as it does in the real loop.
+  assert.deepStrictEqual(f.m._liveReviewSeatsFor(f.team, 't1'), [],
+    'the reaped seat is no longer findable — the record kill() dropped is what this resolves through');
+  f.m._retireReviewSeatsFor(f.team, 't1', 'accepted');
+
+  assert.strictEqual(readRows(f, 't1').length, 1, 'still ONE row — the second path found nothing to book');
 });
 
 // ── failure is reported, never silent and never fatal ──────────────────────
