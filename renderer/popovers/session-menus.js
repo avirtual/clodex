@@ -309,7 +309,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
   let sessionMenu = null;
   function closeSessionMenu() { if (sessionMenu) { sessionMenu.remove(); sessionMenu = null; } }
 
-  // `extra` is the plugin-contributed tail (renderer/plugin-host.js §2.4) —
+  // `extra` is the plugin-contributed tail (renderer/plugin-host.js) —
   // already namespaced and label-validated by the host, appended after core's
   // table. Empty by default, so the menu is byte-identical without plugins.
   function openSessionMenu(anchorBtn, type, onPick, extra = []) {

@@ -375,7 +375,7 @@ function createPluginHostEngine(deps) {
         },
       }),
 
-      // ── events (§3.3) ──────────────────────────────────────────────────────
+      // ── events ────────────────────────────────────────────────────────────
       // Scope is REQUIRED — there is no default, because every plausible default
       // is wrong: 'all' leaks across workspaces, and any session/workspace guess
       // silently drops. An omitted scope is a logged no-op, not a broadcast.
@@ -571,7 +571,7 @@ function createPluginHostEngine(deps) {
       const info = loader.rendererInfo(String(pluginId));
       return info ? { ok: true, ...info } : errorEnvelope('no such plugin');
     },
-    // ── The fail-safe surface (§2.5's Plugins section) ────────────────────
+    // ── The fail-safe surface (the settings Plugins section) ──────────────
     // Every plugin ON DISK, with the user's intent and any quarantine shadowing
     // it — NOT `catalog()`, which lists only what successfully registered and so
     // would hide the exact plugin the section exists to let you fix.

@@ -9,7 +9,7 @@
 // Node test, in the browser bundle, and (critically) inside a plugin's engine
 // half, which must never reach core internals except through the host argument.
 
-// The published host-API version. "1" is FROZEN (Phase 3, plan §3.1/§6): the
+// The published host-API version. "1" is FROZEN: the
 // workbench pilot proved the shapes, and the surface is now a published contract
 // documented in plugins/plugin-api.md rather than an internal one. "0" — the
 // explicitly-unstable predecessor — is gone; a plugin written against it names a
@@ -155,7 +155,7 @@ function pluginReaches(pluginId, grants) {
   return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
 }
 
-// Host-owned namespacing (plan §2.1/§2.4): every id a plugin registers — status
+// Host-owned namespacing: every id a plugin registers — status
 // bar action, session-menu act, dispatch method — is prefixed by the host, never
 // by the plugin. `_host` is the reserved pseudo-plugin the renderer host uses for
 // its own privileged calls (settings.set), so it can never collide with a real id
@@ -165,7 +165,7 @@ function namespaced(pluginId, id) {
   return `${pluginId}:${id}`;
 }
 
-// The kill switch (plan §3.1, §6): `CLODEX_PLUGINS=0` skips the loader entirely,
+// The kill switch: `CLODEX_PLUGINS=0` skips the loader entirely,
 // so the whole program stays globally reversible with an env var. Only the exact
 // string '0' disables — an unset var, an empty var, or anything else is ON, so a
 // typo fails safe toward today's behavior.
@@ -208,7 +208,7 @@ function surfaceAllows(callerSurface, requiredSurface) {
   return requiredSurface === 'any';
 }
 
-// The invoke error envelope (plan §3.4). A disabled plugin, an unknown id, or an
+// The invoke error envelope. A disabled plugin, an unknown id, or an
 // unregistered method degrades LOUDLY — the caller gets a shaped refusal it can
 // render — rather than silently resolving undefined, which is indistinguishable
 // from "the call worked and returned nothing".

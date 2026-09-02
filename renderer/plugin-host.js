@@ -554,7 +554,7 @@ function initPluginHost({
     if (css) {
       // Per-plugin <style> rather than a <link>: works identically in the
       // file:// Electron window and the built web bundle, and removal is one
-      // node (plan §2.6 CSS decision).
+      // node.
       const st = document.createElement('style');
       st.setAttribute('data-plugin-style', pluginId);
       st.textContent = String(css);

@@ -15,7 +15,7 @@
 // Source tab renders per-file diffs there (read-only). The Worktrees tab has no
 // editor and fills the width.
 //
-// Activated ONCE PER BrowserWindow (§3.3 law 1): every piece of state below
+// Activated ONCE PER BrowserWindow (Law 1): every piece of state below
 // lives in this activation closure and dies with the window, and "disable" fans
 // out across windows because the fan-out is the host's, not ours. The overlay
 // CONTAINER is host-owned and removed wholesale on disable (MUST-FIX 6) — this
@@ -947,12 +947,12 @@ module.exports.activate = (rhost) => {
       e.preventDefault();
     });
 
-    // Escape and one-open-at-a-time are the host surface's (§2.6) — this half
+    // Escape and one-open-at-a-time are the host surface's — this half
     // installs no document-level key handler of its own.
     $('workbench-close').addEventListener('click', () => surface.close());
   }
 
-  // §2.2 — the plugin's own entry point, replacing core's `#btn-workbench` and
+  // The plugin's own entry point, replacing core's `#btn-workbench` and
   // the View ▸ Workbench menu item (both deleted in W4 along with the temporary
   // DOM-event bridge that stood in for them). The host renders the button into
   // `#sidebar-footer` with the same glyph+label structure as `#inbox-open`, and
@@ -971,5 +971,5 @@ module.exports.activate = (rhost) => {
 module.exports.deactivate = () => {
   // Nothing to do: the overlay container, its interior, the wrapped document
   // listeners and the injected <style> are all host-held and removed wholesale
-  // (§3.1 law 3 / MUST-FIX 6).
+  // (Law 3 / MUST-FIX 6).
 };

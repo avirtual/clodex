@@ -189,7 +189,7 @@ const API_CONTRACT = [
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
   // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
   // exactly like the peers row above — NOT a plugin transport row (the plugin
-  // transport is the five plugin:* rows, frozen by plan §1; a plugin never sees
+  // transport is the five plugin:* rows, frozen; a plugin never sees
   // this channel).
   { name: 'onRequestOpenPluginsDialog', kind: 'on', channel: 'request-open-plugins-dialog' },
   // t288: the Teams menu's two menu→renderer open requests. The popover and the
@@ -453,7 +453,7 @@ const API_CONTRACT = [
   { name: 'pluginSetEnabled', kind: 'invoke', channel: 'plugin:setEnabled' },
   { name: 'onPluginEvent', kind: 'on', channel: 'plugin-event' },
   // The intent catalog served over IPC rather than statically required by the
-  // renderer (plan §2.3 R-INT-4): once plugins can register verbs, a renderer
+  // renderer: once plugins can register verbs, a renderer
   // that reads its own frozen copy of intent-catalog.js is reading a stale
   // catalog — and the web bundle's copy is frozen at build time.
   { name: 'getIntentCatalog', kind: 'invoke', channel: 'intents:catalog' },

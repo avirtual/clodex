@@ -24,7 +24,7 @@
 //
 // `host.lib.gitWorktree` is PERMANENT and stays a host entry — git-worktree.js
 // is genuinely SHARED (the New-Session dialog and the session-delete flow use
-// it), so it stays core and reaches this plugin the sanctioned way (§3.2 lib).
+// it), so it stays core and reaches this plugin the sanctioned way via host.lib.
 // That is the line: a leaf only the plugin uses moves in; a leaf core also uses
 // stays core and is lent.
 //
@@ -238,6 +238,6 @@ module.exports.activate = (host) => {
 
 module.exports.deactivate = () => {
   // The host tears down every dispatch entry, hook and registry row it handed
-  // out on this plugin's behalf regardless of what happens here (§3.1: teardown
+  // out on this plugin's behalf regardless of what happens here (teardown
   // never trusts the plugin). Nothing of our own to release.
 };
