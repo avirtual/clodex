@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Clicking the context, cost or cache-bust segment on the status bar
+  occasionally did nothing.** The bar redraws itself whenever new proxy or
+  context numbers arrive, and a redraw that landed in the middle of a press
+  threw the click away — the segment you pressed no longer existed by the time
+  you released the button. The three popovers now open on the press itself, so
+  a redraw can no longer swallow the gesture. The wirescope link still opens on
+  release, where it belongs.
+
 - **The sessions.json backup now holds the state from before the app started,
   not from one write ago.** The `.bak` beside your session list used to be
   refreshed on every single field write — so a build that dropped or emptied
