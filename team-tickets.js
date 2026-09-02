@@ -3244,6 +3244,25 @@ function createTicketMethods(deps, shared) {
       return { queued: true };
     },
 
+    // What `_ticketDeliverySuffix` says once, kept. That suffix rides the reply to
+    // the turn that dispatched and nothing is written down, so every LATER reader —
+    // the `start` refusal below, the board, a lead reading the record after a
+    // compact — cannot tell a ticket that reached nobody from one a seat is working.
+    //
+    // Only `undelivered` is recorded. `held` and `parked` mean a seat EXISTS and
+    // will or may see the spec; `self` means the lead kept the ticket. Stamping any
+    // of those would describe a seat that HAS the work as one that never got it.
+    //
+    // Stamp-only, never a clear: each dispatch verb deletes the field with the rest
+    // of its episode state (`nudgedAt`, `parked`) before it picks an arm, so the
+    // arms that never reach a delivery outcome — both seat mints — clear it by
+    // construction. A clear placed here instead would leave them stale.
+    _recordUndeliveredDispatch(team, tickets, ticket, d) {
+      if (!d || !d.undelivered) return;
+      ticket.undeliveredAt = Date.now();
+      ticketsStore.save(team.root, tickets);
+    },
+
     _ticketDeliverySuffix(d, assignee) {
       if (d.undelivered) return ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
       if (d.held) return ` — NOTE: spec NOT delivered (${d.reason || 'held'}); the seat cannot be parked for, so it has not seen the spec — re-send when it clears`;
@@ -4542,9 +4561,27 @@ function createTicketMethods(deps, shared) {
       // dispatch-only marker, right for the shapes that re-pin and wrong for the
       // ones that do not, and start is the one-shot so it must answer for all.
       if (ticketStarted(ticket)) {
+        // NO `|| assignee` fallback. That fallback is what made this reply lie: a
+        // dispatch reaching nobody stamps `startedAt` and stays stamped —
+        // deliberately, so replay and the orphan sweep still see it — so it arrives
+        // here with no seat to name, and the fallback filled the gap with the ROLE
+        // KEY. The reply then claimed "hand holds it" about a spec no seat ever
+        // received, and "re-sends the spec to it" about a send that never happened.
+        const holder = this._ticketAssigneeSeat(team, ticket);
+        // TWO no-holder arms, because a ticket DELIVERED to a seat that has since
+        // died is holderless here too, and "re-send" is true of that one and false
+        // of the other. `undeliveredAt` is the only thing that tells them apart —
+        // which is what the dispatch verbs now write it down for.
+        if (!holder) {
+          reply(ticket.undeliveredAt
+            ? `error: ticket ${intent.id} is already started — but its dispatch reached no seat, and none is live for it now; `
+              + `[agent:task assign ${intent.id} ${ticket.role || assignee}] delivers the spec once one is up`
+            : `error: ticket ${intent.id} is already started — no live seat holds it now; `
+              + `[agent:task assign ${intent.id} ${ticket.role || assignee}] re-sends the spec once one is up`);
+          return;
+        }
         // "holds it", not "is held by": the occupancy refusal above owns that
         // phrasing, and the two replies are told apart by it across the suite.
-        const holder = this._ticketAssigneeSeat(team, ticket) || assignee;
         reply(`error: ticket ${intent.id} is already started — ${holder} holds it; [agent:task assign ${intent.id} ${ticket.role || assignee}] re-sends the spec to it`);
         return;
       }
@@ -4555,6 +4592,11 @@ function createTicketMethods(deps, shared) {
       delete ticket.parked;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;   // dispatch starts a fresh stall episode
+      // Cleared with the rest of the episode state and above every arm, so a
+      // dispatch that mints a seat — which reaches no delivery outcome to record —
+      // still drops a stamp left by an earlier miss. Only the arm that actually
+      // attempts a delivery writes it back, and only when that delivery found nobody.
+      delete ticket.undeliveredAt;
       // Stamped above BOTH arms and above every save below, so no path can
       // dispatch without recording that it did — an unstamped dispatched ticket
       // is startable a second time, which is the tree collision this fixes.
@@ -4585,6 +4627,7 @@ function createTicketMethods(deps, shared) {
       if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
       ticketsStore.save(team.root, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+      this._recordUndeliveredDispatch(team, tickets, ticket, d);
       const suffix = this._ticketDeliverySuffix(d, roleKey);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
@@ -4685,6 +4728,9 @@ function createTicketMethods(deps, shared) {
       // delivered yet still invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
       delete ticket.parked;
+      // Same clear start makes, in the same position and for the same reason: both
+      // of assign's mint arms return without ever reaching a delivery outcome.
+      delete ticket.undeliveredAt;
       // Assign is the OTHER dispatch path, so it records the dispatch for the same
       // reason start does — an assigned-but-unstamped ticket is still `start`able,
       // and starting it mints a second seat onto the tree this assign just sent a
@@ -4698,6 +4744,7 @@ function createTicketMethods(deps, shared) {
         ticket.assignee = ownSeat;
         ticketsStore.save(team.root, tickets);
         const d2 = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+        this._recordUndeliveredDispatch(team, tickets, ticket, d2);
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: ownSeat, body: `ticket ${ticket.id} re-sent` });
         log.info('intent', `task assign by ${session.name}: ${ticket.id} re-sent to its own seat ${ownSeat}`);
@@ -4729,6 +4776,7 @@ function createTicketMethods(deps, shared) {
       if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
       ticketsStore.save(team.root, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true, false, false, null, !prev);
+      this._recordUndeliveredDispatch(team, tickets, ticket, d);
       const suffix = this._ticketDeliverySuffix(d, assignee);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
