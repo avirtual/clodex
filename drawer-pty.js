@@ -45,7 +45,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   const ABANDON_MAX_MS = 1000;
   // An A mark reporting 130 proves only that the last command to finish exited
   // 128+SIGINT: `$?` is latched and re-reports on every prompt cycle until a command
-  // runs, so a stale or in-flight pair can arrive inside our race window. The two
+  // runs, so a stale or in-flight pair can arrive inside our race window. The three
   // clocks above are the only thing standing behind that.
 
   function shellFor() {
@@ -293,7 +293,8 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // loses a byte to. Repeat the abandon instead of typing into it — a shell at a
       // prompt answers a second ^C with a fresh prompt cycle (measured: the elicited A
       // mark arrives ~1ms later), and that mark releases the command through promptAck
-      // like any other, so the blind write is never reached.
+      // like any other. A shell that ignores the repeat too still falls through to the
+      // cap below, so this narrows the blind write rather than removing it.
       //
       // ONE repeat, not a retry loop: the escape hatch is ABANDON_MAX_MS, and a loop
       // would keep signalling a foreground program that is legitimately slow to die.

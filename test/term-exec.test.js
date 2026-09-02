@@ -53,6 +53,9 @@ const MAX_MS = constFromSource('ABANDON_MAX_MS');
 // between source and test silently readmits the ack timer to the deadline list
 // and surfaces as an unrelated wrong-timer failure downstream.
 const ACK_MS = constFromSource('ABANDON_ACK_MS');
+// Read for the same reason, and excluded from `execTimers` for the same reason:
+// it is another exec-armed timer that is not the settle deadline.
+const NUDGE_MS = constFromSource('ABANDON_NUDGE_MS');
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const A = `${ESC}]133;A${BEL}`;
@@ -176,14 +179,16 @@ function mk(over = {}) {
 
 // The kill escalation also uses the injected setTimeout, so a test about the
 // exec deadline must not read timers[0] and hope.
-// The deadline timers, by EXCLUDING the two known others (the 5s kill
-// escalation and the 250ms abandon-ack fallback) rather than by taking [0].
+// The deadline timers, by EXCLUDING every other timer the code arms (the 5s kill
+// escalation and the three abandon-handshake clocks) rather than by taking [0].
 // Positional indexing broke silently when the ack timer was added — it is armed
 // first, so `[0]` became the wrong timer and tests asserting a timeout were
 // firing an arm instead. Every caller below indexes into this, so a pattern that
 // admits an extra row does not fail here; it fails somewhere downstream that
-// looks unrelated.
-const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== ACK_MS && t.ms !== MAX_MS);
+// looks unrelated. A new handshake clock must be excluded here in the same
+// commit that arms it, for that reason.
+const execTimers = (timers) => timers.filter(
+  (t) => t.ms !== 5000 && t.ms !== ACK_MS && t.ms !== NUDGE_MS && t.ms !== MAX_MS);
 
 // ── refusals ────────────────────────────────────────────────────────────────
 // Every one is checked INSIDE exec() rather than by a caller reading a status
@@ -446,6 +451,104 @@ test('a bare prompt mark does not type — a redraw is not our interrupt', () =>
   timers.filter((t) => t.ms === MAX_MS)[0].fn();
   assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
     'the command still goes out on the cap — rejected, not wedged');
+});
+
+// ── the NUDGE ───────────────────────────────────────────────────────────────
+// This state — the shell spoke, drew a prompt, and none of it carried an
+// interrupt status — is where every measured corruption happened. Correlated
+// over 256 execs against a real bash at 32 concurrent shells: all 254 that saw
+// an interrupt-acked prompt after the ^C arrived intact, and both that saw none
+// lost their leading byte. The predictor is the MISSING PROMPT, not the elapsed
+// time, which is why the repair is a second signal rather than a longer wait —
+// a fixed 3s gap between the two writes still lost the byte 2 times in 192.
+
+test('a shell that spoke without acking is re-abandoned, not typed into', () => {
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+
+  // A prompt that is only a redraw: the shell is talking, but nothing it said is
+  // evidence our interrupt was processed.
+  proc.emit(A);
+  assert.deepStrictEqual(proc.written, [CTRL_C], 'ENTER: still held back at the filter');
+
+  timers.filter((t) => t.ms === NUDGE_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, CTRL_C],
+    'the nudge repeats the abandon — it must not type the command here');
+
+  // And the prompt cycle it elicits releases the command through the ORDINARY
+  // promptAck path. That is the whole point: the nudge adds no release path, it
+  // makes the existing one reachable in the state that used to type blind.
+  proc.emit(INTR);
+  assert.deepStrictEqual(proc.written, [CTRL_C, CTRL_C, `ls${CR}`],
+    'the elicited interrupt mark types the command, so the cap is never reached');
+});
+
+test('a SILENT shell is never nudged — it has already been typed into', () => {
+  // The other arm, and the one where a second ^C would be actively harmful: the
+  // silence deadline fires first and types the command, so re-abandoning after
+  // it would interrupt the command we just sent rather than an abandoned line.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+
+  timers.filter((t) => t.ms === ACK_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'ENTER: the silent shell was typed into by the ack deadline');
+
+  timers.filter((t) => t.ms === NUDGE_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'the nudge writes nothing — a ^C here would kill the command that just went out');
+});
+
+test('the nudge fires ONCE and never after the command has gone out', () => {
+  // A retry loop would keep signalling a foreground program that is legitimately
+  // slow to die; ABANDON_MAX_MS is the escape hatch, not repetition. Both guards
+  // are exercised: firing the same timer twice, and firing it after the cap has
+  // already typed.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+
+  proc.emit(A);
+  const nudge = timers.filter((t) => t.ms === NUDGE_MS)[0];
+  nudge.fn();
+  nudge.fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, CTRL_C], 'one repeat, not two');
+
+  timers.filter((t) => t.ms === MAX_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, CTRL_C, `ls${CR}`],
+    'ENTER: the cap still carries a shell that never acked either signal');
+
+  nudge.fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, CTRL_C, `ls${CR}`],
+    'and a late nudge cannot signal the command the cap just sent');
+});
+
+test('the nudge cannot signal a LATER exec', () => {
+  // Same identity hazard the typing path guards: by the time this fires, the
+  // exec that armed it may be settled and a second one running. A ^C then lands
+  // on a command this exec does not own.
+  const { w, spawn, timers, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'first');
+  const proc = spawn.spawned[0];
+  proc.emit(A);
+  const nudge = timers.filter((t) => t.ms === NUDGE_MS)[0];
+
+  // The first command runs and ends, so the seat is free for a second exec.
+  proc.emit(`${INTR}`);
+  proc.emit(`${C('first')}${D(0)}${A}`);
+  assert.strictEqual(results.length, 1, 'ENTER: the first exec settled');
+  assert.strictEqual(w.exec('ws-1', 'alice', 'second').ok, true, 'ENTER: a second was accepted');
+  const before = proc.written.slice();
+
+  nudge.fn();
+  assert.deepStrictEqual(proc.written, before,
+    "the stale nudge writes nothing — a ^C here would abandon the second exec's line");
 });
 
 test('a prompt mark whose status is NOT an interrupt does not type', () => {

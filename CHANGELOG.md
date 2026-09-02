@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A command an agent runs in a workbench terminal can no longer lose its first
+  character and run as something else.** Under load, a command sent to a drawer
+  terminal could arrive with its leading byte missing — `echo a; echo b` reaching
+  the shell as `cho a; echo b` — and the truncated remainder still ran, so a
+  *different* command executed and reported its result. Measured at 32 concurrent
+  shells, 16 of 320 commands were corrupted this way. Clodex interrupts the
+  shell's current line before typing the command, and the loss happened whenever
+  it typed into a shell that had not yet acknowledged that interrupt; it now
+  re-sends the interrupt to draw out the acknowledgement rather than typing
+  blind. Same load, after: 0 of 320.
+
 - **Agents are no longer told a message was swallowed by a seat that plainly
   read it.** The "your message was written into its terminal 90s ago and it has
   not started a turn since" notice fired whenever Clodex had not *observed* the
