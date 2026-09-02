@@ -1011,6 +1011,103 @@ function createTicketMethods(deps, shared) {
       return { ok: true, path: file, error: null };
     },
 
+    // The reviewer's own ledger, read while the seat still HAS one.
+    //
+    // Two independent readers, and neither alone is sufficient:
+    //   - the persisted `wire-totals.json` rows for the seat's session history,
+    //     which is everything the seat spent across app restarts and /clears;
+    //   - `_wireTelemetry.payload()`, the in-process ledger for the CURRENT id.
+    // The file lags by up to a second (wire-telemetry `_scheduleSave` debounce)
+    // and this runs inside the intent handler for the reviewer's LAST turn, so
+    // the file is guaranteed to be missing that turn — the biggest one, since a
+    // verdict is the longest thing a reviewer writes. The overlay is not a
+    // refinement here; without it every review is undercounted by its final turn.
+    //
+    // The overlay is applied ONLY when the wire agrees with the record on the
+    // session id, the rule ipc-handlers' session:info read uses. A reviewer that
+    // falls back to the `<team>-reviewer-<n>` counter name reuses names across
+    // rounds, and _wireTelemetry's per-name map is pruned on poller ticks rather
+    // than at kill — so an ungated read can bill a dead round's ledger to a live
+    // seat that happens to hold the name.
+    _reviewLedger(seatName, rec) {
+      const sessionIds = entrySessionIds(rec);
+      let totals = null;
+      try {
+        totals = JSON.parse(fs.readFileSync(path.join(getUserDataPath(), 'wire-totals.json'), 'utf8'));
+      } catch { /* no ledger file yet — the overlay below may still answer */ }
+      let live = null;
+      const currentId = (rec && rec.sessionId) || null;
+      try {
+        const w = this._wireTelemetry && this._wireTelemetry.payload(seatName);
+        if (w && w.sessionId && w.sessionId === currentId) {
+          // Flattened to a wire-totals ROW, which is the only shape sumSessions
+          // reads. Passing the payload itself would land `cost` as an object and
+          // every field would coerce to a silent zero.
+          live = {
+            cost: w.cost && w.cost.usd, requests: w.cost && w.cost.requests,
+            turns: w.turns, refusals: w.refusals,
+            inputTokens: w.tokens && w.tokens.input,
+            outputTokens: w.tokens && w.tokens.output,
+            cacheReadTokens: w.tokens && w.tokens.cacheRead,
+            cacheWriteTokens: w.tokens && w.tokens.cacheWrite,
+          };
+        }
+      } catch { /* a telemetry fault costs the freshest turn, not the rollup */ }
+      const ledger = teamCost.sumSessions(totals, sessionIds, { currentId, live });
+      ledger.ids = sessionIds;
+      // `resolved` is about whether a LEDGER was found, not whether a seat was:
+      // the seat is `session.name` and is never in doubt on this path. A seat
+      // that spent nothing observable (a Codex reviewer, or one killed before
+      // its first main-line turn) reports null rather than 0, so a real review
+      // whose cost the wire never saw cannot read as a free one.
+      return { ledger, resolved: ledger.known > 0 };
+    },
+
+    // Append one review round's spend to the TICKET's artifact, before the seat
+    // that spent it is killed.
+    //
+    // TWO name-resolved lookups die at teardown, which is why this is not
+    // deferred the way _writeTicketCost is:
+    //   - `_wireTelemetry.payload(seatName)` resolves by NAME out of a map that
+    //     `prune()` clears for every name no longer in `this.sessions`, and
+    //     kill() deletes the session. After a poller tick the freshest-turn
+    //     overlay is simply gone, silently, leaving the debounced file's stale
+    //     figure as the whole answer.
+    //   - `getPersistence().get(seatName)` returns null once kill() has removed
+    //     the record, and `sweepReviewerGraveyard` makes that permanent.
+    // The seat's record is therefore taken as the `rec` ARGUMENT — an object
+    // reference captured before the reap — and must not be re-resolved by name
+    // inside here. That is the change this note exists to prevent; it would look
+    // like a tidy-up and would capture nothing.
+    //
+    // Best-effort like every other rollup: a review's verdict is the output that
+    // matters, and no failure to price it may cost the verdict or strand the
+    // seat. Every arm returns rather than throws.
+    _writeReviewCost(session, team, ticket, rec, round, verdict, mustFixCount) {
+      try {
+        if (!team || !ticket) return { ok: false, path: null, error: 'no ticket' };
+        const dest = this._ticketDiffDest(team, ticket);
+        if (!dest.ok) return { ok: false, path: null, error: dest.error };
+        const { ledger, resolved } = this._reviewLedger(session.name, rec);
+        const row = teamCost.reviewCostRecord({
+          ticket: ticket.id, team: team.name, round, seat: session.name,
+          // Off the RECORD, not recomputed from the ticket's round: the label is
+          // what the proxy actually billed under, and re-deriving it here would
+          // publish the round this code thinks it is rather than the one the
+          // spend was tagged with. The two disagree exactly when the seat fell
+          // back to the counter name, which is the case worth being able to see.
+          wireLabel: (rec && rec.wireLabel) || null,
+          verdict, mustFix: mustFixCount, ledger, resolved,
+        });
+        const file = path.join(dest.dir, teamCost.REVIEW_COST_FILE);
+        ensureDir(dest.dir);
+        fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
+        return { ok: true, path: file, error: null };
+      } catch (e) {
+        return { ok: false, path: null, error: e.message };
+      }
+    },
+
     // The lead's copy of a TICKET verdict: a SUMMARY, never the body. The record
     // stays the store — this only tells the lead the store changed, because a
     // lead that does not know a review finished is a lead not merging it.
@@ -1795,6 +1892,35 @@ function createTicketMethods(deps, shared) {
       // entire output, and losing it costs more than a misrouted one.
       let landedOn = null;
       if (rec.reviewTicket) landedOn = this._landVerdictOnTicket(session, rec.reviewTicket, verdict);
+
+      // ONE call site, ahead of BOTH arms below, because both end in kill() and
+      // the seat's persistence record is the only thing joining this spend to
+      // this ticket. A copy inside each arm is the shape to avoid: the two arms
+      // are edited for unrelated reasons and the second copy is the one that gets
+      // forgotten, which loses the cost of exactly the reviews that went wrong.
+      //
+      // Runs on the UNPARSED-verdict arm too, and deliberately: that seat spent
+      // real money and is about to be reaped like any other, so skipping it would
+      // make the ledger cheapest precisely where the loop is least efficient.
+      // That arm's round is the ticket's stamped round PLUS ONE — the verdict did
+      // not land, so nothing bumped the counter, and reading it raw would file
+      // this round's spend under the previous round's number.
+      if (rec.reviewTicket) {
+        let team = null;
+        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        const ticket = team ? this._loadTicket(team, rec.reviewTicket) : null;
+        const round = landedOn
+          ? Number(landedOn.reviewRound)
+          : (Number(ticket && ticket.reviewRound) || 0) + 1;
+        const w = this._writeReviewCost(
+          session, team, ticket, rec, round, landedOn ? landedOn.verdict : null,
+          landedOn ? countMustFix(landedOn.mustFix) : null,
+        );
+        if (!w.ok) {
+          log.warn('intent', `ticket ${rec.reviewTicket}: review cost for round ${round} not captured (${w.error}) — the seat is about to be reaped, so this round's spend is unrecoverable`);
+        }
+      }
+
       if (landedOn) {
         this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict);
         this._broadcast('ipc-message', {
