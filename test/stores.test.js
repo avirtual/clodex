@@ -3175,3 +3175,77 @@ test('uiSettings: a non-boolean hint flag falls back to the default', () => {
       'a truthy non-boolean must not read as enabled');
   } finally { cleanup(); }
 });
+
+// sessions.json's `.bak` is a LAUNCH SNAPSHOT: one write per initStores, taken
+// from the on-disk content before that process's first _save mutates it, and
+// never refreshed. The four subjects below are the first pins on the mechanism
+// — before t631 nothing in the suite named `.bak`, in either direction.
+// Real files throughout: the whole mechanism is an fs call sequence, and a
+// mocked fs would let a wrong one pass.
+function storesOver(userData) {
+  const registryDir = mkTmpRoot('stores-reg-');
+  return initStores(userData, { log: console, registryDir,
+    resourcesDir: path.join(registryDir, '__no_seed__') });
+}
+
+test('persistence .bak: snapshotted once from pre-launch content, never refreshed', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const bak = path.join(userData, 'sessions.json.bak');
+  const PRE_LAUNCH = JSON.stringify([{ name: 'pre', type: 'claude', workspaceId: 'default' }], null, 2);
+  fs.writeFileSync(path.join(userData, 'sessions.json'), PRE_LAUNCH);
+
+  const { persistence } = storesOver(userData);
+  persistence.upsert({ name: 'first', type: 'claude', workspaceId: 'default' });
+  assert.strictEqual(fs.readFileSync(bak, 'utf-8'), PRE_LAUNCH,
+    'the first save snapshots the state the process started from');
+
+  persistence.upsert({ name: 'second', type: 'claude', workspaceId: 'default' });
+  persistence.setSessionId('first', 's1');
+  persistence.remove('pre');
+  // Content, not a call count: a mirror that refreshed would leave a .bak that
+  // still parses and still looks like a backup, which is exactly the old design.
+  assert.strictEqual(fs.readFileSync(bak, 'utf-8'), PRE_LAUNCH,
+    'later saves must not advance the snapshot toward the live file');
+  assert.deepStrictEqual(persistence.list().map(e => e.name), ['first', 'second'],
+    'ENTER: the live file did move, so the assertion above is about a stale .bak and not a dead store');
+});
+
+test('persistence .bak: an unparseable sessions.json leaves the existing .bak alone', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const bak = path.join(userData, 'sessions.json.bak');
+  const GOOD_BAK = JSON.stringify([{ name: 'rescue', type: 'claude', workspaceId: 'default' }], null, 2);
+  fs.writeFileSync(bak, GOOD_BAK);
+  fs.writeFileSync(path.join(userData, 'sessions.json'), '{ truncated mid-writ');
+
+  const { persistence } = storesOver(userData);
+  persistence.upsert({ name: 'added', type: 'claude', workspaceId: 'default' });
+  persistence.upsert({ name: 'more', type: 'claude', workspaceId: 'default' });
+  assert.strictEqual(fs.readFileSync(bak, 'utf-8'), GOOD_BAK,
+    'snapshotting unparseable bytes would destroy the only good copy left');
+});
+
+test('persistence .bak: a missing sessions.json makes no snapshot, then or later', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const bak = path.join(userData, 'sessions.json.bak');
+
+  const { persistence } = storesOver(userData);
+  persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+  assert.strictEqual(fs.existsSync(bak), false, 'first ever launch has nothing to snapshot');
+
+  persistence.upsert({ name: 'b', type: 'claude', workspaceId: 'default' });
+  // The flag is set even when the snapshot is skipped: a retry here would catch
+  // the file mid-session and back up state this process wrote, not pre-launch state.
+  assert.strictEqual(fs.existsSync(bak), false,
+    'a skipped snapshot must not be retried once the live file exists');
+});
+
+test('persistence: _load still recovers entries from .bak when sessions.json will not parse', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  fs.writeFileSync(path.join(userData, 'sessions.json.bak'),
+    JSON.stringify([{ name: 'rescued', type: 'codex', workspaceId: 'default' }], null, 2));
+  fs.writeFileSync(path.join(userData, 'sessions.json'), 'not json at all');
+
+  const { persistence } = storesOver(userData);
+  assert.deepStrictEqual(persistence.list().map(e => e.name), ['rescued'],
+    'the recovery half of the mechanism is what the snapshot exists to feed');
+});

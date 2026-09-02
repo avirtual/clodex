@@ -387,6 +387,7 @@ function sanitizeSpeakRate(raw) {
 function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
+  let launchBakTaken = false;
   const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
   const TEMPLATES_DIR = path.join(registryDir, 'library', 'templates');
   const WORKSPACES_FILE = path.join(userDataPath, 'workspaces.json');
@@ -424,11 +425,14 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
     _save(entries) {
       try {
-        try {
-          const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
-          JSON.parse(cur);
-          atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
-        } catch {}
+        if (!launchBakTaken) {
+          launchBakTaken = true;
+          try {
+            const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
+            JSON.parse(cur);
+            atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
+          } catch {}
+        }
         atomicWriteFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));
       } catch (e) {
         console.error('persistence save failed:', e);
