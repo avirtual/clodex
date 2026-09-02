@@ -59,4 +59,16 @@ test('the restore loop does not defer its fit into a rAF', () => {
 
   assert.doesNotMatch(loop, /fitSessionInBackground\(/,
     'the helper fits inside a rAF, which lands AFTER the synchronous replay write');
+
+  // Not redundant with the helper check above: a rAF written INLINE here defers
+  // the fit just as the helper would, while leaving `fitSessionInBackground(`
+  // absent and the fit-before-write index comparison satisfied.
+  // Sliced at the write because only a deferral BEFORE it can strand the replay
+  // in an unsized buffer — an unrelated rAF added later in the region must not
+  // red this.
+  const write = loop.indexOf('terminal.write(entry.replay)');
+  assert.ok(write > 0, 'ENTER: the loop still writes the buffered replay');
+  assert.doesNotMatch(loop.slice(0, write), /requestAnimationFrame/,
+    'the fit must not be deferred by any route: a rAF callback runs after the '
+    + 'synchronous write, whether it arrives via the helper or written inline');
 });
