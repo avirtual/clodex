@@ -57,8 +57,9 @@ function scopedFiles() {
 }
 
 // A shallow clone or a checkout with no master ref cannot compute a base, and a
-// ratchet with no base silently passes over every file. Skipping loudly is the
-// only honest outcome; returning null means "skip", never "nothing changed".
+// ratchet with no base would pass over every file. Returning null means "could
+// not compare", never "nothing changed" — the caller fails on it rather than
+// reporting a green it did not earn.
 function mergeBase() {
   const hasMaster = tryGit(['rev-parse', '--verify', '--quiet', 'master']);
   if (!hasMaster.ok || !hasMaster.out.trim()) return { base: null, why: 'no master ref in this checkout' };
@@ -92,8 +93,8 @@ function baseSource(base, file) {
 test('no tracked source file gains comment lines against the merge-base', () => {
   const { base, why } = mergeBase();
   if (base === null) {
-    // Loud skip: a green here would otherwise be indistinguishable from a green
-    // that actually compared every file.
+    // Fails rather than returns: a green here would be indistinguishable from a
+    // green that actually compared every file.
     assert.fail(`comment ratchet cannot run: ${why}. Fetch master (unshallow if needed) and re-run.`);
   }
 
@@ -110,8 +111,16 @@ test('no tracked source file gains comment lines against the merge-base', () => 
   );
 
   // ENTER: specific shapes the filter is most likely to eat — a root module, a
-  // nested renderer leaf, a deep plugin file, a scripts/ tool.
-  for (const must of ['engine.js', 'session-manager.js', 'comment-census.js', 'renderer/lib/format.js']) {
+  // nested renderer leaf, a deep plugin file (whose basename collides with a root
+  // module's, so a scan keyed by basename loses one of them), and a scripts/ tool.
+  for (const must of [
+    'engine.js',
+    'session-manager.js',
+    'comment-census.js',
+    'renderer/lib/format.js',
+    'plugins/git-branches/engine.js',
+    'scripts/boundary-check.js',
+  ]) {
     assert.ok(files.includes(must), `${must} should be in the ratchet scope`);
   }
   assert.ok(!files.some((f) => f.startsWith('test/')), 'test/ must be out of scope');
