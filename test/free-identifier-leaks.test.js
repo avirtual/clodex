@@ -319,11 +319,11 @@ const RENDERER_SCANNED_MODULES = [
   // policy answer from renderer state instead of the main-side draft it is
   // required to agree with.
   'renderer/lib/focus-policy.js',
-  // Which overlays are open and what Cmd+W therefore does (t634). The names it
+  // Which modals are open and what Cmd+W therefore does (t634). The names it
   // must NOT reach for are exactly the ones in scope at both call sites —
-  // `dialogOverlay`, `activeSession`, `sessions` — and reaching any of them
-  // directly would put the overlay population back inside the untested handler
-  // it was just lifted out of.
+  // `dialogOverlay`, `activeSession`, `sessions` — and `document`, since the two
+  // probes are injected precisely so the runtime-created modals are reachable by
+  // a unit test rather than only by a real browser.
   'renderer/lib/chord-guard.js',
   // The bottom drawer's tab host (t201) and its first tenant. The host took
   // the toggle/layout/refit mechanics OUT of ipc-log.js, so the reverse scan

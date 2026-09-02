@@ -1021,10 +1021,12 @@ which is why the judgement worth testing is pushed down here.
 - **web-shortcuts.js** — the pure map from a keydown to a browser Alt-chord
   action. A tab reserves Cmd+T/W/1-9 for its own chrome, so the desktop Cmd
   shortcuts silently fail in-tab.
-- **chord-guard.js** — which top-level modal overlays are open, and what Cmd+W /
-  Alt+W should therefore do. The overlay list is data here rather than a chain of
-  checks in the two handlers, because a modal missing from it is a session
-  archived behind a dialog the operator is looking at.
+- **chord-guard.js** — what Cmd+W / Alt+W should do given which modals are open.
+  It probes BOTH ways a modal exists here: by id for the ones `index.html`
+  declares, and by class for the ones script builds at runtime (`promptText`'s
+  backdrop, plugin overlays), which no scan of the markup can see. A modal
+  missing from either list is a session archived behind a dialog the operator is
+  looking at.
 
 ## Tests
 

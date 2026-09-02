@@ -21501,19 +21501,27 @@ ${i3.join("\n")}
         "file-peek-overlay",
         "report-overlay"
       ];
-      function openOverlayIds(byId) {
+      var MODAL_OVERLAY_CLASSES = [
+        "prompt-modal-overlay",
+        "plugin-overlay"
+      ];
+      function openOverlayIds({ byId, byClass }) {
         const open = [];
         for (const id of MODAL_OVERLAY_IDS) {
           const el = byId(id);
           if (el && el.classList && !el.classList.contains("hidden")) open.push(id);
         }
+        for (const cls of MODAL_OVERLAY_CLASSES) {
+          const els = byClass && byClass(cls) || [];
+          if (els.some((el) => el && el.classList && !el.classList.contains("hidden"))) open.push(cls);
+        }
         return open;
       }
-      function anyOverlayOpen(byId) {
-        return openOverlayIds(byId).length > 0;
+      function anyOverlayOpen(probes) {
+        return openOverlayIds(probes).length > 0;
       }
-      function performCloseChord({ byId, activeSession, peerOf }, { closeNewSessionDialog, hidePeerRow, archiveSession }) {
-        const open = openOverlayIds(byId);
+      function performCloseChord({ byId, byClass, activeSession, peerOf }, { closeNewSessionDialog, hidePeerRow, archiveSession }) {
+        const open = openOverlayIds({ byId, byClass });
         if (open.length === 1 && open[0] === "dialog-overlay") {
           closeNewSessionDialog();
           return "closed-new-session-dialog";
@@ -21528,7 +21536,7 @@ ${i3.join("\n")}
         archiveSession(activeSession);
         return "archived-active-session";
       }
-      module.exports = { MODAL_OVERLAY_IDS, openOverlayIds, anyOverlayOpen, performCloseChord };
+      module.exports = { MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, anyOverlayOpen, performCloseChord };
     }
   });
 
@@ -35853,9 +35861,11 @@ Click for live activity`;
       resizeObserver.observe(terminalContainer);
       window.api.onZoomNudge(refitActiveTerminal);
       var overlayElementById = (id) => document.getElementById(id);
+      var overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
+      var overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClass };
       function runCloseChord() {
         return performCloseChord({
-          byId: overlayElementById,
+          ...overlayProbes,
           activeSession,
           peerOf: (name) => {
             const entry = sessions.get(name);
@@ -35870,7 +35880,7 @@ Click for live activity`;
       document.addEventListener("keydown", (e) => {
         if (!e.metaKey || e.altKey || e.ctrlKey) return;
         if (drawerHost.hasFocus()) return;
-        const overlaysOpen = anyOverlayOpen(overlayElementById);
+        const overlaysOpen = anyOverlayOpen(overlayProbes);
         if (e.key === "t") {
           e.preventDefault();
           e.stopPropagation();
@@ -35919,7 +35929,7 @@ Click for live activity`;
         if (drawerHost.hasFocus()) return;
         e.preventDefault();
         e.stopPropagation();
-        const overlaysOpen = anyOverlayOpen(overlayElementById);
+        const overlaysOpen = anyOverlayOpen(overlayProbes);
         if (action.type === "new") {
           if (!overlaysOpen) openDialog();
           return;

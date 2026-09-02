@@ -3793,10 +3793,12 @@ window.api.onZoomNudge(refitActiveTerminal);
 
 
 const overlayElementById = (id) => document.getElementById(id);
+const overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
+const overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClass };
 
 function runCloseChord() {
   return performCloseChord({
-    byId: overlayElementById,
+    ...overlayProbes,
     activeSession,
     peerOf: (name) => { const entry = sessions.get(name); return (entry && entry.peer) || null; },
   }, {
@@ -3814,7 +3816,7 @@ document.addEventListener('keydown', (e) => {
   // archive an unrelated session.
   if (drawerHost.hasFocus()) return;
 
-  const overlaysOpen = anyOverlayOpen(overlayElementById);
+  const overlaysOpen = anyOverlayOpen(overlayProbes);
 
   if (e.key === 't') {
     e.preventDefault();
@@ -3876,7 +3878,7 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   e.stopPropagation();
 
-  const overlaysOpen = anyOverlayOpen(overlayElementById);
+  const overlaysOpen = anyOverlayOpen(overlayProbes);
 
   if (action.type === 'new') {
     if (!overlaysOpen) openDialog();

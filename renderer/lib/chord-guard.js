@@ -13,21 +13,30 @@ const MODAL_OVERLAY_IDS = [
   'report-overlay',
 ];
 
-function openOverlayIds(byId) {
+const MODAL_OVERLAY_CLASSES = [
+  'prompt-modal-overlay',
+  'plugin-overlay',
+];
+
+function openOverlayIds({ byId, byClass }) {
   const open = [];
   for (const id of MODAL_OVERLAY_IDS) {
     const el = byId(id);
     if (el && el.classList && !el.classList.contains('hidden')) open.push(id);
   }
+  for (const cls of MODAL_OVERLAY_CLASSES) {
+    const els = (byClass && byClass(cls)) || [];
+    if (els.some((el) => el && el.classList && !el.classList.contains('hidden'))) open.push(cls);
+  }
   return open;
 }
 
-function anyOverlayOpen(byId) {
-  return openOverlayIds(byId).length > 0;
+function anyOverlayOpen(probes) {
+  return openOverlayIds(probes).length > 0;
 }
 
-function performCloseChord({ byId, activeSession, peerOf }, { closeNewSessionDialog, hidePeerRow, archiveSession }) {
-  const open = openOverlayIds(byId);
+function performCloseChord({ byId, byClass, activeSession, peerOf }, { closeNewSessionDialog, hidePeerRow, archiveSession }) {
+  const open = openOverlayIds({ byId, byClass });
   if (open.length === 1 && open[0] === 'dialog-overlay') {
     closeNewSessionDialog();
     return 'closed-new-session-dialog';
@@ -43,4 +52,4 @@ function performCloseChord({ byId, activeSession, peerOf }, { closeNewSessionDia
   return 'archived-active-session';
 }
 
-module.exports = { MODAL_OVERLAY_IDS, openOverlayIds, anyOverlayOpen, performCloseChord };
+module.exports = { MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, anyOverlayOpen, performCloseChord };
