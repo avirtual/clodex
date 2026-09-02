@@ -28019,6 +28019,42 @@ helper=${d.helperPath}`;
     }
   });
 
+  // renderer/lib/popover-place.js
+  var require_popover_place = __commonJS({
+    "renderer/lib/popover-place.js"(exports, module) {
+      "use strict";
+      var MARGIN = 8;
+      var GAP = 6;
+      function isDetachedRect(rect) {
+        return !rect || rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0;
+      }
+      function barPlacement(rect, size, viewport, margin = MARGIN) {
+        const maxBottom = Math.max(margin, viewport.height - size.height - margin);
+        if (isDetachedRect(rect)) return { left: margin, bottom: margin, detached: true };
+        const left = Math.max(margin, Math.min(rect.left, viewport.width - size.width - margin));
+        const wantBottom = Math.max(margin, viewport.height - rect.top + GAP);
+        return { left, bottom: Math.min(wantBottom, maxBottom), detached: false };
+      }
+      function liveAnchor(captured, selector) {
+        if (captured && captured.isConnected) return captured;
+        const live = selector ? document.querySelector(selector) : null;
+        return live || captured || null;
+      }
+      function placeAboveAnchor(popover, anchor, selector) {
+        const el = liveAnchor(anchor, selector);
+        const p = barPlacement(
+          el && typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : null,
+          { width: popover.offsetWidth, height: popover.offsetHeight },
+          { width: window.innerWidth, height: window.innerHeight }
+        );
+        popover.style.left = `${p.left}px`;
+        popover.style.bottom = `${p.bottom}px`;
+        return p;
+      }
+      module.exports = { isDetachedRect, barPlacement, liveAnchor, placeAboveAnchor, MARGIN, GAP };
+    }
+  });
+
   // renderer/popovers/checklist-popovers.js
   var require_checklist_popovers = __commonJS({
     "renderer/popovers/checklist-popovers.js"(exports, module) {
@@ -28046,6 +28082,8 @@ helper=${d.helperPath}`;
       var { parseSkillFrontmatter } = require_skills_util();
       var { esc } = require_format();
       var { makeDraggable, resetDrag } = require_popover_drag();
+      var { placeAboveAnchor } = require_popover_place();
+      var BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
       var { grantsForUnlistedPlugins, mergeGrants } = require_plugin_api();
       var CAPABILITY_LABELS = {
         turns: "Turn text \u2014 what the agent writes",
@@ -28082,10 +28120,7 @@ helper=${d.helperPath}`;
           toolsPopover.dataset.name = name;
           resetDrag(toolsPopover);
           toolsPopover.classList.remove("hidden");
-          const r = anchorBtn.getBoundingClientRect();
-          const w = toolsPopover.offsetWidth;
-          toolsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          toolsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(toolsPopover, anchorBtn, BAR_ANCHOR);
         }
         document.getElementById("tools-popover-cancel").addEventListener("click", closeToolsPopover);
         document.getElementById("tools-popover-apply").addEventListener("click", async () => {
@@ -28171,12 +28206,7 @@ helper=${d.helperPath}`;
           skillsPopover.dataset.name = name;
           resetDrag(skillsPopover);
           skillsPopover.classList.remove("hidden");
-          const r = anchorBtn.getBoundingClientRect();
-          const w = skillsPopover.offsetWidth;
-          skillsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          const wantBottom = Math.max(8, window.innerHeight - r.top + 6);
-          const maxBottom = Math.max(8, window.innerHeight - skillsPopover.offsetHeight - 8);
-          skillsPopover.style.bottom = `${Math.min(wantBottom, maxBottom)}px`;
+          placeAboveAnchor(skillsPopover, anchorBtn, BAR_ANCHOR);
         }
         document.getElementById("skills-popover-cancel").addEventListener("click", closeSkillsPopover);
         document.getElementById("skills-popover-apply").addEventListener("click", async () => {
@@ -28259,10 +28289,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           agentsPopover.dataset.name = name;
           resetDrag(agentsPopover);
           agentsPopover.classList.remove("hidden");
-          const r = anchorBtn.getBoundingClientRect();
-          const w = agentsPopover.offsetWidth;
-          agentsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          agentsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(agentsPopover, anchorBtn, BAR_ANCHOR);
         }
         document.getElementById("agents-popover-cancel").addEventListener("click", closeAgentsPopover);
         document.getElementById("agents-popover-close").addEventListener("click", closeAgentsPopover);
@@ -28409,10 +28436,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           intentsPopover.dataset.name = name;
           resetDrag(intentsPopover);
           intentsPopover.classList.remove("hidden");
-          const r = anchorBtn.getBoundingClientRect();
-          const w = intentsPopover.offsetWidth;
-          intentsPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          intentsPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(intentsPopover, anchorBtn, BAR_ANCHOR);
         }
         document.getElementById("intents-popover-cancel").addEventListener("click", closeIntentsPopover);
         document.getElementById("intents-popover-close").addEventListener("click", closeIntentsPopover);
@@ -29494,6 +29518,8 @@ You can add it back from this popover.` : "";
     "renderer/popovers/context-popover.js"(exports, module) {
       var { esc, fmtTokens } = require_format();
       var { groupMcpTools, mcpTotalTokens } = require_mcp_group();
+      var { placeAboveAnchor } = require_popover_place();
+      var CTX_SEG = '#proxy-bar [data-act="ctx"]';
       function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf }) {
         const ctxPopover = document.getElementById("ctx-popover");
         const ctxPopoverName = document.getElementById("ctx-popover-name");
@@ -29503,10 +29529,7 @@ You can add it back from this popover.` : "";
           ctxPopover.dataset.name = "";
         }
         function placeCtxPopover(anchor) {
-          const r = anchor.getBoundingClientRect();
-          const w = ctxPopover.offsetWidth;
-          ctxPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          ctxPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(ctxPopover, anchor, CTX_SEG);
         }
         function renderCompositionLine(a, stripLevel = 0) {
           const comp = a.composition;
@@ -29709,7 +29732,7 @@ You can add it back from this popover.` : "";
             openReportPanel(name);
             return;
           }
-          const anchor = document.querySelector('#proxy-bar [data-act="ctx"]');
+          const anchor = document.querySelector(CTX_SEG);
           if (!anchor) return;
           if (toolsLink) openToolsPopover(name, anchor);
           else openSkillsPopover(name, anchor);
@@ -29759,6 +29782,12 @@ You can add it back from this popover.` : "";
       var { esc, shortTs } = require_format();
       var { STRIP_LEVELS } = require_constants();
       var { sessionMenuEntries } = require_session_actions();
+      var { liveAnchor, placeAboveAnchor } = require_popover_place();
+      var BAR_ANCHOR = {
+        warm: '#proxy-bar [data-act="warm-menu"]',
+        strip: '#proxy-bar [data-act="strip-menu"]',
+        session: '#proxy-bar [data-act="session-menu"]'
+      };
       function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession }) {
         let warmMenu = null;
         function closeWarmMenu() {
@@ -29800,10 +29829,7 @@ You can add it back from this popover.` : "";
             else await doWarmHold(name, { hours: Number(item.dataset.hours) });
           });
           document.body.appendChild(warmMenu);
-          const r = anchorBtn.getBoundingClientRect();
-          const w = warmMenu.offsetWidth;
-          warmMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          warmMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(warmMenu, anchorBtn, BAR_ANCHOR.warm);
         }
         function holdApiFor(name) {
           const st = proxyState.get(name);
@@ -29883,14 +29909,11 @@ Set ${(STRIP_LEVELS.find((s) => s.lvl === level) || {}).name || `level ${level}`
 
 (Tip: cheapest to set the level on a fresh session, or after /clear when the cache is cold.)`
             )) return;
-            const r2 = await window.api.setStripLevel(name, level);
-            if (!r2 || !r2.ok) alert("Change strip level failed: " + (r2 && r2.error || "unknown error"));
+            const r = await window.api.setStripLevel(name, level);
+            if (!r || !r.ok) alert("Change strip level failed: " + (r && r.error || "unknown error"));
           });
           document.body.appendChild(stripMenu);
-          const r = anchorBtn.getBoundingClientRect();
-          const w = stripMenu.offsetWidth;
-          stripMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          stripMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(stripMenu, anchorBtn, BAR_ANCHOR.strip);
         }
         document.addEventListener("click", (e) => {
           if (!stripMenu) return;
@@ -29962,10 +29985,7 @@ The session restarts with --resume on ${sid.slice(0, 8)}\u2026. The current conv
             }
           });
           document.body.appendChild(historyMenu);
-          const r = anchorBtn.getBoundingClientRect();
-          const w = historyMenu.offsetWidth;
-          historyMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          historyMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(historyMenu, anchorBtn, BAR_ANCHOR.session);
         }
         document.addEventListener("click", (e) => {
           if (!historyMenu) return;
@@ -30014,13 +30034,10 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             if (!item) return;
             const act = item.dataset.act;
             closeSessionMenu();
-            if (typeof onPick === "function") onPick(act, anchorBtn);
+            if (typeof onPick === "function") onPick(act, liveAnchor(anchorBtn, BAR_ANCHOR.session));
           });
           document.body.appendChild(sessionMenu);
-          const r = anchorBtn.getBoundingClientRect();
-          const w = sessionMenu.offsetWidth;
-          sessionMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          sessionMenu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+          placeAboveAnchor(sessionMenu, anchorBtn, BAR_ANCHOR.session);
         }
         document.addEventListener("click", (e) => {
           if (!sessionMenu) return;

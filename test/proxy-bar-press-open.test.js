@@ -92,9 +92,17 @@ function makeBar() {
 // --- load the bar's handler block out of renderer.js -------------------------
 
 function loadBarHandlers({ activeSession = 'seat-1' } = {}) {
+  // Both bindings, in EITHER order: terminating on the click line specifically
+  // reds every subject below for a bare reorder of two independent statements,
+  // which is a non-defect.
   const block = rendererSrc.match(
-    /const openPopoverOnPress = [\s\S]*?bar\.addEventListener\('click', runBarActionOnClick\);/);
+    /const openPopoverOnPress = [\s\S]*?bar\.addEventListener\([^)]*\);\n\s*bar\.addEventListener\([^)]*\);/);
   assert.ok(block, 'ENTER: the proxy-bar handler block was found in renderer.js');
+  for (const h of ['openPopoverOnPress', 'runBarActionOnClick']) {
+    assert.ok(block[0].includes(`bar.addEventListener('mousedown', ${h});`)
+      || block[0].includes(`bar.addEventListener('click', ${h});`),
+    `ENTER: ${h} is bound inside the captured block`);
+  }
 
   const bar = makeBar();
   const opens = [];

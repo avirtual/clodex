@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **The ⚙ session menu's popovers sometimes took two or three clicks to
+  appear.** Picking Tools, Skills, Agents or Intents opened the panel above the
+  top of the window, where you could not see it — so the next click closed the
+  invisible panel and only the one after that opened it for real. The status
+  bar rebuilds itself whenever new numbers arrive, which replaces the ⚙ button
+  the panel was measuring itself against; it now measures against the button
+  that is actually on screen when you pick. The context breakdown had the same
+  fault while its data was loading, and every one of these panels is now kept
+  inside the window even when its anchor is gone.
+
 - **Clicking the context, cost or cache-bust segment on the status bar
   occasionally did nothing.** The bar redraws itself whenever new proxy or
   context numbers arrive, and a redraw that landed in the middle of a press
