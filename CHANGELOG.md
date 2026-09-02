@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **A peer DM claim that fails on the wire now says so.** Mail is pulled from a
+  peer by a claim that removes the messages from the far box's store before it
+  answers, so a crash or a dropped connection mid-answer loses the batch — and
+  the receiving end used to discard the error without a word, while the sender
+  had already seen its send succeed. A failed claim now shows a line on the IPC
+  log against that peer, rate-limited to once a minute so a peer that is down
+  does not bury the log.
+
 - **`task start` no longer says a seat holds a ticket that reached nobody.**
   Dispatching to a role with no live seat records the miss on the ticket, so a
   later `start` reports that no live seat holds it and points at `assign`,
