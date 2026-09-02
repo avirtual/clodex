@@ -585,11 +585,48 @@ test('a SILENT shell is never nudged — it has already been typed into', () => 
     'the nudge writes nothing — a ^C here would kill the command that just went out');
 });
 
+test('a shell that has said NOTHING is never nudged, even when the nudge fires FIRST', () => {
+  // The silent shell belongs to the ack deadline, which types. Nothing here has
+  // written the command yet, so `armed` does not cover this — only `spoke` does,
+  // and it is read directly rather than inferred from the two timers' nominal
+  // order. Deleting `!spoke` sends a second ^C to a shell that has not answered
+  // the first, and the ack deadline then types into a line holding an interrupt
+  // it has still not processed — the exact byte-loss state the nudge exists to
+  // avoid, manufactured by the nudge.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: the shell has emitted nothing, so neither the ack deadline nor the cap has typed');
+
+  timers.filter((t) => t.ms === NUDGE_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C], 'a silent shell is left alone');
+});
+
+test('a nudge delayed past the cap cannot signal the command the cap typed', () => {
+  // The shell spoke without acking and the cap typed anyway, so this is the one
+  // state where the nudge's own precondition holds and a ^C is still forbidden:
+  // `spoke` is true and the command is already out. `armed` alone stops it here
+  // — delete that clause and the nudge sends SIGINT to the running command.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+
+  proc.emit(A);
+  timers.filter((t) => t.ms === MAX_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'ENTER: the shell spoke without acking and the cap typed — `spoke` is true and the command is out');
+
+  timers.filter((t) => t.ms === NUDGE_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'the late nudge writes nothing — a ^C here interrupts the command rather than an abandoned line');
+});
+
 test('the nudge fires ONCE and never after the command has gone out', () => {
   // A retry loop would keep signalling a foreground program that is legitimately
-  // slow to die; ABANDON_MAX_MS is the escape hatch, not repetition. Both guards
-  // are exercised: firing the same timer twice, and firing it after the cap has
-  // already typed.
+  // slow to die; ABANDON_MAX_MS is the escape hatch, not repetition.
   const { w, spawn, timers } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'ls');
@@ -607,7 +644,7 @@ test('the nudge fires ONCE and never after the command has gone out', () => {
 
   nudge.fn();
   assert.deepStrictEqual(proc.written, [CTRL_C, CTRL_C, `ls${CR}`],
-    'and a late nudge cannot signal the command the cap just sent');
+    'the once-only flag holds after the cap has typed, as it does before');
 });
 
 test('the nudge cannot signal a LATER exec', () => {
