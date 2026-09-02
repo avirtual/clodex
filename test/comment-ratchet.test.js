@@ -8,10 +8,9 @@
 // edits live before they merge. "Fixing" it to compare against a fixed tag or a
 // committed baseline is the design that was considered and rejected.
 //
-// test/ is deliberately out of scope. This repo's test doctrine (the ENTER:
-// idiom, the non-vacuity rules in CLAUDE.md) actively requires prose, so a
-// ratchet here would red the suite for adding a subject with its explanatory
-// note.
+// test/ is deliberately out of scope: this repo's test doctrine requires prose
+// (an ENTER: assertion states in words which row must survive a reduction), so a
+// ratchet there would red the suite for adding a subject with its note.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -163,10 +162,9 @@ function noteFiles() {
   return fs.readdirSync(NOTES_DIR).filter((f) => f.endsWith('.md')).sort();
 }
 
-// docs/notes/renderer-lib-x.md describes renderer/lib/x.js. The mapping is the
-// path with separators flattened to hyphens, so the source is recovered by
-// trying each hyphen as a separator; a name with a literal hyphen in it (there
-// are many) resolves because only one candidate exists on disk.
+// docs/notes/renderer-lib-x.md describes renderer/lib/x.js: the path with
+// separators flattened to hyphens. Hyphens are also legal in a filename, so the
+// split is ambiguous and every reading is tried, shallowest first.
 function sourceCandidates(noteBase) {
   const parts = noteBase.split('-');
   const out = [];

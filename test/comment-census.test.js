@@ -3,10 +3,6 @@
 // re-deriving the expectation by the tokenizer's own rule would assert only that
 // the code agrees with itself, and would leave the table unable to express the
 // rows that matter here — the ones where a `//` is NOT a comment.
-//
-// Naive `//` counting is wrong for this repo and these rows are why: cli-hooks.js
-// reads 175 naively and 104 tokenized, the difference being shell text inside the
-// template literals that generate the hook scripts.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
