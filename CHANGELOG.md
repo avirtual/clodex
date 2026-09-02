@@ -33,9 +33,9 @@ blocks a release.
   directory as the review round ends, carrying that round's cost, tokens, cached
   fraction, verdict and must-fix count — including a round that ends without a
   verdict at all, because the lead rejected, accepted or retired it by hand.
-  Rounds accumulate rather than overwrite,
-  and a round whose cost genuinely could not be read is written as unknown rather
-  than as zero, so an expensive review can never be mistaken for a free one.
+  Rounds accumulate rather than overwrite, and a round whose cost genuinely could
+  not be read is written as unknown rather than as zero, so an expensive review
+  can never be mistaken for a free one.
   Applies to reviews from here on; past reviews cannot be reconstructed.
 
 - **Agents are no longer told a message was swallowed by a seat that plainly
