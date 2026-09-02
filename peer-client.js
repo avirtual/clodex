@@ -41,6 +41,7 @@ const WTERM_STATUS_CODE = {
 const REQUEST_TIMEOUT_MS = 5000;
 const QUERY_TIMEOUT_MS = 20000;
 const OVERFLOW_LOG_INTERVAL_MS = 60000;
+const CLAIM_FAIL_LOG_INTERVAL_MS = 60000;
 
 // Comparable identity for the hello's webHost field, so identityChanged can
 // treat "appeared", "vanished" and "moved to another port" alike. null and a
@@ -282,7 +283,8 @@ class PeerConnection {
 // the whole-dir rename-claim is atomic, so the loser emits nothing.
   _claimAndEmit() {
     this.claimDms((resp) => {
-      if (resp && resp.ok && Array.isArray(resp.messages) && resp.messages.length) {
+      if (!resp || !resp.ok) return this._reportClaimFailure(resp && resp.error);
+      if (Array.isArray(resp.messages) && resp.messages.length) {
         this._emit('peer-dms', this.id, resp.messages);
       }
     });
@@ -762,6 +764,16 @@ class PeerConnection {
     this._emit('ipc-message', {
       type: 'system', from: `peer:${this.label}`, to: `peer:${this.label}`,
       body: `SSE: ${path} sent ${mb}MB with no frame terminator (limit ${limitMb}MB) — stream dropped, reconnecting. The peer is sending malformed event-stream data.`,
+    });
+  }
+
+  _reportClaimFailure(error) {
+    const now = Date.now();
+    if (this._lastClaimFailLog && now - this._lastClaimFailLog < CLAIM_FAIL_LOG_INTERVAL_MS) return;
+    this._lastClaimFailLog = now;
+    this._emit('ipc-message', {
+      type: 'system', from: `peer:${this.label}`, to: `peer:${this.label}`,
+      body: `DM claim failed (${error || 'no response'}) — any messages this claim already took are unrecoverable: the box drops them from its store before it answers.`,
     });
   }
 

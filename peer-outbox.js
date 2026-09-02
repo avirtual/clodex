@@ -84,9 +84,9 @@ function enqueueOutbox(root, origin, msg, seq) {
 }
 
 // Atomically claim and read every message queued for `origin`, in arrival order.
-// Returns [] when the mailbox is empty, the origin is bad, or another claimer won
-// the race. The claim directory is removed before returning, so returned
-// messages are gone from the store (single delivery).
+// [] when empty, the origin is bad, or another claimer won the race. At most once
+// and possibly zero: the claim dir is gone before this returns, so a crash or
+// dropped connection before the caller flushes the response loses the batch.
 function claimOutbox(root, origin) {
   if (!validOrigin(origin)) return [];
   const dir = originDir(root, origin);
