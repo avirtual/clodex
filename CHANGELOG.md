@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **The sessions.json backup now holds the state from before the app started,
+  not from one write ago.** The `.bak` beside your session list used to be
+  refreshed on every single field write — so a build that dropped or emptied
+  your sessions had copied the damage into the backup within seconds, and the
+  backup was inert against exactly the "an upgrade killed my agents" case it
+  existed for. It is now written once per launch, from the file as it was found,
+  and never refreshed while the app runs. It is also cheaper: a read, a parse
+  and two disk syncs once at startup instead of on each of the ~26 writes that
+  fire as agents work.
+
 - **A peer DM claim that fails on the wire now says so.** Mail is pulled from a
   peer by a claim that removes the messages from the far box's store before it
   answers, so a crash or a dropped connection mid-answer loses the batch — and

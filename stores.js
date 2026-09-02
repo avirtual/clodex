@@ -401,6 +401,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
   const EXEC_DIR = path.join(registryDir, 'library', 'exec');
 
+  let launchBakTaken = false;
+
   const persistence = {
     _load() {
       let all;
@@ -424,11 +426,14 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     },
     _save(entries) {
       try {
-        try {
-          const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
-          JSON.parse(cur);
-          atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
-        } catch {}
+        if (!launchBakTaken) {
+          launchBakTaken = true;
+          try {
+            const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
+            JSON.parse(cur);
+            atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
+          } catch {}
+        }
         atomicWriteFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));
       } catch (e) {
         console.error('persistence save failed:', e);

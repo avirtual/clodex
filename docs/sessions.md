@@ -243,8 +243,13 @@ sessionId/workspaceId/prompt refs/proxy tri-state/agents/deny/tools/skills)
 plus setter-added `sessionIds[]` history, label, stripLevel, `createdAt`,
 `worktree` provenance (`setWorktree`, removed with the record on delete),
 `archivedAt` (`setArchived`, present only while archived), and `autoCompact`
-(stored only as `false` to opt out). Writes validate before backing up to
-`.bak`; load falls back to the backup.
+(stored only as `false` to opt out). `.bak` is a LAUNCH SNAPSHOT, not a mirror:
+the first `_save` of a process copies the on-disk file to `.bak` and no later
+save touches it, so it holds the pre-launch state for the whole session — which
+is what survives an upgrade or a bug in the running build. It is only written
+from content that parses, and a missing or unparseable file writes nothing and
+leaves any existing `.bak` alone. Load falls back to it only when
+sessions.json itself does not parse.
 
 A `worktree` pointer naming a tree that no longer exists is EXPECTED and is not
 swept. Three supported routes produce one: team-retire with archive on a dirty
