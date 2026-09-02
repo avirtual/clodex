@@ -8218,6 +8218,77 @@ test('task park: lead-gated, open-only, and bounces an unknown id', () => {
   assert.ok(f.injected.some((x) => /is done, not open/.test(x)), 'a closed ticket cannot be parked');
 });
 
+// ── t632: the park reply must not name an assign target that bounces ────────
+//
+// The same defect t629 fixed on `_taskStart`'s two refusals. `park`'s reply
+// interpolated `ticket.role || ticket.assignee || '<role|name>'`, and that tail
+// placeholder covers only the EMPTY case. `_resolveAssignee` accepts exactly a
+// key of `team.roles` or a live seat name, and neither field is constrained to
+// be either — `team role-remove` deletes the roles key while tickets still
+// carry it — so a stale role key produced an `assign` command that then
+// bounces, in the one clause whose whole job is to name the release route.
+//
+// Both subjects run the emitted target back through `_resolveAssignee` instead
+// of matching its spelling, so a rewording that reintroduces a bouncing target
+// reds however it is phrased.
+
+// Scoped to the `[agent:task assign <id> …]` bracket, not a whole-reply scan:
+// the unpark reply names the role legitimately outside any bracket, so a loose
+// match would be satisfied by a bouncing command and an honest one alike.
+function parkAssignTarget(said, id) {
+  const m = said.match(new RegExp(`\\[agent:task assign ${id} ([^\\]]+)\\]`));
+  assert.ok(m, `the park reply should name an assign command for ${id} — got: ${said}`);
+  return m[1];
+}
+
+// Started before parking, because `start` is what records `role` alongside the
+// seat pin — a park-at-add ticket carries only the bare role key in `assignee`
+// and could not distinguish the two legs of the helper's fallback chain.
+function startedThenParkedTicket(f) {
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const t = f.one('t1');
+  assert.strictEqual(t.role, 'hand', 'ENTER: start recorded the role the ticket was filed under');
+  assert.strictEqual(t.assignee, 'team-hand', 'ENTER: and re-pinned the assignee to the live seat');
+  assert.ok(t.startedAt != null, 'ENTER: started, so the PARK direction below is the one that runs');
+  f.injected.length = 0;
+  return t;
+}
+
+test('t632: park on a ticket carrying a REMOVED role key names a target that resolves', () => {
+  const f = mkTasks();
+  startedThenParkedTicket(f);
+
+  // `team role-remove` deletes the key outright (team-manifest.js), so a ticket
+  // outliving its role needs no fixture surgery to reach.
+  delete f.team.roles.hand;
+  assert.strictEqual(f.m._resolveAssignee(f.team, 'hand'), null,
+    'ENTER: `assign t1 hand` now bounces — exactly the state the old raw `ticket.role` walked into');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  const said = f.injected.join('\n');
+  assert.match(said, /parked — held out of dispatch/, 'ENTER: the PARK arm, not the unpark one');
+  const target = parkAssignTarget(said, 't1');
+  assert.ok(f.m._resolveAssignee(f.team, target) != null,
+    `the named target must be one assign accepts — got ${target}`);
+  assert.strictEqual(target, 'team-hand', 'the live pin is what remains recoverable once the role key is gone');
+});
+
+test('t632: park still names the ROLE when it resolves, so "always emit the placeholder" reds', () => {
+  const f = mkTasks();
+  startedThenParkedTicket(f);
+  assert.strictEqual(f.m._resolveAssignee(f.team, 'hand'), 'hand', 'ENTER: the role is intact here — the anti-degenerate half');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
+  const target = parkAssignTarget(f.injected.join('\n'), 't1');
+  assert.ok(f.m._resolveAssignee(f.team, target) != null,
+    `the named target must be one assign accepts — got ${target}`);
+  // A lead handed `<role|name>` for a ticket whose role is right there has to go
+  // look it up, so degrading to the placeholder is not a safe universal answer.
+  assert.strictEqual(target, 'hand', 'and it is the role the ticket was filed under, not the placeholder');
+});
+
 test('parking clears nudgedAt, so the unpark starts a fresh stall episode', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');

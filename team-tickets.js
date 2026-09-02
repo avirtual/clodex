@@ -6706,7 +6706,7 @@ function createTicketMethods(deps, shared) {
       // own reply guards against: an unusable recovery in the one reply whose
       // whole job is to name the way out.
       const sendVerb = (!ticket.assignee || ticketStarted(ticket))
-        ? `[agent:task assign ${ticket.id} ${ticket.role || ticket.assignee || '<role|name>'}]`
+        ? `[agent:task assign ${ticket.id} ${this._resolvableAssignTarget(team, ticket)}]`
         : `[agent:task start ${ticket.id}]`;
       const note = ticket.parked
         ? ` (parked — spec replaced, NOT dispatched; ${sendVerb} sends it)`
@@ -7581,11 +7581,7 @@ function createTicketMethods(deps, shared) {
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(backlog)', body: `ticket ${ticket.id} ${parking ? 'parked' : 'unparked'}` });
       log.info('intent', `task ${parking ? 'park' : 'unpark'} ${ticket.id} by ${session.name}`);
       reply(parking
-        // The ROLE, not the pin: `_resolveAssignee` takes a role key or a LIVE
-        // seat, so suggesting a pin that has degraded (its seat is gone) hands
-        // back a command that bounces — an unusable recovery in the one reply
-        // whose whole job is to name the way out.
-        ? `ticket ${ticket.id} parked — held out of dispatch; [agent:task assign ${ticket.id} ${ticket.role || ticket.assignee || '<role|name>'}] releases it`
+        ? `ticket ${ticket.id} parked — held out of dispatch; [agent:task assign ${ticket.id} ${this._resolvableAssignTarget(team, ticket)}] releases it`
         : `ticket ${ticket.id} unparked → ${ticket.role || ticket.assignee || 'backlog'} — the spec was NOT re-sent; use [agent:task assign ${ticket.id} <role|name>] to deliver it`);
     },
 
