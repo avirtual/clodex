@@ -3178,10 +3178,8 @@ test('uiSettings: a non-boolean hint flag falls back to the default', () => {
 
 // sessions.json's `.bak` is a LAUNCH SNAPSHOT: one write per initStores, taken
 // from the on-disk content before that process's first _save mutates it, and
-// never refreshed. The four subjects below are the first pins on the mechanism
-// — before t631 nothing in the suite named `.bak`, in either direction.
-// Real files throughout: the whole mechanism is an fs call sequence, and a
-// mocked fs would let a wrong one pass.
+// never refreshed. Real files throughout: the whole mechanism is an fs call
+// sequence, and a mocked fs would let a wrong one pass.
 function storesOver(userData) {
   const registryDir = mkTmpRoot('stores-reg-');
   return initStores(userData, { log: console, registryDir,
