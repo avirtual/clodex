@@ -140,7 +140,7 @@ function confineUnder(root, target) {
 
 function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : 0; }
 
-// Sum the persisted per-session ledger across the seat's session history.
+// Sum the per-session ledger across the seat's session history.
 //
 // `known` is reported rather than hidden for the same reason session-info.js
 // reports it: wire-totals.json keeps only the newest 500 sessions, so an old
@@ -300,11 +300,11 @@ const REVIEW_COST_VERSION = 1;
 // name left to look the reviewer's sessionIds up under, so the number has to be
 // taken at the one instant both the label and the sessionId are still known.
 //
-// JSONL, one row per round, APPENDED — never a rewritten object. A ticket takes
-// up to nine review rounds (measured), each by a differently-named seat, and a
-// whole-file rewrite would have every round clobber the last. Append also means
-// a crash between rounds costs the rows not yet written, never the rows already
-// there.
+// JSONL, one row per round, APPENDED — never a rewritten object. A rejected
+// ticket is re-reviewed by a fresh seat under a fresh label, so rounds repeat
+// and a whole-file rewrite would have each one clobber the last. Append also
+// means a crash between rounds costs the rows not yet written, never the rows
+// already there.
 //
 // `resolved: false` says the seat's ledger could not be read at all, and every
 // measured field then goes null rather than zero — the same rule costRecord
