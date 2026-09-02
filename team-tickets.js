@@ -1024,11 +1024,12 @@ function createTicketMethods(deps, shared) {
     // refinement here; without it every review is undercounted by its final turn.
     //
     // The overlay is applied ONLY when the wire agrees with the record on the
-    // session id, the rule ipc-handlers' session:info read uses. A reviewer that
-    // falls back to the `<team>-reviewer-<n>` counter name reuses names across
-    // rounds, and _wireTelemetry's per-name map is pruned on poller ticks rather
-    // than at kill — so an ungated read can bill a dead round's ledger to a live
-    // seat that happens to hold the name.
+    // session id AND reports a cost it actually observed. The id half is the
+    // rule ipc-handlers' session:info read uses: a reviewer that falls back to
+    // the `<team>-reviewer-<n>` counter name reuses names across rounds, and
+    // _wireTelemetry's per-name map is pruned on poller ticks rather than at
+    // kill — so an ungated read can bill a dead round's ledger to a live seat
+    // that happens to hold the name.
     _reviewLedger(seatName, rec) {
       const sessionIds = entrySessionIds(rec);
       let totals = null;
@@ -1039,7 +1040,16 @@ function createTicketMethods(deps, shared) {
       const currentId = (rec && rec.sessionId) || null;
       try {
         const w = this._wireTelemetry && this._wireTelemetry.payload(seatName);
-        if (w && w.sessionId && w.sessionId === currentId) {
+        // The cost check is not a refinement of the id gate. sumSessions
+        // REPLACES the file's row with this one, and `cost.usd` is null whenever
+        // wire-telemetry's `_lifetime` had neither a persisted base nor a turn
+        // snapshot to add — reachable on a seat with a main-line turn and no
+        // `sessionTotals`. Overlaying that discards a recorded spend and
+        // publishes it as resolved-and-zero, rather than merely failing to
+        // freshen it; falling through to the file is right whether or not a row
+        // is there.
+        if (w && w.sessionId && w.sessionId === currentId
+            && typeof (w.cost && w.cost.usd) === 'number') {
           // Flattened to a wire-totals ROW, which is the only shape sumSessions
           // reads. Passing the payload itself would land `cost` as an object and
           // every field would coerce to a silent zero.

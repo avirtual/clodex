@@ -396,6 +396,45 @@ test('a wire payload for a DIFFERENT session is not applied', async () => {
   assert.strictEqual(readRows(f, 't1')[0].usd, 1, 'the mismatched payload was ignored; the file answered');
 });
 
+test('a payload whose cost the wire never observed does not DISCARD the recorded row', async () => {
+  // sumSessions REPLACES the file's row with the overlay rather than adding to
+  // it, and wire-telemetry's `_lifetime` yields `cost: null` when it had neither
+  // a persisted base nor a turn snapshot — on a payload that still carries the
+  // matching sessionId. Applied, that null does not merely fail to freshen the
+  // figure: it drops a real recorded spend and republishes it as zero.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 4.2, requests: 40, turns: 12 }) });
+  const nulled = {
+    sessionId: 'sess-r1', cost: { usd: null, requests: null }, turns: null, refusals: 0,
+    tokens: { input: null, output: null, cacheRead: null, cacheWrite: null },
+  };
+  f.m._wireTelemetry = { payload: () => nulled };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.usd, 4.2, 'the recorded spend survived; an applied null overlay publishes 0 here');
+  assert.strictEqual(r.requests, 40);
+  assert.strictEqual(r.turns, 12);
+  assert.strictEqual(r.sessions.resolved, true, 'the file answered, so the round IS priced');
+
+  // ENTER: this fixture's payload really does clear the `sessionId === currentId`
+  // gate. Same seat, same ids, cost swapped for a number — it overrides. Without
+  // this the test above passes on a fixture that never reached the branch at all,
+  // which is the shape that tests nothing.
+  const g = mkFixture();
+  reviewingTicket(g);
+  const grec = spawnReviewer(g, 't1', 'sess-r1');
+  writeTotals(g, { 'sess-r1': row({ cost: 4.2, requests: 40, turns: 12 }) });
+  g.m._wireTelemetry = { payload: () => ({ ...nulled, cost: { usd: 9.5, requests: 95 }, turns: 30 }) };
+  await g.m._handleReviewDone(g.m.sessions.get(grec.name), 'VERDICT: ACCEPT');
+  assert.strictEqual(readRows(g, 't1')[0].usd, 9.5,
+    'ENTER: the overlay branch is reachable with these ids — so the 4.2 above is the cost check, not a missed gate');
+});
+
 // ── the honest-absence half ────────────────────────────────────────────────
 
 test('a reviewer with NO findable ledger reports null, never a false zero', async () => {
@@ -420,6 +459,34 @@ test('a reviewer with NO findable ledger reports null, never a false zero', asyn
   // itself the measurement. A skipped row would read as a round that never ran.
   assert.strictEqual(r.round, 1);
   assert.strictEqual(r.seat, rec.name);
+});
+
+test('a seat whose wire saw NO cost and whose file has no row publishes null, not zero', async () => {
+  // The other half of the same defect. Here there is nothing to discard, but the
+  // null-cost payload is still a truthy row: applied, it increments `known`, so
+  // `resolved` goes TRUE and every measured field publishes a confident 0 for a
+  // review whose spend is simply unknown.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'some-other-session': row() });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-r1', cost: { usd: null, requests: null }, turns: null, refusals: 0,
+      tokens: { input: null, output: null, cacheRead: null, cacheWrite: null },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.sessions.resolved, false, 'no ledger was found — an applied null overlay reports true');
+  assert.strictEqual(r.sessions.known, 0, 'and the id is not counted as answered');
+  assert.strictEqual(r.usd, null, 'unknown, NOT zero');
+  assert.strictEqual(r.requests, null);
+  assert.strictEqual(r.turns, null);
+  assert.deepStrictEqual(r.tokens, { input: null, output: null, cacheRead: null, cacheWrite: null, cachedFraction: null });
 });
 
 test('an UNPARSED verdict still books its round — the seat is reaped either way', async () => {
