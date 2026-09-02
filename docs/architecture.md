@@ -630,6 +630,16 @@ worktree, which is why membership is by repo.
   containment: `.` and `..` pass `/^[a-zA-Z0-9._-]{1,64}$/`. Pure leaf, no I/O.
 - **fs-util.js** — filesystem primitives (ensureDir etc.).
 - **file-touch.js** — recently-touched-file tracking. Pure leaf.
+- **comment-census.js** — `countCommentLines(src)`, a tokenizer over strings,
+  template literals (nested `${}` frames) and regex literals; a line counts if any
+  part of a `//` or `/* */` token lands on it, and `eslint`/`@ts`/`prettier`
+  directive lines are exempt. Naive `//` counting is wrong for this repo —
+  `cli-hooks.js` reads 175 naively and 104 tokenized, the gap being shell text
+  inside the template literals that generate the hook scripts. Drives
+  `test/comment-ratchet.test.js`, which fails a tracked non-test `.js` that gains
+  comment lines against `git merge-base master HEAD` (a file absent at the base
+  counts 0, so a new file's budget is zero). Pure leaf, no I/O; a new leaf rather
+  than an extraction, so NOT in the leak-scanner lists.
 - **file-edit.js** — the write-side policy for the file-peek Edit tab. The peek
   is the only read surface that takes a bare absolute path, because reading
   bytes into a modal is not an authority — writing them is, so the policy is
