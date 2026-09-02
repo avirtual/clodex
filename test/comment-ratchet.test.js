@@ -2,15 +2,16 @@
 // The comment ratchet: no tracked source file may gain comment lines relative to
 // the merge-base with master, and a file absent at the base must ship with zero.
 //
-// ON MASTER THE MERGE-BASE IS HEAD, SO THIS TEST IS VACUOUS BY CONSTRUCTION —
-// every file compares against itself. That is a fact about the mechanism, not a
-// gap to fix: the gate is meant to bite on a branch, which is where a hand's
-// edits live before they merge. "Fixing" it to compare against a fixed tag or a
-// committed baseline is the design that was considered and rejected.
+// ON MASTER THE MERGE-BASE IS HEAD, SO THIS TEST IS VACUOUS BY CONSTRUCTION.
+// That is a fact about the mechanism, not a gap to fix: the gate is meant to bite
+// on a branch, which is where a hand's edits live before they merge. "Fixing" it
+// to compare against a fixed tag or a committed baseline is the design that was
+// considered and rejected.
 //
-// test/ is deliberately out of scope: this repo's test doctrine requires prose
-// (an ENTER: assertion states in words which row must survive a reduction), so a
-// ratchet there would red the suite for adding a subject with its note.
+// A test/ directory at ANY depth is deliberately out of scope (this repo has two
+// tracked ones, root and cli/): the test doctrine requires prose — an ENTER:
+// assertion states in words which row must survive a reduction — so a ratchet
+// there would red the suite for adding a subject with its note.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -22,9 +23,11 @@ const { countCommentLines } = require('../comment-census.js');
 
 const REPO = path.join(__dirname, '..');
 
-// A directory whose .js is vendored, generated or not ours to hold to the rule.
-const EXCLUDED = /^(test|node_modules|web-dist|dist|vendor)\//;
-const EXCLUDED_ANYWHERE = /(^|\/)(node_modules|vendor)\//;
+const EXCLUDED_ANYWHERE = /(^|\/)(node_modules|vendor|test)\//;
+
+// Root-anchored, unlike the above: these two are build artifacts of THIS repo, and
+// a nested dist/ is a plausible source directory name elsewhere in the tree.
+const EXCLUDED_ROOT = /^(web-dist|dist)\//;
 
 function git(args, opts = {}) {
   return execFileSync('git', args, {
@@ -45,7 +48,7 @@ function tryGit(args) {
 }
 
 function inScope(p) {
-  return p.endsWith('.js') && !EXCLUDED.test(p) && !EXCLUDED_ANYWHERE.test(p);
+  return p.endsWith('.js') && !EXCLUDED_ROOT.test(p) && !EXCLUDED_ANYWHERE.test(p);
 }
 
 function scopedFiles() {
@@ -112,7 +115,8 @@ test('no tracked source file gains comment lines against the merge-base', () => 
 
   // ENTER: specific shapes the filter is most likely to eat — a root module, a
   // nested renderer leaf, a deep plugin file (whose basename collides with a root
-  // module's, so a scan keyed by basename loses one of them), and a scripts/ tool.
+  // module's, so a scan keyed by basename loses one of them), a scripts/ tool, and
+  // a cli/ source file, which the test-at-any-depth exclusion sits closest to.
   for (const must of [
     'engine.js',
     'session-manager.js',
@@ -120,10 +124,15 @@ test('no tracked source file gains comment lines against the merge-base', () => 
     'renderer/lib/format.js',
     'plugins/git-branches/engine.js',
     'scripts/boundary-check.js',
+    'cli/src/client.js',
   ]) {
     assert.ok(files.includes(must), `${must} should be in the ratchet scope`);
   }
   assert.ok(!files.some((f) => f.startsWith('test/')), 'test/ must be out of scope');
+  assert.ok(
+    !files.some((f) => f.includes('/test/')),
+    'a nested test tree must be out of scope too',
+  );
 
   const regressions = [];
   const unreadable = [];
