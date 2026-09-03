@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.24.0 — 2026-09-03
+
 - **Escape now closes the New Session, Preferences and Edit Session dialogs**,
   as does a press on the dimmed area around them. Previously only Cancel or the
   ✕ would do it, which read as the app being stuck. A dialog with a second box
