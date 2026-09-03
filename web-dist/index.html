@@ -26780,6 +26780,25 @@ helper=${d.helperPath}`;
     }
   });
 
+  // renderer/lib/popover-group.js
+  var require_popover_group = __commonJS({
+    "renderer/lib/popover-group.js"(exports, module) {
+      "use strict";
+      function createPopoverGroup() {
+        const closers = /* @__PURE__ */ new Map();
+        function register(key, close) {
+          if (closers.has(key)) throw new Error(`popover-group: duplicate key ${key}`);
+          closers.set(key, close);
+          return function closeSiblings() {
+            for (const [k, fn] of closers) if (k !== key) fn();
+          };
+        }
+        return { register };
+      }
+      module.exports = { createPopoverGroup };
+    }
+  });
+
   // renderer/lib/cost-by-line.js
   var require_cost_by_line = __commonJS({
     "renderer/lib/cost-by-line.js"(exports, module) {
@@ -26814,7 +26833,7 @@ helper=${d.helperPath}`;
       var { costStackBlock, svgCostChart } = require_render_html();
       var { COST_SPINE, COST_CONTENT } = require_constants();
       var { costByLine } = require_cost_by_line();
-      function initCostPopover({ popoverApi, proxyState }) {
+      function initCostPopover({ popoverApi, proxyState, barPopovers }) {
         const costPopover = document.getElementById("cost-popover");
         const costPopoverName = document.getElementById("cost-popover-name");
         const costPopoverBody = document.getElementById("cost-popover-body");
@@ -26822,6 +26841,7 @@ helper=${d.helperPath}`;
           costPopover.classList.add("hidden");
           costPopover.dataset.name = "";
         }
+        const closeSiblings = barPopovers.register("cost", closeCostPopover);
         function renderCostTimeline(d, base, sid) {
           const s = d && d.series;
           const link = base && sid ? `<span class="px-link-ext" data-url="${esc(base + "/_timeline?session=" + encodeURIComponent(sid))}" title="Open in a clodex window (\u2318-click for browser)">Open full dashboard \u2192</span>` : "";
@@ -26850,6 +26870,7 @@ helper=${d.helperPath}`;
           return `<div class="cost-sec-title"><span>By line</span><span class="ctx-line-total">${totalTxt}</span></div><div class="cost-line-list">${body}</div><div class="cost-note">Whole-tree estimate for this run, split across the main line and its subagents. Shares ride the live poll (no extra fetch).</div>`;
         }
         async function openCostPopover(name, anchor) {
+          closeSiblings();
           const p = (proxyState.get(name) || {}).payload;
           const base = p && p.base, sid = p && p.sessionId;
           costPopoverName.textContent = name;
@@ -26930,7 +26951,7 @@ helper=${d.helperPath}`;
         }
         return `<div class="bust-span" title="Last bust ${esc(absLast)}">Last bust ${esc(absLast)} \xB7 <b>${esc(age)}</b></div>`;
       }
-      function initBustPopover({ popoverApi, proxyState }) {
+      function initBustPopover({ popoverApi, proxyState, barPopovers }) {
         const bustPopover = document.getElementById("bust-popover");
         const bustPopoverName = document.getElementById("bust-popover-name");
         const bustPopoverBody = document.getElementById("bust-popover-body");
@@ -26938,6 +26959,7 @@ helper=${d.helperPath}`;
           bustPopover.classList.add("hidden");
           bustPopover.dataset.name = "";
         }
+        const closeSiblings = barPopovers.register("bust", closeBustPopover);
         function renderBustSeries(d, base, sid, summary) {
           const triad = bustTriad(summary);
           const busts = Array.isArray(d && d.busts) ? d.busts : [];
@@ -26959,6 +26981,7 @@ helper=${d.helperPath}`;
           return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + note + link;
         }
         async function openBustPopover(name, anchor) {
+          closeSiblings();
           const p = (proxyState.get(name) || {}).payload;
           const base = p && p.base, sid = p && p.sessionId;
           const summary = p && p.busts;
@@ -29520,7 +29543,7 @@ You can add it back from this popover.` : "";
       var { groupMcpTools, mcpTotalTokens } = require_mcp_group();
       var { placeAboveAnchor } = require_popover_place();
       var CTX_SEG = '#proxy-bar [data-act="ctx"]';
-      function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf }) {
+      function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf, barPopovers }) {
         const ctxPopover = document.getElementById("ctx-popover");
         const ctxPopoverName = document.getElementById("ctx-popover-name");
         const ctxPopoverBody = document.getElementById("ctx-popover-body");
@@ -29528,6 +29551,7 @@ You can add it back from this popover.` : "";
           ctxPopover.classList.add("hidden");
           ctxPopover.dataset.name = "";
         }
+        const closeSiblings = barPopovers.register("ctx", closeContextPopover);
         function placeCtxPopover(anchor) {
           placeAboveAnchor(ctxPopover, anchor, CTX_SEG);
         }
@@ -29649,6 +29673,7 @@ You can add it back from this popover.` : "";
           return renderUtilBlock(a.skills_utilization, a.skills && a.skills.per_skill, "Skill utilization");
         }
         async function openContextPopover(name, anchor) {
+          closeSiblings();
           ctxPopoverName.textContent = name;
           ctxPopover.dataset.name = name;
           ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading\u2026</div>';
@@ -30583,6 +30608,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { webViewAffordance } = require_peer_web_view();
       var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
       var { servedBannerView } = require_served_banner();
+      var { placeAboveAnchor } = require_popover_place();
       function initPeersUi({
         sessions,
         sessionList,
@@ -31629,10 +31655,7 @@ ${detail}` });
           peerSelectPopoverName.textContent = peerDisplayHost(st);
           peerSelectPopover.dataset.peerId = id;
           peerSelectPopover.classList.remove("hidden");
-          const rect = anchorBtn.getBoundingClientRect();
-          const w = peerSelectPopover.offsetWidth;
-          peerSelectPopover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
-          peerSelectPopover.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
+          placeAboveAnchor(peerSelectPopover, anchorBtn);
         }
         document.getElementById("peer-select-popover-close").addEventListener("click", closePeerSelectPopover);
         document.getElementById("peer-select-popover-cancel").addEventListener("click", closePeerSelectPopover);
@@ -31700,10 +31723,6 @@ ${detail}` });
           peerInfoBody.innerHTML = rows.join("");
           peerInfoPopover.dataset.peerId = id;
           peerInfoPopover.classList.remove("hidden");
-          const rect = anchorBtn.getBoundingClientRect();
-          const w = peerInfoPopover.offsetWidth;
-          peerInfoPopover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
-          peerInfoPopover.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
           peerInfoUpdateBtn.classList.add("hidden");
           peerInfoUpdateBtn.onclick = null;
           if (boxIds.has(id)) {
@@ -31716,6 +31735,7 @@ ${detail}` });
           } else {
             peerInfoUpdateBtn.textContent = "Update Clodex";
           }
+          placeAboveAnchor(peerInfoPopover, anchorBtn);
           peerInfoDisableBtn.onclick = () => {
             closePeerInfoPopover();
             disablePeer(id, label);
@@ -32586,6 +32606,7 @@ ${detail}` });
       var { initSessionHovercard } = require_session_hovercard();
       var { initTooltips } = require_tooltip();
       var { initReportPanel } = require_report_panel();
+      var { createPopoverGroup } = require_popover_group();
       var { initCostPopover } = require_cost_popover();
       var { initBustPopover } = require_bust_popover();
       var { initSessionInfoPopover } = require_session_info_popover();
@@ -35694,9 +35715,10 @@ Click for live activity`;
           diff: (p) => window.api.fileDiff(name, p)
         };
       }
-      var { openCostPopover } = initCostPopover({ popoverApi, proxyState });
+      var barPopovers = createPopoverGroup();
+      var { openCostPopover } = initCostPopover({ popoverApi, proxyState, barPopovers });
       var { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
-      var { openBustPopover } = initBustPopover({ popoverApi, proxyState });
+      var { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
       var { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
         popoverApi,
         filesState,
@@ -35714,7 +35736,8 @@ Click for live activity`;
         openToolsPopover,
         openSkillsPopover,
         proxyState,
-        sessionTypeOf
+        sessionTypeOf,
+        barPopovers
       });
       window.api.onSessionMention((name, mtype) => {
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);

@@ -1006,6 +1006,11 @@ which is why the judgement worth testing is pushed down here.
   re-query and the clamped above-the-button geometry, with an all-zero (detached)
   anchor rect falling back to the viewport's bottom-left corner instead of off
   the top.
+- **popover-group.js** — mutual exclusion for the bar-anchored popovers: each
+  island registers its own closer under a key and gets back a `closeSiblings`
+  that runs every OTHER member's, so opening one closes the rest. Self-exclusion
+  is structural (a key cannot reach its own closer), and each opener calls it
+  before revealing itself.
 - **peer-collapse.js** — per-workspace fold state for peer headers. The state
   lives outside the DOM because `renderPeers()` rebuilds every row. The
   persisted set names the peers the operator EXPANDED, never the folded ones.

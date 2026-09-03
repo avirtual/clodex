@@ -6,14 +6,14 @@
 // (base/sessionId for the dashboard link). openExternal/openWirescope are
 // window.api shell actions (external-link, not the local-vs-peer data seam).
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
+// The painters are DOM-bound, so no unit tests per the R1 rule; the group wiring is not.
 
 const { esc, fmtUsd } = require('../lib/format');
 const { costStackBlock, svgCostChart } = require('../lib/render-html');
 const { COST_SPINE, COST_CONTENT } = require('../lib/constants');
 const { costByLine } = require('../lib/cost-by-line');
 
-function initCostPopover({ popoverApi, proxyState }) {
+function initCostPopover({ popoverApi, proxyState, barPopovers }) {
   // --- Cost-over-time popover ----------------------------------------------
   // Native render of wirescope's detail=1 `series` (gated on context_timeline):
   // the exact spine (read/write/generation), a cumulative-cost line chart over
@@ -24,6 +24,7 @@ function initCostPopover({ popoverApi, proxyState }) {
   const costPopoverBody = document.getElementById('cost-popover-body');
 
   function closeCostPopover() { costPopover.classList.add('hidden'); costPopover.dataset.name = ''; }
+  const closeSiblings = barPopovers.register('cost', closeCostPopover);
 
   function renderCostTimeline(d, base, sid) {
     const s = d && d.series;
@@ -79,6 +80,7 @@ function initCostPopover({ popoverApi, proxyState }) {
   }
 
   async function openCostPopover(name, anchor) {
+    closeSiblings();
     const p = (proxyState.get(name) || {}).payload;
     const base = p && p.base, sid = p && p.sessionId;
     costPopoverName.textContent = name;

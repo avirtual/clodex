@@ -289,6 +289,10 @@ const RENDERER_SCANNED_MODULES = [
   // and its whole job is to reach for document/window — so the guard that it
   // reaches for NOTHING ELSE is what keeps the reach auditable.
   'renderer/lib/popover-place.js',
+  // The bar-popover mutual-exclusion registry. Unlike popover-place it touches
+  // NO globals at all — it holds closers the islands hand it — so a reach for a
+  // renderer.js name here would be a leaf quietly becoming a coordinator.
+  'renderer/lib/popover-group.js',
   'renderer/lib/args-model.js',
   'renderer/lib/session-actions.js',
   'renderer/lib/name-suggest.js',

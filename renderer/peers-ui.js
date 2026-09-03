@@ -10,6 +10,7 @@ const { openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
 const { webViewAffordance } = require('./lib/peer-web-view');
 const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
 const { servedBannerView } = require('./lib/served-banner');
+const { placeAboveAnchor } = require('./lib/popover-place');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
@@ -1177,10 +1178,7 @@ function initPeersUi({
     peerSelectPopoverName.textContent = peerDisplayHost(st);
     peerSelectPopover.dataset.peerId = id;
     peerSelectPopover.classList.remove('hidden');
-    const rect = anchorBtn.getBoundingClientRect();
-    const w = peerSelectPopover.offsetWidth;
-    peerSelectPopover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
-    peerSelectPopover.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
+    placeAboveAnchor(peerSelectPopover, anchorBtn);
   }
 
   document.getElementById('peer-select-popover-close').addEventListener('click', closePeerSelectPopover);
@@ -1255,10 +1253,6 @@ function initPeersUi({
     peerInfoBody.innerHTML = rows.join('');
     peerInfoPopover.dataset.peerId = id;
     peerInfoPopover.classList.remove('hidden');
-    const rect = anchorBtn.getBoundingClientRect();
-    const w = peerInfoPopover.offsetWidth;
-    peerInfoPopover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
-    peerInfoPopover.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
     peerInfoUpdateBtn.classList.add('hidden');
     peerInfoUpdateBtn.onclick = null;
     if (boxIds.has(id)) {
@@ -1268,6 +1262,7 @@ function initPeersUi({
     } else {
       peerInfoUpdateBtn.textContent = 'Update Clodex';
     }
+    placeAboveAnchor(peerInfoPopover, anchorBtn);
     peerInfoDisableBtn.onclick = () => { closePeerInfoPopover(); disablePeer(id, label); };
     // relayAllowed is a hub-side per-peer setting, not part of the peer's hello — read
     // it from config, not from peerStatuses.
