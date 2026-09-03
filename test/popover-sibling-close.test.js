@@ -157,6 +157,22 @@ test('a lone member closes nothing', () => {
   assert.strictEqual(fired, 0, 'the sole member closed itself');
 });
 
+test('a member closes siblings that registered after it', () => {
+  // renderer.js registers cost, then bust, then ctx — so the first closer is
+  // handed out while two of its siblings do not exist yet. It must iterate the
+  // live registry, not a copy taken at register time, or the earliest island
+  // silently stops closing the later ones.
+  const g = createPopoverGroup();
+  const fired = [];
+  const closeFirst = g.register('cost', () => fired.push('cost'));
+  g.register('bust', () => fired.push('bust'));
+  g.register('ctx', () => fired.push('ctx'));
+
+  closeFirst();
+  assert.deepStrictEqual(fired.sort(), ['bust', 'ctx'],
+    'the first-registered member closed only what existed when it registered');
+});
+
 test('a duplicate key is refused', () => {
   // Two islands registering the same key would silently overwrite the first
   // closer, leaving one popover nothing closes — the defect this fixes, back.
