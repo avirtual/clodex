@@ -234,6 +234,7 @@ const API_CONTRACT = [
   // caller-supplied text into an agent's next request, so an ungated
   // registration is a prompt-injection channel for any authenticated web
   // connection.
+  { name: 'consoleRead', kind: 'invoke', channel: 'console:read' },
   { name: 'drawerArmSelection', kind: 'invoke', channel: 'drawer:armSelection' },
   { name: 'drawerReleaseSelection', kind: 'invoke', channel: 'drawer:releaseSelection' },
   { name: 'drawerInspectSelection', kind: 'invoke', channel: 'drawer:inspectSelection' },

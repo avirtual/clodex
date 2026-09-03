@@ -174,7 +174,10 @@ test('the notice drain is registered under UserPromptSubmit, after ipcdelta, and
   assert.ok(deltaIdx < noticeIdx,
     'the prompt delta comes first: it can change what the intents below it MEAN, while a notice is a fact about the host');
 
-  const postCmds = settings.hooks.PostToolUse[0].hooks.map((h) => h.command);
+  // Every entry, not the first: since t645 there are two (a matcher-less one and
+  // the console's `matcher: 'Bash'`), and an absence asserted over one of them
+  // would stay green with the drain registered in the other.
+  const postCmds = settings.hooks.PostToolUse.flatMap((h) => h.hooks.map((x) => x.command));
   assert.ok(!postCmds.includes(scriptPath),
     'not per-tool: like selection, this is turn-boundary content, and draining it mid-loop would land it between two tool calls');
 });

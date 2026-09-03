@@ -47,7 +47,11 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // is still covered, and WEB_REGISTERED below asserts the local family is
 // present rather than leaving it unmentioned. A prefix dropped from a gate list
 // with nothing asserted on the other side is how a gate disappears silently.
-const GATED_PREFIXES = ['ctl:', 'drawer:', 'peer:wterm'];
+// `console:` (t645) reports a SEAT'S OWN command output — the same class as
+// drawer:inspectSelection, which is gated for reporting the operator's screen
+// text back. A web connection must not be able to ask a desktop box what its
+// agents have been running.
+const GATED_PREFIXES = ['console:', 'ctl:', 'drawer:', 'peer:wterm'];
 // The other half of that removal. Named here beside the gate list because the
 // two are one decision: these channels MUST reach the web surface, and a future
 // edit that re-gates them has to delete this constant to do it.
@@ -333,6 +337,7 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   assert.ok(registered.has('wterm:resize'), 'and its SIGWINCH');
   // The one channel here that writes into an agent's request rather than
   // running something on the host.
+  assert.ok(registered.has('console:read'), 'and the Bash console pull');
   assert.ok(registered.has('drawer:armSelection'), 'and the drawer selection hint');
   assert.ok(registered.has('drawer:releaseSelection'), 'and its release');
   // The peer terminal (t219) — a shell on ANOTHER box, so the strongest member
@@ -570,4 +575,41 @@ test('peer:wtermOpen and peer:wtermClose both refuse when the sender resolves to
   assert.strictEqual(closed.ok, false, 'and the close is refused too — an anonymous caller can be neither credited nor ignored safely');
 
   assert.deepStrictEqual(calls, [], 'nothing reached the connection through either door');
+});
+
+// The RENDERER half of the console tenant (t645), and it exists for the same
+// reason the term-tab pin above does: `console-tab.js` is DOM-bound (the R1
+// rule), so nothing else would notice these two properties changing.
+//
+// Property one is the SEAT axis. The tab is per-seat and only a `claude` seat
+// writes a console at all — the hook is registered by setupClaudeHook, so a
+// codex seat, a bash seat (which runs no hooks and IS a shell) and a remote seat
+// (another box entirely) have no bytes to show. `availableFor` HIDES the tab for
+// those rather than leaving an inert empty pane, which is the defect the peer
+// terminal shipped with.
+//
+// Property two is that it has NO `available()` surface test. Its handler is
+// gated at registration like `ctl:*`, so on the web surface the tab is inert
+// rather than dangerous — and a renderer-side environment test would be the
+// t227 mistake again: it would hide the tab no matter what the host registered.
+test('the console tab gates on the SEAT type and not on the surface', () => {
+  const fs = require('node:fs');
+  const ROOT = path.join(__dirname, '..');
+  const src = fs.readFileSync(path.join(ROOT, 'renderer', 'console-tab.js'), 'utf8');
+
+  assert.ok(src.includes("id: 'console',"), 'ENTER: this really is the console tenant\'s registration');
+  assert.ok(src.includes('availableFor'),
+    'the tab must carry a seat axis — without it the tab shows on seats with no console');
+  assert.match(src, /availableFor: \(\) => typeNow\(\) === 'claude'/,
+    'only a claude seat runs the Bash hook that writes a console');
+  assert.ok(!src.includes('available: () => !window.__CLODEX_WEB__'),
+    'no surface test: registration is the boundary (t227), and a client-side one only hides the tab');
+
+  // The frozen id list is what puts the tab in the strip at all: register()
+  // THROWS on an unknown id, so a tenant whose id is missing from it is a boot
+  // crash rather than a missing tab. Asserted as the WHOLE list because its
+  // order IS the tab order.
+  const { TAB_IDS } = require('../renderer/drawer-host');
+  assert.deepStrictEqual([...TAB_IDS], ['log', 'activity', 'console', 'ctl', 'term'],
+    'the console sits between the activity feed and clodexctl');
 });

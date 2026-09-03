@@ -207,6 +207,14 @@ bundle), whose packaged form is the Docker image under
   what the frozen prompt cannot: AT-MOST-ONCE (claim by rename, consume on
   read), and **must not be merged with the prompt delta**, which is
   at-least-once.
+- **bash-console.js** — the reader behind the drawer's Console tab: normalizes the
+  raw hook JSON `run/<name>/bash-console.sh` appends into blocks, and serves them
+  incrementally by byte offset (`console:read`). It owns the TWO-SHAPE problem —
+  a succeeding Bash call fires `PostToolUse` with `tool_response`, a FAILING one
+  fires `PostToolUseFailure` with no `tool_response` and the exit code inside a
+  top-level `error` — so a reader built for only the first silently omits every
+  failure. ANSI is stripped here, since the pane renders to HTML.
+  Measured CLI facts live in `docs/notes/bash-console.md`.
 - **claude-env.js** — a Claude session's EFFECTIVE process environment, merging
   `process.env` with the settings layers the CLI loads (user < project < local),
   and classifying whether that env routes the CLI to a TEE-BLIND backend
@@ -704,7 +712,8 @@ Own state + DOM, `init*(deps)`:
 - **drawer-host.js** — the bottom drawer as a TAB HOST: owns collapsed state,
   the tab strip, badges, the `#main` layout contract and pane swapping; tenants
   register with `{id, label, available, mount, onShow, onHide, onResize}` and get
-  a `notify(level)` back. Tab ids are frozen: `log`, `activity`, `ctl`, `term`.
+  a `notify(level)` back. Tab ids are frozen: `log`, `activity`, `console`,
+  `ctl`, `term`.
   Its header comment carries the numbered rules a tenant author must not
   re-derive.
 - **ipc-log.js** — the `log` tenant: rows + export only.
@@ -718,6 +727,13 @@ Own state + DOM, `init*(deps)`:
   held in the MAIN process (`ctl-service.js`). The renderer sends a command
   string and receives a rendered block; it never sees a token, a contexts file
   or a transport, and it must not grow a client of its own.
+- **console-tab.js** — the `console` tenant: one block per Bash tool call for the
+  ACTIVE SEAT, with the full command and its real output. Per-seat like the
+  terminal tab, and `availableFor` narrows it to `claude` seats — the data comes
+  from a hook only `setupClaudeHook` registers. It PULLS (`console:read`) and only
+  while visible, so a console nobody is watching costs no IPC; the main-side
+  reader is `bash-console.js`, and it does NOT stream (`PostToolUse` fires at
+  completion, so a long command shows nothing until it ends).
 - **term-tab.js** — the `term` tenant: a REAL PTY in the workbench, not a
   command runner. `vim`, `less` and interactive prompts must work, which is why
   it is an xterm bound to a shell rather than a block list like the ctl tab. It

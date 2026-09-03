@@ -31,10 +31,12 @@
 //     selection.sh       attachment drain hook (same defensive posture)
 //     notices.sh         deferred-notice drain hook (same defensive posture;
 //                        the QUEUE it drains is at the shared root below)
+//     bash-console.jsonl Bash tool calls + output (docs/notes/bash-console.md)
+//     bash-console.sh    the PostToolUse/PostToolUseFailure append hook
 //     zsh/               generated ZDOTDIR for the drawer terminal's OSC 133
 //                        shim — a DIRECTORY, unlike every other kind
 //
-// 23 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 25 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
@@ -54,13 +56,11 @@
 // the authority on which records go where and why),
 // codex-session-hook.sh (the one shared Codex hook, routed by $WB_WRAP_NAME).
 //
-// BASH-MIRRORED GRAMMAR. Two generated scripts resolve the agent name at
-// RUNTIME ($WB_WRAP_NAME / $NAME) and so must rebuild these paths in bash — the
-// module can't be required from a shell script. Those sites carry a cross-ref
+// BASH-MIRRORED GRAMMAR. One generated script resolves the agent name at
+// RUNTIME ($WB_WRAP_NAME) and so must rebuild these paths in bash — the
+// module can't be required from a shell script. That site carries a cross-ref
 // comment; the byte-pinned hook test enforces the mirror mechanically:
 //   - cli-hooks.js setupCodexHook  (LINK / OUTPUT: run/$NAME/{transcript.jsonl,hook-output.json})
-//   - statusline.js is JS-interpolated (name known at generation) so it uses
-//     pathFor directly — no runtime bash mirror needed.
 // If the grammar below changes, update the Codex hook template in cli-hooks.js.
 
 const path = require('path');
@@ -101,6 +101,8 @@ const KINDS = {
   selection: 'selection.jsonl',
   selectionScript: 'selection.sh',
   noticeScript: 'notices.sh',
+  bashConsole: 'bash-console.jsonl',
+  bashConsoleScript: 'bash-console.sh',
   // The ONE kind that is a DIRECTORY, not a file: zsh reads a whole set of
   // startup files from $ZDOTDIR, so the shim has to be a dir to redirect it.
   // The legacy sweep's rmSync is non-recursive and would refuse it, which is
@@ -145,6 +147,8 @@ const LEGACY_SUFFIXES = {
   selection: '-selection.jsonl',
   selectionScript: '-selection.sh',
   noticeScript: '-notices.sh',
+  bashConsole: '-bash-console.jsonl',
+  bashConsoleScript: '-bash-console.sh',
   termShim: '-zsh',
 };
 

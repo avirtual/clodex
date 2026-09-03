@@ -11,6 +11,7 @@ const { denyAgentRules } = require('./agents-util');
 // its reasoning stays the single source — a second literal in a template string
 // is exactly the copy that drifts the first time either is touched.
 const { NOTICE_MAX_AGE_MS } = require('./notice-queue');
+const { CONSOLE_MAX_BYTES } = require('./bash-console');
 
 // `composeRoster` is injected rather than imported: this module must stay
 // electron-free and free of session state, and resolving a team needs both a cwd
@@ -135,6 +136,17 @@ fi
     fs.writeFileSync(attnScriptPath, `#!/bin/bash
 IN="$(cat)"
 printf '%s\\n' "$IN" >> "${attnPath}"
+`, { mode: 0o700 });
+
+    const consolePath = pathFor(REGISTRY_DIR, name, 'bashConsole');
+    const consoleScriptPath = pathFor(REGISTRY_DIR, name, 'bashConsoleScript');
+    fs.writeFileSync(consoleScriptPath, `#!/bin/bash
+if [ -f "${consolePath}" ] && [ "$(wc -c < "${consolePath}" 2>/dev/null || echo 0)" -gt ${CONSOLE_MAX_BYTES} ]; then
+  mv -f "${consolePath}" "${consolePath}.1" 2>/dev/null || true
+fi
+cat >> "${consolePath}" 2>/dev/null || true
+printf '\\n' >> "${consolePath}" 2>/dev/null || true
+exit 0
 `, { mode: 0o700 });
 
     const ackPath = pathFor(REGISTRY_DIR, name, 'acks');
@@ -445,6 +457,17 @@ JSEOF
           matcher: '',
           hooks: [
             { type: 'command', command: pendingScriptPath },
+          ]
+        }, {
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: consoleScriptPath },
+          ]
+        }],
+        PostToolUseFailure: [{
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: consoleScriptPath },
           ]
         }]
       }

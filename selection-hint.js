@@ -97,6 +97,7 @@ const WHERE = Object.freeze({
   term: 'Terminal tab',
   ctl: 'clodexctl tab',
   log: 'IPC log tab',
+  console: 'Console tab',
   activity: 'subagent Activity tab',
 });
 

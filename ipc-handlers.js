@@ -22,6 +22,7 @@ const { feedSince } = require('./subagent-ring');
 // peer:import handlers below).
 const peerImport = require('./peer-import');
 const { wireSeatFor } = require('./peer-shell');
+const { readBashConsole } = require('./bash-console');
 // The shipped thresholds, read from the module that DECIDES with them rather
 // than restated here: Preferences shows them as the values in force when the
 // operator has set nothing, and a second copy would show a number the reminder
@@ -2117,6 +2118,12 @@ function registerIpcHandlers(deps) {
         tab: typeof p.tab === 'string' ? p.tab : '',
         attach: p.attach === true,
       });
+    });
+    handle('console:read', (_e, name, offset) => {
+      const raw = typeof name === 'string' ? name : '';
+      const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
+      if (!seat) return { records: [], offset: 0, reset: false, live: false };
+      return readBashConsole(REGISTRY_DIR, seat, Number(offset) || 0);
     });
     // Read-only, and inside this gate with the other two for the same reason:
     // it reports the operator's own screen text back, which is exactly what a

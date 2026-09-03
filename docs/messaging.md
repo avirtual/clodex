@@ -409,6 +409,8 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 | UserPromptSubmit | `run/<name>/acks.sh` | read+truncate memory acks (lossy-tolerant) |
 | UserPromptSubmit | `run/<name>/pending.sh` | atomic rename-claim drain of parked DMs from `pending/<name>/` (zero-loss) |
 | UserPromptSubmit | `run/<name>/ctxwarn.sh` | read-only context warning; recurs every submit while over threshold |
+| PostToolUse (`matcher: Bash`) | `run/<name>/bash-console.sh` | appends the raw hook JSON to `run/<name>/bash-console.jsonl` (the drawer's Console tab) |
+| PostToolUseFailure (`matcher: Bash`) | `run/<name>/bash-console.sh` | the same append — a FAILING Bash call fires only this event, with no `tool_response` and the exit code inside a top-level `error` |
 
 ## Invariants (do not break)
 
