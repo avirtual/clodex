@@ -66,6 +66,7 @@ const { classifySubagent } = require('./lib/subagent-policy');
 const { initSessionHovercard } = require('./session-hovercard');
 const { initTooltips } = require('./tooltip');
 const { initReportPanel } = require('./popovers/report-panel');
+const { createPopoverGroup } = require('./lib/popover-group');
 const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
 const { initSessionInfoPopover } = require('./popovers/session-info-popover');
@@ -3511,14 +3512,16 @@ function popoverApi(name) {
 }
 
 
-const { openCostPopover } = initCostPopover({ popoverApi, proxyState });
+const barPopovers = createPopoverGroup();
+
+const { openCostPopover } = initCostPopover({ popoverApi, proxyState, barPopovers });
 
 // Sidebar-row ⓘ. Anchored to the row rather than the proxy bar, so it works for
 // any row — including one that isn't the active session.
 const { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
 
 
-const { openBustPopover } = initBustPopover({ popoverApi, proxyState });
+const { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
 
 const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
   popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, showToast,
@@ -3529,7 +3532,7 @@ const { openReportPanel } = initReportPanel({ popoverApi, ctxCatLabel });
 
 const { openContextPopover } = initContextPopover({
   popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover,
-  proxyState, sessionTypeOf,
+  proxyState, sessionTypeOf, barPopovers,
 });
 
 window.api.onSessionMention((name, mtype /* 'dm' */) => {

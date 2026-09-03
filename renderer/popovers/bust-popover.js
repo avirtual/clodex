@@ -40,7 +40,7 @@ function bustTriad(summary) {
   return `<div class="bust-span" title="Last bust ${esc(absLast)}">Last bust ${esc(absLast)} · <b>${esc(age)}</b></div>`;
 }
 
-function initBustPopover({ popoverApi, proxyState }) {
+function initBustPopover({ popoverApi, proxyState, barPopovers }) {
   // ── Cache-bust inspector (wirescope /_bust) ───────────────────────────
   // Turn-by-turn cache-divergence forensics: WHEN the prefix broke, HOW big the
   // re-write was, and WHAT changed (the locus). Opened from the 💥 bar chip.
@@ -52,6 +52,7 @@ function initBustPopover({ popoverApi, proxyState }) {
   const bustPopoverBody = document.getElementById('bust-popover-body');
 
   function closeBustPopover() { bustPopover.classList.add('hidden'); bustPopover.dataset.name = ''; }
+  const closeSiblings = barPopovers.register('bust', closeBustPopover);
 
   function renderBustSeries(d, base, sid, summary) {
     // Age triad from the /_status bust_summary (proxyState), NOT the /_bust series
@@ -109,6 +110,7 @@ function initBustPopover({ popoverApi, proxyState }) {
   }
 
   async function openBustPopover(name, anchor) {
+    closeSiblings();
     const p = (proxyState.get(name) || {}).payload;
     const base = p && p.base, sid = p && p.sessionId;
     const summary = p && p.busts;   // /_status bust_summary — carries the age triad

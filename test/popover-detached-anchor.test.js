@@ -172,8 +172,6 @@ const ALLOWED_RAW = {
     'captures the rect before the latch-clear repaint — the original fix for this bug',
   'renderer/popovers/voice-popover.js':
     'captures the rect before renderRows repaints the bar',
-  'renderer/peers-ui.js':
-    'anchored to sidebar peer rows, which no proxy-bar rebuild touches',
 };
 
 function scannedFiles() {
@@ -205,7 +203,7 @@ test('every inline above-the-bar placement is one that cannot see a detached anc
   }
 
   const raw = files.filter((f) => RAW_PLACEMENT.test(fs.readFileSync(path.join(REPO, f), 'utf8')));
-  assert.ok(raw.length >= 5,
+  assert.ok(raw.length >= 4,
     `the placement scan found ${raw.length} files — the pattern stopped matching, so the exemptions below assert nothing`);
   assert.deepStrictEqual(raw, Object.keys(ALLOWED_RAW).sort(),
     'a new inline above-the-bar placement: route it through placeAboveAnchor, or add it to ALLOWED_RAW with the reason it is safe');

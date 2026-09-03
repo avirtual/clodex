@@ -13,7 +13,7 @@ const { costStackBlock, svgCostChart } = require('../lib/render-html');
 const { COST_SPINE, COST_CONTENT } = require('../lib/constants');
 const { costByLine } = require('../lib/cost-by-line');
 
-function initCostPopover({ popoverApi, proxyState }) {
+function initCostPopover({ popoverApi, proxyState, barPopovers }) {
   // --- Cost-over-time popover ----------------------------------------------
   // Native render of wirescope's detail=1 `series` (gated on context_timeline):
   // the exact spine (read/write/generation), a cumulative-cost line chart over
@@ -24,6 +24,7 @@ function initCostPopover({ popoverApi, proxyState }) {
   const costPopoverBody = document.getElementById('cost-popover-body');
 
   function closeCostPopover() { costPopover.classList.add('hidden'); costPopover.dataset.name = ''; }
+  const closeSiblings = barPopovers.register('cost', closeCostPopover);
 
   function renderCostTimeline(d, base, sid) {
     const s = d && d.series;
@@ -79,6 +80,7 @@ function initCostPopover({ popoverApi, proxyState }) {
   }
 
   async function openCostPopover(name, anchor) {
+    closeSiblings();
     const p = (proxyState.get(name) || {}).payload;
     const base = p && p.base, sid = p && p.sessionId;
     costPopoverName.textContent = name;

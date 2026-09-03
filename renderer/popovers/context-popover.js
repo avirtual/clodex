@@ -16,7 +16,7 @@ const { placeAboveAnchor } = require('../lib/popover-place');
 
 const CTX_SEG = '#proxy-bar [data-act="ctx"]';
 
-function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf }) {
+function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover, proxyState, sessionTypeOf, barPopovers }) {
   // --- Context-breakdown popover -------------------------------------------
   // Opened from the ctx telemetry seg (only when wirescope advertises
   // context_view/context_composition). Pulls /_context for the live session and
@@ -30,6 +30,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     ctxPopover.classList.add('hidden');
     ctxPopover.dataset.name = '';
   }
+  const closeSiblings = barPopovers.register('ctx', closeContextPopover);
 
   // Every call downstream of the fetch below re-places on the SAME anchor object,
   // and a renderProxyBar landing during that fetch detaches it — so the live seg
@@ -258,6 +259,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     return renderUtilBlock(a.skills_utilization, a.skills && a.skills.per_skill, 'Skill utilization');
   }
   async function openContextPopover(name, anchor) {
+    closeSiblings();
     ctxPopoverName.textContent = name;
     ctxPopover.dataset.name = name;
     ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading…</div>';
