@@ -21518,7 +21518,7 @@ ${i3.join("\n")}
         }
         for (const cls of MODAL_OVERLAY_CLASSES) {
           const els = byClass && byClass(cls) || [];
-          if (els.some((el) => el && el.classList && !el.classList.contains("hidden"))) open.push(cls);
+          if (Array.prototype.some.call(els, (el) => el && el.classList && !el.classList.contains("hidden"))) open.push(cls);
         }
         return open;
       }
@@ -32551,7 +32551,7 @@ ${detail}` });
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { prefsGate } = require_prefs_gate();
       var { planNewSession } = require_focus_policy();
-      var { anyOverlayOpen, performCloseChord } = require_chord_guard();
+      var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
@@ -34721,6 +34721,14 @@ ${detail}` });
       }
       dialogOverlay.addEventListener("keydown", (e) => {
         if (e.key === "Enter") submitDialog();
+      });
+      dialogOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === dialogOverlay) closeDialog();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const open = openOverlayIds(overlayProbes);
+        if (open.length === 1 && open[0] === "dialog-overlay") closeDialog();
       });
       function setDialogMode(mode) {
         dialogMode = mode;
@@ -37859,6 +37867,14 @@ ${res.stderr}` : "");
         return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
       }
       document.getElementById("btn-prefs-cancel").addEventListener("click", closePrefs);
+      prefsOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === prefsOverlay) closePrefs();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const open = openOverlayIds(overlayProbes);
+        if (open.length === 1 && open[0] === "prefs-overlay") closePrefs();
+      });
       document.getElementById("btn-prefs-save").addEventListener("click", async () => {
         await window.api.setSettings({
           statusline: {
@@ -38096,6 +38112,14 @@ ${res.stderr}` : "");
         argsEditingSource = null;
       }
       document.getElementById("btn-args-cancel").addEventListener("click", closeArgsDialog);
+      argsOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === argsOverlay) closeArgsDialog();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const open = openOverlayIds(overlayProbes);
+        if (open.length === 1 && open[0] === "args-overlay") closeArgsDialog();
+      });
       document.getElementById("btn-args-save").addEventListener("click", async () => {
         if (!argsEditingName) return closeArgsDialog();
         const parsed = withModelArg(parseArgs(argsInput.value || ""), argsModel.value);
