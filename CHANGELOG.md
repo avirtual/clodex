@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.25.0 — 2026-09-03
+
 - **Low-contrast terminal output is now floored at a readable ratio.** The CLI
   paints its assistant-row bullet in pure black, which on the dark themes sat at
   1.23:1 against the background — a hole where the bullet should be. xterm now
