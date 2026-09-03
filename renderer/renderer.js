@@ -1051,6 +1051,7 @@ function createTerminal(name, peer = null) {
     fontSize: 13,
     fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
     theme: currentXtermTheme(),
+    minimumContrastRatio: 4.5,
     cursorBlink: true,
     allowProposedApi: true,
     // OSC 8 hyperlinks, when a CLI emits them: the URI carries an ALREADY

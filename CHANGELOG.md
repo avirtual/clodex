@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **Low-contrast terminal output is now floored at a readable ratio.** The CLI
+  paints its assistant-row bullet in pure black, which on the dark themes sat at
+  1.23:1 against the background — a hole where the bullet should be. xterm now
+  lifts any foreground that falls below 4.5:1 against the cell it sits on, so
+  dim greys and near-invisible glyphs stay legible without changing anything a
+  program painted with adequate contrast. Box-drawing characters are exempt, so
+  TUI borders keep their colours.
 - **Escape now closes the Discover Sessions, Peers, Plugins and Sandbox
   dialogs**, matching New Session, Preferences and Edit Session. Discover was
   the case that surfaced this: Escape did nothing at all and the only ways out
