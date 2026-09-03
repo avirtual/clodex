@@ -989,6 +989,11 @@ which is why the judgement worth testing is pushed down here.
   file-editing tool call, so those numbers become clickable. Offsets only.
 - **drop-paths.js** — the string typed at the prompt when files are dropped on a
   session: each path shell-quoted, space-joined, one trailing space.
+- **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
+  before `terminal.write`. The echo is truecolor SGR, which xterm renders as
+  inline styles that `options.theme` cannot reach, so the bytes are rewritten
+  rather than the palette remapped. Carries the per-session echo-run gate and a
+  bounded carry for an escape sequence split across PTY chunks.
 - **ipc-export.js** — one grep-friendly line per message for the IPC log's
   Export button, plus the download filename.
 - **mcp-group.js** — fold a wirescope tool roster into per-MCP-server groups.

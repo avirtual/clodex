@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **The CLI's prompt echo now follows your theme instead of being a white slab.**
+  Claude Code paints every submitted prompt on a light grey background, which on
+  the dark themes is a bright slab across the scrollback — worst with heavy
+  agent-to-agent messaging, where every injected dm is one. Each theme now
+  carries its own echo colours, tinted a step off the terminal background so the
+  block still reads as a block. Two limits worth knowing: the recolour happens as
+  output arrives, so rows already in the scrollback keep the colours they were
+  written with when you switch themes (a restored session is replayed, so those
+  do follow); and if a future CLI release changes its echo colours, the recolour
+  silently stops and the slab returns.
+
 ## 5.24.0 — 2026-09-03
 
 - **Escape now closes the New Session, Preferences and Edit Session dialogs**,

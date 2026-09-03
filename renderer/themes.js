@@ -5,8 +5,7 @@
 //
 // FACTORY (R2): applyTheme live-swaps every open terminal's palette, so it
 // needs the sessions Map — the one cross-island reach-in, passed as a factory
-// param (named `sessions`, so applyTheme's body stays byte-identical). Returns
-// currentXtermTheme, which createSession reads at terminal creation. THEMES is
+// param (named `sessions`, so applyTheme's body stays byte-identical). THEMES is
 // imported from lib/constants (it is used nowhere else in renderer.js).
 //
 // DOM/localStorage-bound, so no unit tests per the R1 rule — move-only fidelity
@@ -21,6 +20,7 @@ function initThemes({ sessions }) {
     return THEMES[t] ? t : THEME_DEFAULT;
   }
   function currentXtermTheme() { return THEMES[themeName()].xterm; }
+  function currentEchoPalette() { return THEMES[themeName()].echo || null; }
   // Apply a theme: retint chrome (data-theme), persist, and live-swap every
   // open terminal's palette. Midnight clears the attr so :root wins.
   function applyTheme(name) {
@@ -55,7 +55,7 @@ function initThemes({ sessions }) {
   window.api.onSetTheme((name) => applyTheme(name));
   try { window.api.setTheme(themeName()); } catch {}
 
-  return { currentXtermTheme };
+  return { currentXtermTheme, currentEchoPalette };
 }
 
 module.exports = { initThemes };

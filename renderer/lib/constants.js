@@ -24,6 +24,7 @@ const THEMES = {
       brightYellow: '#fde047', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe',
       brightCyan: '#67e8f9', brightWhite: '#fff',
     },
+    echo: { bg: '#262a44', fg: '#eeeeee', prompt: '#e94560' },
   },
   claude: {
     label: 'Claude (warm dark)',
@@ -36,6 +37,7 @@ const THEMES = {
       brightYellow: '#e6bd7c', brightBlue: '#9bbcd6', brightMagenta: '#c6a7ce',
       brightCyan: '#8ec9cd', brightWhite: '#fffefb',
     },
+    echo: { bg: '#33312d', fg: '#f5f4ef', prompt: '#d97757' },
   },
   paper: {
     label: 'Paper (dim light)',
@@ -51,6 +53,7 @@ const THEMES = {
       brightYellow: '#7c5413', brightBlue: '#20548c', brightMagenta: '#6e3b7f',
       brightCyan: '#226c71', brightWhite: '#33302a',
     },
+    echo: { bg: '#dcd6c3', fg: '#33302a', prompt: '#9c331d' },
   },
   light: {
     label: 'Light',
@@ -63,6 +66,7 @@ const THEMES = {
       brightYellow: '#855a14', brightBlue: '#225a96', brightMagenta: '#763f88',
       brightCyan: '#247479', brightWhite: '#1f1e1d',
     },
+    echo: { bg: '#e8e4d9', fg: '#1f1e1d', prompt: '#a8351f' },
   },
 };
 

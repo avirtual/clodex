@@ -58,6 +58,7 @@ const {
 } = require('./lib/voice-submit');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
+const { createEchoRewriter } = require('./lib/prompt-echo');
 const { initLibraryDrawers } = require('./library-drawers');
 const { createActivityTab } = require('./activity-tab');
 const { createCtlTab } = require('./ctl-tab');
@@ -84,7 +85,7 @@ const { initPluginHost } = require('./plugin-host');
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
 let activeSession = null;
 
-const { currentXtermTheme } = initThemes({ sessions });
+const { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
 
 (function initSidebarResize() {
   const resizer = document.getElementById('sidebar-resizer');
@@ -1256,9 +1257,10 @@ function createTerminal(name, peer = null) {
     window.api.writeToSession(name, data);
   });
 
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer });
+  const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer, echoRewrite });
   updateWindowTitle();
-  return { terminal, fitAddon, searchAddon, wrapperEl };
+  return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
 }
 
 // Electron 32+ removed File.path, so host paths resolve via webUtils.getPathForFile —
@@ -2470,7 +2472,7 @@ async function saveTemplateFromForm() {
 
 window.api.onPtyData((name, data) => {
   const s = sessions.get(name);
-  if (s) s.terminal.write(data);
+  if (s) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
 });
 
 window.api.onSessionExit((name, code, meta) => {
@@ -6229,7 +6231,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       addFailedSessionToSidebar(entry);
       continue;
     }
-    const { terminal, fitAddon } = createTerminal(entry.name);
+    const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
@@ -6248,7 +6250,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       fitAddon.fit();
       window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
     } catch {}
-    if (entry.replay) terminal.write(entry.replay);
+    if (entry.replay) terminal.write(echoRewrite(entry.replay));
     if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
     if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
       ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
