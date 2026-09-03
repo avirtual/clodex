@@ -20,8 +20,9 @@
 // lost records: measured, four concurrent writers left 1/20 records parseable at
 // 400-byte payloads, and the loss was SILENT because a damaged line fails
 // JSON.parse and is skipped. `printf '%s\n' "$(cat)"` as a single write is NOT
-// sufficient either (12/40) — a 35KB append is not atomic on APFS. The
-// concurrency test at the bottom of this file is the one that holds that line.
+// sufficient either (12/40) — a 35KB append is not atomic on APFS. The test that
+// holds that line drives the real generated hook, so it lives in cli-hooks.test.js
+// ('loses nothing when Bash hooks fire concurrently').
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -31,7 +32,7 @@ const path = require('node:path');
 
 const {
   CONSOLE_MAX_RECORDS, RECORD_MAX_BYTES, PULL_MAX_RECORDS,
-  stripAnsi, splitFailure, normalizeRecord, parseChunk, readBashConsole,
+  stripAnsi, splitFailure, normalizeRecord, readBashConsole,
 } = require('../bash-console');
 const { pathFor } = require('../clodex-paths');
 
@@ -184,13 +185,6 @@ test('ANSI escapes and control bytes are stripped, printable text is not', () =>
   assert.strictEqual(stripAnsi('x' + String.fromCharCode(0x00) + 'y'), 'xy', 'a bare NUL');
   // Tabs and newlines are CONTENT here — the pane renders them as layout.
   assert.strictEqual(stripAnsi('keep\ttabs\nand newlines'), 'keep\ttabs\nand newlines');
-});
-
-test('a corrupt line is skipped without aborting the batch around it', () => {
-  const text = `${JSON.stringify(OK_PAYLOAD)}\n{not json\n${JSON.stringify(FAIL_PAYLOAD)}\n`;
-  const recs = parseChunk(text);
-  assert.strictEqual(recs.length, 2, 'ENTER: both real records survived the corrupt middle line');
-  assert.deepStrictEqual(recs.map((r) => r.failed), [false, true]);
 });
 
 test('readBashConsole is incremental: a second read returns only what is new', () => {

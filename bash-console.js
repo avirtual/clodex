@@ -74,18 +74,6 @@ function normalizeRecord(obj) {
   };
 }
 
-function parseChunk(text) {
-  const out = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let obj = null;
-    try { obj = JSON.parse(line); } catch { continue; }
-    const rec = normalizeRecord(obj);
-    if (rec) out.push(rec);
-  }
-  return out;
-}
-
 function recordFiles(dir) {
   let names;
   try { names = fs.readdirSync(dir); } catch { return null; }
@@ -135,6 +123,5 @@ module.exports = {
   stripAnsi,
   splitFailure,
   normalizeRecord,
-  parseChunk,
   readBashConsole,
 };
