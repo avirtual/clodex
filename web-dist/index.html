@@ -21518,7 +21518,7 @@ ${i3.join("\n")}
         }
         for (const cls of MODAL_OVERLAY_CLASSES) {
           const els = byClass && byClass(cls) || [];
-          if (els.some((el) => el && el.classList && !el.classList.contains("hidden"))) open.push(cls);
+          if (Array.prototype.some.call(els, (el) => el && el.classList && !el.classList.contains("hidden"))) open.push(cls);
         }
         return open;
       }
@@ -34722,6 +34722,12 @@ ${detail}` });
       dialogOverlay.addEventListener("keydown", (e) => {
         if (e.key === "Enter") submitDialog();
       });
+      dialogOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === dialogOverlay) closeDialog();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !dialogOverlay.classList.contains("hidden")) closeDialog();
+      });
       function setDialogMode(mode) {
         dialogMode = mode;
         const authoring = mode === "template";
@@ -37859,6 +37865,12 @@ ${res.stderr}` : "");
         return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
       }
       document.getElementById("btn-prefs-cancel").addEventListener("click", closePrefs);
+      prefsOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === prefsOverlay) closePrefs();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !prefsOverlay.classList.contains("hidden")) closePrefs();
+      });
       document.getElementById("btn-prefs-save").addEventListener("click", async () => {
         await window.api.setSettings({
           statusline: {
@@ -38096,6 +38108,12 @@ ${res.stderr}` : "");
         argsEditingSource = null;
       }
       document.getElementById("btn-args-cancel").addEventListener("click", closeArgsDialog);
+      argsOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === argsOverlay) closeArgsDialog();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !argsOverlay.classList.contains("hidden")) closeArgsDialog();
+      });
       document.getElementById("btn-args-save").addEventListener("click", async () => {
         if (!argsEditingName) return closeArgsDialog();
         const parsed = withModelArg(parseArgs(argsInput.value || ""), argsModel.value);

@@ -31,7 +31,7 @@ function openOverlayIds({ byId, byClass }) {
   }
   for (const cls of MODAL_OVERLAY_CLASSES) {
     const els = (byClass && byClass(cls)) || [];
-    if (els.some((el) => el && el.classList && !el.classList.contains('hidden'))) open.push(cls);
+    if (Array.prototype.some.call(els, (el) => el && el.classList && !el.classList.contains('hidden'))) open.push(cls);
   }
   return open;
 }

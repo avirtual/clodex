@@ -2380,6 +2380,10 @@ async function pickSandboxCwd(hostDir) {
 dialogOverlay.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitDialog();
 });
+dialogOverlay.addEventListener('mousedown', (e) => { if (e.target === dialogOverlay) closeDialog(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !dialogOverlay.classList.contains('hidden')) closeDialog();
+});
 
 
 function setDialogMode(mode) {
@@ -5872,6 +5876,10 @@ function collectChecked(container) {
 }
 
 document.getElementById('btn-prefs-cancel').addEventListener('click', closePrefs);
+prefsOverlay.addEventListener('mousedown', (e) => { if (e.target === prefsOverlay) closePrefs(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !prefsOverlay.classList.contains('hidden')) closePrefs();
+});
 document.getElementById('btn-prefs-save').addEventListener('click', async () => {
   await window.api.setSettings({
     statusline: {
@@ -6120,6 +6128,10 @@ function closeArgsDialog() {
 }
 
 document.getElementById('btn-args-cancel').addEventListener('click', closeArgsDialog);
+argsOverlay.addEventListener('mousedown', (e) => { if (e.target === argsOverlay) closeArgsDialog(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !argsOverlay.classList.contains('hidden')) closeArgsDialog();
+});
 document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (!argsEditingName) return closeArgsDialog();
   const parsed = withModelArg(parseArgs(argsInput.value || ''), argsModel.value);
