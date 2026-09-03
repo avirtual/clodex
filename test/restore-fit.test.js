@@ -31,11 +31,21 @@ function restoreLoop(src) {
   return m ? m[0] : null;
 }
 
+// Located by the ARGUMENT, not by an exact call string: the replay is written
+// through whatever transform the write site currently wraps it in (t641 added
+// the prompt-echo rewrite), and pinning the literal `terminal.write(entry.replay)`
+// made this an ENTER failure the moment a wrapper appeared — reporting the
+// replay as absent when only its spelling had changed.
+function replayWriteIndex(loop) {
+  const m = loop.match(/terminal\.write\([^\n]*entry\.replay/);
+  return m ? m.index : -1;
+}
+
 test('the restore loop measures each terminal before replaying into it', () => {
   const loop = restoreLoop(SRC);
   assert.ok(loop, 'ENTER: the restoreSessions IIFE is still the restore path');
 
-  const write = loop.indexOf('terminal.write(entry.replay)');
+  const write = replayWriteIndex(loop);
   assert.ok(write > 0, 'ENTER: the loop still writes the buffered replay');
 
   const fit = loop.indexOf('fitAddon.fit()');
@@ -66,7 +76,7 @@ test('the restore loop does not defer its fit into a rAF', () => {
   // Sliced at the write because only a deferral BEFORE it can strand the replay
   // in an unsized buffer — an unrelated rAF added later in the region must not
   // red this.
-  const write = loop.indexOf('terminal.write(entry.replay)');
+  const write = replayWriteIndex(loop);
   assert.ok(write > 0, 'ENTER: the loop still writes the buffered replay');
   assert.doesNotMatch(loop.slice(0, write), /requestAnimationFrame/,
     'the fit must not be deferred by any route: a rAF callback runs after the '
