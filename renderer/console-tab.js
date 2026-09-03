@@ -18,7 +18,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function stateFor(name) {
     let st = seats.get(name);
     if (!st) {
-      st = { offset: 0, blocks: [], drawn: false };
+      st = { offset: 0, blocks: [] };
       seats.set(name, st);
     }
     return st;
@@ -125,9 +125,10 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   }
 
   function startPolling() {
-    if (pollTimer) return;
+    if (pollTimer) return false;
     pollTimer = setInterval(pull, POLL_MS);
     pull();
+    return true;
   }
 
   function stopPolling() {
@@ -158,11 +159,13 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
 
   function onShow() {
     const next = getActiveSession ? getActiveSession() : null;
-    if (next !== seat) {
+    const switched = next !== seat;
+    if (switched) {
       seat = next;
       renderAll();
     }
-    startPolling();
+    const started = startPolling();
+    if (switched && !started) pull();
   }
 
   function onHide() {

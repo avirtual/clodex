@@ -26278,7 +26278,7 @@ helper=${d.helperPath}`;
         function stateFor(name) {
           let st = seats.get(name);
           if (!st) {
-            st = { offset: 0, blocks: [], drawn: false };
+            st = { offset: 0, blocks: [] };
             seats.set(name, st);
           }
           return st;
@@ -26365,9 +26365,10 @@ helper=${d.helperPath}`;
           notify(records.some((r) => r.failed) ? "attention" : "activity");
         }
         function startPolling() {
-          if (pollTimer) return;
+          if (pollTimer) return false;
           pollTimer = setInterval(pull, POLL_MS);
           pull();
+          return true;
         }
         function stopPolling() {
           if (!pollTimer) return;
@@ -26394,11 +26395,13 @@ helper=${d.helperPath}`;
         }
         function onShow() {
           const next = getActiveSession ? getActiveSession() : null;
-          if (next !== seat) {
+          const switched = next !== seat;
+          if (switched) {
             seat = next;
             renderAll();
           }
-          startPolling();
+          const started = startPolling();
+          if (switched && !started) pull();
         }
         function onHide() {
           stopPolling();
