@@ -8,7 +8,7 @@
 // openSkillsPopover are the sibling islands' openers this one links to;
 // proxyState (live poll payload) and sessionTypeOf are core, injected.
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
+// The painters are DOM-bound, so no unit tests per the R1 rule; the group wiring is not.
 
 const { esc, fmtTokens } = require('../lib/format');
 const { groupMcpTools, mcpTotalTokens } = require('../lib/mcp-group');

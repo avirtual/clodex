@@ -5,7 +5,7 @@
 // popoverApi(name).bust(); proxyState is the live poll-payload Map (base/
 // sessionId). openExternal/openWirescope are window.api shell actions.
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
+// The painters are DOM-bound, so no unit tests per the R1 rule; the group wiring is not.
 
 const { esc, fmtAgo } = require('../lib/format');
 const { bustRow, isZeroCostBust } = require('../lib/render-html');

@@ -6,7 +6,7 @@
 // (base/sessionId for the dashboard link). openExternal/openWirescope are
 // window.api shell actions (external-link, not the local-vs-peer data seam).
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
+// The painters are DOM-bound, so no unit tests per the R1 rule; the group wiring is not.
 
 const { esc, fmtUsd } = require('../lib/format');
 const { costStackBlock, svgCostChart } = require('../lib/render-html');
