@@ -72,6 +72,19 @@ function rewriteBody(body, palette, state) {
         continue;
       }
     }
+    if ((p === '38' || p === '48' || p === '58') && parts[i + 1] === '5' && parts.length >= i + 3
+        && Number.isInteger(Number(parts[i + 2]))) {
+      if (p === '48') state.echo = false;
+      out.push(p, '5', parts[i + 2]);
+      i += 3;
+      continue;
+    }
+    if (p === '58' && parts[i + 1] === '2' && parts.length >= i + 5
+        && [parts[i + 2], parts[i + 3], parts[i + 4]].every((n) => Number.isInteger(Number(n)))) {
+      out.push(p, '2', parts[i + 2], parts[i + 3], parts[i + 4]);
+      i += 5;
+      continue;
+    }
     if (p === '' || p === '0' || isBgParam(p)) state.echo = false;
     out.push(p);
     i += 1;

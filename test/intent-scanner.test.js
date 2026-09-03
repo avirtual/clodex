@@ -42,10 +42,10 @@ test('cleanLine strips the CLI assistant bullet U+23FA, not only its lookalike',
 
 // U+276F leads the Claude CLI's prompt row, and that row is the LIVE COMPOSER:
 // renderer/lib/voice-submit.js's COMPOSER_DRAFT reads `U+276F <sep> <text>` as
-// an unsent draft, measured off a real seat. PREFIX_CHARS feeds parseIntent, so
-// admitting it would make an intent the operator is still TYPING fire the moment
-// the CLI painted it. Absence from this set is the fix, not an oversight.
-test('cleanLine does NOT strip the composer prompt U+276F, so a typed intent cannot fire', () => {
+// an unsent draft, measured off a real seat. PREFIX_CHARS is shared with the
+// intent MARKS, so admitting it would mark a line the operator is still typing
+// as one that will fire. Absence from this set is the fix, not an oversight.
+test('cleanLine does NOT strip the composer prompt U+276F', () => {
   assert.ok(!PREFIX_CHARS.has('\u276f'));
   assert.strictEqual(cleanLine('\u276f [agent:dm bob] hello'), '\u276f [agent:dm bob] hello');
   assert.strictEqual(parseIntent('\u276f [agent:dm bob] hello'), null);

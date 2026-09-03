@@ -84,6 +84,50 @@ const ROWS = [
     expect: `${ESC}[48;2;10;11;12m${ESC}[38;2;173;173;173ma${ESC}[38;2;177;177;177mb`,
   },
   {
+    // The review's literal. 41 sits in the 40-47 range isBgParam reads as a
+    // background, so before the 256-colour form was consumed its components fell
+    // through as standalone params and cleared the gate mid-run -- leaving `c`
+    // literal black on the theme's dark bg, which is already on screen.
+    name: '38;5;41 mid-run does not clear the gate, and is not substituted',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[38;5;41mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[38;5;41mb${ESC}[38;2;17;18;19mc`,
+  },
+  {
+    // The same defect through a different branch: index 0 fell through as the
+    // param `0`, so widening isBgParam alone would leave this arm clearing.
+    name: '38;5;0 mid-run does not clear the gate either',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[38;5;0mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[38;5;0mb${ESC}[38;2;17;18;19mc`,
+  },
+  {
+    // Consumption is not the same as ignoring: a 256-colour BACKGROUND really
+    // does end the echo slab, so this arm must still clear.
+    name: '48;5;n is a real background change and clears the gate',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[48;5;231mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[48;5;231mb${ESC}[38;2;0;0;0mc`,
+  },
+  {
+    // 58 is UNDERLINE colour, not text and not background: it neither ends the
+    // run nor gets substituted -- even spelled with the echo's own black triplet,
+    // which is the row that catches a fix routing 58 into substitute().
+    name: '58;2;0;0;0 is underline colour: neither substituted nor a terminator',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[58;2;0;0;0mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[58;2;0;0;0mb${ESC}[38;2;17;18;19mc`,
+  },
+  {
+    name: '58;5;44 is underline colour too, and 44 must not read as a background',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[58;5;44mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[58;5;44mb${ESC}[38;2;17;18;19mc`,
+  },
+  {
+    // Pins the consumption WIDTH, which the rows above cannot: both forms share
+    // one sequence, so consuming 2 or 4 params instead of 3 lands the scanner
+    // off-by-one and the trailing triplet is no longer seen as 38;2;r;g;b.
+    name: '38;5;n and a black fg in ONE sequence: three params consumed, not two or four',
+    input: [`${ESC}[48;2;240;240;240m${ESC}[38;5;41;38;2;0;0;0mx`],
+    expect: `${ESC}[48;2;10;11;12m${ESC}[38;5;41;38;2;17;18;19mx`,
+  },
+  {
     name: 'no palette: the chunk passes through byte-identical',
     palette: null,
     input: [REAL_ECHO],
