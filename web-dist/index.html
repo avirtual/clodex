@@ -32551,7 +32551,7 @@ ${detail}` });
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { prefsGate } = require_prefs_gate();
       var { planNewSession } = require_focus_policy();
-      var { anyOverlayOpen, performCloseChord } = require_chord_guard();
+      var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
@@ -34726,7 +34726,9 @@ ${detail}` });
         if (e.target === dialogOverlay) closeDialog();
       });
       document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && !dialogOverlay.classList.contains("hidden")) closeDialog();
+        if (e.key !== "Escape") return;
+        const open = openOverlayIds(overlayProbes);
+        if (open.length === 1 && open[0] === "dialog-overlay") closeDialog();
       });
       function setDialogMode(mode) {
         dialogMode = mode;
@@ -37869,7 +37871,9 @@ ${res.stderr}` : "");
         if (e.target === prefsOverlay) closePrefs();
       });
       document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && !prefsOverlay.classList.contains("hidden")) closePrefs();
+        if (e.key !== "Escape") return;
+        const open = openOverlayIds(overlayProbes);
+        if (open.length === 1 && open[0] === "prefs-overlay") closePrefs();
       });
       document.getElementById("btn-prefs-save").addEventListener("click", async () => {
         await window.api.setSettings({
@@ -38112,7 +38116,9 @@ ${res.stderr}` : "");
         if (e.target === argsOverlay) closeArgsDialog();
       });
       document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && !argsOverlay.classList.contains("hidden")) closeArgsDialog();
+        if (e.key !== "Escape") return;
+        const open = openOverlayIds(overlayProbes);
+        if (open.length === 1 && open[0] === "args-overlay") closeArgsDialog();
       });
       document.getElementById("btn-args-save").addEventListener("click", async () => {
         if (!argsEditingName) return closeArgsDialog();

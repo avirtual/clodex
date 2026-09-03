@@ -14,8 +14,9 @@ blocks a release.
 ## Unreleased
 
 - **Escape now closes the New Session, Preferences and Edit Session dialogs**,
-  as does a click on the dimmed area around them. Previously only Cancel or the
-  ✕ would do it, which read as the app being stuck.
+  as does a press on the dimmed area around them. Previously only Cancel or the
+  ✕ would do it, which read as the app being stuck. A dialog with a second box
+  open on top of it stays put until that box is dismissed.
 
 - **The ⚙ session menu's popovers sometimes took two or three clicks to
   appear.** Picking Tools, Skills, Agents or Intents opened the panel above the

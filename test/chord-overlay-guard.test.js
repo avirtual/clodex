@@ -436,6 +436,28 @@ function overlayClassTokens() {
   return { files, found };
 }
 
+test('the class probe survives an array-LIKE, not just an Array', () => {
+  // Every other byClass fake here returns a real Array, so the leaf's `.some`
+  // could be called as a method and nothing would notice — the fix would be one
+  // nobody could keep, which is RA1's own story one level up. `byClass` is
+  // supplied by the CALLER, and the live one wraps getElementsByClassName in
+  // Array.from; drop that wrap and a raw HTMLCollection arrives, where `.some`
+  // is undefined and the TypeError throws inside a capture-phase keydown that
+  // every Cmd chord runs through.
+  //
+  // Pinning the leaf's contract rather than the caller's wrap is deliberate: a
+  // later edit that correctly drops the now-redundant Array.from must not red.
+  const arrayLike = { 0: { classList: { contains: () => false } }, length: 1 };
+  const probes = {
+    byId: fakeDom([]).byId,
+    byClass: (cls) => (cls === 'clx-modal-bg' ? arrayLike : []),
+  };
+  assert.strictEqual(typeof arrayLike.some, 'undefined',
+    'ENTER: the fixture must NOT be an Array, or this subject cannot see the defect');
+  assert.deepStrictEqual(openOverlayIds(probes), ['clx-modal-bg']);
+  assert.strictEqual(anyOverlayOpen(probes), true);
+});
+
 test('no renderer/ subdirectory escapes the class scan unclassified', () => {
   // The scan's file set is hand-kept, so a new subdirectory joins the tree
   // silently and contributes nothing. Each existing entry is floored elsewhere

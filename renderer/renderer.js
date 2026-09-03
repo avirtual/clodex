@@ -35,7 +35,7 @@ const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldR
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
-const { anyOverlayOpen, performCloseChord } = require('./lib/chord-guard');
+const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
@@ -2382,7 +2382,9 @@ dialogOverlay.addEventListener('keydown', (e) => {
 });
 dialogOverlay.addEventListener('mousedown', (e) => { if (e.target === dialogOverlay) closeDialog(); });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !dialogOverlay.classList.contains('hidden')) closeDialog();
+  if (e.key !== 'Escape') return;
+  const open = openOverlayIds(overlayProbes);
+  if (open.length === 1 && open[0] === 'dialog-overlay') closeDialog();
 });
 
 
@@ -5878,7 +5880,9 @@ function collectChecked(container) {
 document.getElementById('btn-prefs-cancel').addEventListener('click', closePrefs);
 prefsOverlay.addEventListener('mousedown', (e) => { if (e.target === prefsOverlay) closePrefs(); });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !prefsOverlay.classList.contains('hidden')) closePrefs();
+  if (e.key !== 'Escape') return;
+  const open = openOverlayIds(overlayProbes);
+  if (open.length === 1 && open[0] === 'prefs-overlay') closePrefs();
 });
 document.getElementById('btn-prefs-save').addEventListener('click', async () => {
   await window.api.setSettings({
@@ -6130,7 +6134,9 @@ function closeArgsDialog() {
 document.getElementById('btn-args-cancel').addEventListener('click', closeArgsDialog);
 argsOverlay.addEventListener('mousedown', (e) => { if (e.target === argsOverlay) closeArgsDialog(); });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !argsOverlay.classList.contains('hidden')) closeArgsDialog();
+  if (e.key !== 'Escape') return;
+  const open = openOverlayIds(overlayProbes);
+  if (open.length === 1 && open[0] === 'args-overlay') closeArgsDialog();
 });
 document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (!argsEditingName) return closeArgsDialog();
