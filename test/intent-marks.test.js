@@ -80,8 +80,7 @@ test('the CLI assistant bullet U+23FA does not hide the intent it leads', () => 
 // SPLIT rather than the glyph: U+276F leads the composer, so the row under it is
 // a draft the operator may still be typing. Marking it `fire` promises a turn
 // that has not been sent -- the believed-but-false mark this module exists to
-// avoid -- and because PREFIX_CHARS is shared, a strip that produced the mark
-// would also make the half-typed line FIRE.
+// avoid.
 //
 // So the pin is deliberately two-sided: it reds if a later edit adds U+276F to
 // PREFIX_CHARS (both go 'fire'), and it reds if someone reaches the mark through

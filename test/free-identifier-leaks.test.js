@@ -295,8 +295,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/popover-group.js',
   // The prompt-echo byte rewriter (t641). It runs per-session inside
   // createTerminal's scope, where `sessions` and `currentEchoPalette` are in
-  // easy reach — and it must stay a pure function of (chunk, palette) or the
-  // split-chunk table below it cannot exercise a real stream.
+  // easy reach.
   'renderer/lib/prompt-echo.js',
   'renderer/lib/args-model.js',
   'renderer/lib/session-actions.js',
