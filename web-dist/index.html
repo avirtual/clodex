@@ -34872,11 +34872,6 @@ ${detail}` });
       dialogOverlay.addEventListener("mousedown", (e) => {
         if (e.target === dialogOverlay) closeDialog();
       });
-      document.addEventListener("keydown", (e) => {
-        if (e.key !== "Escape") return;
-        const open = openOverlayIds(overlayProbes);
-        if (open.length === 1 && open[0] === "dialog-overlay") closeDialog();
-      });
       function setDialogMode(mode) {
         dialogMode = mode;
         const authoring = mode === "template";
@@ -36047,6 +36042,22 @@ Click for live activity`;
       var overlayElementById = (id) => document.getElementById(id);
       var overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
       var overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClass };
+      var ESCAPE_CLOSES = [
+        ["dialog-overlay", () => closeDialog()],
+        ["discovery-overlay", () => closeDiscovery()],
+        ["peers-overlay", () => closePeersDialog()],
+        ["plugins-overlay", () => closePluginsDialog()],
+        ["sandbox-overlay", () => closeSandboxDialog()],
+        ["prefs-overlay", () => closePrefs()],
+        ["args-overlay", () => closeArgsDialog()]
+      ];
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const open = openOverlayIds(overlayProbes);
+        if (open.length !== 1) return;
+        const row = ESCAPE_CLOSES.find(([id]) => id === open[0]);
+        if (row) row[1]();
+      });
       function runCloseChord() {
         return performCloseChord({
           ...overlayProbes,
@@ -36293,7 +36304,7 @@ Click for live activity`;
       }
       if (discoveryRefresh) discoveryRefresh.addEventListener("click", () => openDiscovery());
       if (discoveryClose) discoveryClose.addEventListener("click", () => closeDiscovery());
-      if (discoveryOverlay) discoveryOverlay.addEventListener("click", (e) => {
+      if (discoveryOverlay) discoveryOverlay.addEventListener("mousedown", (e) => {
         if (e.target === discoveryOverlay) closeDiscovery();
       });
       window.api.onRequestOpenDiscovery(() => openDiscovery());
@@ -38019,11 +38030,6 @@ ${res.stderr}` : "");
       prefsOverlay.addEventListener("mousedown", (e) => {
         if (e.target === prefsOverlay) closePrefs();
       });
-      document.addEventListener("keydown", (e) => {
-        if (e.key !== "Escape") return;
-        const open = openOverlayIds(overlayProbes);
-        if (open.length === 1 && open[0] === "prefs-overlay") closePrefs();
-      });
       document.getElementById("btn-prefs-save").addEventListener("click", async () => {
         await window.api.setSettings({
           statusline: {
@@ -38263,11 +38269,6 @@ ${res.stderr}` : "");
       document.getElementById("btn-args-cancel").addEventListener("click", closeArgsDialog);
       argsOverlay.addEventListener("mousedown", (e) => {
         if (e.target === argsOverlay) closeArgsDialog();
-      });
-      document.addEventListener("keydown", (e) => {
-        if (e.key !== "Escape") return;
-        const open = openOverlayIds(overlayProbes);
-        if (open.length === 1 && open[0] === "args-overlay") closeArgsDialog();
       });
       document.getElementById("btn-args-save").addEventListener("click", async () => {
         if (!argsEditingName) return closeArgsDialog();
