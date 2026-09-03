@@ -158,7 +158,7 @@ test('the session menu hands onPick a live anchor, not the button it captured', 
 // Anchoring above a bar button is `bottom: innerHeight - rect.top + 6`. Written
 // inline it is the shape that acquires a zero-rect bug; the reconciled version
 // lives in popover-place.js. This scans for the inline form and pins the
-// survivors, so a fifth copy has to be justified here rather than appearing
+// survivors, so a new copy has to be justified here rather than appearing
 // silently.
 const RAW_PLACEMENT = /innerHeight - (?:r|rect)\.top/;
 
