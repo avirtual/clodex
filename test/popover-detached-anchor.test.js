@@ -209,6 +209,40 @@ test('every inline above-the-bar placement is one that cannot see a detached anc
     'a new inline above-the-bar placement: route it through placeAboveAnchor, or add it to ALLOWED_RAW with the reason it is safe');
 });
 
+test('openPeerInfoPopover measures itself after its optional rows un-hide', () => {
+  // The clamp placeAboveAnchor applies is only as good as the offsetHeight it
+  // reads. peerInfoUpdateBtn un-hides conditionally ABOVE the placement, so a
+  // call placed before it measures a panel shorter than the one drawn and can
+  // still overshoot the viewport top by a row. Ordering, not arithmetic, so the
+  // source is the only place it is visible.
+  const src = fs.readFileSync(path.join(REPO, 'renderer', 'peers-ui.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function openPeerInfoPopover'));
+  const body = fn.slice(0, fn.indexOf('\n  }\n'));
+  assert.ok(body.includes('placeAboveAnchor'), 'ENTER: openPeerInfoPopover places through the shared helper');
+
+  // FIRST occurrence deliberately: the button un-hides twice, once synchronously
+  // in the boxIds branch and once inside a later .then(). The synchronous one is
+  // what a synchronous placement can measure, and it is the earlier index — so if
+  // it were ever deleted this falls through to the deferred one, which sits after
+  // the placement and reds. The vacuous direction is closed.
+  const unhide = body.indexOf("peerInfoUpdateBtn.classList.remove('hidden')");
+  const place = body.indexOf('placeAboveAnchor');
+  assert.strictEqual((body.match(/peerInfoUpdateBtn\.classList\.remove\('hidden'\)/g) || []).length, 2,
+    'the un-hide count changed; re-check which occurrence the index below finds');
+  assert.ok(unhide > 0, 'ENTER: the update button still un-hides in this opener');
+  assert.ok(place > unhide,
+    'peers-ui places the info popover before its update row un-hides, so the clamp measures short');
+
+  // This opener is SYNCHRONOUS — it defers through .then(), never await — which is
+  // why it was exempt from the detachment door to begin with. An `await` check
+  // here would pass vacuously, so the real invariant is stated instead: the
+  // placement stays ahead of the first deferral.
+  assert.ok(!/async\s+function openPeerInfoPopover/.test(src),
+    'the opener became async; the placement now needs a live-anchor re-query');
+  assert.ok(place < body.indexOf('.then('),
+    'the placement moved past a deferral and can now read a detached anchor');
+});
+
 // --- source shape: no rect read on a pre-await anchor ------------------------
 
 // An opener that reads `anchor.getBoundingClientRect()` — or hands the anchor to

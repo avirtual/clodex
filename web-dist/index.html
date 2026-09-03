@@ -31723,7 +31723,6 @@ ${detail}` });
           peerInfoBody.innerHTML = rows.join("");
           peerInfoPopover.dataset.peerId = id;
           peerInfoPopover.classList.remove("hidden");
-          placeAboveAnchor(peerInfoPopover, anchorBtn);
           peerInfoUpdateBtn.classList.add("hidden");
           peerInfoUpdateBtn.onclick = null;
           if (boxIds.has(id)) {
@@ -31736,6 +31735,7 @@ ${detail}` });
           } else {
             peerInfoUpdateBtn.textContent = "Update Clodex";
           }
+          placeAboveAnchor(peerInfoPopover, anchorBtn);
           peerInfoDisableBtn.onclick = () => {
             closePeerInfoPopover();
             disablePeer(id, label);

@@ -4,13 +4,21 @@
 // bust) are mutually exclusive: opening one closes the other two (t638).
 //
 // All three sit at z-index 50 anchored to the same status bar, and each closed
-// only itself — so a press on Cost with Context open left two overlapping
-// panels, and each Escape handler saw only its own element.
+// only itself. Mutual exclusion was nonetheless already EMERGENT, and the
+// distinction matters to anyone deciding what here is load-bearing: the
+// popovers are siblings of #proxy-bar, not descendants, so the bar's opener
+// (bound on #proxy-bar) runs before the islands' document-level mousedown
+// handlers in the same dispatch — and the one that was not pressed sees itself
+// visible, its own seg unmatched, and closes. Two panels are co-visible only
+// within a single dispatch, never across a paint.
 //
-// The fix is a registry (renderer/lib/popover-group.js): each module registers
-// its own private closer and gets back a `closeSiblings` that runs every OTHER
-// member's. Self-exclusion is therefore structural — the key cannot reach its
-// own closer — rather than a conditional an edit could invert.
+// The registry (renderer/lib/popover-group.js) makes that explicit and
+// press-order-independent: each module registers its own private closer and
+// gets back a `closeSiblings` that runs every OTHER member's, with self-
+// exclusion structural — the key cannot reach its own closer — rather than a
+// conditional an edit could invert. It does NOT replace the document-level
+// handlers, which still own outside-click dismissal; deleting one because the
+// registry looks sufficient is a real regression.
 //
 // The subjects, and why each is here:
 //   every ordered pair  — a fix that handles only the pair its author had in
@@ -189,6 +197,14 @@ test('each opener closes its siblings BEFORE revealing itself', () => {
   for (const { key } of KINDS) {
     const file = key === 'ctx' ? 'context' : key;
     const src = fs.readFileSync(path.join(REPO, 'renderer', 'popovers', `${file}-popover.js`), 'utf8');
+    // Counts BEFORE indices: indexOf reports first occurrences only, so a second
+    // closeSiblings() below the reveal — or a second reveal above the call — is
+    // the very shape this guard forbids, passing green on the first pair.
+    const calls = (src.match(/closeSiblings\(\);/g) || []).length;
+    const reveals = (src.match(/\.classList\.remove\('hidden'\)/g) || []).length;
+    assert.strictEqual(calls, 1, `${file}-popover.js calls closeSiblings() ${calls} times; the index check below compares first occurrences`);
+    assert.strictEqual(reveals, 1, `${file}-popover.js reveals itself ${reveals} times; the index check below compares first occurrences`);
+
     const call = src.indexOf('closeSiblings();');
     const reveal = src.indexOf(".classList.remove('hidden')");
     assert.ok(call > 0, `ENTER: ${file}-popover.js calls closeSiblings()`);

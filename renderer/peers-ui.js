@@ -1253,7 +1253,6 @@ function initPeersUi({
     peerInfoBody.innerHTML = rows.join('');
     peerInfoPopover.dataset.peerId = id;
     peerInfoPopover.classList.remove('hidden');
-    placeAboveAnchor(peerInfoPopover, anchorBtn);
     peerInfoUpdateBtn.classList.add('hidden');
     peerInfoUpdateBtn.onclick = null;
     if (boxIds.has(id)) {
@@ -1263,6 +1262,7 @@ function initPeersUi({
     } else {
       peerInfoUpdateBtn.textContent = 'Update Clodex';
     }
+    placeAboveAnchor(peerInfoPopover, anchorBtn);
     peerInfoDisableBtn.onclick = () => { closePeerInfoPopover(); disablePeer(id, label); };
     // relayAllowed is a hub-side per-peer setting, not part of the peer's hello — read
     // it from config, not from peerStatuses.
