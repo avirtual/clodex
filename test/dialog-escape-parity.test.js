@@ -1,32 +1,38 @@
 'use strict';
 
-// dialog-escape-parity.test.js — New Session, Preferences and Edit Session close
-// on Escape and on an outside press, the way every other dismissable surface in
-// the renderer does.
+// dialog-escape-parity.test.js — all seven full-screen dialogs close on Escape
+// and on an outside press, the way every other dismissable surface in the
+// renderer does.
 //
-// The reported symptom was "the app is stuck": three of the seven dialogs had no
-// way out but Cancel or the X. At the commit this was written, NO dialog closed
-// on Escape — the four that were believed to (peers, plugins, sandbox,
-// discovery) each had an outside-press handler only, so there was no existing
-// Escape implementation to copy and no regression to guard.
+// The reported symptom was "the app is stuck": at the commit this file was first
+// written NO dialog closed on Escape, and the four believed to (peers, plugins,
+// sandbox, discovery) each had an outside-press handler only. Three got Escape
+// in the first round; the remaining four are what this revision adds. The
+// discovery case is what surfaced them — with Discover Sessions raised over New
+// Session, Escape did nothing at all.
 //
-// Escape is bound on `document`, so the listener sees every keystroke in the
-// window and must decide for itself whether it is the one that should act. It
-// asks chord-guard's openOverlayIds and closes only when this dialog is the SOLE
-// open overlay — the same shape performCloseChord uses for Cmd+W, and the same
-// refusal files-popover makes when the peek is open above it. What that buys is
-// the stacked case below; what it costs is nothing, because the guard's list
-// deliberately omits the nested new-session tool notice.
+// Escape is bound ONCE on `document`, as a table of overlay id → closer, rather
+// than as seven copies of one block. The listener sees every keystroke in the
+// window and must decide for itself whether it is the one that should act: it
+// asks chord-guard's openOverlayIds and acts only when exactly ONE overlay is
+// open — the same shape performCloseChord uses for Cmd+W. That gate is what buys
+// the stacked subject below, and these overlays are siblings with no stacking
+// manager, so without it Escape would dismiss the wrong one of two.
 //
-// Five subjects per dialog. The last two are what keep the first three honest:
-//   Escape         — reds if the keydown binding is dropped.
+// Six subjects per dialog. The last three are what keep the first three honest:
+//   Escape         — reds if the row is dropped from the table.
 //   closed dialog  — nothing open: reds if the listener acts unconditionally,
 //                    firing teardown (closePrefs stops a poll timer and the
-//                    voice control) against a surface nobody opened.
+//                    voice control; closeSandboxDialog stops sbPollTimer)
+//                    against a surface nobody opened.
 //   other keys     — reds if the key test goes.
 //   STACKED modal  — this dialog open AND a modal above it. Reds if the gate
 //                    weakens to "am I open" — which is what one press
 //                    dismissing two surfaces looks like from here.
+//   backdrop press — reds if the outside-press binding is dropped, and pins the
+//                    event as mousedown: discovery was the lone `click` of the
+//                    seven, where a drag begun inside the panel and released on
+//                    the backdrop dismissed it.
 //   INSIDE press   — the anti-degenerate half for the press half. "close on any
 //                    mousedown" satisfies the backdrop subject completely; only
 //                    this one separates them.
@@ -49,17 +55,23 @@ const { MODAL_OVERLAY_IDS, openOverlayIds } = require('../renderer/lib/chord-gua
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 
-// The three dialogs, by the overlay variable renderer.js binds on and the close
-// function it is expected to call. The close names are LITERAL per row: deriving
-// them (e.g. from the overlay name) would make the table structurally unable to
-// express that Edit Session's closer is `closeArgsDialog` and not `closeArgs`.
+// The seven dialogs, by the overlay variable renderer.js binds the outside press
+// on and the close function Escape is expected to reach. The close names are
+// LITERAL per row: deriving them (e.g. from the overlay name) would make the
+// table structurally unable to express that Edit Session's closer is
+// `closeArgsDialog` and not `closeArgs`, or that Discover's is `closeDiscovery`
+// with no `Dialog` suffix at all.
 const DIALOGS = [
   { label: 'New Session', overlay: 'dialogOverlay', id: 'dialog-overlay', close: 'closeDialog' },
+  { label: 'Discover Sessions', overlay: 'discoveryOverlay', id: 'discovery-overlay', close: 'closeDiscovery' },
+  { label: 'Peers', overlay: 'peersOverlay', id: 'peers-overlay', close: 'closePeersDialog' },
+  { label: 'Plugins', overlay: 'pluginsOverlay', id: 'plugins-overlay', close: 'closePluginsDialog' },
+  { label: 'Sandbox', overlay: 'sandboxOverlay', id: 'sandbox-overlay', close: 'closeSandboxDialog' },
   { label: 'Preferences', overlay: 'prefsOverlay', id: 'prefs-overlay', close: 'closePrefs' },
   { label: 'Edit Session', overlay: 'argsOverlay', id: 'args-overlay', close: 'closeArgsDialog' },
 ];
 
-// A second modal raised OVER one of the three, one per route that reaches it.
+// A second modal raised OVER one of the dialogs, one per route that reaches it.
 // Both are already in MODAL_OVERLAY_CLASSES, so the guard sees them without any
 // new enumeration: prompt-modal-overlay is promptText (btnSaveTemplate lives
 // inside the New Session form), clx-modal-bg is the web frontend's showDialog
@@ -80,7 +92,36 @@ function fakeProbes(open) {
   };
 }
 
-function makeFixture(varName, closeName, overlayId, { open = [], which = 'both' } = {}) {
+// Anchored on `const ESCAPE_CLOSES` through the listener that reads it, so the
+// table and its one consumer are captured together — a table left behind by a
+// deleted listener would otherwise satisfy the pairing subject while closing
+// nothing. The chord handlers are also document-level keydown listeners, so the
+// capture is floored below against wandering into one.
+function extractEscape() {
+  const m = rendererSrc.match(
+    /^const ESCAPE_CLOSES = \[\n[\s\S]*?^\}\);$/m);
+  assert.ok(m, 'ENTER: no ESCAPE_CLOSES table + keydown listener found in renderer.js');
+  assert.match(m[0], /e\.key !== 'Escape'/,
+    'ENTER: the captured keydown block must be the Escape one');
+  assert.match(m[0], /openOverlayIds\(overlayProbes\)/,
+    'ENTER: the Escape block must consult the shared open-overlay guard');
+  assert.doesNotMatch(m[0], /metaKey|altChordAction/,
+    'ENTER: the regex wandered into a chord handler');
+  return m[0];
+}
+
+// The two bindings are extracted SEPARATELY, and that separation is load-bearing.
+// Captured as one adjacent block, dropping either binding fails the block's own
+// ENTER floor and reds all six subjects for both mechanisms at once — so the
+// suite could no longer say WHICH mechanism broke, and the press subjects would
+// be reding for a reason that has nothing to do with a press.
+function extractPress(varName) {
+  const m = rendererSrc.match(new RegExp(`${varName}\\.addEventListener\\('mousedown'.*\\n`));
+  assert.ok(m, `ENTER: no outside-press mousedown binding found for ${varName} in renderer.js`);
+  return m[0];
+}
+
+function makeFixture(varName, closeNames, { open = [], which = 'escape' } = {}) {
   const overlayListeners = new Map();
   const docListeners = new Map();
   function push(map, type, fn) {
@@ -95,14 +136,14 @@ function makeFixture(varName, closeName, overlayId, { open = [], which = 'both' 
   // itself would pin this test's idea of stacking rather than the one the chords
   // already act on, and the two could then disagree silently.
   const stubs = {
-    [varName]: overlay,
-    [closeName]: () => closed.push(closeName),
     document,
     openOverlayIds,
     overlayProbes: fakeProbes(open),
   };
+  if (varName) stubs[varName] = overlay;
+  for (const n of closeNames) stubs[n] = () => closed.push(n);
 
-  const block = extractBlock(varName, overlayId, which);
+  const block = which === 'press' ? extractPress(varName) : extractEscape();
   const names = Object.keys(stubs);
   new Function(...names, block)(...names.map((n) => stubs[n]));
 
@@ -117,65 +158,31 @@ function makeFixture(varName, closeName, overlayId, { open = [], which = 'both' 
   };
 }
 
-// The two bindings are extracted SEPARATELY, and that separation is load-bearing.
-// Captured as one adjacent block, dropping either binding fails the block's own
-// ENTER floor and reds all six subjects for both mechanisms at once — so the
-// suite could no longer say WHICH mechanism broke, and the press subjects would
-// be reding for a reason that has nothing to do with a press.
-function extractPress(varName) {
-  const m = rendererSrc.match(new RegExp(`${varName}\\.addEventListener\\('mousedown'.*\\n`));
-  assert.ok(m, `ENTER: no outside-press binding found for ${varName} in renderer.js`);
-  return m[0];
-}
-
-// Anchored on the overlay ID the block closes on, at line starts, so it selects
-// this dialog's listener positively rather than by being the first `keydown`
-// block that happens not to contain a brace. The chord handlers are also
-// document-level keydown listeners a loose pattern can wander into.
-function extractEscape(varName, overlayId) {
-  const re = new RegExp(
-    `^document\\.addEventListener\\('keydown', \\(e\\) => \\{\\n`
-    + `(?:[ \\t].*\\n)*?[ \\t].*'${overlayId}'.*\\n`
-    + `\\}\\);$`, 'm');
-  const m = rendererSrc.match(re);
-  assert.ok(m, `ENTER: no Escape binding found for ${varName} in renderer.js`);
-  assert.match(m[0], /e\.key !== 'Escape'/,
-    `ENTER: ${varName}'s captured keydown block must be the Escape one`);
-  assert.match(m[0], /openOverlayIds\(overlayProbes\)/,
-    `ENTER: ${varName}'s Escape block must consult the shared open-overlay guard`);
-  assert.doesNotMatch(m[0], /metaKey|altChordAction/,
-    `ENTER: the regex wandered into a chord handler for ${varName}`);
-  return m[0];
-}
-
-// Only the block under test is run, so a fixture built for one mechanism cannot
-// be satisfied by the other.
-function extractBlock(varName, overlayId, which) {
-  if (which === 'press') return extractPress(varName);
-  if (which === 'escape') return extractEscape(varName, overlayId);
-  return `${extractPress(varName)}\n${extractEscape(varName, overlayId)}`;
-}
+// Every closer is stubbed for every Escape subject, so a row wired to the WRONG
+// closer mis-closes visibly instead of throwing on an undefined name.
+const ALL_CLOSERS = DIALOGS.map((d) => d.close);
 
 for (const { label, overlay: varName, id: overlayId, close: closeName } of DIALOGS) {
   test(`${label}: Escape closes it`, () => {
-    const f = makeFixture(varName, closeName, overlayId, { which: 'escape', open: [overlayId] });
+    const f = makeFixture(null, ALL_CLOSERS, { open: [overlayId] });
     assert.deepStrictEqual(f.boundDocTypes(), ['keydown'],
       'ENTER: the Escape binding must be on document, not on the overlay');
     f.key('Escape');
-    assert.deepStrictEqual(f.closed, [closeName], `Escape must call ${closeName}`);
+    assert.deepStrictEqual(f.closed, [closeName], `Escape must call ${closeName}, and only it`);
   });
 
   test(`${label}: Escape while the dialog is CLOSED closes nothing`, () => {
     // A document-level listener sees every keystroke in the window. Without the
     // open-set gate this fires teardown against a dialog nobody opened —
-    // closePrefs stops a poll timer and the voice control.
-    const f = makeFixture(varName, closeName, overlayId, { which: 'escape', open: [] });
+    // closePrefs stops a poll timer and the voice control, closeSandboxDialog
+    // stops the sandbox status poll.
+    const f = makeFixture(null, ALL_CLOSERS, { open: [] });
     f.key('Escape');
     assert.deepStrictEqual(f.closed, [], `${closeName} ran against a closed dialog`);
   });
 
   test(`${label}: a key that is not Escape closes nothing`, () => {
-    const f = makeFixture(varName, closeName, overlayId, { which: 'escape', open: [overlayId] });
+    const f = makeFixture(null, ALL_CLOSERS, { open: [overlayId] });
     for (const k of ['Enter', 'a', 'Tab', 'ArrowDown']) f.key(k);
     assert.deepStrictEqual(f.closed, [], 'only Escape may close the dialog');
   });
@@ -190,15 +197,26 @@ for (const { label, overlay: varName, id: overlayId, close: closeName } of DIALO
     // un-hidden, and an ungated listener dismisses two surfaces at once —
     // stranding the prompt over a dead parent with its promise unresolved.
     for (const above of STACKED) {
-      const f = makeFixture(varName, closeName, overlayId, { which: 'escape', open: [overlayId, above] });
+      const f = makeFixture(null, ALL_CLOSERS, { open: [overlayId, above] });
       f.key('Escape');
-      assert.deepStrictEqual(f.closed, [],
-        `${label} closed underneath a stacked ${above}`);
+      assert.deepStrictEqual(f.closed, [], `${label} closed underneath a stacked ${above}`);
     }
   });
 
+  test(`${label}: Escape with ANOTHER dialog also open closes nothing`, () => {
+    // The stacked subject above raises a class-keyed modal; this one raises a
+    // sibling DIALOG, which is the case discovery actually hits (Discover over
+    // New Session). A gate that consulted only MODAL_OVERLAY_CLASSES for the
+    // stacking question would pass the subject above and close the wrong dialog
+    // here.
+    const other = DIALOGS.find((d) => d.id !== overlayId).id;
+    const f = makeFixture(null, ALL_CLOSERS, { open: [overlayId, other] });
+    f.key('Escape');
+    assert.deepStrictEqual(f.closed, [], `${label} acted with ${other} also open`);
+  });
+
   test(`${label}: a press on the backdrop closes it`, () => {
-    const f = makeFixture(varName, closeName, overlayId, { which: 'press' });
+    const f = makeFixture(varName, [closeName], { which: 'press' });
     assert.deepStrictEqual(f.boundOverlayTypes(), ['mousedown'],
       'ENTER: the outside-press binding must be a mousedown on the overlay');
     f.press(f.overlay);
@@ -209,26 +227,44 @@ for (const { label, overlay: varName, id: overlayId, close: closeName } of DIALO
     // The anti-degenerate half. A handler that closes on any mousedown passes
     // the backdrop subject above and makes the dialog unusable — every click on
     // a field or a button would dismiss it.
-    const f = makeFixture(varName, closeName, overlayId, { which: 'press' });
+    const f = makeFixture(varName, [closeName], { which: 'press' });
     const inner = { classList: { contains: () => false } };
     f.press(inner);
     assert.deepStrictEqual(f.closed, [], 'a press on the dialog body must not close it');
   });
 }
 
-test('all three dialogs are wired, and each to its OWN closer', () => {
-  // A block extracted for one overlay that closes another would satisfy every
-  // subject above (the fixture stubs exactly one closer, so a wrong name would
-  // throw rather than mis-close) — this states the pairing directly, and reds if
-  // a copy-paste points two overlays at one close function.
-  const pairs = DIALOGS.map(({ overlay, id, close }) => {
-    const block = extractBlock(overlay, id);
-    const calls = [...block.matchAll(/(close[A-Za-z]*)\(\)/g)].map((m) => m[1]);
-    return [overlay, [...new Set(calls)]];
-  });
-  assert.deepStrictEqual(pairs, [
-    ['dialogOverlay', ['closeDialog']],
-    ['prefsOverlay', ['closePrefs']],
-    ['argsOverlay', ['closeArgsDialog']],
-  ]);
+test('the table names all seven dialogs, each paired with its OWN closer', () => {
+  // The per-dialog subjects run one row at a time, so a table carrying an EIGHTH
+  // row, or two rows sharing a closer, is invisible to them. This reads the
+  // pairs straight out of the source and states them whole.
+  const block = extractEscape();
+  const rows = [...block.matchAll(/\['([a-z-]+)', \(\) => (close[A-Za-z]*)\(\)\]/g)]
+    .map((m) => [m[1], m[2]]);
+  assert.deepStrictEqual(rows, DIALOGS.map((d) => [d.id, d.close]));
+  assert.strictEqual(new Set(rows.map((r) => r[1])).size, rows.length,
+    'two overlays point at one close function — a copy-paste in the table');
+});
+
+test('every id in the table is one the guard can actually report open', () => {
+  // openOverlayIds only ever returns ids from MODAL_OVERLAY_IDS, so a row keyed
+  // on an id missing from that list is dead code: its dialog would never close
+  // on Escape and every subject above would still pass, because the fixture's
+  // byId is built from the same list. This is the one direction the fixture
+  // cannot see.
+  for (const { id, label } of DIALOGS) {
+    assert.ok(MODAL_OVERLAY_IDS.includes(id),
+      `${label}'s ${id} is not in MODAL_OVERLAY_IDS — the guard can never report it open`);
+  }
+});
+
+test('no per-dialog Escape listener survives beside the shared table', () => {
+  // The three dialogs that had Escape first were each wired with their own
+  // `open[0] === '<id>'` block. Left in place beside the table they would double
+  // the close call, and would drift from it — the second mechanism doing the
+  // same job is exactly what the table replaced.
+  assert.doesNotMatch(rendererSrc, /open\[0\] === '[a-z-]+-overlay'/,
+    'a per-dialog Escape block is still wired alongside ESCAPE_CLOSES');
+  assert.strictEqual((rendererSrc.match(/if \(e\.key !== 'Escape'\) return;/g) || []).length, 1,
+    'more than one Escape gate — the mechanism was duplicated, not shared');
 });

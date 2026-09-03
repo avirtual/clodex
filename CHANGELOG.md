@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **Escape now closes the Discover Sessions, Peers, Plugins and Sandbox
+  dialogs**, matching New Session, Preferences and Edit Session. Discover was
+  the case that surfaced this: raised over New Session, Escape did nothing at
+  all and the only ways out were Cancel and the X. As before, Escape acts only
+  when a single dialog is open — with a second surface raised over one, it
+  closes neither. A drag that starts inside the Discover panel and releases
+  outside it no longer dismisses the dialog.
 - **Intents on the CLI's own bullet rows are highlighted.** The
   highlighter strips the decorator glyphs Claude Code paints ahead of a rendered
   line before it looks for `[agent:…]`, but its list held `⬤` where the CLI
