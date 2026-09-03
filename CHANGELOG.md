@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Intents on the CLI's own bullet rows are highlighted.** The
+  highlighter strips the decorator glyphs Claude Code paints ahead of a rendered
+  line before it looks for `[agent:…]`, but its list held `⬤` where the CLI
+  actually emits `⏺` — a lookalike that was never checked against real output.
+  Every intent the CLI rendered under its bullet went unmarked, though it still
+  fired. The prompt-echo rows that start with `❯` stay unmarked deliberately:
+  that row is the composer, so marking it would light up an intent you were
+  still typing.
 - **The CLI's prompt echo now follows your theme instead of being a white slab.**
   Claude Code paints every submitted prompt on a light grey background, which on
   the dark themes is a bright slab across the scrollback — worst with heavy

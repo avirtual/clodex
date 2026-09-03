@@ -27,6 +27,31 @@ test('PREFIX_CHARS / ANSI_RE are exported and usable', () => {
   assert.ok(ANSI_RE instanceof RegExp);
 });
 
+// The CLI's assistant bullet is U+23FA. The set shipped with U+2B24 BLACK LARGE
+// CIRCLE instead -- a lookalike, matched by eye and never against real output,
+// so every `⏺ [agent:...]` row the CLI rendered was skipped by the highlighter
+// while the intent itself fired from the jsonl. Both are held here: the real
+// glyph because that is the fix, U+2B24 because narrowing the set would stop an
+// intent that fires today.
+test('cleanLine strips the CLI assistant bullet U+23FA, not only its lookalike', () => {
+  assert.strictEqual(cleanLine('\u23fa [agent:who]'), '[agent:who]');
+  assert.strictEqual(cleanLine('\u2b24 [agent:who]'), '[agent:who]');
+  assert.deepStrictEqual(parseIntent('\u23fa [agent:task accept t641]'),
+    { type: 'task', sub: 'accept', id: 't641', who: null, body: '' });
+});
+
+// U+276F leads the Claude CLI's prompt row, and that row is the LIVE COMPOSER:
+// renderer/lib/voice-submit.js's COMPOSER_DRAFT reads `U+276F <sep> <text>` as
+// an unsent draft, measured off a real seat. PREFIX_CHARS feeds parseIntent, so
+// admitting it would make an intent the operator is still TYPING fire the moment
+// the CLI painted it. Absence from this set is the fix, not an oversight.
+test('cleanLine does NOT strip the composer prompt U+276F, so a typed intent cannot fire', () => {
+  assert.ok(!PREFIX_CHARS.has('\u276f'));
+  assert.strictEqual(cleanLine('\u276f [agent:dm bob] hello'), '\u276f [agent:dm bob] hello');
+  assert.strictEqual(parseIntent('\u276f [agent:dm bob] hello'), null);
+  assert.strictEqual(looksLikeIntent('\u276f [agent:dm bob] hello'), null);
+});
+
 test('parseIntent: dm without and with urgent', () => {
   assert.deepStrictEqual(parseIntent('[agent:dm bob] hello there'),
     { type: 'dm', target: 'bob', urgent: false, body: 'hello there' });

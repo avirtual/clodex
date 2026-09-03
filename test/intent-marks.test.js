@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { classifyRows, classifyText, intentSpan, logicalLines, SCAN_ROWS } = require('../renderer/lib/intent-marks');
+const { parseIntent } = require('../intent-scanner');
 
 const rows = (...texts) => texts.map((t) => (typeof t === 'string' ? { text: t, isWrapped: false } : t));
 const wrapped = (text) => ({ text, isWrapped: true });
@@ -66,6 +67,34 @@ test('an indented intent fires, because the scanner strips indentation', () => {
 
 test('a bullet-decorated intent fires, because the scanner strips decorators', () => {
   assert.strictEqual(classifyText('• [agent:who]'), 'fire');
+});
+
+// The row the operator actually reported. U+23FA is the bullet the CLI paints
+// ahead of text the agent emitted, so the intent under it is real and already
+// fired from the jsonl -- the mark was the only half missing.
+test('the CLI assistant bullet U+23FA does not hide the intent it leads', () => {
+  assert.strictEqual(classifyText('\u23fa [agent:task accept t641]'), 'fire');
+});
+
+// The other half of the same report, decided the other way, and this asserts the
+// SPLIT rather than the glyph: U+276F leads the composer, so the row under it is
+// a draft the operator may still be typing. Marking it `fire` promises a turn
+// that has not been sent -- the believed-but-false mark this module exists to
+// avoid -- and because PREFIX_CHARS is shared, a strip that produced the mark
+// would also make the half-typed line FIRE.
+//
+// So the pin is deliberately two-sided: it reds if a later edit adds U+276F to
+// PREFIX_CHARS (both go 'fire'), and it reds if someone reaches the mark through
+// a private render-only strip here (the first goes 'fire', the second stays
+// null) -- which intent-marks.js's header forbids for exactly this reason.
+test('the composer prompt U+276F is marked by neither layer, unlike the bullet', () => {
+  assert.strictEqual(classifyText('\u276f [agent:from ticket-loop]'), null);
+  assert.strictEqual(classifyText('\u276f [agent:dm bob] hello'), null);
+  assert.strictEqual(parseIntent('\u276f [agent:dm bob] hello'), null,
+    'the mark and the scan must agree: neither marked nor fired');
+  assert.strictEqual(classifyText('\u23fa [agent:dm bob] hello'), 'fire',
+    'ENTER: the bullet arm still fires, so the nulls above are a real decision '
+    + 'about U+276F and not a classifier that stopped marking anything');
 });
 
 test('ANSI colour around the intent does not hide it', () => {
