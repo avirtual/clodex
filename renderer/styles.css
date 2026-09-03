@@ -3804,10 +3804,10 @@ html, body {
   visibility: visible;
 }
 
-/* The two terminal-shaped tenants sit on --bg, not the drawer's --sidebar-bg.
+/* The terminal-shaped tenants sit on --bg, not the drawer's --sidebar-bg.
    That is not a taste call: --bg holds each theme's xterm `background` byte for
-   byte (constants.js THEMES, paired by renderer-constants.test.js), so the ctl
-   console and the session terminal above it are the same colour by
+   byte (constants.js THEMES, paired by renderer-constants.test.js), so a
+   monospace pane and the session terminal above it are the same colour by
    construction. The term pane needs it too — xterm paints its own rows, but
    #wterm-host's padding would otherwise frame them in drawer chrome. */
 .drawer-pane[data-tab="ctl"],
