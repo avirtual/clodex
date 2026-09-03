@@ -632,7 +632,7 @@ test('the console hook is registered under BOTH tool-result events, for Bash onl
     'the console must not run after every tool — only after Bash');
 });
 
-test('the console hook appends raw hook JSON and spawns no interpreter', () => {
+test('the console hook spools raw hook JSON per record and spawns no interpreter', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('agent1');
@@ -645,6 +645,10 @@ test('the console hook appends raw hook JSON and spawns no interpreter', () => {
   assert.ok(!body.includes('ELECTRON_RUN_AS_NODE'),
     'no interpreter on the critical path of every Bash call');
   assert.match(body, /exit 0/, 'must exit 0 unconditionally — hooks are fail-open and must stay so');
+  // The atomicity mechanism itself: written to a temp name, then RENAMED in. An
+  // append (`>>`) here is the shape that lost records under concurrency.
+  assert.match(body, /mv -f "\$T"/, 'a record must become visible by rename, never by append');
+  assert.ok(!/>> *"/.test(body), 'no append to a shared file — that is the race');
 
   // Driven for real, both events, exactly as the CLI would pipe them.
   const ok = JSON.stringify({
@@ -663,53 +667,121 @@ test('the console hook appends raw hook JSON and spawns no interpreter', () => {
     assert.strictEqual(r.stdout, '', 'it returns nothing to the CLI — it is a writer, not a drain');
   }
 
-  // ONE JSON object per line, which is what the reader parses by.
-  const lines = fs.readFileSync(consolePath, 'utf-8').split('\n').filter((l) => l.trim());
-  assert.strictEqual(lines.length, 2, 'ENTER: both events appended, so the parse below is real');
-  const parsed = lines.map((l) => JSON.parse(l));
-  assert.deepStrictEqual(parsed.map((p) => p.hook_event_name),
-    ['PostToolUse', 'PostToolUseFailure'], 'both shapes land, in order, unmodified');
+  // ONE FILE PER RECORD, each holding the hook's JSON unmodified.
+  const files = fs.readdirSync(consolePath).filter((n) => n.endsWith('.json')).sort();
+  assert.strictEqual(files.length, 2, 'ENTER: both events spooled, so the parse below is real');
+  const parsed = files.map((f) => JSON.parse(fs.readFileSync(path.join(consolePath, f), 'utf-8')));
+  assert.deepStrictEqual(parsed.map((p) => p.hook_event_name).sort(),
+    ['PostToolUse', 'PostToolUseFailure'], 'both shapes land, unmodified');
   // The reader is the thing that has to consume these bytes, so pin the round
-  // trip rather than the file's shape alone: a hook whose output the reader
+  // trip rather than the files' shape alone: a hook whose output the reader
   // cannot parse is a green hook test over a broken feature.
-  const { parseChunk } = require('../bash-console');
-  const recs = parseChunk(fs.readFileSync(consolePath, 'utf-8'));
-  assert.deepStrictEqual(recs.map((r) => [r.command, r.failed]),
-    [['echo hi', false], ['false', true]],
+  const { readBashConsole } = require('../bash-console');
+  const recs = readBashConsole(REGISTRY_DIR, 'agent1', '').records;
+  assert.deepStrictEqual(recs.map((r) => [r.command, r.failed]).sort(),
+    [['echo hi', false], ['false', true]].sort(),
     'the reader turns the hook\'s own bytes into one ok block and one failed block');
 });
 
-// The cap keeps an unread console bounded on disk. Rotation is one mv, so the
-// worst case is twice the cap, and BOTH generations die with the run dir.
-test('the console hook rotates at its cap instead of growing without bound', () => {
+
+// THE TEST THAT WOULD HAVE CAUGHT THE FIRST SHAPE OF THIS FEATURE. It appended
+// each record to a shared JSONL in two writes (body, then newline), and the CLI
+// fires Bash hooks CONCURRENTLY: measured, four simultaneous writers left 1/20
+// records parseable at 400-BYTE payloads, so this is not a large-output edge
+// case. The loss was SILENT — a damaged line fails JSON.parse and is skipped, so
+// the symptom was a console quietly missing commands.
+//
+// Driven through the REAL generated script with real concurrent processes. A
+// sequential version of this test passes under the broken shape, which is
+// precisely why it has to spawn them at once.
+test('the console hook loses nothing when Bash hooks fire concurrently', async () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('agent1');
   const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
-  const consolePath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
-  const { CONSOLE_MAX_BYTES } = require('../bash-console');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
 
-  // The cap is interpolated into the script, so the number the shell tests
-  // against must be the module's — not a second literal that could drift.
-  assert.ok(fs.readFileSync(scriptPath, 'utf-8').includes(String(CONSOLE_MAX_BYTES)),
-    'the generated script must test against the module\'s own cap');
+  // Payloads big enough that a shared append cannot be atomic, and DISTINCT so a
+  // lost one is identifiable rather than merely a smaller count.
+  const WRITERS = 6;
+  const payloads = [];
+  for (let i = 0; i < WRITERS; i++) {
+    payloads.push(JSON.stringify({
+      hook_event_name: i % 2 ? 'PostToolUse' : 'PostToolUseFailure',
+      tool_name: 'Bash',
+      tool_input: { command: `cmd-${i}` },
+      tool_use_id: `t${i}`,
+      duration_ms: i,
+      ...(i % 2
+        ? { tool_response: { stdout: `${'x'.repeat(20000)}-${i}`, stderr: '' } }
+        : { error: `Exit code ${i + 1}\nboom-${i}`, is_interrupt: false }),
+    }));
+  }
 
-  fs.writeFileSync(consolePath, 'x'.repeat(CONSOLE_MAX_BYTES + 1));
-  const payload = JSON.stringify({
-    hook_event_name: 'PostToolUse', tool_name: 'Bash',
-    tool_input: { command: 'echo after-rotate' },
-    tool_response: { stdout: 'ok', stderr: '' }, tool_use_id: 'c', duration_ms: 1,
-  });
-  const r = cp.spawnSync('bash', [scriptPath], { input: payload, encoding: 'utf-8' });
-  assert.strictEqual(r.status, 0);
+  // All six started before any is waited on — spawnSync in a loop would
+  // serialize them and prove nothing about the race.
+  const kids = payloads.map(() => cp.spawn('bash', [scriptPath], { stdio: ['pipe', 'ignore', 'ignore'] }));
+  const closed = kids.map((k) => new Promise((res) => k.on('close', res)));
+  kids.forEach((k, i) => { k.stdin.end(payloads[i]); });
+  const codes = await Promise.all(closed);
+  assert.deepStrictEqual(codes, payloads.map(() => 0),
+    `every hook must exit 0, got ${codes.join(',')}`);
 
-  assert.ok(fs.existsSync(`${consolePath}.1`), 'the oversized file moved to the one kept generation');
-  const live = fs.readFileSync(consolePath, 'utf-8');
-  assert.ok(live.length < CONSOLE_MAX_BYTES, 'and the live file restarted small');
-  assert.deepStrictEqual(parseChunkCommands(live), ['echo after-rotate'],
-    'the call that triggered the rotation is still recorded, not dropped');
+  // Every record recoverable, and recoverable AS ITS OWN SELF.
+  const { readBashConsole } = require('../bash-console');
+  const res = readBashConsole(REGISTRY_DIR, 'agent1', '');
+  assert.strictEqual(res.records.length, WRITERS,
+    `all ${WRITERS} concurrent records must survive, got ${res.records.length} — a shared append loses them here`);
+  assert.deepStrictEqual(res.records.map((r) => r.command).sort(),
+    payloads.map((_, i) => `cmd-${i}`).sort(),
+    'and each is the record its own writer wrote, not a splice of two');
+
+  // No writer left its scratch file behind.
+  assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.startsWith('.tmp')), [],
+    'the rename must consume every temp file');
 });
 
-function parseChunkCommands(text) {
-  return require('../bash-console').parseChunk(text).map((r) => r.command);
-}
+// The retention bound, and the reason it is a COUNT rather than the byte cap the
+// first shape used: a byte cap over a shared file needed a rotation, and only
+// the live generation was ever readable — so the second generation was written
+// and never shown. One record per file makes the bound a file count and the
+// oldest simply sort first.
+test('the console hook prunes the OLDEST records past its cap', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+  const { CONSOLE_MAX_RECORDS } = require('../bash-console');
+
+  assert.ok(fs.readFileSync(scriptPath, 'utf-8').includes(String(CONSOLE_MAX_RECORDS)),
+    'the generated script must test against the module\'s own cap, not a second literal');
+
+  // Seed one over the cap with names that sort oldest-first, then fire the hook
+  // once so its prune runs. Seeding is far cheaper than 2000 hook spawns.
+  fs.mkdirSync(dir, { recursive: true });
+  for (let i = 0; i <= CONSOLE_MAX_RECORDS; i++) {
+    fs.writeFileSync(path.join(dir, `${String(i).padStart(19, '0')}-1.json`), '{}');
+  }
+  const oldest = `${String(0).padStart(19, '0')}-1.json`;
+  assert.ok(fs.existsSync(path.join(dir, oldest)), 'ENTER: the oldest record is present before the prune');
+
+  const r = cp.spawnSync('bash', [scriptPath], {
+    input: JSON.stringify({
+      hook_event_name: 'PostToolUse', tool_name: 'Bash',
+      tool_input: { command: 'the newest' },
+      tool_response: { stdout: 'ok', stderr: '' }, tool_use_id: 'z', duration_ms: 1,
+    }),
+    encoding: 'utf-8',
+  });
+  assert.strictEqual(r.status, 0);
+
+  const left = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+  assert.ok(left.length <= CONSOLE_MAX_RECORDS,
+    `the spool must stay at or under ${CONSOLE_MAX_RECORDS}, found ${left.length}`);
+  assert.ok(!fs.existsSync(path.join(dir, oldest)), 'the OLDEST record is the one dropped');
+  // The record that triggered the prune must not be what the prune ate.
+  const { readBashConsole } = require('../bash-console');
+  const cmds = readBashConsole(REGISTRY_DIR, 'agent1', '').records.map((x) => x.command);
+  assert.ok(cmds.includes('the newest'), 'the call that triggered the prune is still recorded');
+});

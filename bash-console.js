@@ -1,10 +1,11 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { pathFor } = require('./clodex-paths');
 
-const CONSOLE_MAX_BYTES = 4 * 1024 * 1024;
-const PULL_MAX_BYTES = 512 * 1024;
+const CONSOLE_MAX_RECORDS = 2000;
+const RECORD_MAX_BYTES = 256 * 1024;
 const PULL_MAX_RECORDS = 50;
 
 const ANSI_RE = new RegExp(
@@ -85,58 +86,51 @@ function parseChunk(text) {
   return out;
 }
 
-function readRange(file, from, to) {
-  let fd;
+function recordFiles(dir) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return null; }
+  return names.filter((n) => n.endsWith('.json')).sort();
+}
+
+function readRecordFile(dir, base) {
+  const full = path.join(dir, base);
   try {
-    fd = fs.openSync(file, 'r');
-    const buf = Buffer.alloc(to - from);
-    fs.readSync(fd, buf, 0, buf.length, from);
-    return buf.toString('utf8');
+    if (fs.statSync(full).size > RECORD_MAX_BYTES) return null;
+    return fs.readFileSync(full, 'utf8');
   } catch {
-    return '';
-  } finally {
-    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+    return null;
   }
 }
 
-function sizeOf(file) {
-  try { return fs.statSync(file).size; } catch { return null; }
-}
+function readBashConsole(root, name, cursor) {
+  const dir = pathFor(root, name, 'bashConsole');
+  const files = recordFiles(dir);
+  if (files === null) return { records: [], cursor: '', reset: !!cursor, live: false };
 
-function lastLineBreak(text) {
-  const at = text.lastIndexOf('\n');
-  return at < 0 ? null : at + 1;
-}
+  const since = typeof cursor === 'string' ? cursor : '';
+  let fresh = since ? files.filter((f) => f > since) : files;
 
-function readBashConsole(root, name, offset) {
-  const file = pathFor(root, name, 'bashConsole');
-  const size = sizeOf(file);
-  if (size === null) return { records: [], offset: 0, reset: offset > 0, live: false };
+  const reset = !!since && files.length > 0 && files[0] > since && fresh.length === files.length;
 
-  let from = Number.isInteger(offset) && offset >= 0 ? offset : 0;
-  let reset = false;
-  if (from > size) {
-    from = 0;
-    reset = true;
+  if (fresh.length > PULL_MAX_RECORDS) fresh = fresh.slice(-PULL_MAX_RECORDS);
+
+  const records = [];
+  for (const base of fresh) {
+    const text = readRecordFile(dir, base);
+    if (text === null) continue;
+    let obj = null;
+    try { obj = JSON.parse(text); } catch { continue; }
+    const rec = normalizeRecord(obj);
+    if (rec) records.push(rec);
   }
-  if (from === size) return { records: [], offset: from, reset, live: true };
 
-  const to = Math.min(size, from + PULL_MAX_BYTES);
-  const text = readRange(file, from, to);
-  const cut = lastLineBreak(text);
-  if (cut === null) return { records: [], offset: from, reset, live: true };
-
-  let records = parseChunk(text.slice(0, cut));
-  let next = from + Buffer.byteLength(text.slice(0, cut), 'utf8');
-  if (records.length > PULL_MAX_RECORDS) {
-    records = records.slice(-PULL_MAX_RECORDS);
-  }
-  return { records, offset: next, reset, live: true };
+  const next = fresh.length ? fresh[fresh.length - 1] : since;
+  return { records, cursor: next, reset, live: true };
 }
 
 module.exports = {
-  CONSOLE_MAX_BYTES,
-  PULL_MAX_BYTES,
+  CONSOLE_MAX_RECORDS,
+  RECORD_MAX_BYTES,
   PULL_MAX_RECORDS,
   stripAnsi,
   splitFailure,

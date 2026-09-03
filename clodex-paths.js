@@ -31,8 +31,8 @@
 //     selection.sh       attachment drain hook (same defensive posture)
 //     notices.sh         deferred-notice drain hook (same defensive posture;
 //                        the QUEUE it drains is at the shared root below)
-//     bash-console.jsonl Bash tool calls + output (docs/notes/bash-console.md)
-//     bash-console.sh    the PostToolUse/PostToolUseFailure append hook
+//     bash-console/      Bash calls, one file per record (a DIRECTORY, like zsh/)
+//     bash-console.sh    the PostToolUse/PostToolUseFailure spool writer
 //     zsh/               generated ZDOTDIR for the drawer terminal's OSC 133
 //                        shim — a DIRECTORY, unlike every other kind
 //
@@ -101,10 +101,10 @@ const KINDS = {
   selection: 'selection.jsonl',
   selectionScript: 'selection.sh',
   noticeScript: 'notices.sh',
-  bashConsole: 'bash-console.jsonl',
+  bashConsole: 'bash-console',
   bashConsoleScript: 'bash-console.sh',
-  // The ONE kind that is a DIRECTORY, not a file: zsh reads a whole set of
-  // startup files from $ZDOTDIR, so the shim has to be a dir to redirect it.
+  // A DIRECTORY kind, not a file (bashConsole above is the other): zsh reads a
+  // whole set of startup files from $ZDOTDIR, so the shim must be a dir.
   // The legacy sweep's rmSync is non-recursive and would refuse it, which is
   // harmless — no flat build ever wrote a `{name}-zsh`, and the sweep is
   // name-driven, so it can only ever look for one that is not there. The entry
@@ -147,7 +147,7 @@ const LEGACY_SUFFIXES = {
   selection: '-selection.jsonl',
   selectionScript: '-selection.sh',
   noticeScript: '-notices.sh',
-  bashConsole: '-bash-console.jsonl',
+  bashConsole: '-bash-console',
   bashConsoleScript: '-bash-console.sh',
   termShim: '-zsh',
 };

@@ -11,7 +11,7 @@ const { denyAgentRules } = require('./agents-util');
 // its reasoning stays the single source — a second literal in a template string
 // is exactly the copy that drifts the first time either is touched.
 const { NOTICE_MAX_AGE_MS } = require('./notice-queue');
-const { CONSOLE_MAX_BYTES } = require('./bash-console');
+const { CONSOLE_MAX_RECORDS } = require('./bash-console');
 
 // `composeRoster` is injected rather than imported: this module must stay
 // electron-free and free of session state, and resolving a team needs both a cwd
@@ -141,11 +141,20 @@ printf '%s\\n' "$IN" >> "${attnPath}"
     const consolePath = pathFor(REGISTRY_DIR, name, 'bashConsole');
     const consoleScriptPath = pathFor(REGISTRY_DIR, name, 'bashConsoleScript');
     fs.writeFileSync(consoleScriptPath, `#!/bin/bash
-if [ -f "${consolePath}" ] && [ "$(wc -c < "${consolePath}" 2>/dev/null || echo 0)" -gt ${CONSOLE_MAX_BYTES} ]; then
-  mv -f "${consolePath}" "${consolePath}.1" 2>/dev/null || true
+D="${consolePath}"
+mkdir -p "$D" 2>/dev/null || exit 0
+T="$D/.tmp.$$"
+cat > "$T" 2>/dev/null || { rm -f "$T" 2>/dev/null; exit 0; }
+mv -f "$T" "$D/$(date +%s%N)-$$.json" 2>/dev/null || rm -f "$T" 2>/dev/null
+set -- "$D"/*.json
+if [ "$#" -gt ${CONSOLE_MAX_RECORDS} ]; then
+  n=$(( $# - ${CONSOLE_MAX_RECORDS} ))
+  for f in "$@"; do
+    [ "$n" -gt 0 ] || break
+    rm -f "$f" 2>/dev/null
+    n=$(( n - 1 ))
+  done
 fi
-cat >> "${consolePath}" 2>/dev/null || true
-printf '\\n' >> "${consolePath}" 2>/dev/null || true
 exit 0
 `, { mode: 0o700 });
 

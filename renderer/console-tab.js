@@ -18,7 +18,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function stateFor(name) {
     let st = seats.get(name);
     if (!st) {
-      st = { offset: 0, blocks: [] };
+      st = { cursor: '', blocks: [] };
       seats.set(name, st);
     }
     return st;
@@ -107,17 +107,16 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     const st = stateFor(name);
     let res = null;
     try {
-      res = await window.api.consoleRead(name, st.offset);
+      res = await window.api.consoleRead(name, st.cursor);
     } catch {
       return;
     }
     if (!res || seat !== name) return;
     if (res.reset) {
-      st.offset = 0;
       st.blocks.length = 0;
       renderAll();
     }
-    st.offset = typeof res.offset === 'number' ? res.offset : st.offset;
+    st.cursor = typeof res.cursor === 'string' && res.cursor ? res.cursor : st.cursor;
     const records = Array.isArray(res.records) ? res.records : [];
     if (!records.length) return;
     appendNew(st, records);

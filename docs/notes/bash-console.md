@@ -26,14 +26,15 @@ prefix is the CLI's wording, not a guarantee.
 
 ## readBashConsole
 
-`tool_response.stdout` is capped at exactly 30000 characters. Past that the
-payload gains `persistedOutputPath` (under
-`~/.claude/projects/<slug>/<session>/tool-results/<id>.txt`, which exists and is
-retained) and `persistedOutputSize`: `seq 1 20000` gave stdout of exactly 30000
-and a persisted file of 108894 bytes. `truncated` + `fullBytes` report that
-honestly. That file is deliberately NOT read: reading an absolute path out of a
-payload to render a nicety is a channel this does not need.
+Reads a DIRECTORY of one-file-per-record (`docs/notes/cli-hooks.md` says why that
+shape, not an append). The cursor is the last basename read, not a byte offset:
+the writer's fixed-width timestamp makes lexicographic order chronological, so
+"newer than" is a string compare. A cursor naming a record the prune deleted
+reports `reset` — that reader has a gap it cannot fill.
 
-Hooks are FAIL-OPEN: one pointing at a nonexistent script leaves the Bash call
-working. `CLAUDE_CODE_SHELL_PREFIX` is the opposite, measured FATAL — a missing
-prefix script failed every Bash call AND killed the SessionEnd hook. Never add one.
+`tool_response.stdout` is capped at exactly 30000 characters. Past that the payload
+gains `persistedOutputPath` (`~/.claude/projects/<slug>/<session>/tool-results/`,
+which exists and is retained) and `persistedOutputSize`: `seq 1 20000` gave stdout
+of exactly 30000 and a persisted file of 108894 bytes. `truncated` + `fullBytes`
+report that honestly. That file is deliberately NOT read: opening an absolute path
+out of a payload to render a nicety is a channel this does not need.

@@ -14,6 +14,14 @@
 // while this was built), trimmed only of fields the reader ignores. Hand-written
 // approximations would let the reader stay green against a shape the CLI never
 // sends, which is the one failure this module cannot survive.
+//
+// ONE RECORD PER FILE, claimed by atomic rename, because the CLI fires Bash hooks
+// CONCURRENTLY. The first shape of this feature appended to a shared JSONL and
+// lost records: measured, four concurrent writers left 1/20 records parseable at
+// 400-byte payloads, and the loss was SILENT because a damaged line fails
+// JSON.parse and is skipped. `printf '%s\n' "$(cat)"` as a single write is NOT
+// sufficient either (12/40) — a 35KB append is not atomic on APFS. The
+// concurrency test at the bottom of this file is the one that holds that line.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -22,10 +30,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  CONSOLE_MAX_BYTES, PULL_MAX_BYTES, PULL_MAX_RECORDS,
+  CONSOLE_MAX_RECORDS, RECORD_MAX_BYTES, PULL_MAX_RECORDS,
   stripAnsi, splitFailure, normalizeRecord, parseChunk, readBashConsole,
 } = require('../bash-console');
-const { pathFor, runDirFor } = require('../clodex-paths');
+const { pathFor } = require('../clodex-paths');
 
 // A real PostToolUse payload for `printf "OUT1\nERR1\n"; printf "E2\n" >&2`.
 // The interleaving is the measured fact: stdout and stderr arrive ALREADY
@@ -61,11 +69,18 @@ function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'clx-console-'));
 }
 
-function writeLines(root, name, objs) {
-  fs.mkdirSync(runDirFor(root, name), { recursive: true });
-  const file = pathFor(root, name, 'bashConsole');
-  fs.appendFileSync(file, objs.map((o) => JSON.stringify(o)).join('\n') + '\n');
-  return file;
+function spoolDir(root, name) {
+  const dir = pathFor(root, name, 'bashConsole');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// The hook's own naming: <epoch-ns>-<pid>.json, fixed-width so lexicographic
+// order IS chronological order. Returns the basename, which is the cursor.
+function writeRecord(root, name, obj, stamp) {
+  const base = `${stamp}-9.json`;
+  fs.writeFileSync(path.join(spoolDir(root, name), base), JSON.stringify(obj));
+  return base;
 }
 
 test('a succeeding call becomes a block whose output is the merged stream', () => {
@@ -180,87 +195,101 @@ test('a corrupt line is skipped without aborting the batch around it', () => {
 
 test('readBashConsole is incremental: a second read returns only what is new', () => {
   const root = tmp();
-  writeLines(root, 'agent1', [OK_PAYLOAD]);
+  writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000001');
 
-  const first = readBashConsole(root, 'agent1', 0);
+  const first = readBashConsole(root, 'agent1', '');
   assert.strictEqual(first.live, true);
   assert.strictEqual(first.records.length, 1, 'ENTER: the first pull saw the first call');
-  assert.ok(first.offset > 0);
+  assert.ok(first.cursor, 'and handed back a cursor to resume from');
 
-  const idle = readBashConsole(root, 'agent1', first.offset);
+  const idle = readBashConsole(root, 'agent1', first.cursor);
   assert.deepStrictEqual(idle.records, [], 'nothing new means no records');
-  assert.strictEqual(idle.offset, first.offset, 'and the offset does not move');
+  assert.strictEqual(idle.cursor, first.cursor, 'and the cursor does not move');
 
-  writeLines(root, 'agent1', [FAIL_PAYLOAD]);
-  const second = readBashConsole(root, 'agent1', idle.offset);
+  writeRecord(root, 'agent1', FAIL_PAYLOAD, '00000000000000000002');
+  const second = readBashConsole(root, 'agent1', idle.cursor);
   assert.strictEqual(second.records.length, 1, 'only the NEW call, not both');
   assert.strictEqual(second.records[0].command, 'cat /nope/definitely-missing-t645');
 });
 
 // A seat with no console yet (no Bash call, or a codex seat) must read as empty
 // rather than throwing — the tenant polls before the first call exists.
-test('an absent file reads as not-live with no records', () => {
+test('an absent spool reads as not-live with no records', () => {
   const root = tmp();
-  const res = readBashConsole(root, 'never-ran', 0);
-  assert.deepStrictEqual(res, { records: [], offset: 0, reset: false, live: false });
+  const res = readBashConsole(root, 'never-ran', '');
+  assert.deepStrictEqual(res, { records: [], cursor: '', reset: false, live: false });
 });
 
-// Rotation moves the file out from under a live reader, so the held offset now
-// points past the end of a SHORTER file. Without the reset the reader would sit
-// at that offset forever and the tab would silently stop updating.
-test('an offset past the end signals a reset and re-reads from zero', () => {
+// The prune drops the OLDEST records, so a reader whose cursor names a pruned
+// record has a GAP it cannot fill. Saying so lets the tenant redraw instead of
+// stitching new blocks onto a history that is missing its middle.
+test('a cursor whose record was pruned away reports a reset', () => {
   const root = tmp();
-  writeLines(root, 'agent1', [OK_PAYLOAD, FAIL_PAYLOAD]);
-  const big = readBashConsole(root, 'agent1', 0);
-  assert.strictEqual(big.records.length, 2, 'ENTER: two records to be rotated away');
-
-  fs.writeFileSync(pathFor(root, 'agent1', 'bashConsole'), `${JSON.stringify(OK_PAYLOAD)}\n`);
-  const after = readBashConsole(root, 'agent1', big.offset);
-  assert.strictEqual(after.reset, true, 'the reader must be told its view is stale');
-  assert.strictEqual(after.records.length, 1, 'and re-read the shorter file from the start');
+  writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000005');
+  const stale = '00000000000000000001-1.json';   // older than everything present
+  const res = readBashConsole(root, 'agent1', stale);
+  assert.strictEqual(res.reset, true, 'the reader must be told its continuity broke');
+  assert.strictEqual(res.records.length, 1, 'and get everything that survived');
 });
 
-// A partial line is the normal state: the hook appends while the reader reads.
-// Consuming it would corrupt the record AND advance the offset past it.
-test('a half-written trailing line is left for the next read', () => {
+test('an ordinary resume is NOT reported as a reset', () => {
   const root = tmp();
-  fs.mkdirSync(runDirFor(root, 'agent1'), { recursive: true });
-  const file = pathFor(root, 'agent1', 'bashConsole');
-  const whole = `${JSON.stringify(OK_PAYLOAD)}\n`;
-  const half = JSON.stringify(FAIL_PAYLOAD).slice(0, 40);
-  fs.writeFileSync(file, whole + half);
-
-  const res = readBashConsole(root, 'agent1', 0);
-  assert.strictEqual(res.records.length, 1, 'only the complete record is returned');
-  assert.strictEqual(res.offset, Buffer.byteLength(whole, 'utf8'),
-    'the offset stops at the line break, so the partial line is re-read whole');
-
-  fs.appendFileSync(file, JSON.stringify(FAIL_PAYLOAD).slice(40) + '\n');
-  const next = readBashConsole(root, 'agent1', res.offset);
-  assert.strictEqual(next.records.length, 1, 'ENTER: the completed line parsed on the next pull');
-  assert.strictEqual(next.records[0].exitCode, 1, 'and it parsed as the real failure, not as garbage');
+  const a = writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000001');
+  writeRecord(root, 'agent1', FAIL_PAYLOAD, '00000000000000000002');
+  const res = readBashConsole(root, 'agent1', a);
+  assert.strictEqual(res.reset, false,
+    'the cursor record is still on disk, so nothing was missed');
+  assert.strictEqual(res.records.length, 1, 'ENTER: it still returned the newer record');
 });
 
-// A backlog must not arrive as one unbounded IPC reply. The offset still
-// advances past everything read, so the drop is bounded and forward-only.
+// A record is a whole file claimed by rename, so a reader can never see a
+// half-written one — but a truncated or corrupt file must not abort the batch.
+test('a corrupt record file is skipped without losing its neighbours', () => {
+  const root = tmp();
+  writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000001');
+  fs.writeFileSync(path.join(spoolDir(root, 'agent1'), '00000000000000000002-9.json'), '{not json');
+  writeRecord(root, 'agent1', FAIL_PAYLOAD, '00000000000000000003');
+
+  const res = readBashConsole(root, 'agent1', '');
+  assert.strictEqual(res.records.length, 2, 'ENTER: both real records survived the corrupt middle file');
+  assert.deepStrictEqual(res.records.map((r) => r.failed), [false, true]);
+  assert.strictEqual(res.cursor, '00000000000000000003-9.json',
+    'the cursor advances past the corrupt file so it is not re-read forever');
+});
+
+// The in-flight `.tmp.<pid>` a writer is still filling must be invisible: it is
+// not yet a record, and reading it is exactly the torn read the rename prevents.
+test('an in-flight .tmp file is not a record', () => {
+  const root = tmp();
+  writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000001');
+  fs.writeFileSync(path.join(spoolDir(root, 'agent1'), '.tmp.4242'), '{"partial":');
+  const res = readBashConsole(root, 'agent1', '');
+  assert.strictEqual(res.records.length, 1, 'only the renamed record counts');
+});
+
+// A backlog must not arrive as one unbounded IPC reply. The cursor still
+// advances past everything considered, so the drop is bounded and forward-only.
 test('a large backlog is capped per pull but never re-read', () => {
   const root = tmp();
-  const many = [];
-  for (let i = 0; i < PULL_MAX_RECORDS + 20; i++) {
-    many.push({ ...OK_PAYLOAD, tool_input: { command: `echo ${i}` } });
+  const total = PULL_MAX_RECORDS + 20;
+  for (let i = 0; i < total; i++) {
+    writeRecord(root, 'agent1',
+      { ...OK_PAYLOAD, tool_input: { command: `echo ${i}` } },
+      String(i).padStart(20, '0'));
   }
-  writeLines(root, 'agent1', many);
-  const res = readBashConsole(root, 'agent1', 0);
+  const res = readBashConsole(root, 'agent1', '');
   assert.strictEqual(res.records.length, PULL_MAX_RECORDS, 'the reply is capped');
-  assert.strictEqual(res.records[res.records.length - 1].command,
-    `echo ${many.length - 1}`, 'and it keeps the NEWEST, which is what the operator is watching');
-  const after = readBashConsole(root, 'agent1', res.offset);
-  assert.deepStrictEqual(after.records, [], 'the offset advanced past the whole batch');
+  assert.strictEqual(res.records[res.records.length - 1].command, `echo ${total - 1}`,
+    'and it keeps the NEWEST, which is what the operator is watching');
+  const after = readBashConsole(root, 'agent1', res.cursor);
+  assert.deepStrictEqual(after.records, [], 'the cursor advanced past the whole batch');
 });
 
 test('the caps are real numbers in the right order', () => {
-  assert.strictEqual(CONSOLE_MAX_BYTES, 4 * 1024 * 1024);
-  assert.ok(PULL_MAX_BYTES < CONSOLE_MAX_BYTES,
-    'one pull must not be able to carry the whole file');
+  assert.ok(PULL_MAX_RECORDS < CONSOLE_MAX_RECORDS,
+    'one pull must not be able to carry the whole retained spool');
   assert.ok(PULL_MAX_RECORDS > 0 && PULL_MAX_RECORDS < 1000);
+  // A single record is bounded well above the CLI's own 30000-char stdout cap,
+  // so the guard only ever rejects something pathological.
+  assert.ok(RECORD_MAX_BYTES > 30000 * 2);
 });

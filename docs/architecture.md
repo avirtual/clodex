@@ -208,8 +208,11 @@ bundle), whose packaged form is the Docker image under
   read), and **must not be merged with the prompt delta**, which is
   at-least-once.
 - **bash-console.js** — the reader behind the drawer's Console tab: normalizes the
-  raw hook JSON `run/<name>/bash-console.sh` appends into blocks, and serves them
-  incrementally by byte offset (`console:read`). It owns the TWO-SHAPE problem —
+  raw hook JSON into blocks and serves them incrementally by CURSOR — the last
+  spool basename read (`console:read`). The spool is a DIRECTORY of one file per
+  record, claimed by atomic rename, because the CLI fires Bash hooks CONCURRENTLY
+  and a shared append loses records silently (`docs/notes/cli-hooks.md` has the
+  measurements). It owns the TWO-SHAPE problem —
   a succeeding Bash call fires `PostToolUse` with `tool_response`, a FAILING one
   fires `PostToolUseFailure` with no `tool_response` and the exit code inside a
   top-level `error` — so a reader built for only the first silently omits every

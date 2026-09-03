@@ -115,7 +115,7 @@ to respawn the session later (bash included — restored as a fresh shell).
 **Per-agent runtime dir.** Everything one agent generates lives under
 `~/.clodex/run/<name>/` with UNSUFFIXED names (`hook.sh`, `hook.json`,
 `transcript.jsonl`, `agent.json`, `agent.sock`, `statusline.sh`, `attn.jsonl`,
-`acks`, `pending.sh`, `ctx`, `ctxwarn`, `append-prompt.md`, `bash-console.jsonl`,
+`acks`, `pending.sh`, `ctx`, `ctxwarn`, `append-prompt.md`, `bash-console/`,
 … — the keys of
 `KINDS` in `clodex-paths.js`).
 `clodex-paths.js` (`pathFor` / `runDirFor`) is the single source of that

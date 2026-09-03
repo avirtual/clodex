@@ -2095,11 +2095,12 @@ function registerIpcHandlers(deps) {
       const svc = getCtlService();
       return svc ? svc.helpIndex() : null;
     });
-    handle('console:read', (_e, name, offset) => {
+    handle('console:read', (_e, name, cursor) => {
       const raw = typeof name === 'string' ? name : '';
       const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
-      if (!seat) return { records: [], offset: 0, reset: false, live: false };
-      return readBashConsole(REGISTRY_DIR, seat, Number(offset) || 0);
+      if (!seat) return { records: [], cursor: '', reset: false, live: false };
+      const since = typeof cursor === 'string' && /^[0-9]{1,32}-[0-9]{1,16}\.json$/.test(cursor) ? cursor : '';
+      return readBashConsole(REGISTRY_DIR, seat, since);
     });
     // The drawer selection as a tail hint on the named session's route. Inside
     // this gate for the sharpest reason in this block: the others run something

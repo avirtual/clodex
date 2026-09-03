@@ -23,7 +23,9 @@ blocks a release.
   seats, since that is where the data comes from.
   Output arrives at completion, not as it streams, so a long-running command
   shows nothing until it finishes. When the CLI truncates a very large result the
-  block says so and reports the full size.
+  block says so and reports the full size. Parallel Bash calls are all captured
+  intact — each is recorded as its own file, so concurrent calls cannot overwrite
+  or splice each other.
 
 ## 5.25.0 — 2026-09-03
 
