@@ -394,15 +394,12 @@ const EXCLUDED_CLASSES = {
 // leaving the other unguarded is a green suite over a live defect — which is how
 // clx-modal-bg survived a round twice over: it sat in a directory the sweep did
 // not read, AND it is not spelled "overlay".
-const CLASS_SCAN_DIRS = ['renderer', 'renderer/popovers', 'renderer/web'];
+const CLASS_SCAN_DIRS = ['renderer', 'renderer/lib', 'renderer/popovers', 'renderer/web'];
 const BACKDROP_TOKEN = /overlay|modal|backdrop|scrim/;
-
-// renderer/lib holds the guard's own pure leaves, which build no DOM.
-const CLASS_SCAN_EXEMPT_DIRS = ['renderer/lib'];
 
 // Directories under renderer/ that contain .js, walked rather than listed. The
 // floors on CLASS_SCAN_DIRS below assert each named directory still CONTRIBUTES;
-// none of them can notice a FOURTH directory being added, which is exactly how
+// none of them can notice a NEW directory being added, which is exactly how
 // renderer/web/ stayed invisible for two rounds.
 function rendererJsDirs(rel = 'renderer', out = []) {
   const entries = fs.readdirSync(path.join(ROOT, rel), { withFileTypes: true });
@@ -458,12 +455,12 @@ test('the class probe survives an array-LIKE, not just an Array', () => {
   assert.strictEqual(anyOverlayOpen(probes), true);
 });
 
-test('no renderer/ subdirectory escapes the class scan unclassified', () => {
+test('no renderer/ subdirectory escapes the class scan', () => {
   // The scan's file set is hand-kept, so a new subdirectory joins the tree
   // silently and contributes nothing. Each existing entry is floored elsewhere
   // as "still contributes"; a floor cannot see an ADDITION, so the walked set is
-  // compared whole against the classified one. A new directory reds here until
-  // someone puts it in CLASS_SCAN_DIRS or exempts it deliberately.
+  // compared whole against the scanned one. A new directory reds here until
+  // someone puts it in CLASS_SCAN_DIRS.
   const walked = rendererJsDirs().sort();
 
   // ENTER: the walker must reach past the top level, or the comparison below is
@@ -472,9 +469,8 @@ test('no renderer/ subdirectory escapes the class scan unclassified', () => {
     `ENTER: the walk must find nested dirs — got ${JSON.stringify(walked)}`);
   assert.ok(walked.includes('renderer'), 'ENTER: the walk must include renderer/ itself');
 
-  const classified = [...CLASS_SCAN_DIRS, ...CLASS_SCAN_EXEMPT_DIRS].sort();
-  assert.deepStrictEqual(walked, classified,
-    'a renderer/ subdirectory is neither scanned nor exempted — a backdrop built there is invisible');
+  assert.deepStrictEqual(walked, [...CLASS_SCAN_DIRS].sort(),
+    'a renderer/ subdirectory is not scanned — a backdrop built there is invisible');
 });
 
 test('every modal class CREATED IN SCRIPT is guarded or excluded with a reason', () => {

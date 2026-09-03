@@ -2384,11 +2384,6 @@ dialogOverlay.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitDialog();
 });
 dialogOverlay.addEventListener('mousedown', (e) => { if (e.target === dialogOverlay) closeDialog(); });
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const open = openOverlayIds(overlayProbes);
-  if (open.length === 1 && open[0] === 'dialog-overlay') closeDialog();
-});
 
 
 function setDialogMode(mode) {
@@ -3812,6 +3807,24 @@ const overlayElementById = (id) => document.getElementById(id);
 const overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
 const overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClass };
 
+const ESCAPE_CLOSES = [
+  ['dialog-overlay', () => closeDialog()],
+  ['discovery-overlay', () => closeDiscovery()],
+  ['peers-overlay', () => closePeersDialog()],
+  ['plugins-overlay', () => closePluginsDialog()],
+  ['sandbox-overlay', () => closeSandboxDialog()],
+  ['prefs-overlay', () => closePrefs()],
+  ['args-overlay', () => closeArgsDialog()],
+];
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const open = openOverlayIds(overlayProbes);
+  if (open.length !== 1) return;
+  const row = ESCAPE_CLOSES.find(([id]) => id === open[0]);
+  if (row) row[1]();
+});
+
 function runCloseChord() {
   return performCloseChord({
     ...overlayProbes,
@@ -4090,7 +4103,7 @@ async function openDiscovery() {
 
 if (discoveryRefresh) discoveryRefresh.addEventListener('click', () => openDiscovery());
 if (discoveryClose) discoveryClose.addEventListener('click', () => closeDiscovery());
-if (discoveryOverlay) discoveryOverlay.addEventListener('click', (e) => { if (e.target === discoveryOverlay) closeDiscovery(); });
+if (discoveryOverlay) discoveryOverlay.addEventListener('mousedown', (e) => { if (e.target === discoveryOverlay) closeDiscovery(); });
 window.api.onRequestOpenDiscovery(() => openDiscovery());
 const btnDiscover = document.getElementById('btn-discover');
 if (btnDiscover) btnDiscover.addEventListener('click', () => openDiscovery());
@@ -5135,8 +5148,7 @@ async function renderPluginsDialog() {
 
 // A plugin's own settings live with the plugin, not in Preferences. The panel is INLINE under
 // the row rather than a second overlay: #prefs-overlay and #plugins-overlay are siblings with no
-// stacking manager, so a dialog opened over a dialog is a layering bug, and Escape would close
-// the wrong one.
+// stacking manager, so a dialog opened over a dialog is a layering bug.
 function makePluginSettingsPanel(p, row) {
   const panel = document.createElement('div');
   panel.className = 'plugin-settings-panel hidden';
@@ -5884,11 +5896,6 @@ function collectChecked(container) {
 
 document.getElementById('btn-prefs-cancel').addEventListener('click', closePrefs);
 prefsOverlay.addEventListener('mousedown', (e) => { if (e.target === prefsOverlay) closePrefs(); });
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const open = openOverlayIds(overlayProbes);
-  if (open.length === 1 && open[0] === 'prefs-overlay') closePrefs();
-});
 document.getElementById('btn-prefs-save').addEventListener('click', async () => {
   await window.api.setSettings({
     statusline: {
@@ -6138,11 +6145,6 @@ function closeArgsDialog() {
 
 document.getElementById('btn-args-cancel').addEventListener('click', closeArgsDialog);
 argsOverlay.addEventListener('mousedown', (e) => { if (e.target === argsOverlay) closeArgsDialog(); });
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const open = openOverlayIds(overlayProbes);
-  if (open.length === 1 && open[0] === 'args-overlay') closeArgsDialog();
-});
 document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (!argsEditingName) return closeArgsDialog();
   const parsed = withModelArg(parseArgs(argsInput.value || ''), argsModel.value);
