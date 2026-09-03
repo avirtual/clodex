@@ -20415,7 +20415,8 @@ ${i3.join("\n")}
             brightMagenta: "#d8b4fe",
             brightCyan: "#67e8f9",
             brightWhite: "#fff"
-          }
+          },
+          echo: { bg: "#262a44", fg: "#eeeeee", prompt: "#e94560" }
         },
         claude: {
           label: "Claude (warm dark)",
@@ -20440,7 +20441,8 @@ ${i3.join("\n")}
             brightMagenta: "#c6a7ce",
             brightCyan: "#8ec9cd",
             brightWhite: "#fffefb"
-          }
+          },
+          echo: { bg: "#33312d", fg: "#f5f4ef", prompt: "#d97757" }
         },
         paper: {
           label: "Paper (dim light)",
@@ -20468,7 +20470,8 @@ ${i3.join("\n")}
             brightMagenta: "#6e3b7f",
             brightCyan: "#226c71",
             brightWhite: "#33302a"
-          }
+          },
+          echo: { bg: "#dcd6c3", fg: "#33302a", prompt: "#9c331d" }
         },
         light: {
           label: "Light",
@@ -20493,7 +20496,8 @@ ${i3.join("\n")}
             brightMagenta: "#763f88",
             brightCyan: "#247479",
             brightWhite: "#1f1e1d"
-          }
+          },
+          echo: { bg: "#e8e4d9", fg: "#1f1e1d", prompt: "#a8351f" }
         }
       };
       var STRIP_LEVELS = [
@@ -24768,6 +24772,9 @@ helper=${d.helperPath}`;
         function currentXtermTheme() {
           return THEMES[themeName()].xterm;
         }
+        function currentEchoPalette() {
+          return THEMES[themeName()].echo || null;
+        }
         function applyTheme(name) {
           if (!THEMES[name]) name = THEME_DEFAULT;
           localStorage.setItem("clodex-theme", name);
@@ -24798,9 +24805,126 @@ helper=${d.helperPath}`;
           window.api.setTheme(themeName());
         } catch {
         }
-        return { currentXtermTheme };
+        return { currentXtermTheme, currentEchoPalette };
       }
       module.exports = { initThemes };
+    }
+  });
+
+  // renderer/lib/prompt-echo.js
+  var require_prompt_echo = __commonJS({
+    "renderer/lib/prompt-echo.js"(exports, module) {
+      "use strict";
+      var ECHO_BG = [240, 240, 240];
+      var ECHO_TEXT = [0, 0, 0];
+      var ECHO_PROMPT = [175, 175, 175];
+      var MATCHED_TRIPLETS = [ECHO_BG, ECHO_TEXT, ECHO_PROMPT];
+      var MAX_CARRY = 24;
+      var PARTIAL_CSI = /\x1b(?:\[[0-9;:]*)?$/;
+      function parseHex(v) {
+        if (Array.isArray(v)) return v.length === 3 ? v.map(Number) : null;
+        if (typeof v !== "string") return null;
+        let h = v.trim().replace(/^#/, "");
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      }
+      function sameTriplet(a, b) {
+        return a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+      }
+      function isBgParam(p) {
+        if (p === "49" || p === "48") return true;
+        const n = Number(p);
+        if (!Number.isInteger(n)) return false;
+        return n >= 40 && n <= 47 || n >= 100 && n <= 107;
+      }
+      function readColonSpec(part) {
+        const sub = part.split(":");
+        if (sub.length < 2) return null;
+        const lead = sub[0];
+        if (lead !== "38" && lead !== "48") return null;
+        if (sub[1] !== "2") return null;
+        const rest = sub.slice(2).filter((s, i) => !(i === 0 && s === ""));
+        if (rest.length !== 3) return null;
+        const rgb = rest.map(Number);
+        if (rgb.some((n) => !Number.isInteger(n))) return null;
+        return { lead, rgb, spaced: sub[2] === "" };
+      }
+      function colonOut(lead, rgb, spaced) {
+        return spaced ? `${lead}:2::${rgb.join(":")}` : `${lead}:2:${rgb.join(":")}`;
+      }
+      function rewriteBody(body, palette, state) {
+        const parts = body.split(";");
+        const out = [];
+        let changed = false;
+        let i = 0;
+        while (i < parts.length) {
+          const p = parts[i];
+          const colon = p.indexOf(":") !== -1 ? readColonSpec(p) : null;
+          if (colon) {
+            const sub = substitute(colon.lead, colon.rgb, palette, state);
+            if (sub) {
+              out.push(colonOut(colon.lead, sub, colon.spaced));
+              changed = true;
+            } else out.push(p);
+            i += 1;
+            continue;
+          }
+          if ((p === "38" || p === "48") && parts[i + 1] === "2" && parts.length >= i + 5) {
+            const rgb = [Number(parts[i + 2]), Number(parts[i + 3]), Number(parts[i + 4])];
+            if (rgb.every((n) => Number.isInteger(n))) {
+              const sub = substitute(p, rgb, palette, state);
+              if (sub) {
+                out.push(p, "2", String(sub[0]), String(sub[1]), String(sub[2]));
+                changed = true;
+              } else out.push(p, "2", parts[i + 2], parts[i + 3], parts[i + 4]);
+              i += 5;
+              continue;
+            }
+          }
+          if (p === "" || p === "0" || isBgParam(p)) state.echo = false;
+          out.push(p);
+          i += 1;
+        }
+        return changed ? out.join(";") : null;
+      }
+      function substitute(lead, rgb, palette, state) {
+        if (lead === "48") {
+          if (sameTriplet(rgb, ECHO_BG)) {
+            state.echo = true;
+            return parseHex(palette && palette.bg);
+          }
+          state.echo = false;
+          return null;
+        }
+        if (!state.echo) return null;
+        if (sameTriplet(rgb, ECHO_TEXT)) return parseHex(palette && palette.fg);
+        if (sameTriplet(rgb, ECHO_PROMPT)) return parseHex(palette && palette.prompt);
+        return null;
+      }
+      function rewriteEchoSgr(chunk, palette, state) {
+        const st = state || { echo: false, carry: "" };
+        if (typeof chunk !== "string") return { out: chunk, state: st };
+        const input = (st.carry || "") + chunk;
+        st.carry = "";
+        const m = PARTIAL_CSI.exec(input);
+        let body = input;
+        if (m && m[0].length <= MAX_CARRY) {
+          st.carry = m[0];
+          body = input.slice(0, input.length - m[0].length);
+        }
+        if (!palette || !parseHex(palette.bg)) return { out: body, state: st };
+        const out = body.replace(/\x1b\[([0-9;:]*)m/g, (whole, params) => {
+          const next = rewriteBody(params, palette, st);
+          return next === null ? whole : `\x1B[${next}m`;
+        });
+        return { out, state: st };
+      }
+      function createEchoRewriter(getPalette) {
+        const state = { echo: false, carry: "" };
+        return (chunk) => rewriteEchoSgr(chunk, getPalette(), state).out;
+      }
+      module.exports = { rewriteEchoSgr, createEchoRewriter, MATCHED_TRIPLETS, MAX_CARRY };
     }
   });
 
@@ -32598,6 +32722,7 @@ ${detail}` });
       } = require_voice_submit();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
+      var { createEchoRewriter } = require_prompt_echo();
       var { initLibraryDrawers } = require_library_drawers();
       var { createActivityTab } = require_activity_tab();
       var { createCtlTab } = require_ctl_tab();
@@ -32621,7 +32746,7 @@ ${detail}` });
       var { initPluginHost } = require_plugin_host();
       var sessions = /* @__PURE__ */ new Map();
       var activeSession = null;
-      var { currentXtermTheme } = initThemes({ sessions });
+      var { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
       (function initSidebarResize() {
         const resizer = document.getElementById("sidebar-resizer");
         if (!resizer) return;
@@ -33693,9 +33818,10 @@ ${detail}` });
           if (voiceSubmit) voiceSubmit.noteInput(data);
           window.api.writeToSession(name, data);
         });
-        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer });
+        const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
+        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer, echoRewrite });
         updateWindowTitle();
-        return { terminal, fitAddon, searchAddon, wrapperEl };
+        return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
       }
       document.addEventListener("dragover", (e) => e.preventDefault());
       document.addEventListener("drop", (e) => e.preventDefault());
@@ -34833,7 +34959,7 @@ ${detail}` });
       }
       window.api.onPtyData((name, data) => {
         const s = sessions.get(name);
-        if (s) s.terminal.write(data);
+        if (s) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
       });
       window.api.onSessionExit((name, code, meta) => {
         if (isToolInstallSession(name)) {
@@ -38230,7 +38356,7 @@ ${res.stderr}` : "");
             addFailedSessionToSidebar(entry);
             continue;
           }
-          const { terminal, fitAddon } = createTerminal(entry.name);
+          const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
           addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
           if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
           const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
@@ -38250,7 +38376,7 @@ ${res.stderr}` : "");
             window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
           } catch {
           }
-          if (entry.replay) terminal.write(entry.replay);
+          if (entry.replay) terminal.write(echoRewrite(entry.replay));
           if (typeof entry.ctx === "number") {
             ctxPct.set(entry.name, entry.ctx);
             applyCtxBadge(entry.name, entry.ctx);
