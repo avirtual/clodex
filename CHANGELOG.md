@@ -23,6 +23,11 @@ blocks a release.
   fault while its data was loading, and every one of these panels is now kept
   inside the window even when its anchor is gone.
 
+- **A peer's sessions and info panels could open off the top of the window.**
+  Both are anchored to a peer header in the sidebar, so a peer sitting high in
+  the list opened its panel above the top edge, out of reach. They are now kept
+  inside the window like the status bar's panels.
+
 - **Clicking the context, cost or cache-bust segment on the status bar
   occasionally did nothing.** The bar redraws itself whenever new proxy or
   context numbers arrive, and a redraw that landed in the middle of a press
