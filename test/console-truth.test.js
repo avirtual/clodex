@@ -330,14 +330,12 @@ test('a backgrounded call that DID carry output gets the truncation note', async
     'the note that describes what IS on screen is the truncation one');
 });
 
-// The CLI auto-backgrounds Bash calls under parallel load. Those PostToolUse
-// payloads carry `backgroundTaskId` on `tool_response` with stdout and stderr
-// both EMPTY — measured across every transcript on the author's box, 23 such
-// responses, 23 of them empty, none carrying a byte of output. The bytes never
-// reach the hook, so nothing at the capture layer can recover them; the only
-// defect in reach is the pane drawing a block that reads as "this printed
-// nothing" for a command that printed plenty.
-test('a backgrounded call says its output was never sent, not that there was none', async (t) => {
+// The CLI auto-backgrounds Bash calls under parallel load, and those PostToolUse
+// payloads carry `backgroundTaskId` with stdout and stderr both EMPTY. The
+// reader recovers the bytes from the task's own output file when it is still
+// there; this fixture has no `scratchpad_dir`, so no file can be derived and the
+// pane must say the output is GONE rather than that the command was quiet.
+test('a backgrounded call with no recoverable file says so, not that it was quiet', async (t) => {
   const p = await mountPane(t);
 
   fs.writeFileSync(path.join(p.dir, `${STAMP}-7.json`), JSON.stringify({
@@ -357,6 +355,65 @@ test('a backgrounded call says its output was never sent, not that there was non
     'a backgrounded call must carry a note rather than a bare empty block');
   assert.match(block.innerHTML, /never sent here/,
     'and the note must say the output never arrived, not that the command was quiet');
+  assert.match(block.innerHTML, /task file is gone/,
+    'naming WHY it cannot be shown, which is the state the operator can act on');
+});
+
+// The states this ticket exists to separate, driven through the real reader and
+// the real tenant. Rendering two of them identically is the defect itself, so
+// the assertion is that the notes are mutually DISTINCT — a shared "backgrounded"
+// prefix would otherwise let two collapse and still match every regex here.
+//
+// The empty-with-no-trailer case is the one round 1 got wrong: it captioned an
+// empty file "it really printed nothing" whatever the trailer said, which states
+// silence as fact for a task that may not have printed YET. A block is never
+// repainted once drawn, so that claim would be frozen for the session.
+test('the four background states draw as four distinct notes', async (t) => {
+  const p = await mountPane(t);
+
+  const bgRecord = (pid, taskId, fileText) => {
+    const scratch = path.join(p.dir, taskId, 'sess', 'scratchpad');
+    fs.mkdirSync(path.join(p.dir, taskId, 'sess', 'tasks'), { recursive: true });
+    if (fileText !== null) {
+      fs.writeFileSync(path.join(p.dir, taskId, 'sess', 'tasks', `${taskId}.output`), fileText);
+    }
+    fs.writeFileSync(path.join(p.dir, `${STAMP}-${pid}.json`), JSON.stringify({
+      ...OK,
+      scratchpad_dir: scratch,
+      tool_input: { command: `cmd-${taskId}` },
+      tool_use_id: `t-${taskId}`,
+      tool_response: {
+        stdout: '', stderr: '', interrupted: false, backgroundTaskId: taskId,
+      },
+    }));
+  };
+
+  bgRecord(21, 'aaaaaaaaa', 'REAL-OUTPUT-HERE\n\n[exited with code 0]\n');
+  bgRecord(22, 'bbbbbbbbb', '\n[exited with code 0]\n');
+  bgRecord(23, 'ccccccccc', null);
+  bgRecord(24, 'ddddddddd', '');
+  await p.tick();
+
+  assert.deepStrictEqual(p.painted,
+    ['cmd-aaaaaaaaa', 'cmd-bbbbbbbbb', 'cmd-ccccccccc', 'cmd-ddddddddd'],
+    'ENTER: all four background calls really were painted');
+
+  const html = [...p.body.children].slice(-4).map((n) => n.innerHTML);
+  assert.match(html[0], /REAL-OUTPUT-HERE/,
+    'the output the hook dropped is on screen, which is the whole ticket');
+  assert.doesNotMatch(html[0], /never sent here/,
+    'and it must not be captioned as missing while it is displayed');
+  assert.match(html[1], /really printed nothing/,
+    'an empty file WITH an exit line really did print nothing, and may say so');
+  assert.match(html[2], /task file is gone/, 'and the unrecoverable one says that instead');
+  assert.doesNotMatch(html[3], /really printed nothing/,
+    'an empty file with NO exit line may not state silence as fact — the task may not have printed yet');
+  assert.match(html[3], /as of this read/,
+    'it states the evidence it actually has instead');
+
+  const notes = html.map((h) => /console-block-note">([^<]*)</.exec(h)[1]);
+  assert.strictEqual(new Set(notes).size, 4,
+    `the four states must read differently, got: ${notes.join(' | ')}`);
 });
 
 // The note is specific to the backgrounded case: an ordinary call that genuinely

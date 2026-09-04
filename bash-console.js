@@ -7,6 +7,7 @@ const { pathFor } = require('./clodex-paths');
 const CONSOLE_MAX_RECORDS = 2000;
 const RECORD_MAX_BYTES = 256 * 1024;
 const PULL_MAX_RECORDS = 50;
+const BG_MAX_BYTES = 30000;
 
 const RECORD_NAME_RE = /^[0-9]{1,32}-[0-9]{1,16}\.json$/;
 
@@ -28,12 +29,42 @@ function stripAnsi(s) {
 }
 
 const EXIT_RE = /^Exit code (\d+)\n?/;
+const BG_TASK_ID_RE = /^[a-z0-9]{1,32}$/;
+const BG_EXIT_RE = /\n*\[exited with code (-?\d+)\]\n*$/;
 
 function splitFailure(error) {
   const raw = String(error == null ? '' : error);
   const m = EXIT_RE.exec(raw);
   if (!m) return { exitCode: null, output: raw };
   return { exitCode: Number(m[1]), output: raw.slice(m[0].length) };
+}
+
+function bgOutputPath(scratchpadDir, taskId) {
+  if (typeof scratchpadDir !== 'string' || !scratchpadDir) return null;
+  if (!path.isAbsolute(scratchpadDir)) return null;
+  if (typeof taskId !== 'string' || !BG_TASK_ID_RE.test(taskId)) return null;
+  return path.join(path.dirname(scratchpadDir), 'tasks', `${taskId}.output`);
+}
+
+function readBgOutput(file) {
+  let fd = null;
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) return null;
+    const size = st.size;
+    const tailed = size > BG_MAX_BYTES;
+    const len = tailed ? BG_MAX_BYTES : size;
+    const buf = Buffer.alloc(len);
+    fd = fs.openSync(file, 'r');
+    const got = len ? fs.readSync(fd, buf, 0, len, tailed ? size - len : 0) : 0;
+    fs.closeSync(fd);
+    fd = null;
+    if (got === 0 && size > 0) return null;
+    return { text: buf.subarray(0, got).toString('utf8'), size, tailed };
+  } catch {
+    if (fd !== null) { try { fs.closeSync(fd); } catch { fd = null; } }
+    return null;
+  }
 }
 
 function normalizeRecord(obj) {
@@ -63,6 +94,9 @@ function normalizeRecord(obj) {
       truncated: false,
       fullBytes: null,
       backgrounded: false,
+      bgState: null,
+      bgExitSeen: false,
+      tailed: false,
     };
   }
 
@@ -70,16 +104,48 @@ function normalizeRecord(obj) {
   const stdout = typeof resp.stdout === 'string' ? resp.stdout : '';
   const stderr = typeof resp.stderr === 'string' ? resp.stderr : '';
   const persistedSize = typeof resp.persistedOutputSize === 'number' ? resp.persistedOutputSize : null;
+  const taskId = typeof resp.backgroundTaskId === 'string' ? resp.backgroundTaskId : '';
+
+  let output = stripAnsi(stderr ? `${stdout}\n${stderr}` : stdout);
+  let exitCode = 0;
+  let failed = false;
+  let fullBytes = persistedSize;
+  let bgState = null;
+  let bgExitSeen = false;
+  let tailed = false;
+
+  if (taskId && !output.trim()) {
+    const file = bgOutputPath(obj.scratchpad_dir, taskId);
+    const got = file ? readBgOutput(file) : null;
+    if (!got || typeof got.text !== 'string') {
+      bgState = 'absent';
+    } else {
+      const m = BG_EXIT_RE.exec(got.text);
+      if (m) {
+        exitCode = Number(m[1]);
+        failed = exitCode !== 0;
+      }
+      bgExitSeen = !!m;
+      tailed = got.tailed === true;
+      if (tailed) fullBytes = got.size;
+      output = stripAnsi(m ? got.text.slice(0, got.text.length - m[0].length) : got.text.replace(/\n+$/, ''));
+      bgState = output.trim() ? 'attached' : 'empty';
+    }
+  }
+
   return {
     ...base,
-    failed: false,
-    exitCode: 0,
-    output: stripAnsi(stderr ? `${stdout}\n${stderr}` : stdout),
+    failed,
+    exitCode,
+    output,
     interrupted: resp.interrupted === true,
     timedOut: false,
     truncated: typeof resp.persistedOutputPath === 'string' && !!resp.persistedOutputPath,
-    fullBytes: persistedSize,
-    backgrounded: typeof resp.backgroundTaskId === 'string' && !!resp.backgroundTaskId,
+    fullBytes,
+    backgrounded: !!taskId,
+    bgState,
+    bgExitSeen,
+    tailed,
   };
 }
 
@@ -137,9 +203,12 @@ module.exports = {
   CONSOLE_MAX_RECORDS,
   RECORD_MAX_BYTES,
   PULL_MAX_RECORDS,
+  BG_MAX_BYTES,
   RECORD_NAME_RE,
   stripAnsi,
   splitFailure,
+  bgOutputPath,
+  readBgOutput,
   normalizeRecord,
   readBashConsole,
 };

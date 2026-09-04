@@ -31,8 +31,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  CONSOLE_MAX_RECORDS, RECORD_MAX_BYTES, PULL_MAX_RECORDS, RECORD_NAME_RE,
-  stripAnsi, splitFailure, normalizeRecord, readBashConsole,
+  CONSOLE_MAX_RECORDS, RECORD_MAX_BYTES, PULL_MAX_RECORDS, BG_MAX_BYTES, RECORD_NAME_RE,
+  stripAnsi, splitFailure, bgOutputPath, readBgOutput, normalizeRecord, readBashConsole,
 } = require('../bash-console');
 const { pathFor } = require('../clodex-paths');
 
@@ -102,6 +102,9 @@ test('a succeeding call becomes a block whose output is the merged stream', () =
     truncated: false,
     fullBytes: null,
     backgrounded: false,
+    bgState: null,
+    bgExitSeen: false,
+    tailed: false,
   });
 });
 
@@ -122,6 +125,9 @@ test('a FAILING call becomes a failed block with its exit code split out', () =>
     truncated: false,
     fullBytes: null,
     backgrounded: false,
+    bgState: null,
+    bgExitSeen: false,
+    tailed: false,
   });
 });
 
@@ -392,4 +398,198 @@ test('the caps are real numbers in the right order', () => {
   // A single record is bounded well above the CLI's own 30000-char stdout cap,
   // so the guard only ever rejects something pathological.
   assert.ok(RECORD_MAX_BYTES > 30000 * 2);
+});
+
+// An auto-backgrounded call reaches the hook with stdout and stderr both EMPTY:
+// measured on claude 2.1.260, 7 such responses across every seat spool on the
+// author's box, 7 empty. The bytes are not lost, though — the task's output file
+// OUTLIVES the call (unlike the foreground `persistedOutputPath`, which is
+// unlinked at completion), and `scratchpad_dir` on the record names its parent.
+// Every fixture below is built from the shape of a real captured record; the
+// path derivation resolved 7/7 of the real ones.
+const BG_PAYLOAD = {
+  session_id: 'f700d388-0cd0-483f-ab33-5762ad039ac4',
+  cwd: '/Users/bogdan/projects/tmux/wb-wrap-ui',
+  scratchpad_dir: '/private/tmp/claude-501/-proj/f700d388/scratchpad',
+  hook_event_name: 'PostToolUse',
+  tool_name: 'Bash',
+  tool_input: { command: 'npm run build' },
+  tool_response: {
+    stdout: '', stderr: '', interrupted: false, isImage: false,
+    noOutputExpected: false, backgroundTaskId: 'babsrioq4',
+  },
+  tool_use_id: 'toolu_bg',
+  duration_ms: 42,
+};
+
+// The output file is a SIBLING of the scratchpad dir, not a child: the CLI lays
+// out <base>/<project>/<session>/{scratchpad,tasks}/ and names the file after
+// the task id. Deriving it from the record is what makes the read possible at
+// all — nothing in the payload carries the path itself.
+function bgSpool(root, taskId, text) {
+  const scratch = path.join(root, 'proj', 'sess', 'scratchpad');
+  const tasks = path.join(root, 'proj', 'sess', 'tasks');
+  fs.mkdirSync(tasks, { recursive: true });
+  if (text !== null) fs.writeFileSync(path.join(tasks, `${taskId}.output`), text);
+  return scratch;
+}
+
+test('a backgrounded call gets the output the hook never carried', () => {
+  const root = tmp();
+  const scratch = bgSpool(root, 'babsrioq4',
+    'T648-BG-PROBE-LINE-1\nT648-BG-PROBE-STDERR\nT648-BG-PROBE-LINE-2\n\n[exited with code 0]\n');
+  const rec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
+
+  assert.strictEqual(rec.bgState, 'attached', 'ENTER: the file really was found and read');
+  assert.strictEqual(rec.output,
+    'T648-BG-PROBE-LINE-1\nT648-BG-PROBE-STDERR\nT648-BG-PROBE-LINE-2',
+    'the real bytes reach the pane, and the CLI exit trailer is not one of them');
+  assert.strictEqual(rec.bgExitSeen, true, 'the trailer was there, so the exit code is evidence not inference');
+  assert.strictEqual(rec.exitCode, 0);
+  assert.strictEqual(rec.failed, false);
+});
+
+// The whole point of the ticket: before this, a dropped-output call and a
+// genuinely silent one drew the same empty block. They must not be one state.
+test('an absent task file is a DIFFERENT state from an empty one', () => {
+  const gone = tmp();
+  const goneRec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: bgSpool(gone, 'babsrioq4', null) });
+  assert.strictEqual(goneRec.bgState, 'absent', 'no file at all: we cannot say what it printed');
+  assert.strictEqual(goneRec.output, '');
+
+  const quiet = tmp();
+  const quietRec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: bgSpool(quiet, 'babsrioq4', '\n[exited with code 0]\n') });
+  assert.strictEqual(quietRec.bgState, 'empty', 'a file holding only the trailer: it really printed nothing');
+  assert.strictEqual(quietRec.output, '');
+
+  assert.notStrictEqual(goneRec.bgState, quietRec.bgState,
+    'the two cases this ticket exists to separate must not collapse back together');
+});
+
+// A background command that FAILED renders as exit 0 without this: the
+// PostToolUse branch hardcodes success, and PostToolUseFailure never fires for
+// a call the CLI backgrounded.
+test('a failed background command reports its real exit code', () => {
+  const root = tmp();
+  const scratch = bgSpool(root, 'babsrioq4', 'boom\n\n[exited with code 144]\n');
+  const rec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
+  assert.strictEqual(rec.exitCode, 144, 'ENTER: the trailer really was parsed');
+  assert.strictEqual(rec.failed, true, 'and the block must draw as a failure');
+  assert.strictEqual(rec.output, 'boom');
+});
+
+// A missing trailer is evidence of NOTHING, so the field records only whether one
+// was seen. It must not be read as "still running": a task killed with the app,
+// or one whose dump was cut off, never writes a trailer either and is long dead.
+// Real counter-example on this box, a 49,274-byte finished dump ending mid-line:
+// .../0898f7eb-61eb-4792-bd26-ca98cb62ca9e/tasks/bkan8wpac.output, 0 trailers.
+test('a task file with no exit trailer reports no exit seen, and claims nothing more', () => {
+  const root = tmp();
+  const scratch = bgSpool(root, 'babsrioq4', 'step 1 done\nstep 2 done\n');
+  const rec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
+  assert.strictEqual(rec.bgExitSeen, false);
+  assert.strictEqual(rec.bgState, 'attached');
+  assert.strictEqual(rec.output, 'step 1 done\nstep 2 done');
+  assert.strictEqual(rec.exitCode, 0, 'no trailer means no exit code was read');
+  assert.strictEqual(rec.failed, false, 'and must not be drawn as failed for lacking one');
+});
+
+// A long-running build writes an unbounded file. The read is capped like every
+// other payload here, and takes the TAIL: the end is where the trailer and the
+// newest output are, and a head-truncated build log shows only its banner.
+test('an oversized task file is tail-read under the cap, and says so', () => {
+  const root = tmp();
+  const body = `${'x'.repeat(BG_MAX_BYTES * 2)}TAIL-MARKER\n\n[exited with code 0]\n`;
+  const scratch = bgSpool(root, 'babsrioq4', body);
+  const rec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
+
+  assert.strictEqual(rec.tailed, true, 'ENTER: the file really was over the cap');
+  assert.ok(rec.output.length <= BG_MAX_BYTES, 'the attached text is bounded');
+  assert.ok(rec.output.endsWith('TAIL-MARKER'),
+    'and it is the END of the file, so the newest output survives');
+  assert.strictEqual(rec.fullBytes, Buffer.byteLength(body),
+    'the true size is reported so the pane can say what fraction is on screen');
+});
+
+// The task id is the ONLY caller-influenced part of the derived path, so its
+// grammar is what keeps the join inside the tasks dir. Measured over 993
+// distinct ids in the transcripts here: every one is 9 chars of [a-z0-9].
+test('a task id outside the measured grammar derives no path at all', () => {
+  assert.strictEqual(bgOutputPath('/tmp/p/s/scratchpad', '../../../etc/passwd'), null);
+  assert.strictEqual(bgOutputPath('/tmp/p/s/scratchpad', 'has/slash'), null);
+  assert.strictEqual(bgOutputPath('/tmp/p/s/scratchpad', ''), null);
+  assert.strictEqual(bgOutputPath('relative/scratchpad', 'babsrioq4'), null);
+  assert.strictEqual(bgOutputPath(undefined, 'babsrioq4'), null,
+    'a record lacking scratchpad_dir simply has no file to read');
+  assert.strictEqual(bgOutputPath('/tmp/p/s/scratchpad', 'babsrioq4'),
+    '/tmp/p/s/tasks/babsrioq4.output');
+});
+
+// A payload that DID carry output must not be second-guessed against a file
+// that may since have been reused — the response is the authority when non-empty.
+test('a backgrounded call that carried output is not re-read from disk', () => {
+  const root = tmp();
+  const scratch = bgSpool(root, 'babsrioq4', 'FROM-THE-FILE\n[exited with code 0]\n');
+  const rec = normalizeRecord({
+    ...BG_PAYLOAD,
+    scratchpad_dir: scratch,
+    tool_response: { ...BG_PAYLOAD.tool_response, stdout: 'FROM-THE-RESPONSE' },
+  });
+  assert.strictEqual(rec.output, 'FROM-THE-RESPONSE');
+  assert.strictEqual(rec.bgState, null, 'no file state, because no file was consulted');
+});
+
+// An unreadable file must degrade to `absent`, not throw: this runs in the main
+// process inside the console:read handler, and a throw there fails the whole
+// pull, losing every OTHER record in the batch along with this one. The reader
+// is total by construction, so this pins the real files that could break it
+// rather than an injected stub that could not occur.
+test('an unreadable task file degrades to absent instead of throwing', () => {
+  const root = tmp();
+  const scratch = bgSpool(root, 'babsrioq4', null);
+  const tasks = path.join(root, 'proj', 'sess', 'tasks');
+
+  fs.mkdirSync(path.join(tasks, 'babsrioq4.output'));
+  const dirRec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
+  assert.strictEqual(dirRec.bgState, 'absent', 'a DIRECTORY where the file should be');
+  assert.strictEqual(readBgOutput(path.join(tasks, 'babsrioq4.output')), null);
+
+  assert.strictEqual(readBgOutput(path.join(tasks, 'no-such-file.output')), null,
+    'and a plain missing path');
+});
+
+// A file that SHRANK between the stat and the read yields 0 bytes at a tail
+// offset computed from the old size. Reporting that as an empty read would
+// caption a large file "printed nothing", so it degrades to absent instead.
+test('a file that shrinks under the tail offset reads as absent, not empty', () => {
+  const root = tmp();
+  const tasks = path.join(root, 'proj', 'sess', 'tasks');
+  const scratch = bgSpool(root, 'babsrioq4', 'x'.repeat(BG_MAX_BYTES * 2));
+  const file = path.join(tasks, 'babsrioq4.output');
+  const realStat = fs.statSync;
+  const big = realStat(file).size;
+  fs.writeFileSync(file, 'tiny');
+  fs.statSync = (p, ...rest) => {
+    const st = realStat(p, ...rest);
+    if (String(p) === file) return { ...st, isFile: () => true, size: big };
+    return st;
+  };
+  try {
+    assert.strictEqual(readBgOutput(file), null,
+      'a read that came back empty from a file the stat called large is not evidence of silence');
+  } finally {
+    fs.statSync = realStat;
+  }
+});
+
+// The reader must survive the file it is reading being replaced mid-poll, which
+// a live task does constantly. An empty file is a legal read, not a failure, and
+// must not be confused with one.
+test('a zero-byte task file reads as empty, not as absent', () => {
+  const root = tmp();
+  const scratch = bgSpool(root, 'babsrioq4', '');
+  const rec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
+  assert.strictEqual(rec.bgState, 'empty', 'ENTER: the zero-byte file really was read');
+  assert.strictEqual(rec.bgExitSeen, false, 'no trailer, so nothing is known about completion');
+  assert.strictEqual(rec.output, '');
 });
