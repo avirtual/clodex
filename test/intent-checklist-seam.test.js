@@ -182,11 +182,13 @@ test('t654: collectFormConfig writes `plugins` UNCONDITIONALLY, for every sessio
   assert.ok(!/\.\.\.\([^)]*\?\s*\{\s*plugins/.test(fn),
     'and never wrapped in a conditional spread the way intents/autoCompact are');
 
-  // A shell seat has no plugin checklist to read, so its value is `[]` — a real
-  // "this seat has no plugins", NOT the absent list. Pinned because writing
-  // `null` here would read as absent at every consumer and hand the seat all.
-  assert.match(fn, /collectPluginChecklist\(inputPluginList\)\s*:\s*\[\]/,
-    'a non-claude seat writes [], not null and not nothing');
+  // A seat whose dialog has no Plugins section gets the materialised
+  // globally-enabled set. Not `null` — that reads as absent at every consumer,
+  // and this key is EDITOR_OWNED so it is written either way. Not `[]` either:
+  // there is no UI to reopen a seat closed to every plugin, and the closure
+  // takes its onAgentText feed with it.
+  assert.match(fn, /:\s*defaultPluginTicks\(\);/,
+    'a non-claude seat writes the globally-enabled set, not null and not []');
 });
 
 test('t654: `plugins` is in EDITOR_OWNED — the maintained pair collectFormConfig names', () => {

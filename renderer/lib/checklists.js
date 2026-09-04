@@ -201,19 +201,20 @@ function defaultPluginTicks() {
 }
 
 // Core rows first and unchanged, then ONE `popover-subhead` per contributing
-// plugin — an unticked plugin has no header and no rows at all.
+// plugin — an unticked plugin has no header and no rows at all. A SET, not the
+// previous row: non-contiguous rows would draw a second header for one plugin.
 function renderIntentChecklist(container, intentsList) {
   container.innerHTML = '';
   const nameOf = new Map(pluginCatalogCache.map((p) => [String(p.id), p.name || p.id]));
-  let lastSource = null;
+  const headed = new Set();
   for (const it of intentCatalogCache) {
-    if (it.source && it.source !== 'core' && it.source !== lastSource) {
+    if (it.source && it.source !== 'core' && !headed.has(it.source)) {
+      headed.add(it.source);
       const head = document.createElement('div');
       head.className = 'popover-subhead';
       head.textContent = nameOf.get(String(it.source)) || it.source;
       container.appendChild(head);
     }
-    lastSource = it.source || null;
     const row = document.createElement('label');
     row.className = 'agent-check';
     const cb = document.createElement('input');

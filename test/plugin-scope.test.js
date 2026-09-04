@@ -531,6 +531,33 @@ test('session:setPlugins writes the parent, then prunes both children against it
     'as does every grant');
 }));
 
+// ROUND-2 P3: the grants door already runs sanitizeGrants; this one persisted
+// whatever strings arrived. A stored id is not inert — it becomes a plugin
+// storage directory name and a `data-plugin` CSS attribute selector downstream,
+// which is precisely why PLUGIN_ID_RE is narrower than the session-name regex.
+test('ROUND-2 P3: session:setPlugins filters ids at the door, house pattern', () => withReset(() => {
+  const f = ipcFixture({ entries: { seat: { name: 'seat' } } });
+  f.setPlugins('seat', ['good-plugin', 'BadCase', 'has space', '../traversal', '_host',
+    '-leading', 'trailing-', 'enabled', '', 42, null, 'also-good']);
+  assert.deepStrictEqual(f.store.seat.plugins, ['good-plugin', 'also-good'],
+    'only ids isValidPluginId admits are persisted — everything else is dropped rather than stored inert');
+  // Non-strings are refused rather than coerced, as at the grants door: `42`
+  // stringifies to a REGEX-LEGAL id, so a map(String) ahead of the filter would
+  // mint a plugin id out of a number nothing sent as one.
+  assert.strictEqual(f.store.seat.plugins.includes('42'), false, 'a number is not stringified into a legal id');
+
+  // A list of NOTHING BUT junk lands as [], which is a real value here (the seat
+  // that has no plugins) and not the absent living default. Losing that
+  // distinction at the door would flip the strictest seat to the loosest.
+  f.setPlugins('seat', ['!!!', 'Nope']);
+  assert.deepStrictEqual(f.store.seat.plugins, [], 'an all-junk list is [] — the strict seat, not the absent default');
+
+  // CONTROL for the non-array arm, which the filter must not have swallowed:
+  // null is the full-clear back to the living default, stored as ABSENCE.
+  f.setPlugins('seat', null);
+  assert.ok(!('plugins' in f.store.seat), 'CONTROL: a null list still clears the key back to the living default');
+}));
+
 test('session:setPluginGrants sanitizes at the door and stores divergence only', () => {
   const f = ipcFixture({ entries: { seat: { name: 'seat' } } });
   assert.deepStrictEqual(f.setGrants('nope', ['p:turns']), { ok: false, error: 'Session not found in persistence' });
@@ -987,6 +1014,80 @@ test('REWORK MF4: grants for plugins the dialog could not list survive a save', 
     + 'and then drops it on the way out is no fix at all');
   assert.match(popsrc, /unlistedGrants = grantsForUnlistedPlugins\(/,
     'and the carry-forward must be recomputed at render, not left from a prior session');
+});
+
+// ── ROUND-2 MF2: the same hazard on the SURFACING axis ──────────────────────
+// The plugin checklist draws pluginCatalog(), which is registered AND globally
+// enabled. A quarantined (automatic, on repeated failure) or globally-disabled
+// plugin has no row, so saving the checked set alone drops it from the seat's
+// `plugins` — and session:setPlugins then prunes its verbs and its grant tokens
+// on top of that. Re-enabling the plugin brings none of it back.
+test('ROUND-2 MF2: seat plugin ids the checklist could not draw survive a save', () => {
+  const { pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
+  const persisted = ['visible', 'quarantined', 'disabled'];
+
+  // CONTROL: a plugin the checklist DID draw is not carried — its checkbox is
+  // the operator's answer, and carrying it would make the box inert. Without
+  // this, a function returning everything would pass the assertions below.
+  assert.deepStrictEqual(pluginsForUnlistedPlugins(persisted, ['visible', 'quarantined', 'disabled']), [],
+    'CONTROL: nothing is carried when every seat plugin was listed');
+
+  const carried = pluginsForUnlistedPlugins(persisted, ['visible']);
+  assert.ok(carried.length > 0, 'ENTER: something was actually carried');
+  assert.deepStrictEqual(carried, ['quarantined', 'disabled'],
+    'every id the catalog could not list is carried');
+  assert.strictEqual(carried.includes('visible'), false,
+    'and the listed plugin is left to its checkbox');
+
+  const saved = mergePlugins([], carried); // the visible box UNCHECKED
+  assert.strictEqual(saved.includes('visible'), false, 'unticking a drawn plugin still removes it');
+  assert.deepStrictEqual(saved, ['quarantined', 'disabled'], 'while the undrawable ids ride through');
+
+  // CONTROL for the union: a ticked box survives it, so a mergePlugins that
+  // dropped its first argument would fail here rather than passing above.
+  const kept = mergePlugins(['visible'], carried);
+  assert.deepStrictEqual(kept, ['visible', 'quarantined', 'disabled'], 'CONTROL: a ticked box is saved too');
+  assert.deepStrictEqual(mergePlugins(['a'], ['a']), ['a'], 'an overlapping id appears once');
+
+  // An ABSENT list is the living all-enabled default, which names no ids: there
+  // is nothing to carry, and manufacturing a list here would freeze the default
+  // into a snapshot of whatever happened to be loaded.
+  assert.deepStrictEqual(pluginsForUnlistedPlugins(null, ['a']), [], 'an absent seat list carries nothing');
+  assert.deepStrictEqual(pluginsForUnlistedPlugins(undefined, []), [], 'nor does a missing one');
+  assert.deepStrictEqual(pluginsForUnlistedPlugins([42, null, 'ok'], []), ['ok'],
+    'and non-string entries are not resurrected');
+
+  // Both halves are in the leaf and pinned above, but the CALL is what ships and
+  // all three sites are DOM-bound. Measured on the grants axis: with the leaf
+  // fully pinned, replacing a collect site with the bare checked list left that
+  // file green while the shipped bug was back. Only a source scan pins the call.
+  const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
+  for (const [file, src] of [
+    ['renderer/renderer.js', read('renderer', 'renderer.js')],
+    ['renderer/popovers/checklist-popovers.js', read('renderer', 'popovers', 'checklist-popovers.js')],
+  ]) {
+    assert.match(src, /mergePlugins\(collectPluginChecklist\(/,
+      `${file} must SAVE the union, not the bare checked set`);
+    assert.match(src, /pluginsForUnlistedPlugins\(/,
+      `${file} must compute the carry-forward from the persisted list`);
+  }
+  const rsrc = read('renderer', 'renderer.js');
+  assert.strictEqual((rsrc.match(/mergePlugins\(collectPluginChecklist\(/g) || []).length, 2,
+    'renderer.js has TWO save sites — the new-session dialog and the args editor — and a fix applied to one is not a fix');
+});
+
+// ── ROUND-2 P1: a seat whose dialog has no Plugins section ──────────────────
+test('ROUND-2 P1: a non-claude type is written the globally-enabled set, never []', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('function collectFormConfig()');
+  assert.ok(at > 0, 'ENTER: collectFormConfig was found — a rename makes every assertion below vacuous');
+  const body = src.slice(at, at + 1400);
+  assert.match(body, /: defaultPluginTicks\(\);/,
+    'the non-claude arm materialises the globally-enabled set. `[]` closes a codex seat to every '
+    + 'plugin with no UI to reopen it, and takes its onAgentText feed with it — absent would be the '
+    + 'living default, but this key is EDITOR_OWNED, so it is written either way');
+  assert.strictEqual(body.includes('inputPluginList) : [];'), false,
+    'and the `[]` this replaced is gone, not merely shadowed');
 });
 
 // ── NIT: registering after deactivate must refuse, not silently globalize ────

@@ -33,7 +33,7 @@ const { placeAboveAnchor } = require('../lib/popover-place');
 // open anchors to a sidebar row instead, where this selector finds nothing and
 // the captured row (still attached) is used.
 const BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
-const { grantsForUnlistedPlugins, mergeGrants } = require('../../plugin-api');
+const { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins } = require('../../plugin-api');
 
 // Names auto-INCLUDED for `session` by `sessions:` scope, for a scoped checklist.
 // Agents carry parsed `meta`; skills carry only raw `content` (re-parse it, same
@@ -378,6 +378,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   // A tick repaints both children off the LIVE checkbox state — the override
   // argument on both reads is for exactly that.
   const intentsPluginsList = document.getElementById('intents-popover-plugins-list');
+  let intentsPluginsPersisted = null;
 
   async function repaintPluginChildren(name) {
     const ticked = collectPluginChecklist(intentsPluginsList);
@@ -454,6 +455,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     // res.intents is the raw persisted allowlist (array, or null = all-enabled).
     // Rows are SERVED (intents:catalog), so seed the cache first, same as the dialog.
     setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+    intentsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
     renderPluginChecklist(intentsPluginsList, res.plugins);
     const ticked = collectPluginChecklist(intentsPluginsList);
     setIntentCatalogCache((await window.api.getIntentCatalog(name, ticked)) || []);
@@ -481,7 +483,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     // null, not [], when NOTHING is loaded (kill switch, or all globally
     // disabled): the checklist draws no rows and collect returns [], which would
     // strip a seat of plugins it still has on a path that only edits intents.
-    const plugins = getPluginCatalogCache().length ? collectPluginChecklist(intentsPluginsList) : null;
+    const plugins = getPluginCatalogCache().length
+      ? mergePlugins(collectPluginChecklist(intentsPluginsList),
+        pluginsForUnlistedPlugins(intentsPluginsPersisted, getPluginCatalogCache().map((p) => String(p.id))))
+      : null;
     // Read BEFORE the close: closing does not clear the list, but the two reads
     // must describe the same dialog state, and a later read is a later state.
     const grantsShown = !intentsGrantsBlock.classList.contains('hidden');

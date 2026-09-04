@@ -3,10 +3,10 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
-// The web bundle freezes PLUGIN_CAPABILITIES at build time — safe only because
-// it ships its own engine from the same tree, and a PEER row carries no
+// The web bundle freezes PLUGIN_CAPABILITIES at build time — safe because it
+// ships its own engine from the same tree, and a PEER row carries no
 // pluginGrants, so a scoped plugin fails closed across that seam.
-const { pluginReaches } = require('../plugin-api');
+const { pluginReaches, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
@@ -1802,10 +1802,13 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   renderExecChecklist(inputExecList, enabledSet);
 }
 
+let newSessionPluginsPersisted = null;
+
 // Painted BEFORE the intent list, whose catalog is asked about what this ticks.
 async function refreshNewSessionPlugins(pluginsList) {
   if (inputType.value !== 'claude') return;
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  newSessionPluginsPersisted = Array.isArray(pluginsList) ? pluginsList : null;
   renderPluginChecklist(inputPluginList, Array.isArray(pluginsList) ? pluginsList : defaultPluginTicks());
 }
 
@@ -2210,9 +2213,13 @@ function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
-  // UNCONDITIONAL, every type: omitted reads as cleared, cleared means absent,
-  // and absent means EVERY plugin (see the EDITOR_OWNED note below).
-  const plugins = type === 'claude' ? collectPluginChecklist(inputPluginList) : [];
+  // UNCONDITIONAL, every type: omitted reads as cleared, cleared means absent, and
+  // absent means EVERY plugin (see the EDITOR_OWNED note below). A type with no
+  // Plugins section gets the globally-enabled set — `[]` would close it for good.
+  const plugins = type === 'claude'
+    ? mergePlugins(collectPluginChecklist(inputPluginList),
+      pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))))
+    : defaultPluginTicks();
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
@@ -6132,6 +6139,7 @@ let argsEditingSource = null;
 let argsAgentsPersisted = [];
 let argsAgentsRendered = [];
 let argsAgentsAuto = [];
+let argsPluginsPersisted = null;
 let argsSkillsInjectPersisted = [];
 let argsSkillsInjectRendered = [];
 let argsSkillsInjectAuto = [];
@@ -6194,6 +6202,7 @@ async function openArgsDialog(name, argsSource = null) {
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   argsPluginsSection.style.display = isClaude ? '' : 'none';
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
   renderPluginChecklist(argsPluginList, res.plugins);
   argsIntentsSection.style.display = isClaude ? '' : 'none';
   // Keyed on the list this dialog just painted: the override is what makes a
@@ -6271,7 +6280,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // [] is an absence of options, not the operator's answer.
   const plugins = (argsPluginsSection.style.display === 'none' || !getPluginCatalogCache().length)
     ? undefined
-    : collectPluginChecklist(argsPluginList);
+    : mergePlugins(collectPluginChecklist(argsPluginList),
+      pluginsForUnlistedPlugins(argsPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))));
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
   // dialog OWNS env — an empty box is {}, a real clear, not a no-op.

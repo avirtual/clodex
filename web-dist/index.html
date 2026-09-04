@@ -19883,6 +19883,14 @@ ${i3.join("\n")}
       function mergeGrants(checked, unlisted) {
         return [.../* @__PURE__ */ new Set([...checked || [], ...unlisted || []])];
       }
+      function pluginsForUnlistedPlugins(persisted, listedPluginIds) {
+        if (!Array.isArray(persisted)) return [];
+        const listed = new Set((listedPluginIds || []).map(String));
+        return persisted.filter((id) => typeof id === "string" && !listed.has(id));
+      }
+      function mergePlugins(checked, unlisted) {
+        return [.../* @__PURE__ */ new Set([...(checked || []).map(String), ...(unlisted || []).map(String)])];
+      }
       function seatHasPlugin(pluginId, pluginsList) {
         if (!Array.isArray(pluginsList)) return true;
         return pluginsList.includes(String(pluginId));
@@ -19928,6 +19936,8 @@ ${i3.join("\n")}
         isValidCapability,
         sanitizeGrants,
         grantsForUnlistedPlugins,
+        pluginsForUnlistedPlugins,
+        mergePlugins,
         mergeGrants,
         pluginGranted,
         seatHasPlugin,
@@ -22104,15 +22114,15 @@ ${String(body || "").trim()}
       function renderIntentChecklist(container, intentsList) {
         container.innerHTML = "";
         const nameOf = new Map(pluginCatalogCache.map((p) => [String(p.id), p.name || p.id]));
-        let lastSource = null;
+        const headed = /* @__PURE__ */ new Set();
         for (const it of intentCatalogCache) {
-          if (it.source && it.source !== "core" && it.source !== lastSource) {
+          if (it.source && it.source !== "core" && !headed.has(it.source)) {
+            headed.add(it.source);
             const head = document.createElement("div");
             head.className = "popover-subhead";
             head.textContent = nameOf.get(String(it.source)) || it.source;
             container.appendChild(head);
           }
-          lastSource = it.source || null;
           const row = document.createElement("label");
           row.className = "agent-check";
           const cb = document.createElement("input");
@@ -28739,7 +28749,7 @@ helper=${d.helperPath}`;
       var { makeDraggable, resetDrag } = require_popover_drag();
       var { placeAboveAnchor } = require_popover_place();
       var BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
-      var { grantsForUnlistedPlugins, mergeGrants } = require_plugin_api();
+      var { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins } = require_plugin_api();
       var CAPABILITY_LABELS = {
         turns: "Turn text \u2014 what the agent writes",
         thinking: "Thinking blocks \u2014 its reasoning, not just its answers",
@@ -29032,6 +29042,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           refreshExecReadoutInertState();
         }
         const intentsPluginsList = document.getElementById("intents-popover-plugins-list");
+        let intentsPluginsPersisted = null;
         async function repaintPluginChildren(name) {
           const ticked = collectPluginChecklist(intentsPluginsList);
           const checkedIntents = collectIntentChecklist(popoverIntentsList);
@@ -29096,6 +29107,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             return;
           }
           setPluginCatalogCache(await window.api.pluginCatalog() || []);
+          intentsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
           renderPluginChecklist(intentsPluginsList, res.plugins);
           const ticked = collectPluginChecklist(intentsPluginsList);
           setIntentCatalogCache(await window.api.getIntentCatalog(name, ticked) || []);
@@ -29120,7 +29132,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const name = intentsPopover.dataset.name;
           if (!name) return closeIntentsPopover();
           const intents = collectIntentChecklist(popoverIntentsList);
-          const plugins = getPluginCatalogCache().length ? collectPluginChecklist(intentsPluginsList) : null;
+          const plugins = getPluginCatalogCache().length ? mergePlugins(
+            collectPluginChecklist(intentsPluginsList),
+            pluginsForUnlistedPlugins(intentsPluginsPersisted, getPluginCatalogCache().map((p) => String(p.id)))
+          ) : null;
           const grantsShown = !intentsGrantsBlock.classList.contains("hidden");
           const grants = grantsShown ? collectPluginGrants() : null;
           const restart = intentsPopoverRestart.checked;
@@ -33210,7 +33225,7 @@ ${detail}` });
       var { SearchAddon } = require_addon_search();
       var { WebLinksAddon } = require_addon_web_links();
       var { isExternallyOpenable } = require_external_link();
-      var { pluginReaches } = require_plugin_api();
+      var { pluginReaches, pluginsForUnlistedPlugins, mergePlugins } = require_plugin_api();
       var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
@@ -34865,9 +34880,11 @@ ${detail}` });
         setExecLibCache(await window.api.listExecCommands() || []);
         renderExecChecklist(inputExecList, enabledSet);
       }
+      var newSessionPluginsPersisted = null;
       async function refreshNewSessionPlugins(pluginsList2) {
         if (inputType.value !== "claude") return;
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
+        newSessionPluginsPersisted = Array.isArray(pluginsList2) ? pluginsList2 : null;
         renderPluginChecklist(inputPluginList, Array.isArray(pluginsList2) ? pluginsList2 : defaultPluginTicks());
       }
       async function refreshNewSessionIntents(intentsList) {
@@ -35243,7 +35260,10 @@ ${detail}` });
         const type = inputType.value;
         const agentType = type === "claude" || type === "codex";
         const intents = type === "claude" ? collectIntentChecklist(inputIntentList) : null;
-        const plugins = type === "claude" ? collectPluginChecklist(inputPluginList) : [];
+        const plugins = type === "claude" ? mergePlugins(
+          collectPluginChecklist(inputPluginList),
+          pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id)))
+        ) : defaultPluginTicks();
         const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
         return {
@@ -38804,6 +38824,7 @@ ${res.stderr}` : "");
       var argsAgentsPersisted = [];
       var argsAgentsRendered = [];
       var argsAgentsAuto = [];
+      var argsPluginsPersisted = null;
       var argsSkillsInjectPersisted = [];
       var argsSkillsInjectRendered = [];
       var argsSkillsInjectAuto = [];
@@ -38870,6 +38891,7 @@ ${res.stderr}` : "");
         renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
         argsPluginsSection.style.display = isClaude ? "" : "none";
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
+        argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
         renderPluginChecklist(argsPluginList, res.plugins);
         argsIntentsSection.style.display = isClaude ? "" : "none";
         setIntentCatalogCache(await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList)) || []);
@@ -38946,7 +38968,10 @@ ${res.stderr}` : "");
         const denyBuiltins = argsAgentsRow.style.display === "none" ? [] : collectBuiltinChecklist(argsBuiltinsList);
         const disabledTools = argsToolsRow.style.display === "none" ? [] : collectToolChecklist(argsToolsList);
         const intents = argsIntentsSection.style.display === "none" ? null : collectIntentChecklist(argsIntentsList);
-        const plugins = argsPluginsSection.style.display === "none" || !getPluginCatalogCache().length ? void 0 : collectPluginChecklist(argsPluginList);
+        const plugins = argsPluginsSection.style.display === "none" || !getPluginCatalogCache().length ? void 0 : mergePlugins(
+          collectPluginChecklist(argsPluginList),
+          pluginsForUnlistedPlugins(argsPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id)))
+        );
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : collectExecChecklist(argsExecList);
         const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
         const skillsShown = argsSkillsSection.style.display !== "none";

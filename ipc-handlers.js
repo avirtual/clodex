@@ -14,7 +14,7 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
-const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
+const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
 const { catalogRows, allowlistFromChecked, pruneForPlugins, rows: intentRows } = require('./intent-registry');
 const { feedSince } = require('./subagent-ring');
 // contexts→peers import (t32 step 4). Electron-free; lives main-side ON PURPOSE
@@ -1118,7 +1118,8 @@ function registerIpcHandlers(deps) {
   handle('session:setPlugins', (_e, name, plugins) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found in persistence' };
-    const next = Array.isArray(plugins) ? plugins.map(String) : null;
+    // Door filter, as sanitizeGrants below: this value reaches a directory name.
+    const next = Array.isArray(plugins) ? plugins.filter(isValidPluginId) : null;
     persistence.setPlugins(name, next);
     const pruned = pruneForPlugins(entry, next);
     if (Array.isArray(entry.intents) && pruned.intents.length !== entry.intents.length) {
