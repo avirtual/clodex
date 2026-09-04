@@ -1,40 +1,24 @@
-# renderer/console-tab.js
+# console-tab
 
-## startPolling
+Notes for `renderer/console-tab.js`. Facts the code cannot state; everything
+provable by a test lives in `test/console-truth.test.js` instead.
 
-Returns whether it actually STARTED the timer, because `onShow` needs that
-answer: a seat switch while the tab is visible calls `startPolling` again, which
-early-returns on the live interval, and without an extra pull the new seat's
-first blocks are up to `POLL_MS` away. That extra pull is guarded on `!started`
-only to skip a redundant IPC — the double-APPEND it originally prevented is now
-closed by `pulling`, so this guard is no longer what makes it safe.
+## `contentSig` / `repaintGrown`
 
-## onHide
+A backgrounded call's record is re-served on every poll and GROWS as its
+`.output` file is appended to, so identity dedupe alone paints it once with
+whatever existed at the first poll and never updates -- a long job goes blind
+after ~1.2s. The dedupe that causes this is deliberate: it is what stops a
+re-served timestamp group from double-painting, so the repaint is keyed on a
+content signature and the identity set is left alone. Dropping the key from
+`lastKeys` instead reopens the double-paint hole.
 
-Releases the interval with no idempotence of its own — the host guarantees
-`onShow`/`onHide` are strictly alternating at-most-once edges (drawer-host.js
-rule 2), so a second guard would absorb a host regression instead of surfacing
-it.
+`st.blocks` and `bodyEl`'s children are appended and trimmed together in
+`appendNew`, which is what lets `repaintGrown` use one index for both.
 
-## pull
+## `tick`
 
-`lastKeys` is not belt-and-braces over the cursor: the reader re-serves the
-cursor's whole timestamp group and is stateless across polls, so only this set
-can drop what was already painted. It is REPLACED per batch, safe only because
-that batch is the whole group — a reader omitting any member drops it from here
-and repaints it next poll. Keyed on the basename, unique by construction through
-the rename, where `tool_use_id` is a payload field the record could lack.
-
-`lastSkipped` exists because `skipped` is not an event. With 50+ records in the
-top group the cursor cannot advance, so every poll re-reports the SAME backlog,
-and a marker per poll fills `MAX_BLOCKS` and scrolls the real blocks out. Keyed
-on the count not RISING, so a backlog that grows is reported and one that shrinks
-under the CLI-side prune is not — the smaller loss was inside the larger one.
-
-## blockNode
-
-An auto-backgrounded call reaches the hook empty; the reader recovers the task
-file. Four notes result, split on `bgExitSeen`: recovered, empty, and each again
-with no exit line. Only the exit-line cases may state what the command printed as
-FACT — without one the file may still be filling, so those say "as of this read".
-Two drawn alike IS the defect; none is shown for an ordinary silent command.
+Sequenced, not `Promise.all`. `pullLive` filters against the settled set that
+`pull` populates; run concurrently, the filter can read that set before the
+record settling a call lands in it, and the call then draws in both lanes for
+one tick -- its finished block and its live preview at once.

@@ -143,9 +143,6 @@ function defaultResolveOwners(needles, opts) {
     });
   } catch { return []; }
 
-  // Narrowed to the processes that could own one of these calls BEFORE lsof is
-  // asked anything: a Bash call in flight is one process, while the box is ~800,
-  // and lsof's cost scales with the pids handed to it.
   const byPid = new Map();
   for (const line of psOut.split('\n')) {
     const m = /^\s*([0-9]{1,10})\s+(.*)$/.exec(line);
@@ -163,10 +160,6 @@ function defaultResolveOwners(needles, opts) {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch (e) {
-    // lsof exits NONZERO when any pid in the list has already gone, which is the
-    // normal case here: the call whose output we are chasing may finish between
-    // the ps and the lsof. The pids that did resolve are still on stdout, so the
-    // status is not a reason to discard them.
     lsOut = e && typeof e.stdout === 'string' ? e.stdout : '';
   }
   if (!lsOut) return [];

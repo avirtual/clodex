@@ -111,12 +111,6 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     return el;
   }
 
-  // A backgrounded call's record is re-served on every poll and GROWS as its
-  // .output file is appended to. Identity dedupe alone therefore paints it once,
-  // with whatever existed at the first poll. This signature is what separates
-  // "the same record again" from "the same record with more output in it";
-  // keying the repaint on it leaves the identity dedupe that stops a re-served
-  // timestamp group from double-painting exactly as it was.
   function contentSig(r) {
     return [
       r.output ? r.output.length : 0,
@@ -137,8 +131,6 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       const i = st.blocks.findIndex((b) => !b.gap && b.key === r.key);
       if (i < 0) continue;
       st.blocks[i] = r;
-      // st.blocks and bodyEl's children are appended and trimmed together, so
-      // index i names the same call in both.
       const old = bodyEl && bodyEl.children[i];
       if (old) bodyEl.replaceChild(blockNode(r), old);
     }
@@ -248,10 +240,6 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   }
 
   async function tick() {
-    // SEQUENCED, not Promise.all. pullLive filters against `settled`, which pull
-    // populates: run concurrently, the filter can read the set before the record
-    // that settles a call lands in it, and that call draws in BOTH lanes for one
-    // tick — its finished block and its live preview at once.
     await pull();
     await pullLive();
   }
