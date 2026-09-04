@@ -6461,6 +6461,20 @@ body {
         <button id="intents-popover-apply" type="button">Apply</button>
       </div>
     </div>
+    <div id="plugins-popover" class="hidden">
+      <div class="popover-title"><span>Plugins — <span id="plugins-popover-name"></span></span><button type="button" class="popover-close" id="plugins-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+      <div id="popover-plugins-list" class="agent-checklist"></div>
+      <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to this seat — no intents, no sidebar button, no drawer, no access rows; its verbs and access grants drop on Apply. Unticking here is what the 🔒 Intents popover's Plugins section does; that popover also edits the per-verb list.</span>
+      <label class="tools-popover-restart">
+        <input type="checkbox" id="plugins-popover-restart">
+        <span class="hint-text">Gate applies immediately. Restart now to also refresh the seat's prompt (until then it still lists a removed plugin's verbs, but the gate already bounces them).</span>
+      </label>
+      <div class="popover-actions">
+        <button id="plugins-popover-cancel" class="secondary" type="button">Cancel</button>
+        <button id="plugins-popover-apply" type="button">Apply</button>
+      </div>
+    </div>
     <div id="team-roles-popover" class="hidden">
       <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
       <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
@@ -28762,7 +28776,7 @@ helper=${d.helperPath}`;
         (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || "").meta })),
         session
       ));
-      function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession }) {
+      function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta }) {
         const toolsPopover = document.getElementById("tools-popover");
         const toolsPopoverName = document.getElementById("tools-popover-name");
         const popoverToolsList = document.getElementById("popover-tools-list");
@@ -29151,6 +29165,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               alert(`Update plugins failed: ${pr && pr.error ? pr.error : "unknown error"}`);
               return;
             }
+            refreshSidebarMeta();
           }
           const r = await window.api.setSessionIntents(name, intents);
           if (!r || !r.ok) {
@@ -29191,10 +29206,78 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         popoverIntentsList.addEventListener("change", (e) => {
           if (e.target && e.target.value === "exec") refreshExecReadoutInertState();
         });
+        const pluginsPopover = document.getElementById("plugins-popover");
+        const pluginsPopoverName = document.getElementById("plugins-popover-name");
+        const popoverPluginsList = document.getElementById("popover-plugins-list");
+        const pluginsPopoverRestart = document.getElementById("plugins-popover-restart");
+        let pluginsPersisted = null;
+        function closePluginsPopover() {
+          pluginsPopover.classList.add("hidden");
+          pluginsPopover.dataset.name = "";
+        }
+        async function openPluginsPopover(name, anchorBtn) {
+          const res = await window.api.getSessionArgs(name);
+          if (!res || !res.ok) {
+            alert("Session not found in persistence.");
+            return;
+          }
+          setPluginCatalogCache(await window.api.pluginCatalog() || []);
+          pluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+          renderPluginChecklist(popoverPluginsList, res.plugins);
+          pluginsPopoverRestart.checked = false;
+          pluginsPopoverName.textContent = name;
+          pluginsPopover.dataset.name = name;
+          resetDrag(pluginsPopover);
+          pluginsPopover.classList.remove("hidden");
+          placeAboveAnchor(pluginsPopover, anchorBtn, BAR_ANCHOR);
+        }
+        document.getElementById("plugins-popover-cancel").addEventListener("click", closePluginsPopover);
+        document.getElementById("plugins-popover-close").addEventListener("click", closePluginsPopover);
+        document.getElementById("plugins-popover-apply").addEventListener("click", async () => {
+          const name = pluginsPopover.dataset.name;
+          if (!name) return closePluginsPopover();
+          const plugins = getPluginCatalogCache().length ? mergePlugins(
+            collectPluginChecklist(popoverPluginsList),
+            pluginsForUnlistedPlugins(pluginsPersisted, getPluginCatalogCache().map((p) => String(p.id)))
+          ) : null;
+          const restart = pluginsPopoverRestart.checked;
+          closePluginsPopover();
+          if (!plugins) return;
+          const r = await window.api.setSessionPlugins(name, plugins);
+          if (!r || !r.ok) {
+            alert(`Update plugins failed: ${r && r.error ? r.error : "unknown error"}`);
+            return;
+          }
+          refreshSidebarMeta();
+          if (!restart) return;
+          const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+          const snapType = item ? item.dataset.type || null : null;
+          const snapCwd = item ? item.dataset.cwd : null;
+          const rr = await window.api.restartSession(name);
+          if (!rr || !rr.ok) {
+            alert(`Restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
+            return;
+          }
+          if (snapType) {
+            createTerminal(name);
+            addSessionToSidebar(name, snapType, snapCwd, null);
+            switchSession(name);
+          }
+        });
+        document.addEventListener("mousedown", (e) => {
+          if (pluginsPopover.classList.contains("hidden")) return;
+          if (pluginsPopover.contains(e.target)) return;
+          if (e.target.closest(".px-action")) return;
+          closePluginsPopover();
+        });
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && !pluginsPopover.classList.contains("hidden")) closePluginsPopover();
+        });
         wireBulkToggles(toolsPopover, popoverToolsList);
         wireBulkToggles(skillsPopover, popoverSkillsList);
         wireBulkToggles(agentsPopover, popoverAgentsList);
         wireBulkToggles(intentsPopover, popoverIntentsList);
+        wireBulkToggles(pluginsPopover, popoverPluginsList);
         intentsPopover.querySelectorAll(".popover-bulk [data-bulk]").forEach((btn) => {
           btn.addEventListener("click", () => refreshExecReadoutInertState());
         });
@@ -29204,7 +29287,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         makeDraggable(skillsPopover);
         makeDraggable(agentsPopover);
         makeDraggable(intentsPopover);
-        return { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover };
+        makeDraggable(pluginsPopover);
+        return { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover };
       }
       module.exports = { initChecklistPopovers };
     }
@@ -30469,6 +30553,7 @@ You can add it back from this popover.` : "";
         { act: "intents", label: "\u{1F512} Intents\u2026" }
       ];
       var SHARED_ENTRIES = [
+        { act: "plugins", label: "\u{1F50C} Plugins\u2026" },
         { act: "edit", label: "\u2699 Edit Settings\u2026" },
         { act: "history", label: "\u{1F558} History\u2026" },
         { act: "reload", label: "\u{1F504} Reload (fresh restart)" }
@@ -35824,7 +35909,7 @@ ${detail}` });
             btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched \u2014 click to view or diff">${label}</button>`);
           }
           if (type === "claude") btns.push(voiceBarActionHtml());
-          btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions \u2014 tools, skills, agents, intents, settings, history, reload">\u2699 session \u25BE</button>');
+          btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions \u2014 tools, skills, agents, intents, plugins, settings, history, reload">\u2699 session \u25BE</button>');
         }
         if (activePeerQueryable()) {
           const nFiles = peerFilesCount.has(activeSession) ? peerFilesCount.get(activeSession) : (filesState.get(activeSession) || []).length;
@@ -36310,15 +36395,23 @@ Click for live activity`;
         else if (act === "skills") openSkillsPopover(activeSession, anchor);
         else if (act === "agents") openAgentsPopover(activeSession, anchor);
         else if (act === "intents") openIntentsPopover(activeSession, anchor);
+        else if (act === "plugins") openPluginsPopover(activeSession, anchor);
         else if (act === "edit") openArgsDialog(activeSession);
         else if (act === "history") openHistoryMenu(activeSession, anchor);
         else if (act === "reload") doHardRestart(activeSession);
       }
-      var { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover } = initChecklistPopovers({
+      var {
+        openToolsPopover,
+        openSkillsPopover,
+        openAgentsPopover,
+        openIntentsPopover,
+        openPluginsPopover
+      } = initChecklistPopovers({
         sessionList,
         createTerminal,
         addSessionToSidebar,
-        switchSession
+        switchSession,
+        refreshSidebarMeta
       });
       var { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
       function openCreateTeamDialog() {

@@ -209,9 +209,12 @@ The refusals, and what to do about each:
 **Every plugin is gated per seat.** A seat carries a list of the plugin ids it
 HAS, and a plugin absent from that list contributes nothing to that seat: no
 intent-checklist rows, no grammar lines in its prompt, no fired verbs, no
-turn-text feed. The operator ticks that list in New/Edit Session and in the
-Intents popover. A seat with no list at all — one never edited since this
-shipped — has every plugin, which is what keeps existing seats unchanged.
+turn-text feed. The operator ticks that list in three places: **🔌 Plugins…** in
+the `⚙ session ▾` menu (the dedicated editor, and the only one a **Codex** seat
+has — a codex seat consumes its plugin list exactly like a claude one, but has
+no Intents popover), the Intents popover's *Plugins* sub-section, and New/Edit
+Session. A seat with no list at all — one never edited since this shipped — has
+every plugin, which is what keeps existing seats unchanged.
 
 `scope` used to decide this, and no longer does — the seat list is now the only
 thing that decides what a plugin reaches. **What `scope: "session"` means today

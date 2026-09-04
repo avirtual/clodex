@@ -538,12 +538,6 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (e.target && e.target.value === 'exec') refreshExecReadoutInertState();
   });
 
-  // --- Per-session Plugins popover -----------------------------------------
-  // The same parent list the Intents popover edits as a sub-section, on its own
-  // and reachable from a CODEX seat, which consumes `plugins` but has no Intents
-  // popover. It writes session:setPlugins and NOTHING else: the handler prunes
-  // intents and grants against the list it is given, so writing a child from a
-  // dialog that never displayed one would fight that prune with stale state.
   const pluginsPopover = document.getElementById('plugins-popover');
   const pluginsPopoverName = document.getElementById('plugins-popover-name');
   const popoverPluginsList = document.getElementById('popover-plugins-list');
@@ -564,7 +558,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     pluginsPopoverRestart.checked = false;
     pluginsPopoverName.textContent = name;
     pluginsPopover.dataset.name = name;
-    resetDrag(pluginsPopover); // a fresh open re-anchors; drop any prior drag offset
+    resetDrag(pluginsPopover);
     pluginsPopover.classList.remove('hidden');
     placeAboveAnchor(pluginsPopover, anchorBtn, BAR_ANCHOR);
   }
@@ -574,9 +568,6 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   document.getElementById('plugins-popover-apply').addEventListener('click', async () => {
     const name = pluginsPopover.dataset.name;
     if (!name) return closePluginsPopover();
-    // null, not [], when NOTHING is loaded (kill switch, or all globally
-    // disabled): the checklist draws no rows and collect returns [], which would
-    // strip the seat of every plugin it still has.
     const plugins = getPluginCatalogCache().length
       ? mergePlugins(collectPluginChecklist(popoverPluginsList),
         pluginsForUnlistedPlugins(pluginsPersisted, getPluginCatalogCache().map((p) => String(p.id))))
@@ -588,7 +579,6 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!r || !r.ok) { alert(`Update plugins failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     refreshSidebarMeta();
     if (!restart) return;
-    // Same re-attach dance as the tools popover's restart path.
     const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     const snapType = item ? item.dataset.type || null : null;
     const snapCwd = item ? item.dataset.cwd : null;
@@ -603,7 +593,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   document.addEventListener('mousedown', (e) => {
     if (pluginsPopover.classList.contains('hidden')) return;
     if (pluginsPopover.contains(e.target)) return;
-    if (e.target.closest('.px-action')) return; // the menu/toggle button handles itself
+    if (e.target.closest('.px-action')) return;
     closePluginsPopover();
   });
   document.addEventListener('keydown', (e) => {
@@ -622,7 +612,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     btn.addEventListener('click', () => refreshExecReadoutInertState());
   });
 
-  // Always-reachable ✕ close buttons (tools/skills; agents'/intents' are wired
+  // Always-reachable ✕ close buttons (tools/skills; the rest are wired
   // in-section above). A tall popover can push outside-click/Escape out of reach.
   document.getElementById('tools-popover-close').addEventListener('click', closeToolsPopover);
   document.getElementById('skills-popover-close').addEventListener('click', closeSkillsPopover);
