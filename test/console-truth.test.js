@@ -560,6 +560,25 @@ test('a live row is replaced by its settled record, never drawn alongside it', a
     'and the live row for the same tool_use_id is gone — two rows for one call is the defect');
 });
 
+test('a call whose output cannot be attributed says so, instead of showing a bare preview', async (t) => {
+  // The refusal has a caption of its own because the row it produces looks
+  // exactly like a call that has printed nothing yet: same command, same running
+  // timer, empty body. Saying "live preview" over it would be the t648 false
+  // caption again -- claiming an absence of output that was never observed, when
+  // what actually happened is that Clodex declined to guess which of two
+  // identical running commands the file belongs to.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-amb', command: 'npm test', output: '', bytes: 0, tailed: false, elapsedMs: 4000, finished: false, resolved: false }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /npm test/, 'ENTER: the unattributable call really was drawn');
+  assert.match(html, /still running/, 'it still says the call is running, which is the part it knows');
+  assert.match(html, /cannot be told\s+apart/, 'and names the refusal as the reason the body is empty');
+  assert.doesNotMatch(html, /live preview/,
+    'it must NOT claim to be previewing output it has not attributed to this call');
+});
+
 test('the settled read is AWAITED before the live read, so one call cannot draw twice', async (t) => {
   // The test above passes on scheduling luck: with the two pulls started
   // together, whether the live filter sees the settled id depends on which
@@ -587,7 +606,7 @@ test('a live row never claims the command printed nothing', async (t) => {
   // repainted once the settled record lands. Stating it as fact would freeze a
   // false claim for the session.
   const p = await mountPane(t);
-  p.setLive([{ id: 't-quiet', command: 'quiet', output: '', bytes: 0, tailed: false, elapsedMs: 300, finished: false }]);
+  p.setLive([{ id: 't-quiet', command: 'quiet', output: '', bytes: 0, tailed: false, elapsedMs: 300, finished: false, resolved: true }]);
   await p.tick();
 
   const html = p.liveBody.children[0].innerHTML;

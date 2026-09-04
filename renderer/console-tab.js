@@ -97,9 +97,13 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       + '</div>';
     const out = String(r.output || '').replace(/\n+$/, '');
     const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : '';
-    const note = `<div class="console-block-note">still running — live preview${
-      r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ''
-    }; the finished record replaces this</div>`;
+    const note = r.resolved === false
+      ? '<div class="console-block-note">still running — its output cannot be told'
+        + ' apart from another running command\'s, so none is shown;'
+        + ' the finished record replaces this</div>'
+      : `<div class="console-block-note">still running — live preview${
+        r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ''
+      }; the finished record replaces this</div>`;
     el.innerHTML = head + body + note;
     return el;
   }
