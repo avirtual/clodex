@@ -30,6 +30,9 @@ blocks a release.
   still running is never captioned as having printed nothing, since it may
   simply not have printed yet. Nothing is watched or recorded unless the Console
   tab is actually open.
+  Calls a seat runs itself stream this way, in the foreground and in the
+  background alike; a call made by one of its SUBAGENTS does not yet, and still
+  arrives complete when it finishes, as before.
 
 - **The Console tab now shows the output of Bash calls the CLI ran in the
   background.** Under parallel load the CLI quietly moves a Bash call to the
