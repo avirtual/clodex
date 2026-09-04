@@ -26325,9 +26325,9 @@ helper=${d.helperPath}`;
           if (b.bgState === "absent") {
             note = '<div class="console-block-note">the CLI ran this in the background \u2014 its output was never sent here, and the task file is gone</div>';
           } else if (b.bgState === "empty") {
-            note = '<div class="console-block-note">the CLI ran this in the background \u2014 its task file is there and empty, so it really printed nothing</div>';
+            note = `<div class="console-block-note">${b.bgExitSeen ? "the CLI ran this in the background \u2014 its task file is there and empty, so it really printed nothing" : "the CLI ran this in the background \u2014 no exit line in its task file, and nothing printed as of this read"}</div>`;
           } else if (b.bgState === "attached") {
-            note = `<div class="console-block-note">${b.bgRunning ? "still running in the background \u2014 the output so far" : "the CLI ran this in the background \u2014 output read back from its task file"}${b.tailed ? ` \u2014 the last ${esc(String(out.length))} chars of ${esc(fmtBytes(b.fullBytes))}` : ""}</div>`;
+            note = `<div class="console-block-note">${b.bgExitSeen ? "the CLI ran this in the background \u2014 output read back from its task file" : "the CLI ran this in the background \u2014 no exit line in its task file, so this is the output as of this read"}${b.tailed ? ` \u2014 the last ${esc(String(out.length))} chars of ${esc(fmtBytes(b.fullBytes))}` : ""}</div>`;
           } else if (b.truncated) {
             note = `<div class="console-block-note">output truncated by the CLI at ${esc(String(out.length))} chars${b.fullBytes ? ` \u2014 the full result was ${esc(fmtBytes(b.fullBytes))}` : ""}</div>`;
           }

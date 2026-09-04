@@ -361,9 +361,14 @@ test('a backgrounded call with no recoverable file says so, not that it was quie
 
 // The states this ticket exists to separate, driven through the real reader and
 // the real tenant. Rendering two of them identically is the defect itself, so
-// the assertion is that the three notes are mutually distinct — a shared
-// "backgrounded" prefix would otherwise let two collapse and still match.
-test('recovered, genuinely-empty and gone background output draw differently', async (t) => {
+// the assertion is that the notes are mutually DISTINCT — a shared "backgrounded"
+// prefix would otherwise let two collapse and still match every regex here.
+//
+// The empty-with-no-trailer case is the one round 1 got wrong: it captioned an
+// empty file "it really printed nothing" whatever the trailer said, which states
+// silence as fact for a task that may not have printed YET. A block is never
+// repainted once drawn, so that claim would be frozen for the session.
+test('the four background states draw as four distinct notes', async (t) => {
   const p = await mountPane(t);
 
   const bgRecord = (pid, taskId, fileText) => {
@@ -386,22 +391,29 @@ test('recovered, genuinely-empty and gone background output draw differently', a
   bgRecord(21, 'aaaaaaaaa', 'REAL-OUTPUT-HERE\n\n[exited with code 0]\n');
   bgRecord(22, 'bbbbbbbbb', '\n[exited with code 0]\n');
   bgRecord(23, 'ccccccccc', null);
+  bgRecord(24, 'ddddddddd', '');
   await p.tick();
 
-  assert.deepStrictEqual(p.painted, ['cmd-aaaaaaaaa', 'cmd-bbbbbbbbb', 'cmd-ccccccccc'],
-    'ENTER: all three background calls really were painted');
+  assert.deepStrictEqual(p.painted,
+    ['cmd-aaaaaaaaa', 'cmd-bbbbbbbbb', 'cmd-ccccccccc', 'cmd-ddddddddd'],
+    'ENTER: all four background calls really were painted');
 
-  const html = [...p.body.children].slice(-3).map((n) => n.innerHTML);
+  const html = [...p.body.children].slice(-4).map((n) => n.innerHTML);
   assert.match(html[0], /REAL-OUTPUT-HERE/,
     'the output the hook dropped is on screen, which is the whole ticket');
   assert.doesNotMatch(html[0], /never sent here/,
     'and it must not be captioned as missing while it is displayed');
-  assert.match(html[1], /really printed nothing/, 'the genuinely silent one says so');
+  assert.match(html[1], /really printed nothing/,
+    'an empty file WITH an exit line really did print nothing, and may say so');
   assert.match(html[2], /task file is gone/, 'and the unrecoverable one says that instead');
+  assert.doesNotMatch(html[3], /really printed nothing/,
+    'an empty file with NO exit line may not state silence as fact — the task may not have printed yet');
+  assert.match(html[3], /as of this read/,
+    'it states the evidence it actually has instead');
 
   const notes = html.map((h) => /console-block-note">([^<]*)</.exec(h)[1]);
-  assert.strictEqual(new Set(notes).size, 3,
-    `the three states must read differently, got: ${notes.join(' | ')}`);
+  assert.strictEqual(new Set(notes).size, 4,
+    `the four states must read differently, got: ${notes.join(' | ')}`);
 });
 
 // The note is specific to the backgrounded case: an ordinary call that genuinely

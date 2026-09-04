@@ -18,13 +18,15 @@ blocks a release.
   background, and its output never reaches Clodex through the usual channel — so
   until now those blocks were empty and 5.26.0 could only caption them as lost.
   The output is still on disk in the task's own file, so Clodex reads it back and
-  shows it. A background command that is still running shows the output so far;
-  one that failed now reports its real exit code, where before every background
-  call was drawn as a success. The three cases that used to look identical are
-  now distinct: output recovered, the command genuinely printed nothing, and the
-  task file is gone so nothing can be recovered. Very large output is capped like
-  any other block, keeping the END of the file — where a build's errors and its
-  exit line are — and saying how much of the whole it is showing.
+  shows it. A background command that failed now reports its real exit code,
+  where before every background call was drawn as a success. The cases that used
+  to look identical are now distinct: output recovered, the command genuinely
+  printed nothing, and the task file is gone so nothing can be recovered. Where
+  the task file carries no exit line the block says so and presents what it has
+  as the output "as of this read", rather than claiming the command finished or
+  that it printed nothing — the file may still be filling. Very large output is
+  capped like any other block, keeping the END of the file — where a build's
+  errors and its exit line are — and saying how much of the whole it is showing.
 
 ## 5.26.0 — 2026-09-04
 

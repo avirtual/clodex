@@ -64,9 +64,13 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (b.bgState === 'absent') {
       note = '<div class="console-block-note">the CLI ran this in the background — its output was never sent here, and the task file is gone</div>';
     } else if (b.bgState === 'empty') {
-      note = '<div class="console-block-note">the CLI ran this in the background — its task file is there and empty, so it really printed nothing</div>';
+      note = `<div class="console-block-note">${b.bgExitSeen
+        ? 'the CLI ran this in the background — its task file is there and empty, so it really printed nothing'
+        : 'the CLI ran this in the background — no exit line in its task file, and nothing printed as of this read'}</div>`;
     } else if (b.bgState === 'attached') {
-      note = `<div class="console-block-note">${b.bgRunning ? 'still running in the background — the output so far' : 'the CLI ran this in the background — output read back from its task file'}`
+      note = `<div class="console-block-note">${b.bgExitSeen
+        ? 'the CLI ran this in the background — output read back from its task file'
+        : 'the CLI ran this in the background — no exit line in its task file, so this is the output as of this read'}`
         + `${b.tailed ? ` — the last ${esc(String(out.length))} chars of ${esc(fmtBytes(b.fullBytes))}` : ''}</div>`;
     } else if (b.truncated) {
       note = `<div class="console-block-note">output truncated by the CLI at ${esc(String(out.length))} chars`

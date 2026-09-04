@@ -59,6 +59,7 @@ function readBgOutput(file) {
     const got = len ? fs.readSync(fd, buf, 0, len, tailed ? size - len : 0) : 0;
     fs.closeSync(fd);
     fd = null;
+    if (got === 0 && size > 0) return null;
     return { text: buf.subarray(0, got).toString('utf8'), size, tailed };
   } catch {
     if (fd !== null) { try { fs.closeSync(fd); } catch { fd = null; } }
@@ -94,7 +95,7 @@ function normalizeRecord(obj) {
       fullBytes: null,
       backgrounded: false,
       bgState: null,
-      bgRunning: false,
+      bgExitSeen: false,
       tailed: false,
     };
   }
@@ -110,7 +111,7 @@ function normalizeRecord(obj) {
   let failed = false;
   let fullBytes = persistedSize;
   let bgState = null;
-  let bgRunning = false;
+  let bgExitSeen = false;
   let tailed = false;
 
   if (taskId && !output.trim()) {
@@ -124,7 +125,7 @@ function normalizeRecord(obj) {
         exitCode = Number(m[1]);
         failed = exitCode !== 0;
       }
-      bgRunning = !m;
+      bgExitSeen = !!m;
       tailed = got.tailed === true;
       if (tailed) fullBytes = got.size;
       output = stripAnsi(m ? got.text.slice(0, got.text.length - m[0].length) : got.text.replace(/\n+$/, ''));
@@ -143,7 +144,7 @@ function normalizeRecord(obj) {
     fullBytes,
     backgrounded: !!taskId,
     bgState,
-    bgRunning,
+    bgExitSeen,
     tailed,
   };
 }

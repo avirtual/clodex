@@ -103,7 +103,7 @@ test('a succeeding call becomes a block whose output is the merged stream', () =
     fullBytes: null,
     backgrounded: false,
     bgState: null,
-    bgRunning: false,
+    bgExitSeen: false,
     tailed: false,
   });
 });
@@ -126,7 +126,7 @@ test('a FAILING call becomes a failed block with its exit code split out', () =>
     fullBytes: null,
     backgrounded: false,
     bgState: null,
-    bgRunning: false,
+    bgExitSeen: false,
     tailed: false,
   });
 });
@@ -444,7 +444,7 @@ test('a backgrounded call gets the output the hook never carried', () => {
   assert.strictEqual(rec.output,
     'T648-BG-PROBE-LINE-1\nT648-BG-PROBE-STDERR\nT648-BG-PROBE-LINE-2',
     'the real bytes reach the pane, and the CLI exit trailer is not one of them');
-  assert.strictEqual(rec.bgRunning, false);
+  assert.strictEqual(rec.bgExitSeen, true, 'the trailer was there, so the exit code is evidence not inference');
   assert.strictEqual(rec.exitCode, 0);
   assert.strictEqual(rec.failed, false);
 });
@@ -478,16 +478,19 @@ test('a failed background command reports its real exit code', () => {
   assert.strictEqual(rec.output, 'boom');
 });
 
-// No trailer yet means the task has not exited. Saying "still running" is not
-// cosmetic: without it a partial read looks like the complete result.
-test('a task file with no exit trailer reads as still running', () => {
+// A missing trailer is evidence of NOTHING, so the field records only whether one
+// was seen. It must not be read as "still running": a task killed with the app,
+// or one whose dump was cut off, never writes a trailer either and is long dead.
+// Real counter-example on this box, a 49,274-byte finished dump ending mid-line:
+// .../0898f7eb-61eb-4792-bd26-ca98cb62ca9e/tasks/bkan8wpac.output, 0 trailers.
+test('a task file with no exit trailer reports no exit seen, and claims nothing more', () => {
   const root = tmp();
   const scratch = bgSpool(root, 'babsrioq4', 'step 1 done\nstep 2 done\n');
   const rec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
-  assert.strictEqual(rec.bgRunning, true);
+  assert.strictEqual(rec.bgExitSeen, false);
   assert.strictEqual(rec.bgState, 'attached');
   assert.strictEqual(rec.output, 'step 1 done\nstep 2 done');
-  assert.strictEqual(rec.exitCode, 0, 'an unfinished task has no exit code to report');
+  assert.strictEqual(rec.exitCode, 0, 'no trailer means no exit code was read');
   assert.strictEqual(rec.failed, false, 'and must not be drawn as failed for lacking one');
 });
 
@@ -555,14 +558,38 @@ test('an unreadable task file degrades to absent instead of throwing', () => {
     'and a plain missing path');
 });
 
+// A file that SHRANK between the stat and the read yields 0 bytes at a tail
+// offset computed from the old size. Reporting that as an empty read would
+// caption a large file "printed nothing", so it degrades to absent instead.
+test('a file that shrinks under the tail offset reads as absent, not empty', () => {
+  const root = tmp();
+  const tasks = path.join(root, 'proj', 'sess', 'tasks');
+  const scratch = bgSpool(root, 'babsrioq4', 'x'.repeat(BG_MAX_BYTES * 2));
+  const file = path.join(tasks, 'babsrioq4.output');
+  const realStat = fs.statSync;
+  const big = realStat(file).size;
+  fs.writeFileSync(file, 'tiny');
+  fs.statSync = (p, ...rest) => {
+    const st = realStat(p, ...rest);
+    if (String(p) === file) return { ...st, isFile: () => true, size: big };
+    return st;
+  };
+  try {
+    assert.strictEqual(readBgOutput(file), null,
+      'a read that came back empty from a file the stat called large is not evidence of silence');
+  } finally {
+    fs.statSync = realStat;
+  }
+});
+
 // The reader must survive the file it is reading being replaced mid-poll, which
-// a still-running task does constantly. An empty file is a legal read, not a
-// failure, and must not be confused with one.
+// a live task does constantly. An empty file is a legal read, not a failure, and
+// must not be confused with one.
 test('a zero-byte task file reads as empty, not as absent', () => {
   const root = tmp();
   const scratch = bgSpool(root, 'babsrioq4', '');
   const rec = normalizeRecord({ ...BG_PAYLOAD, scratchpad_dir: scratch });
   assert.strictEqual(rec.bgState, 'empty', 'ENTER: the zero-byte file really was read');
-  assert.strictEqual(rec.bgRunning, true, 'no trailer yet, so the task has not exited');
+  assert.strictEqual(rec.bgExitSeen, false, 'no trailer, so nothing is known about completion');
   assert.strictEqual(rec.output, '');
 });
