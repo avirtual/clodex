@@ -29067,7 +29067,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const plugins = res && res.plugins || [];
           const caps = res && res.capabilities || [];
           const granted = new Set(res && res.granted || []);
-          unlistedGrants = grantsForUnlistedPlugins(res && res.granted || [], plugins.map((p) => p.id));
+          unlistedGrants = grantsForUnlistedPlugins(
+            res && res.granted || [],
+            getPluginCatalogCache().map((p) => String(p.id))
+          );
           intentsGrantsList.innerHTML = "";
           intentsGrantsBlock.classList.toggle("hidden", !plugins.length);
           if (!plugins.length) return;
@@ -34882,8 +34885,8 @@ ${detail}` });
       }
       var newSessionPluginsPersisted = null;
       async function refreshNewSessionPlugins(pluginsList2) {
-        if (inputType.value !== "claude") return;
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
+        if (inputType.value !== "claude") return;
         newSessionPluginsPersisted = Array.isArray(pluginsList2) ? pluginsList2 : null;
         renderPluginChecklist(inputPluginList, Array.isArray(pluginsList2) ? pluginsList2 : defaultPluginTicks());
       }
@@ -38889,7 +38892,8 @@ ${res.stderr}` : "");
         argsToolsSection.style.display = isClaude ? "" : "none";
         setClaudeToolsCache(settings?.claudeTools || []);
         renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
-        argsPluginsSection.style.display = isClaude ? "" : "none";
+        const isPluginsEditable = isClaude && !argsSource;
+        argsPluginsSection.style.display = isPluginsEditable ? "" : "none";
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
         argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
         renderPluginChecklist(argsPluginList, res.plugins);

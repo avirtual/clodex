@@ -18,14 +18,12 @@
 // textarea parse. env-scopes is a pure (electron-free) leaf, so requiring it here
 // keeps this module unit-testable.
 const { sanitizeFlat } = require('./env-scopes');
-// The intents allowlist is now COLLAPSED HERE rather than in the renderer (plugin
-// plan R-INT-4 / MUST-FIX 3): the renderer sends the raw CHECKED set and the
-// engine, where the registry is authoritative, decides whether that set collapses
-// to the all-enabled default. A renderer computing it from its own catalog copy
-// would get the collapse wrong the moment a plugin verb exists — or, in the web
-// bundle, the moment its build-time copy went stale. intent-registry is a pure
-// leaf, so requiring it keeps this module unit-testable.
+// The intents allowlist is COLLAPSED HERE rather than in the renderer, where a
+// copy of the catalog decides it: that copy gets the collapse wrong the moment a
+// plugin verb exists — or, in the web bundle, the moment its build-time copy
+// goes stale. intent-registry is a pure leaf, so this stays unit-testable.
 const { allowlistFromChecked } = require('./intent-registry');
+const { isValidPluginId } = require('./plugin-api');
 
 function resolveSessionArgsPatch(patch = {}, prev = null) {
   const {
@@ -75,9 +73,11 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
       ? sanitizeFlat(env)
       : ((prev?.env && typeof prev.env === 'object') ? prev.env : {}),
     // `[]` is a real value here (the seat that has no plugins) and null is the
-    // living all-enabled default, exactly as for `intents` above.
+    // living all-enabled default, exactly as for `intents` above. The SECOND door
+    // onto this field, so it filters as session:setPlugins does — no map(String),
+    // which would stringify a number into a regex-legal id.
     plugins: plugins !== undefined
-      ? (Array.isArray(plugins) ? plugins.map(String) : null)
+      ? (Array.isArray(plugins) ? plugins.filter(isValidPluginId) : null)
       : (Array.isArray(prev?.plugins) ? prev.plugins : null),
   };
 }

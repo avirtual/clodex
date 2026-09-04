@@ -556,6 +556,21 @@ test('ROUND-2 P3: session:setPlugins filters ids at the door, house pattern', ()
   // null is the full-clear back to the living default, stored as ABSENCE.
   f.setPlugins('seat', null);
   assert.ok(!('plugins' in f.store.seat), 'CONTROL: a null list still clears the key back to the living default');
+
+  // The SECOND door onto the same field. session:setArgs routes through
+  // resolveSessionArgsPatch, which reaches persistence without passing the
+  // handler above, so a filter on one door alone leaves the field guarded from
+  // one direction alone.
+  const { resolveSessionArgsPatch } = require('../session-args');
+  const viaArgs = resolveSessionArgsPatch({ plugins: ['good-plugin', 'BadCase', '../traversal', 42, 'also-good'] }, null);
+  assert.deepStrictEqual(viaArgs.plugins, ['good-plugin', 'also-good'],
+    'session:setArgs filters exactly as session:setPlugins does, and does not stringify a number into a legal id');
+  assert.strictEqual(resolveSessionArgsPatch({ plugins: null }, null).plugins, null,
+    'CONTROL: null is still the living all-enabled default at this door, not an empty list');
+  assert.deepStrictEqual(resolveSessionArgsPatch({ plugins: ['!!!'] }, null).plugins, [],
+    'and an all-junk list is [] — the strict seat, matching the other door');
+  assert.deepStrictEqual(resolveSessionArgsPatch({}, { plugins: ['kept'] }).plugins, ['kept'],
+    'CONTROL: an omitted key is untouched, so the filter cannot eat a persisted list');
 }));
 
 test('session:setPluginGrants sanitizes at the door and stores divergence only', () => {
@@ -1088,6 +1103,108 @@ test('ROUND-2 P1: a non-claude type is written the globally-enabled set, never [
     + 'living default, but this key is EDITOR_OWNED, so it is written either way');
   assert.strictEqual(body.includes('inputPluginList) : [];'), false,
     'and the `[]` this replaced is gone, not merely shadowed');
+});
+
+// ROUND-3 NIT5: the Edit dialog's peer branch omits `plugins` from the payload
+// entirely (deliberately — whether the field crosses the wire is phase B), so a
+// Plugins section drawn on a peer row accepts an untick and drops it on save. A
+// silently discarded edit is worse than an absent control, and exec already
+// solves it by hiding: mirror the shape rather than inventing a second one.
+test('ROUND-3 NIT5: the Plugins section is hidden on a PEER row, exactly as exec is', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('async function openArgsDialog(');
+  assert.ok(at > 0, 'ENTER: openArgsDialog was located');
+  const body = src.slice(at, src.indexOf('\nasync function ', at + 10));
+
+  assert.match(body, /isExecEditable = isClaude && !argsSource/,
+    'ENTER: exec\'s hide is the shape being mirrored — if it changed, this test is comparing against nothing');
+  assert.match(body, /isPluginsEditable = isClaude && !argsSource/,
+    'the Plugins section takes the same editability test as exec');
+  assert.match(body, /argsPluginsSection\.style\.display = isPluginsEditable \? '' : 'none'/,
+    'and the section is actually hidden by it');
+  assert.strictEqual(/argsPluginsSection\.style\.display = isClaude \?/.test(body), false,
+    'never on isClaude alone, which draws it for a peer row whose save silently discards the untick');
+
+  // The other half of the claim, and the reason hiding is the right fix rather
+  // than sending the field: the peer save branch must NOT carry `plugins`.
+  const saveAt = src.indexOf('const res = source');
+  assert.ok(saveAt > 0, 'ENTER: the save branch was located');
+  const peerArm = src.slice(saveAt, src.indexOf(': await window.api.setSessionArgs', saveAt));
+  assert.strictEqual(/\bplugins\b/.test(peerArm), false,
+    'the peer save still omits plugins — phase B decides whether it crosses the wire, not this round');
+});
+
+// ROUND-3 NIT3: round-1 MF4's carry-forward, pointed the wrong way. The popover
+// re-reads session:pluginGrants on every untick, and that handler narrows its
+// `plugins` rows by the LIVE ticked set while returning the full persisted
+// `granted`. Basing the carry-forward on those narrowed rows makes a plugin the
+// operator just unticked look unlistable, so Apply (plugins -> intents -> grants)
+// writes its tokens back over the prune setPlugins had just performed.
+test('ROUND-3 NIT3: an UNTICKED plugin\'s grants are dropped, not carried forward', () => {
+  const { grantsForUnlistedPlugins, mergeGrants } = require('../plugin-api');
+  const granted = ['ticked:turns', 'unticked:turns', 'quarantined:thinking'];
+  // What the two candidate bases actually are after the operator unticks
+  // `unticked`: the narrowed grants rows lose it, the plugin CATALOG does not.
+  const narrowedRows = ['ticked'];
+  const catalogIds = ['ticked', 'unticked'];
+
+  const wrong = grantsForUnlistedPlugins(granted, narrowedRows);
+  assert.ok(wrong.includes('unticked:turns'),
+    'ENTER: the narrowed basis really does resurrect it — without this the assertion below passes for the wrong reason');
+
+  const carried = grantsForUnlistedPlugins(granted, catalogIds);
+  assert.strictEqual(carried.includes('unticked:turns'), false,
+    'a plugin the operator SAW and unticked is not carried: the untick is their answer, and the server pruned on it');
+  // CONTROL, and the whole reason the carry-forward exists: a plugin absent from
+  // the catalog (quarantined, globally disabled) still rides through.
+  assert.deepStrictEqual(carried, ['quarantined:thinking'],
+    'CONTROL: a genuinely undrawable plugin keeps its grant');
+  assert.strictEqual(mergeGrants([], carried).includes('unticked:turns'), false,
+    'and the union the popover saves does not put it back either');
+
+  // The call site is what ships, and it is DOM-bound: the leaf is identical for
+  // both bases, so only the ARGUMENT distinguishes fixed from broken.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'popovers', 'checklist-popovers.js'), 'utf8');
+  const at = src.indexOf('function renderPluginGrants(');
+  assert.ok(at > 0, 'ENTER: renderPluginGrants was located');
+  const body = src.slice(at, src.indexOf('\n  function collectPluginGrants(', at));
+  assert.ok(body.length > 0 && body.length < 2000,
+    'ENTER: the slice is bounded by the NEXT function, not by the first `}` — a nested block would cut the body short and make both assertions below vacuous');
+  const call = body.slice(body.indexOf('grantsForUnlistedPlugins('));
+  const stmt = call.slice(0, call.indexOf(';'));
+  assert.ok(stmt.includes('grantsForUnlistedPlugins('), 'ENTER: the carry-forward statement was isolated');
+  assert.match(stmt, /getPluginCatalogCache\(\)\.map\(/,
+    'the carry-forward must be measured against the plugin catalog, every drawable id');
+  assert.strictEqual(/\bplugins\.map\(/.test(stmt), false,
+    'and never against `res.plugins`, which the handler narrows by the live ticked set');
+});
+
+// ROUND-3 MF2: the shape pin above is TRUE with an empty cache, so it cannot see
+// the failing direction. `defaultPluginTicks()` reads pluginCatalogCache, which
+// only refreshNewSessionPlugins populates for this dialog — and a New-session
+// dialog opened ALREADY TYPED non-claude (adoptSession with a codex prefill,
+// openTemplateEditor on a non-claude template) never enters the claude arm. With
+// the fetch below the type guard the cache stays [], the save persists a codex
+// seat closed to every plugin, and no dialog draws a Plugins section to reopen
+// it. So the invariant is an ORDER inside one function body, not the presence of
+// two calls: assert the indices, the way the MF2 call-site scan does.
+test('ROUND-3 MF2: refreshNewSessionPlugins FETCHES the catalog before the type guard', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('async function refreshNewSessionPlugins(');
+  assert.ok(at > 0, 'ENTER: the function was located — a rename makes every index below meaningless');
+  const end = src.indexOf('\n}', at);
+  assert.ok(end > at, 'ENTER: and its body has an end brace to bound the slice');
+  const body = src.slice(at, end);
+
+  const fetchAt = body.indexOf('setPluginCatalogCache(');
+  const guardAt = body.indexOf("!== 'claude'");
+  assert.ok(fetchAt > 0, 'ENTER: the fetch is in this body at all — moving it out would make the order assertion vacuous');
+  assert.ok(guardAt > 0, 'ENTER: and so is the type guard, or there is no ordering to pin');
+  assert.ok(fetchAt < guardAt,
+    'the catalog fetch must run BEFORE the non-claude early return: defaultPluginTicks() answers off '
+    + 'this cache for every session type, and a dialog opened already typed non-claude returns at the '
+    + 'guard — leaving [] , which persists that seat closed to every plugin with no UI to reopen it');
 });
 
 // ── NIT: registering after deactivate must refuse, not silently globalize ────

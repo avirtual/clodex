@@ -1,8 +1,8 @@
-// popovers/checklist-popovers.js — the three local config-editor popovers off
-// the proxy bar's ⚙ actions: Tools, Skills, and Agents/Builtins. Each renders a
-// checklist of the session's current config, and Apply persists it (optionally
-// with a hard restart + terminal re-attach). Self-contained island: DOM handles,
-// dismiss wiring, and bulk-toggle wiring live here; the openers are returned.
+// popovers/checklist-popovers.js — the local config-editor popovers off the
+// proxy bar's ⚙ actions: Tools, Skills, Agents/Builtins and Intents. Each
+// renders a checklist of the session's current config, and Apply persists it
+// (optionally with a hard restart + terminal re-attach). Self-contained island:
+// DOM handles, dismiss wiring and bulk-toggle wiring live here; openers returned.
 //
 // These read/write settings and restart via window.api directly — outside the
 // popoverApi read-only data seam by design. The restart re-attach dance needs
@@ -10,8 +10,6 @@
 // reference. Tools/Agents are LOCAL-only. SKILLS takes an optional peer `source`
 // ({fetch, save, restartFresh}) so the same popover edits a peer session's
 // skills over the wire; with `source` omitted the local path is unchanged.
-//
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
 const {
   renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist,
@@ -404,16 +402,19 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   const intentsGrantsBlock = document.getElementById('intents-popover-grants');
   const intentsGrantsList = document.getElementById('intents-popover-grants-list');
 
-  // Grants held for plugins this dialog CANNOT draw a row for — see
-  // grantsForUnlistedPlugins. Stashed at render, unioned back at collect, so a
-  // save only ever changes the rows the operator actually saw.
+  // Grants held for plugins this dialog cannot draw a row for. Measured against
+  // the PLUGIN CATALOG, not `res.plugins`: that list is narrowed by the live
+  // ticked set, so after an untick the plugin reads as unlistable and its tokens
+  // are written back over the prune the same Apply asked for. A carry-forward
+  // covers a plugin the operator could not see, never one they saw and unticked.
   let unlistedGrants = [];
 
   function renderPluginGrants(res) {
     const plugins = (res && res.plugins) || [];
     const caps = (res && res.capabilities) || [];
     const granted = new Set((res && res.granted) || []);
-    unlistedGrants = grantsForUnlistedPlugins((res && res.granted) || [], plugins.map((p) => p.id));
+    unlistedGrants = grantsForUnlistedPlugins((res && res.granted) || [],
+      getPluginCatalogCache().map((p) => String(p.id)));
     intentsGrantsList.innerHTML = '';
     intentsGrantsBlock.classList.toggle('hidden', !plugins.length);
     if (!plugins.length) return;

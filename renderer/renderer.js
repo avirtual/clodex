@@ -1805,9 +1805,12 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
 let newSessionPluginsPersisted = null;
 
 // Painted BEFORE the intent list, whose catalog is asked about what this ticks.
+// The FETCH stays ABOVE the type guard: a non-claude seat draws no checklist but
+// still SAVES defaultPluginTicks(), which reads this cache — below the guard it
+// answers [], closing that seat to every plugin with no UI to reopen it.
 async function refreshNewSessionPlugins(pluginsList) {
-  if (inputType.value !== 'claude') return;
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  if (inputType.value !== 'claude') return;
   newSessionPluginsPersisted = Array.isArray(pluginsList) ? pluginsList : null;
   renderPluginChecklist(inputPluginList, Array.isArray(pluginsList) ? pluginsList : defaultPluginTicks());
 }
@@ -2213,8 +2216,7 @@ function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
-  // UNCONDITIONAL, every type: omitted reads as cleared, cleared means absent, and
-  // absent means EVERY plugin (see the EDITOR_OWNED note below). A type with no
+  // Written for EVERY type (see the EDITOR_OWNED note below), and a type with no
   // Plugins section gets the globally-enabled set — `[]` would close it for good.
   const plugins = type === 'claude'
     ? mergePlugins(collectPluginChecklist(inputPluginList),
@@ -2698,19 +2700,16 @@ function activePeerConfigurable() {
   return !type || type === 'claude' || type === 'codex';
 }
 
-// Which SESSION-SCOPED plugins may draw for a given session. Answered off
-// sidebarMeta's per-row read: the sidebar paints every session at once, so a
-// single active-session answer would be the wrong shape for row badges.
-//
-// A plugin absent from `scopedPluginIds` always reaches: the set arrives
-// asynchronously, and an empty one at startup would blank every plugin's UI.
+// Answered off sidebarMeta's per-row read, not off the active session: the
+// sidebar paints every row at once. A plugin absent from `scopedPluginIds`
+// always reaches — the set arrives async, and an empty one at startup would
+// otherwise blank every plugin's UI.
 let scopedPluginIds = new Set();
 function pluginReachesSession(pluginId, sessionName) {
   if (!scopedPluginIds.has(pluginId)) return true;
   const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
-  // The shared leaf, not a local re-derivation: it matches whole tokens against
-  // the capability vocabulary, where the split-on-':' this used to do read a
-  // colon-less "demoX" as plugin "demo" (indexOf -1 → slice(0,-1)).
+  // The shared leaf, never a local re-derivation: a hand-rolled split on ':'
+  // reads a colon-less "demoX" as plugin "demo".
   return pluginReaches(pluginId, grants);
 }
 
@@ -6200,7 +6199,10 @@ async function openArgsDialog(name, argsSource = null) {
   argsToolsSection.style.display = isClaude ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
-  argsPluginsSection.style.display = isClaude ? '' : 'none';
+  // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section
+  // drawn there takes an untick and silently discards it.
+  const isPluginsEditable = isClaude && !argsSource;
+  argsPluginsSection.style.display = isPluginsEditable ? '' : 'none';
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
   argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
   renderPluginChecklist(argsPluginList, res.plugins);
@@ -6275,9 +6277,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // subset ([] = everything gated, a real value). Both OVERWRITE; undefined-preserve is
   // reserved for a patch that omits intents entirely.
   const intents = argsIntentsSection.style.display === 'none' ? null : collectIntentChecklist(argsIntentsList);
-  // undefined = "untouched" — never [], which would strip the seat. A hidden
-  // section, or a checklist that drew no rows because nothing is loaded: there
-  // [] is an absence of options, not the operator's answer.
+  // undefined = "untouched", never []: a hidden section or a checklist that drew
+  // no rows is an absence of options, not the operator's answer.
   const plugins = (argsPluginsSection.style.display === 'none' || !getPluginCatalogCache().length)
     ? undefined
     : mergePlugins(collectPluginChecklist(argsPluginList),

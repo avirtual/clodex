@@ -166,7 +166,6 @@ function intentRowChecked(row, intentsList) {
   if (!Array.isArray(intentsList)) return !row.privileged;
   return intentsList.includes(row.type);
 }
-// Absent (never written) means every loaded plugin.
 function renderPluginChecklist(container, pluginsList) {
   container.innerHTML = '';
   if (!pluginCatalogCache.length) {
