@@ -33,6 +33,8 @@ under the CLI-side prune is not — the smaller loss was inside the larger one.
 
 ## blockNode
 
-An auto-backgrounded call reaches the hook with empty output, so without its note
-the block cannot be told from a command that genuinely printed nothing. Which is
-why the note is NOT shown for an ordinary silent command.
+An auto-backgrounded call reaches the hook with empty output. The reader recovers
+it from the task file where it can, giving three states the operator acts on
+differently: recovered (worded differently again while still running), genuinely
+empty, and file gone. Drawing any two alike IS the defect, so the wordings must
+stay mutually distinct. None is shown for an ordinary silent command.

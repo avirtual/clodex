@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- **The Console tab now shows the output of Bash calls the CLI ran in the
+  background.** Under parallel load the CLI quietly moves a Bash call to the
+  background, and its output never reaches Clodex through the usual channel — so
+  until now those blocks were empty and 5.26.0 could only caption them as lost.
+  The output is still on disk in the task's own file, so Clodex reads it back and
+  shows it. A background command that is still running shows the output so far;
+  one that failed now reports its real exit code, where before every background
+  call was drawn as a success. The three cases that used to look identical are
+  now distinct: output recovered, the command genuinely printed nothing, and the
+  task file is gone so nothing can be recovered. Very large output is capped like
+  any other block, keeping the END of the file — where a build's errors and its
+  exit line are — and saying how much of the whole it is showing.
+
 ## 5.26.0 — 2026-09-04
 
 - **A new Console tab in the bottom drawer shows what a seat's Bash tool actually
