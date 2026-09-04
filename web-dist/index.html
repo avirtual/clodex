@@ -3956,6 +3956,14 @@ body {
 #plugins-folder.hidden {
   display: none;
 }
+#plugins-register-note {
+  margin-top: 8px;
+  word-break: break-all;
+}
+#plugins-register-note.hidden,
+#btn-plugins-register.hidden {
+  display: none;
+}
 #dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
@@ -7191,14 +7199,16 @@ body {
   <div id="plugins-overlay" class="hidden">
     <div id="plugins-dialog">
       <h3>Plugins</h3>
-      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin that has its own settings shows a <strong>Settings</strong> button on its row. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely.</p>
+      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin that has its own settings shows a <strong>Settings</strong> button on its row. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely. <strong>Register Plugin…</strong> links a folder from anywhere on disk into the plugins folder without copying it; a plugin registered this way has no browser UI when you reach this Clodex from a phone or another machine, because the browser bundle is built with the app.</p>
       <div id="plugins-list"></div>
+      <div id="plugins-register-note" class="plugin-row-note hidden"></div>
       <!-- The browser frontend's substitute for revealing the folder in Finder:
            host and viewer are different machines there, so a reveal would open
            the WRONG machine's folder. Filled by renderer.js from the engine's
            read-only listing; never created in Electron, which reveals instead. -->
       <div id="plugins-folder" class="hidden"></div>
       <div class="dialog-actions">
+        <button id="btn-plugins-register" class="secondary" type="button" title="Pick a plugin folder anywhere on disk and link it into ~/.clodex/plugins — the folder stays where it is">Register Plugin…</button>
         <button id="btn-plugins-reveal" class="secondary" type="button" title="Open ~/.clodex/plugins in Finder — created if it does not exist yet">Open Plugins Folder</button>
         <button id="btn-plugins-rescan" class="secondary" type="button" title="Look for plugins added or removed since Clodex started">Re-scan</button>
         <div style="flex: 1;"></div>
@@ -37575,10 +37585,18 @@ ${res.stderr}` : "");
       window.api.onRequestOpenPeersDialog(() => openPeersDialog());
       var pluginsOverlay = document.getElementById("plugins-overlay");
       var pluginsList = document.getElementById("plugins-list");
+      var pluginsRegisterNote = document.getElementById("plugins-register-note");
+      function showPluginsRegisterNote(text, kind) {
+        if (!pluginsRegisterNote) return;
+        pluginsRegisterNote.className = kind === "warn" ? "plugin-row-note warn" : "plugin-row-note";
+        pluginsRegisterNote.textContent = text || "";
+        pluginsRegisterNote.classList.toggle("hidden", !text);
+      }
       function closePluginsDialog() {
         pluginsOverlay.classList.add("hidden");
       }
       async function openPluginsDialog() {
+        showPluginsRegisterNote("");
         await renderPluginsDialog();
         pluginsOverlay.classList.remove("hidden");
       }
@@ -37650,6 +37668,12 @@ ${res.stderr}` : "");
             n.textContent = p.quarantined ? `Disabled automatically: activate() threw on ${p.failCount} consecutive launches \u2014 ${p.lastError || "unknown error"}` : `Failed to activate once (${p.lastError || "unknown error"}) \u2014 one more and it will be held back.`;
             body.appendChild(n);
           }
+          if (p.linkedFrom) {
+            const l = document.createElement("div");
+            l.className = "plugin-row-note";
+            l.textContent = `Registered from ${p.linkedFrom}`;
+            body.appendChild(l);
+          }
           row.appendChild(cb);
           row.appendChild(body);
           if (p.quarantined) {
@@ -37669,6 +37693,33 @@ ${res.stderr}` : "");
               await renderPluginsDialog();
             });
             row.appendChild(retry);
+          }
+          if (p.linkedFrom && !window.__CLODEX_WEB__) {
+            const un = document.createElement("button");
+            un.type = "button";
+            un.className = "secondary";
+            un.textContent = "Unregister";
+            un.title = `Remove the link at the plugins folder \u2014 ${p.linkedFrom} itself is left alone`;
+            un.addEventListener("click", async () => {
+              un.disabled = true;
+              let r = null;
+              try {
+                r = await window.api.pluginInvoke("_host", "plugins.unregister", [p.id]);
+              } catch {
+              }
+              if (!r || !r.ok) {
+                un.disabled = false;
+                showPluginsRegisterNote(`Could not unregister ${p.name || p.id}: ${r && r.error || "unknown error"}`, "warn");
+                return;
+              }
+              try {
+                await window.api.pluginInvoke("_host", "plugins.rescan");
+              } catch {
+              }
+              showPluginsRegisterNote(`Unregistered ${p.name || p.id}. ${p.linkedFrom} was left where it is.`);
+              await renderPluginsDialog();
+            });
+            row.appendChild(un);
           }
           pluginsList.appendChild(row);
           if (pluginBar.settingsSectionOwners().includes(p.id)) {
@@ -37809,6 +37860,52 @@ ${res.stderr}` : "");
         pluginsFolderPanel.appendChild(body);
         pluginsFolderPanel.classList.remove("hidden");
       }
+      var pluginsRegisterBtn = document.getElementById("btn-plugins-register");
+      if (window.__CLODEX_WEB__) pluginsRegisterBtn.classList.add("hidden");
+      pluginsRegisterBtn.addEventListener("click", async () => {
+        showPluginsRegisterNote("");
+        let dir = null;
+        try {
+          dir = await window.api.selectDirectory();
+        } catch {
+        }
+        if (!dir) return;
+        pluginsRegisterBtn.disabled = true;
+        try {
+          let v = null;
+          try {
+            v = await window.api.pluginInvoke("_host", "plugins.validateCandidate", [dir]);
+          } catch {
+          }
+          if (!v || !v.ok) {
+            showPluginsRegisterNote(`${dir} is not a plugin Clodex can load: ${v && v.error || "unknown error"}`, "warn");
+            return;
+          }
+          let r = null;
+          try {
+            r = await window.api.pluginInvoke("_host", "plugins.register", [dir]);
+          } catch {
+          }
+          if (!r || !r.ok) {
+            showPluginsRegisterNote(`Could not register ${v.name || v.id}: ${r && r.error || "unknown error"}`, "warn");
+            return;
+          }
+          let scan = null;
+          try {
+            scan = await window.api.pluginInvoke("_host", "plugins.rescan");
+          } catch {
+          }
+          const failed = (scan && scan.ok && scan.failed || []).find((f) => f.id === r.id);
+          if (failed) {
+            showPluginsRegisterNote(`Registered ${v.name || v.id} from ${r.target}, but it did not start: ${failed.error || "unknown error"}`, "warn");
+          } else {
+            showPluginsRegisterNote(`Registered ${v.name || v.id} from ${r.target}.`);
+          }
+          await renderPluginsDialog();
+        } finally {
+          pluginsRegisterBtn.disabled = false;
+        }
+      });
       document.getElementById("btn-plugins-reveal").addEventListener("click", async () => {
         if (window.__CLODEX_WEB__) {
           await showPluginsFolderListing();

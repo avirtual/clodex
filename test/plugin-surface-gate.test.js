@@ -298,22 +298,62 @@ test('the _host pseudo-plugin stays reachable from the web surface', async () =>
   } finally { b.cleanup(); }
 });
 
-test('_host exempts exactly these eight methods, and no ninth by inheritance', () => {
+test('_host holds exactly these eleven methods, and no twelfth by inheritance', () => {
   // The exemption is a WHOLE-TABLE early return, so a method added to
   // hostMethods is web-reachable the moment it is written, with nothing to edit
-  // and nothing to notice. Same argument as the workbench `"any"` literal below:
-  // the dangerous direction is widening, so widening must touch a test.
-  const HOST_UNGATED = [
-    'plugins.listUserRoot', 'plugins.rescan', 'plugins.status', 'plugins.userRoot',
+  // and nothing to notice — unless it is named in HOST_DESKTOP_ONLY. Same
+  // argument as the workbench `"any"` literal below: the dangerous direction is
+  // widening, so widening must touch a test. The three registration methods are
+  // in the list because the table is pinned WHOLE; the subject below is what
+  // proves they are refused on the web surface.
+  const HOST_METHODS = [
+    'plugins.listUserRoot', 'plugins.register', 'plugins.rescan', 'plugins.status',
+    'plugins.unregister', 'plugins.userRoot', 'plugins.validateCandidate',
     'renderer.info', 'renderer.report',
     'settings.get', 'settings.set',
   ];
   const b = bootBothSurfaces();
   try {
     const names = b.host._hostMethodNames().slice().sort();
-    assert.deepStrictEqual(names, HOST_UNGATED,
+    assert.deepStrictEqual(names, HOST_METHODS,
       'a new _host method is reachable from an authenticated browser — argue for it here');
   } finally { b.cleanup(); }
+});
+
+test('the three _host methods taking a caller-supplied path are desktop-only', async () => {
+  // Registration symlinks a caller-named host directory into the plugin root and
+  // then loads code from it. Reachable from a browser that would be remote code
+  // execution by path, so these three carve out of the `_host` exemption — while
+  // the plumbing the web plugin UI needs keeps answering, which is the half that
+  // proves the carve-out is a carve-out and not a table that stopped working.
+  const b = bootBothSurfaces();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-web-register-'));
+  try {
+    const calls = [
+      ['plugins.validateCandidate', [scratch]],
+      ['plugins.register', [scratch]],
+      ['plugins.unregister', ['workbench']],
+    ];
+    for (const [method, args] of calls) {
+      assert.strictEqual(typeof b.host._hostMethodNames().find((n) => n === method), 'string',
+        `ENTER: ${method} is really in the table, so the refusal below is about a method that exists`);
+      assert.deepStrictEqual(await b.web('_host', method, args),
+        { ok: false, error: NOT_ON_THIS_SURFACE },
+        `${method} must not answer an authenticated browser`);
+    }
+    // The other half: the same registrar and host still serve the desktop, and
+    // the rest of the table still serves the web. An absence alone is equally
+    // true of a build where the whole `_host` branch stopped answering.
+    const desktop = await b.desktop('_host', 'plugins.validateCandidate', [scratch]);
+    assert.strictEqual(desktop.ok, false, 'the desktop reaches the method');
+    assert.match(desktop.error, /manifest\.json/,
+      'and gets the VALIDATOR\'s answer about the empty folder, not a surface refusal');
+    const status = await b.web('_host', 'plugins.status', []);
+    assert.strictEqual(status.ok, true, 'the web surface still has the plugin UI plumbing');
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+    b.cleanup();
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════

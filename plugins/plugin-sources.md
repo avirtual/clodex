@@ -637,6 +637,17 @@ End to end, today, with the user root implemented:
    manifest id. **`~/.clodex` is a dot-directory**, so a Finder user needs
    ⌘⇧. to see it, or ⌘⇧G to navigate to it — but **Manage Plugins ▸ Open Plugins
    Folder** now reveals it directly, creating it if it does not exist yet.
+   Copying is not required: **Manage Plugins ▸ Register Plugin…** picks a folder
+   anywhere on disk — a plugin living in its own git checkout, say — validates
+   its manifest and symlinks it in as `~/.clodex/plugins/<id>`, leaving the
+   folder where it is. The folder must still be NAMED for the plugin's id (§4),
+   and the row for a registered plugin says where it points and offers
+   **Unregister**, which removes the link and never the target. Registration is
+   refused when the id belongs to a built-in plugin, when a real directory
+   already holds that name in the user root, or when the id is already
+   registered — see §4 for why one id can only have one copy. Desktop only: the
+   method takes a caller-supplied host path, so a browser client would be
+   choosing a directory on someone else's machine to load code from.
 4. **Re-scan** in Manage Plugins, or restart. Discovery no longer runs only at
    startup: `plugins.rescan` re-reads every root and loads what it finds.
 5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`.
@@ -690,10 +701,16 @@ Consequences worth stating:
   This is a **distribution** question, not an install-flow one, and deliberately
   not answered here or stubbed: step 1 above is unchanged, and a user still
   learns a plugin exists from a README, a link, or a person.
-- **An install affordance** — even just "drop a folder here". Reveal + re-scan
-  shortens the manual path but does not remove it; obtaining the plugin is still
-  `git clone` or an unzip. This is where a local-only design stays honest:
-  dropping a directory is not a fetch.
+- **Obtaining the plugin.** Register Plugin… removes the copying step — a
+  cloned checkout is registered where it sits — but step 2 is untouched: the
+  clone or the unzip is still the user's, in a terminal or a file manager. This
+  is where a local-only design stays honest: picking a directory is not a fetch.
+- **A registered plugin's renderer half on the WEB surface.** §6's limit
+  unchanged: `renderer/web/plugin-registry.js` is generated at build time from
+  the repo's own `plugins/` tree, so a plugin registered from elsewhere runs its
+  engine half there and has no browser UI. Stated in the dialog's hint text,
+  because a user who reaches this Clodex from a phone would otherwise read it as
+  a break.
 - **Replacing a running plugin without a restart**, per the table above. Reaching
   it would mean deactivating and re-registering a live plugin against a fresh
   module — a substantially larger change than an install flow, and one that
@@ -719,5 +736,5 @@ Consequences worth stating:
 | §9 sources, remote fetch | Sketch, not built |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
-| §10 an install affordance (drop a folder) | Not built, scoped |
+| §10 an install affordance — register a folder from anywhere | **Implemented** (desktop only) |
 | §10 a place to find plugins at all | Out of scope — distribution, not install flow |

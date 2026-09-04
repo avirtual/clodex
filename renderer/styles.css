@@ -2532,6 +2532,13 @@ html, body {
    element is toggled by class and would otherwise ship always-visible. */
 #plugins-folder { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); word-break: break-all; }
 #plugins-folder.hidden { display: none; }
+/* #plugins-register-note ships hidden and is filled by Register/Unregister;
+   #btn-plugins-register is hidden via JS on the web frontend (registration
+   takes a host path and is desktop-only). Both need the per-id rule for the
+   usual reason: there is no generic .hidden, so without it they ship
+   always-visible. */
+#plugins-register-note { margin-top: 8px; word-break: break-all; }
+#plugins-register-note.hidden, #btn-plugins-register.hidden { display: none; }
 
 #dialog {
   background: var(--sidebar-bg);

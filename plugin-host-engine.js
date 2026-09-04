@@ -588,6 +588,24 @@ function createPluginHostEngine(deps) {
       const r = loader.listUserRoot();
       return r ? { ok: true, ...r } : errorEnvelope('no user plugin root configured');
     },
+    'plugins.validateCandidate': (dir) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const r = loader.validateCandidate(String(dir || ''));
+      return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+    },
+    'plugins.register': (dir) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const r = loader.registerUserPlugin(String(dir || ''));
+      return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+    },
+    'plugins.unregister': (pluginId) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const r = loader.unregisterUserPlugin(String(pluginId || ''));
+      return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+    },
     'plugins.rescan': () => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
@@ -607,6 +625,10 @@ function createPluginHostEngine(deps) {
     },
   };
 
+  const HOST_DESKTOP_ONLY = new Set([
+    'plugins.validateCandidate', 'plugins.register', 'plugins.unregister',
+  ]);
+
   const api = {
 // `callerSurface` is REQUIRED in effect: everything but the exact string
 // 'desktop' is treated as untrusted, so a transport that forgets to declare
@@ -616,20 +638,23 @@ function createPluginHostEngine(deps) {
 // all; the check has to be here.
     async dispatch(pluginId, method, args = [], callerSurface = undefined) {
       if (String(pluginId) === HOST_PSEUDO_ID) {
-        // UNGATED, ruled deliberately (t217) rather than left to the early
-        // return. These are the plugin SUBSYSTEM's own plumbing: the web
-        // renderer's plugin UI cannot function without settings.get/set,
-        // renderer.info and plugins.status, and none of them takes a
-        // caller-supplied path or command (see listUserRoot's header).
+        // UNGATED by default, ruled deliberately (t217): these are the plugin
+        // SUBSYSTEM's own plumbing, and the web renderer's plugin UI cannot
+        // function without settings.get/set, renderer.info and plugins.status.
         // `plugins.rescan` is the sharp one — it loads code — but gating it
         // alone would be theatre: `plugin:setEnabled` reaches activateById →
         // loadOne over a separate unconditional channel with identical effect.
-        // Both belong to "core's own web surface is privileged", which is a
-        // wider question than plugin dispatch and is ticketed separately.
-        // The method list is pinned by test/plugin-surface-gate.test.js so a
-        // ninth one has to be argued for, not inherited.
+        // Both belong to "core's own web surface is privileged", a wider
+        // question than plugin dispatch, ticketed separately. HOST_DESKTOP_ONLY
+        // is the exception: those three take a caller-supplied path, so a web
+        // client could otherwise link an arbitrary host directory into the
+        // plugin root and have its code loaded. The list is pinned by
+        // test/plugin-surface-gate.test.js — a new method argues for itself.
         const hf = hostMethods[String(method)];
         if (typeof hf !== 'function') return errorEnvelope(NO_SUCH_METHOD);
+        if (HOST_DESKTOP_ONLY.has(String(method)) && !surfaceAllows(callerSurface, 'desktop')) {
+          return errorEnvelope(NOT_ON_THIS_SURFACE);
+        }
         try { return hf(...args); } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
       }
       const fn = dispatchMap.get(namespaced(String(pluginId), String(method)));
@@ -690,9 +715,9 @@ function createPluginHostEngine(deps) {
     register, deactivate, hooks,
     hostApiVersion: HOST_API_VERSION,
     _dispatchKeys: () => [...dispatchMap.keys()],
-    // The `_host` table is the surface-gate's one exemption (see dispatch), so a
-    // test pins it as a literal — a ninth method must edit that list rather than
-    // inherit web reach from the early return.
+    // Most of the `_host` table is exempt from the surface gate (see dispatch),
+    // so a test pins the whole table as a literal — a new method must edit that
+    // list rather than inherit web reach from the early return.
     _hostMethodNames: () => Object.keys(hostMethods),
     _hookCounts: () => ({
       create: createHooks.size,
