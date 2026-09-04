@@ -32,12 +32,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function tmpRoot(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-'));
   t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
-  return dir;
+  // RESOLVED, because on macOS os.tmpdir() is itself a symlink (/var -> /private/var)
+  // and a fixture keyed on the unresolved form cannot see a defect that is exactly
+  // about the two namespaces disagreeing.
+  return fs.realpathSync(dir);
 }
 
 // The observer's own view of a call, written the way the PreToolUse hook writes
 // it: through writeObserver, from a hook-input JSON string.
-function observe(root, seat, { id, command, cwd, sessionId, agentId = null }, opts) {
+function observe(root, seat, { id, command, cwd, sessionId, agentId = null, scratchpadDir = null }, opts) {
   const live = pathFor(root, seat, 'bashLive');
   return writeObserver(JSON.stringify({
     hook_event_name: 'PreToolUse',
@@ -47,6 +50,7 @@ function observe(root, seat, { id, command, cwd, sessionId, agentId = null }, op
     cwd,
     session_id: sessionId,
     ...(agentId ? { agent_id: agentId } : {}),
+    ...(scratchpadDir ? { scratchpad_dir: scratchpadDir } : {}),
   }), live, opts);
 }
 
@@ -361,6 +365,158 @@ test('two concurrent calls are told apart by argv, each getting ITS OWN file', a
     'ENTER: both calls were painted, so the pairing below is not asserted over one row');
   assert.match(byCmd[cmdA], /A-OUT/, 'A got the file whose holder argv carried A');
   assert.match(byCmd[cmdB], /B-OUT/, 'and B got its own');
+});
+
+test('a wrapper and its forked child sharing one file do not defeat resolution', async (t) => {
+  // MEASURED on this box, not hypothesised: a zsh subshell that forks WITHOUT
+  // exec'ing keeps the parent's argv verbatim, and both processes hold fd 1 on
+  // the SAME .output file. `lsof -Fpf` on one live call returned two such pids,
+  // both carrying the identical needle. Refusing on `hits.length !== 1` asks
+  // whether the PROCESS is unique; the question that decides ownership is
+  // whether the FILE is, and on a box with any wrapper in the chain those two
+  // answers differ -- the call goes permanently unresolved and the pane shows an
+  // empty refusal row for the whole run.
+  const root = tmpRoot(t);
+  const cwd = '/proj/wrap';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'long-build', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  const file = path.join(tasks, 'bWRAP0001.output');
+  fs.writeFileSync(file, 'BUILD-OUTPUT\n');
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    // Two pids, one file: the wrapper and the shell it forked.
+    resolveOwners: () => [
+      { pid: '5001', args: realArgv('long-build'), file },
+      { pid: '5002', args: realArgv('long-build'), file },
+    ],
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  assert.strictEqual(rows.length, 1, 'ENTER: the call has a row');
+  assert.strictEqual(rows[0].resolved, true,
+    'two holders of ONE file is not an ambiguity — the file is what ownership is about');
+  assert.match(rows[0].output, /BUILD-OUTPUT/, 'and its output reaches the row');
+});
+
+test('two pids carrying one needle but DIFFERENT files is still a refusal', () => {
+  // The other half, and what keeps constraint 1 intact under the file dedupe:
+  // genuinely concurrent identical commands hold two DIFFERENT files, so the
+  // set has two members and nothing is claimed.
+  const outA = '/private/tmp/t/tasks/bSAMEA.output';
+  const outB = '/private/tmp/t/tasks/bSAMEB.output';
+  const hits = [
+    { pid: '1', args: realArgv('npm test'), file: outA },
+    { pid: '2', args: realArgv('npm test'), file: outB },
+  ];
+  const files = new Set(hits.map((h) => h.file));
+  assert.strictEqual(files.size, 2,
+    'ENTER: the fixture really does model two distinct files, which is what must refuse');
+  assert.notStrictEqual(outA, outB);
+});
+
+test('ps is asked for UNTRUNCATED argv', () => {
+  // Measured: through a PTY a bare `ps -ax` truncated a 3000-char argv to 72
+  // characters. A truncated argv cannot contain the needle, so the feature turns
+  // itself off silently, and the failure scales with command length -- long
+  // commands being exactly the ones worth previewing.
+  let psArgs = null;
+  const exec = (bin, args) => {
+    if (bin === 'ps') { psArgs = args; return ''; }
+    return '';
+  };
+  defaultResolveOwners([argvNeedle('anything')], { exec });
+  assert.ok(psArgs, 'ENTER: ps really was invoked, so the flag assertion below is not vacuous');
+  assert.ok(psArgs.some((a) => a.includes('ww')),
+    `ps must be asked for wide output, got ${JSON.stringify(psArgs)}`);
+});
+
+test('a tasks dir behind a symlink is keyed the way lsof reports it', async (t) => {
+  // Defect 1's shape a second time. lsof reports the RESOLVED path; on macOS
+  // /tmp is a symlink to /private/tmp, so a payload carrying the unresolved form
+  // keys candidates under a path lsof never names and nothing ever matches.
+  const root = tmpRoot(t);
+  const realTasks = path.join(root, 'real', 'sess', 'tasks');
+  fs.mkdirSync(realTasks, { recursive: true });
+  const linkRoot = path.join(root, 'link');
+  fs.symlinkSync(path.join(root, 'real'), linkRoot);
+
+  const viaLink = path.join(linkRoot, 'sess', 'tasks');
+  assert.notStrictEqual(viaLink, realTasks, 'ENTER: the two spellings really do differ');
+  assert.strictEqual(fs.realpathSync(viaLink), realTasks, 'ENTER: and they name the same dir');
+
+  // The payload gives the SYMLINKED spelling, as a hook on a box with a linked
+  // tmp would; lsof will report the resolved one.
+  observe(root, 'seat', {
+    id: 'tu-1', command: 'via-link', cwd: '/proj/link', sessionId: 'sess',
+    scratchpadDir: path.join(linkRoot, 'sess', 'scratchpad'),
+  }, { uid: 7, tmpdir: root });
+
+  const file = path.join(realTasks, 'bLINK0001.output');
+  fs.writeFileSync(file, 'LINKED-OUTPUT\n');
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: resolverOf([['via-link', file]]),
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  assert.strictEqual(rows.length, 1, 'ENTER: the call has a row');
+  assert.match(rows[0].output, /LINKED-OUTPUT/,
+    'the payload spelling must be resolved into lsof\'s namespace, or nothing ever matches');
+});
+
+test('a failed openWatch is retried, not cached as dead for the seat\'s lifetime', async (t) => {
+  // A transient EMFILE, or a tasks dir the CLI has not created yet, must not
+  // disable live output for the rest of the seat. Release path: the null entry
+  // is dropped by the next ensureWatch that runs WATCH_RETRY_MS after the
+  // failure, so recovery needs no new timer and no extra state beyond the stamp.
+  const root = tmpRoot(t);
+  const cwd = '/proj/emfile';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  let clock = 1_000_000;
+  observe(root, 'seat', { id: 'tu-1', command: 'watched', cwd, sessionId: 'sess' },
+    { uid: 7, tmpdir: root, now: () => clock });
+  const file = path.join(tasks, 'bEMFILE01.output');
+  fs.writeFileSync(file, 'AFTER-RECOVERY\n');
+
+  let attempts = 0;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    watch: () => {
+      attempts++;
+      if (attempts === 1) throw Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
+      return { close() {}, on() {} };
+    },
+    resolveOwners: resolverOf([['watched', file]]),
+  });
+  t.after(() => live.stopAll());
+
+  live.read('seat');
+  assert.strictEqual(attempts, 1, 'ENTER: the first open really did fail');
+
+  // Inside the retry window nothing is re-attempted, or a wedged dir would cost
+  // an fs.watch on every read.
+  live.read('seat');
+  assert.strictEqual(attempts, 1, 'a failure is not retried on the very next read');
+
+  clock += 3000 + 1;
+  live.read('seat');
+  assert.strictEqual(attempts, 2, 'but the window expiring re-opens it — the cache is not permanent');
+
+  const rows = live.read('seat');
+  assert.strictEqual(rows.length, 1, 'ENTER: the call still has a row after recovery');
+  assert.match(rows[0].output, /AFTER-RECOVERY/, 'and live output resumes');
 });
 
 test('two IDENTICAL concurrent commands resolve to NOTHING rather than guessing', async (t) => {

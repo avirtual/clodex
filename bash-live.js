@@ -16,6 +16,7 @@ const WATCH_SENTINEL = '.watching';
 const ARM_REFRESH_MS = 2000;
 const FINALIZED_GRACE_MS = 5000;
 const RESOLVE_WINDOW_MS = 5 * 60 * 1000;
+const WATCH_RETRY_MS = 3000;
 
 const TASK_OUTPUT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.output$/;
 const OBSERVER_FILE_RE = /^[A-Za-z0-9_-]{1,128}\.json$/;
@@ -137,7 +138,7 @@ function defaultResolveOwners(needles, opts) {
 
   let psOut = '';
   try {
-    psOut = run('ps', ['-ax', '-o', 'pid=,args='], {
+    psOut = run('ps', ['-axww', '-o', 'pid=,args='], {
       encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
@@ -187,6 +188,9 @@ function createBashLive(deps) {
   } = deps || {};
 
   const openWatch = watch || ((dir, cb) => fs.watch(dir, { persistent: false }, cb));
+  const realpath = (deps && deps.realpath) || ((d) => {
+    try { return fs.realpathSync(d); } catch { return d; }
+  });
   const setInterval_ = (deps && deps.setInterval) || setInterval;
   const clearInterval_ = (deps && deps.clearInterval) || clearInterval;
   const seats = new Map();
@@ -198,6 +202,7 @@ function createBashLive(deps) {
       st = {
         name,
         watches: new Map(),
+        watchFailedAt: new Map(),
         candidates: new Map(),
         rows: new Map(),
         events: [],
@@ -244,7 +249,7 @@ function createBashLive(deps) {
         file: n,
         command: obj.command,
         agentId: typeof obj.agentId === 'string' ? obj.agentId : null,
-        tasksDir: obj.tasksDir,
+        tasksDir: realpath(obj.tasksDir),
         snapshot: Array.isArray(obj.snapshot) ? obj.snapshot : [],
         startedAt: typeof obj.startedAt === 'number' ? obj.startedAt : 0,
       });
@@ -258,7 +263,15 @@ function createBashLive(deps) {
   }
 
   function ensureWatch(st, dir) {
-    if (st.watches.has(dir)) return;
+    const t = now();
+    if (st.watches.has(dir)) {
+      if (st.watches.get(dir) !== null) return;
+      if (t - (st.watchFailedAt.get(dir) || 0) < WATCH_RETRY_MS) {
+        seedCandidates(st, dir);
+        return;
+      }
+      st.watches.delete(dir);
+    }
     let handle = null;
     try {
       handle = openWatch(dir, (_ev, filename) => {
@@ -270,11 +283,14 @@ function createBashLive(deps) {
       });
     } catch {
       st.watches.set(dir, null);
+      st.watchFailedAt.set(dir, t);
       seedCandidates(st, dir);
+      syncSweep();
       return;
     }
     if (handle && typeof handle.on === 'function') handle.on('error', () => {});
     st.watches.set(dir, handle);
+    st.watchFailedAt.delete(dir);
     seedCandidates(st, dir);
     syncSweep();
   }
@@ -410,7 +426,9 @@ function createBashLive(deps) {
       const needle = needles.get(o.id);
       if (!needle) continue;
       const hits = procs.filter((p) => typeof p.args === 'string' && p.args.includes(needle));
-      if (hits.length !== 1) continue;
+      if (!hits.length) continue;
+      const files = new Set(hits.map((h) => h.file));
+      if (files.size !== 1) continue;
       const c = byPath.get(hits[0].file);
       if (!c || c.owner) continue;
       c.owner = o.id;
@@ -440,6 +458,7 @@ function createBashLive(deps) {
       const h = st.watches.get(dir);
       if (h && typeof h.close === 'function') { try { h.close(); } catch {} }
       st.watches.delete(dir);
+      st.watchFailedAt.delete(dir);
       for (const c of [...st.candidates.values()]) {
         if (c.dir === dir) st.candidates.delete(c.path);
       }
@@ -581,6 +600,7 @@ module.exports = {
   EVENT_QUEUE_MAX,
   FINALIZED_GRACE_MS,
   RESOLVE_WINDOW_MS,
+  WATCH_RETRY_MS,
   OBSERVER_MAX_AGE_MS,
   OBSERVER_MAX_FILES,
   TASK_OUTPUT_RE,
