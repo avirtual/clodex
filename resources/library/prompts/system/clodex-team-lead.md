@@ -220,7 +220,7 @@ cwd IS a worktree is still on the team.
   the tree holds, and whether the seat is running. Prose describes one path
   through that and silently universalises the rest, so read the row.
 
-  FIRST decide which of five arms you are in — only the last reaches the row
+  FIRST decide which of five arms you are in — only the MERGED arm reaches the row
   table, and the other four tear down NO tree and NO branch whatever the rows
   say. Each is named by the words its own reply uses:
 
@@ -240,7 +240,7 @@ cwd IS a worktree is still on the team.
   | `accepted — no ticket branch recorded` | no branch at all — the ticket was worked in the shared checkout, so there is never a tree or a ref to remove. A one-shot seat is ARCHIVED (resumable, and anything it left uncommitted is in the shared checkout); any other seat is left as it is | yes — terminal, there is no second accept to invite |
   | `accepted, but the merge check could NOT run` | git could not answer, treated as NOT merged | no — accept again once it can |
   | `accepted, but branch X is NOT merged into` | the branch is genuinely not in | no — merge it, then accept again |
-  | `stamped this ticket MERGE FAILED at` | the branch IS an ancestor but the loop gave up at a merge step, so the ancestor answer proves nothing | yes — and that CLEARS the mark, so a second accept tears down normally |
+  | `stamped this ticket MERGE FAILED at` | the branch IS an ancestor but the loop gave up at a merge step, so the ancestor answer proves nothing | yes — and that CLEARS the mark, so a second accept tears down normally, EXCEPT on `revert-blocked`, where accepting again is the forbidden action (see the trap below) |
   | `accepted — merged into`, `accepted — branch X has 0 commits beyond`, or `is an ancestor of` with NO `MERGE FAILED` clause | merged: read the row table below | yes |
 
   | on a MERGED branch | seat | worktree | branch |
@@ -348,11 +348,14 @@ cwd IS a worktree is still on the team.
   with the must-fixes. Work worth a cold read that has no ticket is worth
   filing one: a ticket gets you the review plus the branch, the record and the
   merge gate.
-- Never hand-spawn a reviewer or reach for your harness subagent tool — those
-  get you an uncapped reviewer with no verdict channel and no seat your operator
-  can see. Where a scope is yours to write, keep it to the artifact and the
-  question; the ticket path builds its own scope from the record precisely
-  because lead-authored scopes were the measured defect.
+- **To review a ticket**, never hand-spawn a reviewer or reach for your harness
+  subagent tool — those get you an uncapped reviewer with no verdict channel and
+  no seat your operator can see. That forbids REVIEW by those routes and nothing
+  else: a subagent is an ordinary way to do other work, and SendMessage is how
+  you reach one you spawned — it cannot reach a Clodex seat, which is what
+  `[agent:dm]` is for. Where a scope is yours to write, keep it to the artifact
+  and the question; the ticket path builds its own scope from the record
+  precisely because lead-authored scopes were the measured defect.
 - None of this exempts your own work — especially when the team is just you.
   Never grade your own homework on anything that matters; file it as a ticket
   and let the loop review it.
