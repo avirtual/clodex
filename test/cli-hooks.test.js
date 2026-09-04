@@ -787,12 +787,20 @@ test('the console hook survives a `date` with no %N extension', () => {
   assert.strictEqual(names[0].split('-')[0].length, 19,
     'and pad to the same width as a real nanosecond stamp, or the sort stops being chronological');
 
-  // The whole failure was a cursor that could not advance. This is that check.
+  // The whole failure was a cursor that could not advance: the name failed the
+  // grammar, the cursor stayed empty, and every poll re-served the same calls as
+  // NEW ones forever. The reader re-serves the cursor's own timestamp group by
+  // design, so the check is that the cursor took the record and stayed there —
+  // what comes back is that same record, keyed for the tenant to drop, and
+  // nothing the pane has not already seen.
   const first = readBashConsole(REGISTRY_DIR, 'agent1', '');
   assert.strictEqual(first.records.length, 1, 'the record is readable');
+  assert.strictEqual(first.cursor, names[0], 'and the cursor took the fallback-named record');
   const again = readBashConsole(REGISTRY_DIR, 'agent1', first.cursor);
-  assert.deepStrictEqual(again.records, [],
-    'and resuming from its cursor returns nothing — the duplicate-forever loop is closed');
+  assert.deepStrictEqual(again.records.map((r) => r.key), [first.cursor],
+    'a resume re-serves only the cursor record itself');
+  assert.strictEqual(again.cursor, first.cursor,
+    'and the cursor does not move — the duplicate-forever loop is closed');
 });
 
 // The prune must reap a spool orphaned by a killed hook, and must NOT touch one a

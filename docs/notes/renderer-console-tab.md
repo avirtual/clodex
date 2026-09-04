@@ -2,51 +2,36 @@
 
 ## startPolling
 
-Returns whether it actually STARTED the timer, and `onShow` needs that answer.
-
-A seat switch while the tab is already visible re-keys `seat` and calls
-`startPolling` again, which early-returns because the interval is still live — so
-without an extra pull the new seat's first blocks are up to `POLL_MS` away and the
-pane sits empty for a seat that has run plenty.
-
-The extra pull is guarded on `!started` only to skip a pointless second IPC when
-`startPolling` already pulled. The double-APPEND it originally prevented is now
-closed by `pulling` below, so this guard is no longer what makes it safe.
+Returns whether it actually STARTED the timer, because `onShow` needs that
+answer: a seat switch while the tab is visible calls `startPolling` again, which
+early-returns on the live interval, and without an extra pull the new seat's
+first blocks are up to `POLL_MS` away. That extra pull is guarded on `!started`
+only to skip a redundant IPC — the double-APPEND it originally prevented is now
+closed by `pulling`, so this guard is no longer what makes it safe.
 
 ## onHide
 
 Releases the interval with no idempotence of its own — the host guarantees
 `onShow`/`onHide` are strictly alternating at-most-once edges (drawer-host.js
-rule 2), so a second guard here would absorb a host regression instead of
-surfacing it.
+rule 2), so a second guard would absorb a host regression instead of surfacing
+it.
 
 ## pull
 
-`lastKeys` is not belt-and-braces over the cursor — the cursor cannot do this job
-alone. A record's filename is `<ns>-<pid>.json`, and on a `date` without `%N` the
-whole seconds-worth of records shares one `<ns>`, so ordering inside that group is
-by pid and a strict `f > cursor` scan drops every tie that lands after the one the
-cursor named. The reader therefore re-serves the cursor's entire timestamp group
-(`stampOf(f) >= stampOf(cursor)`) and this set drops what was already painted.
-Keyed on the basename because the atomic rename makes it unique by construction,
-where `tool_use_id` is a payload field the record could lack.
+`lastKeys` is not belt-and-braces over the cursor: the reader re-serves the
+cursor's whole timestamp group and is stateless across polls, so only this set
+can drop what was already painted. It is REPLACED per batch, safe only because
+that batch is the whole group — a reader omitting any member drops it from here
+and repaints it next poll. Keyed on the basename, unique by construction through
+the rename, where `tool_use_id` is a payload field the record could lack.
 
-`pulling` closes the interval-tick and slow-IPC paths: an IPC round trip slower
-than `POLL_MS` would otherwise put two pulls on the same cursor, which is the
-double-append above by a different door.
-
-`lastSkipped` suppresses a REPEATED gap marker. When more than
-`PULL_MAX_RECORDS` records share the top timestamp group the cursor cannot
-advance past it, so `skipped` stays above zero on every poll while nothing new
-arrives — appending a marker each time fills `MAX_BLOCKS` and scrolls the real
-blocks out, the pane reporting a fresh loss every `POLL_MS` when nothing has been
-lost since the first. The suppression is keyed on the count being UNCHANGED, not
-on a marker having been shown, so a backlog that GROWS is reported again.
+`lastSkipped` exists because `skipped` is not an event. With 50+ records in the
+top group the cursor cannot advance, so every poll re-reports the SAME backlog,
+and a marker per poll fills `MAX_BLOCKS` and scrolls the real blocks out. Keyed
+on the count being unchanged, so a backlog that GROWS is still reported.
 
 ## blockNode
 
-A record with `backgrounded` set is drawn with a note saying its output was never
-sent, because the CLI auto-backgrounds under parallel load and those payloads
-carry no output at all. Without it an empty block reads as "this command printed
-nothing" for a command that printed plenty. The note is deliberately not shown
-for an ordinary command that genuinely printed nothing.
+An auto-backgrounded call reaches the hook with empty output, so without its note
+the block cannot be told from a command that genuinely printed nothing. Which is
+why the note is NOT shown for an ordinary silent command.
