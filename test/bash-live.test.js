@@ -365,6 +365,315 @@ test('two concurrent calls are told apart by argv, each getting ITS OWN file', a
   assert.match(byCmd[cmdB], /B-OUT/, 'and B got its own');
 });
 
+// ---------------------------------------------------------------------------
+// IDENTICAL command text (the "subagent fan-out" case).
+//
+// The test directly above is the pin this whole block exists to complement, and
+// it is BLIND to what follows: its two calls carry DISTINCT command text, so
+// each argv needle matches exactly one process and the file dedupe answers on
+// its own. Reach the same resolver with two calls whose text is byte-identical
+// -- which is what N subagents running the same command produce -- and one
+// needle matches BOTH processes, the file set has size 2, and master's
+// `files.size !== 1` refused both for the whole run. Measured live: two agents
+// on identical loops, resolved=false for their entire life, while the same
+// command run solo streamed 73 ticks.
+//
+// So a needle group is resolved as a GROUP: K observers, K distinct free files,
+// paired by `startedAt` ascending against file creation time ascending. The
+// fixtures below hand the resolver its processes in an order that is neither
+// the birthtime order NOR the lexicographic order of the file paths, so an
+// implementation that paired by iteration order or by name would hand each row
+// the other row's output and fail on the content assertion, not merely on a
+// count.
+
+// Two observers a known distance apart in `startedAt`, so the ordering the
+// pairing keys on is the fixture's and not the clock's. Real wall-clock times
+// (offset from now), because an observer older than RESOLVE_WINDOW_MS is
+// dropped before assignment and would vacuum out every assertion downstream.
+function observeSeries(root, cwd, ids, command, uidOpts) {
+  const base = Date.now() - 1000;
+  ids.forEach((id, i) => {
+    observe(root, 'seat', { id, command, cwd, sessionId: 'sess' },
+      { ...uidOpts, now: () => base + i * 10 });
+  });
+}
+
+async function birthOrdered(files) {
+  for (const [p, body] of files) {
+    fs.writeFileSync(p, body);
+    await sleep(12);
+  }
+  const times = files.map(([p]) => fs.statSync(p).birthtimeMs);
+  for (let i = 1; i < times.length; i += 1) {
+    assert.ok(times[i - 1] < times[i],
+      'ENTER: the fixture files must really be born in order, or the pairing below is untested');
+  }
+}
+
+test('twins: two in-flight calls with IDENTICAL command text each get the RIGHT file', async (t) => {
+  const root = tmpRoot(t);
+  const cwd = '/proj/twins';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'npm test -- --reporter=dot';
+  // 'tu-zz' starts FIRST: id order is the reverse of startedAt order, so a
+  // pairing that fell back to the observer id would swap the two rows.
+  observeSeries(root, cwd, ['tu-zz', 'tu-aa'], cmd, { uid: 7, tmpdir: root });
+
+  // Born first -> belongs to the observer that started first. Named LAST
+  // alphabetically, so name order disagrees with birth order too.
+  const early = path.join(tasks, 'bZZZZ0001.output');
+  const late = path.join(tasks, 'bAAAA0001.output');
+  await birthOrdered([[early, 'EARLY-OUT\n'], [late, 'LATE-OUT\n']]);
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    // Handed back late-file-first: the resolver's own order is a third order
+    // that disagrees with the answer.
+    resolveOwners: () => [
+      { pid: '7002', args: realArgv(cmd), file: late },
+      { pid: '7001', args: realArgv(cmd), file: early },
+    ],
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+  assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-aa', 'tu-zz'],
+    'ENTER: BOTH rows were painted, so the two assertions below are not one row twice');
+  assert.strictEqual(byId['tu-zz'].resolved, true, 'the call that started first resolved');
+  assert.strictEqual(byId['tu-aa'].resolved, true, 'and so did the one that started second');
+  assert.match(byId['tu-zz'].output, /EARLY-OUT/, 'the earlier call got the file born first');
+  assert.match(byId['tu-aa'].output, /LATE-OUT/, 'and the later call got the file born second');
+});
+
+test('triplets: the identical-text pairing is general, not a two-case special', async (t) => {
+  const root = tmpRoot(t);
+  const cwd = '/proj/triplets';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'rg --json TODO';
+  observeSeries(root, cwd, ['tu-1st', 'tu-2nd', 'tu-3rd'], cmd, { uid: 7, tmpdir: root });
+
+  const f1 = path.join(tasks, 'bMMMM0001.output');
+  const f2 = path.join(tasks, 'bAAAA0001.output');
+  const f3 = path.join(tasks, 'bZZZZ0001.output');
+  await birthOrdered([[f1, 'OUT-1\n'], [f2, 'OUT-2\n'], [f3, 'OUT-3\n']]);
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: () => [
+      { pid: '8003', args: realArgv(cmd), file: f3 },
+      { pid: '8001', args: realArgv(cmd), file: f1 },
+      { pid: '8002', args: realArgv(cmd), file: f2 },
+    ],
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  const byId = Object.fromEntries(rows.map((r) => [r.id, r.output]));
+  assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-1st', 'tu-2nd', 'tu-3rd'],
+    'ENTER: all three rows were painted');
+  assert.match(byId['tu-1st'], /OUT-1/, 'first started -> first born');
+  assert.match(byId['tu-2nd'], /OUT-2/, 'second -> second');
+  assert.match(byId['tu-3rd'], /OUT-3/, 'third -> third');
+});
+
+test('identical text with FEWER distinct files than calls refuses both', async (t) => {
+  // Two calls, two processes, ONE file between them: nothing says which call
+  // wrote it. Note the wrapper test above is the same shape at K=1 and RESOLVES
+  // -- one call may legitimately be held by many pids. What forbids a claim here
+  // is that the number of distinct files does not match the number of CALLS.
+  //
+  // This test and the two after it are what remains true of the deleted
+  // 'two IDENTICAL concurrent commands resolve to NOTHING rather than guessing':
+  // that test's own fixture (two calls, two distinct free files) is precisely
+  // the case this ticket teaches the resolver to decide, so it asserted the
+  // defect and could not survive the fix. Its still-true half -- that a refused
+  // row keeps its command and its elapsed counter, since that counter is what
+  // the pane shows in the output's place -- is re-asserted below.
+  const root = tmpRoot(t);
+  const cwd = '/proj/ambig-few';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'make -j8';
+  observeSeries(root, cwd, ['tu-p', 'tu-q'], cmd, { uid: 7, tmpdir: root });
+  const shared = path.join(tasks, 'bSHARE001.output');
+  fs.writeFileSync(shared, 'WHOSE-OUTPUT\n');
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: () => [
+      { pid: '9001', args: realArgv(cmd), file: shared },
+      { pid: '9002', args: realArgv(cmd), file: shared },
+    ],
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  assert.deepStrictEqual(rows.map((r) => r.id).sort(), ['tu-p', 'tu-q'],
+    'ENTER: both rows exist, so the refusal below is asserted over the real pair');
+  assert.deepStrictEqual(rows.map((r) => r.resolved), [false, false],
+    'neither call may be given output that might belong to the other');
+  assert.deepStrictEqual(rows.map((r) => r.output), ['', ''],
+    'and no bytes of it leaked into either row');
+  for (const r of rows) {
+    assert.strictEqual(r.command, cmd);
+    assert.strictEqual(typeof r.elapsedMs, 'number',
+      'a refused row still carries the elapsed counter the pane shows in place of output');
+  }
+});
+
+test('identical text with MORE distinct files than calls refuses too', async (t) => {
+  // A third holder of a third candidate file means one of the three files was
+  // not written by either waiting call -- so index-pairing the two calls into a
+  // three-long ordering would attribute at least one of them wrongly.
+  const root = tmpRoot(t);
+  const cwd = '/proj/ambig-many';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'pytest -q';
+  observeSeries(root, cwd, ['tu-r', 'tu-s'], cmd, { uid: 7, tmpdir: root });
+  const f1 = path.join(tasks, 'bONE00001.output');
+  const f2 = path.join(tasks, 'bTWO00001.output');
+  const f3 = path.join(tasks, 'bTHREE001.output');
+  await birthOrdered([[f1, 'OUT-1\n'], [f2, 'OUT-2\n'], [f3, 'OUT-3\n']]);
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: () => [
+      { pid: '9101', args: realArgv(cmd), file: f1 },
+      { pid: '9102', args: realArgv(cmd), file: f2 },
+      { pid: '9103', args: realArgv(cmd), file: f3 },
+    ],
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  assert.deepStrictEqual(rows.map((r) => r.id).sort(), ['tu-r', 'tu-s'],
+    'ENTER: both rows exist');
+  assert.deepStrictEqual(rows.map((r) => r.resolved), [false, false],
+    'three files for two calls is not an ordering problem, it is an unknown');
+});
+
+// The tie fixtures drive the `statFile` seam rather than the disk: fs.utimesSync
+// sets mtime and atime, never birthtime, so a tie on the value the resolver
+// actually prefers is not expressible with real files on APFS.
+function statStub(times) {
+  return (p) => {
+    if (!(p in times)) return fs.statSync(p);
+    return times[p];
+  };
+}
+
+test('identical text whose files share a creation time refuses the whole group', async (t) => {
+  const root = tmpRoot(t);
+  const cwd = '/proj/tie';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'go build ./...';
+  observeSeries(root, cwd, ['tu-x', 'tu-y'], cmd, { uid: 7, tmpdir: root });
+  const fa = path.join(tasks, 'bTIEA0001.output');
+  const fb = path.join(tasks, 'bTIEB0001.output');
+  fs.writeFileSync(fa, 'A-OUT\n');
+  fs.writeFileSync(fb, 'B-OUT\n');
+
+  const owners = () => [
+    { pid: '9201', args: realArgv(cmd), file: fa },
+    { pid: '9202', args: realArgv(cmd), file: fb },
+  ];
+  const run = async (statFile) => {
+    const live = createBashLive({ REGISTRY_DIR: root, resolveOwners: owners, statFile });
+    try {
+      live.read('seat');
+      await sleep(150);
+      return live.read('seat');
+    } finally { live.stopAll(); }
+  };
+
+  const tied = await run(statStub({
+    [fa]: { birthtimeMs: 5000, mtimeMs: 5000 },
+    [fb]: { birthtimeMs: 5000, mtimeMs: 9000 },
+  }));
+  assert.deepStrictEqual(tied.map((r) => r.id).sort(), ['tu-x', 'tu-y'], 'ENTER: both rows exist');
+  assert.deepStrictEqual(tied.map((r) => r.resolved), [false, false],
+    'equal birthtimes leave no ordering to pair on, and mtime must not be consulted to break it');
+
+  // ENTER for the refusal above: the SAME fixture, separated only by the
+  // birthtimes, does resolve -- so the tie is what refused it and not some
+  // unrelated thing about the fixture never reaching the pairing.
+  const split = await run(statStub({
+    [fa]: { birthtimeMs: 5000, mtimeMs: 5000 },
+    [fb]: { birthtimeMs: 5001, mtimeMs: 9000 },
+  }));
+  const byId = Object.fromEntries(split.map((r) => [r.id, r.output]));
+  assert.match(byId['tu-x'], /A-OUT/, 'ENTER: one birthtime apart and the earlier call gets the earlier file');
+  assert.match(byId['tu-y'], /B-OUT/, 'ENTER: and the later call gets the later one');
+});
+
+test('mtime stands in for a missing birthtime, and only while it stays strict', async (t) => {
+  const root = tmpRoot(t);
+  const cwd = '/proj/mtime';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'cargo test';
+  observeSeries(root, cwd, ['tu-m', 'tu-n'], cmd, { uid: 7, tmpdir: root });
+  const fa = path.join(tasks, 'bMTA00001.output');
+  const fb = path.join(tasks, 'bMTB00001.output');
+  fs.writeFileSync(fa, 'M-OUT\n');
+  fs.writeFileSync(fb, 'N-OUT\n');
+
+  const owners = () => [
+    { pid: '9301', args: realArgv(cmd), file: fa },
+    { pid: '9302', args: realArgv(cmd), file: fb },
+  ];
+  const run = async (statFile) => {
+    const live = createBashLive({ REGISTRY_DIR: root, resolveOwners: owners, statFile });
+    try {
+      live.read('seat');
+      await sleep(150);
+      return live.read('seat');
+    } finally { live.stopAll(); }
+  };
+
+  const fell = await run(statStub({
+    [fa]: { birthtimeMs: 0, mtimeMs: 4000 },
+    [fb]: { birthtimeMs: 0, mtimeMs: 4001 },
+  }));
+  const byId = Object.fromEntries(fell.map((r) => [r.id, r.output]));
+  assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-m', 'tu-n'], 'ENTER: both rows exist');
+  assert.match(byId['tu-m'], /M-OUT/, 'a filesystem with no birthtime still pairs, by mtime');
+  assert.match(byId['tu-n'], /N-OUT/, 'and the second call gets the second file');
+
+  const tied = await run(statStub({
+    [fa]: { birthtimeMs: 0, mtimeMs: 4000 },
+    [fb]: { birthtimeMs: 0, mtimeMs: 4000 },
+  }));
+  assert.deepStrictEqual(tied.map((r) => r.resolved), [false, false],
+    'the fallback is not a weaker rule: a tie in mtime refuses exactly as a tie in birthtime does');
+
+  const unusable = await run(statStub({
+    [fa]: { birthtimeMs: NaN, mtimeMs: NaN },
+    [fb]: { birthtimeMs: NaN, mtimeMs: 8000 },
+  }));
+  assert.deepStrictEqual(unusable.map((r) => r.resolved), [false, false],
+    'and a file whose times are unreadable refuses rather than sorting as zero');
+});
+
 test('a wrapper and its forked child sharing one file do not defeat resolution', async (t) => {
   // MEASURED on this box, not hypothesised: a zsh subshell that forks WITHOUT
   // exec'ing keeps the parent's argv verbatim, and both processes hold fd 1 on
@@ -618,42 +927,6 @@ test('an ALREADY-OWNED file still counts as a competing claim', async (t) => {
   assert.strictEqual(a.resolved, false,
     'two task files under one needle is undecidable even when one of them is already claimed');
   assert.strictEqual(a.output, '', 'so nothing is attributed to A');
-});
-
-test('two IDENTICAL concurrent commands resolve to NOTHING rather than guessing', async (t) => {
-  // Constraint 1, and the case the mechanism cannot decide: two processes carry
-  // the same needle, so neither file can be attributed. Misattributing A's output
-  // under B is worse than showing none, so the rows keep their command and their
-  // elapsed counter and stay empty.
-  const root = tmpRoot(t);
-  const cwd = '/proj/same';
-  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
-  fs.mkdirSync(tasks, { recursive: true });
-
-  const same = 'npm test';
-  observe(root, 'seat', { id: 'tu-A', command: same, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  observe(root, 'seat', { id: 'tu-B', command: same, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  const fileA = path.join(tasks, 'bSAME0001.output');
-  const fileB = path.join(tasks, 'bSAME0002.output');
-  fs.writeFileSync(fileA, 'FIRST-OUT\n');
-  fs.writeFileSync(fileB, 'SECOND-OUT\n');
-
-  const live = createBashLive({
-    REGISTRY_DIR: root,
-    resolveOwners: resolverOf([[same, fileA], [same, fileB]]),
-  });
-  t.after(() => live.stopAll());
-  live.read('seat');
-  await sleep(150);
-  const rows = live.read('seat');
-
-  assert.strictEqual(rows.length, 2, 'ENTER: both calls still have rows, so the emptiness below is a refusal and not an absence');
-  for (const r of rows) {
-    assert.strictEqual(r.command, same);
-    assert.strictEqual(r.output, '', 'an undecidable owner yields NO output rather than a guess');
-    assert.strictEqual(r.resolved, false);
-    assert.strictEqual(typeof r.elapsedMs, 'number', 'and the row still carries the elapsed counter shown in its place');
-  }
 });
 
 test('a call that keeps missing backs its probe off', async (t) => {

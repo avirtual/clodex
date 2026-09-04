@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **Live Bash output now shows up for concurrent calls that run the same
+  command.** Fan a subagent out over N agents all running one command and every
+  one of those calls used to show the "could not be told apart" row for its
+  whole run; they now stream, each row carrying its own call's output. Calls
+  that genuinely cannot be told apart still refuse rather than guess.
 - **Each seat now decides which plugins it has.** New and Edit Session grow a
   **Plugins** list above Intents, and so does the 🔒 Intents popover. Untick a
   plugin for a seat and it contributes nothing to it: no rows in that seat's
