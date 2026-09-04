@@ -56,6 +56,13 @@ function el(tag = 'div') {
       if (c.parentNode) c.remove();
       c.parentNode = e; e.children.push(c); return c;
     },
+    replaceChild(next, old) {
+      const i = e.children.indexOf(old);
+      if (i < 0) return old;
+      if (next.parentNode) next.remove();
+      e.children[i] = next; next.parentNode = e; old.parentNode = null;
+      return old;
+    },
     remove() {
       if (!e.parentNode) return;
       const i = e.parentNode.children.indexOf(e);
@@ -104,9 +111,23 @@ async function mountPane(t) {
 
   const had = { d: global.document, w: global.window };
   global.document = { createElement: el, addEventListener() {} };
+  // The live lane is served from a mutable array the caller sets, not from a
+  // reader: this harness is about what the PANE does with in-flight rows, and a
+  // real bash-live here would put its fs.watch timing between the test and the
+  // assertion. test/bash-live.test.js drives the real reader over a real dir.
+  const liveRows = [];
+  let slowRead = false;
   global.window = {
     __CLODEX_WEB__: false,
-    api: { consoleRead: async (name, cursor) => readBashConsole(root, name, cursor) },
+    api: {
+      consoleRead: async (name, cursor) => {
+        // Delays the SETTLED read past the live one. Under Promise.all that is
+        // what lets the live filter run before the settle lands.
+        if (slowRead) await new Promise((r) => setTimeout(r, 5));
+        return readBashConsole(root, name, cursor);
+      },
+      consoleLive: async () => liveRows.slice(),
+    },
   };
   const hadClear = global.clearInterval;
   t.after(() => {
@@ -128,6 +149,7 @@ async function mountPane(t) {
   const pane = el('div');
   tenant.mount(pane, el('div'));
   const body = pane.querySelector('#console-body');
+  const liveBody = pane.querySelector('#console-live');
   const painted = [];
   const append = body.appendChild;
   body.appendChild = (c) => {
@@ -153,12 +175,52 @@ async function mountPane(t) {
   return {
     dir,
     body,
+    liveBody,
     painted,
+    setLive(rows) { liveRows.length = 0; for (const r of rows) liveRows.push(r); },
+    slowConsoleRead(on) { slowRead = on; },
+    liveDrawn() {
+      return liveBody.children.map((c) => {
+        const m = /console-block-cmd">([^<]*)</.exec(c.innerHTML);
+        return m ? m[1] : null;
+      });
+    },
     write(cmd, pid, stamp) {
       fs.writeFileSync(path.join(dir, `${stamp}-${pid}.json`),
         JSON.stringify({ ...OK, tool_input: { command: cmd }, tool_use_id: `t-${cmd}` }));
     },
+    // A backgrounded call: the spool record carries the task id and no inline
+    // stdout, so the reader goes to the .output file for its text on EVERY poll.
+    writeBg(cmd, pid, stamp, taskId) {
+      fs.writeFileSync(path.join(dir, `${stamp}-${pid}.json`),
+        JSON.stringify({
+          ...OK,
+          tool_input: { command: cmd },
+          tool_use_id: `t-${cmd}`,
+          scratchpad_dir: path.join(root, 'scratch'),
+          tool_response: { stdout: '', stderr: '', backgroundTaskId: taskId },
+        }));
+    },
+    // The growth the pane has to notice: the CLI appends to this file while the
+    // record that names it stays byte-identical.
+    growBg(taskId, text) {
+      const tdir = path.join(root, 'tasks');
+      fs.mkdirSync(tdir, { recursive: true });
+      fs.appendFileSync(path.join(tdir, `${taskId}.output`), text);
+    },
+    // What is ON SCREEN for a call, as opposed to what was ever appended:
+    // a repaint replaces a node in place and appends nothing.
+    outputOf(cmd) {
+      for (const c of body.children) {
+        const m = /console-block-cmd">([^<]*)</.exec(c.innerHTML);
+        if (!m || m[1] !== cmd) continue;
+        const o = /console-block-out">([\s\S]*?)<\/pre>/.exec(c.innerHTML);
+        return o ? o[1] : '';
+      }
+      return null;
+    },
     async tick() { await poll(); await settle(); await settle(); },
+    hide() { tenant.onHide(); },
   };
 }
 
@@ -172,6 +234,43 @@ const STAMP = '0000000001788481092';
 // falls out of the dedupe set and is repainted by the next poll that re-serves
 // its group. Serving the whole group instead keeps every drawn key in the set,
 // which is what the module's own note already describes.
+test('a backgrounded call REPAINTS as its output file grows, without painting twice', async (t) => {
+  // The bug that made even the background lane useless: bash-console.js re-reads
+  // the .output file on every poll, so the main process really does see it grow,
+  // and the pane then threw the fresher text away -- `raw.filter(r => !lastKeys
+  // .has(r.key))` drops any record already drawn, and the key stays in the set
+  // while the record sits in the cursor window. A long job painted ONCE with
+  // whatever existed at the first poll.
+  //
+  // The identity dedupe that does that is deliberate and is what the test below
+  // this one pins, so the repaint is keyed on CONTENT GROWTH instead of on
+  // dropping the key. Both assertions therefore matter: the text must reach the
+  // screen, and the call must still occupy exactly one block.
+  const p = await mountPane(t);
+
+  p.writeBg('slow-job', 8, STAMP, 'bg000001');
+  p.growBg('bg000001', 'first line\n');
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['slow-job'], 'ENTER: the call was painted once to begin with');
+  assert.match(p.outputOf('slow-job'), /first line/, 'ENTER: with the output it had at that first poll');
+
+  // The job writes more. The spool record naming it does not change by a byte,
+  // which is exactly why identity dedupe alone cannot see this.
+  p.growBg('bg000001', 'second line\n');
+  await p.tick();
+
+  assert.match(p.outputOf('slow-job'), /second line/,
+    'the growth must reach the screen — otherwise a long job is drawn once and goes blind');
+  assert.match(p.outputOf('slow-job'), /first line/, 'and it keeps what it already had');
+  assert.deepStrictEqual(p.painted, ['slow-job'],
+    'while still being ONE block: a repaint replaces the node, it does not append a second one');
+
+  // An idle poll re-serves the same record with the same bytes. Nothing changed,
+  // so nothing may be redrawn.
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['slow-job'], 'and a re-serve with no growth repaints nothing');
+});
+
 test('a record already drawn is not painted a second time when its group is re-served', async (t) => {
   const p = await mountPane(t);
 
@@ -238,7 +337,7 @@ test('a late lower-pid record in the cursor group is painted, and painted once',
 // If more than PULL_MAX_RECORDS records share the top timestamp group and the
 // seat goes quiet, the cursor cannot advance past the group, so `skipped` stays
 // above zero on every poll. Appending a gap node each time fills MAX_BLOCKS and
-// scrolls the real blocks out — the pane reporting a fresh loss every 1.2s when
+// scrolls the real blocks out — the pane reporting a fresh loss every poll when
 // nothing has been lost since the first one.
 test('a stalled backlog reports its gap once, not once per poll', async (t) => {
   const p = await mountPane(t);
@@ -364,7 +463,7 @@ test('a backgrounded call with no recoverable file says so, not that it was quie
 // the assertion is that the notes are mutually DISTINCT — a shared "backgrounded"
 // prefix would otherwise let two collapse and still match every regex here.
 //
-// The empty-with-no-trailer case is the one round 1 got wrong: it captioned an
+// The empty-with-no-trailer case: a caption must not describe an
 // empty file "it really printed nothing" whatever the trailer said, which states
 // silence as fact for a task that may not have printed YET. A block is never
 // repainted once drawn, so that claim would be frozen for the session.
@@ -434,4 +533,235 @@ test('an ordinary call with no output carries no such note', async (t) => {
   const block = p.body.children[p.body.children.length - 1];
   assert.doesNotMatch(block.innerHTML, /console-block-note/,
     'a genuinely silent command is drawn as silent, with nothing claimed about why');
+});
+
+// The live lane. PostToolUse stays the system of record and the live row
+// is a PREVIEW of a file the CLI unlinks at completion, so the pane must hand a
+// call over from one to the other exactly once. Both failure directions are
+// silent to a single-poll assertion: showing both is a duplicate the records
+// array is innocent of, and showing neither loses the call entirely.
+test('a live row is replaced by its settled record, never drawn alongside it', async (t) => {
+  const p = await mountPane(t);
+
+  p.setLive([{ id: 't-slowcmd', command: 'slowcmd', output: 'first line', bytes: 10, tailed: false, elapsedMs: 900, finished: false }]);
+  await p.tick();
+
+  assert.deepStrictEqual(p.liveDrawn(), ['slowcmd'], 'ENTER: the in-flight call really is on screen before it finishes');
+  assert.deepStrictEqual(p.painted, [], 'and it is NOT in the settled list, which the hook has not written yet');
+  assert.match(p.liveBody.children[0].innerHTML, /first line/, 'its partial output is what the pane shows');
+
+  // The hook now writes the authoritative record. The reader still returns the
+  // live row for its finalize grace, which is the window the duplicate appears in.
+  p.write('slowcmd', 11, STAMP);
+  await p.tick();
+
+  assert.deepStrictEqual(p.painted, ['slowcmd'], 'the settled record is painted once');
+  assert.deepStrictEqual(p.liveDrawn(), [],
+    'and the live row for the same tool_use_id is gone — two rows for one call is the defect');
+});
+
+test('a call whose output cannot be attributed says so, instead of showing a bare preview', async (t) => {
+  // The refusal has a caption of its own because the row it produces looks
+  // exactly like a call that has printed nothing yet: same command, same running
+  // timer, empty body. Saying "live preview" over it would be the false-caption
+  // class again -- claiming an absence of output that was never observed, when
+  // what actually happened is that Clodex declined to guess which of two
+  // identical running commands the file belongs to.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-amb', command: 'npm test', output: '', bytes: 0, tailed: false, elapsedMs: 4000, finished: false, resolved: false }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /npm test/, 'ENTER: the unattributable call really was drawn');
+  assert.match(html, /still running/, 'it still says the call is running, which is the part it knows');
+  assert.match(html, /could not be told\s+apart/, 'and names the refusal as the reason the body is empty');
+  assert.doesNotMatch(html, /live preview/,
+    'it must NOT claim to be previewing output it has not attributed to this call');
+});
+
+test('the live elapsed counter advances — the refusal row is not frozen', async (t) => {
+  // Constraint 1 says an unattributable call shows its command with a LIVE
+  // elapsed counter instead of guessed output. That remedy is only worth
+  // anything if the counter moves: `same` compared id/output/finished, all
+  // constant for an unresolved row, so renderLive() never re-ran and the row
+  // sat at its first value. A frozen 0.0s reads as a hung pane, which is a
+  // worse answer than the one the constraint was trying to avoid.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-frozen', command: 'npm test', output: '', bytes: 0,
+    tailed: false, elapsedMs, finished: false, resolved: false,
+  }]);
+
+  p.setLive(row(400));
+  await p.tick();
+  const first = p.liveBody.children[0].innerHTML;
+  assert.match(first, /npm test/, 'ENTER: the refusal row really is on screen');
+  assert.match(first, /400ms/, 'ENTER: showing its first elapsed value');
+
+  // ONLY elapsedMs advances. Every other field is byte-identical, which is
+  // exactly the case the old predicate called "same".
+  p.setLive(row(7000));
+  await p.tick();
+  const second = p.liveBody.children[0].innerHTML;
+  assert.match(second, /7\.0s/, 'the counter must advance, or the row is indistinguishable from a hang');
+  assert.notStrictEqual(first, second, 'ENTER: the node really was repainted');
+});
+
+test('a scrolled-up live lane keeps its position when a row repaints', async (t) => {
+  // Bucketing the elapsed counter into `same` makes the live lane rebuild once
+  // per second for every in-flight call, and the rebuild forced scrollTop to the
+  // bottom unconditionally. Before that it only happened when output changed, so
+  // the cost of reading back through a long in-flight tail went from occasional
+  // to every second. The settled lane already captures nearBottom for the same
+  // reason.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-scroll', command: 'npm test', output: 'one\ntwo\nthree', bytes: 13,
+    tailed: false, elapsedMs, finished: false, resolved: true,
+  }]);
+
+  p.setLive(row(400));
+  await p.tick();
+  assert.strictEqual(p.liveBody.children.length, 1, 'ENTER: the lane has a row to scroll within');
+
+  p.liveBody.scrollHeight = 400;
+  p.liveBody.clientHeight = 100;
+  p.liveBody.scrollTop = 0;
+
+  p.setLive(row(7000));
+  await p.tick();
+  assert.match(p.liveBody.children[0].innerHTML, /7\.0s/,
+    'ENTER: the row really did repaint, so the scroll position below was at risk');
+  assert.strictEqual(p.liveBody.scrollTop, 0,
+    'a reader scrolled up in the live lane keeps their position across a repaint');
+});
+
+test('the live lane still follows the tail when the reader is already at the bottom', async (t) => {
+  // The other direction: following is the default and the whole point of a live
+  // lane. Capturing nearBottom must not turn following off.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-follow', command: 'npm test', output: 'one\ntwo', bytes: 8,
+    tailed: false, elapsedMs, finished: false, resolved: true,
+  }]);
+
+  p.setLive(row(400));
+  await p.tick();
+  p.liveBody.scrollHeight = 400;
+  p.liveBody.clientHeight = 400;
+  p.liveBody.scrollTop = 0;
+
+  p.setLive(row(7000));
+  await p.tick();
+  assert.strictEqual(p.liveBody.scrollTop, p.liveBody.scrollHeight,
+    'a reader at the bottom keeps following the tail');
+});
+
+test('a sub-second tick does not repaint, so the counter costs one repaint per second', async (t) => {
+  // The other half of bucketing: at a 500ms poll an unbucketed comparison
+  // repaints twice per displayed second for every in-flight call, and the
+  // rendered text is identical on the odd ticks.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-bucket', command: 'slow', output: 'x', bytes: 1,
+    tailed: false, elapsedMs, finished: false, resolved: true,
+  }]);
+
+  p.setLive(row(3000));
+  await p.tick();
+  const before = p.liveBody.children[0];
+
+  p.setLive(row(3400));
+  await p.tick();
+  assert.strictEqual(p.liveBody.children[0], before,
+    'same displayed second, same node — a repaint here would be invisible work');
+
+  p.setLive(row(4000));
+  await p.tick();
+  assert.notStrictEqual(p.liveBody.children[0], before, 'ENTER: crossing the second does repaint');
+});
+
+test('a finished live row is not captioned as still running', async (t) => {
+  // Never state something the data does not support. The reader
+  // keeps a row for its finalize grace AFTER the file is gone, and during that
+  // window `finished` is true — captioning it "still running" is false to the
+  // user about the one thing the row exists to report.
+  const p = await mountPane(t);
+  p.setLive([{
+    id: 't-fin', command: 'done-cmd', output: 'all output', bytes: 10,
+    tailed: false, elapsedMs: 5000, finished: true, resolved: true,
+  }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /done-cmd/, 'ENTER: the finished row really was drawn');
+  assert.doesNotMatch(html, /still running/, 'a finished call is not still running');
+  assert.doesNotMatch(html, />running</, 'and its mark must not say running either');
+});
+
+test('a finished UNRESOLVED row states the refusal in the past tense too', async (t) => {
+  // The neighbour the tense fix orphaned: the refusal sentence described "another
+  // RUNNING command", which is a second present-tense claim sitting inside a row
+  // that has already finished. Both halves of the sentence have to agree with the
+  // row's state, not just the one the edit touched.
+  const p = await mountPane(t);
+  p.setLive([{
+    id: 't-fin-amb', command: 'npm test', output: '', bytes: 0,
+    tailed: false, elapsedMs: 9000, finished: true, resolved: false,
+  }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /finished/, 'ENTER: the row really is drawn as finished');
+  assert.doesNotMatch(html, /another running command/,
+    'the refusal clause must not assert a command is still running');
+});
+
+test('the settled read is AWAITED before the live read, so one call cannot draw twice', async (t) => {
+  // The test above passes on scheduling luck: with the two pulls started
+  // together, whether the live filter sees the settled id depends on which
+  // promise resolves first, and in this fixture the fast one usually wins. This
+  // one removes the luck by making the settled read SLOWER than the live read --
+  // under `Promise.all` the live filter then runs against a `settled` set the
+  // settled record has not reached yet, and the call is drawn in both lanes.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-both', command: 'both', output: 'partial', bytes: 7, tailed: false, elapsedMs: 900, finished: false }]);
+  await p.tick();
+  assert.deepStrictEqual(p.liveDrawn(), ['both'], 'ENTER: the call is in the live lane before it settles');
+
+  p.slowConsoleRead(true);
+  p.write('both', 12, STAMP);
+  await p.tick();
+
+  assert.deepStrictEqual(p.painted, ['both'], 'the settled record is painted');
+  assert.deepStrictEqual(p.liveDrawn(), [],
+    'and the live row is gone in the SAME tick — the live read must observe the settle, not race it');
+});
+
+test('a live row never claims the command printed nothing', async (t) => {
+  // The same rule in the new lane: a call still running that has printed
+  // nothing YET has produced no evidence of silence, and a block is never
+  // repainted once the settled record lands. Stating it as fact would freeze a
+  // false claim for the session.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-quiet', command: 'quiet', output: '', bytes: 0, tailed: false, elapsedMs: 300, finished: false, resolved: true }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /quiet/, 'ENTER: the silent in-flight call really was drawn');
+  assert.doesNotMatch(html, /printed nothing/, 'it may not state silence as fact while the call is still running');
+  assert.match(html, /still running/, 'it states what it actually knows instead');
+});
+
+test('hiding the tab drops the live rows rather than freezing them on screen', async (t) => {
+  // A hidden tab stops polling, so a row kept across the hide would be repainted
+  // as "still running" on reopen, ahead of the first pull that could correct it —
+  // and the call may well have finished minutes earlier.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-x', command: 'x', output: 'partial', bytes: 7, tailed: false, elapsedMs: 100, finished: false }]);
+  await p.tick();
+  assert.deepStrictEqual(p.liveDrawn(), ['x'], 'ENTER: there is a live row to lose');
+
+  p.hide();
+  assert.deepStrictEqual(p.liveDrawn(), [], 'the stale preview is cleared with the timer that fed it');
 });

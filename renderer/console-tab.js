@@ -1,15 +1,18 @@
 const { esc } = require('./lib/format');
 
 const MAX_BLOCKS = 300;
-const POLL_MS = 1200;
+const MAX_TRACKED = 600;
+const POLL_MS = 500;
 
 function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   const seats = new Map();
   let seat = null;
   let bodyEl = null;
   let emptyEl = null;
+  let liveEl = null;
   let pollTimer = null;
   let pulling = false;
+  let livePulling = false;
   let notify = Object.assign(() => {}, { selectionChanged: () => {} });
 
   const typeNow = () => {
@@ -19,7 +22,10 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function stateFor(name) {
     let st = seats.get(name);
     if (!st) {
-      st = { cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0 };
+      st = {
+        cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0,
+        live: [], settled: new Set(), sigs: new Map(),
+      };
       seats.set(name, st);
     }
     return st;
@@ -80,6 +86,30 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     return el;
   }
 
+  function liveNode(r) {
+    const el = document.createElement('div');
+    el.className = 'console-block console-live';
+    const marks = [`<span class="console-block-mark">${r.finished ? 'finishing' : 'running'}</span>`];
+    const dur = fmtDuration(r.elapsedMs);
+    if (dur) marks.push(`<span class="console-block-time">${esc(dur)}</span>`);
+    const head = '<div class="console-block-head">'
+      + `<span class="console-block-cmd">${esc(r.command)}</span>`
+      + marks.join('')
+      + '</div>';
+    const out = String(r.output || '').replace(/\n+$/, '');
+    const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : '';
+    const state = r.finished ? 'finished' : 'still running';
+    const note = r.resolved === false
+      ? `<div class="console-block-note">${state} — its output could not be told`
+        + ' apart from another command\'s, so none is shown;'
+        + ' the finished record replaces this</div>'
+      : `<div class="console-block-note">${state} — live preview${
+        r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ''
+      }; the finished record replaces this</div>`;
+    el.innerHTML = head + body + note;
+    return el;
+  }
+
   function gapNode(n) {
     const el = document.createElement('div');
     el.className = 'console-gap';
@@ -87,9 +117,49 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     return el;
   }
 
+  function contentSig(r) {
+    return [
+      r.output ? r.output.length : 0,
+      typeof r.bytes === 'number' ? r.bytes : '',
+      typeof r.fullBytes === 'number' ? r.fullBytes : '',
+      r.exitCode === null || r.exitCode === undefined ? '' : r.exitCode,
+      r.failed ? 1 : 0,
+      r.bgState || '',
+    ].join(':');
+  }
+
+  function repaintGrown(st, raw) {
+    for (const r of raw) {
+      if (!r || !r.key || !st.lastKeys.has(r.key)) continue;
+      const sig = contentSig(r);
+      if (st.sigs.get(r.key) === sig) continue;
+      st.sigs.set(r.key, sig);
+      const i = st.blocks.findIndex((b) => !b.gap && b.key === r.key);
+      if (i < 0) continue;
+      st.blocks[i] = r;
+      const old = bodyEl && bodyEl.children[i];
+      if (old) bodyEl.replaceChild(blockNode(r), old);
+    }
+  }
+
+  function trim(store, cap) {
+    if (store.size <= cap) return;
+    for (const k of [...store.keys()].slice(0, store.size - cap)) store.delete(k);
+  }
+
   function pushBlock(st, b) {
     st.blocks.push(b);
     while (st.blocks.length > MAX_BLOCKS) st.blocks.shift();
+  }
+
+  function renderLive() {
+    if (!liveEl) return;
+    const st = seat ? stateFor(seat) : null;
+    const nearBottom = liveEl.scrollHeight - liveEl.scrollTop - liveEl.clientHeight < 60;
+    liveEl.innerHTML = '';
+    if (!st || !st.live.length) return;
+    for (const r of st.live) liveEl.appendChild(liveNode(r));
+    if (nearBottom) liveEl.scrollTop = liveEl.scrollHeight;
   }
 
   function renderAll() {
@@ -139,24 +209,69 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       st.blocks.length = 0;
       st.lastKeys.clear();
       st.lastSkipped = 0;
+      st.settled.clear();
+      st.sigs.clear();
       renderAll();
     }
     st.cursor = typeof res.cursor === 'string' && res.cursor ? res.cursor : st.cursor;
     const raw = Array.isArray(res.records) ? res.records : [];
     const records = raw.filter((r) => !st.lastKeys.has(r.key));
+    repaintGrown(st, raw);
     if (raw.length) st.lastKeys = new Set(raw.map((r) => r.key));
+    for (const r of records) st.sigs.set(r.key, contentSig(r));
     const skipped = typeof res.skipped === 'number' && res.skipped > 0 ? res.skipped : 0;
     const repeatGap = skipped <= st.lastSkipped;
     st.lastSkipped = skipped;
+    for (const r of records) if (r.id) st.settled.add(r.id);
+    trim(st.settled, MAX_TRACKED);
+    trim(st.sigs, MAX_TRACKED);
     if (!records.length && (!skipped || repeatGap)) return;
     appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
     notify(records.some((r) => r.failed) ? 'attention' : 'activity');
   }
 
+  async function pullLive() {
+    const name = seat;
+    if (!name || livePulling) return;
+    const st = stateFor(name);
+    livePulling = true;
+    let rows = null;
+    try {
+      rows = await window.api.consoleLive(name);
+    } catch {
+      return;
+    } finally {
+      livePulling = false;
+    }
+    if (seat !== name) return;
+    const next = (Array.isArray(rows) ? rows : []).filter((r) => r && !st.settled.has(r.id));
+    const secs = (r) => (typeof r.elapsedMs === 'number' ? Math.floor(r.elapsedMs / 1000) : -1);
+    const same = next.length === st.live.length
+      && next.every((r, i) => st.live[i].id === r.id
+        && st.live[i].output === r.output
+        && st.live[i].finished === r.finished
+        && st.live[i].resolved === r.resolved
+        && secs(st.live[i]) === secs(r));
+    st.live = next;
+    if (!same) renderLive();
+  }
+
+  let ticking = false;
+  async function tick() {
+    if (ticking) return;
+    ticking = true;
+    try {
+      await pull();
+      await pullLive();
+    } finally {
+      ticking = false;
+    }
+  }
+
   function startPolling() {
     if (pollTimer) return false;
-    pollTimer = setInterval(pull, POLL_MS);
-    pull();
+    pollTimer = setInterval(tick, POLL_MS);
+    tick();
     return true;
   }
 
@@ -164,12 +279,16 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (!pollTimer) return;
     clearInterval(pollTimer);
     pollTimer = null;
+    for (const st of seats.values()) st.live.length = 0;
+    renderLive();
   }
 
   function mount(pane, actions) {
-    pane.innerHTML = '<div id="console-body"><div id="console-empty"></div></div>';
+    pane.innerHTML = '<div id="console-body"><div id="console-empty"></div></div>'
+      + '<div id="console-live"></div>';
     bodyEl = pane.querySelector('#console-body');
     emptyEl = pane.querySelector('#console-empty');
+    liveEl = pane.querySelector('#console-live');
 
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
@@ -180,8 +299,11 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     clearBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!seat) return;
-      stateFor(seat).blocks.length = 0;
+      const st = stateFor(seat);
+      st.blocks.length = 0;
+      st.live.length = 0;
       renderAll();
+      renderLive();
     });
     actions.appendChild(clearBtn);
   }
@@ -192,9 +314,10 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (switched) {
       seat = next;
       renderAll();
+      renderLive();
     }
     const started = startPolling();
-    if (switched && !started) pull();
+    if (switched && !started) tick();
   }
 
   function onHide() {

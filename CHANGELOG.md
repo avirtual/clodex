@@ -13,6 +13,24 @@ blocks a release.
 
 ## Unreleased
 
+- **The Console tab now shows a running command's output while it runs.** Until
+  now output arrived only when the call finished, so a 465-second release
+  command showed nothing at all until it ended. A live preview of the command
+  now appears as soon as it starts producing output, below the finished blocks
+  and marked as still running, and is replaced by the complete record the moment
+  the call ends. The preview scrolls with the command, so what you see is the
+  latest output rather than the first screenful. Output is matched to the call
+  that produced it exactly, never by guesswork: on the rare occasion Clodex
+  cannot be certain which running command a file belongs to — two identical
+  commands at the same moment — it shows the command with a running timer and no
+  output, rather than risk showing you one command's output under another's.
+  The preview is a preview: because the CLI deletes the file it is read from at
+  the instant the command finishes, the last few lines may only appear in the
+  finished block that replaces it — which is the one that is kept. A command
+  still running is never captioned as having printed nothing, since it may
+  simply not have printed yet. Nothing is watched or recorded unless the Console
+  tab is actually open.
+
 - **The Console tab now shows the output of Bash calls the CLI ran in the
   background.** Under parallel load the CLI quietly moves a Bash call to the
   background, and its output never reaches Clodex through the usual channel — so
@@ -24,7 +42,9 @@ blocks a release.
   printed nothing, and the task file is gone so nothing can be recovered. Where
   the task file carries no exit line the block says so and presents what it has
   as the output "as of this read", rather than claiming the command finished or
-  that it printed nothing — the file may still be filling. Very large output is
+  that it printed nothing — the file may still be filling. Such a block now also
+  UPDATES as the file fills, instead of being drawn once with whatever the first
+  poll happened to catch and then going stale for the rest of the run. Very large output is
   capped like any other block, keeping the END of the file — where a build's
   errors and its exit line are — and saying how much of the whole it is showing.
 
