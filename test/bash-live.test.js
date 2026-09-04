@@ -379,12 +379,12 @@ test('two concurrent calls are told apart by argv, each getting ITS OWN file', a
 // command run solo streamed 73 ticks.
 //
 // So a needle group is resolved as a GROUP: K observers, K distinct free files,
-// paired by `startedAt` ascending against file creation time ascending. The
-// fixtures below hand the resolver its processes in an order that is neither
-// the birthtime order NOR the lexicographic order of the file paths, so an
-// implementation that paired by iteration order or by name would hand each row
-// the other row's output and fail on the content assertion, not merely on a
-// count.
+// paired by `startedAt` ascending against file creation time ascending. In the
+// twins and triplets fixtures below, the birthtime order disagrees with the order
+// the resolver hands its processes back in, with the lexicographic order of the
+// file paths, and with the sort order of the observer ids -- so pairing by any of
+// those three would hand a row another row's output and fail the content
+// assertion, not merely a count.
 
 // Two observers a known distance apart in `startedAt`, so the ordering the
 // pairing keys on is the fixture's and not the clock's. Real wall-clock times
@@ -457,7 +457,8 @@ test('triplets: the identical-text pairing is general, not a two-case special', 
   fs.mkdirSync(tasks, { recursive: true });
 
   const cmd = 'rg --json TODO';
-  observeSeries(root, cwd, ['tu-1st', 'tu-2nd', 'tu-3rd'], cmd, { uid: 7, tmpdir: root });
+  // Started in this order; sorted by id they are m2, x3, z1 -- a third order.
+  observeSeries(root, cwd, ['tu-z1', 'tu-m2', 'tu-x3'], cmd, { uid: 7, tmpdir: root });
 
   const f1 = path.join(tasks, 'bMMMM0001.output');
   const f2 = path.join(tasks, 'bAAAA0001.output');
@@ -478,11 +479,11 @@ test('triplets: the identical-text pairing is general, not a two-case special', 
   const rows = live.read('seat');
 
   const byId = Object.fromEntries(rows.map((r) => [r.id, r.output]));
-  assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-1st', 'tu-2nd', 'tu-3rd'],
+  assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-m2', 'tu-x3', 'tu-z1'],
     'ENTER: all three rows were painted');
-  assert.match(byId['tu-1st'], /OUT-1/, 'first started -> first born');
-  assert.match(byId['tu-2nd'], /OUT-2/, 'second -> second');
-  assert.match(byId['tu-3rd'], /OUT-3/, 'third -> third');
+  assert.match(byId['tu-z1'], /OUT-1/, 'first started -> first born');
+  assert.match(byId['tu-m2'], /OUT-2/, 'second -> second');
+  assert.match(byId['tu-x3'], /OUT-3/, 'third -> third');
 });
 
 test('identical text with FEWER distinct files than calls refuses both', async (t) => {
@@ -490,14 +491,8 @@ test('identical text with FEWER distinct files than calls refuses both', async (
   // wrote it. Note the wrapper test above is the same shape at K=1 and RESOLVES
   // -- one call may legitimately be held by many pids. What forbids a claim here
   // is that the number of distinct files does not match the number of CALLS.
-  //
-  // This test and the two after it are what remains true of the deleted
-  // 'two IDENTICAL concurrent commands resolve to NOTHING rather than guessing':
-  // that test's own fixture (two calls, two distinct free files) is precisely
-  // the case this ticket teaches the resolver to decide, so it asserted the
-  // defect and could not survive the fix. Its still-true half -- that a refused
-  // row keeps its command and its elapsed counter, since that counter is what
-  // the pane shows in the output's place -- is re-asserted below.
+  // A refused row is not a dropped one: it keeps its command and its elapsed
+  // counter, which is what the pane draws in place of the output.
   const root = tmpRoot(t);
   const cwd = '/proj/ambig-few';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
