@@ -9,12 +9,9 @@
 // Node test, in the browser bundle, and (critically) inside a plugin's engine
 // half, which must never reach core internals except through the host argument.
 
-// The published host-API version. "1" is FROZEN: the workbench pilot proved
-// the shapes, and the surface is now a published contract
-// documented in plugins/plugin-api.md rather than an internal one. "0" — the
-// explicitly-unstable predecessor — is gone; a plugin written against it names a
-// version this host does not serve and is refused by name, which is the whole
-// point of the field.
+// The published host-API version. "1" is FROZEN. "0" — the explicitly-unstable
+// predecessor — is gone; a plugin written against it names a version this host
+// does not serve and is refused by name, which is the whole point of the field.
 //
 // WHAT A BUMP MEANS. A manifest whose `hostApi` doesn't match refuses to load
 // with a named error rather than half-activating against a surface it predates,
@@ -38,9 +35,7 @@ const PLUGIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 // literally named `enabled` writes its settings object over the user's enabled
 // ARRAY on its first `host.settings.set`. `sanitizePlugins` then coerces the
 // non-array to `[]`, `enabledSet()` reads `[]` as "the user turned everything
-// off", and every OTHER plugin is silently disabled at the next launch. The
-// comments in plugin-loader.js already called `enabled` reserved; nothing
-// enforced it, and the only artifact was a const holding the key name.
+// off", and every OTHER plugin is silently disabled at the next launch.
 //
 // `_failures` — the quarantine shadow, the other key in that object — needs no
 // entry here: PLUGIN_ID_RE forbids a leading underscore, so it is collision-proof
@@ -147,10 +142,30 @@ function mergeGrants(checked, unlisted) {
   return [...new Set([...(checked || []), ...(unlisted || [])])];
 }
 
-// The SURFACING predicate — "does this plugin reach this session at all?".
-// Deliberately ANY rather than a fourth "visible" capability: a plugin the
-// operator granted turn text but nothing else must still show its rows, and a
-// separate visibility grant would be a checkbox that does nothing on its own.
+// The same hazard on the SURFACING axis: the checklist draws only registered,
+// globally-enabled plugins, so a quarantined or globally-off one has no row, and
+// saving the checked set alone drops it from the seat — the server then prunes
+// its verbs and grants too, and re-enabling the plugin brings none of it back.
+function pluginsForUnlistedPlugins(persisted, listedPluginIds) {
+  if (!Array.isArray(persisted)) return [];
+  const listed = new Set((listedPluginIds || []).map(String));
+  return persisted.filter((id) => typeof id === 'string' && !listed.has(id));
+}
+
+// The union half, in the leaf for the reason mergeGrants states.
+function mergePlugins(checked, unlisted) {
+  return [...new Set([...(checked || []).map(String), ...(unlisted || []).map(String)])];
+}
+
+// The SURFACING predicate. An absent list is the living all-enabled default,
+// NOT `pluginGranted`'s strict absent-=-none: flipping it strips every
+// pre-upgrade seat of the shipped plugins with no migration back.
+function seatHasPlugin(pluginId, pluginsList) {
+  if (!Array.isArray(pluginsList)) return true;
+  return pluginsList.includes(String(pluginId));
+}
+
+// The GRANTS-axis reach. Not the surfacing predicate — that is seatHasPlugin.
 function pluginReaches(pluginId, grants) {
   return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
 }
@@ -234,8 +249,11 @@ module.exports = {
   isValidCapability,
   sanitizeGrants,
   grantsForUnlistedPlugins,
+  pluginsForUnlistedPlugins,
+  mergePlugins,
   mergeGrants,
   pluginGranted,
+  seatHasPlugin,
   pluginReaches,
   HOST_PSEUDO_ID,
   namespaced,

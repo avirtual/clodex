@@ -22,7 +22,7 @@ const META_TIERS = {
   // single synchronous loop, so no payload can ever answer some of them and not
   // the rest. Named for what it answers rather than for the handler that
   // decorates them, since a later producer may fill them elsewhere.
-  record: ['createdAt', 'archivedAt', 'team', 'pluginGrants'],
+  record: ['createdAt', 'archivedAt', 'team', 'pluginGrants', 'plugins'],
 };
 
 const TIER_OF_KEY = new Map();

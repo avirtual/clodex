@@ -604,16 +604,25 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     // plugin that defaulted to granted would reach every seat created before it
     // was installed.
     //
-    // There is no agent-facing writer for this, by omission. `intents` has one
-    // (filtered through withoutPrivilegedIntentsFor) because a seat asking for
-    // its own verbs is meaningful; a seat granting a plugin the right to read
-    // its own thinking is not a decision the seat gets to make.
+    // No agent-facing writer, by omission: a seat granting a plugin the right to
+    // read its own thinking is not a decision the seat gets to make.
     setPluginGrants(name, grants) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
       if (entry) {
         if (Array.isArray(grants) && grants.length) entry.pluginGrants = grants.map(String);
         else delete entry.pluginGrants;
+        this._save(all);
+      }
+    },
+    // Unlike setPluginGrants above, an EMPTY array is a real value and persists:
+    // absent means ALL, so storing "no plugins" as absence inverts the seat.
+    setPlugins(name, plugins) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry) {
+        if (Array.isArray(plugins)) entry.plugins = plugins.map(String);
+        else delete entry.plugins;
         this._save(all);
       }
     },
@@ -686,6 +695,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
     'autoCompact', 'noWire', 'denyBuiltins', 'disabledTools', 'disabledSkills',
     'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
+    'plugins',
   ]);
   const templates = {
     // Confines the SUFFIXED basename, not the bare name: `${name}.json` is what

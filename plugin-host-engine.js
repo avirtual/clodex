@@ -10,7 +10,7 @@
 const {
   HOST_API_VERSION, isValidPluginId, RESERVED_PLUGIN_IDS, namespaced, HOST_PSEUDO_ID,
   NO_SUCH_METHOD, NOT_ON_THIS_SURFACE, errorEnvelope, scopeOf, pluginGranted,
-  methodSurfaceOf, surfaceAllows,
+  seatHasPlugin, methodSurfaceOf, surfaceAllows,
 } = require('./plugin-api');
 const { registerIntent, unregisterSource } = require('./intent-registry');
 
@@ -185,13 +185,15 @@ function createPluginHostEngine(deps) {
     // once per REQUEST. Reading here still means read-at-delivery — a revoke
     // lands on the next turn.
     setImmediate(() => {
-      const grants = readPluginGrants(event.session);
+      const entry = readSeatEntry(event.session);
+      const grants = (entry && Array.isArray(entry.pluginGrants)) ? entry.pluginGrants : null;
       for (const [pluginId, set] of textHooks) {
-        // Gated on the `turns` capability SPECIFICALLY, not on pluginReaches:
-        // reaching is ANY capability, and a plugin granted only `toolInputs`
-        // holding turn text would defeat the whole point of splitting the grants
-        // by risk. pluginGranted is the primitive pluginReaches is built from —
-        // one predicate family, the member that matches this payload.
+        // OUTER of the two: a grant token for a plugin the seat no longer has
+        // sits on disk until its next `plugins` write, and would keep feeding it.
+        if (!seatHasPlugin(pluginId, entry && entry.plugins)) continue;
+        // Gated on the `turns` capability SPECIFICALLY, not on any grant:
+        // a plugin granted only `toolInputs` holding turn text would defeat the
+        // whole point of splitting the grants by risk.
         if (!pluginGranted(pluginId, 'turns', grants)) continue;
         // Scope from the REGISTERED MANIFEST, same rule as intents.register:
         // grants persist per session and survive an upgrade that flips a
@@ -211,11 +213,10 @@ function createPluginHostEngine(deps) {
 // Read at DELIVERY, never cached: a revoke has to take effect on the next turn,
 // and a cache here would be the same "stale grant lives for the process's life"
 // shape the sidebar-meta revoke bug had.
-  function readPluginGrants(sessionName) {
+  function readSeatEntry(sessionName) {
     try {
       const p = getPersistence && getPersistence();
-      const entry = p && p.get(sessionName);
-      return (entry && Array.isArray(entry.pluginGrants)) ? entry.pluginGrants : null;
+      return (p && p.get(sessionName)) || null;
     } catch { return null; }   // no persistence ⇒ no grants ⇒ pluginGranted refuses
   }
 
@@ -689,6 +690,7 @@ function createPluginHostEngine(deps) {
         // A scope that arrived later than the first paint would show a scoped
         // plugin's UI on every session for a frame.
         scope: scopeOf(r.manifest),
+        enabledByDefault: r.manifest.enabledByDefault !== false,
       }));
     },
     setEnabled(pluginId, enabled) {

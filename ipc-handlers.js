@@ -14,8 +14,8 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
-const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, PLUGIN_CAPABILITIES, pluginReaches } = require('./plugin-api');
-const { catalogRows, allowlistFromChecked, pluginRowFor } = require('./intent-registry');
+const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
+const { catalogRows, allowlistFromChecked, pruneForPlugins, rows: intentRows } = require('./intent-registry');
 const { feedSince } = require('./subagent-ring');
 // contexts→peers import (t32 step 4). Electron-free; lives main-side ON PURPOSE
 // — an imported token must never round-trip through the renderer (see the
@@ -83,15 +83,15 @@ function registerIpcHandlers(deps) {
       throw new Error(`A session named "${p.name}" is archived or saved — unarchive it or pick another name.`);
     }
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true);
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null);
     const seedStrip = (p.stripLevel === 1 || p.stripLevel === 2) ? p.stripLevel : agentDefaults.getStrip(p.name);
     if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
     return { ok: true, session };
   }
 
-  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire) => {
+  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins) => {
     try {
-      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire });
+      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -820,7 +820,7 @@ function registerIpcHandlers(deps) {
         if (!meta[s.name]) meta[s.name] = {};
         // A new array, never a push: metaFor freezes ONE instance and shares it
         // across every row, so extending it in place would re-tier the whole
-        // batch (and throw). Claiming the tier is what makes the four keys below
+        // batch (and throw). Claiming the tier is what makes the keys below
         // authoritative — including by omission, which is how a revoke lands.
         meta[s.name]._tiers = [...(meta[s.name]._tiers || []), 'record'];
         meta[s.name].createdAt = s.createdAt || null;
@@ -840,6 +840,9 @@ function registerIpcHandlers(deps) {
         if (Array.isArray(s.pluginGrants) && s.pluginGrants.length) {
           meta[s.name].pluginGrants = [...s.pluginGrants];
         }
+        // Array.isArray ALONE, unlike the grants line above: `[]` is a seat with
+        // no plugins, absent is a seat with all — dropping `[]` inverts it.
+        if (Array.isArray(s.plugins)) meta[s.name].plugins = [...s.plugins];
       }
       return { ok: true, meta };
     } catch (err) {
@@ -933,10 +936,11 @@ function registerIpcHandlers(deps) {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
-  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env) =>
+  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins) =>
     applySessionArgs(name, {
       extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
       disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env,
+      plugins,
     }, workspaceOfSender(e)));
 
   handle('session:restart', async (e, name, opts = {}) =>
@@ -1102,14 +1106,29 @@ function registerIpcHandlers(deps) {
   // the plugin host — the registry is a module-level table both halves mutate, so
   // it stays authoritative with no host (kill switch, construction failed), where
   // routing through the host would blank the checklist in exactly those cases.
-  // The session name is OPTIONAL and its absence is not a shortcut for "show
-  // everything": with no session there are no grants, so a session-scoped
-  // plugin's rows do not surface. That is the right answer for the only caller
-  // that has no name to give — the NEW-session dialog, which is choosing what a
-  // seat that does not exist yet may do.
-  handle('intents:catalog', (_e, name) => {
+  // With neither a name nor an override the answer is the globally enabled set,
+  // which is what an absent list resolves to: only a globally enabled plugin
+  // ever registers a row here. `override` is the checklist's LIVE ticked set.
+  handle('intents:catalog', (_e, name, override) => {
+    if (Array.isArray(override)) return catalogRows(override.map(String));
     const entry = name ? persistence.get(String(name)) : null;
-    return catalogRows(entry && entry.pluginGrants);
+    return catalogRows(entry ? entry.plugins : undefined);
+  });
+
+  handle('session:setPlugins', (_e, name, plugins) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found in persistence' };
+    // Door filter, as sanitizeGrants below: this value reaches a directory name.
+    const next = Array.isArray(plugins) ? plugins.filter(isValidPluginId) : null;
+    persistence.setPlugins(name, next);
+    const pruned = pruneForPlugins(entry, next);
+    if (Array.isArray(entry.intents) && pruned.intents.length !== entry.intents.length) {
+      persistence.setIntents(name, pruned.intents);
+    }
+    if (Array.isArray(entry.pluginGrants) && pruned.pluginGrants.length !== entry.pluginGrants.length) {
+      persistence.setPluginGrants(name, pruned.pluginGrants);
+    }
+    return { ok: true };
   });
 
   // Companion to session:setIntents, and deliberately a SEPARATE channel rather
@@ -1122,22 +1141,21 @@ function registerIpcHandlers(deps) {
     const next = sanitizeGrants(grants);
     persistence.setPluginGrants(name, next);
     // A revoked grant must also drop the plugin's verbs from the allowlist, at
-    // this one write point. Without it the two decisions diverge silently and
-    // the UI hides the side that still bites: the row vanishes from the
-    // checklist and the grammar line from the prompt, while `intentEnabledFor`
-    // — scope-blind by design, and staying that way — keeps letting the seat
-    // fire the verb into a plugin it holds no capability on. The popover's own
-    // save order (intents first, grants second) makes that the DEFAULT outcome
-    // of an in-dialog revoke.
-    // A null allowlist needs no reconcile: a plugin row is enabled only by
-    // explicit inclusion in an array, never by the all-enabled default.
-    if (Array.isArray(entry.intents)) {
-      const kept = entry.intents.filter((t) => {
-        const row = pluginRowFor(t);
-        if (!row || row.scope !== 'session') return true;
-        return pluginReaches(row.source, next);
-      });
-      if (kept.length !== entry.intents.length) persistence.setIntents(name, kept);
+    // this one write point. Without it the row vanishes from the checklist and
+    // the grammar line from the prompt while the seat keeps firing the verb into
+    // a plugin it holds no capability on — and the popover's own save order makes
+    // that the DEFAULT outcome of an in-dialog revoke.
+    // GRANTS axis only: a global plugin offers no grants to revoke, so it stays
+    // reached whatever `next` says. The granted ids alone would drop a verb-only
+    // plugin's verbs on every grants save.
+    // `next` is NULL for a non-array payload — a full revoke, not a throw.
+    const granted = new Set((next || []).map((g) => String(g).split(':')[0]).filter(Boolean));
+    const stillReached = [...new Set(intentRows()
+      .filter((r) => r.source && (r.scope !== 'session' || granted.has(r.source)))
+      .map((r) => r.source))];
+    const kept = pruneForPlugins({ intents: entry.intents }, stillReached).intents;
+    if (Array.isArray(entry.intents) && kept.length !== entry.intents.length) {
+      persistence.setIntents(name, kept);
     }
     return { ok: true };
   });
@@ -1146,16 +1164,18 @@ function registerIpcHandlers(deps) {
   // exist, plus what this session has already granted. Only SCOPED plugins are
   // listed — a global plugin has no per-session decision to offer, so listing it
   // would invite an operator to withhold something that is not withheld.
-  handle('session:pluginGrants', (_e, name) => {
+  handle('session:pluginGrants', (_e, name, override) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found in persistence' };
     const host = getPluginHost && getPluginHost();
     const status = host ? host.status() : { plugins: [] };
+    const seatPlugins = Array.isArray(override) ? override.map(String) : entry.plugins;
     return {
       ok: true,
       capabilities: [...PLUGIN_CAPABILITIES],
       plugins: (status.plugins || [])
         .filter((p) => p.scope === 'session' && p.enabled && !p.quarantined)
+        .filter((p) => seatHasPlugin(p.id, seatPlugins))
         .map((p) => ({ id: p.id, name: p.name })),
       granted: Array.isArray(entry.pluginGrants) ? [...entry.pluginGrants] : [],
     };
@@ -2014,6 +2034,7 @@ function registerIpcHandlers(deps) {
         (entry.env && typeof entry.env === 'object') ? entry.env : null,
         false,             // mint — retry re-spawns an existing record
         entry.noWire === true,
+        Array.isArray(entry.plugins) ? entry.plugins : null,
       );
       return { ok: true };
     } catch (err) {

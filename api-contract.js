@@ -363,6 +363,7 @@ const API_CONTRACT = [
   { name: 'setSessionSkills', kind: 'invoke', channel: 'session:setSkills' },
   { name: 'setSessionAgents', kind: 'invoke', channel: 'session:setAgents' },
   { name: 'setSessionIntents', kind: 'invoke', channel: 'session:setIntents' },
+  { name: 'setSessionPlugins', kind: 'invoke', channel: 'session:setPlugins' },
   { name: 'getSkillCatalog', kind: 'invoke', channel: 'session:skillCatalog' },
   { name: 'getAgentCatalog', kind: 'invoke', channel: 'session:agentCatalog' },
   { name: 'getSkillCatalogFor', kind: 'invoke', channel: 'settings:skillCatalogFor' },
@@ -459,9 +460,9 @@ const API_CONTRACT = [
   // that reads its own frozen copy of intent-catalog.js is reading a stale
   // catalog — and the web bundle's copy is frozen at build time.
   { name: 'getIntentCatalog', kind: 'invoke', channel: 'intents:catalog' },
-  // Plugin capability grants (t190). Separate from setIntents on purpose: the
-  // two are written by different UI blocks, and folding them together would let
-  // an intents save silently revoke every grant.
+  // Three separate channels — plugins, intents, grants — written by three UI
+  // blocks. Folding any two together lets a save that drew only one of them
+  // silently clear the other.
   { name: 'getSessionPluginGrants', kind: 'invoke', channel: 'session:pluginGrants' },
   { name: 'setSessionPluginGrants', kind: 'invoke', channel: 'session:setPluginGrants' },
 ];

@@ -47,15 +47,18 @@ test('args-edit restart threads the persisted env into create() (19th positional
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.restarted, true);
   assert.strictEqual(captured.length, 1, 'create was called once');
-  // 21, because create() grew two positionals past env (mint, then t189's
-  // noWire). The count is still asserted rather than only the index: env sits at
-  // 18 and a signature that lost a LATER argument would leave 18 correct while
-  // the tail silently defaults — which is how noWire would stop surviving a
-  // restart with nothing else failing.
-  assert.strictEqual(captured[0].length, 21, 'create got the full 21-positional signature');
+  // 22, because create() grew three positionals past env (mint, then noWire, then
+  // the seat's plugin list). The count is still asserted rather than only the
+  // index: env sits at 18 and a signature that lost a LATER argument would leave
+  // 18 correct while the tail silently defaults — which is how noWire would stop
+  // surviving a restart with nothing else failing.
+  assert.strictEqual(captured[0].length, 22, 'create got the full 22-positional signature');
   assert.deepStrictEqual(captured[0][18], { AWS_PROFILE: 'acct', DB: 'x' }, 'the persisted env is threaded as the 19th arg — not dropped');
   assert.strictEqual(captured[0][20], false,
     'and the 21st is noWire, resolved off the persisted entry — an args edit must not un-wire an ordinary seat');
+  assert.strictEqual(captured[0][21], null,
+    'and the 22nd is the seat plugin list — null here, since this entry has none, '
+    + 'which is the living all-enabled default rather than a seat stripped of plugins');
 });
 
 // t189 — the arm that carries the claim. The `false` above is satisfied by a

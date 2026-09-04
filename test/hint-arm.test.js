@@ -1200,6 +1200,7 @@ function mkManager({ hintArm = null, extraDeps = {} } = {}) {
     withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor,
     bodyModeFor: require('../intent-registry').bodyModeFor,
     intentEnabledFor: require('../intent-registry').intentEnabledFor,
+    intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat,
     pluginRowFor: require('../intent-registry').pluginRowFor,
     validIntentNames: require('../intent-registry').validIntentNames,
     fencedLines: require('../intent-scanner').fencedLines,

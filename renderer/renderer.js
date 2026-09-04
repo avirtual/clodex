@@ -3,13 +3,10 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
-// Both halves of the surfacing gate answer through this one predicate. The web
-// bundle freezes PLUGIN_CAPABILITIES at build time, which is the copy shape
-// `intents:catalog` exists to avoid — safe here only because the bundle ships
-// its own engine built from the same tree, and a PEER row carries no
-// pluginGrants at all, so a scoped plugin fails closed across that seam rather
-// than reading a stale vocabulary.
-const { pluginReaches } = require('../plugin-api');
+// The web bundle freezes PLUGIN_CAPABILITIES at build time — safe because it
+// ships its own engine from the same tree, and a PEER row carries no
+// pluginGrants, so a scoped plugin fails closed across that seam.
+const { pluginReaches, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
@@ -41,7 +38,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -203,7 +200,7 @@ const teamRolePromptSelect = document.getElementById('input-team-role-prompt');
 let dialogTeamMode = null;   // 'create' | 'join' | null (not an agent / authoring)
 let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
-let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix — Task 15
+let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix
 let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
 const placementRow = document.getElementById('placement-row');
 const inputPlacement = document.getElementById('input-placement');
@@ -1253,7 +1250,7 @@ function createTerminal(name, peer = null) {
     }
     // Typing is evidence the draft was NOT dictated, and this is the only place
     // that sees it: the recording indicator can be lit through an ordinary typed
-    // turn (t571's re-arm writes the trigger character at every turn end), so
+    // turn (the re-arm writes the trigger character at every turn end), so
     // without this the operator's exact typed words submit marked as spoken.
     if (voiceSubmit) voiceSubmit.noteInput(data);
     window.api.writeToSession(name, data);
@@ -1479,7 +1476,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   for (const sec of [toolsSection, skillsSection, otherSection]) {
     if (sec) sec.style.display = claudeOnly ? '' : 'none';
   }
-  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionExecCommands(); refreshNewSessionIntents(); refreshNewSessionTools(); }
+  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); refreshNewSessionTools(); }
   const agentType = type === 'claude' || type === 'codex';
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
@@ -1698,7 +1695,7 @@ function populateChecklistsFromCatalogs(cat) {
   renderToolChecklist(inputToolsList, new Set());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
-  refreshNewSessionIntents();       // served by the LOCAL engine, box-independent (as the static catalog was)
+  refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache({
     system: (cat.prompts || []).filter((p) => p.kind === 'system'),
     append: (cat.prompts || []).filter((p) => p.kind === 'append'),
@@ -1768,6 +1765,13 @@ const inputAgentsList = document.getElementById('input-agents-list');
 const inputBuiltinsList = document.getElementById('input-builtins-list');
 const inputExecList = document.getElementById('input-exec-list');
 const inputIntentList = document.getElementById('input-intent-list');
+const inputPluginList = document.getElementById('input-plugin-list');
+// Re-reads the checked set: a newly appearing verb row must arrive UNTICKED.
+if (inputPluginList) {
+  inputPluginList.addEventListener('change', () => {
+    refreshNewSessionIntents(collectIntentChecklist(inputIntentList));
+  });
+}
 
 const toolsRow = document.getElementById('tools-row');
 const inputToolsList = document.getElementById('input-tools-list');
@@ -1798,9 +1802,22 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   renderExecChecklist(inputExecList, enabledSet);
 }
 
+let newSessionPluginsPersisted = null;
+
+// Painted BEFORE the intent list, whose catalog is asked about what this ticks.
+// The FETCH stays ABOVE the type guard: a non-claude seat draws no checklist but
+// still SAVES defaultPluginTicks(), which reads this cache — below the guard it
+// answers [], closing that seat to every plugin with no UI to reopen it.
+async function refreshNewSessionPlugins(pluginsList) {
+  setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  if (inputType.value !== 'claude') return;
+  newSessionPluginsPersisted = Array.isArray(pluginsList) ? pluginsList : null;
+  renderPluginChecklist(inputPluginList, Array.isArray(pluginsList) ? pluginsList : defaultPluginTicks());
+}
+
 async function refreshNewSessionIntents(intentsList) {
   if (inputType.value !== 'claude') return;
-  setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
+  setIntentCatalogCache((await window.api.getIntentCatalog(null, collectPluginChecklist(inputPluginList))) || []);
   renderIntentChecklist(inputIntentList, intentsList);
 }
 
@@ -2036,7 +2053,7 @@ function populateHostCatalogs(settings, agentLib) {
   setAgentLibCache(agentLib || []);
   renderAgentChecklist(inputAgentsList, new Set());
   refreshNewSessionExecCommands();
-  refreshNewSessionIntents();
+  refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
@@ -2137,7 +2154,8 @@ inputTemplate.addEventListener('change', async () => {
   if (t.type === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set(t.agents || []));
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
-    refreshNewSessionIntents(t.intents);
+    await refreshNewSessionPlugins(t.plugins);
+    await refreshNewSessionIntents(t.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
     await refreshNewSessionTools(new Set(t.disabledTools || []));
     await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -2198,6 +2216,12 @@ function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
+  // Written for EVERY type (see the EDITOR_OWNED note below), and a type with no
+  // Plugins section gets the globally-enabled set — `[]` would close it for good.
+  const plugins = type === 'claude'
+    ? mergePlugins(collectPluginChecklist(inputPluginList),
+      pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))))
+    : defaultPluginTicks();
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
@@ -2213,6 +2237,7 @@ function collectFormConfig() {
     agents: type === 'claude' ? collectAgentChecklist(inputAgentsList) : [],
     execCommands: type === 'claude' ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
+    plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
@@ -2235,7 +2260,7 @@ async function doCreate() {
   const cfg = collectFormConfig();
   const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
-          systemPromptFile, appendPromptFiles, intents, noWire } = cfg;
+          systemPromptFile, appendPromptFiles, intents, noWire, plugins } = cfg;
   const env = collectDialogEnv();
 
   const supportsPrompts = type === 'claude' || type === 'codex';
@@ -2321,7 +2346,7 @@ async function doCreate() {
   // could abandon the managed wirescope when the port stops matching).
   if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
   const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true };
+  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
   let result;
   if (teamOn && dialogTeamMode === 'create') {
     const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -2331,7 +2356,7 @@ async function doCreate() {
     const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
     result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
   } else {
-    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true);
+    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
   }
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
@@ -2433,7 +2458,8 @@ async function openTemplateEditor(tpl = null) {
   if (inputType.value === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []));
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
-    refreshNewSessionIntents(tpl && tpl.intents);
+    await refreshNewSessionPlugins(tpl && tpl.plugins);
+    await refreshNewSessionIntents(tpl && tpl.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
     await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []));
     await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []));
@@ -2674,24 +2700,16 @@ function activePeerConfigurable() {
   return !type || type === 'claude' || type === 'codex';
 }
 
-// Which SESSION-SCOPED plugins may draw for a given session (t190). Answered
-// off sidebarMeta, which already carries a per-row read on a timer — the
-// sidebar paints every session at once, so a single active-session answer would
-// be the wrong shape for row badges.
-//
-// A plugin absent from `scopedPluginIds` is GLOBAL (or does not exist) and
-// always reaches: this must fail toward today's behaviour, because the set
-// arrives asynchronously and an empty one during startup would otherwise blank
-// every plugin's UI for a frame.
+// Answered off sidebarMeta's per-row read, not off the active session: the
+// sidebar paints every row at once. A plugin absent from `scopedPluginIds`
+// always reaches — the set arrives async, and an empty one at startup would
+// otherwise blank every plugin's UI.
 let scopedPluginIds = new Set();
 function pluginReachesSession(pluginId, sessionName) {
   if (!scopedPluginIds.has(pluginId)) return true;
   const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
-  // The engine's own predicate, not a local re-derivation: it matches whole
-  // tokens against the capability vocabulary, where the split-on-':' this used
-  // to do read a colon-less "demoX" as plugin "demo" (indexOf -1 → slice(0,-1)).
-  // Both halves must answer the same question the same way or the renderer hides
-  // what the engine allows, or worse.
+  // The shared leaf, never a local re-derivation: a hand-rolled split on ':'
+  // reads a colon-less "demoX" as plugin "demo".
   return pluginReaches(pluginId, grants);
 }
 
@@ -3383,7 +3401,7 @@ const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopov
 
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
 
-// Create Team… (t288) — a team with NO seat behind it, which is why it goes
+// Create Team… — a team with NO seat behind it, which is why it goes
 // through teamCreateBare rather than the new-session dialog's teamCreate (that
 // one writes the manifest and spawns the lead indivisibly).
 //
@@ -5414,7 +5432,7 @@ function applySandboxRunning(running, ports = null) {
     sbPortsLine.classList.add('hidden');
   }
   if (running) {
-    // The live url deliberately does NOT go in `href` (t445): the click handler
+    // The live url deliberately does NOT go in `href`: the click handler
     // routes through openExternal so the browser frontend can refuse a link that
     // points at the box's loopback, and a real href hands cmd-click and
     // middle-click a path straight around that gate. `title` carries the address
@@ -6090,6 +6108,15 @@ const argsToolsSection = document.getElementById('args-tools-section');
 const argsOtherSection = document.getElementById('args-other-section');
 const argsIntentsList = document.getElementById('args-intents-list');
 const argsIntentsSection = document.getElementById('args-intents-section');
+const argsPluginList = document.getElementById('args-plugin-list');
+const argsPluginsSection = document.getElementById('args-plugins-section');
+if (argsPluginList) {
+  argsPluginList.addEventListener('change', async () => {
+    const checked = collectIntentChecklist(argsIntentsList);
+    setIntentCatalogCache((await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList))) || []);
+    renderIntentChecklist(argsIntentsList, checked);
+  });
+}
 const argsExecList = document.getElementById('args-exec-list');
 const argsExecSection = document.getElementById('args-exec-section');
 const argsSkillsRow = document.getElementById('args-skills-row');
@@ -6111,6 +6138,7 @@ let argsEditingSource = null;
 let argsAgentsPersisted = [];
 let argsAgentsRendered = [];
 let argsAgentsAuto = [];
+let argsPluginsPersisted = null;
 let argsSkillsInjectPersisted = [];
 let argsSkillsInjectRendered = [];
 let argsSkillsInjectAuto = [];
@@ -6171,10 +6199,17 @@ async function openArgsDialog(name, argsSource = null) {
   argsToolsSection.style.display = isClaude ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
+  // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section
+  // drawn there takes an untick and silently discards it.
+  const isPluginsEditable = isClaude && !argsSource;
+  argsPluginsSection.style.display = isPluginsEditable ? '' : 'none';
+  setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+  renderPluginChecklist(argsPluginList, res.plugins);
   argsIntentsSection.style.display = isClaude ? '' : 'none';
-  // Named: a session-scoped plugin's verbs surface here only if THIS seat
-  // granted the plugin. Passing no name would draw the un-granted catalog.
-  setIntentCatalogCache((await window.api.getIntentCatalog(name)) || []);
+  // Keyed on the list this dialog just painted: the override is what makes a
+  // live untick repaint the verbs.
+  setIntentCatalogCache((await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList))) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
   const isExecEditable = isClaude && !argsSource;
   argsExecSection.style.display = isExecEditable ? '' : 'none';
@@ -6242,6 +6277,12 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // subset ([] = everything gated, a real value). Both OVERWRITE; undefined-preserve is
   // reserved for a patch that omits intents entirely.
   const intents = argsIntentsSection.style.display === 'none' ? null : collectIntentChecklist(argsIntentsList);
+  // undefined = "untouched", never []: a hidden section or a checklist that drew
+  // no rows is an absence of options, not the operator's answer.
+  const plugins = (argsPluginsSection.style.display === 'none' || !getPluginCatalogCache().length)
+    ? undefined
+    : mergePlugins(collectPluginChecklist(argsPluginList),
+      pluginsForUnlistedPlugins(argsPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))));
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
   // dialog OWNS env — an empty box is {}, a real clear, not a no-op.
@@ -6275,7 +6316,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env);
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;

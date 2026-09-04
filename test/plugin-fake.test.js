@@ -194,11 +194,17 @@ test('fake plugin: activation reaches every engine extension point exactly once'
     assert.deepStrictEqual(engine._dispatchKeys().sort(), ['fake:boom', 'fake:ping', 'fake:slow']);
     assert.deepStrictEqual(engine._hookCounts(), { create: 1, exit: 1, text: 1 });
     assert.strictEqual(intentRegistry.pluginRowFor('fake-note').source, 'fake');
-    // `scope` (t190) is part of the catalog row because the renderer must know
-    // which plugins are session-scoped BEFORE it activates any of them. A
-    // manifest that declares none resolves to 'global' — today's behaviour.
+    // `scope` is part of the catalog row because the renderer must know which
+    // plugins are session-scoped BEFORE it activates any of them. A manifest that
+    // declares none resolves to 'global'. `enabledByDefault` rides the same row
+    // and defaults TRUE for a manifest that omits it, matching the loader's
+    // isEnabled — a row that reported false here would show the operator a
+    // default the loader does not apply.
     assert.deepStrictEqual(engine.catalog(), [
-      { id: 'fake', name: 'Fake', version: '0.0.1', enabled: true, announce: null, scope: 'global' },
+      {
+        id: 'fake', name: 'Fake', version: '0.0.1', enabled: true, announce: null,
+        scope: 'global', enabledByDefault: true,
+      },
     ]);
   });
 });
@@ -961,6 +967,7 @@ function makeWiredPair({ intents = ['fake-note'], noHost = false } = {}) {
     execBodyCap: 64 * 1024,
     bodyModeFor: intentRegistry.bodyModeFor,
     intentEnabledFor: intentRegistry.intentEnabledFor,
+    intentEnabledForSeat: intentRegistry.intentEnabledForSeat,
     pluginRowFor: intentRegistry.pluginRowFor,
     validIntentNames: intentRegistry.validIntentNames,
     getPluginHooks: () => (engine ? engine.hooks : null),

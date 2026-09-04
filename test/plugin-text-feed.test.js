@@ -569,6 +569,7 @@ function mkManager(fired, overrides = {}) {
     looksLikeIntent: require('../intent-scanner').looksLikeIntent,
     bodyModeFor: require('../intent-registry').bodyModeFor,
     intentEnabledFor: require('../intent-registry').intentEnabledFor,
+    intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat,
     pluginRowFor: require('../intent-registry').pluginRowFor,
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: require('node:fs'),
