@@ -238,10 +238,10 @@ function initPluginHost({
       let chip = badges.querySelector(sel);
       let r = null;
       // Per ROW, not per active session: the sidebar paints every session, so
-      // this is the one slot where several grant answers are live at once. A
-      // badge already on screen must also be REMOVED when the grant goes away,
-      // which is why this falls through to the removal below rather than
-      // `continue`-ing past it.
+      // this is the one slot where several seat answers are live at once. A
+      // badge already on screen must also be REMOVED when the seat loses the
+      // plugin, which is why this falls through to the removal below rather
+      // than `continue`-ing past it.
       if (!reaches(b.pluginId, name)) { if (chip) chip.remove(); continue; }
       try { r = b.resolve(name, meta); } catch (e) { warn(b.pluginId, e); }
       if (!r || !r.text) { if (chip) chip.remove(); continue; }
@@ -315,7 +315,7 @@ function initPluginHost({
   // `sessionName` is optional and defaults to the active session rather than to
   // "unscoped": every caller opens this menu FOR a session, and a missing
   // argument at some future call site must not become a hole that surfaces a
-  // scoped plugin's entries on a seat that never granted it.
+  // plugin's entries on a seat that does not have it.
   function menuEntriesFor(type, sessionName) {
     const forSession = sessionName || (getActiveSession ? getActiveSession() : null);
     const out = [];
