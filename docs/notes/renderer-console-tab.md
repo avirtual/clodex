@@ -34,3 +34,19 @@ where `tool_use_id` is a payload field the record could lack.
 `pulling` closes the interval-tick and slow-IPC paths: an IPC round trip slower
 than `POLL_MS` would otherwise put two pulls on the same cursor, which is the
 double-append above by a different door.
+
+`lastSkipped` suppresses a REPEATED gap marker. When more than
+`PULL_MAX_RECORDS` records share the top timestamp group the cursor cannot
+advance past it, so `skipped` stays above zero on every poll while nothing new
+arrives — appending a marker each time fills `MAX_BLOCKS` and scrolls the real
+blocks out, the pane reporting a fresh loss every `POLL_MS` when nothing has been
+lost since the first. The suppression is keyed on the count being UNCHANGED, not
+on a marker having been shown, so a backlog that GROWS is reported again.
+
+## blockNode
+
+A record with `backgrounded` set is drawn with a note saying its output was never
+sent, because the CLI auto-backgrounds under parallel load and those payloads
+carry no output at all. Without it an empty block reads as "this command printed
+nothing" for a command that printed plenty. The note is deliberately not shown
+for an ordinary command that genuinely printed nothing.

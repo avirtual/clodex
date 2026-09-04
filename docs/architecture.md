@@ -208,8 +208,9 @@ bundle), whose packaged form is the Docker image under
   read), and **must not be merged with the prompt delta**, which is
   at-least-once.
 - **bash-console.js** — the reader behind the drawer's Console tab: normalizes the
-  raw hook JSON into blocks and serves them incrementally by CURSOR — the last
-  spool basename read (`console:read`). The spool is a DIRECTORY of one file per
+  raw hook JSON into blocks and serves them bounded by a CURSOR — the last spool
+  basename read (`console:read`). Bounded, not incremental: it re-serves the
+  cursor's whole timestamp group, so suppressing the repeat is the tenant's job. The spool is a DIRECTORY of one file per
   record, claimed by atomic rename, because the CLI fires Bash hooks CONCURRENTLY
   and a shared append loses records silently (`docs/notes/cli-hooks.md` has the
   measurements). It owns the TWO-SHAPE problem —

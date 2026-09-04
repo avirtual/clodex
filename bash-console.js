@@ -62,6 +62,7 @@ function normalizeRecord(obj) {
       timedOut: obj.is_timeout === true,
       truncated: false,
       fullBytes: null,
+      backgrounded: false,
     };
   }
 
@@ -78,6 +79,7 @@ function normalizeRecord(obj) {
     timedOut: false,
     truncated: typeof resp.persistedOutputPath === 'string' && !!resp.persistedOutputPath,
     fullBytes: persistedSize,
+    backgrounded: typeof resp.backgroundTaskId === 'string' && !!resp.backgroundTaskId,
   };
 }
 
@@ -105,7 +107,7 @@ function readBashConsole(root, name, cursor) {
   const since = typeof cursor === 'string' ? cursor : '';
   const sinceStamp = since ? stampOf(since) : '';
   let fresh = since
-    ? files.filter((f) => f !== since && stampOf(f) >= sinceStamp)
+    ? files.filter((f) => stampOf(f) >= sinceStamp)
     : files;
 
   const reset = !!since && files.length > 0 && !files.includes(since);
