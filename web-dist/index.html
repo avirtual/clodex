@@ -5403,6 +5403,22 @@ body {
   font-size: 10px;
   font-style: italic;
 }
+#console-live {
+  flex-shrink: 0;
+  padding: 0 12px;
+  font-family:
+    "SF Mono",
+    "Menlo",
+    monospace;
+  font-size: 12px;
+}
+#console-live:empty {
+  display: none;
+}
+.console-block.console-live {
+  border-left-color: var(--accent);
+  margin-bottom: 4px;
+}
 .console-gap {
   margin: 6px 0;
   padding: 3px 0;
@@ -7535,6 +7551,7 @@ body {
         { name: "ctlContext", kind: "invoke", channel: "ctl:context" },
         { name: "ctlHelp", kind: "invoke", channel: "ctl:help" },
         { name: "consoleRead", kind: "invoke", channel: "console:read" },
+        { name: "consoleLive", kind: "invoke", channel: "console:live" },
         // The drawer's selection → wirescope tail hint. Under the SAME gate as the
         // rest of the drawer family and for a sharper reason than either: it puts
         // caller-supplied text into an agent's next request, so an ungated
@@ -26268,14 +26285,16 @@ helper=${d.helperPath}`;
     "renderer/console-tab.js"(exports, module) {
       var { esc } = require_format();
       var MAX_BLOCKS = 300;
-      var POLL_MS = 1200;
+      var POLL_MS = 500;
       function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
         const seats = /* @__PURE__ */ new Map();
         let seat = null;
         let bodyEl = null;
         let emptyEl = null;
+        let liveEl = null;
         let pollTimer = null;
         let pulling = false;
+        let livePulling = false;
         let notify = Object.assign(() => {
         }, { selectionChanged: () => {
         } });
@@ -26289,7 +26308,7 @@ helper=${d.helperPath}`;
         function stateFor(name) {
           let st = seats.get(name);
           if (!st) {
-            st = { cursor: "", blocks: [], lastKeys: /* @__PURE__ */ new Set(), lastSkipped: 0 };
+            st = { cursor: "", blocks: [], lastKeys: /* @__PURE__ */ new Set(), lastSkipped: 0, live: [], settled: /* @__PURE__ */ new Set() };
             seats.set(name, st);
           }
           return st;
@@ -26334,6 +26353,19 @@ helper=${d.helperPath}`;
           el.innerHTML = head + body + note;
           return el;
         }
+        function liveNode(r) {
+          const el = document.createElement("div");
+          el.className = "console-block console-live";
+          const marks = ['<span class="console-block-mark">running</span>'];
+          const dur = fmtDuration(r.elapsedMs);
+          if (dur) marks.push(`<span class="console-block-time">${esc(dur)}</span>`);
+          const head = `<div class="console-block-head"><span class="console-block-cmd">${esc(r.command)}</span>` + marks.join("") + "</div>";
+          const out = String(r.output || "").replace(/\n+$/, "");
+          const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : "";
+          const note = `<div class="console-block-note">still running \u2014 live preview${r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ""}; the finished record replaces this</div>`;
+          el.innerHTML = head + body + note;
+          return el;
+        }
         function gapNode(n) {
           const el = document.createElement("div");
           el.className = "console-gap";
@@ -26343,6 +26375,13 @@ helper=${d.helperPath}`;
         function pushBlock(st, b) {
           st.blocks.push(b);
           while (st.blocks.length > MAX_BLOCKS) st.blocks.shift();
+        }
+        function renderLive() {
+          if (!liveEl) return;
+          const st = seat ? stateFor(seat) : null;
+          liveEl.innerHTML = "";
+          if (!st || !st.live.length) return;
+          for (const r of st.live) liveEl.appendChild(liveNode(r));
         }
         function renderAll() {
           if (!bodyEl) return;
@@ -26386,6 +26425,7 @@ helper=${d.helperPath}`;
             st.blocks.length = 0;
             st.lastKeys.clear();
             st.lastSkipped = 0;
+            st.settled.clear();
             renderAll();
           }
           st.cursor = typeof res.cursor === "string" && res.cursor ? res.cursor : st.cursor;
@@ -26395,25 +26435,51 @@ helper=${d.helperPath}`;
           const skipped = typeof res.skipped === "number" && res.skipped > 0 ? res.skipped : 0;
           const repeatGap = skipped <= st.lastSkipped;
           st.lastSkipped = skipped;
+          for (const r of records) if (r.id) st.settled.add(r.id);
           if (!records.length && (!skipped || repeatGap)) return;
           appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
           notify(records.some((r) => r.failed) ? "attention" : "activity");
         }
+        async function pullLive() {
+          const name = seat;
+          if (!name || livePulling) return;
+          const st = stateFor(name);
+          livePulling = true;
+          let rows = null;
+          try {
+            rows = await window.api.consoleLive(name);
+          } catch {
+            return;
+          } finally {
+            livePulling = false;
+          }
+          if (seat !== name) return;
+          const next = (Array.isArray(rows) ? rows : []).filter((r) => r && !st.settled.has(r.id));
+          const same = next.length === st.live.length && next.every((r, i) => st.live[i].id === r.id && st.live[i].output === r.output && st.live[i].finished === r.finished);
+          st.live = next;
+          if (!same) renderLive();
+        }
+        async function tick() {
+          await Promise.all([pull(), pullLive()]);
+        }
         function startPolling() {
           if (pollTimer) return false;
-          pollTimer = setInterval(pull, POLL_MS);
-          pull();
+          pollTimer = setInterval(tick, POLL_MS);
+          tick();
           return true;
         }
         function stopPolling() {
           if (!pollTimer) return;
           clearInterval(pollTimer);
           pollTimer = null;
+          if (seat) stateFor(seat).live.length = 0;
+          renderLive();
         }
         function mount(pane, actions) {
-          pane.innerHTML = '<div id="console-body"><div id="console-empty"></div></div>';
+          pane.innerHTML = '<div id="console-body"><div id="console-empty"></div></div><div id="console-live"></div>';
           bodyEl = pane.querySelector("#console-body");
           emptyEl = pane.querySelector("#console-empty");
+          liveEl = pane.querySelector("#console-live");
           const clearBtn = document.createElement("button");
           clearBtn.type = "button";
           clearBtn.id = "console-clear";
@@ -26423,8 +26489,11 @@ helper=${d.helperPath}`;
           clearBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             if (!seat) return;
-            stateFor(seat).blocks.length = 0;
+            const st = stateFor(seat);
+            st.blocks.length = 0;
+            st.live.length = 0;
             renderAll();
+            renderLive();
           });
           actions.appendChild(clearBtn);
         }
@@ -26434,9 +26503,10 @@ helper=${d.helperPath}`;
           if (switched) {
             seat = next;
             renderAll();
+            renderLive();
           }
           const started = startPolling();
-          if (switched && !started) pull();
+          if (switched && !started) tick();
         }
         function onHide() {
           stopPolling();

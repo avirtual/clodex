@@ -1,15 +1,17 @@
 const { esc } = require('./lib/format');
 
 const MAX_BLOCKS = 300;
-const POLL_MS = 1200;
+const POLL_MS = 500;
 
 function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   const seats = new Map();
   let seat = null;
   let bodyEl = null;
   let emptyEl = null;
+  let liveEl = null;
   let pollTimer = null;
   let pulling = false;
+  let livePulling = false;
   let notify = Object.assign(() => {}, { selectionChanged: () => {} });
 
   const typeNow = () => {
@@ -19,7 +21,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function stateFor(name) {
     let st = seats.get(name);
     if (!st) {
-      st = { cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0 };
+      st = { cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0, live: [], settled: new Set() };
       seats.set(name, st);
     }
     return st;
@@ -80,6 +82,25 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     return el;
   }
 
+  function liveNode(r) {
+    const el = document.createElement('div');
+    el.className = 'console-block console-live';
+    const marks = ['<span class="console-block-mark">running</span>'];
+    const dur = fmtDuration(r.elapsedMs);
+    if (dur) marks.push(`<span class="console-block-time">${esc(dur)}</span>`);
+    const head = '<div class="console-block-head">'
+      + `<span class="console-block-cmd">${esc(r.command)}</span>`
+      + marks.join('')
+      + '</div>';
+    const out = String(r.output || '').replace(/\n+$/, '');
+    const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : '';
+    const note = `<div class="console-block-note">still running — live preview${
+      r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ''
+    }; the finished record replaces this</div>`;
+    el.innerHTML = head + body + note;
+    return el;
+  }
+
   function gapNode(n) {
     const el = document.createElement('div');
     el.className = 'console-gap';
@@ -90,6 +111,14 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function pushBlock(st, b) {
     st.blocks.push(b);
     while (st.blocks.length > MAX_BLOCKS) st.blocks.shift();
+  }
+
+  function renderLive() {
+    if (!liveEl) return;
+    const st = seat ? stateFor(seat) : null;
+    liveEl.innerHTML = '';
+    if (!st || !st.live.length) return;
+    for (const r of st.live) liveEl.appendChild(liveNode(r));
   }
 
   function renderAll() {
@@ -139,6 +168,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       st.blocks.length = 0;
       st.lastKeys.clear();
       st.lastSkipped = 0;
+      st.settled.clear();
       renderAll();
     }
     st.cursor = typeof res.cursor === 'string' && res.cursor ? res.cursor : st.cursor;
@@ -148,15 +178,43 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     const skipped = typeof res.skipped === 'number' && res.skipped > 0 ? res.skipped : 0;
     const repeatGap = skipped <= st.lastSkipped;
     st.lastSkipped = skipped;
+    for (const r of records) if (r.id) st.settled.add(r.id);
     if (!records.length && (!skipped || repeatGap)) return;
     appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
     notify(records.some((r) => r.failed) ? 'attention' : 'activity');
   }
 
+  async function pullLive() {
+    const name = seat;
+    if (!name || livePulling) return;
+    const st = stateFor(name);
+    livePulling = true;
+    let rows = null;
+    try {
+      rows = await window.api.consoleLive(name);
+    } catch {
+      return;
+    } finally {
+      livePulling = false;
+    }
+    if (seat !== name) return;
+    const next = (Array.isArray(rows) ? rows : []).filter((r) => r && !st.settled.has(r.id));
+    const same = next.length === st.live.length
+      && next.every((r, i) => st.live[i].id === r.id
+        && st.live[i].output === r.output
+        && st.live[i].finished === r.finished);
+    st.live = next;
+    if (!same) renderLive();
+  }
+
+  async function tick() {
+    await Promise.all([pull(), pullLive()]);
+  }
+
   function startPolling() {
     if (pollTimer) return false;
-    pollTimer = setInterval(pull, POLL_MS);
-    pull();
+    pollTimer = setInterval(tick, POLL_MS);
+    tick();
     return true;
   }
 
@@ -164,12 +222,16 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (!pollTimer) return;
     clearInterval(pollTimer);
     pollTimer = null;
+    if (seat) stateFor(seat).live.length = 0;
+    renderLive();
   }
 
   function mount(pane, actions) {
-    pane.innerHTML = '<div id="console-body"><div id="console-empty"></div></div>';
+    pane.innerHTML = '<div id="console-body"><div id="console-empty"></div></div>'
+      + '<div id="console-live"></div>';
     bodyEl = pane.querySelector('#console-body');
     emptyEl = pane.querySelector('#console-empty');
+    liveEl = pane.querySelector('#console-live');
 
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
@@ -180,8 +242,11 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     clearBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!seat) return;
-      stateFor(seat).blocks.length = 0;
+      const st = stateFor(seat);
+      st.blocks.length = 0;
+      st.live.length = 0;
       renderAll();
+      renderLive();
     });
     actions.appendChild(clearBtn);
   }
@@ -192,9 +257,10 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (switched) {
       seat = next;
       renderAll();
+      renderLive();
     }
     const started = startPolling();
-    if (switched && !started) pull();
+    if (switched && !started) tick();
   }
 
   function onHide() {

@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **The Console tab now shows a running command's output while it runs.** Until
+  now output arrived only when the call finished, so a 465-second release
+  command showed nothing at all until it ended. A live preview of the command
+  now appears as soon as it starts producing output, above the finished blocks
+  and marked as still running, and is replaced by the complete record the moment
+  the call ends. The preview is a preview: because the CLI deletes the file it
+  is read from at the instant the command finishes, the last few lines may only
+  appear in the finished block that replaces it — which is the one that is kept.
+  A command still running is never captioned as having printed nothing, since it
+  may simply not have printed yet. Costs nothing while no command is running,
+  and nothing at all when the tab is closed.
+
 - **The Console tab now shows the output of Bash calls the CLI ran in the
   background.** Under parallel load the CLI quietly moves a Bash call to the
   background, and its output never reaches Clodex through the usual channel — so

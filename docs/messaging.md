@@ -409,6 +409,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 | UserPromptSubmit | `run/<name>/acks.sh` | read+truncate memory acks (lossy-tolerant) |
 | UserPromptSubmit | `run/<name>/pending.sh` | atomic rename-claim drain of parked DMs from `pending/<name>/` (zero-loss) |
 | UserPromptSubmit | `run/<name>/ctxwarn.sh` | read-only context warning; recurs every submit while over threshold |
+| PreToolUse (`matcher: Bash`) | `run/<name>/bash-live.sh` | an OBSERVER for the live console: records the call plus a snapshot of the CLI's tasks dir under `run/<name>/bash-live/`, then exits 0 having printed NOTHING. A PreToolUse that emits `updatedInput` or exits 2 alters or blocks the Bash call, so silence is the safety property, not a style choice |
 | PostToolUse (`matcher: Bash`) | `run/<name>/bash-console.sh` | spools the raw hook JSON as ONE FILE PER RECORD under `run/<name>/bash-console/`, claimed by atomic rename (Bash hooks fire concurrently; a shared append loses records). The `<epoch-ns>-<pid>.json` name falls back to whole seconds where `date` has no `%N`, and its `.tmp` sweep is `kill -0`-guarded — an unguarded one deletes a live writer's spool |
 | PostToolUseFailure (`matcher: Bash`) | `run/<name>/bash-console.sh` | the same spool write — a FAILING Bash call fires only this event, with no `tool_response` and the exit code inside a top-level `error` |
 
