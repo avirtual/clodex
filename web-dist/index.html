@@ -1435,6 +1435,7 @@ body {
 #skills-popover,
 #agents-popover,
 #intents-popover,
+#plugins-popover,
 #team-roles-popover,
 #peer-select-popover {
   position: fixed;
@@ -1454,6 +1455,7 @@ body {
 #skills-popover.hidden,
 #agents-popover.hidden,
 #intents-popover.hidden,
+#plugins-popover.hidden,
 #team-roles-popover.hidden,
 #peer-select-popover.hidden {
   display: none;
@@ -1881,6 +1883,7 @@ body {
 #skills-popover .popover-title,
 #agents-popover .popover-title,
 #intents-popover .popover-title,
+#plugins-popover .popover-title,
 #peer-select-popover .popover-title {
   font-size: 12px;
   font-weight: 600;
@@ -1890,6 +1893,7 @@ body {
 #skills-popover #popover-skills-list,
 #agents-popover #popover-agents-list,
 #intents-popover #popover-intents-list,
+#plugins-popover #popover-plugins-list,
 #peer-select-popover #peer-select-list {
   overflow-y: auto;
   flex: 1;
@@ -1994,7 +1998,8 @@ body {
 #tools-popover .tools-popover-restart,
 #skills-popover .tools-popover-restart,
 #agents-popover .tools-popover-restart,
-#intents-popover .tools-popover-restart {
+#intents-popover .tools-popover-restart,
+#plugins-popover .tools-popover-restart {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2004,6 +2009,7 @@ body {
 #skills-popover .popover-actions,
 #agents-popover .popover-actions,
 #intents-popover .popover-actions,
+#plugins-popover .popover-actions,
 #peer-select-popover .popover-actions {
   display: flex;
   justify-content: flex-end;
@@ -5551,13 +5557,15 @@ body {
 #tools-popover,
 #skills-popover,
 #agents-popover,
-#intents-popover {
+#intents-popover,
+#plugins-popover {
   overflow: hidden;
 }
 #tools-popover,
 #skills-popover,
 #agents-popover,
 #intents-popover,
+#plugins-popover,
 #ctx-popover,
 #cost-popover,
 #bust-popover,

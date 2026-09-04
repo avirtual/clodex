@@ -1199,6 +1199,7 @@ html, body {
 #skills-popover,
 #agents-popover,
 #intents-popover,
+#plugins-popover,
 #team-roles-popover,
 #peer-select-popover {
   position: fixed;
@@ -1214,7 +1215,7 @@ html, body {
   padding: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
-#tools-popover.hidden, #skills-popover.hidden, #agents-popover.hidden, #intents-popover.hidden, #team-roles-popover.hidden, #peer-select-popover.hidden { display: none; }
+#tools-popover.hidden, #skills-popover.hidden, #agents-popover.hidden, #intents-popover.hidden, #plugins-popover.hidden, #team-roles-popover.hidden, #peer-select-popover.hidden { display: none; }
 #team-roles-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 #team-roles-popover .popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 
@@ -1442,11 +1443,13 @@ html, body {
 #skills-popover .popover-title,
 #agents-popover .popover-title,
 #intents-popover .popover-title,
+#plugins-popover .popover-title,
 #peer-select-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 #tools-popover #popover-tools-list,
 #skills-popover #popover-skills-list,
 #agents-popover #popover-agents-list,
 #intents-popover #popover-intents-list,
+#plugins-popover #popover-plugins-list,
 #peer-select-popover #peer-select-list { overflow-y: auto; flex: 1; }
 
 /* Peer identity popover — same chrome as the others but narrower (its content is
@@ -1537,13 +1540,15 @@ html, body {
 #tools-popover .tools-popover-restart,
 #skills-popover .tools-popover-restart,
 #agents-popover .tools-popover-restart,
-#intents-popover .tools-popover-restart {
+#intents-popover .tools-popover-restart,
+#plugins-popover .tools-popover-restart {
   display: flex; align-items: center; gap: 6px; margin: 8px 0 0;
 }
 #tools-popover .popover-actions,
 #skills-popover .popover-actions,
 #agents-popover .popover-actions,
 #intents-popover .popover-actions,
+#plugins-popover .popover-actions,
 #peer-select-popover .popover-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;
 }
@@ -4286,10 +4291,10 @@ html, body {
    max-height caps still bound the drag. `resize` needs overflow != visible:
    the single-scroll shells already have overflow-y:auto; the flex-column
    shells (fixed header + internally scrolling list) get overflow:hidden. */
-#tools-popover, #skills-popover, #agents-popover, #intents-popover {
+#tools-popover, #skills-popover, #agents-popover, #intents-popover, #plugins-popover {
   overflow: hidden;
 }
-#tools-popover, #skills-popover, #agents-popover, #intents-popover,
+#tools-popover, #skills-popover, #agents-popover, #intents-popover, #plugins-popover,
 #ctx-popover, #cost-popover, #bust-popover, #files-popover,
 #file-peek-modal {
   resize: both;
