@@ -933,12 +933,25 @@ test('the live observer emits nothing, exits 0, and records the call it is about
     tool_input: { command: 'sleep 5' }, tool_use_id: 'tu-live-1',
     cwd, session_id: 'sess-abc',
   });
+
+  // NOBODY WATCHING: the gate must short-circuit BEFORE the interpreter spawn.
+  // `bash-console.sh` is pinned to spawn no interpreter at all on the critical
+  // path of every Bash call; this hook does spawn one, so it only earns that
+  // cost while a pane is actually reading. Unwatched is the common case.
+  fs.mkdirSync(livePath, { recursive: true });
+  const cold = cp.spawnSync('bash', [scriptPath], { input: payload, encoding: 'utf-8' });
+  assert.strictEqual(cold.status, 0, 'still exits 0 when nothing is watching');
+  assert.deepStrictEqual(fs.readdirSync(livePath), [],
+    'no observer is written when no pane is reading — the spawn is skipped entirely');
+
+  // WATCHING: the main side touches the sentinel while a pane reads.
+  fs.writeFileSync(path.join(livePath, '.watching'), '');
   const r = cp.spawnSync('bash', [scriptPath], { input: payload, encoding: 'utf-8' });
   assert.strictEqual(r.status, 0, `the observer must exit 0, got ${r.status}: ${r.stderr}`);
   assert.strictEqual(r.stdout, '',
     'it returns NOTHING to the CLI — any output here is a chance to alter the command');
 
-  const files = fs.readdirSync(livePath);
+  const files = fs.readdirSync(livePath).filter((n) => n !== '.watching');
   assert.deepStrictEqual(files, ['tu-live-1.json'],
     'ENTER: the observer really wrote its record, so the fields below are the hook\'s own bytes');
   const rec = JSON.parse(fs.readFileSync(path.join(livePath, files[0]), 'utf-8'));
@@ -956,6 +969,12 @@ test('a malformed hook payload leaves the observer silent and successful', () =>
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('agent1');
   const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashLiveScript');
+  // Armed deliberately: with the gate closed the script exits before it ever
+  // parses anything, so every case below would pass without exercising the
+  // fail-open path this test is about.
+  const livePath = pathFor(REGISTRY_DIR, 'agent1', 'bashLive');
+  fs.mkdirSync(livePath, { recursive: true });
+  fs.writeFileSync(path.join(livePath, '.watching'), '');
 
   for (const input of ['', 'not json at all', '{"tool_name":"Bash"}', '{]']) {
     const r = cp.spawnSync('bash', [scriptPath], { input, encoding: 'utf-8' });

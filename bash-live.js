@@ -10,6 +10,10 @@ const LIVE_MAX_BYTES = 30000;
 const OBSERVER_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const OBSERVER_MAX_FILES = 64;
 const IDLE_REAP_MS = 10000;
+const IDLE_SWEEP_MS = 5000;
+const EVENT_QUEUE_MAX = 512;
+const WATCH_SENTINEL = '.watching';
+const ARM_REFRESH_MS = 2000;
 const FINALIZED_GRACE_MS = 5000;
 
 const TASK_OUTPUT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.output$/;
@@ -132,7 +136,10 @@ function createBashLive(deps) {
   } = deps || {};
 
   const openWatch = watch || ((dir, cb) => fs.watch(dir, { persistent: false }, cb));
+  const setInterval_ = (deps && deps.setInterval) || setInterval;
+  const clearInterval_ = (deps && deps.clearInterval) || clearInterval;
   const seats = new Map();
+  let sweepTimer = null;
 
   function seatFor(name) {
     let st = seats.get(name);
@@ -144,6 +151,7 @@ function createBashLive(deps) {
         rows: new Map(),
         events: [],
         lastRead: now(),
+        armedAt: 0,
       };
       seats.set(name, st);
     }
@@ -152,6 +160,20 @@ function createBashLive(deps) {
 
   function liveDirFor(name) {
     return pathFor(REGISTRY_DIR, name, 'bashLive');
+  }
+
+  function arm(name, st) {
+    const t = now();
+    if (st.armedAt && t - st.armedAt < ARM_REFRESH_MS) return;
+    st.armedAt = t;
+    try {
+      fs.mkdirSync(liveDirFor(name), { recursive: true });
+      fs.writeFileSync(path.join(liveDirFor(name), WATCH_SENTINEL), '');
+    } catch {}
+  }
+
+  function disarm(name) {
+    try { fs.unlinkSync(path.join(liveDirFor(name), WATCH_SENTINEL)); } catch {}
   }
 
   function loadObservers(name) {
@@ -189,6 +211,10 @@ function createBashLive(deps) {
     let handle = null;
     try {
       handle = openWatch(dir, (_ev, filename) => {
+        if (st.events.length >= EVENT_QUEUE_MAX) {
+          st.events = [null];
+          return;
+        }
         st.events.push(filename == null ? null : String(filename));
       });
     } catch {
@@ -199,6 +225,7 @@ function createBashLive(deps) {
     if (handle && typeof handle.on === 'function') handle.on('error', () => {});
     st.watches.set(dir, handle);
     seedCandidates(st, dir);
+    syncSweep();
   }
 
   function isTaskFile(dir, base) {
@@ -218,7 +245,7 @@ function createBashLive(deps) {
       if (!isTaskFile(dir, n)) continue;
       const key = path.join(dir, n);
       if (!st.candidates.has(key)) {
-        st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null });
+        st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null, probed: false });
       }
     }
   }
@@ -238,7 +265,7 @@ function createBashLive(deps) {
         const key = path.join(dir, n);
         if (isTaskFile(dir, n)) {
           if (!st.candidates.has(key)) {
-            st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null });
+            st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null, probed: false });
           }
         } else {
           retire(st, key);
@@ -272,6 +299,10 @@ function createBashLive(deps) {
     const size = st2.size;
     if (size < row.offset) row.offset = 0;
     if (size === row.offset) return;
+    if (size - row.offset > LIVE_MAX_BYTES) {
+      row.offset = size - LIVE_MAX_BYTES;
+      row.tailed = true;
+    }
     const len = size - row.offset;
     let fd = null;
     try {
@@ -329,12 +360,14 @@ function createBashLive(deps) {
     }
 
     for (const c of free) {
-      if (c.owner) continue;
+      if (c.owner || c.probed) continue;
       const list = unclaimed(c);
       if (list.length < 2) continue;
+      c.probed = true;
       const args = probeOwner(c.path);
       if (!args) continue;
-      const hits = list.filter((o) => args.includes(commandFingerprint(o.command)));
+      const argsFp = commandFingerprint(args);
+      const hits = list.filter((o) => argsFp.includes(commandFingerprint(o.command)));
       if (hits.length !== 1) continue;
       c.owner = hits[0].id;
       claimed.add(hits[0].id);
@@ -346,6 +379,7 @@ function createBashLive(deps) {
     if (typeof name !== 'string' || !name) return [];
     const st = seatFor(name);
     st.lastRead = now();
+    arm(name, st);
 
     const observers = loadObservers(name);
     if (!observers.length && !st.rows.size) {
@@ -440,6 +474,7 @@ function createBashLive(deps) {
     if (!st) return;
     closeWatches(st);
     seats.delete(name);
+    disarm(name);
   }
 
   function reap(keep) {
@@ -448,10 +483,23 @@ function createBashLive(deps) {
       if (name === keep) continue;
       if (t - st.lastRead > IDLE_REAP_MS) stop(name);
     }
+    syncSweep();
+  }
+
+  function syncSweep() {
+    const wanted = watchedDirCount() > 0;
+    if (wanted && !sweepTimer) {
+      sweepTimer = setInterval_(() => reap(null), IDLE_SWEEP_MS);
+      if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+    } else if (!wanted && sweepTimer) {
+      clearInterval_(sweepTimer);
+      sweepTimer = null;
+    }
   }
 
   function stopAll() {
     for (const name of [...seats.keys()]) stop(name);
+    if (sweepTimer) { clearInterval_(sweepTimer); sweepTimer = null; }
   }
 
   function watchedDirCount() {
@@ -460,7 +508,13 @@ function createBashLive(deps) {
     return n;
   }
 
-  return { read, stop, stopAll, watchedDirCount };
+  function pendingEventCount() {
+    let n = 0;
+    for (const st of seats.values()) n += st.events.length;
+    return n;
+  }
+
+  return { read, stop, stopAll, watchedDirCount, pendingEventCount };
 }
 
 module.exports = {
@@ -472,9 +526,12 @@ module.exports = {
   defaultProbeOwner,
   LIVE_MAX_BYTES,
   IDLE_REAP_MS,
+  IDLE_SWEEP_MS,
+  EVENT_QUEUE_MAX,
   FINALIZED_GRACE_MS,
   OBSERVER_MAX_AGE_MS,
   OBSERVER_MAX_FILES,
   TASK_OUTPUT_RE,
   OBSERVER_FILE_RE,
+  WATCH_SENTINEL,
 };

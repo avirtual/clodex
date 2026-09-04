@@ -21,7 +21,7 @@ const path = require('node:path');
 
 const {
   createBashLive, writeObserver, pruneObservers, tasksDirFor, commandFingerprint,
-  OBSERVER_MAX_FILES, TASK_OUTPUT_RE,
+  OBSERVER_MAX_FILES, TASK_OUTPUT_RE, LIVE_MAX_BYTES, EVENT_QUEUE_MAX, WATCH_SENTINEL,
 } = require('../bash-live');
 const { pathFor } = require('../clodex-paths');
 
@@ -306,12 +306,18 @@ test('a stale observer whose file never appeared is dropped, not kept as a phant
 
   assert.deepStrictEqual(live.read('seat'), [], 'no file yet, so nothing to show');
   const liveDir = pathFor(root, 'seat', 'bashLive');
-  assert.deepStrictEqual(fs.readdirSync(liveDir), ['tu-1.json'], 'ENTER: the observer is on disk to be aged out');
+  // `.watching` is the hook's gate, written by read() and removed by stop(). It
+  // is not an observer and must survive the reaping that removes them: deleting
+  // it here would silently switch the hook off for a seat still being watched.
+  const observers = () => fs.readdirSync(liveDir).filter((n) => n !== WATCH_SENTINEL);
+  assert.deepStrictEqual(observers(), ['tu-1.json'], 'ENTER: the observer is on disk to be aged out');
 
   clock += 7 * 60 * 60 * 1000;
   live.read('seat');
-  assert.deepStrictEqual(fs.readdirSync(liveDir), [],
+  assert.deepStrictEqual(observers(), [],
     'an observer whose call left no trace is reaped — a crashed CLI must not leak one file per Bash call');
+  assert.ok(fs.existsSync(path.join(liveDir, WATCH_SENTINEL)),
+    'and the gate survives the reap, or the next Bash call goes unobserved');
 });
 
 test('pruneObservers bounds the dir, keeping the newest', () => {
@@ -348,4 +354,226 @@ test('TASK_OUTPUT_RE admits the CLI\'s ids and rejects a traversal', () => {
   for (const bad of ['../x.output', 'a/b.output', '.output', 'x.output.json', 'x.txt']) {
     assert.ok(!TASK_OUTPUT_RE.test(bad), `must reject ${bad}`);
   }
+});
+
+// ─── Round-1 rework: the paths the tests above structurally cannot reach ────
+
+test('a seat nobody reads again releases its watch WITHOUT another seat being read', async (t) => {
+  // The leak the first round shipped. `reap` ran only from `read`, so closing
+  // the tab — which ends all reads — left the last seat's kqueue fd open for the
+  // life of the process. The existing idle test cannot catch it: it reaps by
+  // reading a DIFFERENT seat, which is the one path a closed tab never takes.
+  // So this drives the real shape: read once, then never read anything again.
+  const root = tmpRoot(t);
+  const cwd = '/proj/closed';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'x', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+
+  let clock = 1_000_000;
+  let sweep = null;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    // Captured rather than timed, so the test drives the sweep instead of
+    // sleeping for it — and so a version with NO sweep at all fails here
+    // rather than passing slowly.
+    setInterval: (fn) => { sweep = fn; return { unref() {} }; },
+    clearInterval: () => { sweep = null; },
+  });
+  t.after(() => live.stopAll());
+
+  live.read('seat');
+  assert.strictEqual(live.watchedDirCount(), 1, 'ENTER: the in-flight call opened a watch to be released');
+  assert.ok(sweep, 'a watch must arm a self-driving sweep — nothing else will run once the tab closes');
+
+  // The tab closes here. No further read() of any seat, ever.
+  clock += 60_000;
+  sweep();
+
+  assert.strictEqual(live.watchedDirCount(), 0,
+    'the watch is released with no read to trigger it — otherwise the fd is held for the process lifetime');
+});
+
+test('the sweep is disarmed once nothing is watched, and re-armed by the next call', async (t) => {
+  // The other half: a timer that outlives its last watch is the same leak in a
+  // cheaper currency, and an unref'd interval running forever is invisible.
+  const root = tmpRoot(t);
+  const cwd = '/proj/sweep';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'x', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+
+  let clock = 1_000_000;
+  let armed = 0;
+  let sweep = null;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    setInterval: (fn) => { armed++; sweep = fn; return { unref() {} }; },
+    clearInterval: () => { sweep = null; },
+  });
+  t.after(() => live.stopAll());
+
+  live.read('seat');
+  assert.strictEqual(armed, 1, 'ENTER: the sweep armed once for the first watch');
+
+  clock += 60_000;
+  sweep();
+  assert.strictEqual(live.watchedDirCount(), 0);
+  assert.strictEqual(sweep, null, 'with nothing watched the sweep stops rather than ticking forever');
+
+  observe(root, 'seat2', { id: 'tu-2', command: 'y', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  live.read('seat2');
+  assert.strictEqual(armed, 2, 'and a later call re-arms it — disarming must not be permanent');
+});
+
+test('a probe that cannot resolve the owner is not retried every tick', async (t) => {
+  // The cost defect: an unresolved candidate recorded nothing, so every read
+  // re-ran defaultProbeOwner — two execFileSync calls with 5s timeouts — at the
+  // tab's cadence. That is exactly the per-tick lsof the design exists to avoid.
+  // The round-1 test only ever exercised a SUCCEEDING stub, so its "no re-probe"
+  // assertion passed for the wrong reason.
+  const root = tmpRoot(t);
+  const cwd = '/proj/failprobe';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  observe(root, 'seat', { id: 'tu-A', command: 'alpha', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  observe(root, 'seat', { id: 'tu-B', command: 'beta', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  fs.writeFileSync(path.join(tasks, 'bFAIL0001.output'), 'X\n');
+  fs.writeFileSync(path.join(tasks, 'bFAIL0002.output'), 'Y\n');
+
+  let probes = 0;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    probeOwner: () => { probes++; return null; },
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  live.read('seat');
+  const afterFirst = probes;
+  assert.ok(afterFirst > 0, 'ENTER: the collision really did reach the probe, so the ceiling below is meaningful');
+
+  for (let i = 0; i < 10; i++) live.read('seat');
+  assert.strictEqual(probes, afterFirst,
+    `a failed probe must back off; 10 further reads added ${probes - afterFirst} probes`);
+});
+
+test('a probe matches an argv that is not whitespace-normalized', async (t) => {
+  // `ps -o args=` returns the command as spawned — a multi-line agent Bash call
+  // keeps its newlines and runs of spaces. Normalizing only the fingerprint side
+  // meant such a command never matched, silently forcing the unresolved path for
+  // exactly the calls most worth previewing.
+  const root = tmpRoot(t);
+  const cwd = '/proj/multiline';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  // BOTH are multi-line on purpose. With only one, the other resolves by name,
+  // and the constraint propagation then hands the leftover file to the leftover
+  // observer on the NEXT read — so the test passes without the normalization
+  // fix. Two unmatchable commands leave the propagation nothing to work with,
+  // which is what makes this test discriminate.
+  const multiA = 'for f in *.js; do\n  echo "$f"\ndone';
+  const multiB = 'while read l; do\n  printf "%s" "$l"\ndone';
+  observe(root, 'seat', { id: 'tu-A', command: multiA, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  observe(root, 'seat', { id: 'tu-B', command: multiB, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  fs.writeFileSync(path.join(tasks, 'bMULTI001.output'), 'M-A\n');
+  fs.writeFileSync(path.join(tasks, 'bMULTI002.output'), 'M-B\n');
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    // Raw, exactly as ps prints it: newlines intact, not collapsed.
+    probeOwner: (f) => (f.endsWith('bMULTI001.output')
+      ? `/bin/zsh -c ${multiA}`
+      : `/bin/zsh -c ${multiB}`),
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  live.read('seat');
+  const rows = live.read('seat');
+
+  const byCmd = Object.fromEntries(rows.map((r) => [r.command, r.output]));
+  assert.deepStrictEqual(Object.keys(byCmd).sort(), [multiA, multiB].sort(),
+    'ENTER: both multi-line calls were painted, so the pairing below is real');
+  assert.match(byCmd[multiA], /M-A/, 'each multi-line call got ITS file, not left unresolved');
+  assert.match(byCmd[multiB], /M-B/);
+});
+
+test('a burst of events cannot grow the queue without bound', async (t) => {
+  // The watch callback pushed one string per event into an array drained only by
+  // a read. With the tab closed nothing drains it, so a command emitting a line
+  // a second appends forever. The overflow collapses to a single full-rescan
+  // marker, which is strictly more correct than the names it replaces.
+  const root = tmpRoot(t);
+  const cwd = '/proj/burst';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'noisy', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+
+  let fire = null;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    watch: (dir, cb) => { fire = cb; return { close() {} }; },
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  assert.ok(fire, 'ENTER: the watch was opened, so the burst below reaches the real callback');
+
+  for (let i = 0; i < EVENT_QUEUE_MAX * 4; i++) fire('change', 'bBURST001.output');
+
+  // The claim is about the QUEUE, not about the output: an unbounded push grows
+  // one string per event for as long as the command runs, and asserting only
+  // that the output still resolves passes either way.
+  assert.ok(live.pendingEventCount() <= EVENT_QUEUE_MAX,
+    `the undrained queue must stay bounded, got ${live.pendingEventCount()} after ${EVENT_QUEUE_MAX * 4} events`);
+
+  const file = path.join(tasks, 'bBURST001.output');
+  fs.writeFileSync(file, 'BURST-OUTPUT\n');
+  const rows = live.read('seat');
+  assert.strictEqual(rows.length, 1, 'the overflow marker still resolves the call by rescan');
+  assert.match(rows[0].output, /BURST-OUTPUT/, 'so collapsing the queue loses no output');
+});
+
+test('a file that grew past the cap between reads is read in bounded memory', async (t) => {
+  // `Buffer.alloc(size - offset)` with no clamp let the agent's own command pick
+  // the allocation size in the MAIN process: 40MB between two ticks meant a 40MB
+  // buffer and a 40MB string, trimmed to LIVE_MAX_BYTES only afterwards. The
+  // sibling reader (bash-console.js) already read from the tail under a cap.
+  const root = tmpRoot(t);
+  const cwd = '/proj/huge';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'flood', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+
+  const live = createBashLive({ REGISTRY_DIR: root });
+  t.after(() => live.stopAll());
+  live.read('seat');
+
+  const huge = LIVE_MAX_BYTES * 8;
+  const body = `${'a'.repeat(huge)}\nTAIL-MARKER\n`;
+  fs.writeFileSync(path.join(tasks, 'bHUGE0001.output'), body);
+
+  const allocs = [];
+  const realAlloc = Buffer.alloc;
+  Buffer.alloc = (n, ...rest) => { allocs.push(n); return realAlloc.call(Buffer, n, ...rest); };
+  let rows;
+  try {
+    await sleep(150);
+    rows = live.read('seat');
+  } finally {
+    Buffer.alloc = realAlloc;
+  }
+
+  assert.strictEqual(rows.length, 1, 'ENTER: the flooding call was read at all');
+  assert.ok(allocs.length > 0, 'ENTER: the read really did allocate, so the ceiling below is measured');
+  const biggest = Math.max(...allocs);
+  assert.ok(biggest <= LIVE_MAX_BYTES,
+    `no single read may exceed LIVE_MAX_BYTES; largest allocation was ${biggest}`);
+  assert.match(rows[0].output, /TAIL-MARKER/,
+    'and it keeps the END of the file — where a build\'s errors and its exit line are');
+  assert.strictEqual(rows[0].tailed, true, 'the row says it is showing a tail rather than the whole output');
 });

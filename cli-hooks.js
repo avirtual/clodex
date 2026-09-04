@@ -169,6 +169,7 @@ exit 0
     const livePath = pathFor(REGISTRY_DIR, name, 'bashLive');
     const liveScriptPath = pathFor(REGISTRY_DIR, name, 'bashLiveScript');
     fs.writeFileSync(liveScriptPath, `#!/bin/bash
+[ -e "${livePath}/.watching" ] || exit 0
 IN="$(cat)"
 ${INTERP} - "${require.resolve('./bash-live')}" "$IN" "${livePath}" <<'JSEOF' 2>/dev/null
 try { require(process.argv[2]).writeObserver(process.argv[3], process.argv[4]); } catch (e) {}

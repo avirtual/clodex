@@ -119,6 +119,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     liveEl.innerHTML = '';
     if (!st || !st.live.length) return;
     for (const r of st.live) liveEl.appendChild(liveNode(r));
+    liveEl.scrollTop = liveEl.scrollHeight;
   }
 
   function renderAll() {

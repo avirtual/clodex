@@ -212,8 +212,11 @@ bundle), whose packaged form is the Docker image under
   completion, which is exactly why `PostToolUse` cannot see it. A PreToolUse
   OBSERVER (emits nothing, so it cannot break a Bash call) records the call plus
   a snapshot of the tasks dir; `fs.watch` detects the new file for free, and one
-  `lsof` disambiguates only a genuine collision — never per tick. Watches are
-  opened only while a pane is reading and reaped when it stops.
+  `lsof` disambiguates only a genuine collision — once per candidate, never per
+  tick. Watches open only while a pane is reading, and an unref'd sweep releases
+  them when it stops — a closed tab makes no further reads, so nothing else
+  would. The hook itself is gated on a `.watching` sentinel this module writes
+  while reading, so an unwatched seat skips the interpreter spawn entirely.
 - **bash-console.js** — the reader behind the drawer's Console tab: normalizes the
   raw hook JSON into blocks and serves them bounded by a CURSOR — the last spool
   basename read (`console:read`). Bounded, not incremental: it re-serves the
