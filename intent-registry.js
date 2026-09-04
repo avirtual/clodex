@@ -376,7 +376,17 @@ function pruneForPlugins(entry, pluginsList) {
   const pluginGrants = Array.isArray(src.pluginGrants)
     ? src.pluginGrants.filter((g) => {
       const at = String(g).indexOf(':');
-      return at > 0 && seatHasPlugin(String(g).slice(0, at), pluginsList);
+      if (at <= 0) return false;
+      const id = String(g).slice(0, at);
+      // The same `!row` exemption the verbs half above applies. A quarantined
+      // plugin has no row (deactivate unregisters its source) and so is absent
+      // from the catalog snapshot every editor saves; pruning against that
+      // snapshot would revoke its grants on the first unrelated Edit-save,
+      // irreversibly, because the operator never saw it to re-tick. This module
+      // sees verbs only, so a loaded plugin that registers none is exempted
+      // here too — widening the retention, never the revoke.
+      if (!pluginRows.some((r) => r.source === id)) return true;
+      return seatHasPlugin(id, pluginsList);
     })
     : null;
   return { intents, pluginGrants };

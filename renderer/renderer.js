@@ -6,7 +6,7 @@ const { isExternallyOpenable } = require('../external-link');
 // The web bundle freezes PLUGIN_CAPABILITIES at build time — safe because it
 // ships its own engine from the same tree, and a PEER row carries no
 // pluginGrants, so a scoped plugin fails closed across that seam.
-const { pluginReaches, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
+const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
@@ -1333,6 +1333,9 @@ function switchSession(name) {
   updateSidebarActive();
   emptyState.style.display = 'none';
 
+  // AFTER activeSession is set: the host answers reaches() off it, so calling
+  // this on the way in would judge the seat being left.
+  pluginBar.onSeatSwitched();
   renderProxyBar();
   if (window.api.getProxySnapshot) {
     window.api.getProxySnapshot(name).then((p) => {
@@ -2218,10 +2221,18 @@ function collectFormConfig() {
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
   // Written for EVERY type (see the EDITOR_OWNED note below), and a type with no
   // Plugins section gets the globally-enabled set — `[]` would close it for good.
-  const plugins = type === 'claude'
-    ? mergePlugins(collectPluginChecklist(inputPluginList),
-      pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))))
-    : defaultPluginTicks();
+  //
+  // null on an EMPTY catalog, exactly as the Intents popover's Apply does: an
+  // empty catalog is "we could not ask" (kill switch, all globally disabled),
+  // not "the operator ticked nothing". `plugins` is EDITOR_OWNED, so omitting
+  // the key stores ABSENCE — the living all-enabled default — where `[]` would
+  // freeze the seat closed to every plugin with no UI that can reopen it.
+  const plugins = getPluginCatalogCache().length
+    ? (type === 'claude'
+      ? mergePlugins(collectPluginChecklist(inputPluginList),
+        pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))))
+      : defaultPluginTicks())
+    : null;
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
@@ -2237,7 +2248,7 @@ function collectFormConfig() {
     agents: type === 'claude' ? collectAgentChecklist(inputAgentsList) : [],
     execCommands: type === 'claude' ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
-    plugins,
+    ...(plugins ? { plugins } : {}),
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
@@ -2455,10 +2466,14 @@ async function openTemplateEditor(tpl = null) {
     fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '');
     renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []));
   }
+  // ABOVE the guard, like refreshNewSessionPlugins' own fetch and for the same
+  // reason: a non-claude template draws no checklist but collectFormConfig still
+  // saves defaultPluginTicks(), which reads this cache. Below the guard it
+  // answers [] and writes a closed list into the template file.
+  await refreshNewSessionPlugins(tpl && tpl.plugins);
   if (inputType.value === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []));
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
-    await refreshNewSessionPlugins(tpl && tpl.plugins);
     await refreshNewSessionIntents(tpl && tpl.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
     await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []));
@@ -2701,16 +2716,9 @@ function activePeerConfigurable() {
 }
 
 // Answered off sidebarMeta's per-row read, not off the active session: the
-// sidebar paints every row at once. A plugin absent from `scopedPluginIds`
-// always reaches — the set arrives async, and an empty one at startup would
-// otherwise blank every plugin's UI.
-let scopedPluginIds = new Set();
+// sidebar paints every row at once.
 function pluginReachesSession(pluginId, sessionName) {
-  if (!scopedPluginIds.has(pluginId)) return true;
-  const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
-  // The shared leaf, never a local re-derivation: a hand-rolled split on ':'
-  // reads a colon-less "demoX" as plugin "demo".
-  return pluginReaches(pluginId, grants);
+  return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins);
 }
 
 const pluginBar = initPluginHost({
@@ -2759,26 +2767,10 @@ function requirePluginRenderer(rendererPath, id) {
   return window.require(rendererPath);
 }
 
-// Which installed plugins declare `scope: "session"`. Separated from the load
-// loop because a plugin enabled mid-run must update it without re-activating
-// every other plugin.
-// null (never []) on a failed read, and every caller must skip ACTIVATION on it:
-// the set is left as it was, so a plugin activated against a stale set would draw
-// unscoped on every session until some later refresh happened to fix it. Not
-// drawing at all is the recoverable half of that.
-async function refreshScopedPluginIds() {
-  let catalog = null;
-  try { catalog = await window.api.pluginCatalog(); } catch { return null; }
-  scopedPluginIds = new Set((catalog || []).filter((p) => p && p.scope === 'session').map((p) => p.id));
-  return catalog || [];
-}
-
 async function loadPluginRenderers() {
   if (!window.api.pluginCatalog) return;
-  // Recorded BEFORE activation: a scoped plugin's first paint can happen inside
-  // activate(), and a set filled afterwards would let it draw once on every
-  // session regardless of grants.
-  const catalog = await refreshScopedPluginIds();
+  let catalog = null;
+  try { catalog = await window.api.pluginCatalog(); } catch { return; }
   for (const p of catalog || []) {
     if (!p || !p.enabled) continue;
     await activatePluginRenderer(p.id);
@@ -2789,11 +2781,7 @@ loadPluginRenderers();
 if (window.api.onPluginEvent) {
   window.api.onPluginEvent((pluginId, topic, payload) => {
     if (pluginId === '_host' && topic === 'plugin-state' && payload && payload.id) {
-      // A plugin enabled mid-run has never been through loadPluginRenderers, so
-      // its scope would be unknown and it would draw unscoped until restart.
-      if (payload.enabled) {
-        refreshScopedPluginIds().then((c) => { if (c) activatePluginRenderer(payload.id); });
-      }
+      if (payload.enabled) activatePluginRenderer(payload.id);
       else pluginBar.dispose(payload.id);
       if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
       return;

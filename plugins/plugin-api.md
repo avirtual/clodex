@@ -213,12 +213,13 @@ turn-text feed. The operator ticks that list in New/Edit Session and in the
 Intents popover. A seat with no list at all — one never edited since this
 shipped — has every plugin, which is what keeps existing seats unchanged.
 
-`scope` used to decide this, and no longer does. What it still decides is
-narrower and is the only thing it governs now: **a `session`-scoped plugin
-consumes seat data and therefore offers capability grants.** It gates the
-`onAgentText` subscription, and it decides whether the *Plugin Access* block
-draws grant rows for the plugin. A `global` plugin has no grants to offer and no
-feed to receive; it is tickable per seat exactly like everything else.
+`scope` used to decide this, and no longer does — the seat list is now the only
+thing that decides what a plugin reaches. **What `scope: "session"` means today
+is exactly one thing: the plugin opts in to capability GRANTS.** It gates the
+`onAgentText` subscription and decides whether the *Plugin Access* block draws
+grant rows for the plugin. A `global` plugin has no grants to offer and no feed
+to receive; it is tickable per seat exactly like everything else, and it is
+hidden from an unticked seat exactly as a session-scoped one is.
 
 ### What actually becomes conditional
 
@@ -232,19 +233,25 @@ plugin *reaches*:
 | Grammar lines in the seat's prompt | present | absent |
 | The near-miss bounce's verb list | names the verb | omits it |
 | Firing one of its verbs | subject to the intent gate | refused |
-| `rhost.ui.sidebar.rowBadge` | every granted row | only granted rows |
-| `rhost.ui.sessionMenu.addProvider` | every granted session | only granted sessions |
-| `rhost.ui.statusBar.addAction` / `addSegment` | every granted session | only granted sessions |
-| `rhost.ui.sidebar.footerButton` | always | **always** — see below |
+| `rhost.ui.sidebar.rowBadge` | painted on ticked seats' rows | absent from other rows |
+| `rhost.ui.sessionMenu.addProvider` | offered on ticked seats | absent, and a stale act is refused |
+| `rhost.ui.statusBar.addAction` / `addSegment` | drawn on ticked seats | absent, and a stale act is refused |
+| `rhost.ui.sidebar.footerButton` | live | dimmed while an unticked seat is active; the click toasts and refuses |
 | `rhost.ui.settings.section` | always | **always** |
-| `rhost.ui.surfaces.overlay` | always | **always** |
+| `rhost.ui.surfaces.overlay` | openable | refused while an unticked seat is active; an open one closes on switch |
 | `host.sessions.*` / `rhost.sessions.*` *(enumeration)* | unchanged | **unchanged at every scope** |
 | `host.sessions.onAgentText` | only with `scope: "session"` AND the `turns` grant | never delivers |
 
-The three `rhost.ui` rows marked **always** are the chrome, and they belong to
-the *window* rather than to whichever seat happens to be active. A settings
-section configures the plugin process-wide, so a seat decision has nothing to say
-there at all.
+The chrome rows — footer button and overlay — belong to the *window*, so they
+are never removed on a seat switch: removing them would reflow the footer on
+every hop and show MORE buttons with nothing selected than with a seat selected.
+They carry the seat decision as STATE instead, dimmed and refusing, which tells
+the operator why rather than silently doing nothing. With no active seat every
+button is live: with no seat there is no seat decision.
+
+`rhost.ui.settings.section` is the one row gated by nothing, and deliberately:
+a settings section configures the plugin process-wide — a poll interval is not
+per seat — so a seat decision has nothing to say there at all.
 
 The `sessions.*` rows are the ones to read carefully, and they point opposite
 ways. The session ENUMERATION APIs are **not narrowed**: `host.sessions.get(name)`

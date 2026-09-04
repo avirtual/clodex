@@ -30,17 +30,17 @@ function initPluginHost({
 // scopes existed did — so the default is today's behaviour, not a refusal.
   pluginReachesSession,
 } = {}) {
-  // Only the PER-SESSION slots consult this — statusActions, statusSegments,
-  // rowBadges, menuProviders; the `reaches(` call sites below are the list, and
-  // are the reason this says no number. (It said "the three PER-SESSION slots"
-  // while there were four. A comment that counts its own siblings goes stale
-  // the next time one is added, which is precisely when nobody rereads it.)
+  // The `reaches(` call sites below are the list, and are the reason this says
+  // no number. (It said "the three PER-SESSION slots" while there were four. A
+  // comment that counts its own siblings goes stale the next time one is added,
+  // which is precisely when nobody rereads it.)
   //
-  // The window-global slots — footerButtons, settingsSections, overlays —
-  // deliberately do not: a sidebar footer button belongs to the window, not to
-  // whichever session happens to be active, and hiding it on session switch
-  // would make the chrome flicker with no coherent meaning. Scope governs what
-  // a plugin sees OF a session, and those see none of it.
+  // Per-session slots HIDE on false; the footer button and the overlay REFUSE
+  // instead — dimmed and toasted, never removed. A vanishing footer button
+  // reflows the chrome on every seat switch, and would show more buttons with
+  // nothing selected than with a seat selected. `settingsSections` are ungated:
+  // the Plugins dialog configures a plugin process-wide, so a seat decision has
+  // nothing to say there.
   function reaches(pluginId, sessionName) {
     if (typeof pluginReachesSession !== 'function') return true;
     if (!sessionName) return true;
@@ -286,13 +286,26 @@ function initPluginHost({
           el.appendChild(sp);
         }
         el.addEventListener('click', () => {
+          // Re-read at CLICK time, not off the paint: a seat switch between the
+          // two repaints leaves a live-looking button one frame stale, and the
+          // dim is an affordance, not the gate.
+          const seat = getActiveSession ? getActiveSession() : null;
+          if (!reaches(b.pluginId, seat)) {
+            if (showToast) showToast(`${b.label || b.id} is not enabled for ${seat}`);
+            return;
+          }
           try { b.onClick(el); } catch (e) { warn(b.pluginId, e); }
         });
         footer.appendChild(el);
       }
       el.querySelector('.footer-glyph').textContent = b.glyph ? String(b.glyph) : '';
       el.querySelector('.footer-label').textContent = b.label ? String(b.label) : '';
-      if (b.tip) el.setAttribute('data-tip', String(b.tip));
+      const seat = getActiveSession ? getActiveSession() : null;
+      const dimmed = !reaches(b.pluginId, seat);
+      el.classList.toggle('plugin-footer-dimmed', dimmed);
+      if (dimmed) el.setAttribute('data-tip', `Not enabled for ${seat} — tick it under Plugins`);
+      else if (b.tip) el.setAttribute('data-tip', String(b.tip));
+      else el.removeAttribute('data-tip');
       let badge = null;
       if (typeof b.badge === 'function') {
         try { badge = b.badge(); } catch (e) { warn(b.pluginId, e); }
@@ -421,6 +434,13 @@ function initPluginHost({
       const entry = overlays[overlays.length - 1];
       return {
         open(opts) {
+          // Refused BEFORE the close below, or a refused open still shuts
+          // whatever the operator had open.
+          const seat = getActiveSession ? getActiveSession() : null;
+          if (!reaches(entry.pluginId, seat)) {
+            if (showToast) showToast(`${entry.pluginId} is not enabled for ${seat}`);
+            return;
+          }
           closeOpenOverlay(); // one overlay at a time, host-centralized
           if (!entry.el) {
             entry.el = document.createElement('div');
@@ -622,9 +642,16 @@ function initPluginHost({
     for (const id of [...resources.keys()]) dispose(id);
   }
 
+  function onSeatSwitched() {
+    if (openOverlay && !reaches(openOverlay.pluginId, getActiveSession ? getActiveSession() : null)) {
+      closeOpenOverlay();
+    }
+    renderFooterButtons();
+  }
+
   return {
     statusBarHtml, hasVisibleContribution, handleBarClick,
-    applyRowBadges, renderFooterButtons,
+    applyRowBadges, renderFooterButtons, onSeatSwitched,
     menuEntriesFor, handleMenuPick,
     renderSectionsInto, collectSectionsFrom, settingsSectionOwners,
     activate, dispose, disposeAll,
