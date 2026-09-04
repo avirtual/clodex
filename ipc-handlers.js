@@ -1140,15 +1140,15 @@ function registerIpcHandlers(deps) {
     const next = sanitizeGrants(grants);
     persistence.setPluginGrants(name, next);
     // A revoked grant must also drop the plugin's verbs from the allowlist, at
-    // this one write point. Without it the two decisions diverge silently and
-    // the UI hides the side that still bites: the row vanishes from the
-    // checklist and the grammar line from the prompt, while the seat keeps
-    // firing the verb into a plugin it holds no capability on. The popover's own
-    // save order makes that the DEFAULT outcome of an in-dialog revoke.
+    // this one write point. Without it the row vanishes from the checklist and
+    // the grammar line from the prompt while the seat keeps firing the verb into
+    // a plugin it holds no capability on — and the popover's own save order makes
+    // that the DEFAULT outcome of an in-dialog revoke.
     // GRANTS axis only: a global plugin offers no grants to revoke, so it stays
-    // reached whatever `next` says. Narrowing this to the granted ids alone would
-    // drop a verb-only plugin's verbs on every grants save.
-    const granted = new Set(next.map((g) => String(g).split(':')[0]).filter(Boolean));
+    // reached whatever `next` says. The granted ids alone would drop a verb-only
+    // plugin's verbs on every grants save.
+    // `next` is NULL for a non-array payload — a full revoke, not a throw.
+    const granted = new Set((next || []).map((g) => String(g).split(':')[0]).filter(Boolean));
     const stillReached = [...new Set(intentRows()
       .filter((r) => r.source && (r.scope !== 'session' || granted.has(r.source)))
       .map((r) => r.source))];

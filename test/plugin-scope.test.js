@@ -391,13 +391,18 @@ test('host.intents.register carries the MANIFEST\'s scope into the registry row'
     assert.strictEqual(registry.pluginRowFor('fromglobal').scope, 'global',
       'a manifest with no scope produces a global row — the shipped four');
 
-    const ungated = registry.catalogRows(null).map((r) => r.type);
-    assert.ok(ungated.includes('fromglobal'),
-      'ENTER: the global verb registered and surfaces — so the absence below is the gate, not an empty registry');
-    assert.strictEqual(ungated.includes('fromscoped'), false,
-      'the scoped verb is absent for a session with no grants');
-    assert.ok(registry.catalogRows(['scoped-plug:turns']).map((r) => r.type).includes('fromscoped'),
-      'CONTROL: and present once granted');
+    // Scope reaching the row is what makes the plugin OFFER GRANTS; it no longer
+    // decides visibility. So the absent list surfaces BOTH verbs, and the seat's
+    // own list is what hides either of them.
+    const absent = registry.catalogRows(null).map((r) => r.type);
+    assert.ok(absent.includes('fromglobal'),
+      'ENTER: the global verb registered — so the absences below are the gate, not an empty registry');
+    assert.ok(absent.includes('fromscoped'),
+      'ENTER: and so did the scoped one — the absent list is the all-enabled default for both');
+    const only = registry.catalogRows(['global-plug']).map((r) => r.type);
+    assert.ok(only.includes('fromglobal'), 'a ticked plugin\'s verb surfaces');
+    assert.strictEqual(only.includes('fromscoped'), false,
+      'and an unticked one\'s does not, whatever its scope says');
   } finally { cleanup(); }
 }));
 
