@@ -49,10 +49,7 @@ function isValidPluginId(id) {
 
 // ── Scope (t190) ────────────────────────────────────────────────────────────
 // `global` is the default and is today's behaviour exactly: the plugin's rows,
-// grammar lines and per-session UI appear for every session. `session` means the
-// plugin is INVISIBLE to a session that has not granted it — absent from the
-// checklist, not present-and-refused, which is what `intentEnabledFor` already
-// does and is not what this adds.
+// grammar lines and per-session UI appear for every session.
 //
 // Additive by design (see HOST_API_VERSION above): an absent `scope` resolves to
 // `global`, so every manifest written against "1" keeps working and the field
@@ -165,10 +162,6 @@ function seatHasPlugin(pluginId, pluginsList) {
   return pluginsList.includes(String(pluginId));
 }
 
-// The GRANTS-axis reach. Not the surfacing predicate — that is seatHasPlugin.
-function pluginReaches(pluginId, grants) {
-  return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
-}
 
 // Host-owned namespacing: every id a plugin registers — status
 // bar action, session-menu act, dispatch method — is prefixed by the host, never
@@ -254,7 +247,6 @@ module.exports = {
   mergeGrants,
   pluginGranted,
   seatHasPlugin,
-  pluginReaches,
   HOST_PSEUDO_ID,
   namespaced,
   pluginsEnabled,

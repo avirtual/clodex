@@ -6,7 +6,7 @@ const { isExternallyOpenable } = require('../external-link');
 // The web bundle freezes PLUGIN_CAPABILITIES at build time — safe because it
 // ships its own engine from the same tree, and a PEER row carries no
 // pluginGrants, so a scoped plugin fails closed across that seam.
-const { pluginReaches, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
+const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
@@ -981,6 +981,11 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
     }
   } catch {} finally { metaRefreshInFlight = false; }
   refreshSidebarView();
+  // The footer's dim is answered off sidebarMeta, which does not exist yet when
+  // loadPluginRenderers paints the buttons — without a repaint here the boot
+  // state is UNDIMMED for a seat that lacks the plugin, and on a single-seat
+  // workspace no switch ever comes to correct it.
+  pluginBar.renderFooterButtons();
 }
 
 function onViewControlChange() {
@@ -1333,6 +1338,9 @@ function switchSession(name) {
   updateSidebarActive();
   emptyState.style.display = 'none';
 
+  // AFTER activeSession is set: the host answers reaches() off it, so calling
+  // this on the way in would judge the seat being left.
+  pluginBar.onSeatSwitched();
   renderProxyBar();
   if (window.api.getProxySnapshot) {
     window.api.getProxySnapshot(name).then((p) => {
@@ -1449,6 +1457,9 @@ function removeSession(name, { keepPersisted = false } = {}) {
       // the seat that just went away.
       reportFocusedSession();
       emptyState.style.display = '';
+      // No seat means no seat decision, so every button goes live again. This
+      // branch is not a switch, so onSeatSwitched never runs for it.
+      pluginBar.renderFooterButtons();
       renderProxyBar();
     }
   }
@@ -2455,10 +2466,14 @@ async function openTemplateEditor(tpl = null) {
     fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '');
     renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []));
   }
+  // ABOVE the guard, like refreshNewSessionPlugins' own fetch and for the same
+  // reason: a non-claude template draws no checklist but collectFormConfig still
+  // saves defaultPluginTicks(), which reads this cache. Below the guard it
+  // answers [] and writes a closed list into the template file.
+  await refreshNewSessionPlugins(tpl && tpl.plugins);
   if (inputType.value === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []));
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
-    await refreshNewSessionPlugins(tpl && tpl.plugins);
     await refreshNewSessionIntents(tpl && tpl.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
     await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []));
@@ -2701,16 +2716,9 @@ function activePeerConfigurable() {
 }
 
 // Answered off sidebarMeta's per-row read, not off the active session: the
-// sidebar paints every row at once. A plugin absent from `scopedPluginIds`
-// always reaches — the set arrives async, and an empty one at startup would
-// otherwise blank every plugin's UI.
-let scopedPluginIds = new Set();
+// sidebar paints every row at once.
 function pluginReachesSession(pluginId, sessionName) {
-  if (!scopedPluginIds.has(pluginId)) return true;
-  const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
-  // The shared leaf, never a local re-derivation: a hand-rolled split on ':'
-  // reads a colon-less "demoX" as plugin "demo".
-  return pluginReaches(pluginId, grants);
+  return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins);
 }
 
 const pluginBar = initPluginHost({
@@ -2759,26 +2767,10 @@ function requirePluginRenderer(rendererPath, id) {
   return window.require(rendererPath);
 }
 
-// Which installed plugins declare `scope: "session"`. Separated from the load
-// loop because a plugin enabled mid-run must update it without re-activating
-// every other plugin.
-// null (never []) on a failed read, and every caller must skip ACTIVATION on it:
-// the set is left as it was, so a plugin activated against a stale set would draw
-// unscoped on every session until some later refresh happened to fix it. Not
-// drawing at all is the recoverable half of that.
-async function refreshScopedPluginIds() {
-  let catalog = null;
-  try { catalog = await window.api.pluginCatalog(); } catch { return null; }
-  scopedPluginIds = new Set((catalog || []).filter((p) => p && p.scope === 'session').map((p) => p.id));
-  return catalog || [];
-}
-
 async function loadPluginRenderers() {
   if (!window.api.pluginCatalog) return;
-  // Recorded BEFORE activation: a scoped plugin's first paint can happen inside
-  // activate(), and a set filled afterwards would let it draw once on every
-  // session regardless of grants.
-  const catalog = await refreshScopedPluginIds();
+  let catalog = null;
+  try { catalog = await window.api.pluginCatalog(); } catch { return; }
   for (const p of catalog || []) {
     if (!p || !p.enabled) continue;
     await activatePluginRenderer(p.id);
@@ -2789,11 +2781,7 @@ loadPluginRenderers();
 if (window.api.onPluginEvent) {
   window.api.onPluginEvent((pluginId, topic, payload) => {
     if (pluginId === '_host' && topic === 'plugin-state' && payload && payload.id) {
-      // A plugin enabled mid-run has never been through loadPluginRenderers, so
-      // its scope would be unknown and it would draw unscoped until restart.
-      if (payload.enabled) {
-        refreshScopedPluginIds().then((c) => { if (c) activatePluginRenderer(payload.id); });
-      }
+      if (payload.enabled) activatePluginRenderer(payload.id);
       else pluginBar.dispose(payload.id);
       if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
       return;

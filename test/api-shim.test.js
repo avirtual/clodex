@@ -792,3 +792,64 @@ test('t445 MUST-FIX 3: a NON-loopback public base still opens — the exemption 
     assert.deepEqual(toastTexts(global.document.body), []);
   } finally { restore(); }
 });
+
+// ── t655 B5: the plugin-axis rows cross the shim at FULL arity ───────────────
+// Phase A grew `session:create` and `session:setArgs` a trailing `plugins`
+// positional and added three plugin channels. The shim forwards `...a` unless a
+// row carries an `argmap`, and an argmap is written as a fixed-arity arrow
+// (`(name, cwd) => [{ name, cwd }]`) — so an argmap added to any of these rows
+// silently TRUNCATES the appended positional, and the web Plugins block draws
+// and then fails on Apply. Driven through the real shim rather than read off the
+// table, so the property pinned is what the browser actually sends.
+test('t655: every plugin-axis invoke crosses the web shim at full arity', async () => {
+  const { ws, restore } = await connected();
+  try {
+    // Each row carries its OWN literal argument list and its own expectation —
+    // not one computed by re-applying the shim's `...a` rule, which would be
+    // true of every row by construction and could not express an exception.
+    const cases = [
+      { name: 'setSessionPlugins', channel: 'session:setPlugins', args: ['seat', ['workbench']] },
+      { name: 'getIntentCatalog', channel: 'intents:catalog', args: ['seat', ['workbench']] },
+      { name: 'getSessionPluginGrants', channel: 'session:pluginGrants', args: ['seat', ['workbench']] },
+      { name: 'setSessionPluginGrants', channel: 'session:setPluginGrants', args: ['seat', ['workbench:turns']] },
+      {
+        name: 'setSessionArgs',
+        channel: 'session:setArgs',
+        // The REAL caller's arity (renderer.js's args-dialog save): 16
+        // positionals with `plugins` LAST. A 3-arg case would be satisfied by a
+        // truncating argmap of arity >= 3, so it could not fail for the reason
+        // this test exists.
+        args: ['seat', ['--model', 'opus'], true, null, undefined, [], [], [], undefined, undefined,
+          null, [], ['dm'], [], {}, ['workbench']],
+      },
+      {
+        name: 'createSession',
+        channel: 'session:create',
+        // create() is 22 positionals and `plugins` is the LAST of them; a
+        // truncating argmap shows up here and nowhere else.
+        args: ['seat', 'claude', '/cwd', [], null, null, null, null, [], [], [], [],
+          [], [], 0, null, [], ['dm'], {}, 'ws-1', false, ['workbench']],
+      },
+    ];
+    for (const c of cases) {
+      assert.equal(typeof global.window.api[c.name], 'function', `ENTER: ${c.name} is on the shim's surface`);
+      const row = API_CONTRACT.find((r) => r.name === c.name);
+      assert.equal(row.channel, c.channel, `ENTER: ${c.name} maps to ${c.channel}`);
+      global.window.api[c.name](...c.args);
+      await tick();
+      const inv = ws.frames().find((f) => f.t === 'invoke' && f.channel === c.channel);
+      assert.ok(inv, `${c.name} sent an invoke on ${c.channel}`);
+      assert.deepEqual(inv.args, c.args,
+        `${c.name} forwards all ${c.args.length} arguments — an argmap here would drop the trailing plugins positional`);
+    }
+    // The last positional is the one at risk, so assert it survived by VALUE and
+    // not merely by count: a shim that padded with undefined would pass a length
+    // check.
+    const created = ws.frames().find((f) => f.t === 'invoke' && f.channel === 'session:create');
+    assert.deepEqual(created.args[21], ['workbench'],
+      'session:create arg[21] is the plugins list, intact at the far end of the wire');
+    const argsSaved = ws.frames().find((f) => f.t === 'invoke' && f.channel === 'session:setArgs');
+    assert.deepEqual(argsSaved.args[15], ['workbench'],
+      'session:setArgs arg[15] is the plugins list, intact at the far end of the wire');
+  } finally { restore(); }
+});

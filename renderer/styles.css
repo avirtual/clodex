@@ -334,6 +334,11 @@ html, body {
    guessing. */
 .footer-badge:empty { display: none; }
 
+/* Opacity only: the button keeps its box, so a seat switch cannot reflow the
+   footer. It stays clickable — the click refuses with a toast, which is the
+   affordance a removed button cannot offer. */
+#sidebar-footer [data-plugin-footer].plugin-footer-dimmed { opacity: 0.4; }
+
 .inbox-count {
   margin-left: auto;
   font-size: 10px;

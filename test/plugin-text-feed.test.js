@@ -91,8 +91,8 @@ test('the feed is gated on the `turns` grant — not on holding ANY capability',
     await settle();
     assert.strictEqual(seen.length, 0, 'an ungranted session delivers nothing');
 
-    // The load-bearing case, and the reason this gate is pluginGranted and not
-    // pluginReaches: toolInputs is the SHARPEST grant (Bash commands, Write
+    // The load-bearing case, and the reason this gate is pluginGranted per
+    // capability: toolInputs is the SHARPEST grant (Bash commands, Write
     // contents) and turn prose is a different exposure. Holding one must not
     // yield the other, in either direction — that is the whole reason the
     // capabilities are split by risk rather than bundled.
