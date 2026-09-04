@@ -359,6 +359,7 @@ test('an intent handler is called handler(SessionHandle, intent) — argument OR
       fencedLines: require('../intent-scanner').fencedLines,
       bodyModeFor: intentRegistry.bodyModeFor,
       intentEnabledFor: intentRegistry.intentEnabledFor,
+      intentEnabledForSeat: intentRegistry.intentEnabledForSeat,
       pluginRowFor: intentRegistry.pluginRowFor,
       validIntentNames: intentRegistry.validIntentNames,
       // The handle is minted BY THE HOST — this is the seam the whole test is

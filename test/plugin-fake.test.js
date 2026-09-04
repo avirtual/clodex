@@ -961,6 +961,7 @@ function makeWiredPair({ intents = ['fake-note'], noHost = false } = {}) {
     execBodyCap: 64 * 1024,
     bodyModeFor: intentRegistry.bodyModeFor,
     intentEnabledFor: intentRegistry.intentEnabledFor,
+    intentEnabledForSeat: intentRegistry.intentEnabledForSeat,
     pluginRowFor: intentRegistry.pluginRowFor,
     validIntentNames: intentRegistry.validIntentNames,
     getPluginHooks: () => (engine ? engine.hooks : null),

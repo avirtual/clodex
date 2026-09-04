@@ -107,6 +107,7 @@ function boot(opts = {}) {
     // dm arm, so a stub deciding it here would put the gate under this file's
     // control instead of the delivery path's.
     intentEnabledFor: require('../intent-registry').intentEnabledFor,
+    intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat,
     withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor,
     bodyModeFor: require('../intent-registry').bodyModeFor,
     validIntentNames: require('../intent-registry').validIntentNames,
