@@ -230,6 +230,7 @@ const API_CONTRACT = [
   { name: 'ctlContext', kind: 'invoke', channel: 'ctl:context' },
   { name: 'ctlHelp', kind: 'invoke', channel: 'ctl:help' },
   { name: 'consoleRead', kind: 'invoke', channel: 'console:read' },
+  { name: 'consoleLive', kind: 'invoke', channel: 'console:live' },
   // The drawer's selection → wirescope tail hint. Under the SAME gate as the
   // rest of the drawer family and for a sharper reason than either: it puts
   // caller-supplied text into an agent's next request, so an ungated

@@ -31,12 +31,14 @@
 //     selection.sh       attachment drain hook (same defensive posture)
 //     notices.sh         deferred-notice drain hook (same defensive posture;
 //                        the QUEUE it drains is at the shared root below)
-//     bash-console/      Bash calls, one file per record (a DIRECTORY, like zsh/)
-//     bash-console.sh    the PostToolUse/PostToolUseFailure spool writer
+//     bash-console/      settled Bash calls, one file per record (a DIRECTORY)
+//     bash-console.sh    its PostToolUse/PostToolUseFailure spool writer
+//     bash-live/         in-flight Bash calls, one observer per call (a DIRECTORY)
+//     bash-live.sh       its PreToolUse observer
 //     zsh/               generated ZDOTDIR for the drawer terminal's OSC 133
 //                        shim — a DIRECTORY, unlike every other kind
 //
-// 25 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 27 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
@@ -103,19 +105,19 @@ const KINDS = {
   noticeScript: 'notices.sh',
   bashConsole: 'bash-console',
   bashConsoleScript: 'bash-console.sh',
-  // A DIRECTORY kind, not a file (bashConsole above is the other): zsh reads a
-  // whole set of startup files from $ZDOTDIR, so the shim must be a dir.
-  // The legacy sweep's rmSync is non-recursive and would refuse it, which is
-  // harmless — no flat build ever wrote a `{name}-zsh`, and the sweep is
-  // name-driven, so it can only ever look for one that is not there. The entry
-  // below exists to keep every kind sweepable, per the invariant.
+  bashLive: 'bash-live',
+  bashLiveScript: 'bash-live.sh',
+  // A DIRECTORY kind, like bashConsole and bashLive above: zsh reads a whole
+  // set of startup files from $ZDOTDIR, so the shim must be a dir.
+  // The legacy sweep's rmSync is non-recursive and would refuse it, harmlessly:
+  // no flat build ever wrote a `{name}-zsh` and the sweep is name-driven, so the
+  // entry below exists only to keep every kind sweepable, per the invariant.
   //
   // The basename now UNDER-DESCRIBES it: bash's generated rc lives in this same
   // directory (term-shim.js writes `bashrc` into it). Sharing the dir is what
   // keeps bash out of this table entirely — no new kind, no new legacy suffix,
-  // and one dir per seat that goes away with the seat. Renaming it to something
-  // shell-neutral would strand every shim dir already on disk, which is a
-  // migration bought for a nicer word.
+  // one dir per seat that goes with the seat. Renaming it shell-neutral would
+  // strand every shim dir on disk: a migration bought for a nicer word.
   termShim: 'zsh',
 };
 
@@ -149,6 +151,8 @@ const LEGACY_SUFFIXES = {
   noticeScript: '-notices.sh',
   bashConsole: '-bash-console',
   bashConsoleScript: '-bash-console.sh',
+  bashLive: '-bash-live',
+  bashLiveScript: '-bash-live.sh',
   termShim: '-zsh',
 };
 

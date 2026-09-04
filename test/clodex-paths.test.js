@@ -27,8 +27,8 @@ test('pathFor: the three bare forms are unsuffixed', () => {
   assert.strictEqual(path.basename(pathFor(ROOT, 'a', 'socket')), 'agent.sock');
 });
 
-test('pathFor: 25 per-agent kinds are defined', () => {
-  assert.strictEqual(Object.keys(KINDS).length, 25);
+test('pathFor: 27 per-agent kinds are defined', () => {
+  assert.strictEqual(Object.keys(KINDS).length, 27);
   // every kind has a matching legacy suffix (the sweep depends on the pairing) —
   // ipcdelta.sh has no flat ancestor but keeps a defensive suffix so the
   // invariant (every kind sweepable) holds.

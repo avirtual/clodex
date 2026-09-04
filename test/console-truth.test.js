@@ -104,9 +104,17 @@ async function mountPane(t) {
 
   const had = { d: global.document, w: global.window };
   global.document = { createElement: el, addEventListener() {} };
+  // The live lane is served from a mutable array the caller sets, not from a
+  // reader: this harness is about what the PANE does with in-flight rows, and a
+  // real bash-live here would put its fs.watch timing between the test and the
+  // assertion. test/bash-live.test.js drives the real reader over a real dir.
+  const liveRows = [];
   global.window = {
     __CLODEX_WEB__: false,
-    api: { consoleRead: async (name, cursor) => readBashConsole(root, name, cursor) },
+    api: {
+      consoleRead: async (name, cursor) => readBashConsole(root, name, cursor),
+      consoleLive: async () => liveRows.slice(),
+    },
   };
   const hadClear = global.clearInterval;
   t.after(() => {
@@ -128,6 +136,7 @@ async function mountPane(t) {
   const pane = el('div');
   tenant.mount(pane, el('div'));
   const body = pane.querySelector('#console-body');
+  const liveBody = pane.querySelector('#console-live');
   const painted = [];
   const append = body.appendChild;
   body.appendChild = (c) => {
@@ -153,12 +162,21 @@ async function mountPane(t) {
   return {
     dir,
     body,
+    liveBody,
     painted,
+    setLive(rows) { liveRows.length = 0; for (const r of rows) liveRows.push(r); },
+    liveDrawn() {
+      return liveBody.children.map((c) => {
+        const m = /console-block-cmd">([^<]*)</.exec(c.innerHTML);
+        return m ? m[1] : null;
+      });
+    },
     write(cmd, pid, stamp) {
       fs.writeFileSync(path.join(dir, `${stamp}-${pid}.json`),
         JSON.stringify({ ...OK, tool_input: { command: cmd }, tool_use_id: `t-${cmd}` }));
     },
     async tick() { await poll(); await settle(); await settle(); },
+    hide() { tenant.onHide(); },
   };
 }
 
@@ -434,4 +452,57 @@ test('an ordinary call with no output carries no such note', async (t) => {
   const block = p.body.children[p.body.children.length - 1];
   assert.doesNotMatch(block.innerHTML, /console-block-note/,
     'a genuinely silent command is drawn as silent, with nothing claimed about why');
+});
+
+// The live lane (t649). PostToolUse stays the system of record and the live row
+// is a PREVIEW of a file the CLI unlinks at completion, so the pane must hand a
+// call over from one to the other exactly once. Both failure directions are
+// silent to a single-poll assertion: showing both is a duplicate the records
+// array is innocent of, and showing neither loses the call entirely.
+test('a live row is replaced by its settled record, never drawn alongside it', async (t) => {
+  const p = await mountPane(t);
+
+  p.setLive([{ id: 't-slowcmd', command: 'slowcmd', output: 'first line', bytes: 10, tailed: false, elapsedMs: 900, finished: false }]);
+  await p.tick();
+
+  assert.deepStrictEqual(p.liveDrawn(), ['slowcmd'], 'ENTER: the in-flight call really is on screen before it finishes');
+  assert.deepStrictEqual(p.painted, [], 'and it is NOT in the settled list, which the hook has not written yet');
+  assert.match(p.liveBody.children[0].innerHTML, /first line/, 'its partial output is what the pane shows');
+
+  // The hook now writes the authoritative record. The reader still returns the
+  // live row for its finalize grace, which is the window the duplicate appears in.
+  p.write('slowcmd', 11, STAMP);
+  await p.tick();
+
+  assert.deepStrictEqual(p.painted, ['slowcmd'], 'the settled record is painted once');
+  assert.deepStrictEqual(p.liveDrawn(), [],
+    'and the live row for the same tool_use_id is gone — two rows for one call is the defect');
+});
+
+test('a live row never claims the command printed nothing', async (t) => {
+  // The t648 lesson in the new lane: a call still running that has printed
+  // nothing YET has produced no evidence of silence, and a block is never
+  // repainted once the settled record lands. Stating it as fact would freeze a
+  // false claim for the session.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-quiet', command: 'quiet', output: '', bytes: 0, tailed: false, elapsedMs: 300, finished: false }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /quiet/, 'ENTER: the silent in-flight call really was drawn');
+  assert.doesNotMatch(html, /printed nothing/, 'it may not state silence as fact while the call is still running');
+  assert.match(html, /still running/, 'it states what it actually knows instead');
+});
+
+test('hiding the tab drops the live rows rather than freezing them on screen', async (t) => {
+  // A hidden tab stops polling, so a row kept across the hide would be repainted
+  // as "still running" on reopen, ahead of the first pull that could correct it —
+  // and the call may well have finished minutes earlier.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-x', command: 'x', output: 'partial', bytes: 7, tailed: false, elapsedMs: 100, finished: false }]);
+  await p.tick();
+  assert.deepStrictEqual(p.liveDrawn(), ['x'], 'ENTER: there is a live row to lose');
+
+  p.hide();
+  assert.deepStrictEqual(p.liveDrawn(), [], 'the stale preview is cleared with the timer that fed it');
 });
