@@ -401,20 +401,68 @@ test('a wrapper and its forked child sharing one file do not defeat resolution',
   assert.match(rows[0].output, /BUILD-OUTPUT/, 'and its output reaches the row');
 });
 
-test('two pids carrying one needle but DIFFERENT files is still a refusal', () => {
-  // The other half, and what keeps constraint 1 intact under the file dedupe:
-  // genuinely concurrent identical commands hold two DIFFERENT files, so the
-  // set has two members and nothing is claimed.
-  const outA = '/private/tmp/t/tasks/bSAMEA.output';
-  const outB = '/private/tmp/t/tasks/bSAMEB.output';
-  const hits = [
-    { pid: '1', args: realArgv('npm test'), file: outA },
-    { pid: '2', args: realArgv('npm test'), file: outB },
-  ];
-  const files = new Set(hits.map((h) => h.file));
-  assert.strictEqual(files.size, 2,
-    'ENTER: the fixture really does model two distinct files, which is what must refuse');
-  assert.notStrictEqual(outA, outB);
+test('a holder whose fd 1 is a tty does not make the file look ambiguous', async (t) => {
+  // The dedupe asks whether the FILE is unique, and a wrapper in the chain need
+  // not hold a task file at all -- an interactive shell's fd 1 is its tty, which
+  // is an absolute path and so survives the resolver's own filter. Counting it
+  // as a second file refuses a call whose ownership is not in doubt, which is
+  // the silent-off shape the file dedupe was introduced to remove, one layer out.
+  const root = tmpRoot(t);
+  const cwd = '/proj/tty';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'tty-build', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  const file = path.join(tasks, 'bTTY00001.output');
+  fs.writeFileSync(file, 'TTY-OUTPUT\n');
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: () => [
+      { pid: '6001', args: realArgv('tty-build'), file },
+      { pid: '6002', args: realArgv('tty-build'), file: '/dev/ttys003' },
+    ],
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  assert.strictEqual(rows.length, 1, 'ENTER: the call has a row');
+  assert.strictEqual(rows[0].resolved, true,
+    'a non-task holder is not a competing claim on the output');
+  assert.match(rows[0].output, /TTY-OUTPUT/, 'and its output reaches the row');
+});
+
+test('a tty holder does not collapse a genuine two-file ambiguity', async (t) => {
+  // The other direction of the same filter: discarding non-task holders must not
+  // discard a real competitor. Two task files under one needle is undecidable
+  // whether or not a tty is also in the list.
+  const root = tmpRoot(t);
+  const cwd = '/proj/ttyamb';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'amb-build', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  const fileA = path.join(tasks, 'bAMB00001.output');
+  const fileB = path.join(tasks, 'bAMB00002.output');
+  fs.writeFileSync(fileA, 'AMB-A\n');
+  fs.writeFileSync(fileB, 'AMB-B\n');
+
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: () => [
+      { pid: '6101', args: realArgv('amb-build'), file: fileA },
+      { pid: '6102', args: realArgv('amb-build'), file: fileB },
+      { pid: '6103', args: realArgv('amb-build'), file: '/dev/ttys003' },
+    ],
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  assert.strictEqual(rows.length, 1, 'ENTER: the call has a row, so the emptiness below is a refusal');
+  assert.strictEqual(rows[0].resolved, false, 'two task files under one needle stays undecidable');
+  assert.strictEqual(rows[0].output, '', 'and nothing is guessed');
 });
 
 test('ps is asked for UNTRUNCATED argv', () => {
@@ -515,6 +563,61 @@ test('a failed openWatch is retried, not cached as dead for the seat\'s lifetime
   const rows = live.read('seat');
   assert.strictEqual(rows.length, 1, 'ENTER: the call still has a row after recovery');
   assert.match(rows[0].output, /AFTER-RECOVERY/, 'and live output resumes');
+});
+
+test('an ALREADY-OWNED file still counts as a competing claim', async (t) => {
+  // The dedupe discards holders whose file is not a task file, and it must weigh
+  // ALL task files, not only the unclaimed ones. Narrowing to free files instead
+  // makes a second, already-attributed file vanish from the count, and the
+  // ambiguity it represented disappears with it -- the observer then claims the
+  // one file left over, which is a guess dressed as a unique answer and exactly
+  // what constraint 1 forbids.
+  const root = tmpRoot(t);
+  const cwd = '/proj/owned';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  let clock = 1_000_000;
+  const opts = { uid: 7, tmpdir: root, now: () => clock };
+  const fileB = path.join(tasks, 'bOWN00001.output');
+  const fileG = path.join(tasks, 'bOWN00002.output');
+  fs.writeFileSync(fileB, 'BEE-OUT\n');
+  fs.writeFileSync(fileG, 'GEE-OUT\n');
+
+  observe(root, 'seat', { id: 'tu-B', command: 'bee', cwd, sessionId: 'sess' }, opts);
+
+  let both = false;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    resolveOwners: () => (both
+      ? [
+        { pid: '1', args: realArgv('bee'), file: fileB },
+        { pid: '2', args: realArgv('aye'), file: fileB },
+        { pid: '3', args: realArgv('aye'), file: fileG },
+      ]
+      : [{ pid: '1', args: realArgv('bee'), file: fileB }]),
+  });
+  t.after(() => live.stopAll());
+
+  live.read('seat');
+  await sleep(150);
+  const first = live.read('seat');
+  assert.strictEqual(first.length, 1, 'ENTER: only B is in flight so far');
+  assert.strictEqual(first[0].resolved, true, 'ENTER: and B really did claim its file, so it is OWNED below');
+
+  clock += 500;
+  observe(root, 'seat', { id: 'tu-A', command: 'aye', cwd, sessionId: 'sess' }, opts);
+  both = true;
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  const a = rows.find((r) => r.command === 'aye');
+  assert.ok(a, 'ENTER: A has a row of its own');
+  assert.strictEqual(a.resolved, false,
+    'two task files under one needle is undecidable even when one of them is already claimed');
+  assert.strictEqual(a.output, '', 'so nothing is attributed to A');
 });
 
 test('two IDENTICAL concurrent commands resolve to NOTHING rather than guessing', async (t) => {
@@ -622,6 +725,61 @@ test('a probe that SUCCEEDS resets the backoff, so the next call is not penalise
 
   assert.strictEqual(rows.length, 1, 'ENTER: the call has a row');
   assert.match(rows[0].output, /GOT-IT/, 'a backed-off seat still resolves once the process appears');
+});
+
+test('a NEWLY started call does not inherit an older call\'s backoff penalty', async (t) => {
+  // The backoff counter is per-SEAT, but the reason to back off is per-CALL: one
+  // permanently unresolvable observer drives the seat to the longest bucket, and
+  // a call started afterwards then waits that whole bucket for its FIRST probe.
+  // Nothing is lost -- the claim tails from offset 0 -- but the operator's
+  // headline case is starting something and wanting to watch it now, so a blind
+  // window there is the one place the backoff must not reach.
+  const root = tmpRoot(t);
+  const cwd = '/proj/newcall';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  let clock = 1_000_000;
+  const opts = { uid: 7, tmpdir: root, now: () => clock };
+  observe(root, 'seat', { id: 'tu-stuck', command: 'never-matches', cwd, sessionId: 'sess' }, opts);
+
+  // A candidate the stuck call can never claim: without one, assign() returns
+  // before it reaches the probe at all and the seat never earns a penalty to
+  // inherit -- which is how the first version of this test passed pre-fix.
+  fs.writeFileSync(path.join(tasks, 'bNEWSTUCK.output'), 'STUCK\n');
+  const file = path.join(tasks, 'bNEW00001.output');
+  let started = false;
+  let probes = 0;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    resolveOwners: () => {
+      probes++;
+      return started ? [{ pid: '8', args: realArgv('fresh-call'), file }] : [];
+    },
+  });
+  t.after(() => live.stopAll());
+
+  for (let i = 0; i < 10; i++) { clock += 500; live.read('seat'); }
+  const spent = probes;
+  assert.ok(spent > 0 && spent < 10,
+    `ENTER: the stuck call really did back the seat off (${spent} probes over 10 reads)`);
+  assert.strictEqual(live.read('seat').length, 1,
+    'ENTER: and it is still unresolved, so the wait it earned is live');
+
+  clock += 500;
+  observe(root, 'seat', { id: 'tu-fresh', command: 'fresh-call', cwd, sessionId: 'sess' }, opts);
+  fs.writeFileSync(file, 'FRESH-OUTPUT\n');
+  started = true;
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  const fresh = rows.find((r) => r.command === 'fresh-call');
+  assert.ok(fresh, 'ENTER: the new call has a row of its own');
+  assert.strictEqual(fresh.resolved, true,
+    'a call that has not yet missed anything must be probed on its first read');
+  assert.match(fresh.output, /FRESH-OUTPUT/, 'and its output is already streaming');
 });
 
 test('an unresolvable call stops costing ps+lsof once its window closes', async (t) => {

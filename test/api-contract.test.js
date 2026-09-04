@@ -184,7 +184,7 @@ const PINNED_NAMES = [
   // t645: the Bash console's pull. Same gated-registration story as `ctl:*` —
   // bound on both surfaces, registered only where drawer services are granted.
   'consoleRead',
-  // t649: its in-flight half. Same story again — the live preview of a Bash
+  // t650: its in-flight half. Same story again — the live preview of a Bash
   // call that has not finished, registered behind the same drawer-services gate.
   'consoleLive',
   // These four ARE reachable on both hosts (t227) — the exception to the

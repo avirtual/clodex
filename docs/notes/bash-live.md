@@ -27,8 +27,7 @@ Ownership is fd 1: the child shell's stdout IS the `.output` file, verified with
 
 `lsof -p <list>` exits 1 when ANY pid in the list has already gone -- the normal
 case on an ~800-process box -- and the pids that did resolve are on stdout
-regardless. Narrowing on the `ps` output first took 786 pids to 1, and the probe
-to ~67ms against ~160ms for a single `lsof <file>`.
+regardless. Narrowing on the `ps` output first took 786 pids to 1.
 
 ## `assign`
 

@@ -205,6 +205,7 @@ function createBashLive(deps) {
         lastRead: now(),
         lastProbeAt: 0,
         probeMisses: 0,
+        probeWaiting: null,
         armedAt: 0,
       };
       seats.set(name, st);
@@ -405,10 +406,16 @@ function createBashLive(deps) {
     );
     if (!waiting.length) return;
 
-    const misses = st.probeMisses || 0;
+    const waitingIds = new Set(waiting.map((o) => o.id));
+    const seen = st.probeWaiting;
+    const misses = !seen || [...waitingIds].some((id) => !seen.has(id))
+      ? 0
+      : (st.probeMisses || 0);
+    st.probeMisses = misses;
     const wait = PROBE_BACKOFF_MS[Math.min(misses, PROBE_BACKOFF_MS.length - 1)];
     if (wait && t - (st.lastProbeAt || 0) < wait) return;
     st.lastProbeAt = t;
+    st.probeWaiting = waitingIds;
 
     const needles = new Map();
     for (const o of waiting) {
@@ -433,9 +440,10 @@ function createBashLive(deps) {
       if (!needle) continue;
       const hits = procs.filter((p) => typeof p.args === 'string' && p.args.includes(needle));
       if (!hits.length) continue;
-      const files = new Set(hits.map((h) => h.file));
+      const files = new Set(hits.map((h) => h.file).filter((f) => st.candidates.has(f)));
       if (files.size !== 1) continue;
-      const c = byPath.get(hits[0].file);
+      const [file] = files;
+      const c = byPath.get(file);
       if (!c || c.owner) continue;
       c.owner = o.id;
       claimed.add(o.id);

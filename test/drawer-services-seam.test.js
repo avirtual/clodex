@@ -340,7 +340,7 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   assert.ok(registered.has('wterm:write'), 'and its input');
   assert.ok(registered.has('wterm:resize'), 'and its SIGWINCH');
   assert.ok(registered.has('console:read'), 'and the Bash console pull');
-  // Its in-flight half (t649), which reads a seat's Bash output BEFORE the call
+  // Its in-flight half, which reads a seat's Bash output BEFORE the call
   // ends. The `console:` prefix in GATED_PREFIXES already keeps it off the web
   // host; this is the other side of that absence — a channel gated everywhere is
   // indistinguishable from one that was never registered at all.

@@ -155,10 +155,11 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function renderLive() {
     if (!liveEl) return;
     const st = seat ? stateFor(seat) : null;
+    const nearBottom = liveEl.scrollHeight - liveEl.scrollTop - liveEl.clientHeight < 60;
     liveEl.innerHTML = '';
     if (!st || !st.live.length) return;
     for (const r of st.live) liveEl.appendChild(liveNode(r));
-    liveEl.scrollTop = liveEl.scrollHeight;
+    if (nearBottom) liveEl.scrollTop = liveEl.scrollHeight;
   }
 
   function renderAll() {

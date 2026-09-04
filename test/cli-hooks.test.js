@@ -891,7 +891,7 @@ test('the console hook prunes the OLDEST records past its cap', () => {
   assert.ok(cmds.includes('the newest'), 'the call that triggered the prune is still recorded');
 });
 
-// ─── The live-console PreToolUse observer (t649) ───────────────────────────
+// ─── The live-console PreToolUse observer ─────────────────────────────────
 // A PreToolUse hook sits in front of the tool call, so this one is only safe
 // because it OBSERVES: it emits nothing on stdout and exits 0 on every path.
 // A PreToolUse that emits `hookSpecificOutput.updatedInput` or exits 2 alters

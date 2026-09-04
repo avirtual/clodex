@@ -53,7 +53,7 @@ const SCANNED_MODULES = [
   'wirescope-proxy.js',
   'wirescope-supervisor.js',
   'cli-hooks.js',
-  // The live-console watcher (t649). It is constructed in engine.js and reads a
+  // The live-console watcher. It is constructed in engine.js and reads a
   // seat's in-flight Bash output off disk, so `REGISTRY_DIR` and `fs` are the two
   // names in easy reach — and both are INJECTED here precisely so a test can aim
   // it at a temp tree. Grabbing either from the coordinator scope would make the

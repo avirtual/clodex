@@ -607,6 +607,56 @@ test('the live elapsed counter advances — the refusal row is not frozen', asyn
   assert.notStrictEqual(first, second, 'ENTER: the node really was repainted');
 });
 
+test('a scrolled-up live lane keeps its position when a row repaints', async (t) => {
+  // Bucketing the elapsed counter into `same` makes the live lane rebuild once
+  // per second for every in-flight call, and the rebuild forced scrollTop to the
+  // bottom unconditionally. Before that it only happened when output changed, so
+  // the cost of reading back through a long in-flight tail went from occasional
+  // to every second. The settled lane already captures nearBottom for the same
+  // reason.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-scroll', command: 'npm test', output: 'one\ntwo\nthree', bytes: 13,
+    tailed: false, elapsedMs, finished: false, resolved: true,
+  }]);
+
+  p.setLive(row(400));
+  await p.tick();
+  assert.strictEqual(p.liveBody.children.length, 1, 'ENTER: the lane has a row to scroll within');
+
+  p.liveBody.scrollHeight = 400;
+  p.liveBody.clientHeight = 100;
+  p.liveBody.scrollTop = 0;
+
+  p.setLive(row(7000));
+  await p.tick();
+  assert.match(p.liveBody.children[0].innerHTML, /7\.0s/,
+    'ENTER: the row really did repaint, so the scroll position below was at risk');
+  assert.strictEqual(p.liveBody.scrollTop, 0,
+    'a reader scrolled up in the live lane keeps their position across a repaint');
+});
+
+test('the live lane still follows the tail when the reader is already at the bottom', async (t) => {
+  // The other direction: following is the default and the whole point of a live
+  // lane. Capturing nearBottom must not turn following off.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-follow', command: 'npm test', output: 'one\ntwo', bytes: 8,
+    tailed: false, elapsedMs, finished: false, resolved: true,
+  }]);
+
+  p.setLive(row(400));
+  await p.tick();
+  p.liveBody.scrollHeight = 400;
+  p.liveBody.clientHeight = 400;
+  p.liveBody.scrollTop = 0;
+
+  p.setLive(row(7000));
+  await p.tick();
+  assert.strictEqual(p.liveBody.scrollTop, p.liveBody.scrollHeight,
+    'a reader at the bottom keeps following the tail');
+});
+
 test('a sub-second tick does not repaint, so the counter costs one repaint per second', async (t) => {
   // The other half of bucketing: at a 500ms poll an unbucketed comparison
   // repaints twice per displayed second for every in-flight call, and the
