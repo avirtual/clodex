@@ -184,9 +184,6 @@ const PINNED_NAMES = [
   // t645: the Bash console's pull. Same gated-registration story as `ctl:*` —
   // bound on both surfaces, registered only where drawer services are granted.
   'consoleRead',
-  // t649: its in-flight half. Same story again — the live preview of a Bash
-  // call that has not finished, registered behind the same drawer-services gate.
-  'consoleLive',
   // These four ARE reachable on both hosts (t227) — the exception to the
   // paragraph above, not another instance of it. Their gate is
   // `enableLocalTerminal`, which the web host grants, because a web client
@@ -220,8 +217,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 275-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 275, 'pinned list is the full 275-method surface');
+test('contract covers exactly the pinned 274-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 274, 'pinned list is the full 274-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -245,7 +242,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 275, 'window.api has exactly 275 methods');
+    assert.equal(generated.length, 274, 'window.api has exactly 274 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

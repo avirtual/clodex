@@ -166,17 +166,6 @@ fi
 exit 0
 `, { mode: 0o700 });
 
-    const livePath = pathFor(REGISTRY_DIR, name, 'bashLive');
-    const liveScriptPath = pathFor(REGISTRY_DIR, name, 'bashLiveScript');
-    fs.writeFileSync(liveScriptPath, `#!/bin/bash
-[ -e "${livePath}/.watching" ] || exit 0
-IN="$(cat)"
-${INTERP} - "${require.resolve('./bash-live')}" "$IN" "${livePath}" <<'JSEOF' 2>/dev/null
-try { require(process.argv[2]).writeObserver(process.argv[3], process.argv[4]); } catch (e) {}
-JSEOF
-exit 0
-`, { mode: 0o700 });
-
     const ackPath = pathFor(REGISTRY_DIR, name, 'acks');
     const ackScriptPath = pathFor(REGISTRY_DIR, name, 'acksScript');
     fs.writeFileSync(ackScriptPath, `#!/bin/bash
@@ -479,12 +468,6 @@ JSEOF
             // mid-loop would land it between two tool calls.
             { type: 'command', command: noticeScriptPath },
             { type: 'command', command: ctxwarnScriptPath },
-          ]
-        }],
-        PreToolUse: [{
-          matcher: 'Bash',
-          hooks: [
-            { type: 'command', command: liveScriptPath },
           ]
         }],
         PostToolUse: [{

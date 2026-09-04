@@ -138,8 +138,6 @@ conversations being born), `run/<name>/hook.json` (the `--settings` payload:
 statusline, hooks, `ANTHROPIC_BASE_URL` routing — wire base wins over proxy
 base —, `permissions.deny` from denyBuiltins ∪ disabledTools, `skillOverrides`
 for disabled skills), plus the attention/statusline/acks/pending/ctxwarn scripts
-and the two Bash-console ones — `bash-console.sh` (PostToolUse/PostToolUseFailure,
-the settled record) and `bash-live.sh` (PreToolUse, the in-flight observer)
 (see [messaging.md](messaging.md) §7 for the drain semantics).
 
 Codex gets the shared SessionStart script plus a per-cwd `.codex/hooks.json`

@@ -860,9 +860,6 @@ const {
 const { createJsonlWatcher } = require('./jsonl-watcher');
 const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR });
 
-const { createBashLive } = require('./bash-live');
-const bashLive = createBashLive({ REGISTRY_DIR });
-
 const { createSessionMeta } = require('./session-meta');
 const sessionMeta = createSessionMeta({ REGISTRY_DIR });
 
@@ -2004,7 +2001,6 @@ const toolCache = createToolCache({ whichBin });
     // Workbench shells are children of this process with no persistence record
     // to resume from, so a quit that skipped this would orphan them outright.
     if (drawerPtys) { try { drawerPtys.dispose(); } catch {} }
-    try { bashLive.stopAll(); } catch {}
     // AFTER killAll, not before. killAll runs each session's teardown, and a
     // watcher stopping flushes its pending text — which can re-enter _maybeSpeak
     // and START a narration. Stopping first therefore leaves the app exiting
@@ -2032,7 +2028,6 @@ const toolCache = createToolCache({ whichBin });
     enableLocalTerminal,
     syncTerminalReports,
     getCtlService: () => ctlService,
-    getBashLive: () => bashLive,
     getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,

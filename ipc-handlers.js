@@ -63,7 +63,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
-    enableDrawerServices, enableLocalTerminal, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
+    enableDrawerServices, enableLocalTerminal, getCtlService, getDrawerPtys, workspaceOfSenderStrict,
     syncTerminalReports,
     getPluginHost, surfaceOfSender,
   } = deps;
@@ -2101,14 +2101,6 @@ function registerIpcHandlers(deps) {
       if (!seat) return { records: [], cursor: '', reset: false, skipped: 0, live: false };
       const since = typeof cursor === 'string' && RECORD_NAME_RE.test(cursor) ? cursor : '';
       return readBashConsole(REGISTRY_DIR, seat, since);
-    });
-    handle('console:live', (_e, name) => {
-      const raw = typeof name === 'string' ? name : '';
-      const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
-      if (!seat) return [];
-      const svc = getBashLive ? getBashLive() : null;
-      if (!svc) return [];
-      try { return svc.read(seat); } catch { return []; }
     });
     // The drawer selection as a tail hint on the named session's route. Inside
     // this gate for the sharpest reason in this block: the others run something

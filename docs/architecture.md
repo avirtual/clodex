@@ -207,19 +207,6 @@ bundle), whose packaged form is the Docker image under
   what the frozen prompt cannot: AT-MOST-ONCE (claim by rename, consume on
   read), and **must not be merged with the prompt delta**, which is
   at-least-once.
-- **bash-live.js** — the in-flight half of the Console tab, and a different file
-  class from the one below: a FOREGROUND Bash call's output file is unlinked at
-  completion, which is exactly why `PostToolUse` cannot see it. A PreToolUse
-  OBSERVER (emits nothing, so it cannot break a Bash call) records the call plus
-  a snapshot of the tasks dir; `fs.watch` detects the new file for free, and one
-  `lsof` disambiguates only a genuine collision — once per candidate, never per
-  tick. Watches open only while a pane is reading. An unref'd sweep releases the
-  seat `IDLE_REAP_MS` after its last read, and its liveness is keyed to the SEAT,
-  not to the watch: a tab with no call in flight holds no watch, so a
-  watch-keyed sweep stopped in the gap between two Bash calls and left the seat
-  armed forever. The hook is gated on a `.watching` sentinel this module writes
-  while reading and removes with the seat, so an unwatched seat skips the
-  interpreter spawn entirely.
 - **bash-console.js** — the reader behind the drawer's Console tab: normalizes the
   raw hook JSON into blocks and serves them bounded by a CURSOR — the last spool
   basename read (`console:read`). Bounded, not incremental: it re-serves the
@@ -750,15 +737,12 @@ Own state + DOM, `init*(deps)`:
 - **console-tab.js** — the `console` tenant: one block per Bash tool call for the
   ACTIVE SEAT, with the full command and its real output. Per-seat like the
   terminal tab, and `availableFor` narrows it to `claude` seats — the data comes
-  from a hook only `setupClaudeHook` registers. It PULLS and only while visible,
-  so a console nobody is watching costs no IPC. TWO lanes on one timer:
-  `console:read` serves the settled blocks (`bash-console.js`), `console:live`
-  the in-flight preview (`bash-live.js`). `PostToolUse` fires at completion and
-  stays the system of record — a live row is REPLACED by its settled block, and
-  because the CLI unlinks the file it tails, the preview may miss the final
-  chunk. That is only safe because it is not what gets kept. It carries an
-  `available()` surface test as well: both channels are gated out of the web
-  host, so the tab is HIDDEN there rather than left inert.
+  from a hook only `setupClaudeHook` registers. It PULLS (`console:read`) and only
+  while visible, so a console nobody is watching costs no IPC; the main-side
+  reader is `bash-console.js`, and it does NOT stream (`PostToolUse` fires at
+  completion, so a long command shows nothing until it ends). It carries an
+  `available()` surface test as well: `console:read` is gated out of the web host,
+  so the tab is HIDDEN there rather than left inert.
 - **term-tab.js** — the `term` tenant: a REAL PTY in the workbench, not a
   command runner. `vim`, `less` and interactive prompts must work, which is why
   it is an xterm bound to a shell rather than a block list like the ctl tab. It
