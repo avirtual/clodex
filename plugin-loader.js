@@ -254,6 +254,7 @@ function createPluginLoader(deps) {
       const rec = {
         id: manifest.id,
         dir,
+        isLink: ent.isSymbolicLink(),
         root: root.id,
         rootLabel: root.label || root.id,
         manifest,
@@ -462,6 +463,121 @@ function createPluginLoader(deps) {
     return { dir, entries };
   }
 
+  function validateCandidate(dir) {
+    const abs = String(dir || '');
+    if (!abs || !path.isAbsolute(abs)) {
+      return { ok: false, error: 'a plugin folder must be given as an absolute path' };
+    }
+    let st;
+    try { st = fs.statSync(abs); } catch (e) {
+      return { ok: false, error: `cannot read ${abs} — ${(e && e.message) || e}` };
+    }
+    if (!st.isDirectory()) {
+      return { ok: false, error: `${abs} is not a directory — pick the plugin's own folder, the one holding its manifest.json` };
+    }
+    const manifestPath = path.join(abs, 'manifest.json');
+    let raw;
+    try { raw = fs.readFileSync(manifestPath, 'utf8'); } catch (e) {
+      return { ok: false, error: `could not read ${manifestPath} — ${(e && e.message) || e}` };
+    }
+    let manifest;
+    try { manifest = JSON.parse(raw); } catch (e) {
+      return { ok: false, error: `${manifestPath} is not valid JSON — ${(e && e.message) || e}` };
+    }
+    const dirName = path.basename(abs);
+    const why = validateManifest(manifest, dirName);
+    if (why) {
+      if (manifest && typeof manifest === 'object' && isValidPluginId(manifest.id)
+          && !RESERVED_PLUGIN_IDS.has(manifest.id) && manifest.id !== dirName) {
+        return {
+          ok: false,
+          error: `${why} — a plugin's folder must be named for its id, so rename "${dirName}" to "${manifest.id}" and pick it again`,
+        };
+      }
+      return { ok: false, error: why };
+    }
+    const entry = manifest.entry || {};
+    return {
+      ok: true,
+      id: manifest.id,
+      name: manifest.name || manifest.id,
+      version: manifest.version || null,
+      entry: { engine: entry.engine || null, renderer: entry.renderer || null },
+      scope: scopeOf(manifest),
+      hasRenderer: !!entry.renderer,
+    };
+  }
+
+  function registerUserPlugin(dir) {
+    const v = validateCandidate(dir);
+    if (!v.ok) return v;
+    const root = ensureUserRoot();
+    if (!root) return { ok: false, error: 'no user plugin root configured' };
+    let target;
+    try { target = fs.realpathSync(String(dir)); } catch { target = String(dir); }
+    let rootReal;
+    try { rootReal = fs.realpathSync(root); } catch { rootReal = root; }
+    if (target === rootReal || target.startsWith(rootReal + path.sep)) {
+      return { ok: false, error: `${target} is already inside the plugins folder ${root} — it needs no registering, press Re-scan instead` };
+    }
+    const link = path.join(root, v.id);
+    let lst = null;
+    try { lst = fs.lstatSync(link); } catch { lst = null; }
+    if (lst) {
+      if (lst.isSymbolicLink()) {
+        let points = null;
+        try { points = fs.readlinkSync(link); } catch { points = null; }
+        return {
+          ok: false,
+          error: `"${v.id}" is already registered: ${link} is a link to ${points || 'a target that cannot be read'}. Unregister it first to point it somewhere else.`,
+        };
+      }
+      return {
+        ok: false,
+        error: `${link} already exists and is ${lst.isDirectory() ? 'a real directory' : 'a file'}, not a registered link — Clodex will not touch it. Move or remove it by hand first.`,
+      };
+    }
+    const core = discover().find((r) => r.id === v.id && r.root === 'core');
+    if (core) {
+      return {
+        ok: false,
+        error: `"${v.id}" is the id of a plugin built into Clodex, and only one copy of an id can run — which one is decided by version precedence, not by you. Give your plugin a different id and rename its folder to match.`,
+      };
+    }
+    try {
+      fs.symlinkSync(target, link, 'dir');
+    } catch (e) {
+      return { ok: false, error: `could not link ${link} to ${target} — ${(e && e.message) || e}` };
+    }
+    logIt(`registered ${v.id}: ${link} -> ${target}`);
+    return { ok: true, id: v.id, dir: link, target };
+  }
+
+  function unregisterUserPlugin(id) {
+    const name = String(id || '');
+    if (!isValidPluginId(name)) return { ok: false, error: `invalid plugin id: ${JSON.stringify(name)}` };
+    const root = ensureUserRoot();
+    if (!root) return { ok: false, error: 'no user plugin root configured' };
+    const link = path.join(root, name);
+    let lst;
+    try { lst = fs.lstatSync(link); } catch (e) {
+      return { ok: false, error: `nothing to unregister at ${link} — ${(e && e.message) || e}` };
+    }
+    if (!lst.isSymbolicLink()) {
+      return {
+        ok: false,
+        error: `${link} is ${lst.isDirectory() ? 'a real directory' : 'a real file'}, not a registered link — it was copied in, not registered, so removing it here would delete it. Move it out by hand instead.`,
+      };
+    }
+    try {
+      fs.unlinkSync(link);
+    } catch (e) {
+      return { ok: false, error: `could not remove ${link} — ${(e && e.message) || e}` };
+    }
+    logIt(`unregistered ${name}: removed the link at ${link}`);
+    return { ok: true, id: name };
+  }
+
   // css TEXT, not a path: the renderer injects a per-plugin <style> element, and no
   // path resolves in the built web bundle.
   function rendererInfo(id) {
@@ -497,6 +613,7 @@ function createPluginLoader(deps) {
           restartRequired: restartRequired.get(rec.id) || null,
           root: rec.root || null,
           rootLabel: rec.rootLabel || null,
+          linkedFrom: rec.root === 'user' && rec.isLink ? rec.dir : null,
           scope: scopeOf(rec.manifest),
         };
       }),
@@ -508,6 +625,7 @@ function createPluginLoader(deps) {
   return {
     discover, isEnabled, enabledSet, setEnabledInSettings,
     loadAll, activateById, rescan, ensureUserRoot, listUserRoot, rendererInfo,
+    validateCandidate, registerUserPlugin, unregisterUserPlugin,
     status, noteRendererActivation, clearFailures, isQuarantined,
     _validateManifest: validateManifest,
     _isNewerVersion: isNewerVersion,
