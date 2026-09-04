@@ -7,13 +7,13 @@
 // The proxy bar reserves its scarce width for DYNAMIC state (📄 files count, the
 // keep-warm control, context/cost segments); these static, seldom-clicked
 // launchers collapse behind one button whose menu is built from this list.
-// `act` matches the dispatch keys renderSessionActions already routes
-// (tools/skills/agents/intents/edit/history/reload) so the menu reuses the exact
-// opener wiring the standalone buttons used.
+// `act` matches the dispatch keys routeSessionAction already routes
+// (tools/skills/agents/intents/plugins/edit/history/reload) so the menu reuses
+// the exact opener wiring the standalone buttons used.
 
-// Claude exposes the full config surface (tool/skill/agent/intent gating) plus
-// the conversation actions; Codex has no per-session gating popovers, so it gets
-// only edit/history/reload — the same conditional the old button row encoded.
+// Tool/skill/agent/intent gating is Claude-only. Plugins is NOT, and must stay
+// shared: a codex seat's `plugins` list gates its grammar and its verbs, so
+// moving the entry here would leave that seat with no editor for it.
 const CLAUDE_ONLY_ENTRIES = [
   { act: 'tools', label: '🛠 Tools…' },
   { act: 'skills', label: '🧩 Skills…' },
@@ -21,6 +21,7 @@ const CLAUDE_ONLY_ENTRIES = [
   { act: 'intents', label: '🔒 Intents…' },
 ];
 const SHARED_ENTRIES = [
+  { act: 'plugins', label: '🔌 Plugins…' },
   { act: 'edit', label: '⚙ Edit Settings…' },
   { act: 'history', label: '🕘 History…' },
   { act: 'reload', label: '🔄 Reload (fresh restart)' },

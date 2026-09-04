@@ -3,9 +3,6 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
-// The web bundle freezes PLUGIN_CAPABILITIES at build time — safe because it
-// ships its own engine from the same tree, and a PEER row carries no
-// pluginGrants, so a scoped plugin fails closed across that seam.
 const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
@@ -2810,7 +2807,7 @@ function renderSessionActions(holdHtml = '') {
     // Claude only: Codex has no `/voice`, so the button would name a setting
     // that seat cannot have.
     if (type === 'claude') btns.push(voiceBarActionHtml());
-    btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions — tools, skills, agents, intents, settings, history, reload">⚙ session ▾</button>');
+    btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions — tools, skills, agents, intents, plugins, settings, history, reload">⚙ session ▾</button>');
   }
   if (activePeerQueryable()) {
     const nFiles = peerFilesCount.has(activeSession)
@@ -3378,13 +3375,16 @@ function routeSessionAction(act, anchor) {
   else if (act === 'skills') openSkillsPopover(activeSession, anchor);
   else if (act === 'agents') openAgentsPopover(activeSession, anchor);
   else if (act === 'intents') openIntentsPopover(activeSession, anchor);
+  else if (act === 'plugins') openPluginsPopover(activeSession, anchor);
   else if (act === 'edit') openArgsDialog(activeSession);
   else if (act === 'history') openHistoryMenu(activeSession, anchor);
   else if (act === 'reload') doHardRestart(activeSession);
 }
 
-const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover } = initChecklistPopovers({
-  sessionList, createTerminal, addSessionToSidebar, switchSession,
+const {
+  openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover,
+} = initChecklistPopovers({
+  sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta,
 });
 
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });

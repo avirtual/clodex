@@ -1,5 +1,5 @@
 // popovers/checklist-popovers.js — the local config-editor popovers off the
-// proxy bar's ⚙ actions: Tools, Skills, Agents/Builtins and Intents. Each
+// proxy bar's ⚙ actions: Tools, Skills, Agents/Builtins, Intents, Plugins. Each
 // renders a checklist of the session's current config, and Apply persists it
 // (optionally with a hard restart + terminal re-attach). Self-contained island:
 // DOM handles, dismiss wiring and bulk-toggle wiring live here; openers returned.
@@ -26,7 +26,7 @@ const { esc } = require('../lib/format');
 const { makeDraggable, resetDrag } = require('../lib/popover-drag');
 const { placeAboveAnchor } = require('../lib/popover-place');
 
-// All four open from the ⚙ session menu, and each awaits its config read first —
+// All of them open from the ⚙ session menu, and each awaits its config read first —
 // long enough for renderSessionActions to have replaced the button. A peer skills
 // open anchors to a sidebar row instead, where this selector finds nothing and
 // the captured row (still attached) is used.
@@ -52,7 +52,7 @@ const agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
 
-function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession }) {
+function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta }) {
   // --- Tools quick-access popover ------------------------------------------
   // Opened from the status-bar "tools" icon. Reads the session's current
   // disabled set + the known-tool catalog, lets the user toggle, and persists
@@ -499,6 +499,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (plugins) {
       const pr = await window.api.setSessionPlugins(name, plugins);
       if (!pr || !pr.ok) { alert(`Update plugins failed: ${pr && pr.error ? pr.error : 'unknown error'}`); return; }
+      refreshSidebarMeta();
     }
     const r = await window.api.setSessionIntents(name, intents);
     if (!r || !r.ok) { alert(`Update intents failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
@@ -537,11 +538,84 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (e.target && e.target.value === 'exec') refreshExecReadoutInertState();
   });
 
+  // --- Per-session Plugins popover -----------------------------------------
+  // The same parent list the Intents popover edits as a sub-section, on its own
+  // and reachable from a CODEX seat, which consumes `plugins` but has no Intents
+  // popover. It writes session:setPlugins and NOTHING else: the handler prunes
+  // intents and grants against the list it is given, so writing a child from a
+  // dialog that never displayed one would fight that prune with stale state.
+  const pluginsPopover = document.getElementById('plugins-popover');
+  const pluginsPopoverName = document.getElementById('plugins-popover-name');
+  const popoverPluginsList = document.getElementById('popover-plugins-list');
+  const pluginsPopoverRestart = document.getElementById('plugins-popover-restart');
+  let pluginsPersisted = null;
+
+  function closePluginsPopover() {
+    pluginsPopover.classList.add('hidden');
+    pluginsPopover.dataset.name = '';
+  }
+
+  async function openPluginsPopover(name, anchorBtn) {
+    const res = await window.api.getSessionArgs(name);
+    if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+    setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+    pluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+    renderPluginChecklist(popoverPluginsList, res.plugins);
+    pluginsPopoverRestart.checked = false;
+    pluginsPopoverName.textContent = name;
+    pluginsPopover.dataset.name = name;
+    resetDrag(pluginsPopover); // a fresh open re-anchors; drop any prior drag offset
+    pluginsPopover.classList.remove('hidden');
+    placeAboveAnchor(pluginsPopover, anchorBtn, BAR_ANCHOR);
+  }
+
+  document.getElementById('plugins-popover-cancel').addEventListener('click', closePluginsPopover);
+  document.getElementById('plugins-popover-close').addEventListener('click', closePluginsPopover);
+  document.getElementById('plugins-popover-apply').addEventListener('click', async () => {
+    const name = pluginsPopover.dataset.name;
+    if (!name) return closePluginsPopover();
+    // null, not [], when NOTHING is loaded (kill switch, or all globally
+    // disabled): the checklist draws no rows and collect returns [], which would
+    // strip the seat of every plugin it still has.
+    const plugins = getPluginCatalogCache().length
+      ? mergePlugins(collectPluginChecklist(popoverPluginsList),
+        pluginsForUnlistedPlugins(pluginsPersisted, getPluginCatalogCache().map((p) => String(p.id))))
+      : null;
+    const restart = pluginsPopoverRestart.checked;
+    closePluginsPopover();
+    if (!plugins) return;
+    const r = await window.api.setSessionPlugins(name, plugins);
+    if (!r || !r.ok) { alert(`Update plugins failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
+    refreshSidebarMeta();
+    if (!restart) return;
+    // Same re-attach dance as the tools popover's restart path.
+    const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    const snapType = item ? item.dataset.type || null : null;
+    const snapCwd = item ? item.dataset.cwd : null;
+    const rr = await window.api.restartSession(name);
+    if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
+    if (snapType) {
+      createTerminal(name);
+      addSessionToSidebar(name, snapType, snapCwd, null);
+      switchSession(name);
+    }
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (pluginsPopover.classList.contains('hidden')) return;
+    if (pluginsPopover.contains(e.target)) return;
+    if (e.target.closest('.px-action')) return; // the menu/toggle button handles itself
+    closePluginsPopover();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !pluginsPopover.classList.contains('hidden')) closePluginsPopover();
+  });
+
   // Bulk "Check all / Uncheck all" controls for the checklist popovers.
   wireBulkToggles(toolsPopover, popoverToolsList);
   wireBulkToggles(skillsPopover, popoverSkillsList);
   wireBulkToggles(agentsPopover, popoverAgentsList);
   wireBulkToggles(intentsPopover, popoverIntentsList);
+  wireBulkToggles(pluginsPopover, popoverPluginsList);
   // Bulk toggles set .checked programmatically (no change event fires), so refresh
   // the exec-grant readout's inert state after a bulk check/uncheck flips exec too.
   intentsPopover.querySelectorAll('.popover-bulk [data-bulk]').forEach((btn) => {
@@ -559,8 +633,9 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   makeDraggable(skillsPopover);
   makeDraggable(agentsPopover);
   makeDraggable(intentsPopover);
+  makeDraggable(pluginsPopover);
 
-  return { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover };
+  return { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover };
 }
 
 module.exports = { initChecklistPopovers };
