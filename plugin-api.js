@@ -147,12 +147,13 @@ function mergeGrants(checked, unlisted) {
   return [...new Set([...(checked || []), ...(unlisted || [])])];
 }
 
-// The SURFACING predicate — "does this plugin reach this session at all?".
-// Deliberately ANY rather than a fourth "visible" capability: a plugin the
-// operator granted turn text but nothing else must still show its rows, and a
-// separate visibility grant would be a checkbox that does nothing on its own.
-function pluginReaches(pluginId, grants) {
-  return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
+// The SURFACING predicate — "does this seat HAVE this plugin?". An absent list
+// is the living all-enabled default, NOT the strict absent-=-none rule
+// `pluginGranted` follows: flipping it would strip every pre-upgrade seat of the
+// shipped plugins with no migration to restore them.
+function seatHasPlugin(pluginId, pluginsList) {
+  if (!Array.isArray(pluginsList)) return true;
+  return pluginsList.includes(String(pluginId));
 }
 
 // Host-owned namespacing: every id a plugin registers — status
@@ -236,7 +237,7 @@ module.exports = {
   grantsForUnlistedPlugins,
   mergeGrants,
   pluginGranted,
-  pluginReaches,
+  seatHasPlugin,
   HOST_PSEUDO_ID,
   namespaced,
   pluginsEnabled,

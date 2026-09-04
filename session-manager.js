@@ -407,6 +407,7 @@ function createSessionManager(deps) {
     hasActivePending,
     bodyModeFor,
     intentEnabledFor,
+    intentEnabledForSeat,
     pluginGrammarLines,
     pluginRowFor,
     validIntentNames,
@@ -1207,7 +1208,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1360,6 +1361,7 @@ function createSessionManager(deps) {
             // respawn, which is the same deal the intent checklist already
             // offers; the fire-time gate is what applies immediately.
             pluginGrants: (existingEntry && existingEntry.pluginGrants) || null,
+            plugins: Array.isArray(plugins) ? plugins : null,
             appendPromptFiles,
             inlineBody: systemPromptBody || null,
             hasSystemFile: !!sysFile,
@@ -1545,8 +1547,7 @@ function createSessionManager(deps) {
           cmd = 'codex';
           const codexSystemBody = systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null;
           const codexAppendBodies = readAppendBodies(appendPromptFiles);
-          const codexGrants = (existingEntry && existingEntry.pluginGrants) || null;
-          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents, codexGrants)), {
+          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           args = [...cleaned];
@@ -1828,6 +1829,11 @@ function createSessionManager(deps) {
         // absent — never freeze `intents: null` onto the record — while `[]`
         // (everything gated) is a real value that persists.
         ...(Array.isArray(intents) ? { intents: intents.map(String) } : {}),
+        // Same conditional-omit rule as `intents` directly above, and for the
+        // same reason: an ABSENT list is the living all-enabled default, so
+        // freezing `plugins: null` onto the record would be a value, not a
+        // silence. `[]` is a real value and persists.
+        ...(Array.isArray(plugins) ? { plugins: plugins.map(String) } : {}),
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
         // Session-scope env. Persisted on the entry so --resume respawns with the
         // SAME env (the wrong AWS identity on restart would be silent and
@@ -2772,7 +2778,7 @@ function createSessionManager(deps) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands),
-          pluginGrammarLines(recipe.intents, recipe.pluginGrants));
+          pluginGrammarLines(recipe.intents, recipe.plugins));
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles),
         inlineBody: recipe.inlineBody,
@@ -4030,15 +4036,15 @@ function createSessionManager(deps) {
       if (intent.type === 'unknown') {
         if (session && session.agentType) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
-          // Grants-scoped: this list is written INTO the seat's context, so
-          // naming a session-scoped plugin's verb here would advertise the
+          // Seat-scoped: this list is written INTO the seat's context, so naming
+          // a verb from a plugin the seat does not have would advertise that
           // plugin's existence to exactly the agents it is meant to be
           // invisible to.
-          const grants = getPersistence().get(senderName)?.pluginGrants;
+          const seatPlugins = getPersistence().get(senderName)?.plugins;
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
             + nearMissFormHint(intent.text)
-            + `Valid intents: ${validIntentNames(grants).join(', ')}. `
+            + `Valid intents: ${validIntentNames(seatPlugins).join(', ')}. `
             + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].', { parkable: true });
         }
         this._broadcast('ipc-message', {
@@ -4048,7 +4054,7 @@ function createSessionManager(deps) {
         return;
       }
 
-      if (!intentEnabledFor(intent.type, getPersistence().get(senderName)?.intents)) {
+      if (!intentEnabledForSeat(intent.type, getPersistence().get(senderName))) {
         if (session && session.agentType) {
           const msg = intent.type === 'resend'
             ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
@@ -5331,6 +5337,7 @@ function createSessionManager(deps) {
               (entry.env && typeof entry.env === 'object') ? entry.env : null,
               false,           // mint — a reload respawns an existing record
               entry.noWire === true,
+              Array.isArray(entry.plugins) ? entry.plugins : null,
             );
             const lvl = stripLevelOf(entry);
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);

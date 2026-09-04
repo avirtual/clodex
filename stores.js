@@ -617,6 +617,19 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
+    // The PARENT of every per-seat plugin decision: the plugin ids this seat HAS.
+    // Absent means all (the living default `intents` also uses), so unlike
+    // setPluginGrants above an EMPTY array is a real value and must persist — it
+    // is the seat that has no plugins, not the seat that was never configured.
+    setPlugins(name, plugins) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry) {
+        if (Array.isArray(plugins)) entry.plugins = plugins.map(String);
+        else delete entry.plugins;
+        this._save(all);
+      }
+    },
     setExecCommands(name, execCommands) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -686,6 +699,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
     'autoCompact', 'noWire', 'denyBuiltins', 'disabledTools', 'disabledSkills',
     'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
+    'plugins',
   ]);
   const templates = {
     // Confines the SUFFIXED basename, not the bare name: `${name}.json` is what

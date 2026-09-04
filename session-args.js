@@ -30,7 +30,7 @@ const { allowlistFromChecked } = require('./intent-registry');
 function resolveSessionArgsPatch(patch = {}, prev = null) {
   const {
     agents, denyBuiltins, disabledTools, disabledSkills, injectSkills,
-    systemPrompt, systemPromptFile, appendPromptFiles, intents, execCommands, env,
+    systemPrompt, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins,
   } = patch;
   return {
     agents: agents !== undefined ? (agents || []) : (prev?.agents || []),
@@ -76,6 +76,13 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     env: env !== undefined
       ? sanitizeFlat(env)
       : ((prev?.env && typeof prev.env === 'object') ? prev.env : {}),
+    // The seat's plugin list. Same two shapes as `intents` — an array (incl []
+    // = this seat has no plugins, a real value) or null (all enabled, stored as
+    // absence) — and the same undefined = untouched rule. A peer patch never
+    // carries the key, so over the wire this resolves to the box's list.
+    plugins: plugins !== undefined
+      ? (Array.isArray(plugins) ? plugins.map(String) : null)
+      : (Array.isArray(prev?.plugins) ? prev.plugins : null),
   };
 }
 

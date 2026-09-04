@@ -9,7 +9,7 @@ const {
   intentsAllowlistFromChecked,
   withoutPrivilegedIntents,
 } = require('./intent-catalog');
-const { DEFAULT_PLUGIN_SCOPE, pluginReaches } = require('./plugin-api');
+const { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require('./plugin-api');
 
 // `parse` receives the CLEANED, TRIMMED line; the scanner shell owns cleanLine/trim and the escape check.
 
@@ -302,24 +302,13 @@ function pluginRowFor(type) {
   return pluginRows.find((r) => r.type === type) || null;
 }
 
-// The SURFACING gate (t190), and only that — enforcement stays with
-// `intentEnabledFor`, which is already strict and is deliberately NOT
-// scope-aware. The two answer different questions: this one is "should this
-// session's operator ever be shown this row?", that one is "may this session
-// fire this verb?". A session-scoped plugin's verb is refused by the second
-// whether or not this one hid it, so hiding can never be the only thing
-// standing between a seat and a verb.
-//
-// A `global` row is visible to everything, which is what makes the shipped four
-// byte-identical: they declare no scope, `scopeOf` resolves them to `global`,
-// and this returns true for every grants value including the absent one.
-function rowVisibleTo(row, grants) {
-  if (!row || row.scope !== 'session') return true;
-  return pluginReaches(row.source, grants);
+function rowVisibleTo(row, plugins) {
+  if (!row) return true;
+  return seatHasPlugin(row.source, plugins);
 }
 
-function visiblePluginRows(grants) {
-  return pluginRows.filter((r) => rowVisibleTo(r, grants));
+function visiblePluginRows(plugins) {
+  return pluginRows.filter((r) => rowVisibleTo(r, plugins));
 }
 
 
@@ -361,6 +350,39 @@ function intentEnabledFor(type, intentsList) {
   return intentEnabled(type, intentsList);
 }
 
+// The fire gate, seat-aware: `intents` alone is not enough for a plugin verb,
+// because a seat can hold a stale allowlist entry for a plugin it no longer has
+// and every write-time prune is a place that can be forgotten. Takes the whole
+// persistence entry rather than two lists so a caller cannot pass one and not
+// the other.
+function intentEnabledForSeat(type, entry) {
+  const row = pluginRowFor(type);
+  if (!row) return intentEnabled(type, entry && entry.intents);
+  return seatHasPlugin(row.source, entry && entry.plugins)
+    && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
+}
+
+// The write-time half: drop from a seat's allowlist and grants everything owned
+// by a plugin the seat does not have. A null `intents` needs no prune — a plugin
+// row is enabled only by explicit inclusion in an array, never by the
+// all-enabled default.
+function pruneForPlugins(entry, pluginsList) {
+  const src = entry || {};
+  const intents = Array.isArray(src.intents)
+    ? src.intents.filter((t) => {
+      const row = pluginRowFor(t);
+      return !row || seatHasPlugin(row.source, pluginsList);
+    })
+    : null;
+  const pluginGrants = Array.isArray(src.pluginGrants)
+    ? src.pluginGrants.filter((g) => {
+      const at = String(g).indexOf(':');
+      return at > 0 && seatHasPlugin(String(g).slice(0, at), pluginsList);
+    })
+    : null;
+  return { intents, pluginGrants };
+}
+
 // withoutPrivilegedIntents filters against PRIVILEGED_INTENTS, a Set that never
 // learns plugin verbs, so it silently passes them through. Every agent-initiated
 // or over-the-wire writer of `intents` MUST call this wrapper, never the catalog's.
@@ -372,10 +394,10 @@ function withoutPrivilegedIntentsFor(intentsList) {
 // R-INT-4: the checklist projection. GATEABLE_INTENTS in ITS order (which owns
 // checklist row order), then plugin rows in registration order — so the
 // existing checklist is byte-identical and simply grows a plugin tail.
-function catalogRows(grants) {
+function catalogRows(plugins) {
   return [
     ...GATEABLE_INTENTS.map((i) => ({ type: i.type, label: i.label, privileged: PRIVILEGED_INTENTS.has(i.type), source: 'core' })),
-    ...visiblePluginRows(grants).map((r) => ({ type: r.type, label: r.label, privileged: true, source: r.source })),
+    ...visiblePluginRows(plugins).map((r) => ({ type: r.type, label: r.label, privileged: true, source: r.source })),
   ];
 }
 
@@ -392,13 +414,12 @@ function allowlistFromChecked(checkedTypes) {
   return [...coreEnabled, ...pluginChecked];
 }
 
-// Two filters, not one, and the scope filter is the OUTER of the two: a
-// session-scoped plugin whose verb was somehow left in an old `intents` array
-// must still contribute no grammar line to a session that has not granted it.
-// Collapsing these into a single condition would make that depend on which
+// Two filters, not one, and the seat filter is the OUTER of the two: a verb left
+// in a stale `intents` array must still contribute no grammar line to a seat
+// that does not have its plugin. Collapsing them makes that depend on which
 // stale list wins.
-function pluginGrammarLines(intentsList, grants) {
-  return visiblePluginRows(grants)
+function pluginGrammarLines(intentsList, plugins) {
+  return visiblePluginRows(plugins)
     .filter((r) => r.promptLines && intentEnabledFor(r.type, intentsList))
     .map((r) => r.promptLines);
 }
@@ -412,10 +433,10 @@ const CORE_VALID_INTENT_NAMES = [
 ];
 
 // Feeds the near-miss bounce, which is user-visible text: naming a verb here
-// that the session cannot see would advertise a scoped plugin's existence to
-// exactly the agents it is meant to be invisible to.
-function validIntentNames(grants) {
-  return [...CORE_VALID_INTENT_NAMES, ...visiblePluginRows(grants).map((r) => r.type), 'end'];
+// that the seat cannot see would advertise a plugin's existence to exactly the
+// agents it is meant to be invisible to.
+function validIntentNames(plugins) {
+  return [...CORE_VALID_INTENT_NAMES, ...visiblePluginRows(plugins).map((r) => r.type), 'end'];
 }
 
 module.exports = {
@@ -434,6 +455,8 @@ module.exports = {
   parseWithRegistry,
   bodyModeFor,
   intentEnabledFor,
+  intentEnabledForSeat,
+  pruneForPlugins,
   withoutPrivilegedIntentsFor,
   catalogRows,
   allowlistFromChecked,
