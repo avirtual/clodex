@@ -31,7 +31,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  CONSOLE_MAX_RECORDS, RECORD_MAX_BYTES, PULL_MAX_RECORDS,
+  CONSOLE_MAX_RECORDS, RECORD_MAX_BYTES, PULL_MAX_RECORDS, RECORD_NAME_RE,
   stripAnsi, splitFailure, normalizeRecord, readBashConsole,
 } = require('../bash-console');
 const { pathFor } = require('../clodex-paths');
@@ -211,7 +211,7 @@ test('readBashConsole is incremental: a second read returns only what is new', (
 test('an absent spool reads as not-live with no records', () => {
   const root = tmp();
   const res = readBashConsole(root, 'never-ran', '');
-  assert.deepStrictEqual(res, { records: [], cursor: '', reset: false, live: false });
+  assert.deepStrictEqual(res, { records: [], cursor: '', reset: false, skipped: 0, live: false });
 });
 
 // The prune drops the OLDEST records, so a reader whose cursor names a pruned
@@ -262,8 +262,11 @@ test('an in-flight .tmp file is not a record', () => {
 });
 
 // A backlog must not arrive as one unbounded IPC reply. The cursor still
-// advances past everything considered, so the drop is bounded and forward-only.
-test('a large backlog is capped per pull but never re-read', () => {
+// advances past everything considered, so the drop is bounded and forward-only —
+// and `skipped` COUNTS what it dropped, because a seat that ran 300 calls while
+// the operator watched another tab would otherwise lose 250 of them with the
+// pane showing no sign that anything was missing.
+test('a large backlog is capped per pull, and says how many it dropped', () => {
   const root = tmp();
   const total = PULL_MAX_RECORDS + 20;
   for (let i = 0; i < total; i++) {
@@ -275,8 +278,97 @@ test('a large backlog is capped per pull but never re-read', () => {
   assert.strictEqual(res.records.length, PULL_MAX_RECORDS, 'the reply is capped');
   assert.strictEqual(res.records[res.records.length - 1].command, `echo ${total - 1}`,
     'and it keeps the NEWEST, which is what the operator is watching');
+  assert.strictEqual(res.skipped, 20,
+    'the 20 it could not carry are REPORTED, not dropped in silence');
   const after = readBashConsole(root, 'agent1', res.cursor);
   assert.deepStrictEqual(after.records, [], 'the cursor advanced past the whole batch');
+  assert.strictEqual(after.skipped, 0, 'and an idle pull reports no gap');
+});
+
+// THE TIE IS THE POINT of this group, and it is not hypothetical: `date +%s%N`
+// is a GNU/FreeBSD-14.1 extension, and on a `date` without it the hook falls
+// back to whole seconds, so every record in the same second shares one stamp and
+// is ordered only by pid. A strict `f > cursor` scan then drops every tie that
+// sorts after the record the cursor named — silently, which is the round-1
+// record-loss defect arriving through the reader instead of the writer. So the
+// reader re-serves the cursor's whole timestamp group and the tenant dedupes on
+// `key`. Both halves are needed: the scan alone omits, the re-serve alone
+// repeats.
+test('a record tying the cursor stamp but sorting BEFORE it is still served', () => {
+  const root = tmp();
+  const dir = spoolDir(root, 'agent1');
+  // Same whole-second stamp, ordered by pid: the cursor names the HIGHER pid, so
+  // a strict > scan would drop the lower one forever.
+  fs.writeFileSync(path.join(dir, '00000000000000000007-8.json'),
+    JSON.stringify({ ...OK_PAYLOAD, tool_input: { command: 'echo lower-pid' } }));
+  fs.writeFileSync(path.join(dir, '00000000000000000007-9.json'),
+    JSON.stringify({ ...OK_PAYLOAD, tool_input: { command: 'echo higher-pid' } }));
+
+  const res = readBashConsole(root, 'agent1', '00000000000000000007-9.json');
+  assert.deepStrictEqual(res.records.map((r) => r.command), ['echo lower-pid'],
+    'the tie that sorts below the cursor must still reach the pane');
+  assert.strictEqual(res.reset, false, 'and it is a resume, not a broken history');
+});
+
+// Cost of the tolerance above: a pull can re-serve a record the pane already
+// drew. Every record therefore carries the basename it came from, which the
+// atomic rename makes unique by construction — `tool_use_id` is a payload field
+// a malformed record could lack, a filename is not.
+test('every record carries its spool basename as a dedupe key', () => {
+  const root = tmp();
+  const a = writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000001');
+  const b = writeRecord(root, 'agent1', FAIL_PAYLOAD, '00000000000000000002');
+  const res = readBashConsole(root, 'agent1', '');
+  assert.deepStrictEqual(res.records.map((r) => r.key), [a, b],
+    'ENTER: both records arrived, each keyed by the file the rename claimed');
+  assert.strictEqual(new Set(res.records.map((r) => r.key)).size, 2, 'and the keys are distinct');
+});
+
+// The cursor must never move BACKWARDS. It can only be re-served now, and a
+// cursor that regressed to the bottom of a tie group would re-serve that group
+// on every poll forever.
+test('the cursor never moves backwards when a tie group is re-served', () => {
+  const root = tmp();
+  const dir = spoolDir(root, 'agent1');
+  fs.writeFileSync(path.join(dir, '00000000000000000007-8.json'), JSON.stringify(OK_PAYLOAD));
+  fs.writeFileSync(path.join(dir, '00000000000000000007-9.json'), JSON.stringify(OK_PAYLOAD));
+  const cursor = '00000000000000000007-9.json';
+  const res = readBashConsole(root, 'agent1', cursor);
+  assert.strictEqual(res.records.length, 1, 'ENTER: the tie really was re-served');
+  assert.strictEqual(res.cursor, cursor, 'but the cursor held its high-water mark');
+});
+
+// The writer names the files and the ipc-handlers validator decides which
+// cursors it will accept. They were two independent regex literals; a writer
+// change that widened the name would have left the validator rejecting every
+// cursor it produced, resetting the pane to 0 on every poll. One exported
+// grammar, derived on both sides.
+test('the cursor validator derives from the reader\'s exported name grammar', () => {
+  const fs2 = require('node:fs');
+  const src = fs2.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.ok(src.includes('RECORD_NAME_RE'),
+    'ipc-handlers must USE the exported grammar, not restate it');
+  assert.ok(!/\/\^\[0-9\]\{1,32\}-/.test(src),
+    'and must not carry a second copy of the record-name literal');
+
+  assert.ok(RECORD_NAME_RE.test('1788481092000000000-51198.json'), 'a real basename passes');
+  assert.ok(!RECORD_NAME_RE.test('.tmp.4242'), 'an in-flight spool does not');
+  assert.ok(!RECORD_NAME_RE.test('../../etc/passwd'), 'nor does a traversal');
+  assert.ok(!RECORD_NAME_RE.test('1788481092N-51198.json'),
+    'nor does the unguarded `date +%s%N` output this grammar exists to exclude');
+});
+
+// Anything the writer did not name is not a record. The prune counts `*.json`
+// and the reader must agree with it, or the two disagree about what the cap
+// retains.
+test('a file outside the name grammar is not read as a record', () => {
+  const root = tmp();
+  const dir = spoolDir(root, 'agent1');
+  writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000001');
+  fs.writeFileSync(path.join(dir, 'notes.json'), JSON.stringify(OK_PAYLOAD));
+  fs.writeFileSync(path.join(dir, '1788481092N-77.json'), JSON.stringify(OK_PAYLOAD));
+  const res = readBashConsole(root, 'agent1', '');
+  assert.strictEqual(res.records.length, 1, 'only the correctly-named record counts');
 });
 
 test('the caps are real numbers in the right order', () => {

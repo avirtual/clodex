@@ -22,7 +22,7 @@ const { feedSince } = require('./subagent-ring');
 // peer:import handlers below).
 const peerImport = require('./peer-import');
 const { wireSeatFor } = require('./peer-shell');
-const { readBashConsole } = require('./bash-console');
+const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
 // The shipped thresholds, read from the module that DECIDES with them rather
 // than restated here: Preferences shows them as the values in force when the
 // operator has set nothing, and a second copy would show a number the reminder
@@ -2098,8 +2098,8 @@ function registerIpcHandlers(deps) {
     handle('console:read', (_e, name, cursor) => {
       const raw = typeof name === 'string' ? name : '';
       const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
-      if (!seat) return { records: [], cursor: '', reset: false, live: false };
-      const since = typeof cursor === 'string' && /^[0-9]{1,32}-[0-9]{1,16}\.json$/.test(cursor) ? cursor : '';
+      if (!seat) return { records: [], cursor: '', reset: false, skipped: 0, live: false };
+      const since = typeof cursor === 'string' && RECORD_NAME_RE.test(cursor) ? cursor : '';
       return readBashConsole(REGISTRY_DIR, seat, since);
     });
     // The drawer selection as a tail hint on the named session's route. Inside

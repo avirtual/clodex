@@ -216,7 +216,9 @@ bundle), whose packaged form is the Docker image under
   a succeeding Bash call fires `PostToolUse` with `tool_response`, a FAILING one
   fires `PostToolUseFailure` with no `tool_response` and the exit code inside a
   top-level `error` — so a reader built for only the first silently omits every
-  failure. ANSI is stripped here, since the pane renders to HTML.
+  failure. ANSI is stripped here, since the pane renders to HTML. It exports
+  `RECORD_NAME_RE`, the spool's filename grammar, which `ipc-handlers.js` validates
+  an incoming cursor against rather than restating.
   Measured CLI facts live in `docs/notes/bash-console.md`.
 - **claude-env.js** — a Claude session's EFFECTIVE process environment, merging
   `process.env` with the settings layers the CLI loads (user < project < local),
@@ -736,7 +738,9 @@ Own state + DOM, `init*(deps)`:
   from a hook only `setupClaudeHook` registers. It PULLS (`console:read`) and only
   while visible, so a console nobody is watching costs no IPC; the main-side
   reader is `bash-console.js`, and it does NOT stream (`PostToolUse` fires at
-  completion, so a long command shows nothing until it ends).
+  completion, so a long command shows nothing until it ends). It carries an
+  `available()` surface test as well: `console:read` is gated out of the web host,
+  so the tab is HIDDEN there rather than left inert.
 - **term-tab.js** — the `term` tenant: a REAL PTY in the workbench, not a
   command runner. `vim`, `less` and interactive prompts must work, which is why
   it is an xterm bound to a shell rather than a block list like the ctl tab. It

@@ -741,6 +741,103 @@ test('the console hook loses nothing when Bash hooks fire concurrently', async (
     'the rename must consume every temp file');
 });
 
+// `date +%s%N` is a GNU/FreeBSD-14.1 EXTENSION, not POSIX. On a macOS old enough
+// to predate it — the README declares the floor at 12, and no box either author
+// can test on is one — `%N` comes back LITERALLY, so the name is
+// `<secs>N-<pid>.json`. Unguarded, that name fails the reader's grammar and the
+// cursor never advances: the same handful of calls repaints every 1.2s while real
+// ones scroll out of the pane. The guard is pure builtins (no interpreter, no
+// extra subprocess) and the fallback branch IS reachable here, with a stub `date`
+// ahead of the script on PATH.
+test('the console hook survives a `date` with no %N extension', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+
+  const stubDir = path.join(REGISTRY_DIR, 'stub-bin');
+  fs.mkdirSync(stubDir, { recursive: true });
+  const stub = path.join(stubDir, 'date');
+  fs.writeFileSync(stub, [
+    '#!/bin/bash',
+    'case "$1" in',
+    '  +%s%N) echo "1788481092N" ;;',
+    '  +%s)   echo "1788481092" ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'), { mode: 0o755 });
+
+  const r = cp.spawnSync('bash', [scriptPath], {
+    input: JSON.stringify({
+      hook_event_name: 'PostToolUse', tool_name: 'Bash',
+      tool_input: { command: 'echo no-nanoseconds' },
+      tool_response: { stdout: 'ok', stderr: '' }, tool_use_id: 'q', duration_ms: 1,
+    }),
+    encoding: 'utf-8',
+    env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` },
+  });
+  assert.strictEqual(r.status, 0);
+
+  const names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+  assert.strictEqual(names.length, 1, 'ENTER: the hook really did land a record under the stub');
+  const { RECORD_NAME_RE, readBashConsole } = require('../bash-console');
+  assert.match(names[0], RECORD_NAME_RE,
+    `the fallback name must satisfy the grammar the cursor validator uses, got ${names[0]}`);
+  assert.strictEqual(names[0].split('-')[0].length, 19,
+    'and pad to the same width as a real nanosecond stamp, or the sort stops being chronological');
+
+  // The whole failure was a cursor that could not advance. This is that check.
+  const first = readBashConsole(REGISTRY_DIR, 'agent1', '');
+  assert.strictEqual(first.records.length, 1, 'the record is readable');
+  const again = readBashConsole(REGISTRY_DIR, 'agent1', first.cursor);
+  assert.deepStrictEqual(again.records, [],
+    'and resuming from its cursor returns nothing — the duplicate-forever loop is closed');
+});
+
+// The prune must reap a spool orphaned by a killed hook, and must NOT touch one a
+// LIVE writer is still filling. A bare `rm -f "$D"/.tmp.*` does the first and
+// fails the second: measured on this box, 12 concurrent writers with the bare
+// sweep lost 77 of 120 records — the round-1 defect reintroduced by its own fix.
+// The pid is in the name, so `kill -0` tells the two apart.
+test('the console hook reaps an ORPHANED spool but spares a live writer\'s', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+  fs.mkdirSync(dir, { recursive: true });
+
+  // A pid nothing owns. Walk up until kill -0 fails, so the fixture cannot
+  // accidentally name a live process and assert the opposite of what it means.
+  let deadPid = 90000;
+  for (;;) {
+    try { process.kill(deadPid, 0); deadPid++; } catch (e) {
+      if (e.code === 'ESRCH') break;
+      deadPid++;
+    }
+  }
+  const orphan = path.join(dir, `.tmp.${deadPid}`);
+  const livePid = process.pid;          // this test runner is unambiguously alive
+  const live = path.join(dir, `.tmp.${livePid}`);
+  fs.writeFileSync(orphan, '{"half":');
+  fs.writeFileSync(live, '{"still":');
+
+  const r = cp.spawnSync('bash', [scriptPath], {
+    input: JSON.stringify({
+      hook_event_name: 'PostToolUse', tool_name: 'Bash',
+      tool_input: { command: 'echo sweep' },
+      tool_response: { stdout: 'ok', stderr: '' }, tool_use_id: 'w', duration_ms: 1,
+    }),
+    encoding: 'utf-8',
+  });
+  assert.strictEqual(r.status, 0);
+
+  assert.ok(!fs.existsSync(orphan), 'the spool of a dead writer is reaped');
+  assert.ok(fs.existsSync(live),
+    'but a LIVE writer\'s spool is untouched — deleting it is the record loss this whole design prevents');
+});
+
 // The retention bound, and the reason it is a COUNT rather than the byte cap the
 // first shape used: a byte cap over a shared file needed a rotation, and only
 // the live generation was ever readable — so the second generation was written

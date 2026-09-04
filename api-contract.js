@@ -225,16 +225,16 @@ const API_CONTRACT = [
   // The drawer's clodexctl REPL (t214). Present in the contract on BOTH
   // surfaces because the contract is a binding table, not a permission list —
   // the web build's `ctl:run` binding simply has no handler to reach, since
-  // registration is gated on enableDrawerServices (ipc-handlers.js).
+  // registration is gated on enableDrawerServices (ipc-handlers.js). `consoleRead` rides the same story.
   { name: 'ctlRun', kind: 'invoke', channel: 'ctl:run' },
   { name: 'ctlContext', kind: 'invoke', channel: 'ctl:context' },
   { name: 'ctlHelp', kind: 'invoke', channel: 'ctl:help' },
+  { name: 'consoleRead', kind: 'invoke', channel: 'console:read' },
   // The drawer's selection → wirescope tail hint. Under the SAME gate as the
   // rest of the drawer family and for a sharper reason than either: it puts
   // caller-supplied text into an agent's next request, so an ungated
   // registration is a prompt-injection channel for any authenticated web
   // connection.
-  { name: 'consoleRead', kind: 'invoke', channel: 'console:read' },
   { name: 'drawerArmSelection', kind: 'invoke', channel: 'drawer:armSelection' },
   { name: 'drawerReleaseSelection', kind: 'invoke', channel: 'drawer:releaseSelection' },
   { name: 'drawerInspectSelection', kind: 'invoke', channel: 'drawer:inspectSelection' },

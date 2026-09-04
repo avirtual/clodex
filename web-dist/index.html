@@ -5403,6 +5403,16 @@ body {
   font-size: 10px;
   font-style: italic;
 }
+.console-gap {
+  margin: 6px 0;
+  padding: 3px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+  text-align: center;
+}
 #ctl-input-row {
   display: flex;
   align-items: center;
@@ -7524,12 +7534,13 @@ body {
         { name: "ctlRun", kind: "invoke", channel: "ctl:run" },
         { name: "ctlContext", kind: "invoke", channel: "ctl:context" },
         { name: "ctlHelp", kind: "invoke", channel: "ctl:help" },
+        // The Bash console's pull (t645). Same gated-registration story as `ctl:*`.
+        { name: "consoleRead", kind: "invoke", channel: "console:read" },
         // The drawer's selection → wirescope tail hint. Under the SAME gate as the
         // rest of the drawer family and for a sharper reason than either: it puts
         // caller-supplied text into an agent's next request, so an ungated
         // registration is a prompt-injection channel for any authenticated web
         // connection.
-        { name: "consoleRead", kind: "invoke", channel: "console:read" },
         { name: "drawerArmSelection", kind: "invoke", channel: "drawer:armSelection" },
         { name: "drawerReleaseSelection", kind: "invoke", channel: "drawer:releaseSelection" },
         { name: "drawerInspectSelection", kind: "invoke", channel: "drawer:inspectSelection" },
@@ -26265,6 +26276,7 @@ helper=${d.helperPath}`;
         let bodyEl = null;
         let emptyEl = null;
         let pollTimer = null;
+        let pulling = false;
         let notify = Object.assign(() => {
         }, { selectionChanged: () => {
         } });
@@ -26278,7 +26290,7 @@ helper=${d.helperPath}`;
         function stateFor(name) {
           let st = seats.get(name);
           if (!st) {
-            st = { cursor: "", blocks: [] };
+            st = { cursor: "", blocks: [], lastKeys: /* @__PURE__ */ new Set() };
             seats.set(name, st);
           }
           return st;
@@ -26314,6 +26326,12 @@ helper=${d.helperPath}`;
           el.innerHTML = head + body + note;
           return el;
         }
+        function gapNode(n) {
+          const el = document.createElement("div");
+          el.className = "console-gap";
+          el.textContent = `\u2026 ${n} earlier call${n === 1 ? "" : "s"} not shown \u2014 the backlog outran this pane`;
+          return el;
+        }
         function pushBlock(st, b) {
           st.blocks.push(b);
           while (st.blocks.length > MAX_BLOCKS) st.blocks.shift();
@@ -26327,7 +26345,7 @@ helper=${d.helperPath}`;
             bodyEl.appendChild(emptyEl);
             return;
           }
-          for (const b of st.blocks) bodyEl.appendChild(blockNode(b));
+          for (const b of st.blocks) bodyEl.appendChild(b.gap ? gapNode(b.gap) : blockNode(b));
           bodyEl.scrollTop = bodyEl.scrollHeight;
         }
         function appendNew(st, records) {
@@ -26335,7 +26353,7 @@ helper=${d.helperPath}`;
           if (emptyEl && emptyEl.parentNode === bodyEl) emptyEl.remove();
           for (const b of records) {
             pushBlock(st, b);
-            if (bodyEl) bodyEl.appendChild(blockNode(b));
+            if (bodyEl) bodyEl.appendChild(b.gap ? gapNode(b.gap) : blockNode(b));
           }
           while (bodyEl && bodyEl.childElementCount > st.blocks.length) {
             bodyEl.firstElementChild.remove();
@@ -26344,23 +26362,30 @@ helper=${d.helperPath}`;
         }
         async function pull() {
           const name = seat;
-          if (!name) return;
+          if (!name || pulling) return;
           const st = stateFor(name);
+          pulling = true;
           let res = null;
           try {
             res = await window.api.consoleRead(name, st.cursor);
           } catch {
             return;
+          } finally {
+            pulling = false;
           }
           if (!res || seat !== name) return;
           if (res.reset) {
             st.blocks.length = 0;
+            st.lastKeys.clear();
             renderAll();
           }
           st.cursor = typeof res.cursor === "string" && res.cursor ? res.cursor : st.cursor;
-          const records = Array.isArray(res.records) ? res.records : [];
-          if (!records.length) return;
-          appendNew(st, records);
+          const raw = Array.isArray(res.records) ? res.records : [];
+          const records = raw.filter((r) => !st.lastKeys.has(r.key));
+          if (raw.length) st.lastKeys = new Set(raw.map((r) => r.key));
+          const skipped = typeof res.skipped === "number" && res.skipped > 0 ? res.skipped : 0;
+          if (!records.length && !skipped) return;
+          appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
           notify(records.some((r) => r.failed) ? "attention" : "activity");
         }
         function startPolling() {
@@ -26408,6 +26433,7 @@ helper=${d.helperPath}`;
         notify = host.register({
           id: "console",
           label: "Console",
+          available: () => !window.__CLODEX_WEB__,
           availableFor: () => typeNow() === "claude",
           mount,
           onShow,

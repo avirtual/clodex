@@ -9,6 +9,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   let bodyEl = null;
   let emptyEl = null;
   let pollTimer = null;
+  let pulling = false;
   let notify = Object.assign(() => {}, { selectionChanged: () => {} });
 
   const typeNow = () => {
@@ -18,7 +19,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function stateFor(name) {
     let st = seats.get(name);
     if (!st) {
-      st = { cursor: '', blocks: [] };
+      st = { cursor: '', blocks: [], lastKeys: new Set() };
       seats.set(name, st);
     }
     return st;
@@ -67,6 +68,13 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     return el;
   }
 
+  function gapNode(n) {
+    const el = document.createElement('div');
+    el.className = 'console-gap';
+    el.textContent = `… ${n} earlier call${n === 1 ? '' : 's'} not shown — the backlog outran this pane`;
+    return el;
+  }
+
   function pushBlock(st, b) {
     st.blocks.push(b);
     while (st.blocks.length > MAX_BLOCKS) st.blocks.shift();
@@ -83,7 +91,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       bodyEl.appendChild(emptyEl);
       return;
     }
-    for (const b of st.blocks) bodyEl.appendChild(blockNode(b));
+    for (const b of st.blocks) bodyEl.appendChild(b.gap ? gapNode(b.gap) : blockNode(b));
     bodyEl.scrollTop = bodyEl.scrollHeight;
   }
 
@@ -93,7 +101,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (emptyEl && emptyEl.parentNode === bodyEl) emptyEl.remove();
     for (const b of records) {
       pushBlock(st, b);
-      if (bodyEl) bodyEl.appendChild(blockNode(b));
+      if (bodyEl) bodyEl.appendChild(b.gap ? gapNode(b.gap) : blockNode(b));
     }
     while (bodyEl && bodyEl.childElementCount > st.blocks.length) {
       bodyEl.firstElementChild.remove();
@@ -103,23 +111,30 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
 
   async function pull() {
     const name = seat;
-    if (!name) return;
+    if (!name || pulling) return;
     const st = stateFor(name);
+    pulling = true;
     let res = null;
     try {
       res = await window.api.consoleRead(name, st.cursor);
     } catch {
       return;
+    } finally {
+      pulling = false;
     }
     if (!res || seat !== name) return;
     if (res.reset) {
       st.blocks.length = 0;
+      st.lastKeys.clear();
       renderAll();
     }
     st.cursor = typeof res.cursor === 'string' && res.cursor ? res.cursor : st.cursor;
-    const records = Array.isArray(res.records) ? res.records : [];
-    if (!records.length) return;
-    appendNew(st, records);
+    const raw = Array.isArray(res.records) ? res.records : [];
+    const records = raw.filter((r) => !st.lastKeys.has(r.key));
+    if (raw.length) st.lastKeys = new Set(raw.map((r) => r.key));
+    const skipped = typeof res.skipped === 'number' && res.skipped > 0 ? res.skipped : 0;
+    if (!records.length && !skipped) return;
+    appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
     notify(records.some((r) => r.failed) ? 'attention' : 'activity');
   }
 
@@ -174,6 +189,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   notify = host.register({
     id: 'console',
     label: 'Console',
+    available: () => !window.__CLODEX_WEB__,
     availableFor: () => typeNow() === 'claude',
     mount,
     onShow,

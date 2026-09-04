@@ -8,6 +8,13 @@ const CONSOLE_MAX_RECORDS = 2000;
 const RECORD_MAX_BYTES = 256 * 1024;
 const PULL_MAX_RECORDS = 50;
 
+const RECORD_NAME_RE = /^[0-9]{1,32}-[0-9]{1,16}\.json$/;
+
+function stampOf(base) {
+  const i = base.indexOf('-');
+  return i < 0 ? base : base.slice(0, i);
+}
+
 const ANSI_RE = new RegExp(
   '\\u001b\\][^\\u0007\\u001b]*(?:\\u0007|\\u001b\\\\)'
   + '|\\u001bP[\\s\\S]*?\\u001b\\\\'
@@ -77,7 +84,7 @@ function normalizeRecord(obj) {
 function recordFiles(dir) {
   let names;
   try { names = fs.readdirSync(dir); } catch { return null; }
-  return names.filter((n) => n.endsWith('.json')).sort();
+  return names.filter((n) => RECORD_NAME_RE.test(n)).sort();
 }
 
 function readRecordFile(dir, base) {
@@ -93,14 +100,21 @@ function readRecordFile(dir, base) {
 function readBashConsole(root, name, cursor) {
   const dir = pathFor(root, name, 'bashConsole');
   const files = recordFiles(dir);
-  if (files === null) return { records: [], cursor: '', reset: !!cursor, live: false };
+  if (files === null) return { records: [], cursor: '', reset: !!cursor, skipped: 0, live: false };
 
   const since = typeof cursor === 'string' ? cursor : '';
-  let fresh = since ? files.filter((f) => f > since) : files;
+  const sinceStamp = since ? stampOf(since) : '';
+  let fresh = since
+    ? files.filter((f) => f !== since && stampOf(f) >= sinceStamp)
+    : files;
 
-  const reset = !!since && files.length > 0 && files[0] > since && fresh.length === files.length;
+  const reset = !!since && files.length > 0 && !files.includes(since);
 
-  if (fresh.length > PULL_MAX_RECORDS) fresh = fresh.slice(-PULL_MAX_RECORDS);
+  let skipped = 0;
+  if (fresh.length > PULL_MAX_RECORDS) {
+    skipped = fresh.length - PULL_MAX_RECORDS;
+    fresh = fresh.slice(-PULL_MAX_RECORDS);
+  }
 
   const records = [];
   for (const base of fresh) {
@@ -109,17 +123,19 @@ function readBashConsole(root, name, cursor) {
     let obj = null;
     try { obj = JSON.parse(text); } catch { continue; }
     const rec = normalizeRecord(obj);
-    if (rec) records.push(rec);
+    if (rec) records.push({ key: base, ...rec });
   }
 
-  const next = fresh.length ? fresh[fresh.length - 1] : since;
-  return { records, cursor: next, reset, live: true };
+  const last = fresh.length ? fresh[fresh.length - 1] : '';
+  const next = last > since ? last : since;
+  return { records, cursor: next, reset, skipped, live: true };
 }
 
 module.exports = {
   CONSOLE_MAX_RECORDS,
   RECORD_MAX_BYTES,
   PULL_MAX_RECORDS,
+  RECORD_NAME_RE,
   stripAnsi,
   splitFailure,
   normalizeRecord,

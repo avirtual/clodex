@@ -145,7 +145,15 @@ D="${consolePath}"
 mkdir -p "$D" 2>/dev/null || exit 0
 T="$D/.tmp.$$"
 cat > "$T" 2>/dev/null || { rm -f "$T" 2>/dev/null; exit 0; }
-mv -f "$T" "$D/$(date +%s%N)-$$.json" 2>/dev/null || rm -f "$T" 2>/dev/null
+S=$(date +%s%N)
+case "$S" in ''|*[!0-9]*) S=$(date +%s)000000000;; esac
+mv -f "$T" "$D/$S-$$.json" 2>/dev/null || rm -f "$T" 2>/dev/null
+for t in "$D"/.tmp.*; do
+  [ -e "$t" ] || continue
+  q="\${t##*/.tmp.}"
+  case "$q" in ''|*[!0-9]*) continue;; esac
+  kill -0 "$q" 2>/dev/null || rm -f "$t" 2>/dev/null
+done
 set -- "$D"/*.json
 if [ "$#" -gt ${CONSOLE_MAX_RECORDS} ]; then
   n=$(( $# - ${CONSOLE_MAX_RECORDS} ))

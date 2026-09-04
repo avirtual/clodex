@@ -4116,6 +4116,17 @@ html, body {
   font-style: italic;
 }
 
+.console-gap {
+  margin: 6px 0;
+  padding: 3px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+  text-align: center;
+}
+
 #ctl-input-row {
   display: flex;
   align-items: center;
