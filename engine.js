@@ -1427,22 +1427,30 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   persistence.setEnv(name, nextEnv);
   if (!restart) return { ok: true, restarted: false };
   if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
+  const restartIntents = Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents;
+  let preservable = beforeKill;
+  if (Array.isArray(beforeKill.pluginGrants)) {
+    const { pluginGrants: _preprune, ...rest } = beforeKill;
+    preservable = prunedArgs.pluginGrants.length
+      ? { ...rest, pluginGrants: prunedArgs.pluginGrants }
+      : rest;
+  }
   try {
     if (manager.sessions.has(name)) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    manager._preserveAcrossRestart(name, beforeKill, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
-    const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins);
+    manager._preserveAcrossRestart(name, preservable, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
+    const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins);
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
     return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
-    // Applied to the ASSEMBLED object, not to `beforeKill`: the spread is what
-    // actually reaches the store, so stripping the source would be undone by it.
+    // Applied to the ASSEMBLED object, not to the spread source: the spread is
+    // what actually reaches the store, so stripping the source would be undone.
     // Same reason as restartSession's arm above (t491).
-    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? nextIntents : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined }));
+    persistence.upsert(manager._stripClaimedTree({ ...preservable, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
