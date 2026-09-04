@@ -21,7 +21,7 @@ const path = require('node:path');
 
 const {
   createBashLive, writeObserver, pruneObservers, tasksDirFor, tasksDirFromScratchpad,
-  psArgvEncode, argvNeedle,
+  psArgvEncode, argvNeedle, defaultResolveOwners,
   OBSERVER_MAX_FILES, TASK_OUTPUT_RE, LIVE_MAX_BYTES, EVENT_QUEUE_MAX, WATCH_SENTINEL,
   RESOLVE_WINDOW_MS,
 } = require('../bash-live');
@@ -283,6 +283,50 @@ test('the DELETE of the file finalizes the row, and the last read keeps what it 
   assert.strictEqual(rows.length, 1, 'the row survives its file for the finalize grace');
   assert.strictEqual(rows[0].finished, true, 'and is marked finished by the delete');
   assert.match(rows[0].output, /PARTIAL/, 'keeping the text it had read');
+});
+
+test('the resolver keeps lsof output when lsof exits NONZERO', () => {
+  // Measured, and it made the whole feature inert once: `lsof -p <list>` exits 1
+  // if ANY pid in the list has already gone, which is the normal case here --
+  // between the ps and the lsof, other short calls on an ~800-process box come
+  // and go. execFileSync turns that status into a throw, and a catch that
+  // returned [] discarded the pids that DID resolve, on every single read.
+  //
+  // Drives the REAL defaultResolveOwners through a stubbed exec, so the parsing
+  // under test is the shipped parsing rather than a copy of it in this fixture.
+  const outFile = '/private/tmp/claude-501/-Users-b-proj/sess/tasks/bLIVE0001.output';
+  const needle = argvNeedle('counter');
+  const exec = (bin) => {
+    if (bin === 'ps') return `  4321 ${realArgv('counter')}\n  4322 /usr/sbin/unrelated\n`;
+    throw Object.assign(new Error('Command failed: lsof'), {
+      status: 1,
+      stdout: `p4321\nf1\nn${outFile}\n`,
+    });
+  };
+
+  const rows = defaultResolveOwners([needle], { exec });
+  assert.deepStrictEqual(rows.map((r) => [r.pid, r.file]), [['4321', outFile]],
+    'a nonzero lsof status must not discard the pids that DID resolve');
+  assert.ok(rows[0].args.includes(needle), 'and each row carries the argv the needle matched');
+});
+
+test('the resolver narrows to matching pids BEFORE spending an lsof', () => {
+  // lsof's cost scales with the pids handed to it, and a box runs ~800 processes
+  // while a Bash call in flight is one. Narrowing on the ps output first is what
+  // keeps the probe affordable at a 500ms cadence.
+  let askedFor = null;
+  const exec = (bin, args) => {
+    if (bin === 'ps') return `  10 ${realArgv('wanted-cmd')}\n  11 ${realArgv('other-cmd')}\n  12 /sbin/launchd\n`;
+    askedFor = args[args.indexOf('-p') + 1];
+    return 'p10\nf1\nn/tmp/tasks/bW.output\n';
+  };
+
+  const rows = defaultResolveOwners([argvNeedle('wanted-cmd')], { exec });
+  assert.strictEqual(askedFor, '10', 'only the pid whose argv carried the needle is handed to lsof');
+  assert.deepStrictEqual(rows.map((r) => r.pid), ['10'], 'ENTER: and it did resolve, so the narrowing is not just refusing');
+
+  assert.deepStrictEqual(defaultResolveOwners([], { exec }), [],
+    'with no needles there is nothing to own, so neither command is worth running');
 });
 
 test('two concurrent calls are told apart by argv, each getting ITS OWN file', async (t) => {

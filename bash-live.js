@@ -130,30 +130,46 @@ function argvNeedle(command) {
   return psArgvEncode(`eval '${cmd.split("'").join(`'"'"'`)}'`);
 }
 
-function defaultResolveOwners() {
+function defaultResolveOwners(needles, opts) {
+  const run = (opts && opts.exec) || execFileSync;
+  const wanted = Array.isArray(needles) ? needles.filter(Boolean) : [];
+  if (!wanted.length) return [];
+
   let psOut = '';
   try {
-    psOut = execFileSync('ps', ['-ax', '-o', 'pid=,args='], {
+    psOut = run('ps', ['-ax', '-o', 'pid=,args='], {
       encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch { return []; }
 
+  // Narrowed to the processes that could own one of these calls BEFORE lsof is
+  // asked anything: a Bash call in flight is one process, while the box is ~800,
+  // and lsof's cost scales with the pids handed to it.
   const byPid = new Map();
   for (const line of psOut.split('\n')) {
     const m = /^\s*([0-9]{1,10})\s+(.*)$/.exec(line);
-    if (m && m[2]) byPid.set(m[1], m[2]);
+    if (!m || !m[2]) continue;
+    if (!wanted.some((n) => m[2].includes(n))) continue;
+    byPid.set(m[1], m[2]);
   }
   if (!byPid.size) return [];
 
   const pids = [...byPid.keys()];
   let lsOut = '';
   try {
-    lsOut = execFileSync('lsof', ['-a', '-p', pids.join(','), '-d', '1', '-Fpn'], {
+    lsOut = run('lsof', ['-a', '-p', pids.join(','), '-d', '1', '-Fpn'], {
       encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-  } catch { return []; }
+  } catch (e) {
+    // lsof exits NONZERO when any pid in the list has already gone, which is the
+    // normal case here: the call whose output we are chasing may finish between
+    // the ps and the lsof. The pids that did resolve are still on stdout, so the
+    // status is not a reason to discard them.
+    lsOut = e && typeof e.stdout === 'string' ? e.stdout : '';
+  }
+  if (!lsOut) return [];
 
   const out = [];
   let pid = null;
@@ -383,15 +399,22 @@ function createBashLive(deps) {
     );
     if (!waiting.length) return;
 
+    const needles = new Map();
+    for (const o of waiting) {
+      const n = argvNeedle(o.command);
+      if (n) needles.set(o.id, n);
+    }
+    if (!needles.size) return;
+
     let procs = null;
-    try { procs = resolveOwners(); } catch { return; }
+    try { procs = resolveOwners([...needles.values()]); } catch { return; }
     if (!Array.isArray(procs) || !procs.length) return;
 
     const byPath = new Map();
     for (const c of free) byPath.set(c.path, c);
 
     for (const o of waiting) {
-      const needle = argvNeedle(o.command);
+      const needle = needles.get(o.id);
       if (!needle) continue;
       const hits = procs.filter((p) => typeof p.args === 'string' && p.args.includes(needle));
       if (hits.length !== 1) continue;
