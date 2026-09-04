@@ -56,6 +56,13 @@ function el(tag = 'div') {
       if (c.parentNode) c.remove();
       c.parentNode = e; e.children.push(c); return c;
     },
+    replaceChild(next, old) {
+      const i = e.children.indexOf(old);
+      if (i < 0) return old;
+      if (next.parentNode) next.remove();
+      e.children[i] = next; next.parentNode = e; old.parentNode = null;
+      return old;
+    },
     remove() {
       if (!e.parentNode) return;
       const i = e.parentNode.children.indexOf(e);
@@ -109,10 +116,16 @@ async function mountPane(t) {
   // real bash-live here would put its fs.watch timing between the test and the
   // assertion. test/bash-live.test.js drives the real reader over a real dir.
   const liveRows = [];
+  let slowRead = false;
   global.window = {
     __CLODEX_WEB__: false,
     api: {
-      consoleRead: async (name, cursor) => readBashConsole(root, name, cursor),
+      consoleRead: async (name, cursor) => {
+        // Delays the SETTLED read past the live one. Under Promise.all that is
+        // what lets the live filter run before the settle lands.
+        if (slowRead) await new Promise((r) => setTimeout(r, 5));
+        return readBashConsole(root, name, cursor);
+      },
       consoleLive: async () => liveRows.slice(),
     },
   };
@@ -165,6 +178,7 @@ async function mountPane(t) {
     liveBody,
     painted,
     setLive(rows) { liveRows.length = 0; for (const r of rows) liveRows.push(r); },
+    slowConsoleRead(on) { slowRead = on; },
     liveDrawn() {
       return liveBody.children.map((c) => {
         const m = /console-block-cmd">([^<]*)</.exec(c.innerHTML);
@@ -174,6 +188,36 @@ async function mountPane(t) {
     write(cmd, pid, stamp) {
       fs.writeFileSync(path.join(dir, `${stamp}-${pid}.json`),
         JSON.stringify({ ...OK, tool_input: { command: cmd }, tool_use_id: `t-${cmd}` }));
+    },
+    // A backgrounded call: the spool record carries the task id and no inline
+    // stdout, so the reader goes to the .output file for its text on EVERY poll.
+    writeBg(cmd, pid, stamp, taskId) {
+      fs.writeFileSync(path.join(dir, `${stamp}-${pid}.json`),
+        JSON.stringify({
+          ...OK,
+          tool_input: { command: cmd },
+          tool_use_id: `t-${cmd}`,
+          scratchpad_dir: path.join(root, 'scratch'),
+          tool_response: { stdout: '', stderr: '', backgroundTaskId: taskId },
+        }));
+    },
+    // The growth the pane has to notice: the CLI appends to this file while the
+    // record that names it stays byte-identical.
+    growBg(taskId, text) {
+      const tdir = path.join(root, 'tasks');
+      fs.mkdirSync(tdir, { recursive: true });
+      fs.appendFileSync(path.join(tdir, `${taskId}.output`), text);
+    },
+    // What is ON SCREEN for a call, as opposed to what was ever appended:
+    // a repaint replaces a node in place and appends nothing.
+    outputOf(cmd) {
+      for (const c of body.children) {
+        const m = /console-block-cmd">([^<]*)</.exec(c.innerHTML);
+        if (!m || m[1] !== cmd) continue;
+        const o = /console-block-out">([\s\S]*?)<\/pre>/.exec(c.innerHTML);
+        return o ? o[1] : '';
+      }
+      return null;
     },
     async tick() { await poll(); await settle(); await settle(); },
     hide() { tenant.onHide(); },
@@ -190,6 +234,43 @@ const STAMP = '0000000001788481092';
 // falls out of the dedupe set and is repainted by the next poll that re-serves
 // its group. Serving the whole group instead keeps every drawn key in the set,
 // which is what the module's own note already describes.
+test('a backgrounded call REPAINTS as its output file grows, without painting twice', async (t) => {
+  // The bug that made even the background lane useless: bash-console.js re-reads
+  // the .output file on every poll, so the main process really does see it grow,
+  // and the pane then threw the fresher text away -- `raw.filter(r => !lastKeys
+  // .has(r.key))` drops any record already drawn, and the key stays in the set
+  // while the record sits in the cursor window. A long job painted ONCE with
+  // whatever existed at the first poll.
+  //
+  // The identity dedupe that does that is deliberate and is what the test below
+  // this one pins, so the repaint is keyed on CONTENT GROWTH instead of on
+  // dropping the key. Both assertions therefore matter: the text must reach the
+  // screen, and the call must still occupy exactly one block.
+  const p = await mountPane(t);
+
+  p.writeBg('slow-job', 8, STAMP, 'bg000001');
+  p.growBg('bg000001', 'first line\n');
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['slow-job'], 'ENTER: the call was painted once to begin with');
+  assert.match(p.outputOf('slow-job'), /first line/, 'ENTER: with the output it had at that first poll');
+
+  // The job writes more. The spool record naming it does not change by a byte,
+  // which is exactly why identity dedupe alone cannot see this.
+  p.growBg('bg000001', 'second line\n');
+  await p.tick();
+
+  assert.match(p.outputOf('slow-job'), /second line/,
+    'the growth must reach the screen — otherwise a long job is drawn once and goes blind');
+  assert.match(p.outputOf('slow-job'), /first line/, 'and it keeps what it already had');
+  assert.deepStrictEqual(p.painted, ['slow-job'],
+    'while still being ONE block: a repaint replaces the node, it does not append a second one');
+
+  // An idle poll re-serves the same record with the same bytes. Nothing changed,
+  // so nothing may be redrawn.
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['slow-job'], 'and a re-serve with no growth repaints nothing');
+});
+
 test('a record already drawn is not painted a second time when its group is re-served', async (t) => {
   const p = await mountPane(t);
 
@@ -477,6 +558,27 @@ test('a live row is replaced by its settled record, never drawn alongside it', a
   assert.deepStrictEqual(p.painted, ['slowcmd'], 'the settled record is painted once');
   assert.deepStrictEqual(p.liveDrawn(), [],
     'and the live row for the same tool_use_id is gone — two rows for one call is the defect');
+});
+
+test('the settled read is AWAITED before the live read, so one call cannot draw twice', async (t) => {
+  // The test above passes on scheduling luck: with the two pulls started
+  // together, whether the live filter sees the settled id depends on which
+  // promise resolves first, and in this fixture the fast one usually wins. This
+  // one removes the luck by making the settled read SLOWER than the live read --
+  // under `Promise.all` the live filter then runs against a `settled` set the
+  // settled record has not reached yet, and the call is drawn in both lanes.
+  const p = await mountPane(t);
+  p.setLive([{ id: 't-both', command: 'both', output: 'partial', bytes: 7, tailed: false, elapsedMs: 900, finished: false }]);
+  await p.tick();
+  assert.deepStrictEqual(p.liveDrawn(), ['both'], 'ENTER: the call is in the live lane before it settles');
+
+  p.slowConsoleRead(true);
+  p.write('both', 12, STAMP);
+  await p.tick();
+
+  assert.deepStrictEqual(p.painted, ['both'], 'the settled record is painted');
+  assert.deepStrictEqual(p.liveDrawn(), [],
+    'and the live row is gone in the SAME tick — the live read must observe the settle, not race it');
 });
 
 test('a live row never claims the command printed nothing', async (t) => {

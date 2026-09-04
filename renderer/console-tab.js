@@ -21,7 +21,10 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function stateFor(name) {
     let st = seats.get(name);
     if (!st) {
-      st = { cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0, live: [], settled: new Set() };
+      st = {
+        cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0,
+        live: [], settled: new Set(), sigs: new Map(),
+      };
       seats.set(name, st);
     }
     return st;
@@ -108,6 +111,39 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     return el;
   }
 
+  // A backgrounded call's record is re-served on every poll and GROWS as its
+  // .output file is appended to. Identity dedupe alone therefore paints it once,
+  // with whatever existed at the first poll. This signature is what separates
+  // "the same record again" from "the same record with more output in it";
+  // keying the repaint on it leaves the identity dedupe that stops a re-served
+  // timestamp group from double-painting exactly as it was.
+  function contentSig(r) {
+    return [
+      r.output ? r.output.length : 0,
+      typeof r.bytes === 'number' ? r.bytes : '',
+      typeof r.fullBytes === 'number' ? r.fullBytes : '',
+      r.exitCode === null || r.exitCode === undefined ? '' : r.exitCode,
+      r.failed ? 1 : 0,
+      r.bgState || '',
+    ].join(':');
+  }
+
+  function repaintGrown(st, raw) {
+    for (const r of raw) {
+      if (!r || !r.key || !st.lastKeys.has(r.key)) continue;
+      const sig = contentSig(r);
+      if (st.sigs.get(r.key) === sig) continue;
+      st.sigs.set(r.key, sig);
+      const i = st.blocks.findIndex((b) => !b.gap && b.key === r.key);
+      if (i < 0) continue;
+      st.blocks[i] = r;
+      // st.blocks and bodyEl's children are appended and trimmed together, so
+      // index i names the same call in both.
+      const old = bodyEl && bodyEl.children[i];
+      if (old) bodyEl.replaceChild(blockNode(r), old);
+    }
+  }
+
   function pushBlock(st, b) {
     st.blocks.push(b);
     while (st.blocks.length > MAX_BLOCKS) st.blocks.shift();
@@ -170,12 +206,15 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       st.lastKeys.clear();
       st.lastSkipped = 0;
       st.settled.clear();
+      st.sigs.clear();
       renderAll();
     }
     st.cursor = typeof res.cursor === 'string' && res.cursor ? res.cursor : st.cursor;
     const raw = Array.isArray(res.records) ? res.records : [];
     const records = raw.filter((r) => !st.lastKeys.has(r.key));
+    repaintGrown(st, raw);
     if (raw.length) st.lastKeys = new Set(raw.map((r) => r.key));
+    for (const r of records) st.sigs.set(r.key, contentSig(r));
     const skipped = typeof res.skipped === 'number' && res.skipped > 0 ? res.skipped : 0;
     const repeatGap = skipped <= st.lastSkipped;
     st.lastSkipped = skipped;
@@ -209,7 +248,12 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   }
 
   async function tick() {
-    await Promise.all([pull(), pullLive()]);
+    // SEQUENCED, not Promise.all. pullLive filters against `settled`, which pull
+    // populates: run concurrently, the filter can read the set before the record
+    // that settles a call lands in it, and that call draws in BOTH lanes for one
+    // tick — its finished block and its live preview at once.
+    await pull();
+    await pullLive();
   }
 
   function startPolling() {
