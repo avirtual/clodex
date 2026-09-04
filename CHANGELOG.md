@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.27.0 — 2026-09-04
+
 - **The Console tab now shows a running command's output while it runs.** Until
   now output arrived only when the call finished, so a 465-second release
   command showed nothing at all until it ended. A live preview of the command
