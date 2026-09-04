@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.26.0 — 2026-09-04
+
 - **A new Console tab in the bottom drawer shows what a seat's Bash tool actually
   ran.** The CLI renders its own Bash calls as a few scattered truncated lines;
   this shows one block per call with the full command and its complete output
