@@ -1394,3 +1394,47 @@ test('t655: the design decision is that an empty catalog still writes a list, ne
     'and otherwise draws a row per catalog plugin, ticked from the seat list — '
     + 'so a seat stored as [] draws every row UNTICKED and can be reopened');
 });
+
+// ── t655 r1 MUST-FIX 1: the dim needs a painter on the two non-switch paths ──
+// `renderFooterButtons` is called at plugin-registration time and from
+// `onSeatSwitched()`, and nowhere else. That leaves the dim wrong in the
+// PERMISSIVE direction on two reachable paths, and the chrome tests cannot see
+// it because they drive `onSeatSwitched()` by hand — a missing CALLER is
+// invisible to a test that supplies the call itself. Hence a source scan.
+//
+//   BOOT: loadPluginRenderers paints the buttons before sidebarMeta exists, so
+//   pluginReachesSession reads `.plugins` off undefined and seatHasPlugin
+//   returns the living-default true — undimmed for a seat that lacks the
+//   plugin. On a single-seat workspace no later switch ever corrects it.
+//   LAST SEAT CLOSED: the `activeSession = null` branch is not a switch, so
+//   buttons dimmed for the seat that just left stay dimmed with no seat active.
+test('t655 r1: refreshSidebarMeta repaints the footer, closing the boot race', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('async function refreshSidebarMeta(');
+  assert.ok(at > 0, 'ENTER: refreshSidebarMeta was located');
+  const end = src.indexOf('\n}', at);
+  const body = src.slice(at, end);
+  assert.ok(body.length < 1200, 'ENTER: the slice is one function');
+  assert.match(body, /refreshSidebarView\(\);/,
+    'ENTER: the existing repaint call is still here — this pin sits beside it');
+  assert.match(body, /pluginBar\.renderFooterButtons\(\);/,
+    'the footer must be repainted once sidebarMeta lands, or the dim keeps answering off a '
+    + 'meta map that was empty when the buttons were first painted');
+});
+
+test('t655 r1: closing the LAST seat repaints the footer, so nothing stays dimmed', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  // The branch, not the whole function: `activeSession = null` is its only
+  // occurrence outside the top-level declaration, and the assertion below is
+  // meaningless if the slice accidentally spans a switchSession call.
+  const at = src.indexOf('      activeSession = null;');
+  assert.ok(at > 0, 'ENTER: the no-remaining-sessions branch was located');
+  const branch = src.slice(at, at + 600);
+  assert.doesNotMatch(branch, /switchSession\(/,
+    'ENTER: this really is the branch with NO seat to switch to');
+  assert.match(branch, /renderProxyBar\(\);/,
+    'ENTER: the branch\'s existing repaint is here — the new call sits beside it');
+  assert.match(branch, /pluginBar\.renderFooterButtons\(\);/,
+    'with no active seat every button goes live again; this branch is not a switch, '
+    + 'so onSeatSwitched never runs for it and nothing else would undim them');
+});

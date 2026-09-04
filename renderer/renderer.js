@@ -981,6 +981,11 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
     }
   } catch {} finally { metaRefreshInFlight = false; }
   refreshSidebarView();
+  // The footer's dim is answered off sidebarMeta, which does not exist yet when
+  // loadPluginRenderers paints the buttons — without a repaint here the boot
+  // state is UNDIMMED for a seat that lacks the plugin, and on a single-seat
+  // workspace no switch ever comes to correct it.
+  pluginBar.renderFooterButtons();
 }
 
 function onViewControlChange() {
@@ -1452,6 +1457,9 @@ function removeSession(name, { keepPersisted = false } = {}) {
       // the seat that just went away.
       reportFocusedSession();
       emptyState.style.display = '';
+      // No seat means no seat decision, so every button goes live again. This
+      // branch is not a switch, so onSeatSwitched never runs for it.
+      pluginBar.renderFooterButtons();
       renderProxyBar();
     }
   }

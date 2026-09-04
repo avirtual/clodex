@@ -34188,6 +34188,7 @@ ${detail}` });
           metaRefreshInFlight = false;
         }
         refreshSidebarView();
+        pluginBar.renderFooterButtons();
       }
       function onViewControlChange() {
         sidebarView = {
@@ -34551,6 +34552,7 @@ ${detail}` });
             activeSession = null;
             reportFocusedSession();
             emptyState.style.display = "";
+            pluginBar.renderFooterButtons();
             renderProxyBar();
           }
         }

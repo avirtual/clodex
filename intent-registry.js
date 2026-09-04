@@ -375,9 +375,9 @@ function pruneForPlugins(entry, pluginsList) {
       const at = String(g).indexOf(':');
       if (at <= 0) return false;
       const id = String(g).slice(0, at);
-      // The same `!row` exemption the verbs half applies: a rowless plugin is
-      // absent from the catalog snapshot every editor saves, so pruning against
-      // that snapshot would revoke its grants irreversibly.
+      // The same `!row` exemption the verbs half applies: a QUARANTINED plugin is
+      // rowless AND absent from the catalog snapshot every editor saves, so
+      // pruning against that snapshot would revoke its grants irreversibly.
       if (!pluginRows.some((r) => r.source === id)) return true;
       return seatHasPlugin(id, pluginsList);
     })
