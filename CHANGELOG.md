@@ -24,7 +24,12 @@ blocks a release.
   an explicit list, so a plugin installed later does not quietly appear on that
   seat; re-ticking brings the plugin back but not the verbs you had chosen for
   it, which you pick again. Seats you have never edited are unchanged and keep
-  every plugin, exactly as before this release.
+  every plugin, exactly as before this release. The chrome follows the same tick:
+  a plugin's sidebar button dims while a seat that does not have it is active,
+  and clicking it says so rather than doing nothing — the button never moves, so
+  the footer does not jump as you hop between seats. Its drawer will not open
+  from such a seat, and a drawer left open closes when you switch to a seat
+  without that plugin. With no seat selected everything is live again.
 
 - **A plugin can now be registered from any folder on disk.** Manage Plugins has
   a **Register Plugin…** button: pick the plugin's folder — a git checkout, a

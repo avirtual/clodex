@@ -1097,10 +1097,10 @@ test('ROUND-2 P1: a non-claude type is written the globally-enabled set, never [
   const at = src.indexOf('function collectFormConfig()');
   assert.ok(at > 0, 'ENTER: collectFormConfig was found — a rename makes every assertion below vacuous');
   const body = src.slice(at, at + 1400);
-  assert.match(body, /: defaultPluginTicks\(\);/,
+  assert.match(body, /: defaultPluginTicks\(\)\)/,
     'the non-claude arm materialises the globally-enabled set. `[]` closes a codex seat to every '
-    + 'plugin with no UI to reopen it, and takes its onAgentText feed with it — absent would be the '
-    + 'living default, but this key is EDITOR_OWNED, so it is written either way');
+    + 'plugin with no UI to reopen it, and takes its onAgentText feed with it. t655 nests this arm '
+    + 'under the empty-catalog check, which is the ONLY case that now stores absence instead');
   assert.strictEqual(body.includes('inputPluginList) : [];'), false,
     'and the `[]` this replaced is gone, not merely shadowed');
 });
@@ -1233,25 +1233,141 @@ test('REWORK NIT: intents.register after deactivate throws rather than defaultin
   } finally { cleanup(); }
 }));
 
-// ── NIT: a failed catalog read must fail CLOSED, not activate unscoped ───────
-// `scopedPluginIds` is what tells the renderer a plugin is scoped at all, so a
-// plugin activated while that set is stale draws on EVERY session regardless of
-// grants — the opposite of what enabling a scoped plugin is supposed to do — and
-// it stays that way until some later refresh happens to succeed.
-test('REWORK NIT: a rejected plugin catalog skips activation rather than drawing unscoped', () => {
+// ── t655: the renderer's surfacing gate is the SEAT LIST, not grants ─────────
+// `pluginReachesSession` used to answer off `scopedPluginIds` + `pluginGrants`,
+// which meant a GLOBAL plugin reached every seat (it was never in the scoped
+// set) and a session-scoped one reached any seat holding a capability. t655
+// re-keys it onto `seatHasPlugin` over the seat's own `plugins` list, which is
+// the same question every other enforcement point now asks.
+//
+// Source-scanned because this lives in renderer.js's top-level body, which needs
+// a DOM and window.api to load at all. The BEHAVIOUR of the predicate it names
+// is exercised for real in plugin-api's own seatHasPlugin tests; what can only
+// be pinned here is that the renderer calls THAT and not something else.
+test('t655: pluginReachesSession is keyed on the seat list, and the scoped-id set is gone', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  // Source-scanned because this lives in renderer.js's top-level IIFE-free body,
-  // which requires a DOM and window.api to load at all. The property is a
-  // two-part contract between a producer and its callers, so both halves are
-  // pinned: a catch returning [] would satisfy neither.
-  assert.match(src, /try \{ catalog = await window\.api\.pluginCatalog\(\); \} catch \{ return null; \}/,
-    'a failed catalog read must report null — [] is indistinguishable from "no plugins installed", '
-    + 'which is exactly the answer that makes a caller activate against a stale scope set');
-  assert.match(src, /refreshScopedPluginIds\(\)\.then\(\(c\) => \{ if \(c\) activatePluginRenderer\(payload\.id\); \}\)/,
-    'and the mid-run enable path must skip activation on it');
-  // The boot path needs no guard of its own — it iterates the return value, so a
-  // null activates nothing by construction. Pinned so a later `?? []` there
-  // silently re-opens the hole.
-  assert.match(src, /const catalog = await refreshScopedPluginIds\(\);\n  for \(const p of catalog \|\| \[\]\)/,
-    'the boot path iterates the catalog directly, so null activates nothing');
+  assert.match(src, /function pluginReachesSession\(pluginId, sessionName\) \{\n\s*return seatHasPlugin\(pluginId, \(sidebarMeta\.get\(sessionName\) \|\| \{\}\)\.plugins\);\n\}/,
+    'the renderer answers off sidebarMeta.plugins through the shared leaf — a local '
+    + 'ticked-list re-derivation would drift from the main-process gate');
+  // The grants-axis predicate is RETIRED, not merely unused: a surviving export
+  // is an invitation to re-key the UI onto grants and re-open the split between
+  // what the chrome shows and what the engine allows.
+  assert.doesNotMatch(src, /pluginReaches\b(?!Session)/,
+    'renderer.js no longer imports or calls pluginReaches');
+  assert.doesNotMatch(src, /scopedPluginIds|refreshScopedPluginIds/,
+    'the scoped-id set and its refresher are deleted, not left dangling');
+  const api = fs.readFileSync(path.join(__dirname, '..', 'plugin-api.js'), 'utf8');
+  assert.doesNotMatch(api, /pluginReaches\b/,
+    'and plugin-api.js exports it no more');
+  // ENTER: the deletion above is only meaningful if the leaf it moved TO is
+  // really still exported — a typo'd rename would satisfy both doesNotMatch arms.
+  assert.strictEqual(typeof seatHasPlugin, 'function', 'ENTER: seatHasPlugin is the surviving predicate');
+});
+
+// The boot/enable paths no longer need a scope set recorded before activation,
+// so the ordering that existed only for it is gone. What must survive is that a
+// FAILED catalog read activates nothing — an exception mid-boot would otherwise
+// leave the plugin bar half-populated.
+test('t655: a rejected plugin catalog activates nothing on either path', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  assert.match(src, /let catalog = null;\n\s*try \{ catalog = await window\.api\.pluginCatalog\(\); \} catch \{ return; \}/,
+    'the boot path bails on a rejected catalog rather than iterating a partial one');
+  assert.match(src, /for \(const p of catalog \|\| \[\]\)/,
+    'and a null catalog iterates nothing by construction');
+  assert.match(src, /if \(payload\.enabled\) activatePluginRenderer\(payload\.id\);/,
+    'the mid-run enable activates directly — the scope set it used to refresh first is gone');
+});
+
+// ── t655 B6 (r3 NIT 2): a quarantined plugin's grants survive an Edit-save ───
+// The failing case the NIT named: a PRE-UPGRADE seat (`plugins` absent) holding
+// a grant for a plugin that is quarantined or globally disabled. Such a plugin
+// has no registered row, so it is absent from the catalog snapshot the editor
+// saves; pruning the grants against that snapshot revoked them irreversibly on
+// the first unrelated Edit-save, because the operator never saw the plugin to
+// re-tick it. The verbs half already exempted a rowless type (`!row`); the
+// grants half now does the same.
+test('t655: pruneForPlugins keeps grants for a plugin with NO registered row, and still drops a ticked-off one', () => withReset(() => {
+  registry.registerIntent(mkRow('liveverb'), 'live', { scope: 'session' });
+  // `quarantined` deliberately registers NOTHING — that is what deactivate()
+  // leaves behind, and it is the whole condition under test.
+  assert.strictEqual(registry.pluginRowFor('liveverb').source, 'live',
+    'ENTER: the registered plugin really has a row');
+  assert.strictEqual(registry.rows().some((r) => r.source === 'quarantined'), false,
+    'ENTER: and the quarantined one really has none');
+
+  const entry = {
+    intents: ['dm', 'liveverb'],
+    pluginGrants: ['live:turns', 'quarantined:turns', 'quarantined:toolInputs'],
+  };
+  // The saved list is the catalog snapshot: it names only what is registered and
+  // ticked, which by construction cannot name the quarantined plugin.
+  const out = registry.pruneForPlugins(entry, ['live']);
+  assert.deepStrictEqual(out.pluginGrants, ['live:turns', 'quarantined:turns', 'quarantined:toolInputs'],
+    'every grant token for the rowless plugin survives — the operator never saw it to re-tick');
+
+  // CONTROL, and it is the half that must NOT be widened: a grant for a
+  // REGISTERED plugin the seat unticked is still dropped. Without this arm the
+  // exemption above would pass equally for a prune that stopped pruning.
+  const unticked = registry.pruneForPlugins(entry, []);
+  assert.deepStrictEqual(unticked.pluginGrants, ['quarantined:turns', 'quarantined:toolInputs'],
+    'CONTROL: the registered plugin\'s grant IS dropped when the seat unticks it');
+  assert.deepStrictEqual(unticked.intents, ['dm'],
+    'CONTROL: and its verb goes too — the verbs half is unchanged');
+
+  // A malformed token has no plugin id to exempt and must still go.
+  const malformed = registry.pruneForPlugins({ intents: null, pluginGrants: ['nocolon', ':leading'] }, []);
+  assert.deepStrictEqual(malformed.pluginGrants, [],
+    'a token with no plugin id is dropped, not exempted as "rowless"');
+}));
+
+// ── t655 B7 (r3 NIT 1): the template editor's cold-cache hole ───────────────
+// `openTemplateEditor` guarded its whole plugin block on claude, so editing a
+// CODEX/SHELL template in a fresh window never warmed pluginCatalogCache —
+// `collectFormConfig`'s non-claude arm then returned `defaultPluginTicks() ===
+// []` and `saveTemplateFromForm` wrote a closed list into the template file.
+// Same fix and same pin shape as refreshNewSessionPlugins' own hoist.
+test('t655: openTemplateEditor fetches the plugin catalog ABOVE its claude guard', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('async function openTemplateEditor');
+  assert.ok(at > 0, 'ENTER: openTemplateEditor was found');
+  // Bounded by the next column-0 close brace, which is the end of the function —
+  // checked against the real body, which has no column-0 brace before it.
+  const end = src.indexOf('\n}', at);
+  assert.ok(end > at, 'ENTER: the function body slice is bounded');
+  const body = src.slice(at, end);
+  assert.ok(body.length < 4000, 'ENTER: the slice is one function, not the rest of the file');
+
+  const fetchAt = body.indexOf('await refreshNewSessionPlugins(');
+  const guardAt = body.indexOf("if (inputType.value === 'claude')");
+  assert.ok(fetchAt > 0, 'the plugin fetch is in the function');
+  assert.ok(guardAt > 0, 'ENTER: and the claude guard is still there to be above');
+  assert.ok(fetchAt < guardAt,
+    'the fetch runs BEFORE the guard — below it, a non-claude template save writes plugins: [] '
+    + 'from an empty cache and closes that template to every plugin');
+  // Exactly one call: a second one left inside the guard would re-render the
+  // checklist against a template list the claude arm already applied.
+  assert.strictEqual(body.split('await refreshNewSessionPlugins(').length - 1, 1,
+    'hoisted, not duplicated');
+});
+
+// ── t655 ride-along: an EMPTY catalog stores ABSENCE, never [] ──────────────
+// `collectFormConfig` wrote `plugins` unconditionally, so a seat created while
+// plugins were globally off (or the kill switch was on) froze at `[]` — closed
+// to every plugin, with no UI able to reopen it because the checklist draws no
+// rows either. `plugins` is EDITOR_OWNED, so OMITTING the key stores absence,
+// which is the living all-enabled default. Same rule the Intents popover's Apply
+// already applies for the same reason.
+test('t655: collectFormConfig omits plugins entirely when the catalog is empty', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('function collectFormConfig()');
+  assert.ok(at > 0, 'ENTER: collectFormConfig was found');
+  const end = src.indexOf('\n}', at);
+  const body = src.slice(at, end);
+  assert.ok(body.length < 4000, 'ENTER: the slice is one function');
+  assert.match(body, /const plugins = getPluginCatalogCache\(\)\.length/,
+    'the empty catalog is the OUTER question — "we could not ask", not "nothing was ticked"');
+  assert.match(body, /\.\.\.\(plugins \? \{ plugins \} : \{\}\),/,
+    'and a null result omits the key, storing absence rather than a closed []');
+  assert.doesNotMatch(body, /^\s*plugins,$/m,
+    'the unconditional write is gone');
 });

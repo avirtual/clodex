@@ -501,6 +501,9 @@ body {
 .footer-badge:empty {
   display: none;
 }
+#sidebar-footer [data-plugin-footer].plugin-footer-dimmed {
+  opacity: 0.4;
+}
 .inbox-count {
   margin-left: auto;
   font-size: 10px;
@@ -19895,9 +19898,6 @@ ${i3.join("\n")}
         if (!Array.isArray(pluginsList)) return true;
         return pluginsList.includes(String(pluginId));
       }
-      function pluginReaches(pluginId, grants) {
-        return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
-      }
       var HOST_PSEUDO_ID = "_host";
       function namespaced(pluginId, id) {
         return `${pluginId}:${id}`;
@@ -19941,7 +19941,6 @@ ${i3.join("\n")}
         mergeGrants,
         pluginGranted,
         seatHasPlugin,
-        pluginReaches,
         HOST_PSEUDO_ID,
         namespaced,
         pluginsEnabled,
@@ -23714,7 +23713,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }) : null;
         const pluginGrants = Array.isArray(src.pluginGrants) ? src.pluginGrants.filter((g) => {
           const at = String(g).indexOf(":");
-          return at > 0 && seatHasPlugin(String(g).slice(0, at), pluginsList);
+          if (at <= 0) return false;
+          const id = String(g).slice(0, at);
+          if (!pluginRows.some((r) => r.source === id)) return true;
+          return seatHasPlugin(id, pluginsList);
         }) : null;
         return { intents, pluginGrants };
       }
@@ -32507,10 +32509,9 @@ ${detail}` });
         // No `= () => null` default here: the leak scanner's param matcher cannot
         // cross nested parens, and a defaulted arrow hides every dep above it.
         getWorkspaceId,
-        // (pluginId, sessionName) -> bool. The SURFACING gate's renderer half (t190):
-        // false hides a session-scoped plugin's per-session UI from that session.
-        // Absent = everything reaches everything, which is what a host built before
-        // scopes existed did — so the default is today's behaviour, not a refusal.
+        // (pluginId, sessionName) -> bool. Absent = everything reaches everything, which
+        // is what a host built before this existed did — the default is today's
+        // behaviour, not a refusal.
         pluginReachesSession
       } = {}) {
         function reaches(pluginId, sessionName) {
@@ -32789,6 +32790,11 @@ ${detail}` });
                 el.appendChild(sp);
               }
               el.addEventListener("click", () => {
+                const seat2 = getActiveSession ? getActiveSession() : null;
+                if (!reaches(b.pluginId, seat2)) {
+                  if (showToast) showToast(`${b.label || b.id} is not enabled for ${seat2}`);
+                  return;
+                }
                 try {
                   b.onClick(el);
                 } catch (e) {
@@ -32799,7 +32805,12 @@ ${detail}` });
             }
             el.querySelector(".footer-glyph").textContent = b.glyph ? String(b.glyph) : "";
             el.querySelector(".footer-label").textContent = b.label ? String(b.label) : "";
-            if (b.tip) el.setAttribute("data-tip", String(b.tip));
+            const seat = getActiveSession ? getActiveSession() : null;
+            const dimmed = !reaches(b.pluginId, seat);
+            el.classList.toggle("plugin-footer-dimmed", dimmed);
+            if (dimmed) el.setAttribute("data-tip", `Not enabled for ${seat} \u2014 tick it under Plugins`);
+            else if (b.tip) el.setAttribute("data-tip", String(b.tip));
+            else el.removeAttribute("data-tip");
             let badge = null;
             if (typeof b.badge === "function") {
               try {
@@ -32932,6 +32943,11 @@ ${detail}` });
             const entry = overlays[overlays.length - 1];
             return {
               open(opts) {
+                const seat = getActiveSession ? getActiveSession() : null;
+                if (!reaches(entry.pluginId, seat)) {
+                  if (showToast) showToast(`${entry.pluginId} is not enabled for ${seat}`);
+                  return;
+                }
                 closeOpenOverlay();
                 if (!entry.el) {
                   entry.el = document.createElement("div");
@@ -33173,12 +33189,19 @@ ${detail}` });
         function disposeAll() {
           for (const id of [...resources.keys()]) dispose(id);
         }
+        function onSeatSwitched() {
+          if (openOverlay && !reaches(openOverlay.pluginId, getActiveSession ? getActiveSession() : null)) {
+            closeOpenOverlay();
+          }
+          renderFooterButtons();
+        }
         return {
           statusBarHtml,
           hasVisibleContribution,
           handleBarClick,
           applyRowBadges,
           renderFooterButtons,
+          onSeatSwitched,
           menuEntriesFor,
           handleMenuPick,
           renderSectionsInto,
@@ -33228,7 +33251,7 @@ ${detail}` });
       var { SearchAddon } = require_addon_search();
       var { WebLinksAddon } = require_addon_web_links();
       var { isExternallyOpenable } = require_external_link();
-      var { pluginReaches, pluginsForUnlistedPlugins, mergePlugins } = require_plugin_api();
+      var { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require_plugin_api();
       var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
@@ -34430,6 +34453,7 @@ ${detail}` });
         }
         updateSidebarActive();
         emptyState.style.display = "none";
+        pluginBar.onSeatSwitched();
         renderProxyBar();
         if (window.api.getProxySnapshot) {
           window.api.getProxySnapshot(name).then((p) => {
@@ -35263,10 +35287,10 @@ ${detail}` });
         const type = inputType.value;
         const agentType = type === "claude" || type === "codex";
         const intents = type === "claude" ? collectIntentChecklist(inputIntentList) : null;
-        const plugins = type === "claude" ? mergePlugins(
+        const plugins = getPluginCatalogCache().length ? type === "claude" ? mergePlugins(
           collectPluginChecklist(inputPluginList),
           pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id)))
-        ) : defaultPluginTicks();
+        ) : defaultPluginTicks() : null;
         const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
         return {
@@ -35277,7 +35301,7 @@ ${detail}` });
           agents: type === "claude" ? collectAgentChecklist(inputAgentsList) : [],
           execCommands: type === "claude" ? collectExecChecklist(inputExecList) : [],
           ...Array.isArray(intents) ? { intents } : {},
-          plugins,
+          ...plugins ? { plugins } : {},
           ...autoCompactOff ? { autoCompact: false } : {},
           ...noWireOn ? { noWire: true } : {},
           denyBuiltins: type === "claude" ? collectBuiltinChecklist(inputBuiltinsList) : [],
@@ -35492,10 +35516,10 @@ ${detail}` });
           fillSystemPromptSelect(inputSystemPrompt, tpl && tpl.systemPromptFile || "");
           renderAppendChecklist(inputAppendList, new Set(tpl && tpl.appendPromptFiles || []));
         }
+        await refreshNewSessionPlugins(tpl && tpl.plugins);
         if (inputType.value === "claude") {
           renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []));
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
-          await refreshNewSessionPlugins(tpl && tpl.plugins);
           await refreshNewSessionIntents(tpl && tpl.intents);
           renderBuiltinChecklist(inputBuiltinsList, new Set(tpl && tpl.denyBuiltins || []));
           await refreshNewSessionTools(new Set(tpl && tpl.disabledTools || []));
@@ -35708,11 +35732,8 @@ ${detail}` });
         const type = (st.sessions || []).find((s) => s.name === entry.peer.name)?.type;
         return !type || type === "claude" || type === "codex";
       }
-      var scopedPluginIds = /* @__PURE__ */ new Set();
       function pluginReachesSession(pluginId, sessionName) {
-        if (!scopedPluginIds.has(pluginId)) return true;
-        const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
-        return pluginReaches(pluginId, grants);
+        return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins);
       }
       var pluginBar = initPluginHost({
         getActiveSession: () => activeSession,
@@ -35762,19 +35783,14 @@ ${detail}` });
         if (window.__CLODEX_WEB__ || !window.require) return null;
         return window.require(rendererPath);
       }
-      async function refreshScopedPluginIds() {
+      async function loadPluginRenderers() {
+        if (!window.api.pluginCatalog) return;
         let catalog = null;
         try {
           catalog = await window.api.pluginCatalog();
         } catch {
-          return null;
+          return;
         }
-        scopedPluginIds = new Set((catalog || []).filter((p) => p && p.scope === "session").map((p) => p.id));
-        return catalog || [];
-      }
-      async function loadPluginRenderers() {
-        if (!window.api.pluginCatalog) return;
-        const catalog = await refreshScopedPluginIds();
         for (const p of catalog || []) {
           if (!p || !p.enabled) continue;
           await activatePluginRenderer(p.id);
@@ -35784,11 +35800,8 @@ ${detail}` });
       if (window.api.onPluginEvent) {
         window.api.onPluginEvent((pluginId, topic, payload) => {
           if (pluginId === "_host" && topic === "plugin-state" && payload && payload.id) {
-            if (payload.enabled) {
-              refreshScopedPluginIds().then((c) => {
-                if (c) activatePluginRenderer(payload.id);
-              });
-            } else pluginBar.dispose(payload.id);
+            if (payload.enabled) activatePluginRenderer(payload.id);
+            else pluginBar.dispose(payload.id);
             if (pluginsOverlay && !pluginsOverlay.classList.contains("hidden")) renderPluginsDialog();
             return;
           }

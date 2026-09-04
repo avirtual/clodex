@@ -217,9 +217,8 @@ const PLUGIN_VERB_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 
 // Module-level, deliberately: `parseIntent` and `_extractIntents` read this
 // list from three different feeds (jsonl, wire, bash PTY) without any of them
-// holding a registry reference. Because registration mutates the ONE list all
-// three read, a plugin verb is live on every feed by construction — the
-// "registered on one feed only" failure mode cannot be expressed (R-INT-3).
+// holding a registry reference. Registration mutates the ONE list all three
+// read, so "registered on one feed only" cannot be expressed.
 const pluginRows = [];
 
 function registerIntent(spec, source, opts = {}) {
@@ -312,8 +311,8 @@ function visiblePluginRows(plugins) {
 }
 
 
-// R-INT-1: the parse walk. Core rows first, ALWAYS — a plugin can never shadow
-// a core verb even before P5's collision check fires.
+// The parse walk. Core rows first, ALWAYS — a plugin can never shadow a core
+// verb even before the collision check fires.
 // `raw` is the same line with the decorator prefix stripped but the ANSI
 // sequences still IN it, and it is optional: every row but `term` ignores it and
 // a one-argument call still parses. It exists because the shell's ANSI strip
@@ -351,9 +350,7 @@ function intentEnabledFor(type, intentsList) {
 
 // The fire gate, seat-aware: `intents` alone is not enough for a plugin verb,
 // because a seat can hold a stale allowlist entry for a plugin it no longer has
-// and every write-time prune is a place that can be forgotten. Takes the whole
-// persistence entry rather than two lists so a caller cannot pass one and not
-// the other.
+// and every write-time prune is a place that can be forgotten.
 function intentEnabledForSeat(type, entry) {
   const row = pluginRowFor(type);
   if (!row) return intentEnabled(type, entry && entry.intents);
@@ -378,13 +375,9 @@ function pruneForPlugins(entry, pluginsList) {
       const at = String(g).indexOf(':');
       if (at <= 0) return false;
       const id = String(g).slice(0, at);
-      // The same `!row` exemption the verbs half above applies. A quarantined
-      // plugin has no row (deactivate unregisters its source) and so is absent
-      // from the catalog snapshot every editor saves; pruning against that
-      // snapshot would revoke its grants on the first unrelated Edit-save,
-      // irreversibly, because the operator never saw it to re-tick. This module
-      // sees verbs only, so a loaded plugin that registers none is exempted
-      // here too — widening the retention, never the revoke.
+      // The same `!row` exemption the verbs half applies: a rowless plugin is
+      // absent from the catalog snapshot every editor saves, so pruning against
+      // that snapshot would revoke its grants irreversibly.
       if (!pluginRows.some((r) => r.source === id)) return true;
       return seatHasPlugin(id, pluginsList);
     })
@@ -400,9 +393,9 @@ function withoutPrivilegedIntentsFor(intentsList) {
   return withoutPrivilegedIntents(intentsList).filter((t) => !pluginRowFor(t));
 }
 
-// R-INT-4: the checklist projection. GATEABLE_INTENTS in ITS order (which owns
-// checklist row order), then plugin rows in registration order — so the
-// existing checklist is byte-identical and simply grows a plugin tail.
+// GATEABLE_INTENTS in ITS order (which owns checklist row order), then plugin
+// rows in registration order — the existing checklist stays byte-identical and
+// simply grows a plugin tail.
 function catalogRows(plugins) {
   return [
     ...GATEABLE_INTENTS.map((i) => ({ type: i.type, label: i.label, privileged: PRIVILEGED_INTENTS.has(i.type), source: 'core' })),

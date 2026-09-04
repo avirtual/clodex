@@ -24,23 +24,17 @@ function initPluginHost({
 // No `= () => null` default here: the leak scanner's param matcher cannot
 // cross nested parens, and a defaulted arrow hides every dep above it.
   getWorkspaceId,
-// (pluginId, sessionName) -> bool. The SURFACING gate's renderer half (t190):
-// false hides a session-scoped plugin's per-session UI from that session.
-// Absent = everything reaches everything, which is what a host built before
-// scopes existed did — so the default is today's behaviour, not a refusal.
+// (pluginId, sessionName) -> bool. Absent = everything reaches everything, which
+// is what a host built before this existed did — the default is today's
+// behaviour, not a refusal.
   pluginReachesSession,
 } = {}) {
-  // The `reaches(` call sites below are the list, and are the reason this says
-  // no number. (It said "the three PER-SESSION slots" while there were four. A
-  // comment that counts its own siblings goes stale the next time one is added,
-  // which is precisely when nobody rereads it.)
-  //
+  // The `reaches(` call sites below are the list — deliberately uncounted here,
+  // since a comment that counts its siblings goes stale as one is added.
   // Per-session slots HIDE on false; the footer button and the overlay REFUSE
-  // instead — dimmed and toasted, never removed. A vanishing footer button
-  // reflows the chrome on every seat switch, and would show more buttons with
-  // nothing selected than with a seat selected. `settingsSections` are ungated:
-  // the Plugins dialog configures a plugin process-wide, so a seat decision has
-  // nothing to say there.
+  // instead — dimmed and toasted, never removed, or the chrome reflows on every
+  // seat switch. `settingsSections` are ungated: the Plugins dialog configures a
+  // plugin process-wide, so a seat decision has nothing to say there.
   function reaches(pluginId, sessionName) {
     if (typeof pluginReachesSession !== 'function') return true;
     if (!sessionName) return true;
@@ -231,10 +225,8 @@ function initPluginHost({
     requestRelayout() { if (scheduleSidebarRelayout) scheduleSidebarRelayout(); },
   };
 
-  // Paint plugin badges into a row's .session-badges, mirroring applyPrBadge
-  // (renderer.js:1045) — one span per registered badge, data-tip for the
-  // body-delegated tooltip, removed when resolve() returns null. `resolve` is
-  // SYNC by contract: the plugin fills its own cache and calls requestRelayout.
+  // `resolve` is SYNC by contract: the plugin fills its own cache and calls
+  // requestRelayout. Removed from the row when resolve() returns null.
   function applyRowBadges(item) {
     if (!item || !rowBadges.length) return;
     const badges = item.querySelector('.session-badges');
