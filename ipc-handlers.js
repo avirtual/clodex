@@ -22,6 +22,7 @@ const { feedSince } = require('./subagent-ring');
 // peer:import handlers below).
 const peerImport = require('./peer-import');
 const { wireSeatFor } = require('./peer-shell');
+const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
 // The shipped thresholds, read from the module that DECIDES with them rather
 // than restated here: Preferences shows them as the values in force when the
 // operator has set nothing, and a second copy would show a number the reminder
@@ -2074,8 +2075,8 @@ function registerIpcHandlers(deps) {
   // flag below. The two are separate because their arguments are separate, and
   // merging them again would re-gate a shell the same host already hands out.
   //
-  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:`/`drawer:` are
-  // ABSENT from the web-host handler map — absent, not present-and-guarded).
+  // Pinned by test/drawer-services-seam.test.js (asserts `console:`, `ctl:` and
+  // `drawer:` are ABSENT from the web-host map — absent, not present-and-guarded).
   if (enableDrawerServices) {
     handle('ctl:run', async (_e, line) => {
       const svc = getCtlService();
@@ -2094,9 +2095,16 @@ function registerIpcHandlers(deps) {
       const svc = getCtlService();
       return svc ? svc.helpIndex() : null;
     });
+    handle('console:read', (_e, name, cursor) => {
+      const raw = typeof name === 'string' ? name : '';
+      const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
+      if (!seat) return { records: [], cursor: '', reset: false, skipped: 0, live: false };
+      const since = typeof cursor === 'string' && RECORD_NAME_RE.test(cursor) ? cursor : '';
+      return readBashConsole(REGISTRY_DIR, seat, since);
+    });
     // The drawer selection as a tail hint on the named session's route. Inside
-    // this gate for the sharpest reason of the three: every other channel here
-    // runs something on the host, while this one writes caller-supplied text
+    // this gate for the sharpest reason in this block: the others run something
+    // on the host or read from it, while this one writes caller-supplied text
     // into an agent's next request — an ungated registration is a prompt
     // injection channel for any authenticated web connection.
     //

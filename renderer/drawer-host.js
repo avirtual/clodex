@@ -72,7 +72,7 @@ const ARM_DEBOUNCE_MS = 300;
 // Fixed order and the frozen id set: tab ids are part of the agent-facing
 // source grammar (`drawer:<tabId>`), so they are chosen once and an unknown id
 // is a programming error, not a new tab.
-const TAB_IDS = Object.freeze(['log', 'activity', 'ctl', 'term']);
+const TAB_IDS = Object.freeze(['log', 'activity', 'console', 'ctl', 'term']);
 
 // Beyond this the badge is "a lot"; the count itself keeps counting.
 const BADGE_MAX = 99;
@@ -252,7 +252,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   }
 
   // Tenants register statically from renderer.js at boot; the register calls
-  // ARE the registry (four known tenants do not justify a dynamic one).
+  // ARE the registry (a handful of known tenants do not justify a dynamic one).
   //
   // `available()` hides a tab in an environment that cannot serve it. It is a
   // UI nicety the client controls and NOT a security boundary: a tenant backed
@@ -269,8 +269,8 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // re-running the environment test on every switch, or — the defect this
   // fixes — never re-running the seat test at all.
   //
-  // A tenant without it is available for every seat, which is what the three
-  // non-terminal tenants want: their content is workspace-wide.
+  // A tenant without it is available for every seat, which is what a tenant whose
+  // content is workspace-wide (the log, the activity feed, ctl) wants.
   function servesSeat(rec) {
     if (!rec.def.availableFor) return true;
     try { return rec.def.availableFor(seatType()); } catch { return true; }
@@ -468,7 +468,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     copyBtn.classList.toggle('armed', has);
     // Every selection change in the drawer funnels through here — the document
     // listener, xterm's own callback, tab switches and collapse all call it — so
-    // this is the one place the arm has to hang off to cover all four tenants.
+    // this is the one place the arm has to hang off to cover every tenant.
     scheduleArm();
   }
 

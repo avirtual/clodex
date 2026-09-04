@@ -62,6 +62,7 @@ const { createEchoRewriter } = require('./lib/prompt-echo');
 const { initLibraryDrawers } = require('./library-drawers');
 const { createActivityTab } = require('./activity-tab');
 const { createCtlTab } = require('./ctl-tab');
+const { createConsoleTab } = require('./console-tab');
 const { createTermTab } = require('./term-tab');
 const { classifySubagent } = require('./lib/subagent-policy');
 const { initSessionHovercard } = require('./session-hovercard');
@@ -3583,6 +3584,12 @@ const {
 } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
 
 createCtlTab({ host: drawerHost });
+
+createConsoleTab({
+  host: drawerHost,
+  getActiveSession: () => activeSession,
+  getSeatType: () => (activeSession ? sessionTypeOf(activeSession) : null),
+});
 
 // The workbench shell takes the session terminals' theme, read per-mount so a
 // theme switch before first open is picked up.

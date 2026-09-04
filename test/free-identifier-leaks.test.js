@@ -376,6 +376,10 @@ const RENDERER_SCANNED_MODULES = [
   // point — the pane must reach main only through `window.api`, and a
   // renderer.js name appearing in it is the first sign it grew a second path.
   'renderer/ctl-tab.js',
+  // The Bash console tenant (t645), scanned on the same forward-scan reasoning:
+  // it is per-SEAT, so `activeSession` is the exact renderer.js name it would
+  // reach for instead of taking the seat through its injected getter.
+  'renderer/console-tab.js',
   // The drawer's workbench terminal tenant (t215), same standing as ctl-tab:
   // it must reach main only through `window.api`, and it owns an xterm, so a
   // renderer.js terminal-management name appearing here is the sign it started

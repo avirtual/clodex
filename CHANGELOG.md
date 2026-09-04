@@ -13,6 +13,22 @@ blocks a release.
 
 ## Unreleased
 
+- **A new Console tab in the bottom drawer shows what a seat's Bash tool actually
+  ran.** The CLI renders its own Bash calls as a few scattered truncated lines;
+  this shows one block per call with the full command and its complete output
+  (stdout and stderr interleaved as they happened), how long it took, and — the
+  part the CLI's inline view hides hardest — the exit code and error text of the
+  commands that FAILED. Per-seat like the Terminal tab: each agent shows its own,
+  and switching sessions switches the content. The tab appears only for Claude
+  seats, since that is where the data comes from, and only in the desktop app —
+  the browser surface cannot serve it.
+  Output arrives at completion, not as it streams, so a long-running command
+  shows nothing until it finishes. When the CLI truncates a very large result the
+  block says so and reports the full size. Parallel Bash calls are all captured
+  intact — each is recorded as its own file, so concurrent calls cannot overwrite
+  or splice each other. If a seat runs more calls than one refresh can carry, the
+  pane marks how many it skipped rather than dropping them silently.
+
 ## 5.25.0 — 2026-09-03
 
 - **Low-contrast terminal output is now floored at a readable ratio.** The CLI

@@ -43,12 +43,19 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
   assert.ok(Array.isArray(settings.hooks.SessionStart));
   assert.ok(Array.isArray(settings.hooks.UserPromptSubmit));
-  // PostToolUse drains parked DMs MID-LOOP (between tool calls). It must carry
-  // the pending drain ONLY — acks/ctxwarn are turn-boundary bookkeeping and must
-  // not fire per-tool. Pin both facts: PostToolUse exists, and its single hook is
-  // the same pendingScriptPath the UserPromptSubmit block's middle hook uses.
+  // PostToolUse drains parked DMs MID-LOOP (between tool calls). The
+  // MATCHER-LESS entry must carry the pending drain ONLY — acks/ctxwarn are
+  // turn-boundary bookkeeping and must not fire per-tool. Pin both facts: the
+  // entry exists, and its single hook is the same pendingScriptPath the
+  // UserPromptSubmit block's middle hook uses.
+  //
+  // Resolved by MATCHER, not by index: the Bash console (t645) registers a
+  // SECOND PostToolUse entry under `matcher: 'Bash'`, and an index here would
+  // make this assertion about whichever entry happened to be written first.
   assert.ok(Array.isArray(settings.hooks.PostToolUse));
-  const postCmds = settings.hooks.PostToolUse[0].hooks.map((h) => h.command);
+  const anyToolEntry = settings.hooks.PostToolUse.find((x) => x.matcher === '');
+  assert.ok(anyToolEntry, 'ENTER: the matcher-less (any-tool) entry must exist to be asserted about');
+  const postCmds = anyToolEntry.hooks.map((h) => h.command);
   // Resolved BY NAME, not by index: this assertion is about which drain runs
   // per-tool, and the UserPromptSubmit ordering is a separate decision pinned in
   // ipc-prompt-cache-rework.test.js (the delta goes first). An index here silently
@@ -57,7 +64,8 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   const submitCmds = settings.hooks.UserPromptSubmit[0].hooks.map((h) => h.command);
   const pendingCmd = submitCmds.find((c) => c.endsWith('pending.sh'));
   assert.ok(pendingCmd, 'the pending drain must be registered under UserPromptSubmit');
-  assert.deepStrictEqual(postCmds, [pendingCmd], 'PostToolUse must drain pending only');
+  assert.deepStrictEqual(postCmds, [pendingCmd],
+    'the matcher-less PostToolUse entry must drain pending only');
   assert.match(pendingCmd, /pending/); // the pending drain script, not acks/ctxwarn
 
   // The pending drain runs under BOTH events, so its output hookEventName must be
@@ -492,7 +500,10 @@ test('the selection drain claims by rename, consumes, and emits UserPromptSubmit
   assert.ok(submitCmds.includes(scriptPath), 'the selection drain must be under UserPromptSubmit');
   // NOT under PostToolUse: an attachment is the operator's turn-boundary
   // gesture, and draining it mid-loop would land it between two tool calls.
-  const postCmds = settings.hooks.PostToolUse[0].hooks.map((x) => x.command);
+  // Flattened across EVERY PostToolUse entry, not just the first: the claim is
+  // that this drain fires per-tool NOWHERE, and reading one entry would leave it
+  // true of that entry while the drain sat in another.
+  const postCmds = settings.hooks.PostToolUse.flatMap((x) => x.hooks.map((h) => h.command));
   assert.ok(!postCmds.includes(scriptPath), 'the drain must not fire per-tool');
 
   // Two clicks between submits, as the queue is written.
@@ -581,4 +592,293 @@ test('CONTROL: the at-least-once writes are deliberately NOT fsynced', () => {
   assert.match(delta, /renameSync/, 'ENTER: the delta script must still advance by rename');
   assert.ok(!/fsyncSync/.test(delta),
     'the baseline advance is at-least-once by design: a lost rename re-delivers the diff, a durable one cannot be undone');
+});
+
+// ─── The Bash console hook (t645) ──────────────────────────────────────────
+// Three properties, each a defect if it flips:
+//   1. it is registered under BOTH PostToolUse and PostToolUseFailure — a
+//      failing Bash call fires ONLY the second, so the success-event-only
+//      version omits exactly the commands worth reading;
+//   2. both registrations carry `matcher: 'Bash'` — a matcher-less one would run
+//      this append after every Read, Grep and Edit;
+//   3. it spawns NO interpreter. This runs synchronously on the critical path of
+//      every Bash call, so an INTERP here is latency added to the agent's work.
+test('the console hook is registered under BOTH tool-result events, for Bash only', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'settings'), 'utf-8'));
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+
+  // The failure event is the one this ticket exists for, so it is asserted as a
+  // WHOLE entry: a second hook quietly added to it, or a matcher widened to '',
+  // would pass a mere `includes`.
+  assert.deepStrictEqual(settings.hooks.PostToolUseFailure, [{
+    matcher: 'Bash',
+    hooks: [{ type: 'command', command: scriptPath }],
+  }], 'a failing Bash call fires ONLY this event — no registration here means no failures shown');
+
+  const bashEntries = settings.hooks.PostToolUse.filter((e) => e.matcher === 'Bash');
+  assert.deepStrictEqual(bashEntries, [{
+    matcher: 'Bash',
+    hooks: [{ type: 'command', command: scriptPath }],
+  }], 'the success event carries the same script under the same matcher');
+
+  // The matcher-less entry must NOT have gained it: that entry fires for every
+  // tool, and merging the two is the mistake the separate entry exists to avoid.
+  const anyTool = settings.hooks.PostToolUse.find((e) => e.matcher === '');
+  assert.ok(anyTool, 'ENTER: the matcher-less entry still exists');
+  assert.ok(!anyTool.hooks.some((x) => x.command === scriptPath),
+    'the console must not run after every tool — only after Bash');
+});
+
+test('the console hook spools raw hook JSON per record and spawns no interpreter', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const consolePath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+
+  const body = fs.readFileSync(scriptPath, 'utf-8');
+  // The INTERP string is what every OTHER generated hook uses, so its absence
+  // here is the load-bearing claim rather than a style note.
+  assert.ok(!body.includes('ELECTRON_RUN_AS_NODE'),
+    'no interpreter on the critical path of every Bash call');
+  assert.match(body, /exit 0/, 'must exit 0 unconditionally — hooks are fail-open and must stay so');
+  // The atomicity mechanism itself: written to a temp name, then RENAMED in. An
+  // append (`>>`) here is the shape that lost records under concurrency.
+  assert.match(body, /mv -f "\$T"/, 'a record must become visible by rename, never by append');
+  assert.ok(!/>> *"/.test(body), 'no append to a shared file — that is the race');
+
+  // Driven for real, both events, exactly as the CLI would pipe them.
+  const ok = JSON.stringify({
+    hook_event_name: 'PostToolUse', tool_name: 'Bash',
+    tool_input: { command: 'echo hi' },
+    tool_response: { stdout: 'hi', stderr: '' }, tool_use_id: 'a', duration_ms: 5,
+  });
+  const bad = JSON.stringify({
+    hook_event_name: 'PostToolUseFailure', tool_name: 'Bash',
+    tool_input: { command: 'false' }, tool_use_id: 'b',
+    error: 'Exit code 1\n', is_interrupt: false, duration_ms: 3,
+  });
+  for (const payload of [ok, bad]) {
+    const r = cp.spawnSync('bash', [scriptPath], { input: payload, encoding: 'utf-8' });
+    assert.strictEqual(r.status, 0, `the hook must exit 0, got ${r.status}: ${r.stderr}`);
+    assert.strictEqual(r.stdout, '', 'it returns nothing to the CLI — it is a writer, not a drain');
+  }
+
+  // ONE FILE PER RECORD, each holding the hook's JSON unmodified.
+  const files = fs.readdirSync(consolePath).filter((n) => n.endsWith('.json')).sort();
+  assert.strictEqual(files.length, 2, 'ENTER: both events spooled, so the parse below is real');
+  const parsed = files.map((f) => JSON.parse(fs.readFileSync(path.join(consolePath, f), 'utf-8')));
+  assert.deepStrictEqual(parsed.map((p) => p.hook_event_name).sort(),
+    ['PostToolUse', 'PostToolUseFailure'], 'both shapes land, unmodified');
+  // The reader is the thing that has to consume these bytes, so pin the round
+  // trip rather than the files' shape alone: a hook whose output the reader
+  // cannot parse is a green hook test over a broken feature.
+  const { readBashConsole } = require('../bash-console');
+  const recs = readBashConsole(REGISTRY_DIR, 'agent1', '').records;
+  assert.deepStrictEqual(recs.map((r) => [r.command, r.failed]).sort(),
+    [['echo hi', false], ['false', true]].sort(),
+    'the reader turns the hook\'s own bytes into one ok block and one failed block');
+});
+
+
+// THE TEST THAT WOULD HAVE CAUGHT THE FIRST SHAPE OF THIS FEATURE. It appended
+// each record to a shared JSONL in two writes (body, then newline), and the CLI
+// fires Bash hooks CONCURRENTLY: measured, four simultaneous writers left 1/20
+// records parseable at 400-BYTE payloads, so this is not a large-output edge
+// case. The loss was SILENT — a damaged line fails JSON.parse and is skipped, so
+// the symptom was a console quietly missing commands.
+//
+// Driven through the REAL generated script with real concurrent processes. A
+// sequential version of this test passes under the broken shape, which is
+// precisely why it has to spawn them at once.
+test('the console hook loses nothing when Bash hooks fire concurrently', async () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+
+  // Payloads big enough that a shared append cannot be atomic, and DISTINCT so a
+  // lost one is identifiable rather than merely a smaller count.
+  const WRITERS = 6;
+  const payloads = [];
+  for (let i = 0; i < WRITERS; i++) {
+    payloads.push(JSON.stringify({
+      hook_event_name: i % 2 ? 'PostToolUse' : 'PostToolUseFailure',
+      tool_name: 'Bash',
+      tool_input: { command: `cmd-${i}` },
+      tool_use_id: `t${i}`,
+      duration_ms: i,
+      ...(i % 2
+        ? { tool_response: { stdout: `${'x'.repeat(20000)}-${i}`, stderr: '' } }
+        : { error: `Exit code ${i + 1}\nboom-${i}`, is_interrupt: false }),
+    }));
+  }
+
+  // All six started before any is waited on — spawnSync in a loop would
+  // serialize them and prove nothing about the race.
+  const kids = payloads.map(() => cp.spawn('bash', [scriptPath], { stdio: ['pipe', 'ignore', 'ignore'] }));
+  const closed = kids.map((k) => new Promise((res) => k.on('close', res)));
+  kids.forEach((k, i) => { k.stdin.end(payloads[i]); });
+  const codes = await Promise.all(closed);
+  assert.deepStrictEqual(codes, payloads.map(() => 0),
+    `every hook must exit 0, got ${codes.join(',')}`);
+
+  // Every record recoverable, and recoverable AS ITS OWN SELF.
+  const { readBashConsole } = require('../bash-console');
+  const res = readBashConsole(REGISTRY_DIR, 'agent1', '');
+  assert.strictEqual(res.records.length, WRITERS,
+    `all ${WRITERS} concurrent records must survive, got ${res.records.length} — a shared append loses them here`);
+  assert.deepStrictEqual(res.records.map((r) => r.command).sort(),
+    payloads.map((_, i) => `cmd-${i}`).sort(),
+    'and each is the record its own writer wrote, not a splice of two');
+
+  // No writer left its scratch file behind.
+  assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.startsWith('.tmp')), [],
+    'the rename must consume every temp file');
+});
+
+// `date +%s%N` is a GNU/FreeBSD-14.1 EXTENSION, not POSIX. On a macOS old enough
+// to predate it — the README declares the floor at 12, and no box either author
+// can test on is one — `%N` comes back LITERALLY, so the name is
+// `<secs>N-<pid>.json`. Unguarded, that name fails the reader's grammar and the
+// cursor never advances: the same handful of calls repaints every 1.2s while real
+// ones scroll out of the pane. The guard is pure builtins (no interpreter, no
+// extra subprocess) and the fallback branch IS reachable here, with a stub `date`
+// ahead of the script on PATH.
+test('the console hook survives a `date` with no %N extension', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+
+  const stubDir = path.join(REGISTRY_DIR, 'stub-bin');
+  fs.mkdirSync(stubDir, { recursive: true });
+  const stub = path.join(stubDir, 'date');
+  fs.writeFileSync(stub, [
+    '#!/bin/bash',
+    'case "$1" in',
+    '  +%s%N) echo "1788481092N" ;;',
+    '  +%s)   echo "1788481092" ;;',
+    '  *) exit 1 ;;',
+    'esac',
+  ].join('\n'), { mode: 0o755 });
+
+  const r = cp.spawnSync('bash', [scriptPath], {
+    input: JSON.stringify({
+      hook_event_name: 'PostToolUse', tool_name: 'Bash',
+      tool_input: { command: 'echo no-nanoseconds' },
+      tool_response: { stdout: 'ok', stderr: '' }, tool_use_id: 'q', duration_ms: 1,
+    }),
+    encoding: 'utf-8',
+    env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` },
+  });
+  assert.strictEqual(r.status, 0);
+
+  const names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+  assert.strictEqual(names.length, 1, 'ENTER: the hook really did land a record under the stub');
+  const { RECORD_NAME_RE, readBashConsole } = require('../bash-console');
+  assert.match(names[0], RECORD_NAME_RE,
+    `the fallback name must satisfy the grammar the cursor validator uses, got ${names[0]}`);
+  assert.strictEqual(names[0].split('-')[0].length, 19,
+    'and pad to the same width as a real nanosecond stamp, or the sort stops being chronological');
+
+  // The whole failure was a cursor that could not advance. This is that check.
+  const first = readBashConsole(REGISTRY_DIR, 'agent1', '');
+  assert.strictEqual(first.records.length, 1, 'the record is readable');
+  const again = readBashConsole(REGISTRY_DIR, 'agent1', first.cursor);
+  assert.deepStrictEqual(again.records, [],
+    'and resuming from its cursor returns nothing — the duplicate-forever loop is closed');
+});
+
+// The prune must reap a spool orphaned by a killed hook, and must NOT touch one a
+// LIVE writer is still filling. A bare `rm -f "$D"/.tmp.*` does the first and
+// fails the second: measured on this box, 12 concurrent writers with the bare
+// sweep lost 77 of 120 records — the round-1 defect reintroduced by its own fix.
+// The pid is in the name, so `kill -0` tells the two apart.
+test('the console hook reaps an ORPHANED spool but spares a live writer\'s', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+  fs.mkdirSync(dir, { recursive: true });
+
+  // A pid nothing owns. Walk up until kill -0 fails, so the fixture cannot
+  // accidentally name a live process and assert the opposite of what it means.
+  let deadPid = 90000;
+  for (;;) {
+    try { process.kill(deadPid, 0); deadPid++; } catch (e) {
+      if (e.code === 'ESRCH') break;
+      deadPid++;
+    }
+  }
+  const orphan = path.join(dir, `.tmp.${deadPid}`);
+  const livePid = process.pid;          // this test runner is unambiguously alive
+  const live = path.join(dir, `.tmp.${livePid}`);
+  fs.writeFileSync(orphan, '{"half":');
+  fs.writeFileSync(live, '{"still":');
+
+  const r = cp.spawnSync('bash', [scriptPath], {
+    input: JSON.stringify({
+      hook_event_name: 'PostToolUse', tool_name: 'Bash',
+      tool_input: { command: 'echo sweep' },
+      tool_response: { stdout: 'ok', stderr: '' }, tool_use_id: 'w', duration_ms: 1,
+    }),
+    encoding: 'utf-8',
+  });
+  assert.strictEqual(r.status, 0);
+
+  assert.ok(!fs.existsSync(orphan), 'the spool of a dead writer is reaped');
+  assert.ok(fs.existsSync(live),
+    'but a LIVE writer\'s spool is untouched — deleting it is the record loss this whole design prevents');
+});
+
+// The retention bound, and the reason it is a COUNT rather than the byte cap the
+// first shape used: a byte cap over a shared file needed a rotation, and only
+// the live generation was ever readable — so the second generation was written
+// and never shown. One record per file makes the bound a file count and the
+// oldest simply sort first.
+test('the console hook prunes the OLDEST records past its cap', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashConsoleScript');
+  const dir = pathFor(REGISTRY_DIR, 'agent1', 'bashConsole');
+  const { CONSOLE_MAX_RECORDS } = require('../bash-console');
+
+  assert.ok(fs.readFileSync(scriptPath, 'utf-8').includes(String(CONSOLE_MAX_RECORDS)),
+    'the generated script must test against the module\'s own cap, not a second literal');
+
+  // Seed one over the cap with names that sort oldest-first, then fire the hook
+  // once so its prune runs. Seeding is far cheaper than 2000 hook spawns.
+  fs.mkdirSync(dir, { recursive: true });
+  for (let i = 0; i <= CONSOLE_MAX_RECORDS; i++) {
+    fs.writeFileSync(path.join(dir, `${String(i).padStart(19, '0')}-1.json`), '{}');
+  }
+  const oldest = `${String(0).padStart(19, '0')}-1.json`;
+  assert.ok(fs.existsSync(path.join(dir, oldest)), 'ENTER: the oldest record is present before the prune');
+
+  const r = cp.spawnSync('bash', [scriptPath], {
+    input: JSON.stringify({
+      hook_event_name: 'PostToolUse', tool_name: 'Bash',
+      tool_input: { command: 'the newest' },
+      tool_response: { stdout: 'ok', stderr: '' }, tool_use_id: 'z', duration_ms: 1,
+    }),
+    encoding: 'utf-8',
+  });
+  assert.strictEqual(r.status, 0);
+
+  const left = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+  assert.ok(left.length <= CONSOLE_MAX_RECORDS,
+    `the spool must stay at or under ${CONSOLE_MAX_RECORDS}, found ${left.length}`);
+  assert.ok(!fs.existsSync(path.join(dir, oldest)), 'the OLDEST record is the one dropped');
+  // The record that triggered the prune must not be what the prune ate.
+  const { readBashConsole } = require('../bash-console');
+  const cmds = readBashConsole(REGISTRY_DIR, 'agent1', '').records.map((x) => x.command);
+  assert.ok(cmds.includes('the newest'), 'the call that triggered the prune is still recorded');
 });

@@ -5131,6 +5131,7 @@ body {
   visibility: visible;
 }
 .drawer-pane[data-tab=ctl],
+.drawer-pane[data-tab=console],
 .drawer-pane[data-tab=term] {
   background: var(--bg);
 }
@@ -5338,6 +5339,79 @@ body {
   color: var(--text-dim);
   font-family: inherit;
   font-size: inherit;
+}
+#console-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family:
+    "SF Mono",
+    "Menlo",
+    monospace;
+  font-size: 12px;
+}
+#console-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 11px;
+  font-family: -apple-system, sans-serif;
+  text-align: center;
+  padding: 30px 0;
+}
+.console-block {
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 8px;
+  margin-bottom: 8px;
+}
+.console-block.failed {
+  border-left-color: var(--error);
+}
+.console-block-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.console-block-cmd {
+  color: var(--text);
+  font-weight: 600;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+.console-block-time,
+.console-block-mark {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.console-block-exit {
+  color: var(--error);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.console-block-out {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: inherit;
+}
+.console-block-note {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+}
+.console-gap {
+  margin: 6px 0;
+  padding: 3px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+  text-align: center;
 }
 #ctl-input-row {
   display: flex;
@@ -7456,10 +7530,11 @@ body {
         // The drawer's clodexctl REPL (t214). Present in the contract on BOTH
         // surfaces because the contract is a binding table, not a permission list —
         // the web build's `ctl:run` binding simply has no handler to reach, since
-        // registration is gated on enableDrawerServices (ipc-handlers.js).
+        // registration is gated on enableDrawerServices (ipc-handlers.js). `consoleRead` rides the same story.
         { name: "ctlRun", kind: "invoke", channel: "ctl:run" },
         { name: "ctlContext", kind: "invoke", channel: "ctl:context" },
         { name: "ctlHelp", kind: "invoke", channel: "ctl:help" },
+        { name: "consoleRead", kind: "invoke", channel: "console:read" },
         // The drawer's selection → wirescope tail hint. Under the SAME gate as the
         // rest of the drawer family and for a sharper reason than either: it puts
         // caller-supplied text into an agent's next request, so an ungated
@@ -22248,7 +22323,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_drawer_host = __commonJS({
     "renderer/drawer-host.js"(exports, module) {
       var ARM_DEBOUNCE_MS = 300;
-      var TAB_IDS = Object.freeze(["log", "activity", "ctl", "term"]);
+      var TAB_IDS = Object.freeze(["log", "activity", "console", "ctl", "term"]);
       var BADGE_MAX = 99;
       function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType = null, onArmChanged = null }) {
         const armChanged = () => {
@@ -26185,6 +26260,189 @@ helper=${d.helperPath}`;
         return { open: () => host.open("ctl") };
       }
       module.exports = { createCtlTab, MAX_BLOCKS };
+    }
+  });
+
+  // renderer/console-tab.js
+  var require_console_tab = __commonJS({
+    "renderer/console-tab.js"(exports, module) {
+      var { esc } = require_format();
+      var MAX_BLOCKS = 300;
+      var POLL_MS = 1200;
+      function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
+        const seats = /* @__PURE__ */ new Map();
+        let seat = null;
+        let bodyEl = null;
+        let emptyEl = null;
+        let pollTimer = null;
+        let pulling = false;
+        let notify = Object.assign(() => {
+        }, { selectionChanged: () => {
+        } });
+        const typeNow = () => {
+          try {
+            return getSeatType ? getSeatType() : null;
+          } catch {
+            return null;
+          }
+        };
+        function stateFor(name) {
+          let st = seats.get(name);
+          if (!st) {
+            st = { cursor: "", blocks: [], lastKeys: /* @__PURE__ */ new Set() };
+            seats.set(name, st);
+          }
+          return st;
+        }
+        function fmtDuration(ms) {
+          if (typeof ms !== "number") return "";
+          if (ms < 1e3) return `${ms}ms`;
+          if (ms < 6e4) return `${(ms / 1e3).toFixed(1)}s`;
+          const m = Math.floor(ms / 6e4);
+          return `${m}m${String(Math.round(ms % 6e4 / 1e3)).padStart(2, "0")}s`;
+        }
+        function fmtBytes(n) {
+          if (typeof n !== "number") return "";
+          if (n < 1024) return `${n} B`;
+          if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+          return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+        }
+        function blockNode(b) {
+          const el = document.createElement("div");
+          el.className = "console-block" + (b.failed ? " failed" : "");
+          const marks = [];
+          if (b.failed) {
+            marks.push(`<span class="console-block-exit">${b.exitCode === null ? "failed" : `exit ${esc(String(b.exitCode))}`}</span>`);
+          }
+          if (b.interrupted) marks.push('<span class="console-block-mark">interrupted</span>');
+          if (b.timedOut) marks.push('<span class="console-block-mark">timed out</span>');
+          const dur = fmtDuration(b.durationMs);
+          if (dur) marks.push(`<span class="console-block-time">${esc(dur)}</span>`);
+          const head = `<div class="console-block-head"><span class="console-block-cmd">${esc(b.command)}</span>` + marks.join("") + "</div>";
+          const out = String(b.output || "").replace(/\n+$/, "");
+          const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : "";
+          const note = b.truncated ? `<div class="console-block-note">output truncated by the CLI at ${esc(String(out.length))} chars${b.fullBytes ? ` \u2014 the full result was ${esc(fmtBytes(b.fullBytes))}` : ""}</div>` : "";
+          el.innerHTML = head + body + note;
+          return el;
+        }
+        function gapNode(n) {
+          const el = document.createElement("div");
+          el.className = "console-gap";
+          el.textContent = `\u2026 ${n} earlier call${n === 1 ? "" : "s"} not shown \u2014 the backlog outran this pane`;
+          return el;
+        }
+        function pushBlock(st, b) {
+          st.blocks.push(b);
+          while (st.blocks.length > MAX_BLOCKS) st.blocks.shift();
+        }
+        function renderAll() {
+          if (!bodyEl) return;
+          const st = seat ? stateFor(seat) : null;
+          bodyEl.innerHTML = "";
+          if (!st || !st.blocks.length) {
+            emptyEl.textContent = seat ? `No Bash calls seen yet for ${seat}.` : "Select an agent session to see its Bash calls.";
+            bodyEl.appendChild(emptyEl);
+            return;
+          }
+          for (const b of st.blocks) bodyEl.appendChild(b.gap ? gapNode(b.gap) : blockNode(b));
+          bodyEl.scrollTop = bodyEl.scrollHeight;
+        }
+        function appendNew(st, records) {
+          const nearBottom = bodyEl && bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60;
+          if (emptyEl && emptyEl.parentNode === bodyEl) emptyEl.remove();
+          for (const b of records) {
+            pushBlock(st, b);
+            if (bodyEl) bodyEl.appendChild(b.gap ? gapNode(b.gap) : blockNode(b));
+          }
+          while (bodyEl && bodyEl.childElementCount > st.blocks.length) {
+            bodyEl.firstElementChild.remove();
+          }
+          if (bodyEl && nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+        }
+        async function pull() {
+          const name = seat;
+          if (!name || pulling) return;
+          const st = stateFor(name);
+          pulling = true;
+          let res = null;
+          try {
+            res = await window.api.consoleRead(name, st.cursor);
+          } catch {
+            return;
+          } finally {
+            pulling = false;
+          }
+          if (!res || seat !== name) return;
+          if (res.reset) {
+            st.blocks.length = 0;
+            st.lastKeys.clear();
+            renderAll();
+          }
+          st.cursor = typeof res.cursor === "string" && res.cursor ? res.cursor : st.cursor;
+          const raw = Array.isArray(res.records) ? res.records : [];
+          const records = raw.filter((r) => !st.lastKeys.has(r.key));
+          if (raw.length) st.lastKeys = new Set(raw.map((r) => r.key));
+          const skipped = typeof res.skipped === "number" && res.skipped > 0 ? res.skipped : 0;
+          if (!records.length && !skipped) return;
+          appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
+          notify(records.some((r) => r.failed) ? "attention" : "activity");
+        }
+        function startPolling() {
+          if (pollTimer) return false;
+          pollTimer = setInterval(pull, POLL_MS);
+          pull();
+          return true;
+        }
+        function stopPolling() {
+          if (!pollTimer) return;
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        function mount(pane, actions) {
+          pane.innerHTML = '<div id="console-body"><div id="console-empty"></div></div>';
+          bodyEl = pane.querySelector("#console-body");
+          emptyEl = pane.querySelector("#console-empty");
+          const clearBtn = document.createElement("button");
+          clearBtn.type = "button";
+          clearBtn.id = "console-clear";
+          clearBtn.title = "Clear this seat\u2019s console view";
+          clearBtn.setAttribute("aria-label", "Clear this seat\u2019s console view");
+          clearBtn.textContent = "\u232B";
+          clearBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (!seat) return;
+            stateFor(seat).blocks.length = 0;
+            renderAll();
+          });
+          actions.appendChild(clearBtn);
+        }
+        function onShow() {
+          const next = getActiveSession ? getActiveSession() : null;
+          const switched = next !== seat;
+          if (switched) {
+            seat = next;
+            renderAll();
+          }
+          const started = startPolling();
+          if (switched && !started) pull();
+        }
+        function onHide() {
+          stopPolling();
+        }
+        notify = host.register({
+          id: "console",
+          label: "Console",
+          available: () => !window.__CLODEX_WEB__,
+          availableFor: () => typeNow() === "claude",
+          mount,
+          onShow,
+          onHide,
+          selection: () => host.domSelection(bodyEl),
+          onSeatChanged: () => onShow()
+        });
+        return { open: () => host.open("console") };
+      }
+      module.exports = { createConsoleTab, MAX_BLOCKS, POLL_MS };
     }
   });
 
@@ -32737,6 +32995,7 @@ ${detail}` });
       var { initLibraryDrawers } = require_library_drawers();
       var { createActivityTab } = require_activity_tab();
       var { createCtlTab } = require_ctl_tab();
+      var { createConsoleTab } = require_console_tab();
       var { createTermTab } = require_term_tab();
       var { classifySubagent } = require_subagent_policy();
       var { initSessionHovercard } = require_session_hovercard();
@@ -35902,6 +36161,11 @@ Click for live activity`;
         dropParent: dropActivityFeeds
       } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
       createCtlTab({ host: drawerHost });
+      createConsoleTab({
+        host: drawerHost,
+        getActiveSession: () => activeSession,
+        getSeatType: () => activeSession ? sessionTypeOf(activeSession) : null
+      });
       createTermTab({
         host: drawerHost,
         xtermTheme: currentXtermTheme,

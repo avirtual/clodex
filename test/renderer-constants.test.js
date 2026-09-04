@@ -20,7 +20,7 @@ test('THEMES: four themes, each with a label + full xterm palette', () => {
 
 // The chrome palette lives in CSS and the terminal palette lives here, so
 // nothing but this test holds them together. It matters because the drawer's
-// terminal-shaped tenants (`ctl`, `term`) paint their ground with `var(--bg)`
+// terminal-shaped tenants (`ctl`, `console`, `term`) paint their ground with `var(--bg)`
 // specifically to match the xterm above them — retune one side's ground alone
 // and the console goes back to being a differently-coloured strip under the
 // terminal, which is the defect this pairing fixed.

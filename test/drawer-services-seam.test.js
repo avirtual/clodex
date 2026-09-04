@@ -47,7 +47,11 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // is still covered, and WEB_REGISTERED below asserts the local family is
 // present rather than leaving it unmentioned. A prefix dropped from a gate list
 // with nothing asserted on the other side is how a gate disappears silently.
-const GATED_PREFIXES = ['ctl:', 'drawer:', 'peer:wterm'];
+// `console:` (t645) reports a SEAT'S OWN command output — the same class as
+// drawer:inspectSelection, which is gated for reporting the operator's screen
+// text back. A web connection must not be able to ask a desktop box what its
+// agents have been running.
+const GATED_PREFIXES = ['console:', 'ctl:', 'drawer:', 'peer:wterm'];
 // The other half of that removal. Named here beside the gate list because the
 // two are one decision: these channels MUST reach the web surface, and a future
 // edit that re-gates them has to delete this constant to do it.
@@ -261,19 +265,23 @@ test('the term tab has no web-surface available() — and the committed bundle a
   assert.ok(!src.includes(GATE),
     'term-tab must not gate itself off the web surface — the handlers are registered there now');
 
-  // The ctl tab is the control: it KEEPS its gate, so a mutation that stripped
-  // the string everywhere (or a grep that matches nothing) fails here instead
-  // of passing quietly above.
+  // The controls: two tenants KEEP the gate, so a mutation that stripped the
+  // string everywhere (or a grep that matches nothing) fails here instead of
+  // passing quietly above. Both are gated for the same reason and term-tab is
+  // not: their handlers are absent from the web host's map.
   const ctl = fs.readFileSync(path.join(ROOT, 'renderer', 'ctl-tab.js'), 'utf8');
   assert.ok(ctl.includes(GATE), 'ENTER: ctl-tab still HAS the gate — ctl:* stays desktop-only');
+  const con = fs.readFileSync(path.join(ROOT, 'renderer', 'console-tab.js'), 'utf8');
+  assert.ok(con.includes(GATE), 'ENTER: console-tab too — console:read is gated out of the web host');
 
-  // One occurrence in the bundle, not zero: ctl-tab's. Zero would mean the
-  // grep is looking for a string esbuild rewrote, and this pin would then be
-  // green over anything at all.
+  // The count is exactly the gated tenants above, and it is a COUNT rather than
+  // a presence check so the term tab's gate coming back fails here. Zero would
+  // mean the grep is looking for a string esbuild rewrote, which would leave
+  // this pin green over anything at all.
   const web = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
   const hits = web.split(GATE).length - 1;
-  assert.strictEqual(hits, 1,
-    `expected exactly ctl-tab's gate in web-dist/index.html, found ${hits} — either the term tab's gate is back, or web-dist is stale (run \`npm run build:web\` and commit it)`);
+  assert.strictEqual(hits, 2,
+    `expected the ctl and console gates in web-dist/index.html, found ${hits} — either the term tab's gate is back, or web-dist is stale (run \`npm run build:web\` and commit it)`);
 });
 
 // The local-terminal flag is a real seam and not decoration: a host that means to
@@ -331,6 +339,7 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   assert.ok(registered.has('wterm:spawn'), 'the desktop path must register the workbench shell');
   assert.ok(registered.has('wterm:write'), 'and its input');
   assert.ok(registered.has('wterm:resize'), 'and its SIGWINCH');
+  assert.ok(registered.has('console:read'), 'and the Bash console pull');
   // The one channel here that writes into an agent's request rather than
   // running something on the host.
   assert.ok(registered.has('drawer:armSelection'), 'and the drawer selection hint');
@@ -570,4 +579,44 @@ test('peer:wtermOpen and peer:wtermClose both refuse when the sender resolves to
   assert.strictEqual(closed.ok, false, 'and the close is refused too — an anonymous caller can be neither credited nor ignored safely');
 
   assert.deepStrictEqual(calls, [], 'nothing reached the connection through either door');
+});
+
+// The RENDERER half of the console tenant (t645), and it exists for the same
+// reason the term-tab pin above does: `console-tab.js` is DOM-bound (the R1
+// rule), so nothing else would notice these two properties changing.
+//
+// Property one is the SEAT axis. The tab is per-seat and only a `claude` seat
+// writes a console at all — the hook is registered by setupClaudeHook, so a
+// codex seat, a bash seat (which runs no hooks and IS a shell) and a remote seat
+// (another box entirely) have no bytes to show. `availableFor` HIDES the tab for
+// those rather than leaving an inert empty pane, which is the defect the peer
+// terminal shipped with.
+//
+// Property two is the SURFACE axis, and it is NOT the t227 case. t227 removed a
+// surface test from the term tab because the web host DOES register `wterm:*`,
+// so the test hid a tab the host could serve. `console:read` is in
+// GATED_PREFIXES (asserted above), so the web host never registers it and the
+// tab could only ever read "No Bash calls seen yet" forever. An inert visible
+// pane is the defect the peer terminal shipped with; hidden is correct here, and
+// the two axes stay separate because only the seat one re-runs on a switch.
+test('the console tab gates on BOTH the seat type and the surface', () => {
+  const fs = require('node:fs');
+  const ROOT = path.join(__dirname, '..');
+  const src = fs.readFileSync(path.join(ROOT, 'renderer', 'console-tab.js'), 'utf8');
+
+  assert.ok(src.includes("id: 'console',"), 'ENTER: this really is the console tenant\'s registration');
+  assert.ok(src.includes('availableFor'),
+    'the tab must carry a seat axis — without it the tab shows on seats with no console');
+  assert.match(src, /availableFor: \(\) => typeNow\(\) === 'claude'/,
+    'only a claude seat runs the Bash hook that writes a console');
+  assert.ok(src.includes('available: () => !window.__CLODEX_WEB__'),
+    'console:read is gated out of the web host, so the tab must be HIDDEN there rather than inert');
+
+  // The frozen id list is what puts the tab in the strip at all: register()
+  // THROWS on an unknown id, so a tenant whose id is missing from it is a boot
+  // crash rather than a missing tab. Asserted as the WHOLE list because its
+  // order IS the tab order.
+  const { TAB_IDS } = require('../renderer/drawer-host');
+  assert.deepStrictEqual([...TAB_IDS], ['log', 'activity', 'console', 'ctl', 'term'],
+    'the console sits between the activity feed and clodexctl');
 });

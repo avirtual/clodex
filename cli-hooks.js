@@ -11,6 +11,7 @@ const { denyAgentRules } = require('./agents-util');
 // its reasoning stays the single source — a second literal in a template string
 // is exactly the copy that drifts the first time either is touched.
 const { NOTICE_MAX_AGE_MS } = require('./notice-queue');
+const { CONSOLE_MAX_RECORDS } = require('./bash-console');
 
 // `composeRoster` is injected rather than imported: this module must stay
 // electron-free and free of session state, and resolving a team needs both a cwd
@@ -135,6 +136,34 @@ fi
     fs.writeFileSync(attnScriptPath, `#!/bin/bash
 IN="$(cat)"
 printf '%s\\n' "$IN" >> "${attnPath}"
+`, { mode: 0o700 });
+
+    const consolePath = pathFor(REGISTRY_DIR, name, 'bashConsole');
+    const consoleScriptPath = pathFor(REGISTRY_DIR, name, 'bashConsoleScript');
+    fs.writeFileSync(consoleScriptPath, `#!/bin/bash
+D="${consolePath}"
+mkdir -p "$D" 2>/dev/null || exit 0
+T="$D/.tmp.$$"
+cat > "$T" 2>/dev/null || { rm -f "$T" 2>/dev/null; exit 0; }
+S=$(date +%s%N)
+case "$S" in ''|*[!0-9]*) S=$(date +%s)000000000;; esac
+mv -f "$T" "$D/$S-$$.json" 2>/dev/null || rm -f "$T" 2>/dev/null
+for t in "$D"/.tmp.*; do
+  [ -e "$t" ] || continue
+  q="\${t##*/.tmp.}"
+  case "$q" in ''|*[!0-9]*) continue;; esac
+  kill -0 "$q" 2>/dev/null || rm -f "$t" 2>/dev/null
+done
+set -- "$D"/*.json
+if [ "$#" -gt ${CONSOLE_MAX_RECORDS} ]; then
+  n=$(( $# - ${CONSOLE_MAX_RECORDS} ))
+  for f in "$@"; do
+    [ "$n" -gt 0 ] || break
+    rm -f "$f" 2>/dev/null
+    n=$(( n - 1 ))
+  done
+fi
+exit 0
 `, { mode: 0o700 });
 
     const ackPath = pathFor(REGISTRY_DIR, name, 'acks');
@@ -445,6 +474,17 @@ JSEOF
           matcher: '',
           hooks: [
             { type: 'command', command: pendingScriptPath },
+          ]
+        }, {
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: consoleScriptPath },
+          ]
+        }],
+        PostToolUseFailure: [{
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: consoleScriptPath },
           ]
         }]
       }

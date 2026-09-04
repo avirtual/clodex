@@ -3804,13 +3804,14 @@ html, body {
   visibility: visible;
 }
 
-/* The two terminal-shaped tenants sit on --bg, not the drawer's --sidebar-bg.
+/* The terminal-shaped tenants sit on --bg, not the drawer's --sidebar-bg.
    That is not a taste call: --bg holds each theme's xterm `background` byte for
-   byte (constants.js THEMES, paired by renderer-constants.test.js), so the ctl
-   console and the session terminal above it are the same colour by
+   byte (constants.js THEMES, paired by renderer-constants.test.js), so a
+   monospace pane and the session terminal above it are the same colour by
    construction. The term pane needs it too — xterm paints its own rows, but
    #wterm-host's padding would otherwise frame them in drawer chrome. */
 .drawer-pane[data-tab="ctl"],
+.drawer-pane[data-tab="console"],
 .drawer-pane[data-tab="term"] {
   background: var(--bg);
 }
@@ -4041,6 +4042,89 @@ html, body {
   color: var(--text-dim);
   font-family: inherit;
   font-size: inherit;
+}
+
+/* Bash console tenant (drawer tab `console`). A block list like `ctl` above and
+   deliberately the same vocabulary: one block is one Bash call, and the left
+   border is what keeps a command and its output readable as a pair. Output
+   arrives ANSI-stripped (bash-console.js), so nothing here renders escapes. */
+#console-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+}
+
+#console-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 11px;
+  font-family: -apple-system, sans-serif;
+  text-align: center;
+  padding: 30px 0;
+}
+
+.console-block {
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 8px;
+  margin-bottom: 8px;
+}
+
+.console-block.failed { border-left-color: var(--error); }
+
+.console-block-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.console-block-cmd {
+  color: var(--text);
+  font-weight: 600;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
+.console-block-time,
+.console-block-mark {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.console-block-exit {
+  color: var(--error);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.console-block-out {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.console-block-note {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+}
+
+.console-gap {
+  margin: 6px 0;
+  padding: 3px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+  text-align: center;
 }
 
 #ctl-input-row {
