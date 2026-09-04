@@ -820,7 +820,7 @@ function registerIpcHandlers(deps) {
         if (!meta[s.name]) meta[s.name] = {};
         // A new array, never a push: metaFor freezes ONE instance and shares it
         // across every row, so extending it in place would re-tier the whole
-        // batch (and throw). Claiming the tier is what makes the four keys below
+        // batch (and throw). Claiming the tier is what makes the keys below
         // authoritative — including by omission, which is how a revoke lands.
         meta[s.name]._tiers = [...(meta[s.name]._tiers || []), 'record'];
         meta[s.name].createdAt = s.createdAt || null;

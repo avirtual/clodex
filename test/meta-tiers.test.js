@@ -14,7 +14,7 @@ test('META_TIERS: each producer\'s keys are one tier, and the three are separate
   assert.deepStrictEqual(META_TIERS, {
     activity: ['lastActivityTs'],
     pr: ['branch', 'prState', 'prNumber'],
-    record: ['createdAt', 'archivedAt', 'team', 'pluginGrants'],
+    record: ['createdAt', 'archivedAt', 'team', 'pluginGrants', 'plugins'],
   });
 });
 
@@ -85,7 +85,7 @@ test('mergeMeta: keys in no tier keep plain-spread semantics', () => {
   assert.strictEqual(merged.lastActivityTs, 5, 'ENTER: the marked merge really ran');
 });
 
-// ── The `record` tier: the four keys metaFor does not produce ───────────────
+// ── The `record` tier: the keys metaFor does not produce ───────────────────
 // They are decorated onto the row AFTER metaFor returns, which left them untiered
 // and therefore plain-spread — the reason pluginGrants had to be empty-filled on
 // every refresh. The claim is what makes omission mean "none".

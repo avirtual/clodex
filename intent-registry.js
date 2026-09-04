@@ -338,13 +338,12 @@ function bodyModeFor(intent) {
   try { return r.bodyMode(intent) || 'none'; } catch { return 'none'; }
 }
 
-// The gate, registry-aware (rule P1). Core types delegate to intent-catalog
-// unchanged; a PLUGIN verb is privileged by construction, and privileged
-// semantics are exactly "explicit grant or nothing" — an absent list is a
-// refusal, never the living all-enabled default. This wrapper exists because
-// intent-catalog returns TRUE for any type outside its catalog (the
-// "ungateable by omission" rule), which for a plugin verb would be a
-// retroactive grant to every seat that ever existed.
+// The INTENTS-ONLY predicate; the fire gate is intentEnabledForSeat below. Core
+// types delegate to intent-catalog unchanged; a PLUGIN verb is privileged by
+// construction, so an absent list is a refusal, never the living all-enabled
+// default. This wrapper exists because intent-catalog returns TRUE for any type
+// outside its catalog ("ungateable by omission"), which for a plugin verb would
+// be a retroactive grant to every seat that ever existed.
 function intentEnabledFor(type, intentsList) {
   if (pluginRowFor(type)) return Array.isArray(intentsList) && intentsList.includes(type);
   return intentEnabled(type, intentsList);

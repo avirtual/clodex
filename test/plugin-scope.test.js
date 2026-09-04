@@ -726,7 +726,7 @@ test('REWORK MF1: a grant survives the restart the popover itself offers', () =>
 
 // ── MF2: a revoke must reach the renderer ───────────────────────────────────
 // A revoke is carried by ABSENCE now that `record` is a tier (t196): the claim
-// makes the four post-metaFor keys authoritative including by omission, so the
+// makes the post-metaFor keys authoritative including by omission, so the
 // renderer's tier clear is what drops the stale array. Before the tier, absence
 // meant "unchanged" to a plain spread and the key had to be empty-filled on
 // every refresh or a revoked plugin kept drawing for the life of the window.
@@ -757,7 +757,7 @@ function metaFixture(list, { skipMeta = false } = {}) {
     sessionMeta: {
       // skipMeta reproduces the row metaFor returned nothing for, which the
       // handler backfills with `{}` — it must still claim `record`, since it
-      // really is authoritative about the four keys it goes on to write.
+      // really is authoritative about the keys it goes on to write.
       metaFor: async (sessions) => (skipMeta ? {} : Object.fromEntries(
         sessions.map((s) => [s.name, { _tiers: sharedTiers, lastActivityTs: 1 }]))),
     },
@@ -820,7 +820,7 @@ test('REWORK MF2: a revoke reaches the renderer through the meta merge', async (
     + 'with this test still green');
 });
 
-// t196: the four keys the handler bolts on AFTER metaFor returns were in no tier,
+// t196: the keys the handler bolts on AFTER metaFor returns were in no tier,
 // so they fell through to plain-spread and pluginGrants had to be empty-filled.
 // The claim is what retires that. It has to be added without touching metaFor's
 // marker, which is one frozen instance shared by every row in the response.
@@ -855,7 +855,7 @@ test('t196: the handler claims `record` on top of metaFor\'s tiers, without touc
 
 test('t196: a row metaFor returned nothing for still claims `record`', async () => {
   // The `meta[s.name] = {}` backfill. It has no activity or pr answer, but it is
-  // fully authoritative about the four keys it goes on to write — so it must
+  // fully authoritative about the keys it goes on to write — so it must
   // claim record and claim ONLY record. Claiming nothing would leave those keys
   // plain-spread on exactly the rows that have no other content to correct them.
   const res = await metaFixture([{ name: 'seat', cwd: '/p', createdAt: 9 }], { skipMeta: true })({});
