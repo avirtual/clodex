@@ -47,6 +47,10 @@ let execLibCache = [];
 // verbs. Empty until the first fetch, which is fine: every render path awaits a
 // refresh before painting, exactly like the exec registry above.
 let intentCatalogCache = [];
+// Loaded-plugin catalog (`plugin:catalog`). Every row here is globally enabled
+// and not quarantined by construction — the loader registers nothing else — so
+// this doubles as the pre-tick set for a NEW seat.
+let pluginCatalogCache = [];
 let claudeToolsCache = [];
 // Global default tool-deny set (the "*" agent-default); new sessions start with
 // these tools unchecked.
@@ -58,6 +62,8 @@ function setAgentLibCache(v) { agentLibCache = v; }
 function setSkillLibCache(v) { skillLibCache = v; }
 function setExecLibCache(v) { execLibCache = v; }
 function setIntentCatalogCache(v) { intentCatalogCache = Array.isArray(v) ? v : []; }
+function setPluginCatalogCache(v) { pluginCatalogCache = Array.isArray(v) ? v : []; }
+function getPluginCatalogCache() { return pluginCatalogCache; }
 function setClaudeToolsCache(v) { claudeToolsCache = v; }
 function setDefaultToolDenyCache(v) { defaultToolDenyCache = v; }
 
@@ -170,9 +176,60 @@ function intentRowChecked(row, intentsList) {
   if (!Array.isArray(intentsList)) return !row.privileged;
   return intentsList.includes(row.type);
 }
+// The PARENT of the intent gate below: an unticked plugin contributes no rows to
+// it at all. Absent (never written) means every loaded plugin, so a seat that has
+// never been edited is pre-checked here and byte-identical after a save that
+// changes nothing else.
+function renderPluginChecklist(container, pluginsList) {
+  container.innerHTML = '';
+  if (!pluginCatalogCache.length) {
+    container.innerHTML = '<span class="hint-text">No plugins loaded — enable some via Preferences ▸ Plugins.</span>';
+    return;
+  }
+  const has = Array.isArray(pluginsList) ? new Set(pluginsList.map(String)) : null;
+  for (const p of pluginCatalogCache) {
+    const row = document.createElement('label');
+    row.className = 'agent-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = p.id;
+    cb.checked = has ? has.has(String(p.id)) : true;
+    if (p.announce) row.dataset.tip = p.announce;
+    const txt = document.createElement('span');
+    txt.innerHTML = `<strong>${esc(p.name || p.id)}</strong>${p.announce ? ' — ' + esc(p.announce) : ''}`;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    container.appendChild(row);
+  }
+}
+function collectPluginChecklist(container) {
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
+// The pre-tick set for a seat that has none: every LOADED plugin, which is the
+// operator's own globally-enabled decision rather than each manifest's
+// `enabledByDefault` — the flag is agent-writable and would pre-tick a plugin
+// the operator never enabled anywhere.
+function defaultPluginTicks() {
+  return pluginCatalogCache.map((p) => String(p.id));
+}
+
+// Core rows first and unchanged, then ONE `popover-subhead` per plugin that
+// contributed rows. The grouping is what keeps this list readable at 30
+// plugins: an unticked plugin has no header and no rows, so its row in the
+// Plugins list above is its collapsed form.
 function renderIntentChecklist(container, intentsList) {
   container.innerHTML = '';
+  const nameOf = new Map(pluginCatalogCache.map((p) => [String(p.id), p.name || p.id]));
+  let lastSource = null;
   for (const it of intentCatalogCache) {
+    if (it.source && it.source !== 'core' && it.source !== lastSource) {
+      const head = document.createElement('div');
+      head.className = 'popover-subhead';
+      head.textContent = nameOf.get(String(it.source)) || it.source;
+      container.appendChild(head);
+    }
+    lastSource = it.source || null;
     const row = document.createElement('label');
     row.className = 'agent-check';
     const cb = document.createElement('input');
@@ -375,6 +432,7 @@ module.exports = {
   renderAgentChecklist, collectAgentChecklist,
   renderExecChecklist, collectExecChecklist,
   renderIntentChecklist, collectIntentChecklist, intentRowChecked,
+  renderPluginChecklist, collectPluginChecklist, defaultPluginTicks,
   renderBuiltinChecklist, collectBuiltinChecklist,
   renderInjectChecklist, collectInjectChecklist,
   renderToolChecklist, collectToolChecklist,
@@ -382,6 +440,8 @@ module.exports = {
   setChecklistAll, wireBulkToggles,
   setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache,
   setIntentCatalogCache,
+  setPluginCatalogCache,
+  getPluginCatalogCache,
   setClaudeToolsCache, setDefaultToolDenyCache,
   getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache,
 };

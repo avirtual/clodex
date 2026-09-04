@@ -6430,6 +6430,12 @@ body {
     </div>
     <div id="intents-popover" class="hidden">
       <div class="popover-title"><span>Intents — <span id="intents-popover-name"></span></span><button type="button" class="popover-close" id="intents-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="intents-popover-plugins">
+        <div class="popover-subhead">Plugins</div>
+        <span class="hint-text">Which plugins this seat HAS — the parent of both lists below. An unticked plugin contributes no intents and no access rows, and its verbs drop from the allowlist on Apply.</span>
+        <div id="intents-popover-plugins-list" class="agent-checklist"></div>
+      </div>
+      <div class="popover-subhead">Intents</div>
       <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-intents-list" class="agent-checklist"></div>
       <span class="hint-text">Unchecked intents are gated OFF for this session — it can't emit them (a gated seat still RECEIVES). <code>[agent:name]</code> is never gateable.</span>
@@ -6440,7 +6446,7 @@ body {
       </div>
       <div id="intents-popover-grants" class="hidden">
         <div class="popover-subhead">Plugin Access</div>
-        <span class="hint-text">Separate from Intents above: an intent is what this seat may EMIT, a grant is what a plugin may READ of it. Each defaults off, and a plugin with no grant here is invisible to this session — absent from the list above, not merely refused.</span>
+        <span class="hint-text">Separate from Intents above: an intent is what this seat may EMIT, a grant is what a plugin may READ of it. Each defaults off. Only plugins this seat HAS appear here — untick one under Plugins and its rows go with it.</span>
         <div id="intents-popover-grants-list" class="agent-checklist"></div>
       </div>
       <label class="tools-popover-restart">
@@ -6725,6 +6731,10 @@ body {
           <div id="input-exec-list" class="agent-checklist"></div>
           <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one.</span>
         </label>
+        <label id="plugins-row">Plugins
+          <div id="input-plugin-list" class="agent-checklist"></div>
+          <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to it — no intents below, no grammar in its prompt, no turn feed. New seats start with every plugin you have enabled in Preferences &#9656; Plugins ticked.</span>
+        </label>
         <label id="intents-row">Intents
           <div id="input-intent-list" class="agent-checklist"></div>
           <span class="hint-text">Which <code>[agent:…]</code> intents this seat may <em>send</em>. Checked = allowed (all checked by default). Unchecking one makes that verb bounce when the seat emits it — send-side only, so a seat with <code>dm</code> off still <em>receives</em> DMs. <code>name</code> can't be gated. Applies immediately (no restart).</span>
@@ -6925,6 +6935,13 @@ body {
         <label id="args-exec-row">
           <div id="args-exec-list" class="agent-checklist"></div>
           <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. The grant is checked fresh on every invocation, so a change applies to the <em>next</em> exec immediately — no restart needed (restarting only refreshes the seat's prompt). Grants only bite when the <code>exec</code> intent is also enabled (see Intents). Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one. Local sessions only.</span>
+        </label>
+      </details>
+      <details id="args-plugins-section" class="dialog-section">
+        <summary>Plugins</summary>
+        <label id="args-plugins-row">
+          <div id="args-plugin-list" class="agent-checklist"></div>
+          <span class="hint-text">Which plugins this seat HAS. Unticking one drops its intents below and its plugin access on save — re-ticking it does not restore them, you choose them again.</span>
         </label>
       </details>
       <details id="args-intents-section" class="dialog-section">
@@ -7693,6 +7710,11 @@ body {
         { name: "setSessionSkills", kind: "invoke", channel: "session:setSkills" },
         { name: "setSessionAgents", kind: "invoke", channel: "session:setAgents" },
         { name: "setSessionIntents", kind: "invoke", channel: "session:setIntents" },
+        // The PARENT of every per-seat plugin decision, and a separate channel from
+        // setSessionIntents for the same reason grants are: the three are written by
+        // three UI blocks, and folding them would let a save that drew only one of
+        // them clear the other two.
+        { name: "setSessionPlugins", kind: "invoke", channel: "session:setPlugins" },
         { name: "getSkillCatalog", kind: "invoke", channel: "session:skillCatalog" },
         { name: "getAgentCatalog", kind: "invoke", channel: "session:agentCatalog" },
         { name: "getSkillCatalogFor", kind: "invoke", channel: "settings:skillCatalogFor" },
@@ -7788,10 +7810,15 @@ body {
         // renderer: once plugins can register verbs, a renderer
         // that reads its own frozen copy of intent-catalog.js is reading a stale
         // catalog — and the web bundle's copy is frozen at build time.
+        // Takes (name, override): `override` is the LIVE ticked plugin set, so the
+        // list repaints as the operator ticks rather than at the next open.
         { name: "getIntentCatalog", kind: "invoke", channel: "intents:catalog" },
         // Plugin capability grants (t190). Separate from setIntents on purpose: the
         // two are written by different UI blocks, and folding them together would let
         // an intents save silently revoke every grant.
+        // Same (name, override) widening as getIntentCatalog above, and for the same
+        // reason: grants are a CHILD of the seat's plugin list, so an untick must drop
+        // the plugin's grant rows in the same repaint.
         { name: "getSessionPluginGrants", kind: "invoke", channel: "session:pluginGrants" },
         { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" }
       ];
@@ -19865,6 +19892,10 @@ ${i3.join("\n")}
       function mergeGrants(checked, unlisted) {
         return [.../* @__PURE__ */ new Set([...checked || [], ...unlisted || []])];
       }
+      function seatHasPlugin(pluginId, pluginsList) {
+        if (!Array.isArray(pluginsList)) return true;
+        return pluginsList.includes(String(pluginId));
+      }
       function pluginReaches(pluginId, grants) {
         return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
       }
@@ -19908,6 +19939,7 @@ ${i3.join("\n")}
         grantsForUnlistedPlugins,
         mergeGrants,
         pluginGranted,
+        seatHasPlugin,
         pluginReaches,
         HOST_PSEUDO_ID,
         namespaced,
@@ -19957,7 +19989,7 @@ ${i3.join("\n")}
         // single synchronous loop, so no payload can ever answer some of them and not
         // the rest. Named for what it answers rather than for the handler that
         // decorates them, since a later producer may fill them elsewhere.
-        record: ["createdAt", "archivedAt", "team", "pluginGrants"]
+        record: ["createdAt", "archivedAt", "team", "pluginGrants", "plugins"]
       };
       var TIER_OF_KEY = /* @__PURE__ */ new Map();
       for (const [tier, keys] of Object.entries(META_TIERS)) {
@@ -21934,6 +21966,7 @@ ${String(body || "").trim()}
       var skillLibCache = [];
       var execLibCache = [];
       var intentCatalogCache = [];
+      var pluginCatalogCache = [];
       var claudeToolsCache = [];
       var defaultToolDenyCache = [];
       function setPromptLibCache(v) {
@@ -21950,6 +21983,12 @@ ${String(body || "").trim()}
       }
       function setIntentCatalogCache(v) {
         intentCatalogCache = Array.isArray(v) ? v : [];
+      }
+      function setPluginCatalogCache(v) {
+        pluginCatalogCache = Array.isArray(v) ? v : [];
+      }
+      function getPluginCatalogCache() {
+        return pluginCatalogCache;
       }
       function setClaudeToolsCache(v) {
         claudeToolsCache = v;
@@ -22043,9 +22082,46 @@ ${String(body || "").trim()}
         if (!Array.isArray(intentsList)) return !row.privileged;
         return intentsList.includes(row.type);
       }
+      function renderPluginChecklist(container, pluginsList) {
+        container.innerHTML = "";
+        if (!pluginCatalogCache.length) {
+          container.innerHTML = '<span class="hint-text">No plugins loaded \u2014 enable some via Preferences \u25B8 Plugins.</span>';
+          return;
+        }
+        const has = Array.isArray(pluginsList) ? new Set(pluginsList.map(String)) : null;
+        for (const p of pluginCatalogCache) {
+          const row = document.createElement("label");
+          row.className = "agent-check";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = p.id;
+          cb.checked = has ? has.has(String(p.id)) : true;
+          if (p.announce) row.dataset.tip = p.announce;
+          const txt = document.createElement("span");
+          txt.innerHTML = `<strong>${esc(p.name || p.id)}</strong>${p.announce ? " \u2014 " + esc(p.announce) : ""}`;
+          row.appendChild(cb);
+          row.appendChild(txt);
+          container.appendChild(row);
+        }
+      }
+      function collectPluginChecklist(container) {
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+      }
+      function defaultPluginTicks() {
+        return pluginCatalogCache.map((p) => String(p.id));
+      }
       function renderIntentChecklist(container, intentsList) {
         container.innerHTML = "";
+        const nameOf = new Map(pluginCatalogCache.map((p) => [String(p.id), p.name || p.id]));
+        let lastSource = null;
         for (const it of intentCatalogCache) {
+          if (it.source && it.source !== "core" && it.source !== lastSource) {
+            const head = document.createElement("div");
+            head.className = "popover-subhead";
+            head.textContent = nameOf.get(String(it.source)) || it.source;
+            container.appendChild(head);
+          }
+          lastSource = it.source || null;
           const row = document.createElement("label");
           row.className = "agent-check";
           const cb = document.createElement("input");
@@ -22199,6 +22275,9 @@ ${String(body || "").trim()}
         renderIntentChecklist,
         collectIntentChecklist,
         intentRowChecked,
+        renderPluginChecklist,
+        collectPluginChecklist,
+        defaultPluginTicks,
         renderBuiltinChecklist,
         collectBuiltinChecklist,
         renderInjectChecklist,
@@ -22214,6 +22293,8 @@ ${String(body || "").trim()}
         setSkillLibCache,
         setExecLibCache,
         setIntentCatalogCache,
+        setPluginCatalogCache,
+        getPluginCatalogCache,
         setClaudeToolsCache,
         setDefaultToolDenyCache,
         getPromptLibCache,
@@ -23351,7 +23432,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         intentsAllowlistFromChecked,
         withoutPrivilegedIntents
       } = require_intent_catalog();
-      var { DEFAULT_PLUGIN_SCOPE, pluginReaches } = require_plugin_api();
+      var { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require_plugin_api();
       function parseDm(cleaned) {
         const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
         return m ? { type: "dm", target: m[1], urgent: !!m[2], body: m[3] } : null;
@@ -23587,12 +23668,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function pluginRowFor(type) {
         return pluginRows.find((r) => r.type === type) || null;
       }
-      function rowVisibleTo(row, grants) {
-        if (!row || row.scope !== "session") return true;
-        return pluginReaches(row.source, grants);
+      function rowVisibleTo(row, plugins) {
+        if (!row) return true;
+        return seatHasPlugin(row.source, plugins);
       }
-      function visiblePluginRows(grants) {
-        return pluginRows.filter((r) => rowVisibleTo(r, grants));
+      function visiblePluginRows(plugins) {
+        return pluginRows.filter((r) => rowVisibleTo(r, plugins));
       }
       function parseWithRegistry(cleaned, raw) {
         for (const r of CORE_ROWS) {
@@ -23619,14 +23700,31 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (pluginRowFor(type)) return Array.isArray(intentsList) && intentsList.includes(type);
         return intentEnabled(type, intentsList);
       }
+      function intentEnabledForSeat(type, entry) {
+        const row = pluginRowFor(type);
+        if (!row) return intentEnabled(type, entry && entry.intents);
+        return seatHasPlugin(row.source, entry && entry.plugins) && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
+      }
+      function pruneForPlugins(entry, pluginsList) {
+        const src = entry || {};
+        const intents = Array.isArray(src.intents) ? src.intents.filter((t) => {
+          const row = pluginRowFor(t);
+          return !row || seatHasPlugin(row.source, pluginsList);
+        }) : null;
+        const pluginGrants = Array.isArray(src.pluginGrants) ? src.pluginGrants.filter((g) => {
+          const at = String(g).indexOf(":");
+          return at > 0 && seatHasPlugin(String(g).slice(0, at), pluginsList);
+        }) : null;
+        return { intents, pluginGrants };
+      }
       function withoutPrivilegedIntentsFor(intentsList) {
         if (!Array.isArray(intentsList)) return intentsList;
         return withoutPrivilegedIntents(intentsList).filter((t) => !pluginRowFor(t));
       }
-      function catalogRows(grants) {
+      function catalogRows(plugins) {
         return [
           ...GATEABLE_INTENTS.map((i) => ({ type: i.type, label: i.label, privileged: PRIVILEGED_INTENTS.has(i.type), source: "core" })),
-          ...visiblePluginRows(grants).map((r) => ({ type: r.type, label: r.label, privileged: true, source: r.source }))
+          ...visiblePluginRows(plugins).map((r) => ({ type: r.type, label: r.label, privileged: true, source: r.source }))
         ];
       }
       function allowlistFromChecked(checkedTypes) {
@@ -23637,8 +23735,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const coreEnabled = Array.isArray(core) ? core : GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
         return [...coreEnabled, ...pluginChecked];
       }
-      function pluginGrammarLines(intentsList, grants) {
-        return visiblePluginRows(grants).filter((r) => r.promptLines && intentEnabledFor(r.type, intentsList)).map((r) => r.promptLines);
+      function pluginGrammarLines(intentsList, plugins) {
+        return visiblePluginRows(plugins).filter((r) => r.promptLines && intentEnabledFor(r.type, intentsList)).map((r) => r.promptLines);
       }
       var CORE_VALID_INTENT_NAMES = [
         "dm",
@@ -23658,8 +23756,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         "term",
         "reboot"
       ];
-      function validIntentNames(grants) {
-        return [...CORE_VALID_INTENT_NAMES, ...visiblePluginRows(grants).map((r) => r.type), "end"];
+      function validIntentNames(plugins) {
+        return [...CORE_VALID_INTENT_NAMES, ...visiblePluginRows(plugins).map((r) => r.type), "end"];
       }
       module.exports = {
         CORE_ROWS,
@@ -23677,6 +23775,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         parseWithRegistry,
         bodyModeFor,
         intentEnabledFor,
+        intentEnabledForSeat,
+        pruneForPlugins,
         withoutPrivilegedIntentsFor,
         catalogRows,
         allowlistFromChecked,
@@ -28632,11 +28732,15 @@ helper=${d.helperPath}`;
         wireBulkToggles,
         renderIntentChecklist,
         collectIntentChecklist,
+        renderPluginChecklist,
+        collectPluginChecklist,
         setClaudeToolsCache,
         setSkillLibCache,
         setAgentLibCache,
         getSkillLibCache,
-        setIntentCatalogCache
+        setIntentCatalogCache,
+        setPluginCatalogCache,
+        getPluginCatalogCache
       } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
@@ -28936,6 +29040,24 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           refreshExecReadoutInertState();
         }
+        const intentsPluginsList = document.getElementById("intents-popover-plugins-list");
+        async function repaintPluginChildren(name) {
+          const ticked = collectPluginChecklist(intentsPluginsList);
+          const checkedIntents = collectIntentChecklist(popoverIntentsList);
+          setIntentCatalogCache(await window.api.getIntentCatalog(name, ticked) || []);
+          renderIntentChecklist(popoverIntentsList, checkedIntents);
+          let g = null;
+          try {
+            g = await window.api.getSessionPluginGrants(name, ticked);
+          } catch {
+          }
+          renderPluginGrants(g && g.ok ? g : null);
+          refreshExecReadoutInertState();
+        }
+        intentsPluginsList.addEventListener("change", () => {
+          const name = intentsPopover.dataset.name;
+          if (name) repaintPluginChildren(name);
+        });
         const intentsGrantsBlock = document.getElementById("intents-popover-grants");
         const intentsGrantsList = document.getElementById("intents-popover-grants-list");
         let unlistedGrants = [];
@@ -28982,12 +29104,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             alert("Session not found in persistence.");
             return;
           }
-          setIntentCatalogCache(await window.api.getIntentCatalog(name) || []);
+          setPluginCatalogCache(await window.api.pluginCatalog() || []);
+          renderPluginChecklist(intentsPluginsList, res.plugins);
+          const ticked = collectPluginChecklist(intentsPluginsList);
+          setIntentCatalogCache(await window.api.getIntentCatalog(name, ticked) || []);
           renderIntentChecklist(popoverIntentsList, res.intents);
           renderExecGrantReadout(res.execCommands || []);
           let grantsRes = null;
           try {
-            grantsRes = await window.api.getSessionPluginGrants(name);
+            grantsRes = await window.api.getSessionPluginGrants(name, ticked);
           } catch {
           }
           renderPluginGrants(grantsRes && grantsRes.ok ? grantsRes : null);
@@ -29004,10 +29129,18 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const name = intentsPopover.dataset.name;
           if (!name) return closeIntentsPopover();
           const intents = collectIntentChecklist(popoverIntentsList);
+          const plugins = getPluginCatalogCache().length ? collectPluginChecklist(intentsPluginsList) : null;
           const grantsShown = !intentsGrantsBlock.classList.contains("hidden");
           const grants = grantsShown ? collectPluginGrants() : null;
           const restart = intentsPopoverRestart.checked;
           closeIntentsPopover();
+          if (plugins) {
+            const pr = await window.api.setSessionPlugins(name, plugins);
+            if (!pr || !pr.ok) {
+              alert(`Update plugins failed: ${pr && pr.error ? pr.error : "unknown error"}`);
+              return;
+            }
+          }
           const r = await window.api.setSessionIntents(name, intents);
           if (!r || !r.ok) {
             alert(`Update intents failed: ${r && r.error ? r.error : "unknown error"}`);
@@ -33114,7 +33247,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -34409,7 +34542,7 @@ ${detail}` });
           refreshNewSessionSkills();
           refreshNewSessionInjectSkills();
           refreshNewSessionExecCommands();
-          refreshNewSessionIntents();
+          refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
           refreshNewSessionTools();
         }
         const agentType = type === "claude" || type === "codex";
@@ -34656,7 +34789,7 @@ ${detail}` });
         renderToolChecklist(inputToolsList, /* @__PURE__ */ new Set());
         renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
         refreshNewSessionExecCommands();
-        refreshNewSessionIntents();
+        refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setPromptLibCache({
           system: (cat.prompts || []).filter((p) => p.kind === "system"),
           append: (cat.prompts || []).filter((p) => p.kind === "append")
@@ -34709,6 +34842,12 @@ ${detail}` });
       var inputBuiltinsList = document.getElementById("input-builtins-list");
       var inputExecList = document.getElementById("input-exec-list");
       var inputIntentList = document.getElementById("input-intent-list");
+      var inputPluginList = document.getElementById("input-plugin-list");
+      if (inputPluginList) {
+        inputPluginList.addEventListener("change", () => {
+          refreshNewSessionIntents(collectIntentChecklist(inputIntentList));
+        });
+      }
       var toolsRow = document.getElementById("tools-row");
       var inputToolsList = document.getElementById("input-tools-list");
       var skillsRow = document.getElementById("skills-row");
@@ -34735,9 +34874,14 @@ ${detail}` });
         setExecLibCache(await window.api.listExecCommands() || []);
         renderExecChecklist(inputExecList, enabledSet);
       }
+      async function refreshNewSessionPlugins(pluginsList2) {
+        if (inputType.value !== "claude") return;
+        setPluginCatalogCache(await window.api.pluginCatalog() || []);
+        renderPluginChecklist(inputPluginList, Array.isArray(pluginsList2) ? pluginsList2 : defaultPluginTicks());
+      }
       async function refreshNewSessionIntents(intentsList) {
         if (inputType.value !== "claude") return;
-        setIntentCatalogCache(await window.api.getIntentCatalog() || []);
+        setIntentCatalogCache(await window.api.getIntentCatalog(null, collectPluginChecklist(inputPluginList)) || []);
         renderIntentChecklist(inputIntentList, intentsList);
       }
       async function refreshNewSessionSkills(disabledSet = /* @__PURE__ */ new Set()) {
@@ -34980,7 +35124,7 @@ ${detail}` });
         setAgentLibCache(agentLib || []);
         renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set());
         refreshNewSessionExecCommands();
-        refreshNewSessionIntents();
+        refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
         setClaudeToolsCache(settings?.claudeTools || []);
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
@@ -35052,7 +35196,8 @@ ${detail}` });
         if (t.type === "claude") {
           renderAgentChecklist(inputAgentsList, new Set(t.agents || []));
           await refreshNewSessionExecCommands(new Set(t.execCommands || []));
-          refreshNewSessionIntents(t.intents);
+          await refreshNewSessionPlugins(t.plugins);
+          await refreshNewSessionIntents(t.intents);
           renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
           await refreshNewSessionTools(new Set(t.disabledTools || []));
           await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -35107,6 +35252,7 @@ ${detail}` });
         const type = inputType.value;
         const agentType = type === "claude" || type === "codex";
         const intents = type === "claude" ? collectIntentChecklist(inputIntentList) : null;
+        const plugins = type === "claude" ? collectPluginChecklist(inputPluginList) : [];
         const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
         return {
@@ -35117,6 +35263,7 @@ ${detail}` });
           agents: type === "claude" ? collectAgentChecklist(inputAgentsList) : [],
           execCommands: type === "claude" ? collectExecChecklist(inputExecList) : [],
           ...Array.isArray(intents) ? { intents } : {},
+          plugins,
           ...autoCompactOff ? { autoCompact: false } : {},
           ...noWireOn ? { noWire: true } : {},
           denyBuiltins: type === "claude" ? collectBuiltinChecklist(inputBuiltinsList) : [],
@@ -35150,7 +35297,8 @@ ${detail}` });
           systemPromptFile,
           appendPromptFiles,
           intents,
-          noWire
+          noWire,
+          plugins
         } = cfg;
         const env = collectDialogEnv();
         const supportsPrompts = type === "claude" || type === "codex";
@@ -35227,7 +35375,7 @@ ${detail}` });
         closeDialog();
         if (typeof proxy === "string") window.api.setSettings({ lastCustomProxyUrl: proxy });
         const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== "none";
-        const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true };
+        const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
         let result;
         if (teamOn && dialogTeamMode === "create") {
           const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -35237,7 +35385,7 @@ ${detail}` });
           const prompt2 = teamRoleSelect && teamRoleSelect.value === "hand" ? null : teamRolePromptSelect && teamRolePromptSelect.value || null;
           result = await window.api.teamJoin({ team: dialogTeamName, role, prompt: prompt2, ...seatParams });
         } else {
-          result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true);
+          result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
         }
         if (!result.ok) {
           console.error("Failed to create session:", result.error);
@@ -35333,7 +35481,8 @@ ${detail}` });
         if (inputType.value === "claude") {
           renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []));
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
-          refreshNewSessionIntents(tpl && tpl.intents);
+          await refreshNewSessionPlugins(tpl && tpl.plugins);
+          await refreshNewSessionIntents(tpl && tpl.intents);
           renderBuiltinChecklist(inputBuiltinsList, new Set(tpl && tpl.denyBuiltins || []));
           await refreshNewSessionTools(new Set(tpl && tpl.disabledTools || []));
           await refreshNewSessionSkills(new Set(tpl && tpl.disabledSkills || []));
@@ -38637,6 +38786,15 @@ ${res.stderr}` : "");
       var argsOtherSection = document.getElementById("args-other-section");
       var argsIntentsList = document.getElementById("args-intents-list");
       var argsIntentsSection = document.getElementById("args-intents-section");
+      var argsPluginList = document.getElementById("args-plugin-list");
+      var argsPluginsSection = document.getElementById("args-plugins-section");
+      if (argsPluginList) {
+        argsPluginList.addEventListener("change", async () => {
+          const checked = collectIntentChecklist(argsIntentsList);
+          setIntentCatalogCache(await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList)) || []);
+          renderIntentChecklist(argsIntentsList, checked);
+        });
+      }
       var argsExecList = document.getElementById("args-exec-list");
       var argsExecSection = document.getElementById("args-exec-section");
       var argsSkillsRow = document.getElementById("args-skills-row");
@@ -38719,8 +38877,11 @@ ${res.stderr}` : "");
         argsToolsSection.style.display = isClaude ? "" : "none";
         setClaudeToolsCache(settings?.claudeTools || []);
         renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
+        argsPluginsSection.style.display = isClaude ? "" : "none";
+        setPluginCatalogCache(await window.api.pluginCatalog() || []);
+        renderPluginChecklist(argsPluginList, res.plugins);
         argsIntentsSection.style.display = isClaude ? "" : "none";
-        setIntentCatalogCache(await window.api.getIntentCatalog(name) || []);
+        setIntentCatalogCache(await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList)) || []);
         renderIntentChecklist(argsIntentsList, res.intents);
         const isExecEditable = isClaude && !argsSource;
         argsExecSection.style.display = isExecEditable ? "" : "none";
@@ -38794,6 +38955,7 @@ ${res.stderr}` : "");
         const denyBuiltins = argsAgentsRow.style.display === "none" ? [] : collectBuiltinChecklist(argsBuiltinsList);
         const disabledTools = argsToolsRow.style.display === "none" ? [] : collectToolChecklist(argsToolsList);
         const intents = argsIntentsSection.style.display === "none" ? null : collectIntentChecklist(argsIntentsList);
+        const plugins = argsPluginsSection.style.display === "none" || !getPluginCatalogCache().length ? void 0 : collectPluginChecklist(argsPluginList);
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : collectExecChecklist(argsExecList);
         const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
         const skillsShown = argsSkillsSection.style.display !== "none";
@@ -38828,7 +38990,7 @@ ${res.stderr}` : "");
           systemPromptFile,
           appendPromptFiles,
           intents
-        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, void 0, void 0, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env);
+        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, void 0, void 0, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins);
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;

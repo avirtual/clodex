@@ -156,6 +156,14 @@ function seatHasPlugin(pluginId, pluginsList) {
   return pluginsList.includes(String(pluginId));
 }
 
+// The GRANTS-axis reach, and no longer the surfacing predicate: catalog rows,
+// grammar lines, the fire gate and the feed all key on seatHasPlugin above.
+// Its one remaining caller is renderer.js's pluginReachesSession, which is
+// re-keyed in phase B; nothing in the main process calls it.
+function pluginReaches(pluginId, grants) {
+  return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
+}
+
 // Host-owned namespacing: every id a plugin registers — status
 // bar action, session-menu act, dispatch method — is prefixed by the host, never
 // by the plugin. `_host` is the reserved pseudo-plugin the renderer host uses for
@@ -238,6 +246,7 @@ module.exports = {
   mergeGrants,
   pluginGranted,
   seatHasPlugin,
+  pluginReaches,
   HOST_PSEUDO_ID,
   namespaced,
   pluginsEnabled,

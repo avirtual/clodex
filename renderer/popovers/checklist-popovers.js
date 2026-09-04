@@ -23,8 +23,9 @@ const {
   renderInjectChecklist, collectInjectChecklist, renderAgentChecklist, collectAgentChecklist,
   renderBuiltinChecklist, collectBuiltinChecklist, wireBulkToggles,
   renderIntentChecklist, collectIntentChecklist,
+  renderPluginChecklist, collectPluginChecklist,
   setClaudeToolsCache, setSkillLibCache, setAgentLibCache, getSkillLibCache,
-  setIntentCatalogCache,
+  setIntentCatalogCache, setPluginCatalogCache, getPluginCatalogCache,
 } = require('../lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
 const { parseSkillFrontmatter } = require('../../skills-util');
@@ -378,6 +379,29 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     refreshExecReadoutInertState();
   }
 
+  // --- Plugins (the parent) ------------------------------------------
+  // Above Intents and above Plugin Access because it is the parent of both: an
+  // unticked plugin has no verb rows and no access rows. A tick repaints the two
+  // children off the LIVE checkbox state, which is what the override argument on
+  // both reads is for.
+  const intentsPluginsList = document.getElementById('intents-popover-plugins-list');
+
+  async function repaintPluginChildren(name) {
+    const ticked = collectPluginChecklist(intentsPluginsList);
+    const checkedIntents = collectIntentChecklist(popoverIntentsList);
+    setIntentCatalogCache((await window.api.getIntentCatalog(name, ticked)) || []);
+    renderIntentChecklist(popoverIntentsList, checkedIntents);
+    let g = null;
+    try { g = await window.api.getSessionPluginGrants(name, ticked); } catch {}
+    renderPluginGrants(g && g.ok ? g : null);
+    refreshExecReadoutInertState();
+  }
+
+  intentsPluginsList.addEventListener('change', () => {
+    const name = intentsPopover.dataset.name;
+    if (name) repaintPluginChildren(name);
+  });
+
   // --- Plugin Access -------------------------------------------------
   // Same storage rule as the intent gate and the same strict semantics, but its
   // own block and its own header: "Intents" is what this seat may EMIT, a grant
@@ -439,13 +463,16 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
     // res.intents is the raw persisted allowlist (array, or null = all-enabled).
     // Rows are SERVED (intents:catalog), so seed the cache first, same as the dialog.
-    setIntentCatalogCache((await window.api.getIntentCatalog(name)) || []);
+    setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+    renderPluginChecklist(intentsPluginsList, res.plugins);
+    const ticked = collectPluginChecklist(intentsPluginsList);
+    setIntentCatalogCache((await window.api.getIntentCatalog(name, ticked)) || []);
     renderIntentChecklist(popoverIntentsList, res.intents);
     // res.execCommands is the seat's persisted grant list (local session, never
     // stripped — the wire strip is peer-only). Readout dims live off the exec box.
     renderExecGrantReadout(res.execCommands || []);
     let grantsRes = null;
-    try { grantsRes = await window.api.getSessionPluginGrants(name); } catch {}
+    try { grantsRes = await window.api.getSessionPluginGrants(name, ticked); } catch {}
     renderPluginGrants(grantsRes && grantsRes.ok ? grantsRes : null);
     intentsPopoverRestart.checked = false;
     intentsPopoverName.textContent = name;
@@ -461,12 +488,25 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const name = intentsPopover.dataset.name;
     if (!name) return closeIntentsPopover();
     const intents = collectIntentChecklist(popoverIntentsList); // array | null
+    // null, not [], when NOTHING is loaded: with the kill switch on
+    // (CLODEX_PLUGINS=0) or every plugin globally disabled, the checklist draws
+    // no rows and collect returns [] — writing that would permanently strip a
+    // seat of plugins it still has, on a path the operator only meant to edit
+    // intents. null leaves the parent untouched.
+    const plugins = getPluginCatalogCache().length ? collectPluginChecklist(intentsPluginsList) : null;
     // Read BEFORE the close: closing does not clear the list, but the two reads
     // must describe the same dialog state, and a later read is a later state.
     const grantsShown = !intentsGrantsBlock.classList.contains('hidden');
     const grants = grantsShown ? collectPluginGrants() : null;
     const restart = intentsPopoverRestart.checked;
     closeIntentsPopover();
+    // PARENT FIRST, then its two children: the server prunes both against the
+    // list it has just been given, so a child write that follows lands on an
+    // already-narrowed seat instead of fighting the prune.
+    if (plugins) {
+      const pr = await window.api.setSessionPlugins(name, plugins);
+      if (!pr || !pr.ok) { alert(`Update plugins failed: ${pr && pr.error ? pr.error : 'unknown error'}`); return; }
+    }
     const r = await window.api.setSessionIntents(name, intents);
     if (!r || !r.ok) { alert(`Update intents failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     // Only when the block was actually drawn: a save from a dialog that never

@@ -41,7 +41,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -1479,7 +1479,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   for (const sec of [toolsSection, skillsSection, otherSection]) {
     if (sec) sec.style.display = claudeOnly ? '' : 'none';
   }
-  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionExecCommands(); refreshNewSessionIntents(); refreshNewSessionTools(); }
+  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); refreshNewSessionTools(); }
   const agentType = type === 'claude' || type === 'codex';
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
@@ -1698,7 +1698,9 @@ function populateChecklistsFromCatalogs(cat) {
   renderToolChecklist(inputToolsList, new Set());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
-  refreshNewSessionIntents();       // served by the LOCAL engine, box-independent (as the static catalog was)
+  // Both served by the LOCAL engine, box-independent (as the static catalog was).
+  // Plugins first: the intent catalog is asked about the set this paints.
+  refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   setPromptLibCache({
     system: (cat.prompts || []).filter((p) => p.kind === 'system'),
     append: (cat.prompts || []).filter((p) => p.kind === 'append'),
@@ -1768,6 +1770,16 @@ const inputAgentsList = document.getElementById('input-agents-list');
 const inputBuiltinsList = document.getElementById('input-builtins-list');
 const inputExecList = document.getElementById('input-exec-list');
 const inputIntentList = document.getElementById('input-intent-list');
+const inputPluginList = document.getElementById('input-plugin-list');
+// Ticking a plugin repaints the intent list live, so the operator sees the
+// verbs arrive rather than discovering them at the next open. Newly appearing
+// rows arrive UNTICKED — a plugin verb is privileged and never all-enabled by
+// default — which is why the current checked set is re-read, not preserved.
+if (inputPluginList) {
+  inputPluginList.addEventListener('change', () => {
+    refreshNewSessionIntents(collectIntentChecklist(inputIntentList));
+  });
+}
 
 const toolsRow = document.getElementById('tools-row');
 const inputToolsList = document.getElementById('input-tools-list');
@@ -1798,9 +1810,18 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   renderExecChecklist(inputExecList, enabledSet);
 }
 
+// The PARENT refresh: the plugin list is painted first, and its ticked set is
+// what `intents:catalog` is then asked about — so the two lists agree on the
+// first frame and not only after the operator touches something.
+async function refreshNewSessionPlugins(pluginsList) {
+  if (inputType.value !== 'claude') return;
+  setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  renderPluginChecklist(inputPluginList, Array.isArray(pluginsList) ? pluginsList : defaultPluginTicks());
+}
+
 async function refreshNewSessionIntents(intentsList) {
   if (inputType.value !== 'claude') return;
-  setIntentCatalogCache((await window.api.getIntentCatalog()) || []);
+  setIntentCatalogCache((await window.api.getIntentCatalog(null, collectPluginChecklist(inputPluginList))) || []);
   renderIntentChecklist(inputIntentList, intentsList);
 }
 
@@ -2036,7 +2057,7 @@ function populateHostCatalogs(settings, agentLib) {
   setAgentLibCache(agentLib || []);
   renderAgentChecklist(inputAgentsList, new Set());
   refreshNewSessionExecCommands();
-  refreshNewSessionIntents();
+  refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
@@ -2137,7 +2158,8 @@ inputTemplate.addEventListener('change', async () => {
   if (t.type === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set(t.agents || []));
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
-    refreshNewSessionIntents(t.intents);
+    await refreshNewSessionPlugins(t.plugins);
+    await refreshNewSessionIntents(t.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
     await refreshNewSessionTools(new Set(t.disabledTools || []));
     await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -2198,6 +2220,10 @@ function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
+  // UNCONDITIONAL, for every session type — see the EDITOR_OWNED note below. A
+  // shell seat that omitted this would read as "cleared", and cleared means
+  // absent, and absent means EVERY plugin.
+  const plugins = type === 'claude' ? collectPluginChecklist(inputPluginList) : [];
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
@@ -2213,6 +2239,7 @@ function collectFormConfig() {
     agents: type === 'claude' ? collectAgentChecklist(inputAgentsList) : [],
     execCommands: type === 'claude' ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
+    plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
@@ -2235,7 +2262,7 @@ async function doCreate() {
   const cfg = collectFormConfig();
   const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
-          systemPromptFile, appendPromptFiles, intents, noWire } = cfg;
+          systemPromptFile, appendPromptFiles, intents, noWire, plugins } = cfg;
   const env = collectDialogEnv();
 
   const supportsPrompts = type === 'claude' || type === 'codex';
@@ -2321,7 +2348,7 @@ async function doCreate() {
   // could abandon the managed wirescope when the port stops matching).
   if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
   const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true };
+  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
   let result;
   if (teamOn && dialogTeamMode === 'create') {
     const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -2331,7 +2358,7 @@ async function doCreate() {
     const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
     result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
   } else {
-    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true);
+    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
   }
   if (!result.ok) {
     console.error('Failed to create session:', result.error);
@@ -2433,7 +2460,8 @@ async function openTemplateEditor(tpl = null) {
   if (inputType.value === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []));
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
-    refreshNewSessionIntents(tpl && tpl.intents);
+    await refreshNewSessionPlugins(tpl && tpl.plugins);
+    await refreshNewSessionIntents(tpl && tpl.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
     await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []));
     await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []));
@@ -6090,6 +6118,15 @@ const argsToolsSection = document.getElementById('args-tools-section');
 const argsOtherSection = document.getElementById('args-other-section');
 const argsIntentsList = document.getElementById('args-intents-list');
 const argsIntentsSection = document.getElementById('args-intents-section');
+const argsPluginList = document.getElementById('args-plugin-list');
+const argsPluginsSection = document.getElementById('args-plugins-section');
+if (argsPluginList) {
+  argsPluginList.addEventListener('change', async () => {
+    const checked = collectIntentChecklist(argsIntentsList);
+    setIntentCatalogCache((await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList))) || []);
+    renderIntentChecklist(argsIntentsList, checked);
+  });
+}
 const argsExecList = document.getElementById('args-exec-list');
 const argsExecSection = document.getElementById('args-exec-section');
 const argsSkillsRow = document.getElementById('args-skills-row');
@@ -6171,10 +6208,14 @@ async function openArgsDialog(name, argsSource = null) {
   argsToolsSection.style.display = isClaude ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
+  argsPluginsSection.style.display = isClaude ? '' : 'none';
+  setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  renderPluginChecklist(argsPluginList, res.plugins);
   argsIntentsSection.style.display = isClaude ? '' : 'none';
-  // Named: a session-scoped plugin's verbs surface here only if THIS seat
-  // granted the plugin. Passing no name would draw the un-granted catalog.
-  setIntentCatalogCache((await window.api.getIntentCatalog(name)) || []);
+  // Keyed on the plugin list this dialog just painted, not on the persisted one:
+  // the two are the same on open, and the override is what makes a live untick
+  // repaint the verbs rather than waiting for the next open.
+  setIntentCatalogCache((await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList))) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
   const isExecEditable = isClaude && !argsSource;
   argsExecSection.style.display = isExecEditable ? '' : 'none';
@@ -6242,6 +6283,14 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // subset ([] = everything gated, a real value). Both OVERWRITE; undefined-preserve is
   // reserved for a patch that omits intents entirely.
   const intents = argsIntentsSection.style.display === 'none' ? null : collectIntentChecklist(argsIntentsList);
+  // undefined = "untouched" — never [], which would strip the seat of every
+  // plugin. Two cases take it: a hidden section (peer row / non-claude), and a
+  // checklist that drew no rows because NOTHING is loaded (kill switch, or every
+  // plugin globally disabled), where collect's [] is an absence of options
+  // rather than the operator's answer.
+  const plugins = (argsPluginsSection.style.display === 'none' || !getPluginCatalogCache().length)
+    ? undefined
+    : collectPluginChecklist(argsPluginList);
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
   // dialog OWNS env — an empty box is {}, a real clear, not a no-op.
@@ -6275,7 +6324,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env);
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
