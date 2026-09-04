@@ -20,8 +20,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  createBashLive, writeObserver, pruneObservers, tasksDirFor, tasksDirFromScratchpad, commandFingerprint,
+  createBashLive, writeObserver, pruneObservers, tasksDirFor, tasksDirFromScratchpad,
+  psArgvEncode, argvNeedle,
   OBSERVER_MAX_FILES, TASK_OUTPUT_RE, LIVE_MAX_BYTES, EVENT_QUEUE_MAX, WATCH_SENTINEL,
+  RESOLVE_WINDOW_MS,
 } = require('../bash-live');
 const { pathFor } = require('../clodex-paths');
 
@@ -46,6 +48,28 @@ function observe(root, seat, { id, command, cwd, sessionId, agentId = null }, op
     session_id: sessionId,
     ...(agentId ? { agent_id: agentId } : {}),
   }), live, opts);
+}
+
+// The zsh preamble the CLI really puts in front of every Bash call, copied from a
+// live `ps -o args=` capture on this box (claude 2.1.260). Tests build argv by
+// wrapping a command in THIS, so a fixture cannot agree with the matcher by
+// construction: the wrapper, the `eval '...'` requoting and the \012 newline
+// encoding are the bytes the matcher must survive, and a hand-written
+// approximation of them is what let t649's matcher ship green while it could
+// never match a multi-line command.
+const ZSH_PREAMBLE = "/bin/zsh -c source /Users/b/.claude/shell-snapshots/snapshot-zsh-1788523123004-88g69m.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && ";
+
+function realArgv(command) {
+  const quoted = String(command).split("'").join(`'"'"'`);
+  return `${ZSH_PREAMBLE}eval '${psArgvEncode(quoted)}' < /dev/null && pwd -P >| /tmp/claude-0866-cwd`;
+}
+
+// Stands in for `ps -ax` + `lsof -d 1`: one entry per child shell, its argv as ps
+// would PRINT it, and the .output file sitting on its fd 1.
+function resolverOf(pairs) {
+  return () => pairs.map(([command, file], i) => ({
+    pid: String(4000 + i), args: realArgv(command), file,
+  }));
 }
 
 test('tasksDirFor derives the CLI\'s tasks dir from cwd + session_id', () => {
@@ -148,29 +172,38 @@ test('writeObserver records the pre-existing files as a snapshot, and ignores no
 test('a subagent transcript symlink is never adopted as a task file', async (t) => {
   // Measured against claude 2.1.260: a subagent's transcript lands in the SAME
   // tasks dir as `<agent_id>.output`, a SYMLINK, and it is present BEFORE that
-  // subagent's first Bash call — so the obvious "newest .output file" heuristic
-  // picks it and streams a transcript into the console.
+  // subagent's first Bash call. Ownership comes from fd 1, so the resolver here
+  // NAMES the symlink -- the rejection has to come from the candidate side, and
+  // a test whose resolver named only the real file would assert nothing.
   const root = tmpRoot(t);
   const cwd = '/proj/sym';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
   fs.mkdirSync(tasks, { recursive: true });
   const target = path.join(root, 'transcript-target');
   fs.writeFileSync(target, 'SUBAGENT-TRANSCRIPT-TEXT\n');
-  fs.symlinkSync(target, path.join(tasks, 'agent-99.output'));
+  const link = path.join(tasks, 'agent-99.output');
+  fs.symlinkSync(target, link);
 
   observe(root, 'seat', { id: 'tu-1', command: 'sleep 1', cwd, sessionId: 'sess' },
     { uid: 7, tmpdir: root });
 
-  const live = createBashLive({ REGISTRY_DIR: root });
+  const real = path.join(tasks, 'bREALFILE.output');
+  let offered = link;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: () => [{ pid: '4000', args: realArgv('sleep 1'), file: offered }],
+  });
   t.after(() => live.stopAll());
   live.read('seat');
   await sleep(60);
   const rows = live.read('seat');
 
-  assert.deepStrictEqual(rows, [], 'a symlink is not a task file, so the call has no candidate yet');
+  assert.strictEqual(rows.length, 1, 'the call keeps a row: an unowned call is shown with its counter');
+  assert.strictEqual(rows[0].resolved, false, 'ENTER: it really is unresolved, not resolved-and-empty');
+  assert.strictEqual(rows[0].output, '', 'a symlink is not a task file, so nothing was adopted');
 
-  const real = path.join(tasks, 'bREALFILE.output');
   fs.writeFileSync(real, 'REAL-OUTPUT\n');
+  offered = real;
   await sleep(120);
   const after = live.read('seat');
   assert.strictEqual(after.length, 1, 'ENTER: the REAL file was adopted, so the symlink assertion above is not vacuous');
@@ -190,11 +223,13 @@ test('output is visible WHILE the writer is still appending, not only after it c
   observe(root, 'seat', { id: 'tu-1', command: 'emit lines', cwd, sessionId: 'sess' },
     { uid: 7, tmpdir: root });
 
-  const live = createBashLive({ REGISTRY_DIR: root });
+  const file = path.join(tasks, 'bSTREAM01.output');
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: resolverOf([['emit lines', file]]),
+  });
   t.after(() => live.stopAll());
   live.read('seat');
-
-  const file = path.join(tasks, 'bSTREAM01.output');
   const fd = fs.openSync(file, 'a');
   const readsDuringWrite = [];
   try {
@@ -231,11 +266,13 @@ test('the DELETE of the file finalizes the row, and the last read keeps what it 
   fs.mkdirSync(tasks, { recursive: true });
   observe(root, 'seat', { id: 'tu-1', command: 'run', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
 
-  const live = createBashLive({ REGISTRY_DIR: root });
+  const file = path.join(tasks, 'bFINAL001.output');
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: resolverOf([['run', file]]),
+  });
   t.after(() => live.stopAll());
   live.read('seat');
-
-  const file = path.join(tasks, 'bFINAL001.output');
   fs.writeFileSync(file, 'PARTIAL\n');
   await sleep(120);
   assert.strictEqual(live.read('seat')[0].finished, false, 'ENTER: it was live before the unlink');
@@ -248,27 +285,27 @@ test('the DELETE of the file finalizes the row, and the last read keeps what it 
   assert.match(rows[0].output, /PARTIAL/, 'keeping the text it had read');
 });
 
-test('two calls landing together are told apart by their snapshots, with no lsof', async (t) => {
-  // The cheap path, and the reason the design is affordable: each observer
-  // snapshots the dir at PreToolUse, so a file absent from A's snapshot but
-  // present in B's belongs to A by construction.
+test('two concurrent calls are told apart by argv, each getting ITS OWN file', async (t) => {
   const root = tmpRoot(t);
   const cwd = '/proj/two';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
   fs.mkdirSync(tasks, { recursive: true });
 
-  observe(root, 'seat', { id: 'tu-A', command: 'cmd A', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  // Both are MULTI-LINE, which is the case t649 could never resolve, and both
+  // are in flight at once with neither file excluded by anything: the argv
+  // needle is the only thing that can separate them.
+  const cmdA = 'for f in *.js; do\n  echo "$f"\ndone';
+  const cmdB = 'while read l; do\n  printf "%s" "$l"\ndone';
+  observe(root, 'seat', { id: 'tu-A', command: cmdA, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  observe(root, 'seat', { id: 'tu-B', command: cmdB, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
   const fileA = path.join(tasks, 'bAAAA0001.output');
-  fs.writeFileSync(fileA, 'A-OUT\n');
-  // B is observed AFTER A's file exists, so A's file is inside B's snapshot.
-  observe(root, 'seat', { id: 'tu-B', command: 'cmd B', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
   const fileB = path.join(tasks, 'bBBBB0001.output');
+  fs.writeFileSync(fileA, 'A-OUT\n');
   fs.writeFileSync(fileB, 'B-OUT\n');
 
-  let probes = 0;
   const live = createBashLive({
     REGISTRY_DIR: root,
-    probeOwner: () => { probes++; return null; },
+    resolveOwners: resolverOf([[cmdA, fileA], [cmdB, fileB]]),
   });
   t.after(() => live.stopAll());
   live.read('seat');
@@ -276,52 +313,87 @@ test('two calls landing together are told apart by their snapshots, with no lsof
   const rows = live.read('seat');
 
   const byCmd = Object.fromEntries(rows.map((r) => [r.command, r.output]));
-  assert.deepStrictEqual(Object.keys(byCmd).sort(), ['cmd A', 'cmd B'],
+  assert.deepStrictEqual(Object.keys(byCmd).sort(), [cmdA, cmdB].sort(),
     'ENTER: both calls were painted, so the pairing below is not asserted over one row');
-  assert.match(byCmd['cmd A'], /A-OUT/, 'A gets the file that was absent from B\'s snapshot');
-  assert.match(byCmd['cmd B'], /B-OUT/, 'and B gets the one that appeared after it');
-  assert.strictEqual(probes, 0, 'snapshots alone resolved it — lsof is for a GENUINE collision only');
+  assert.match(byCmd[cmdA], /A-OUT/, 'A got the file whose holder argv carried A');
+  assert.match(byCmd[cmdB], /B-OUT/, 'and B got its own');
 });
 
-test('a genuine collision falls back to exactly one probe, per collision', async (t) => {
-  // Both observers snapshot the same empty dir, so neither file is excluded by
-  // a snapshot and the free path cannot decide. This is the only case that may
-  // spend an lsof, and it must spend it once — not once per read.
+test('two IDENTICAL concurrent commands resolve to NOTHING rather than guessing', async (t) => {
+  // Constraint 1, and the case the mechanism cannot decide: two processes carry
+  // the same needle, so neither file can be attributed. Misattributing A's output
+  // under B is worse than showing none, so the rows keep their command and their
+  // elapsed counter and stay empty.
   const root = tmpRoot(t);
-  const cwd = '/proj/coll';
+  const cwd = '/proj/same';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
   fs.mkdirSync(tasks, { recursive: true });
 
-  observe(root, 'seat', { id: 'tu-A', command: 'alpha-cmd', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  observe(root, 'seat', { id: 'tu-B', command: 'beta-cmd', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  fs.writeFileSync(path.join(tasks, 'bCOLL0001.output'), 'ALPHA-OUT\n');
-  fs.writeFileSync(path.join(tasks, 'bCOLL0002.output'), 'BETA-OUT\n');
+  const same = 'npm test';
+  observe(root, 'seat', { id: 'tu-A', command: same, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  observe(root, 'seat', { id: 'tu-B', command: same, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+  const fileA = path.join(tasks, 'bSAME0001.output');
+  const fileB = path.join(tasks, 'bSAME0002.output');
+  fs.writeFileSync(fileA, 'FIRST-OUT\n');
+  fs.writeFileSync(fileB, 'SECOND-OUT\n');
 
-  const probed = [];
   const live = createBashLive({
     REGISTRY_DIR: root,
-    probeOwner: (f) => {
-      probed.push(f);
-      return f.endsWith('bCOLL0001.output') ? '/bin/zsh -c alpha-cmd' : '/bin/zsh -c beta-cmd';
-    },
+    resolveOwners: resolverOf([[same, fileA], [same, fileB]]),
   });
   t.after(() => live.stopAll());
   live.read('seat');
   await sleep(150);
   const rows = live.read('seat');
-  const afterFirst = probed.length;
 
-  const byCmd = Object.fromEntries(rows.map((r) => [r.command, r.output]));
-  assert.deepStrictEqual(Object.keys(byCmd).sort(), ['alpha-cmd', 'beta-cmd'],
-    'ENTER: both collided rows were painted');
-  assert.match(byCmd['alpha-cmd'], /ALPHA-OUT/, 'the probe resolved each file to its own command');
-  assert.match(byCmd['beta-cmd'], /BETA-OUT/);
-  assert.ok(afterFirst > 0 && afterFirst <= 2, `one probe per colliding file, got ${afterFirst}`);
+  assert.strictEqual(rows.length, 2, 'ENTER: both calls still have rows, so the emptiness below is a refusal and not an absence');
+  for (const r of rows) {
+    assert.strictEqual(r.command, same);
+    assert.strictEqual(r.output, '', 'an undecidable owner yields NO output rather than a guess');
+    assert.strictEqual(r.resolved, false);
+    assert.strictEqual(typeof r.elapsedMs, 'number', 'and the row still carries the elapsed counter shown in its place');
+  }
+});
 
+test('an unresolvable call stops costing ps+lsof once its window closes', async (t) => {
+  // The cost bound. An observer whose process is gone can never resolve, and at
+  // a 500ms cadence a resolver left running against it is two execs a second for
+  // as long as the observer file survives.
+  const root = tmpRoot(t);
+  const cwd = '/proj/failprobe';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  let clock = 1_000_000;
+  observe(root, 'seat', { id: 'tu-A', command: 'alpha', cwd, sessionId: 'sess' },
+    { uid: 7, tmpdir: root, now: () => clock });
+  fs.writeFileSync(path.join(tasks, 'bFAIL0001.output'), 'X\n');
+  let calls = 0;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    // Nothing on the box carries this call's needle: the process already exited.
+    resolveOwners: () => { calls++; return [{ pid: '999', args: '/bin/zsh -c something-else', file: '/tmp/other.output' }]; },
+  });
+  t.after(() => live.stopAll());
   live.read('seat');
+  await sleep(120);
   live.read('seat');
-  assert.strictEqual(probed.length, afterFirst,
-    'later reads must NOT re-probe: the assignment is remembered, or this is polling by another name');
+  const during = calls;
+  assert.ok(during > 0, 'ENTER: the resolver really was consulted while the window was open');
+
+  const row = live.read('seat')[0];
+  assert.strictEqual(row.resolved, false, 'ENTER: it really is unresolved, which is the state that must expire');
+  assert.strictEqual(row.output, '', 'and it never adopted the unrelated file');
+
+  clock += RESOLVE_WINDOW_MS + 1000;
+  const after = live.read('seat');
+  const settled = calls;
+  for (let i = 0; i < 10; i++) live.read('seat');
+
+  assert.deepStrictEqual(after, [], 'past its window the phantom row is dropped rather than counting up forever');
+  assert.strictEqual(calls, settled,
+    `and 10 further reads must add no resolver calls, got ${calls - settled}`);
 });
 
 test('the watcher holds no fd when nothing is in flight, and releases them when reads stop', async (t) => {
@@ -362,7 +434,10 @@ test('a stale observer whose file never appeared is dropped, not kept as a phant
   observe(root, 'seat', { id: 'tu-1', command: 'x', cwd, sessionId: 'sess' },
     { uid: 7, tmpdir: root, now: () => clock });
 
-  assert.deepStrictEqual(live.read('seat'), [], 'no file yet, so nothing to show');
+  const pending = live.read('seat');
+  assert.strictEqual(pending.length, 1, 'the call is shown while it waits — running blind is the bug being fixed');
+  assert.strictEqual(pending[0].output, '', 'with no output, since no file has been attributed to it');
+  assert.strictEqual(pending[0].resolved, false);
   const liveDir = pathFor(root, 'seat', 'bashLive');
   // `.watching` is the hook's gate, written by read() and removed by stop(). It
   // is not an observer and must survive the reaping that removes them: deleting
@@ -402,9 +477,44 @@ test('pruneObservers bounds the dir, keeping the newest', () => {
     'the NEWEST survives — dropping the newest would delete the call currently running');
 });
 
-test('commandFingerprint collapses whitespace so a probe can match a respawned argv', () => {
-  assert.strictEqual(commandFingerprint('  a   b\n c  '), 'a b c');
-  assert.strictEqual(commandFingerprint(null), '');
+test('the argv encoder reproduces what ps PRINTS, byte for byte', () => {
+  // Measured against a crafted argv on macOS with xxd, not assumed: ps does not
+  // print argv raw, it escapes. \n and \t become the four-character sequences
+  // \\012 and \\011, other control bytes become caret notation. A matcher that
+  // instead NORMALIZES both sides (t649 collapsed whitespace) can never match a
+  // multi-line command, and agent Bash calls are routinely multi-line.
+  assert.strictEqual(psArgvEncode('X\nY\tZ\rW\x01V'), 'X\\012Y\\011Z^MW^AV');
+  assert.strictEqual(psArgvEncode('plain text'), 'plain text');
+
+  // Backslash is NOT escaped, which is why this direction is the only sound one:
+  // `a\\012b` and a real newline both print as the same bytes, so DECODING ps
+  // output is ambiguous while encoding the known command is exact.
+  assert.strictEqual(psArgvEncode('a\\012b'), 'a\\012b');
+  assert.strictEqual(psArgvEncode('a\nb'), 'a\\012b');
+});
+
+test('the needle matches a REAL argv carrying both a newline and a single quote', () => {
+  // The case t649 could not match at all. Bytes below are a live `ps -o args=`
+  // capture from this box (claude 2.1.260), not a hand-written approximation --
+  // an approximation is what made the broken matcher look tested.
+  const command = 'ps -p $$ -o args= > /tmp/t650argv3.txt\necho \'it\'"\'"\'s\'\necho "done"';
+  const REAL_ARGV = "/bin/zsh -c source /Users/bogdan/.claude/shell-snapshots/snapshot-zsh-1788523123004-88g69m.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'ps -p $$ -o args= > /tmp/t650argv3.txt\\012echo '\"'\"'it'\"'\"'\"'\"'\"'\"'\"'\"'s'\"'\"'\\012echo \"done\"' < /dev/null && pwd -P >| /tmp/claude-e063-cwd";
+
+  assert.ok(command.includes('\n') && command.includes("'"),
+    'ENTER: the command really does carry both a newline and a quote, or this pins nothing');
+  assert.ok(REAL_ARGV.includes('\\012'),
+    'ENTER: the captured argv really is in ps ESCAPED form, not raw');
+  assert.ok(REAL_ARGV.includes(argvNeedle(command)),
+    'the needle must be found in the real bytes — this is the whole ownership mechanism');
+});
+
+test('a needle is refused for an empty command rather than matching everything', () => {
+  // A needle of `eval ''` would be a substring of nothing useful, but an empty
+  // or absent command must not produce a needle at all: a matcher that returns
+  // a match for every process assigns output to the wrong call, which
+  // constraint 1 ranks as worse than showing none.
+  for (const bad of ['', null, undefined]) assert.strictEqual(argvNeedle(bad), null);
+  assert.ok(argvNeedle('echo hi'), 'ENTER: a real command still yields a needle');
 });
 
 test('TASK_OUTPUT_RE admits the CLI\'s ids and rejects a traversal', () => {
@@ -489,81 +599,6 @@ test('the sweep is disarmed once no seat is left, and re-armed by the next call'
   assert.strictEqual(armed, 2, 'and a later call re-arms it — disarming must not be permanent');
 });
 
-test('a probe that cannot resolve the owner is not retried every tick', async (t) => {
-  // The cost defect: an unresolved candidate recorded nothing, so every read
-  // re-ran defaultProbeOwner — two execFileSync calls with 5s timeouts — at the
-  // tab's cadence. That is exactly the per-tick lsof the design exists to avoid.
-  // The round-1 test only ever exercised a SUCCEEDING stub, so its "no re-probe"
-  // assertion passed for the wrong reason.
-  const root = tmpRoot(t);
-  const cwd = '/proj/failprobe';
-  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
-  fs.mkdirSync(tasks, { recursive: true });
-
-  observe(root, 'seat', { id: 'tu-A', command: 'alpha', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  observe(root, 'seat', { id: 'tu-B', command: 'beta', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  fs.writeFileSync(path.join(tasks, 'bFAIL0001.output'), 'X\n');
-  fs.writeFileSync(path.join(tasks, 'bFAIL0002.output'), 'Y\n');
-
-  let probes = 0;
-  const live = createBashLive({
-    REGISTRY_DIR: root,
-    probeOwner: () => { probes++; return null; },
-  });
-  t.after(() => live.stopAll());
-  live.read('seat');
-  await sleep(150);
-  live.read('seat');
-  const afterFirst = probes;
-  assert.ok(afterFirst > 0, 'ENTER: the collision really did reach the probe, so the ceiling below is meaningful');
-
-  for (let i = 0; i < 10; i++) live.read('seat');
-  assert.strictEqual(probes, afterFirst,
-    `a failed probe must back off; 10 further reads added ${probes - afterFirst} probes`);
-});
-
-test('a probe matches an argv that is not whitespace-normalized', async (t) => {
-  // `ps -o args=` returns the command as spawned — a multi-line agent Bash call
-  // keeps its newlines and runs of spaces. Normalizing only the fingerprint side
-  // meant such a command never matched, silently forcing the unresolved path for
-  // exactly the calls most worth previewing.
-  const root = tmpRoot(t);
-  const cwd = '/proj/multiline';
-  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
-  fs.mkdirSync(tasks, { recursive: true });
-
-  // BOTH are multi-line on purpose. With only one, the other resolves by name,
-  // and the constraint propagation then hands the leftover file to the leftover
-  // observer on the NEXT read — so the test passes without the normalization
-  // fix. Two unmatchable commands leave the propagation nothing to work with,
-  // which is what makes this test discriminate.
-  const multiA = 'for f in *.js; do\n  echo "$f"\ndone';
-  const multiB = 'while read l; do\n  printf "%s" "$l"\ndone';
-  observe(root, 'seat', { id: 'tu-A', command: multiA, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  observe(root, 'seat', { id: 'tu-B', command: multiB, cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
-  fs.writeFileSync(path.join(tasks, 'bMULTI001.output'), 'M-A\n');
-  fs.writeFileSync(path.join(tasks, 'bMULTI002.output'), 'M-B\n');
-
-  const live = createBashLive({
-    REGISTRY_DIR: root,
-    // Raw, exactly as ps prints it: newlines intact, not collapsed.
-    probeOwner: (f) => (f.endsWith('bMULTI001.output')
-      ? `/bin/zsh -c ${multiA}`
-      : `/bin/zsh -c ${multiB}`),
-  });
-  t.after(() => live.stopAll());
-  live.read('seat');
-  await sleep(150);
-  live.read('seat');
-  const rows = live.read('seat');
-
-  const byCmd = Object.fromEntries(rows.map((r) => [r.command, r.output]));
-  assert.deepStrictEqual(Object.keys(byCmd).sort(), [multiA, multiB].sort(),
-    'ENTER: both multi-line calls were painted, so the pairing below is real');
-  assert.match(byCmd[multiA], /M-A/, 'each multi-line call got ITS file, not left unresolved');
-  assert.match(byCmd[multiB], /M-B/);
-});
-
 test('a burst of events cannot grow the queue without bound', async (t) => {
   // The watch callback pushed one string per event into an array drained only by
   // a read. With the tab closed nothing drains it, so a command emitting a line
@@ -575,10 +610,12 @@ test('a burst of events cannot grow the queue without bound', async (t) => {
   fs.mkdirSync(tasks, { recursive: true });
   observe(root, 'seat', { id: 'tu-1', command: 'noisy', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
 
+  const file = path.join(tasks, 'bBURST001.output');
   let fire = null;
   const live = createBashLive({
     REGISTRY_DIR: root,
     watch: (dir, cb) => { fire = cb; return { close() {} }; },
+    resolveOwners: resolverOf([['noisy', file]]),
   });
   t.after(() => live.stopAll());
   live.read('seat');
@@ -592,7 +629,6 @@ test('a burst of events cannot grow the queue without bound', async (t) => {
   assert.ok(live.pendingEventCount() <= EVENT_QUEUE_MAX,
     `the undrained queue must stay bounded, got ${live.pendingEventCount()} after ${EVENT_QUEUE_MAX * 4} events`);
 
-  const file = path.join(tasks, 'bBURST001.output');
   fs.writeFileSync(file, 'BURST-OUTPUT\n');
   const rows = live.read('seat');
   assert.strictEqual(rows.length, 1, 'the overflow marker still resolves the call by rescan');
@@ -610,13 +646,17 @@ test('a file that grew past the cap between reads is read in bounded memory', as
   fs.mkdirSync(tasks, { recursive: true });
   observe(root, 'seat', { id: 'tu-1', command: 'flood', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
 
-  const live = createBashLive({ REGISTRY_DIR: root });
+  const hugeFile = path.join(tasks, 'bHUGE0001.output');
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: resolverOf([['flood', hugeFile]]),
+  });
   t.after(() => live.stopAll());
   live.read('seat');
 
   const huge = LIVE_MAX_BYTES * 8;
   const body = `${'a'.repeat(huge)}\nTAIL-MARKER\n`;
-  fs.writeFileSync(path.join(tasks, 'bHUGE0001.output'), body);
+  fs.writeFileSync(hugeFile, body);
 
   const allocs = [];
   const realAlloc = Buffer.alloc;

@@ -15,6 +15,7 @@ const EVENT_QUEUE_MAX = 512;
 const WATCH_SENTINEL = '.watching';
 const ARM_REFRESH_MS = 2000;
 const FINALIZED_GRACE_MS = 5000;
+const RESOLVE_WINDOW_MS = 5 * 60 * 1000;
 
 const TASK_OUTPUT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.output$/;
 const OBSERVER_FILE_RE = /^[A-Za-z0-9_-]{1,128}\.json$/;
@@ -111,25 +112,59 @@ function pruneObservers(liveDir, opts) {
   }
 }
 
-function defaultProbeOwner(file) {
-  try {
-    const out = execFileSync('lsof', ['-t', file], {
-      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const pid = out.split('\n').map((s) => s.trim()).filter(Boolean)[0];
-    if (!pid || !/^[0-9]{1,10}$/.test(pid)) return null;
-    const args = execFileSync('ps', ['-p', pid, '-o', 'args='], {
-      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const line = args.trim();
-    return line || null;
-  } catch {
-    return null;
+function psArgvEncode(command) {
+  let out = '';
+  for (const b of Buffer.from(String(command == null ? '' : command), 'utf8')) {
+    if (b === 0x0a) out += '\\012';
+    else if (b === 0x09) out += '\\011';
+    else if (b === 0x7f) out += '^?';
+    else if (b < 0x20) out += `^${String.fromCharCode(b + 64)}`;
+    else out += String.fromCharCode(b);
   }
+  return out;
 }
 
-function commandFingerprint(command) {
-  return String(command == null ? '' : command).replace(/\s+/g, ' ').trim().slice(0, 200);
+function argvNeedle(command) {
+  const cmd = String(command == null ? '' : command);
+  if (!cmd) return null;
+  return psArgvEncode(`eval '${cmd.split("'").join(`'"'"'`)}'`);
+}
+
+function defaultResolveOwners() {
+  let psOut = '';
+  try {
+    psOut = execFileSync('ps', ['-ax', '-o', 'pid=,args='], {
+      encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch { return []; }
+
+  const byPid = new Map();
+  for (const line of psOut.split('\n')) {
+    const m = /^\s*([0-9]{1,10})\s+(.*)$/.exec(line);
+    if (m && m[2]) byPid.set(m[1], m[2]);
+  }
+  if (!byPid.size) return [];
+
+  const pids = [...byPid.keys()];
+  let lsOut = '';
+  try {
+    lsOut = execFileSync('lsof', ['-a', '-p', pids.join(','), '-d', '1', '-Fpn'], {
+      encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch { return []; }
+
+  const out = [];
+  let pid = null;
+  for (const line of lsOut.split('\n')) {
+    if (line.startsWith('p')) { pid = line.slice(1); continue; }
+    if (!line.startsWith('n') || !pid) continue;
+    const file = line.slice(1);
+    const args = byPid.get(pid);
+    if (args && file.startsWith('/')) out.push({ pid, args, file });
+  }
+  return out;
 }
 
 function createBashLive(deps) {
@@ -138,7 +173,7 @@ function createBashLive(deps) {
     fs = fsDefault,
     now = Date.now,
     watch = null,
-    probeOwner = defaultProbeOwner,
+    resolveOwners = defaultResolveOwners,
     tasksDirOpts = null,
   } = deps || {};
 
@@ -252,7 +287,7 @@ function createBashLive(deps) {
       if (!isTaskFile(dir, n)) continue;
       const key = path.join(dir, n);
       if (!st.candidates.has(key)) {
-        st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null, probed: false });
+        st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null });
       }
     }
   }
@@ -272,7 +307,7 @@ function createBashLive(deps) {
         const key = path.join(dir, n);
         if (isTaskFile(dir, n)) {
           if (!st.candidates.has(key)) {
-            st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null, probed: false });
+            st.candidates.set(key, { dir, base: n, path: key, seenAt: now(), owner: null });
           }
         } else {
           retire(st, key);
@@ -342,42 +377,28 @@ function createBashLive(deps) {
 
     const free = [...st.candidates.values()].filter((c) => !c.owner);
     if (!free.length) return;
-    const waiting = observers.filter((o) => !claimed.has(o.id));
+    const t = now();
+    const waiting = observers.filter(
+      (o) => !claimed.has(o.id) && t - (o.startedAt || t) <= RESOLVE_WINDOW_MS,
+    );
     if (!waiting.length) return;
 
-    const eligible = new Map();
-    for (const c of free) {
-      eligible.set(c.path, waiting.filter(
-        (o) => o.tasksDir === c.dir && !o.snapshot.includes(c.base),
-      ));
-    }
-    const unclaimed = (c) => eligible.get(c.path).filter((o) => !claimed.has(o.id));
+    let procs = null;
+    try { procs = resolveOwners(); } catch { return; }
+    if (!Array.isArray(procs) || !procs.length) return;
 
-    let progress = true;
-    while (progress) {
-      progress = false;
-      for (const c of free) {
-        if (c.owner) continue;
-        const list = unclaimed(c);
-        if (list.length !== 1) continue;
-        c.owner = list[0].id;
-        claimed.add(list[0].id);
-        progress = true;
-      }
-    }
+    const byPath = new Map();
+    for (const c of free) byPath.set(c.path, c);
 
-    for (const c of free) {
-      if (c.owner || c.probed) continue;
-      const list = unclaimed(c);
-      if (list.length < 2) continue;
-      c.probed = true;
-      const args = probeOwner(c.path);
-      if (!args) continue;
-      const argsFp = commandFingerprint(args);
-      const hits = list.filter((o) => argsFp.includes(commandFingerprint(o.command)));
+    for (const o of waiting) {
+      const needle = argvNeedle(o.command);
+      if (!needle) continue;
+      const hits = procs.filter((p) => typeof p.args === 'string' && p.args.includes(needle));
       if (hits.length !== 1) continue;
-      c.owner = hits[0].id;
-      claimed.add(hits[0].id);
+      const c = byPath.get(hits[0].file);
+      if (!c || c.owner) continue;
+      c.owner = o.id;
+      claimed.add(o.id);
     }
   }
 
@@ -448,11 +469,10 @@ function createBashLive(deps) {
         dropObserver(name, o.file);
         continue;
       }
-      if (!c && !row.finishedAt && !row.offset) {
-        if (t - (o.startedAt || t) > OBSERVER_MAX_AGE_MS) {
-          st.rows.delete(o.id);
-          dropObserver(name, o.file);
-        }
+      if (!c && !row.finishedAt && !row.offset
+          && t - (o.startedAt || t) > RESOLVE_WINDOW_MS) {
+        st.rows.delete(o.id);
+        dropObserver(name, o.file);
         continue;
       }
       out.push({
@@ -462,6 +482,7 @@ function createBashLive(deps) {
         output: row.text.replace(/\n+$/, ''),
         bytes: row.bytes,
         tailed: row.tailed,
+        resolved: !!(c || row.offset > 0 || row.finishedAt),
         startedAt: row.startedAt,
         elapsedMs: row.startedAt ? Math.max(0, t - row.startedAt) : null,
         finished: !!row.finishedAt,
@@ -535,13 +556,15 @@ module.exports = {
   pruneObservers,
   tasksDirFor,
   tasksDirFromScratchpad,
-  commandFingerprint,
-  defaultProbeOwner,
+  psArgvEncode,
+  argvNeedle,
+  defaultResolveOwners,
   LIVE_MAX_BYTES,
   IDLE_REAP_MS,
   IDLE_SWEEP_MS,
   EVENT_QUEUE_MAX,
   FINALIZED_GRACE_MS,
+  RESOLVE_WINDOW_MS,
   OBSERVER_MAX_AGE_MS,
   OBSERVER_MAX_FILES,
   TASK_OUTPUT_RE,
