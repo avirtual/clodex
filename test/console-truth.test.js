@@ -108,9 +108,11 @@ async function mountPane(t) {
     __CLODEX_WEB__: false,
     api: { consoleRead: async (name, cursor) => readBashConsole(root, name, cursor) },
   };
+  const hadClear = global.clearInterval;
   t.after(() => {
     global.document = had.d;
     global.window = had.w;
+    global.clearInterval = hadClear;
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -257,9 +259,9 @@ test('a stalled backlog reports its gap once, not once per poll', async (t) => {
     `the gap marker repeated on idle polls: ${p.painted.filter((x) => x === 'GAP').length} markers`);
 });
 
-// The suppression is on an UNCHANGED count, not on the marker having been shown.
-// A backlog that grows is a new loss and must say so, or the pane goes quiet
-// exactly when it is falling further behind.
+// The suppression is on a count that did not RISE, not on the marker having been
+// shown. A backlog that grows is a new loss and must say so, or the pane goes
+// quiet exactly when it is falling further behind.
 test('a gap that GROWS is reported again', async (t) => {
   const p = await mountPane(t);
   for (let i = 0; i < PULL_MAX_RECORDS + 5; i++) p.write(`c${i}`, 200 + i, STAMP);
@@ -267,13 +269,65 @@ test('a gap that GROWS is reported again', async (t) => {
   await p.tick();
   assert.strictEqual(p.painted.filter((x) => x === 'GAP').length, 1, 'ENTER: the first gap was reported');
 
-  // More records into the same stalled group: the count the pane could not carry
-  // is now larger than the one it reported.
-  for (let i = 0; i < 10; i++) p.write(`d${i}`, 400 + i, STAMP);
+  // More records into the same stalled group, at pids that sort BELOW the served
+  // window: the second poll returns nothing the pane has not already drawn, so
+  // the append can only come from the COUNT rising. Growth pids INSIDE the
+  // window make this pass against a naive `gapShown` boolean.
+  for (let i = 0; i < 10; i++) p.write(`e${i}`, 100 + i, STAMP);
   await p.tick();
 
   assert.strictEqual(p.painted.filter((x) => x === 'GAP').length, 2,
     'a larger backlog is a new loss and is reported');
+});
+
+// The mirror of the growth case, and the reason the guard is `<=` rather than
+// `===`. The CLI-side prune reaps the OLDEST records while the cursor survives,
+// so a stalled group can shrink: `skipped` drops 10 -> 2 and an equality guard
+// reads that as a new loss, announcing 2 for a backlog it already reported as
+// 10. The smaller number was already covered by the larger one.
+test('a gap that SHRINKS is not reported again', async (t) => {
+  const p = await mountPane(t);
+  const total = PULL_MAX_RECORDS + 5;
+  for (let i = 0; i < total; i++) p.write(`c${i}`, 200 + i, STAMP);
+
+  await p.tick();
+  assert.strictEqual(p.painted.filter((x) => x === 'GAP').length, 1,
+    'ENTER: the full backlog really did report its gap');
+
+  // The prune reaps the three oldest, which are below the served window, so the
+  // next poll returns the same 50 records and a SMALLER skipped count.
+  for (let i = 0; i < 3; i++) fs.rmSync(path.join(p.dir, `${STAMP}-${200 + i}.json`));
+  await p.tick();
+
+  assert.strictEqual(p.painted.filter((x) => x === 'GAP').length, 1,
+    'a backlog that shrank re-announced a loss already reported as a larger one');
+});
+
+// A payload carrying BOTH flags must not be told the output never arrived while
+// 30000 chars of it are on screen above the note. The backgrounded branch is
+// guarded on there being no output for exactly this reason: measured payloads
+// are all empty, but the note is a claim about the screen, not about the flag.
+test('a backgrounded call that DID carry output gets the truncation note', async (t) => {
+  const p = await mountPane(t);
+
+  fs.writeFileSync(path.join(p.dir, `${STAMP}-8.json`), JSON.stringify({
+    ...OK,
+    tool_input: { command: 'seq 1 20000' },
+    tool_use_id: 't-bg-out',
+    tool_response: {
+      stdout: 'x'.repeat(120), stderr: '', interrupted: false,
+      backgroundTaskId: 'b0zgstcy6',
+      persistedOutputPath: '/tmp/out.txt', persistedOutputSize: 108894,
+    },
+  }));
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['seq 1 20000'], 'ENTER: the call really was painted');
+
+  const block = p.body.children[p.body.children.length - 1];
+  assert.doesNotMatch(block.innerHTML, /never sent here/,
+    'output is on screen, so the pane must not claim it never arrived');
+  assert.match(block.innerHTML, /output truncated by the CLI/,
+    'the note that describes what IS on screen is the truncation one');
 });
 
 // The CLI auto-backgrounds Bash calls under parallel load. Those PostToolUse

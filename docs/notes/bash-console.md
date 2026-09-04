@@ -30,11 +30,10 @@ string: the prefix is the CLI's wording, not a guarantee.
 "Newer than" is NOT a plain `>`. Where `date` has no `%N` the writer falls back
 to whole seconds, so a second's records share one stamp ordered only by pid and
 `f > cursor` drops every tie below it. The scan re-serves that whole group
-INCLUDING the cursor's own record — excluding it is what "incremental" means, and
-it REPAINTS, since the tenant's dedupe set is replaced per batch (A-B-A measured;
-3 duplicates in 48 records).
+INCLUDING the cursor's own record — the tenant's dedupe set is replaced per batch
+(A-B-A measured; 3 duplicates in 48 records).
 
 `RECORD_NAME_RE` is exported because `ipc-handlers.js` validates an incoming
 cursor with it — two literals could drift into rejecting every cursor written.
 `skipped` exists because the cursor advances past a backlog the pull could not
-carry, unreported a console missing the commands it exists for.
+carry, and unreported that leaves a console missing the commands it exists for.
