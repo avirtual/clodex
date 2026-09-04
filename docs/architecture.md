@@ -210,11 +210,11 @@ bundle), whose packaged form is the Docker image under
 - **bash-live.js** — the in-flight half of the Console tab, and a different file
   class from the one below: a FOREGROUND Bash call's output file is unlinked at
   completion, which is exactly why `PostToolUse` cannot see it. A PreToolUse
-  OBSERVER (emits nothing, so it cannot break a Bash call) records the call plus
-  a snapshot of the tasks dir; `fs.watch` detects the new file for free, and one
-  `lsof` disambiguates only a genuine collision — once per candidate, never per
-  tick. Watches open only while a pane is reading. An unref'd sweep releases the
-  seat `IDLE_REAP_MS` after its last read, and its liveness is keyed to the SEAT,
+  OBSERVER (emits nothing, so it cannot break a Bash call) records the call and
+  its command; `fs.watch` detects the new file for free, and ownership is
+  resolved by matching that command against `ps` argv and taking the matching
+  process's fd 1, which IS the output file. Watches open only while a pane is
+  reading. An unref'd sweep releases the seat `IDLE_REAP_MS` after its last read, and its liveness is keyed to the SEAT,
   not to the watch: a tab with no call in flight holds no watch, so a
   watch-keyed sweep stopped in the gap between two Bash calls and left the seat
   armed forever. The hook is gated on a `.watching` sentinel this module writes

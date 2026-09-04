@@ -1,5 +1,5 @@
 'use strict';
-// bash-live.test.js — the FOREGROUND Bash case (t649). Its output file is
+// bash-live.test.js — the FOREGROUND Bash case. Its output file is
 // UNLINKED at completion, which is why PostToolUse cannot see it and why the
 // live layer exists at all.
 //
@@ -59,8 +59,8 @@ function observe(root, seat, { id, command, cwd, sessionId, agentId = null, scra
 // wrapping a command in THIS, so a fixture cannot agree with the matcher by
 // construction: the wrapper, the `eval '...'` requoting and the \012 newline
 // encoding are the bytes the matcher must survive, and a hand-written
-// approximation of them is what let t649's matcher ship green while it could
-// never match a multi-line command.
+// approximation of them is what let an earlier matcher ship green while it
+// could never match a multi-line command.
 const ZSH_PREAMBLE = "/bin/zsh -c source /Users/b/.claude/shell-snapshots/snapshot-zsh-1788523123004-88g69m.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && ";
 
 function realArgv(command) {
@@ -120,8 +120,6 @@ test('the observer takes the tasks dir from the payload, NOT from os.tmpdir()', 
 
     assert.strictEqual(rec.tasksDir, tasks,
       'the payload dir must win over the derived one');
-    assert.deepStrictEqual(rec.snapshot, ['bAAAAAAAA.output'],
-      'and it must actually READ that dir — an unreadable dir silently snapshots []');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -149,12 +147,11 @@ test('a relative or empty scratchpad_dir is refused, not joined', () => {
   assert.ok(tasksDirFromScratchpad('/abs/x/scratchpad'), 'ENTER: an absolute one still resolves');
 });
 
-test('writeObserver records the pre-existing files as a snapshot, and ignores non-Bash', () => {
+test('writeObserver records the call, and ignores non-Bash', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-'));
   const cwd = '/proj/one';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
   fs.mkdirSync(tasks, { recursive: true });
-  fs.writeFileSync(path.join(tasks, 'bAAAAAAAA.output'), 'older call');
   const live = path.join(root, 'live');
 
   const rec = writeObserver(JSON.stringify({
@@ -162,8 +159,8 @@ test('writeObserver records the pre-existing files as a snapshot, and ignores no
     cwd, session_id: 'sess',
   }), live, { uid: 7, tmpdir: root });
 
-  assert.deepStrictEqual(rec.snapshot, ['bAAAAAAAA.output'],
-    'the file already there must be in the snapshot, or it is mistaken for this call\'s');
+  assert.strictEqual(rec.command, 'echo hi', 'the command is what ownership is later resolved by');
+  assert.strictEqual(rec.tasksDir, tasks);
   assert.deepStrictEqual(fs.readdirSync(live), ['tu-1.json']);
 
   assert.strictEqual(writeObserver(JSON.stringify({
@@ -339,7 +336,8 @@ test('two concurrent calls are told apart by argv, each getting ITS OWN file', a
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
   fs.mkdirSync(tasks, { recursive: true });
 
-  // Both are MULTI-LINE, which is the case t649 could never resolve, and both
+  // Both are MULTI-LINE, the case a whitespace-collapsing matcher can never
+  // resolve, and both
   // are in flight at once with neither file excluded by anything: the argv
   // needle is the only thing that can separate them.
   const cmdA = 'for f in *.js; do\n  echo "$f"\ndone';
@@ -555,6 +553,77 @@ test('two IDENTICAL concurrent commands resolve to NOTHING rather than guessing'
   }
 });
 
+test('a call that keeps missing backs its probe off', async (t) => {
+  // Each probe is ~26ms of SYNCHRONOUS work on the Electron main thread -- the
+  // one that draws the whole app -- and 26ms overruns a 16ms frame. At the
+  // 500ms poll that is a ~5% duty cycle sustained for the whole resolve window,
+  // which the operator perceives as the app going sticky. The first few reads
+  // still probe eagerly, because the common case resolves within a tick or two.
+  const root = tmpRoot(t);
+  const cwd = '/proj/backoff';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  let clock = 1_000_000;
+  observe(root, 'seat', { id: 'tu-1', command: 'never-matches', cwd, sessionId: 'sess' },
+    { uid: 7, tmpdir: root, now: () => clock });
+  fs.writeFileSync(path.join(tasks, 'bBACK0001.output'), 'X\n');
+
+  let probes = 0;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    resolveOwners: () => { probes++; return []; },
+  });
+  t.after(() => live.stopAll());
+
+  live.read('seat');
+  await sleep(120);
+  const eager = probes;
+  assert.ok(eager > 0, 'ENTER: the first read really did probe, so the ceiling below means something');
+
+  // Twenty reads at the real cadence, no clock movement beyond the poll itself.
+  for (let i = 0; i < 20; i++) { clock += 500; live.read('seat'); }
+  const spent = probes - eager;
+  assert.ok(spent < 20,
+    `a repeatedly-missing probe must not run on every read; 20 reads spent ${spent} probes`);
+  assert.ok(spent > 0, 'ENTER: it still probes sometimes — a permanent stop would never recover');
+});
+
+test('a probe that SUCCEEDS resets the backoff, so the next call is not penalised', async (t) => {
+  // The backoff is per-seat, and a seat runs many calls. Without a reset the
+  // penalty earned by one slow call is paid by every later one.
+  const root = tmpRoot(t);
+  const cwd = '/proj/reset';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  let clock = 1_000_000;
+  observe(root, 'seat', { id: 'tu-1', command: 'resolves', cwd, sessionId: 'sess' },
+    { uid: 7, tmpdir: root, now: () => clock });
+  const file = path.join(tasks, 'bRESET001.output');
+  fs.writeFileSync(file, 'GOT-IT\n');
+
+  let hit = false;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    resolveOwners: () => (hit ? [{ pid: '7', args: realArgv('resolves'), file }] : []),
+  });
+  t.after(() => live.stopAll());
+
+  // Miss enough times to earn a real wait.
+  for (let i = 0; i < 8; i++) { clock += 500; live.read('seat'); }
+  hit = true;
+  clock += 20000;
+  live.read('seat');
+  await sleep(120);
+  const rows = live.read('seat');
+
+  assert.strictEqual(rows.length, 1, 'ENTER: the call has a row');
+  assert.match(rows[0].output, /GOT-IT/, 'a backed-off seat still resolves once the process appears');
+});
+
 test('an unresolvable call stops costing ps+lsof once its window closes', async (t) => {
   // The cost bound. An observer whose process is gone can never resolve, and at
   // a 500ms cadence a resolver left running against it is two execs a second for
@@ -681,7 +750,7 @@ test('the argv encoder reproduces what ps PRINTS, byte for byte', () => {
   // Measured against a crafted argv on macOS with xxd, not assumed: ps does not
   // print argv raw, it escapes. \n and \t become the four-character sequences
   // \\012 and \\011, other control bytes become caret notation. A matcher that
-  // instead NORMALIZES both sides (t649 collapsed whitespace) can never match a
+  // instead NORMALIZES both sides can never match a
   // multi-line command, and agent Bash calls are routinely multi-line.
   assert.strictEqual(psArgvEncode('X\nY\tZ\rW\x01V'), 'X\\012Y\\011Z^MW^AV');
   assert.strictEqual(psArgvEncode('plain text'), 'plain text');
@@ -694,7 +763,8 @@ test('the argv encoder reproduces what ps PRINTS, byte for byte', () => {
 });
 
 test('the needle matches a REAL argv carrying both a newline and a single quote', () => {
-  // The case t649 could not match at all. Bytes below are a live `ps -o args=`
+  // The case a whitespace-collapsing matcher cannot match at all. Bytes below
+  // are a live `ps -o args=`
   // capture from this box (claude 2.1.260), not a hand-written approximation --
   // an approximation is what made the broken matcher look tested.
   const command = 'ps -p $$ -o args= > /tmp/t650argv3.txt\necho \'it\'"\'"\'s\'\necho "done"';
@@ -767,7 +837,7 @@ test('the sweep is disarmed once no seat is left, and re-armed by the next call'
   // The other half: a timer that outlives its last SEAT is the same leak in a
   // cheaper currency, and an unref'd interval running forever is invisible.
   // Keyed to the seat, not the watch — a watch-keyed condition stopped the
-  // sweep in the gap between two Bash calls, which is the round-2 defect.
+  // sweep in the gap between two Bash calls.
   const root = tmpRoot(t);
   const cwd = '/proj/sweep';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });

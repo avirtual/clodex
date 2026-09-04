@@ -337,7 +337,7 @@ test('a late lower-pid record in the cursor group is painted, and painted once',
 // If more than PULL_MAX_RECORDS records share the top timestamp group and the
 // seat goes quiet, the cursor cannot advance past the group, so `skipped` stays
 // above zero on every poll. Appending a gap node each time fills MAX_BLOCKS and
-// scrolls the real blocks out — the pane reporting a fresh loss every 1.2s when
+// scrolls the real blocks out — the pane reporting a fresh loss every poll when
 // nothing has been lost since the first one.
 test('a stalled backlog reports its gap once, not once per poll', async (t) => {
   const p = await mountPane(t);
@@ -463,7 +463,7 @@ test('a backgrounded call with no recoverable file says so, not that it was quie
 // the assertion is that the notes are mutually DISTINCT — a shared "backgrounded"
 // prefix would otherwise let two collapse and still match every regex here.
 //
-// The empty-with-no-trailer case is the one round 1 got wrong: it captioned an
+// The empty-with-no-trailer case: a caption must not describe an
 // empty file "it really printed nothing" whatever the trailer said, which states
 // silence as fact for a task that may not have printed YET. A block is never
 // repainted once drawn, so that claim would be frozen for the session.
@@ -535,7 +535,7 @@ test('an ordinary call with no output carries no such note', async (t) => {
     'a genuinely silent command is drawn as silent, with nothing claimed about why');
 });
 
-// The live lane (t649). PostToolUse stays the system of record and the live row
+// The live lane. PostToolUse stays the system of record and the live row
 // is a PREVIEW of a file the CLI unlinks at completion, so the pane must hand a
 // call over from one to the other exactly once. Both failure directions are
 // silent to a single-poll assertion: showing both is a duplicate the records
@@ -563,8 +563,8 @@ test('a live row is replaced by its settled record, never drawn alongside it', a
 test('a call whose output cannot be attributed says so, instead of showing a bare preview', async (t) => {
   // The refusal has a caption of its own because the row it produces looks
   // exactly like a call that has printed nothing yet: same command, same running
-  // timer, empty body. Saying "live preview" over it would be the t648 false
-  // caption again -- claiming an absence of output that was never observed, when
+  // timer, empty body. Saying "live preview" over it would be the false-caption
+  // class again -- claiming an absence of output that was never observed, when
   // what actually happened is that Clodex declined to guess which of two
   // identical running commands the file belongs to.
   const p = await mountPane(t);
@@ -577,6 +577,76 @@ test('a call whose output cannot be attributed says so, instead of showing a bar
   assert.match(html, /cannot be told\s+apart/, 'and names the refusal as the reason the body is empty');
   assert.doesNotMatch(html, /live preview/,
     'it must NOT claim to be previewing output it has not attributed to this call');
+});
+
+test('the live elapsed counter advances — the refusal row is not frozen', async (t) => {
+  // Constraint 1 says an unattributable call shows its command with a LIVE
+  // elapsed counter instead of guessed output. That remedy is only worth
+  // anything if the counter moves: `same` compared id/output/finished, all
+  // constant for an unresolved row, so renderLive() never re-ran and the row
+  // sat at its first value. A frozen 0.0s reads as a hung pane, which is a
+  // worse answer than the one the constraint was trying to avoid.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-frozen', command: 'npm test', output: '', bytes: 0,
+    tailed: false, elapsedMs, finished: false, resolved: false,
+  }]);
+
+  p.setLive(row(400));
+  await p.tick();
+  const first = p.liveBody.children[0].innerHTML;
+  assert.match(first, /npm test/, 'ENTER: the refusal row really is on screen');
+  assert.match(first, /400ms/, 'ENTER: showing its first elapsed value');
+
+  // ONLY elapsedMs advances. Every other field is byte-identical, which is
+  // exactly the case the old predicate called "same".
+  p.setLive(row(7000));
+  await p.tick();
+  const second = p.liveBody.children[0].innerHTML;
+  assert.match(second, /7\.0s/, 'the counter must advance, or the row is indistinguishable from a hang');
+  assert.notStrictEqual(first, second, 'ENTER: the node really was repainted');
+});
+
+test('a sub-second tick does not repaint, so the counter costs one repaint per second', async (t) => {
+  // The other half of bucketing: at a 500ms poll an unbucketed comparison
+  // repaints twice per displayed second for every in-flight call, and the
+  // rendered text is identical on the odd ticks.
+  const p = await mountPane(t);
+  const row = (elapsedMs) => ([{
+    id: 't-bucket', command: 'slow', output: 'x', bytes: 1,
+    tailed: false, elapsedMs, finished: false, resolved: true,
+  }]);
+
+  p.setLive(row(3000));
+  await p.tick();
+  const before = p.liveBody.children[0];
+
+  p.setLive(row(3400));
+  await p.tick();
+  assert.strictEqual(p.liveBody.children[0], before,
+    'same displayed second, same node — a repaint here would be invisible work');
+
+  p.setLive(row(4000));
+  await p.tick();
+  assert.notStrictEqual(p.liveBody.children[0], before, 'ENTER: crossing the second does repaint');
+});
+
+test('a finished live row is not captioned as still running', async (t) => {
+  // Never state something the data does not support. The reader
+  // keeps a row for its finalize grace AFTER the file is gone, and during that
+  // window `finished` is true — captioning it "still running" is false to the
+  // user about the one thing the row exists to report.
+  const p = await mountPane(t);
+  p.setLive([{
+    id: 't-fin', command: 'done-cmd', output: 'all output', bytes: 10,
+    tailed: false, elapsedMs: 5000, finished: true, resolved: true,
+  }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /done-cmd/, 'ENTER: the finished row really was drawn');
+  assert.doesNotMatch(html, /still running/, 'a finished call is not still running');
+  assert.doesNotMatch(html, />running</, 'and its mark must not say running either');
 });
 
 test('the settled read is AWAITED before the live read, so one call cannot draw twice', async (t) => {
@@ -601,7 +671,7 @@ test('the settled read is AWAITED before the live read, so one call cannot draw 
 });
 
 test('a live row never claims the command printed nothing', async (t) => {
-  // The t648 lesson in the new lane: a call still running that has printed
+  // The same rule in the new lane: a call still running that has printed
   // nothing YET has produced no evidence of silence, and a block is never
   // repainted once the settled record lands. Stating it as fact would freeze a
   // false claim for the session.

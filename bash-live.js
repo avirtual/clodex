@@ -17,6 +17,7 @@ const ARM_REFRESH_MS = 2000;
 const FINALIZED_GRACE_MS = 5000;
 const RESOLVE_WINDOW_MS = 5 * 60 * 1000;
 const WATCH_RETRY_MS = 3000;
+const PROBE_BACKOFF_MS = [0, 0, 0, 1000, 1000, 3000, 5000, 10000];
 
 const TASK_OUTPUT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.output$/;
 const OBSERVER_FILE_RE = /^[A-Za-z0-9_-]{1,128}\.json$/;
@@ -58,16 +59,12 @@ function writeObserver(inputJson, liveDir, opts) {
     || tasksDirFor(obj.cwd, obj.session_id, opts);
   if (!dir) return null;
 
-  let snapshot = [];
-  try { snapshot = fs.readdirSync(dir).filter((n) => TASK_OUTPUT_RE.test(n)); } catch { snapshot = []; }
-
   const rec = {
     id,
     command,
     cwd: typeof obj.cwd === 'string' ? obj.cwd : null,
     agentId: typeof obj.agent_id === 'string' ? obj.agent_id : null,
     tasksDir: dir,
-    snapshot,
     startedAt: now(),
   };
 
@@ -184,7 +181,6 @@ function createBashLive(deps) {
     now = Date.now,
     watch = null,
     resolveOwners = defaultResolveOwners,
-    tasksDirOpts = null,
   } = deps || {};
 
   const openWatch = watch || ((dir, cb) => fs.watch(dir, { persistent: false }, cb));
@@ -207,6 +203,8 @@ function createBashLive(deps) {
         rows: new Map(),
         events: [],
         lastRead: now(),
+        lastProbeAt: 0,
+        probeMisses: 0,
         armedAt: 0,
       };
       seats.set(name, st);
@@ -250,7 +248,6 @@ function createBashLive(deps) {
         command: obj.command,
         agentId: typeof obj.agentId === 'string' ? obj.agentId : null,
         tasksDir: realpath(obj.tasksDir),
-        snapshot: Array.isArray(obj.snapshot) ? obj.snapshot : [],
         startedAt: typeof obj.startedAt === 'number' ? obj.startedAt : 0,
       });
     }
@@ -408,6 +405,11 @@ function createBashLive(deps) {
     );
     if (!waiting.length) return;
 
+    const misses = st.probeMisses || 0;
+    const wait = PROBE_BACKOFF_MS[Math.min(misses, PROBE_BACKOFF_MS.length - 1)];
+    if (wait && t - (st.lastProbeAt || 0) < wait) return;
+    st.lastProbeAt = t;
+
     const needles = new Map();
     for (const o of waiting) {
       const n = argvNeedle(o.command);
@@ -416,11 +418,15 @@ function createBashLive(deps) {
     if (!needles.size) return;
 
     let procs = null;
-    try { procs = resolveOwners([...needles.values()]); } catch { return; }
-    if (!Array.isArray(procs) || !procs.length) return;
+    try { procs = resolveOwners([...needles.values()]); } catch { procs = null; }
+    if (!Array.isArray(procs) || !procs.length) {
+      st.probeMisses = misses + 1;
+      return;
+    }
 
     const byPath = new Map();
     for (const c of free) byPath.set(c.path, c);
+    let resolvedAny = false;
 
     for (const o of waiting) {
       const needle = needles.get(o.id);
@@ -433,7 +439,9 @@ function createBashLive(deps) {
       if (!c || c.owner) continue;
       c.owner = o.id;
       claimed.add(o.id);
+      resolvedAny = true;
     }
+    st.probeMisses = resolvedAny ? 0 : misses + 1;
   }
 
   function read(name) {
@@ -601,6 +609,7 @@ module.exports = {
   FINALIZED_GRACE_MS,
   RESOLVE_WINDOW_MS,
   WATCH_RETRY_MS,
+  PROBE_BACKOFF_MS,
   OBSERVER_MAX_AGE_MS,
   OBSERVER_MAX_FILES,
   TASK_OUTPUT_RE,

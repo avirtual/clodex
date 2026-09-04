@@ -1,6 +1,7 @@
 const { esc } = require('./lib/format');
 
 const MAX_BLOCKS = 300;
+const MAX_TRACKED = 600;
 const POLL_MS = 500;
 
 function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
@@ -88,7 +89,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function liveNode(r) {
     const el = document.createElement('div');
     el.className = 'console-block console-live';
-    const marks = ['<span class="console-block-mark">running</span>'];
+    const marks = [`<span class="console-block-mark">${r.finished ? 'finishing' : 'running'}</span>`];
     const dur = fmtDuration(r.elapsedMs);
     if (dur) marks.push(`<span class="console-block-time">${esc(dur)}</span>`);
     const head = '<div class="console-block-head">'
@@ -97,11 +98,12 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       + '</div>';
     const out = String(r.output || '').replace(/\n+$/, '');
     const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : '';
+    const state = r.finished ? 'finished' : 'still running';
     const note = r.resolved === false
-      ? '<div class="console-block-note">still running — its output cannot be told'
+      ? `<div class="console-block-note">${state} — its output cannot be told`
         + ' apart from another running command\'s, so none is shown;'
         + ' the finished record replaces this</div>'
-      : `<div class="console-block-note">still running — live preview${
+      : `<div class="console-block-note">${state} — live preview${
         r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ''
       }; the finished record replaces this</div>`;
     el.innerHTML = head + body + note;
@@ -138,6 +140,11 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
       const old = bodyEl && bodyEl.children[i];
       if (old) bodyEl.replaceChild(blockNode(r), old);
     }
+  }
+
+  function trim(store, cap) {
+    if (store.size <= cap) return;
+    for (const k of [...store.keys()].slice(0, store.size - cap)) store.delete(k);
   }
 
   function pushBlock(st, b) {
@@ -215,6 +222,8 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     const repeatGap = skipped <= st.lastSkipped;
     st.lastSkipped = skipped;
     for (const r of records) if (r.id) st.settled.add(r.id);
+    trim(st.settled, MAX_TRACKED);
+    trim(st.sigs, MAX_TRACKED);
     if (!records.length && (!skipped || repeatGap)) return;
     appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
     notify(records.some((r) => r.failed) ? 'attention' : 'activity');
@@ -235,17 +244,27 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     }
     if (seat !== name) return;
     const next = (Array.isArray(rows) ? rows : []).filter((r) => r && !st.settled.has(r.id));
+    const secs = (r) => (typeof r.elapsedMs === 'number' ? Math.floor(r.elapsedMs / 1000) : -1);
     const same = next.length === st.live.length
       && next.every((r, i) => st.live[i].id === r.id
         && st.live[i].output === r.output
-        && st.live[i].finished === r.finished);
+        && st.live[i].finished === r.finished
+        && st.live[i].resolved === r.resolved
+        && secs(st.live[i]) === secs(r));
     st.live = next;
     if (!same) renderLive();
   }
 
+  let ticking = false;
   async function tick() {
-    await pull();
-    await pullLive();
+    if (ticking) return;
+    ticking = true;
+    try {
+      await pull();
+      await pullLive();
+    } finally {
+      ticking = false;
+    }
   }
 
   function startPolling() {
@@ -259,7 +278,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (!pollTimer) return;
     clearInterval(pollTimer);
     pollTimer = null;
-    if (seat) stateFor(seat).live.length = 0;
+    for (const st of seats.values()) st.live.length = 0;
     renderLive();
   }
 
