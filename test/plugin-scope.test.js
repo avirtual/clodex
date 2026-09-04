@@ -1,5 +1,5 @@
 'use strict';
-// plugin-scope.test.js — the SURFACING gate (t190).
+// plugin-scope.test.js — the SURFACING gate (t190, re-keyed by t654).
 //
 // `intentEnabledFor` already refuses a plugin verb for a session that was not
 // granted it, and has since the registry existed. What it does NOT do is stop
@@ -7,6 +7,13 @@
 // is in every session's prompt, and its name is in every near-miss bounce. For a
 // plugin that exists for one team's seats, "present and refused" is the wrong
 // answer — the right one is absent.
+//
+// t654 moved the QUESTION the gate asks. It used to be "has this seat granted
+// this plugin a capability?", which left every GLOBAL plugin visible everywhere;
+// it is now "does this seat HAVE this plugin?" (`seatHasPlugin` against the
+// seat's own `plugins` list), and every plugin is seat-gated. Grants are demoted
+// to a child of that decision. An ABSENT list is the living all-enabled default,
+// which is what keeps a pre-upgrade seat byte-identical.
 //
 // So the property under test here is an ABSENCE, which is exactly the shape
 // CLAUDE.md's `## Tests` section warns about: `deepEqual(x, [])` and
@@ -23,7 +30,7 @@ const path = require('node:path');
 
 const {
   PLUGIN_SCOPES, DEFAULT_PLUGIN_SCOPE, scopeOf,
-  PLUGIN_CAPABILITIES, grantToken, isValidCapability, pluginGranted, pluginReaches,
+  PLUGIN_CAPABILITIES, grantToken, isValidCapability, pluginGranted, seatHasPlugin,
   HOST_API_VERSION,
 } = require('../plugin-api');
 const registry = require('../intent-registry');
@@ -96,12 +103,14 @@ test('pluginGranted is STRICT — an absent list is a refusal, never a default g
   for (const absent of [undefined, null, 'p:turns', { 'p:turns': true }, 0]) {
     assert.strictEqual(pluginGranted('p', 'turns', absent), false,
       `a non-array grants value (${JSON.stringify(absent)}) is a refusal`);
-    assert.strictEqual(pluginReaches('p', absent), false);
+    assert.strictEqual(seatHasPlugin('p', absent), true,
+      'seatHasPlugin is the OPPOSITE polarity, deliberately: absent means the living '
+      + 'all-enabled default, so a pre-upgrade seat keeps every shipped plugin');
   }
-  assert.strictEqual(pluginReaches('p', ['q:turns', 'q:thinking']), false,
-    'another plugin\'s grants do not reach this one');
-  assert.strictEqual(pluginReaches('p', ['p:thinking']), true,
-    'CONTROL: one real grant does reach — so the refusals above are about the input, not a broken predicate');
+  assert.strictEqual(seatHasPlugin('p', ['q', 'r']), false,
+    'a list that names other plugins does not reach this one');
+  assert.strictEqual(seatHasPlugin('p', ['p']), true,
+    'CONTROL: a list naming it does reach — so the refusal above is about the input, not a broken predicate');
 });
 
 // ── The manifest gate (plugin-loader.js) ────────────────────────────────────
@@ -164,96 +173,153 @@ function mkRow(verb, extra = {}) {
   };
 }
 
-test('a GLOBAL plugin row surfaces for every session, grants or not (today\'s behaviour)', () => withReset(() => {
+test('an ABSENT plugins list surfaces every plugin — the living default that keeps pre-upgrade seats whole', () => withReset(() => {
   registry.registerIntent(mkRow('glob'), 'globby', { scope: 'global' });
-  for (const grants of [undefined, null, [], ['other:turns'], ['globby:turns']]) {
-    const rows = registry.catalogRows(grants);
+  registry.registerIntent(mkRow('scoped'), 'scopey', { scope: 'session' });
+  // A pre-upgrade seat has no `plugins` key at all, and SCOPE no longer enters
+  // into it: t654 made every plugin seat-gated, so the scoped row rides the same
+  // default as the global one.
+  for (const plugins of [undefined, null, 'nonsense', 42]) {
+    const rows = registry.catalogRows(plugins);
     assert.ok(rows.some((r) => r.type === 'glob'),
-      `a global row is in the checklist for grants ${JSON.stringify(grants)}`);
-    assert.ok(registry.validIntentNames(grants).includes('glob'));
-    // The grammar line still obeys the INTENT grant, which is unchanged.
-    assert.deepStrictEqual(registry.pluginGrammarLines(['glob'], grants), ['  [agent:glob]   line for glob.']);
+      `the global row is in the checklist for plugins ${JSON.stringify(plugins)}`);
+    assert.ok(rows.some((r) => r.type === 'scoped'),
+      `and so is the SESSION-scoped one — scope stopped deciding visibility`);
+    assert.ok(registry.validIntentNames(plugins).includes('glob'));
+    assert.deepStrictEqual(registry.pluginGrammarLines(['glob'], plugins), ['  [agent:glob]   line for glob.']);
   }
-  // An omitted scope is the same thing — this is what every shipped plugin hits.
-  registry.registerIntent(mkRow('unsaid'), 'unsaid-src');
-  assert.ok(registry.catalogRows(null).some((r) => r.type === 'unsaid'),
-    'a row registered with NO scope option behaves exactly like an explicit global');
 }));
 
-test('a SESSION-scoped row is ABSENT from a non-granted session, and PRESENT for a granted one', () => withReset(() => {
+test('a plugin the seat does NOT have is ABSENT from every feed, scope irrelevant', () => withReset(() => {
   registry.registerIntent(mkRow('scoped'), 'scopey', { scope: 'session' });
+  registry.registerIntent(mkRow('glob'), 'globby', { scope: 'global' });
 
   // CONTROL FIRST, deliberately. The absence assertions below are all true of a
-  // registry that never took the row; this proves the row is really there and
+  // registry that never took the rows; this proves they are really there and
   // really reachable, so the absences that follow are about the GATE.
-  const granted = ['scopey:turns'];
-  const shown = registry.catalogRows(granted);
+  const has = ['scopey', 'globby'];
+  const shown = registry.catalogRows(has);
   assert.ok(shown.some((r) => r.type === 'scoped'),
-    'CONTROL: with a grant the row IS in the checklist — the fixture reached the state it names');
-  assert.ok(registry.validIntentNames(granted).includes('scoped'),
-    'CONTROL: and in the near-miss vocabulary');
-  assert.deepStrictEqual(registry.pluginGrammarLines(['scoped'], granted),
+    'CONTROL: a seat that has the plugin sees its row — the fixture reached the state it names');
+  assert.ok(registry.validIntentNames(has).includes('scoped'),
+    'CONTROL: and the verb is in the near-miss vocabulary');
+  assert.deepStrictEqual(registry.pluginGrammarLines(['scoped'], has),
     ['  [agent:scoped]   line for scoped.'], 'CONTROL: and contributes its grammar line');
 
-  // The property: absent, not present-and-denied.
-  for (const grants of [undefined, null, [], ['someone-else:turns'], ['scopey:nonsense']]) {
-    const rows = registry.catalogRows(grants);
-    assert.ok(rows.length > 0, `ENTER: the catalog is non-empty for ${JSON.stringify(grants)} — core rows always survive`);
+  // The property: absent, not present-and-denied. `[]` is the seat that has NO
+  // plugins, which under the old grants keying was indistinguishable from the
+  // absent list — it is a real, distinct value now.
+  for (const plugins of [[], ['someone-else'], ['scopey-typo']]) {
+    const rows = registry.catalogRows(plugins);
+    assert.ok(rows.length > 0, `ENTER: the catalog is non-empty for ${JSON.stringify(plugins)} — core rows always survive`);
     assert.strictEqual(rows.some((r) => r.type === 'scoped'), false,
-      `no checklist row for grants ${JSON.stringify(grants)}`);
-    assert.strictEqual(registry.validIntentNames(grants).includes('scoped'), false,
+      `no checklist row for plugins ${JSON.stringify(plugins)}`);
+    assert.strictEqual(rows.some((r) => r.type === 'glob'), false,
+      'and a GLOBAL plugin is gated identically — that short circuit is gone');
+    assert.strictEqual(registry.validIntentNames(plugins).includes('scoped'), false,
       'and the bounce must not advertise a verb the seat cannot see');
-    assert.deepStrictEqual(registry.pluginGrammarLines(['scoped'], grants), [],
-      'and no grammar line, EVEN THOUGH the intent list names the verb — the scope filter is the outer one');
+    assert.deepStrictEqual(registry.pluginGrammarLines(['scoped'], plugins), [],
+      'and no grammar line, EVEN THOUGH the intent list names the verb — the seat filter is the outer one');
   }
 }));
 
-test('scope hides; it does NOT enforce — intentEnabledFor is untouched', () => withReset(() => {
+test('the seat gate hides; intentEnabledFor still does not enforce it — intentEnabledForSeat does', () => withReset(() => {
   registry.registerIntent(mkRow('scoped2'), 'scopey2', { scope: 'session' });
-  // Enforcement was never the gap (SPEC: "So enforcement is not the gap.
-  // Surfacing is."). A scoped verb is refused for an ungranted seat exactly as
-  // before — by the INTENT list, with no reference to plugin grants — so hiding
-  // is never the only thing between a seat and a verb.
+  // `intentEnabledFor` is the intents-only predicate and stays that way: it
+  // answers off the allowlist alone, with no knowledge of the seat's plugins.
   assert.strictEqual(registry.intentEnabledFor('scoped2', null), false);
   assert.strictEqual(registry.intentEnabledFor('scoped2', ['dm']), false);
   assert.strictEqual(registry.intentEnabledFor('scoped2', ['scoped2']), true,
-    'the intent gate answers the same way it always has, with no knowledge of scope');
-  // And a scoped plugin's PARSING is unchanged: the row still parses on every
-  // feed. Scope is a visibility property, not an isolation one.
+    'the intents-only gate answers the same way it always has');
+  // `intentEnabledForSeat` is the one the fire path uses, and it is the hole
+  // write-time pruning alone leaves: an allowlist naming the verb is not enough.
+  assert.strictEqual(registry.intentEnabledForSeat('scoped2', { intents: ['scoped2'], plugins: ['scopey2'] }), true,
+    'CONTROL: with the plugin held AND the verb checked, it fires');
+  assert.strictEqual(registry.intentEnabledForSeat('scoped2', { intents: ['scoped2'], plugins: [] }), false,
+    'a stale allowlist entry cannot fire a verb whose plugin the seat no longer has');
+  assert.strictEqual(registry.intentEnabledForSeat('scoped2', { intents: ['scoped2'] }), true,
+    'and the absent list is still the living default — a pre-upgrade seat is unaffected');
+  // A scoped plugin's PARSING is unchanged: the row still parses on every feed.
+  // Seat gating is a visibility property, not an isolation one.
   assert.deepStrictEqual(registry.parseWithRegistry('[agent:scoped2]'), { probe: 'scoped2', type: 'scoped2' });
 }));
 
 test('the row\'s scope comes from the HOST, never from the plugin\'s own spec', () => withReset(() => {
-  // A plugin that could name its own scope could declare itself global and undo
-  // the operator's decision. `registerIntent` reads opts, never spec.
+  // A plugin that could name its own scope could declare itself global. Under
+  // t654 that no longer buys visibility either way — every plugin is seat-gated
+  // — but the row must still carry the HOST's answer, because scope is what
+  // decides whether the plugin offers grant rows at all.
   registry.registerIntent({ ...mkRow('liar'), scope: 'global' }, 'liar-src', { scope: 'session' });
   const row = registry.pluginRowFor('liar');
   assert.strictEqual(row.scope, 'session', 'the manifest wins over the spec field');
-  assert.strictEqual(registry.catalogRows(null).some((r) => r.type === 'liar'), false,
-    'so the self-declared "global" buys the plugin nothing');
-  assert.ok(registry.catalogRows(['liar-src:turns']).some((r) => r.type === 'liar'),
-    'CONTROL: the row exists and surfaces once actually granted');
+  assert.strictEqual(registry.catalogRows([]).some((r) => r.type === 'liar'), false,
+    'a seat with no plugins does not see it');
+  assert.ok(registry.catalogRows(['liar-src']).some((r) => r.type === 'liar'),
+    'CONTROL: the row exists and surfaces once the seat has the plugin');
 }));
 
-test('two scoped plugins are visible independently — a grant reaches only its own', () => withReset(() => {
+test('two plugins are visible independently — a tick reaches only its own', () => withReset(() => {
   registry.registerIntent(mkRow('alpha'), 'a-src', { scope: 'session' });
-  registry.registerIntent(mkRow('beta'), 'b-src', { scope: 'session' });
-  const types = (g) => registry.catalogRows(g).filter((r) => r.source !== 'core').map((r) => r.type);
-  assert.deepStrictEqual(types(['a-src:turns']), ['alpha'], 'a grant surfaces its own plugin and no other');
-  assert.deepStrictEqual(types(['b-src:thinking']), ['beta']);
-  assert.deepStrictEqual(types(['a-src:turns', 'b-src:toolInputs']).sort(), ['alpha', 'beta'],
-    'CONTROL: both surface when both are granted, in registration order');
+  registry.registerIntent(mkRow('beta'), 'b-src', { scope: 'global' });
+  const types = (p) => registry.catalogRows(p).filter((r) => r.source !== 'core').map((r) => r.type);
+  assert.deepStrictEqual(types(['a-src']), ['alpha'], 'a tick surfaces its own plugin and no other');
+  assert.deepStrictEqual(types(['b-src']), ['beta'], 'including for a GLOBAL plugin, now equally gated');
+  assert.deepStrictEqual(types(['a-src', 'b-src']).sort(), ['alpha', 'beta'],
+    'CONTROL: both surface when both are ticked, in registration order');
   assert.deepStrictEqual(types([]), []);
+}));
+
+// A literal count, not one computed by the rule under test: a table that
+// re-derives the expectation the way catalogRows does asserts only that the code
+// agrees with itself, and could not express an exception if one existed.
+test('catalogRows with 3 plugins registered and 1 ticked returns core + exactly that one\'s rows', () => withReset(() => {
+  const core = registry.catalogRows([]).length;
+  assert.ok(core > 0, 'ENTER: the core rows are the baseline this counts against');
+  registry.registerIntent(mkRow('p1a'), 'plug-one');
+  registry.registerIntent(mkRow('p1b'), 'plug-one');
+  registry.registerIntent(mkRow('p2a'), 'plug-two', { scope: 'session' });
+  registry.registerIntent(mkRow('p3a'), 'plug-three');
+  assert.strictEqual(registry.catalogRows(undefined).length, core + 4,
+    'ENTER: all four plugin rows registered — the absent list surfaces every one');
+  const ticked = registry.catalogRows(['plug-one']);
+  assert.strictEqual(ticked.length, core + 2, 'core rows plus plug-one\'s two verbs, and nothing else');
+  assert.deepStrictEqual(ticked.filter((r) => r.source !== 'core').map((r) => r.type), ['p1a', 'p1b']);
+}));
+
+test('pruneForPlugins drops verbs AND grants for an unticked plugin, and leaves a null allowlist null', () => withReset(() => {
+  registry.registerIntent(mkRow('keptverb'), 'kept');
+  registry.registerIntent(mkRow('goneverb'), 'gone', { scope: 'session' });
+  const entry = {
+    intents: ['dm', 'keptverb', 'goneverb'],
+    pluginGrants: ['kept:turns', 'gone:turns', 'gone:thinking'],
+  };
+  const out = registry.pruneForPlugins(entry, ['kept']);
+  assert.deepStrictEqual(out.intents, ['dm', 'keptverb'],
+    'the unticked plugin\'s verb goes; core verbs and the ticked plugin\'s verb stay');
+  assert.deepStrictEqual(out.pluginGrants, ['kept:turns'],
+    'and every grant token whose plugin id is not in the list goes with it');
+  assert.deepStrictEqual(entry.intents, ['dm', 'keptverb', 'goneverb'],
+    'ENTER: the input is not mutated — the caller decides whether to write back');
+
+  // A null allowlist needs no prune: a plugin row is enabled only by explicit
+  // inclusion in an array, never by the all-enabled default, so there is nothing
+  // to drop and collapsing null to a list would gate every core verb.
+  const nulls = registry.pruneForPlugins({ intents: null, pluginGrants: null }, []);
+  assert.strictEqual(nulls.intents, null);
+  assert.strictEqual(nulls.pluginGrants, null);
 }));
 
 // ── Byte-identity: the no-scoped-plugin world is unchanged ──────────────────
 
-test('with no SESSION-scoped plugin registered, every surfacing fn ignores grants entirely', () => withReset(() => {
-  // clodex: "Absent scope must be byte-identically today's behaviour." The
-  // strongest form of that: for a registry holding only core + global rows, the
-  // new parameter cannot change any answer, for any value.
+test('with an ABSENT plugins list, every surfacing fn ignores the argument entirely', () => withReset(() => {
+  // The t190 form of this asserted grants-INVARIANCE for a registry holding only
+  // core + global rows, which was true because `scope !== 'session'` short
+  // circuited before the grants were ever read. That short circuit is gone, so
+  // the invariance is gone with it: an explicit list now decides a global
+  // plugin's visibility too. What survives — and is the property that keeps a
+  // pre-upgrade seat whole — is that every NON-ARRAY value is the same answer.
   registry.registerIntent(mkRow('g1'), 'g-src');
-  const probes = [undefined, null, [], ['g-src:turns'], ['anything:thinking'], 'nonsense', 42];
+  const probes = [undefined, null, 'nonsense', 42, { plugins: ['g-src'] }];
   const base = {
     catalog: registry.catalogRows(),
     names: registry.validIntentNames(),
@@ -262,25 +328,29 @@ test('with no SESSION-scoped plugin registered, every surfacing fn ignores grant
   };
   // ENTER: the fixture actually registered — otherwise every deepStrictEqual
   // below compares two copies of the core-only answer and proves nothing.
-  assert.ok(base.catalog.some((r) => r.type === 'g1'), 'ENTER: the global row is in the baseline');
+  assert.ok(base.catalog.some((r) => r.type === 'g1'), 'ENTER: the plugin row is in the baseline');
   assert.deepStrictEqual(base.grammarG1, ['  [agent:g1]   line for g1.'], 'ENTER: and contributes a grammar line');
-  for (const g of probes) {
-    assert.deepStrictEqual(registry.catalogRows(g), base.catalog, `catalogRows is grants-invariant for ${JSON.stringify(g)}`);
-    assert.deepStrictEqual(registry.validIntentNames(g), base.names, `validIntentNames is grants-invariant for ${JSON.stringify(g)}`);
-    assert.deepStrictEqual(registry.pluginGrammarLines(null, g), base.grammarNone);
-    assert.deepStrictEqual(registry.pluginGrammarLines(['g1'], g), base.grammarG1);
+  for (const p of probes) {
+    assert.deepStrictEqual(registry.catalogRows(p), base.catalog, `catalogRows treats ${JSON.stringify(p)} as absent`);
+    assert.deepStrictEqual(registry.validIntentNames(p), base.names, `validIntentNames treats ${JSON.stringify(p)} as absent`);
+    assert.deepStrictEqual(registry.pluginGrammarLines(null, p), base.grammarNone);
+    assert.deepStrictEqual(registry.pluginGrammarLines(['g1'], p), base.grammarG1);
   }
+  // And the contrast that makes the above a real claim rather than a tautology:
+  // an ARRAY answers, and answers differently.
+  assert.strictEqual(registry.catalogRows([]).some((r) => r.type === 'g1'), false,
+    'an explicit empty list is NOT the absent list — that distinction is the whole field');
 }));
 
-test('allowlistFromChecked is untouched by scope — an unsurfaced row cannot be checked', () => withReset(() => {
+test('allowlistFromChecked is seat-blind — an unsurfaced row cannot be checked', () => withReset(() => {
   registry.registerIntent(mkRow('hidden'), 'h-src', { scope: 'session' });
-  // The checklist is the only producer of a checked set, and a hidden row draws
-  // no checkbox. So this function needs no grants argument: by the time it runs,
-  // the surfacing decision has already been made upstream. Pinned so nobody
+  // The checklist is the only producer of a checked set, and an unsurfaced row
+  // draws no checkbox. So this function needs no plugins argument: by the time it
+  // runs, the surfacing decision has already been made upstream. Pinned so nobody
   // "fixes" it by adding a second gate that could disagree with the first.
   const got = registry.allowlistFromChecked(['dm', 'hidden']);
   assert.ok(got.includes('hidden'),
-    'a checked scoped verb still becomes a grant — refusing here would silently drop an operator decision');
+    'a checked plugin verb still becomes a grant — refusing here would silently drop an operator decision');
   assert.strictEqual(registry.intentEnabledFor('hidden', got), true);
 }));
 
@@ -360,6 +430,14 @@ function ipcFixture({ entries = {}, pluginStatus = null } = {}) {
       if (!store[name]) return;
       store[name].intents = Array.isArray(intents) ? [...intents] : null;
     },
+    // The REAL rule from stores.js, and NOT setPluginGrants' shape: any array
+    // persists, including the empty one, because `[]` is the seat that has no
+    // plugins while absent is the seat that has all of them.
+    setPlugins(name, plugins) {
+      if (!store[name]) return;
+      if (Array.isArray(plugins)) store[name].plugins = plugins.map(String);
+      else delete store[name].plugins;
+    },
   };
   const stub = () => () => {};
   const deps = new Proxy({
@@ -374,32 +452,78 @@ function ipcFixture({ entries = {}, pluginStatus = null } = {}) {
   registerIpcHandlers(deps);
   return {
     store,
-    catalog: (name) => handlers.get('intents:catalog')(null, name),
-    getGrants: (name) => handlers.get('session:pluginGrants')(null, name),
+    catalog: (name, override) => handlers.get('intents:catalog')(null, name, override),
+    getGrants: (name, override) => handlers.get('session:pluginGrants')(null, name, override),
     setGrants: (name, g) => handlers.get('session:setPluginGrants')(null, name, g),
+    setPlugins: (name, p) => handlers.get('session:setPlugins')(null, name, p),
   };
 }
 
-test('intents:catalog resolves grants off the NAMED session', () => withReset(() => {
+test('intents:catalog resolves the seat\'s plugins off the NAMED session', () => withReset(() => {
   registry.registerIntent(mkRow('ipcscoped'), 'ipc-plug', { scope: 'session' });
   const f = ipcFixture({
     entries: {
-      granted: { name: 'granted', pluginGrants: ['ipc-plug:turns'] },
+      has: { name: 'has', plugins: ['ipc-plug'] },
+      hasnt: { name: 'hasnt', plugins: [] },
       bare: { name: 'bare' },
     },
   });
-  const types = (name) => f.catalog(name).map((r) => r.type);
+  const types = (name, override) => f.catalog(name, override).map((r) => r.type);
   // CONTROL first: the row is registered and reachable, so the absences below
   // are the gate rather than an empty registry.
-  assert.ok(types('granted').includes('ipcscoped'),
-    'CONTROL: a granted session sees the row over IPC');
-  assert.ok(types('bare').length > 0, 'ENTER: an ungranted session still gets the core catalog');
-  assert.strictEqual(types('bare').includes('ipcscoped'), false, 'an ungranted session does not');
-  assert.strictEqual(types('nosuchsession').includes('ipcscoped'), false, 'nor does an unknown name');
-  // No name = the New-session dialog, which is choosing for a seat that does not
-  // exist yet. Absent is the right answer, not a shortcut for "show everything".
-  assert.strictEqual(types(undefined).includes('ipcscoped'), false,
-    'and an omitted name does not surface scoped rows');
+  assert.ok(types('has').includes('ipcscoped'),
+    'CONTROL: a seat that has the plugin sees the row over IPC');
+  assert.ok(types('hasnt').length > 0, 'ENTER: a seat without it still gets the core catalog');
+  assert.strictEqual(types('hasnt').includes('ipcscoped'), false, 'and not the plugin row');
+  assert.ok(types('bare').includes('ipcscoped'),
+    'a pre-upgrade seat with NO plugins key takes the living default and sees everything');
+  assert.ok(types('nosuchsession').includes('ipcscoped'),
+    'and an unknown name is the same absent-list answer, not "none"');
+  // The t190 ruling — "an absent name means no grants, so scoped rows do not
+  // surface" — was about GRANTS and does not carry: with no name and no override
+  // the answer is the globally enabled set, which is exactly what an absent list
+  // resolves to, since only a globally enabled plugin ever registers a row here.
+  assert.ok(types(undefined).includes('ipcscoped'),
+    'an omitted name falls back to the globally-enabled set, not to "none" and not to "all seats"');
+  // The override is the LIVE ticked set from the plugin checklist, and it WINS
+  // over the persisted list — that is what repaints the intent list as the
+  // operator ticks, rather than at the next open.
+  assert.strictEqual(types('has', []).includes('ipcscoped'), false,
+    'an override of [] hides the row even for a seat whose persisted list has it');
+  assert.ok(types('hasnt', ['ipc-plug']).includes('ipcscoped'),
+    'and an override naming it shows the row for a seat whose persisted list does not');
+  assert.ok(types(undefined, ['ipc-plug']).includes('ipcscoped'),
+    'CONTROL: the New-session dialog passes an override with no name at all');
+}));
+
+test('session:setPlugins writes the parent, then prunes both children against it', () => withReset(() => {
+  registry.registerIntent(mkRow('keptverb'), 'kept');
+  registry.registerIntent(mkRow('goneverb'), 'gone', { scope: 'session' });
+  const f = ipcFixture({
+    entries: {
+      seat: {
+        name: 'seat',
+        intents: ['dm', 'keptverb', 'goneverb'],
+        pluginGrants: ['kept:turns', 'gone:thinking'],
+      },
+    },
+  });
+  assert.deepStrictEqual(f.setPlugins('nope', ['kept']), { ok: false, error: 'Session not found in persistence' });
+
+  assert.deepStrictEqual(f.setPlugins('seat', ['kept']), { ok: true });
+  assert.deepStrictEqual(f.store.seat.plugins, ['kept'], 'ENTER: the parent decision was persisted');
+  assert.deepStrictEqual(f.store.seat.intents, ['dm', 'keptverb'],
+    'the unticked plugin\'s verb is dropped from the allowlist at the parent write point');
+  assert.deepStrictEqual(f.store.seat.pluginGrants, ['kept:turns'],
+    'and so is its grant token — the grant is a CHILD of the tick, not an independent decision');
+
+  // The empty array is a real value and must persist: absent means ALL, so
+  // storing "no plugins" as absence would flip the strictest seat to the loosest.
+  f.setPlugins('seat', []);
+  assert.deepStrictEqual(f.store.seat.plugins, [], 'an empty list is stored as [], never as absence');
+  assert.deepStrictEqual(f.store.seat.intents, ['dm'], 'and every plugin verb goes with it');
+  assert.ok(!('pluginGrants' in f.store.seat) || f.store.seat.pluginGrants.length === 0,
+    'as does every grant');
 }));
 
 test('session:setPluginGrants sanitizes at the door and stores divergence only', () => {
@@ -439,6 +563,10 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
   });
   const res = f.getGrants('seat');
   assert.strictEqual(res.ok, true);
+  // This fixture's seat carries NO `plugins` key, so it takes the living
+  // all-enabled default — which is what makes the scope filter the only one
+  // acting in the assertions below.
+  assert.ok(!('plugins' in f.store.seat), 'ENTER: the seat is on the absent-list default');
   // ENTER: the filter kept something. `deepStrictEqual(x, [])` would be true of
   // a status read that returned nothing at all.
   assert.ok(res.plugins.length > 0, 'ENTER: the scoped plugins survived the filter');
@@ -448,6 +576,29 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
   assert.deepStrictEqual(res.granted, ['scoped-a:turns']);
   assert.deepStrictEqual(res.capabilities, [...PLUGIN_CAPABILITIES]);
   assert.deepStrictEqual(f.getGrants('nope'), { ok: false, error: 'Session not found in persistence' });
+
+  // t654: the seat's plugin list is the OUTER filter. A scoped plugin the seat
+  // does not have offers it no decision, so its rows must not draw — and the
+  // override is what makes an untick in the popover drop them in the same
+  // repaint rather than at the next open.
+  assert.deepStrictEqual(f.getGrants('seat', ['scoped-b']).plugins.map((p) => p.id), ['scoped-b'],
+    'an override narrows the offer to the ticked plugins');
+  assert.deepStrictEqual(f.getGrants('seat', []).plugins, [],
+    'and a seat with no plugins is offered nothing');
+  const narrowed = ipcFixture({
+    entries: { seat: { name: 'seat', plugins: ['scoped-b'], pluginGrants: ['scoped-a:turns'] } },
+    pluginStatus: {
+      plugins: [
+        { id: 'scoped-a', name: 'Scoped A', scope: 'session', enabled: true, quarantined: false },
+        { id: 'scoped-b', name: 'Scoped B', scope: 'session', enabled: true, quarantined: false },
+      ],
+    },
+  });
+  assert.deepStrictEqual(narrowed.getGrants('seat').plugins.map((p) => p.id), ['scoped-b'],
+    'the PERSISTED list filters too, not only the override');
+  assert.deepStrictEqual(narrowed.getGrants('seat').granted, ['scoped-a:turns'],
+    'while a token held for an unlisted plugin is still REPORTED — grantsForUnlistedPlugins '
+    + 'carries it forward, so hiding it here would make the save silently revoke it');
 
   // With no plugin host (kill switch, or construction failed) the UI must draw
   // nothing rather than throw — the same fail-safe posture as intents:catalog.
@@ -459,7 +610,7 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
 // The seat's PROMPT. `_realIpcFor` is the one assembly both the spawn and
 // refreshPrompt run through (that is what keeps their bytes equal), so it is
 // where a grants-blind grammar line would show up in a seat's context.
-test('a scoped plugin\'s grammar line reaches only a granted seat\'s prompt', () => withReset(() => {
+test('a plugin\'s grammar line reaches only a seat that HAS it', () => withReset(() => {
   const { createSessionManager } = require('../session-manager');
   const intentRegistry = require('../intent-registry');
   intentRegistry.registerIntent(mkRow('promptverb'), 'prompt-plug', { scope: 'session' });
@@ -476,32 +627,36 @@ test('a scoped plugin\'s grammar line reaches only a granted seat\'s prompt', ()
     fs, log: () => {},
   });
   const m = new SessionManager();
-  const recipeFor = (pluginGrants) => ({
-    extraArgs: [], intents: ['promptverb'], execCommands: [], pluginGrants,
+  const recipeFor = (plugins) => ({
+    extraArgs: [], intents: ['promptverb'], execCommands: [], plugins,
     appendPromptFiles: [], inlineBody: null, hasSystemFile: false, ipcDisabled: false,
   });
   const LINE = '[agent:promptverb]';
 
-  // CONTROL: granted, the line IS baked in. Without this the absence below is
+  // CONTROL: held, the line IS baked in. Without this the absence below is
   // equally true of a prompt builder that dropped every plugin line.
-  const granted = m._realIpcFor(recipeFor(['prompt-plug:thinking']), null).realIpc;
-  assert.ok(granted.includes(LINE), 'CONTROL: a granted seat is told about the verb');
+  const held = m._realIpcFor(recipeFor(['prompt-plug']), null).realIpc;
+  assert.ok(held.includes(LINE), 'CONTROL: a seat that has the plugin is told about the verb');
+  // The absent list is the living default and must ALSO carry the line — that is
+  // what keeps a pre-upgrade seat's prompt byte-identical.
+  assert.ok(m._realIpcFor(recipeFor(null), null).realIpc.includes(LINE),
+    'CONTROL: and so is a pre-upgrade seat whose recipe carries no list at all');
 
-  for (const g of [null, [], ['other:turns']]) {
+  for (const g of [[], ['other-plugin']]) {
     const out = m._realIpcFor(recipeFor(g), null).realIpc;
-    assert.ok(out.length > 100, `ENTER: a real prompt was built for grants ${JSON.stringify(g)}`);
+    assert.ok(out.length > 100, `ENTER: a real prompt was built for plugins ${JSON.stringify(g)}`);
     assert.strictEqual(out.includes(LINE), false,
-      'an ungranted seat is never told the verb exists — EVEN THOUGH its intents list names it');
+      'a seat without the plugin is never told the verb exists — EVEN THOUGH its intents list names it');
   }
 
-  // And byte-identity: an ungranted seat's prompt equals the prompt it would get
-  // if the scoped plugin were not installed at all. That is the property the
-  // whole ticket is for, and it is stronger than "the line is absent".
-  const ungranted = m._realIpcFor(recipeFor(null), null).realIpc;
+  // And byte-identity: such a seat's prompt equals the prompt it would get if the
+  // plugin were not installed at all. That is the property the whole ticket is
+  // for, and it is stronger than "the line is absent".
+  const without = m._realIpcFor(recipeFor([]), null).realIpc;
   intentRegistry._resetPluginRows();
-  const noPluginAtAll = m._realIpcFor(recipeFor(null), null).realIpc;
-  assert.strictEqual(ungranted, noPluginAtAll,
-    'a scoped plugin is byte-invisible to a seat that has not granted it');
+  const noPluginAtAll = m._realIpcFor(recipeFor([]), null).realIpc;
+  assert.strictEqual(without, noPluginAtAll,
+    'a plugin is byte-invisible to a seat that does not have it');
 }));
 
 // ════════════════════════════════════════════════════════════════════════════

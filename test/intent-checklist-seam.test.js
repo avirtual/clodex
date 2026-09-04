@@ -157,3 +157,43 @@ test('the served catalog carries exactly the three fields the checklist needs', 
     assert.strictEqual(typeof row.privileged, 'boolean');
   }
 });
+
+// ── t654: the plugin checklist, and the EDITOR_OWNED trap ───────────────────
+// `plugins` joins EDITOR_OWNED, where an OMITTED owned key on save means "the
+// user cleared it". Cleared here means ABSENT, and absent means EVERY plugin —
+// so a session type whose branch omits the key hands that seat every plugin
+// installed, silently and forever. That is the one direction this field can
+// fail in without anything looking wrong, which is why the assertion is on the
+// SOURCE of collectFormConfig rather than on a value: the bug is a `type ===
+// 'claude' ? … : (nothing)` shape, and no runtime fixture can see the branch it
+// never takes.
+test('t654: collectFormConfig writes `plugins` UNCONDITIONALLY, for every session type', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const body = src.slice(src.indexOf('function collectFormConfig()'));
+  const end = body.indexOf('\nfunction ');
+  const fn = body.slice(0, end === -1 ? body.length : end);
+  assert.ok(fn.includes('collectFormConfig'), 'ENTER: the function body was actually located');
+
+  // The conditional keys in this object are written `...(cond ? { k } : {})`.
+  // `plugins` must be a PLAIN key in the returned literal — a spread would make
+  // it omittable, and omitted is the failing direction.
+  assert.match(fn, /^\s{4}plugins,\s*$/m,
+    'plugins must be a plain key in the returned object, never a conditional spread');
+  assert.ok(!/\.\.\.\([^)]*\?\s*\{\s*plugins/.test(fn),
+    'and never wrapped in a conditional spread the way intents/autoCompact are');
+
+  // A shell seat has no plugin checklist to read, so its value is `[]` — a real
+  // "this seat has no plugins", NOT the absent list. Pinned because writing
+  // `null` here would read as absent at every consumer and hand the seat all.
+  assert.match(fn, /collectPluginChecklist\(inputPluginList\)\s*:\s*\[\]/,
+    'a non-claude seat writes [], not null and not nothing');
+});
+
+test('t654: `plugins` is in EDITOR_OWNED — the maintained pair collectFormConfig names', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'stores.js'), 'utf8');
+  const owned = src.slice(src.indexOf('const EDITOR_OWNED = new Set(['));
+  const list = owned.slice(0, owned.indexOf(']);'));
+  assert.ok(list.includes("'intents'"), 'ENTER: the EDITOR_OWNED literal was located');
+  assert.ok(list.includes("'plugins'"),
+    'an owned key missing here is resurrected by merge-preserve after the operator clears it');
+});

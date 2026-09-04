@@ -32,6 +32,10 @@ function mk(overrides = {}) {
     // dispatch tail, so a fake here would test the fake.
     bodyModeFor: require('../intent-registry').bodyModeFor,
     intentEnabledFor: require('../intent-registry').intentEnabledFor,
+    // The FIRE gate, and the only one _handleIntent consults. Real leaf for the
+    // same reason as the others here: it reads the whole persistence entry, so a
+    // fake would answer off a shape the shipped code never sees.
+    intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat,
     pluginRowFor: require('../intent-registry').pluginRowFor,
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: require('node:fs'), // real — create()'s pre-spawn cwd validation stats it
@@ -869,11 +873,13 @@ test('who: lists agent sessions from all workspaces, flat, self excluded', async
 // all enabled (back-compat). `name` is never gateable. `exec` passing the coarse
 // gate still meets its finer per-command grant. The resend bounce spells out
 // that the fallback is parking (a delay), not a loss.
-function mkGate(intents) {
-  // `intents` is the value persisted under sender 'a' (undefined = absent).
+function mkGate(intents, plugins) {
+  // `intents` is the value persisted under sender 'a' (undefined = absent), and
+  // `plugins` is the seat's plugin list on the same record (undefined = the
+  // living all-enabled default).
   const injected = [];
   const m = mk({
-    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents, plugins } : null) }),
     registry: { listPeers: () => [] },
     getPeerManager: () => null,
     peerStatusLabel: () => 'idle',
@@ -923,6 +929,47 @@ test('gate: `name` is never gateable, even with an empty allowlist', async () =>
   const { m, injected } = mkGate([]);
   await m._handleIntent('a', { type: 'name' });
   assert.strictEqual(injected[0], '[agent:name] a');
+});
+
+// t654: the hole write-time pruning alone leaves. Every writer of `plugins`
+// prunes the allowlist, but a writer can be forgotten and a record can be
+// hand-edited — so the seat whose `intents` names a plugin verb while its
+// `plugins` does not must be REFUSED at the fire point, not merely un-surfaced.
+// Driven through _handleIntent rather than the predicate: the predicate agreeing
+// with itself is not what protects the seat, the call site wiring is.
+test('gate: a plugin verb whose plugin the seat does not have BOUNCES, allowlist notwithstanding', async () => {
+  const registry = require('../intent-registry');
+  registry.registerIntent({
+    verb: 'seatgated',
+    parse: (l) => (l === '[agent:seatgated]' ? { probe: 'seatgated' } : null),
+    promptLines: '  [agent:seatgated]   a plugin verb.',
+  }, 'gated-plug', { scope: 'session' });
+  try {
+    // CONTROL: with the plugin held, the verb passes the gate — so the bounce
+    // below is the seat filter, not a verb the registry refuses outright.
+    const ok = mkGate(['seatgated'], ['gated-plug']);
+    await ok.m._handleIntent('a', { type: 'seatgated' });
+    assert.strictEqual(
+      ok.injected.filter((t) => t.includes('is disabled for this session')).length, 0,
+      'CONTROL: a seat that HAS the plugin is not bounced',
+    );
+
+    const { m, injected } = mkGate(['seatgated'], []);
+    await m._handleIntent('a', { type: 'seatgated' });
+    assert.strictEqual(injected[0], '[agent:seatgated] the seatgated intent is disabled for this session',
+      'the verb is refused even though the allowlist still names it');
+
+    // And the living default is preserved: a pre-upgrade seat with no `plugins`
+    // key fires it exactly as before.
+    const pre = mkGate(['seatgated'], undefined);
+    await pre.m._handleIntent('a', { type: 'seatgated' });
+    assert.strictEqual(
+      pre.injected.filter((t) => t.includes('is disabled for this session')).length, 0,
+      'a seat on the absent-list default is unaffected',
+    );
+  } finally {
+    registry._resetPluginRows();
+  }
 });
 
 test('gate: exec disabled → coarse bounce before the per-command grant is consulted', async () => {
