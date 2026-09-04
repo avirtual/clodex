@@ -574,7 +574,7 @@ test('a call whose output cannot be attributed says so, instead of showing a bar
   const html = p.liveBody.children[0].innerHTML;
   assert.match(html, /npm test/, 'ENTER: the unattributable call really was drawn');
   assert.match(html, /still running/, 'it still says the call is running, which is the part it knows');
-  assert.match(html, /cannot be told\s+apart/, 'and names the refusal as the reason the body is empty');
+  assert.match(html, /could not be told\s+apart/, 'and names the refusal as the reason the body is empty');
   assert.doesNotMatch(html, /live preview/,
     'it must NOT claim to be previewing output it has not attributed to this call');
 });
@@ -647,6 +647,24 @@ test('a finished live row is not captioned as still running', async (t) => {
   assert.match(html, /done-cmd/, 'ENTER: the finished row really was drawn');
   assert.doesNotMatch(html, /still running/, 'a finished call is not still running');
   assert.doesNotMatch(html, />running</, 'and its mark must not say running either');
+});
+
+test('a finished UNRESOLVED row states the refusal in the past tense too', async (t) => {
+  // The neighbour the tense fix orphaned: the refusal sentence described "another
+  // RUNNING command", which is a second present-tense claim sitting inside a row
+  // that has already finished. Both halves of the sentence have to agree with the
+  // row's state, not just the one the edit touched.
+  const p = await mountPane(t);
+  p.setLive([{
+    id: 't-fin-amb', command: 'npm test', output: '', bytes: 0,
+    tailed: false, elapsedMs: 9000, finished: true, resolved: false,
+  }]);
+  await p.tick();
+
+  const html = p.liveBody.children[0].innerHTML;
+  assert.match(html, /finished/, 'ENTER: the row really is drawn as finished');
+  assert.doesNotMatch(html, /another running command/,
+    'the refusal clause must not assert a command is still running');
 });
 
 test('the settled read is AWAITED before the live read, so one call cannot draw twice', async (t) => {

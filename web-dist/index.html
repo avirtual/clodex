@@ -26371,7 +26371,7 @@ helper=${d.helperPath}`;
           const out = String(r.output || "").replace(/\n+$/, "");
           const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : "";
           const state = r.finished ? "finished" : "still running";
-          const note = r.resolved === false ? `<div class="console-block-note">${state} \u2014 its output cannot be told apart from another running command's, so none is shown; the finished record replaces this</div>` : `<div class="console-block-note">${state} \u2014 live preview${r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ""}; the finished record replaces this</div>`;
+          const note = r.resolved === false ? `<div class="console-block-note">${state} \u2014 its output could not be told apart from another command's, so none is shown; the finished record replaces this</div>` : `<div class="console-block-note">${state} \u2014 live preview${r.tailed ? `, last ${esc(String(out.length))} chars of ${esc(fmtBytes(r.bytes))}` : ""}; the finished record replaces this</div>`;
           el.innerHTML = head + body + note;
           return el;
         }
