@@ -446,8 +446,8 @@ function createPluginLoader(deps) {
   }
 
   // No path argument, no recursion, no writes: the root comes from `roots` and
-  // cannot be influenced by the caller. A caller-supplied path would make this a
-  // remote file browser, which is a different feature with a security review.
+  // cannot be influenced by the caller, so this one answers every surface. The
+  // three below DO take a caller-supplied path and are desktop-gated in dispatch.
   function listUserRoot() {
     const dir = ensureUserRoot();
     if (!dir) return null;
