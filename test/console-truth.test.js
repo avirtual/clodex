@@ -259,9 +259,9 @@ test('a stalled backlog reports its gap once, not once per poll', async (t) => {
     `the gap marker repeated on idle polls: ${p.painted.filter((x) => x === 'GAP').length} markers`);
 });
 
-// The suppression is on an UNCHANGED count, not on the marker having been shown.
-// A backlog that grows is a new loss and must say so, or the pane goes quiet
-// exactly when it is falling further behind.
+// The suppression is on a count that did not RISE, not on the marker having been
+// shown. A backlog that grows is a new loss and must say so, or the pane goes
+// quiet exactly when it is falling further behind.
 test('a gap that GROWS is reported again', async (t) => {
   const p = await mountPane(t);
   for (let i = 0; i < PULL_MAX_RECORDS + 5; i++) p.write(`c${i}`, 200 + i, STAMP);
