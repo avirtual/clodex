@@ -444,7 +444,7 @@ test('the engine host is the SAME surface at every scope — scope narrows reach
     + 'above have become a matrix and plugins/plugin-api.md §4 needs a column per capability');
 });
 
-test('scope changes WHICH SESSIONS a verb surfaces to, and nothing about the host', () => {
+test('the SEAT LIST changes which seats a verb surfaces to, and nothing about the host', () => {
   const intentRegistry = require('../intent-registry');
   const { engine, cleanup } = realEngineHost();
   const mk = (verb) => ({
@@ -458,16 +458,19 @@ test('scope changes WHICH SESSIONS a verb surfaces to, and nothing about the hos
     engine.register('scoped-p', { activate(h) { h.intents.register(mk('scopedverb')); } },
       { hostApi: HOST_API_VERSION, scope: 'session' });
 
-    // The MATRIX, such as it is: two plugins, three grant states, one table.
-    const surface = (grants) => intentRegistry.catalogRows(grants)
+    // The MATRIX, such as it is: two plugins, four seat lists, one table. t654
+    // moved the axis from grants to the seat's own `plugins`, and with it the
+    // scope short circuit — a GLOBAL plugin is gated exactly like a scoped one.
+    const surface = (plugins) => intentRegistry.catalogRows(plugins)
       .filter((r) => r.source !== 'core').map((r) => r.type).sort();
-    assert.deepStrictEqual(surface(null), ['globverb'],
-      'ENTER: the global verb registered and surfaces ungranted — so the scoped absence is the gate');
-    assert.deepStrictEqual(surface([]), ['globverb']);
-    assert.deepStrictEqual(surface(['scoped-p:turns']), ['globverb', 'scopedverb'],
-      'CONTROL: the scoped verb appears once its plugin is granted');
-    assert.deepStrictEqual(surface(['glob-p:turns']), ['globverb'],
-      'and granting a GLOBAL plugin adds nothing — it was never withheld');
+    assert.deepStrictEqual(surface(null), ['globverb', 'scopedverb'],
+      'ENTER: both verbs registered, and an absent list is the living all-enabled default');
+    assert.deepStrictEqual(surface([]), [],
+      'a seat that has no plugins sees neither, whatever their scopes say');
+    assert.deepStrictEqual(surface(['scoped-p']), ['scopedverb'],
+      'CONTROL: ticking one plugin surfaces its verb and only its verb');
+    assert.deepStrictEqual(surface(['glob-p']), ['globverb'],
+      'and a GLOBAL plugin is withheld until ticked, exactly like a scoped one');
   } finally {
     engine.deactivate('glob-p');
     engine.deactivate('scoped-p');
