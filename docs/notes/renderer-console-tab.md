@@ -9,10 +9,9 @@ A seat switch while the tab is already visible re-keys `seat` and calls
 without an extra pull the new seat's first blocks are up to `POLL_MS` away and the
 pane sits empty for a seat that has run plenty.
 
-The extra pull is therefore guarded on `!started`: `startPolling` pulls once when
-it does start, and two pulls racing at the same cursor both read the same records
-and append every block twice. "Always pull on switch" is the obvious
-simplification and it is the duplicating one.
+The extra pull is guarded on `!started` only to skip a pointless second IPC when
+`startPolling` already pulled. The double-APPEND it originally prevented is now
+closed by `pulling` below, so this guard is no longer what makes it safe.
 
 ## onHide
 
