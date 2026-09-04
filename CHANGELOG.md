@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- **Each seat now decides which plugins it has.** New and Edit Session grow a
+  **Plugins** list above Intents, and so does the 🔒 Intents popover. Untick a
+  plugin for a seat and it contributes nothing to it: no rows in that seat's
+  intent list, no grammar in its prompt, no fired verbs, no turn feed. Its
+  intents are grouped under its name when it is ticked, so a box with thirty
+  plugins does not put three hundred rows in front of you — the plugins you have
+  not ticked are one line each. Plugin Access rows follow the same tick: a
+  plugin the seat does not have offers it no grants. Unticking is remembered as
+  an explicit list, so a plugin installed later does not quietly appear on that
+  seat; re-ticking brings the plugin back but not the verbs you had chosen for
+  it, which you pick again. Seats you have never edited are unchanged and keep
+  every plugin, exactly as before this release.
+
 - **A plugin can now be registered from any folder on disk.** Manage Plugins has
   a **Register Plugin…** button: pick the plugin's folder — a git checkout, a
   downloaded directory, anywhere — and Clodex validates its manifest and links it

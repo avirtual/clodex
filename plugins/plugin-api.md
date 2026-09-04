@@ -155,7 +155,7 @@ the menu bar has a tick next to it.
 | `style` | no | Path to a CSS file, relative to the plugin directory. Loaded as **text** and injected per window. |
 | `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. |
 | `announce` | no | One sentence describing what the plugin does. Shown as the description line in the Manage Plugins dialog. |
-| `scope` | no | `"global"` (the default) or `"session"`. A `session`-scoped plugin is **invisible** to any session that has not granted it — see §2.1. Absent means `global`, which is the behaviour every plugin had before this field existed. |
+| `scope` | no | `"global"` (the default) or `"session"`. A `session`-scoped plugin **consumes seat data and therefore offers capability grants** — see §2.1. It no longer decides visibility: every plugin is gated by the seat's own plugin list. Absent means `global`. |
 | `surfaces` | no | An object mapping a method name to `"any"`. A method listed as `"any"` may be called from the browser surface as well as the desktop app; **anything you do not list is desktop-only**. Absent means the whole plugin is desktop-only. See §2.2 — this is the one manifest field whose default costs you reach rather than granting it. |
 
 Unknown fields are ignored, not refused. That is deliberate: it lets a future
@@ -204,50 +204,54 @@ The refusals, and what to do about each:
 
 ---
 
-## 2.1 Scope: global and session-scoped plugins
+## 2.1 The seat's plugin list, and what `scope` still means
 
-Plugins are `global` by default and that is what every shipped plugin is: it
-loads once, its UI draws in every window, its intent verbs appear in every
-session's checklist, and the only thing standing between a seat and one of its
-verbs is the per-session intent gate (§7).
+**Every plugin is gated per seat.** A seat carries a list of the plugin ids it
+HAS, and a plugin absent from that list contributes nothing to that seat: no
+intent-checklist rows, no grammar lines in its prompt, no fired verbs, no
+turn-text feed. The operator ticks that list in New/Edit Session and in the
+Intents popover. A seat with no list at all — one never edited since this
+shipped — has every plugin, which is what keeps existing seats unchanged.
 
-That fits a plugin that adds UI. It does not fit a plugin written for one team's
-seats, which should be **invisible** to unrelated agents rather than merely
-refused. `"scope": "session"` is that opt-in.
+`scope` used to decide this, and no longer does. What it still decides is
+narrower and is the only thing it governs now: **a `session`-scoped plugin
+consumes seat data and therefore offers capability grants.** It gates the
+`onAgentText` subscription, and it decides whether the *Plugin Access* block
+draws grant rows for the plugin. A `global` plugin has no grants to offer and no
+feed to receive; it is tickable per seat exactly like everything else.
 
 ### What actually becomes conditional
 
-A session-scoped plugin still **loads once** — its engine half is one module, and
-`activate(host)` runs exactly as before. What becomes per-session is what the
+A plugin still **loads once** — its engine half is one module, and
+`activate(host)` runs exactly as before. What becomes per-seat is what the
 plugin *reaches*:
 
-| Surface | Global plugin | Session-scoped plugin |
+| Surface | Plugin the seat has | Plugin the seat does not have |
 |---|---|---|
-| Intent-checklist rows | every session | only granted sessions |
-| Grammar lines in the seat's prompt | every granted seat | only granted sessions |
-| The near-miss bounce's verb list | every session | only granted sessions |
-| `rhost.ui.sidebar.rowBadge` | every row | only granted rows |
-| `rhost.ui.sessionMenu.addProvider` | every session | only granted sessions |
-| `rhost.ui.statusBar.addAction` / `addSegment` | every session | only granted sessions |
+| Intent-checklist rows | shown | absent |
+| Grammar lines in the seat's prompt | present | absent |
+| The near-miss bounce's verb list | names the verb | omits it |
+| Firing one of its verbs | subject to the intent gate | refused |
+| `rhost.ui.sidebar.rowBadge` | every granted row | only granted rows |
+| `rhost.ui.sessionMenu.addProvider` | every granted session | only granted sessions |
+| `rhost.ui.statusBar.addAction` / `addSegment` | every granted session | only granted sessions |
 | `rhost.ui.sidebar.footerButton` | always | **always** — see below |
 | `rhost.ui.settings.section` | always | **always** |
 | `rhost.ui.surfaces.overlay` | always | **always** |
 | `host.sessions.*` / `rhost.sessions.*` *(enumeration)* | unchanged | **unchanged at every scope** |
-| `host.sessions.onAgentText` | never delivers | only granted sessions |
+| `host.sessions.onAgentText` | only with `scope: "session"` AND the `turns` grant | never delivers |
 
-The last three UI rows are deliberate. A sidebar footer button belongs to the *window*,
-not to whichever session happens to be active; hiding it on session switch would
-make the chrome flicker with no coherent meaning. Scope governs what a plugin
-sees **of a session**, and those three see none of it.
+The three `rhost.ui` rows marked **always** are the chrome, and they belong to
+the *window* rather than to whichever seat happens to be active. A settings
+section configures the plugin process-wide, so a seat decision has nothing to say
+there at all.
 
 The `sessions.*` rows are the ones to read carefully, and they point opposite
-ways. The session ENUMERATION APIs are **not narrowed for a scoped plugin**:
-`host.sessions.get(name)` and `rhost.sessions.listWorkspace()` answer the same
-for a plugin granted nothing as for one granted everything. Do not design
-against that row as though it were an isolation boundary — see the next section.
-The turn-text feed is the exception, and the only member of `sessions.*` that
-scope governs: a `global` plugin never receives a single event from it, whatever
-a session granted (§4).
+ways. The session ENUMERATION APIs are **not narrowed**: `host.sessions.get(name)`
+and `rhost.sessions.listWorkspace()` answer the same for a plugin no seat has
+ticked as for one every seat has. Do not design against that row as though it
+were an isolation boundary — see the next section. The turn-text feed is the
+exception, and the only member of `sessions.*` any of this governs.
 
 ### The three grants
 
@@ -270,10 +274,11 @@ frozen at `"1"` and only a change that breaks a conforming plugin bumps it, so a
 capability added *after* the API it gates would be exactly such a change.
 Declaring the whole vocabulary up front spends no version bump.
 
-A plugin holding **any** capability on a session is visible to it; holding none
-means it is absent. The operator edits these in the Intents popover's *Plugin
-Access* block, and only session-scoped plugins appear there — a global plugin has
-no per-session decision to offer.
+A grant is a **child** of the seat's tick, never a substitute for it: a grant on
+a plugin the seat does not have reaches nothing, and unticking the plugin drops
+its grants along with its verbs. The operator edits grants in the Intents
+popover's *Plugin Access* block, which draws rows only for session-scoped
+plugins the seat actually has.
 
 ### Scope means visibility, not isolation
 
@@ -283,13 +288,13 @@ session scoping does **not** partition that. Two session-scoped plugins used by
 different agents still cannot share a verb name — the second one to load is
 refused, exactly as two global plugins would be.
 
-Nor is scope a security boundary. A scoped plugin's engine half is unsandboxed
-in-process Node with the same `host` every other plugin gets (§13); what scope
-changes is what the operator is *shown* and what the plugin is *fed*, not what a
-determined plugin could reach. The enforcement that was already there —
-`intentEnabledFor`'s strict per-session gate — is unchanged and is what actually
-refuses a verb. Scope stops a plugin from being *offered*; the gate is what stops
-it from *firing*.
+Nor is any of this a security boundary. A plugin's engine half is unsandboxed
+in-process Node with the same `host` every other plugin gets (§13); what the seat
+list changes is what the operator is *shown* and what the plugin is *fed*, not
+what a determined plugin could reach. The seat list stops a plugin from being
+*offered*; the per-seat intent gate is what stops a verb from *firing*, and it
+now refuses a plugin verb on two independent grounds — the verb unchecked, or the
+plugin unticked.
 
 ---
 
