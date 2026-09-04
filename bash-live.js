@@ -34,6 +34,12 @@ function tasksDirFor(cwd, sessionId, opts) {
   return path.join(tmp, `claude-${uid}`, slug, sessionId, 'tasks');
 }
 
+function tasksDirFromScratchpad(scratchpadDir) {
+  if (typeof scratchpadDir !== 'string' || !scratchpadDir) return null;
+  if (!path.isAbsolute(scratchpadDir)) return null;
+  return path.join(path.dirname(scratchpadDir), 'tasks');
+}
+
 function writeObserver(inputJson, liveDir, opts) {
   const fs = (opts && opts.fs) || fsDefault;
   const now = (opts && opts.now) || Date.now;
@@ -46,7 +52,8 @@ function writeObserver(inputJson, liveDir, opts) {
   if (!command) return null;
   const id = safeId(obj.tool_use_id);
   if (!id) return null;
-  const dir = tasksDirFor(obj.cwd, obj.session_id, opts);
+  const dir = tasksDirFromScratchpad(obj.scratchpad_dir)
+    || tasksDirFor(obj.cwd, obj.session_id, opts);
   if (!dir) return null;
 
   let snapshot = [];
@@ -527,6 +534,7 @@ module.exports = {
   writeObserver,
   pruneObservers,
   tasksDirFor,
+  tasksDirFromScratchpad,
   commandFingerprint,
   defaultProbeOwner,
   LIVE_MAX_BYTES,

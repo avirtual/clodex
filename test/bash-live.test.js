@@ -20,7 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  createBashLive, writeObserver, pruneObservers, tasksDirFor, commandFingerprint,
+  createBashLive, writeObserver, pruneObservers, tasksDirFor, tasksDirFromScratchpad, commandFingerprint,
   OBSERVER_MAX_FILES, TASK_OUTPUT_RE, LIVE_MAX_BYTES, EVENT_QUEUE_MAX, WATCH_SENTINEL,
 } = require('../bash-live');
 const { pathFor } = require('../clodex-paths');
@@ -61,6 +61,64 @@ test('tasksDirFor refuses a session id that could traverse out of the tmp root',
     assert.strictEqual(tasksDirFor('/p', bad, { uid: 1, tmpdir: '/tmp' }), null, `rejects ${JSON.stringify(bad)}`);
   }
   assert.ok(tasksDirFor('/p', 'ok-1.2_3', { uid: 1, tmpdir: '/tmp' }), 'ENTER: a legal id still resolves, so the rejections above mean something');
+});
+
+test('the observer takes the tasks dir from the payload, NOT from os.tmpdir()', () => {
+  // Shipped green while the feature did not work at all. Every fixture passed
+  // `tmpdir` through the DI seam, so the derived dir and the fixture's dir agreed
+  // by construction; on a real box they do not. TMPDIR is /var/folders/<hash>/T
+  // while the CLI writes its tasks under /private/tmp, so the watcher watched a
+  // directory that never existed and no foreground output ever streamed.
+  // These are the REAL bytes off a live PreToolUse payload, which is why this
+  // test may not supply `tmpdir`: the seam is what hid the defect.
+  const scratchpad = '/private/tmp/claude-501/-Users-b-proj/5383fbbc/scratchpad';
+  const derived = tasksDirFor('/Users/b/proj', '5383fbbc', { uid: 501, tmpdir: '/var/folders/m4/xyz/T' });
+
+  assert.strictEqual(tasksDirFromScratchpad(scratchpad),
+    '/private/tmp/claude-501/-Users-b-proj/5383fbbc/tasks');
+  assert.notStrictEqual(tasksDirFromScratchpad(scratchpad), derived,
+    'ENTER: the two roots must actually DIFFER here, or this test cannot fail');
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-real-'));
+  try {
+    const tasks = path.join(root, 'sess', 'tasks');
+    fs.mkdirSync(tasks, { recursive: true });
+    fs.writeFileSync(path.join(tasks, 'bAAAAAAAA.output'), 'pre-existing');
+    const rec = writeObserver(JSON.stringify({
+      tool_name: 'Bash', tool_use_id: 'tu-real', tool_input: { command: 'echo hi' },
+      cwd: '/Users/b/proj', session_id: 'sess',
+      scratchpad_dir: path.join(root, 'sess', 'scratchpad'),
+    }), path.join(root, 'live'), { uid: 501, tmpdir: '/var/folders/m4/xyz/T' });
+
+    assert.strictEqual(rec.tasksDir, tasks,
+      'the payload dir must win over the derived one');
+    assert.deepStrictEqual(rec.snapshot, ['bAAAAAAAA.output'],
+      'and it must actually READ that dir — an unreadable dir silently snapshots []');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a payload with no scratchpad_dir still falls back to the derived dir', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-fb-'));
+  try {
+    const tasks = tasksDirFor('/proj/fb', 'sess', { uid: 7, tmpdir: root });
+    fs.mkdirSync(tasks, { recursive: true });
+    const rec = writeObserver(JSON.stringify({
+      tool_name: 'Bash', tool_use_id: 'tu-fb', tool_input: { command: 'echo hi' },
+      cwd: '/proj/fb', session_id: 'sess',
+    }), path.join(root, 'live'), { uid: 7, tmpdir: root });
+    assert.strictEqual(rec.tasksDir, tasks, 'fallback still resolves when the field is absent');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a relative or empty scratchpad_dir is refused, not joined', () => {
+  for (const bad of ['relative/path', '', null, 42]) {
+    assert.strictEqual(tasksDirFromScratchpad(bad), null, `refuses ${JSON.stringify(bad)}`);
+  }
+  assert.ok(tasksDirFromScratchpad('/abs/x/scratchpad'), 'ENTER: an absolute one still resolves');
 });
 
 test('writeObserver records the pre-existing files as a snapshot, and ignores non-Bash', () => {
