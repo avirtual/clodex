@@ -19,7 +19,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function stateFor(name) {
     let st = seats.get(name);
     if (!st) {
-      st = { cursor: '', blocks: [], lastKeys: new Set() };
+      st = { cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0 };
       seats.set(name, st);
     }
     return st;
@@ -60,10 +60,13 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
 
     const out = String(b.output || '').replace(/\n+$/, '');
     const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : '';
-    const note = b.truncated
-      ? `<div class="console-block-note">output truncated by the CLI at ${esc(String(out.length))} chars`
-        + `${b.fullBytes ? ` — the full result was ${esc(fmtBytes(b.fullBytes))}` : ''}</div>`
-      : '';
+    let note = '';
+    if (b.backgrounded) {
+      note = '<div class="console-block-note">the CLI ran this in the background — its output was never sent here</div>';
+    } else if (b.truncated) {
+      note = `<div class="console-block-note">output truncated by the CLI at ${esc(String(out.length))} chars`
+        + `${b.fullBytes ? ` — the full result was ${esc(fmtBytes(b.fullBytes))}` : ''}</div>`;
+    }
     el.innerHTML = head + body + note;
     return el;
   }
@@ -126,6 +129,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (res.reset) {
       st.blocks.length = 0;
       st.lastKeys.clear();
+      st.lastSkipped = 0;
       renderAll();
     }
     st.cursor = typeof res.cursor === 'string' && res.cursor ? res.cursor : st.cursor;
@@ -133,7 +137,9 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     const records = raw.filter((r) => !st.lastKeys.has(r.key));
     if (raw.length) st.lastKeys = new Set(raw.map((r) => r.key));
     const skipped = typeof res.skipped === 'number' && res.skipped > 0 ? res.skipped : 0;
-    if (!records.length && !skipped) return;
+    const repeatGap = skipped === st.lastSkipped;
+    st.lastSkipped = skipped;
+    if (!records.length && (!skipped || repeatGap)) return;
     appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);
     notify(records.some((r) => r.failed) ? 'attention' : 'activity');
   }

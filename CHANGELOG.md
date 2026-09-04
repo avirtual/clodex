@@ -24,9 +24,11 @@ blocks a release.
   the browser surface cannot serve it.
   Output arrives at completion, not as it streams, so a long-running command
   shows nothing until it finishes. When the CLI truncates a very large result the
-  block says so and reports the full size. Parallel Bash calls are all captured
-  intact — each is recorded as its own file, so concurrent calls cannot overwrite
-  or splice each other. If a seat runs more calls than one refresh can carry, the
+  block says so and reports the full size. Parallel Bash calls are each recorded as
+  their own file, so concurrent calls cannot overwrite or splice each other. The
+  CLI does sometimes run one in the background instead, and then its output never
+  reaches Clodex at all — the block says so, rather than looking like a command
+  that printed nothing. If a seat runs more calls than one refresh can carry, the
   pane marks how many it skipped rather than dropping them silently.
 
 ## 5.25.0 — 2026-09-03

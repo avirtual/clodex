@@ -101,6 +101,7 @@ test('a succeeding call becomes a block whose output is the merged stream', () =
     timedOut: false,
     truncated: false,
     fullBytes: null,
+    backgrounded: false,
   });
 });
 
@@ -120,6 +121,7 @@ test('a FAILING call becomes a failed block with its exit code split out', () =>
     timedOut: false,
     truncated: false,
     fullBytes: null,
+    backgrounded: false,
   });
 });
 
@@ -187,7 +189,14 @@ test('ANSI escapes and control bytes are stripped, printable text is not', () =>
   assert.strictEqual(stripAnsi('keep\ttabs\nand newlines'), 'keep\ttabs\nand newlines');
 });
 
-test('readBashConsole is incremental: a second read returns only what is new', () => {
+// The reader is bounded by the cursor, NOT incremental: it re-serves the
+// cursor's whole timestamp group every time, including the cursor's own record.
+// It cannot do otherwise and stay correct — it is stateless across polls, and on
+// a `date` without `%N` a whole second's records share one stamp, so any rule
+// that drops part of that group drops records forever. Suppressing the repeat is
+// the tenant's job (`lastKeys` in renderer/console-tab.js), and the two halves
+// only compose: the reader alone repeats, the tenant alone never sees the ties.
+test('a resume re-serves the cursor group and everything after it', () => {
   const root = tmp();
   writeRecord(root, 'agent1', OK_PAYLOAD, '00000000000000000001');
 
@@ -197,13 +206,15 @@ test('readBashConsole is incremental: a second read returns only what is new', (
   assert.ok(first.cursor, 'and handed back a cursor to resume from');
 
   const idle = readBashConsole(root, 'agent1', first.cursor);
-  assert.deepStrictEqual(idle.records, [], 'nothing new means no records');
+  assert.deepStrictEqual(idle.records.map((r) => r.key), [first.cursor],
+    'an idle pull re-serves the cursor record itself, keyed for the tenant to drop');
   assert.strictEqual(idle.cursor, first.cursor, 'and the cursor does not move');
 
   writeRecord(root, 'agent1', FAIL_PAYLOAD, '00000000000000000002');
   const second = readBashConsole(root, 'agent1', idle.cursor);
-  assert.strictEqual(second.records.length, 1, 'only the NEW call, not both');
-  assert.strictEqual(second.records[0].command, 'cat /nope/definitely-missing-t645');
+  assert.deepStrictEqual(second.records.map((r) => r.command),
+    ['printf "OUT1\\nERR1\\n"; printf "E2\\n" >&2', 'cat /nope/definitely-missing-t645'],
+    'and a pull with something new carries the new record after the re-served one');
 });
 
 // A seat with no console yet (no Bash call, or a codex seat) must read as empty
@@ -233,7 +244,9 @@ test('an ordinary resume is NOT reported as a reset', () => {
   const res = readBashConsole(root, 'agent1', a);
   assert.strictEqual(res.reset, false,
     'the cursor record is still on disk, so nothing was missed');
-  assert.strictEqual(res.records.length, 1, 'ENTER: it still returned the newer record');
+  assert.deepStrictEqual(res.records.map((r) => r.command),
+    ['printf "OUT1\\nERR1\\n"; printf "E2\\n" >&2', 'cat /nope/definitely-missing-t645'],
+    'ENTER: it still returned the newer record, behind the re-served cursor one');
 });
 
 // A record is a whole file claimed by rename, so a reader can never see a
@@ -281,7 +294,8 @@ test('a large backlog is capped per pull, and says how many it dropped', () => {
   assert.strictEqual(res.skipped, 20,
     'the 20 it could not carry are REPORTED, not dropped in silence');
   const after = readBashConsole(root, 'agent1', res.cursor);
-  assert.deepStrictEqual(after.records, [], 'the cursor advanced past the whole batch');
+  assert.deepStrictEqual(after.records.map((r) => r.key), [res.cursor],
+    'the cursor advanced past the whole batch, leaving only its own record re-served');
   assert.strictEqual(after.skipped, 0, 'and an idle pull reports no gap');
 });
 
@@ -305,8 +319,8 @@ test('a record tying the cursor stamp but sorting BEFORE it is still served', ()
     JSON.stringify({ ...OK_PAYLOAD, tool_input: { command: 'echo higher-pid' } }));
 
   const res = readBashConsole(root, 'agent1', '00000000000000000007-9.json');
-  assert.deepStrictEqual(res.records.map((r) => r.command), ['echo lower-pid'],
-    'the tie that sorts below the cursor must still reach the pane');
+  assert.deepStrictEqual(res.records.map((r) => r.command), ['echo lower-pid', 'echo higher-pid'],
+    'the tie that sorts below the cursor must still reach the pane, and the whole group with it');
   assert.strictEqual(res.reset, false, 'and it is a resume, not a broken history');
 });
 
@@ -334,7 +348,7 @@ test('the cursor never moves backwards when a tie group is re-served', () => {
   fs.writeFileSync(path.join(dir, '00000000000000000007-9.json'), JSON.stringify(OK_PAYLOAD));
   const cursor = '00000000000000000007-9.json';
   const res = readBashConsole(root, 'agent1', cursor);
-  assert.strictEqual(res.records.length, 1, 'ENTER: the tie really was re-served');
+  assert.strictEqual(res.records.length, 2, 'ENTER: the whole tie group really was re-served');
   assert.strictEqual(res.cursor, cursor, 'but the cursor held its high-water mark');
 });
 
