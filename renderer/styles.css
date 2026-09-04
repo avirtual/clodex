@@ -4128,7 +4128,6 @@ html, body {
   font-size: 12px;
 }
 
-#console-live:empty { display: none; }
 
 .console-block.console-live {
   border-left-color: var(--accent);

@@ -577,3 +577,42 @@ test('a file that grew past the cap between reads is read in bounded memory', as
     'and it keeps the END of the file — where a build\'s errors and its exit line are');
   assert.strictEqual(rows[0].tailed, true, 'the row says it is showing a tail rather than the whole output');
 });
+
+test('a seat with no call in flight still disarms the hook once nobody reads it', async (t) => {
+  // "No Bash call in flight" is the state a tab sits in almost all the time, and
+  // it takes read()'s early return — which drops the watch. With the sweep's
+  // liveness keyed to WATCHES, the timer was then cleared while the seat was
+  // still armed on disk, so closing the tab left `.watching` for the process
+  // lifetime and every later Bash call paid the interpreter spawn NIT-1 removed.
+  //
+  // The two sweep tests above cannot see this: both drive a seat that HAS a
+  // watch. The stale-observer test asserts the sentinel SURVIVES a reap, never
+  // that it is eventually removed. So the liveness condition has to be the seat,
+  // not the watch.
+  const root = tmpRoot(t);
+  let clock = 1_000_000;
+  let sweep = null;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    now: () => clock,
+    setInterval: (fn) => { sweep = fn; return { unref() {} }; },
+    clearInterval: () => { sweep = null; },
+  });
+  t.after(() => live.stopAll());
+
+  // No observer is ever written: this seat has no Bash call in flight at all.
+  live.read('seat');
+  const sentinel = path.join(pathFor(root, 'seat', 'bashLive'), WATCH_SENTINEL);
+  assert.ok(fs.existsSync(sentinel),
+    'ENTER: reading the seat armed the hook, so there is something to disarm');
+  assert.strictEqual(live.watchedDirCount(), 0,
+    'ENTER: and it did so with NO watch open, which is the path under test');
+  assert.ok(sweep, 'an armed seat must arm the sweep even with no watch — nothing else will disarm it');
+
+  clock += 60_000;
+  sweep();
+
+  assert.ok(!fs.existsSync(sentinel),
+    'the hook is disarmed once nobody reads the seat — otherwise every later Bash call pays the spawn');
+  assert.strictEqual(live.seatCount(), 0, 'and the seat itself is released');
+});

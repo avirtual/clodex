@@ -213,10 +213,13 @@ bundle), whose packaged form is the Docker image under
   OBSERVER (emits nothing, so it cannot break a Bash call) records the call plus
   a snapshot of the tasks dir; `fs.watch` detects the new file for free, and one
   `lsof` disambiguates only a genuine collision — once per candidate, never per
-  tick. Watches open only while a pane is reading, and an unref'd sweep releases
-  them when it stops — a closed tab makes no further reads, so nothing else
-  would. The hook itself is gated on a `.watching` sentinel this module writes
-  while reading, so an unwatched seat skips the interpreter spawn entirely.
+  tick. Watches open only while a pane is reading. An unref'd sweep releases the
+  seat `IDLE_REAP_MS` after its last read, and its liveness is keyed to the SEAT,
+  not to the watch: a tab with no call in flight holds no watch, so a
+  watch-keyed sweep stopped in the gap between two Bash calls and left the seat
+  armed forever. The hook is gated on a `.watching` sentinel this module writes
+  while reading and removes with the seat, so an unwatched seat skips the
+  interpreter spawn entirely.
 - **bash-console.js** — the reader behind the drawer's Console tab: normalizes the
   raw hook JSON into blocks and serves them bounded by a CURSOR — the last spool
   basename read (`console:read`). Bounded, not incremental: it re-serves the

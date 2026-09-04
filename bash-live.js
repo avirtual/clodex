@@ -385,6 +385,7 @@ function createBashLive(deps) {
     if (!observers.length && !st.rows.size) {
       if (st.watches.size) closeWatches(st);
       st.candidates.clear();
+      syncSweep();
       return [];
     }
 
@@ -487,7 +488,7 @@ function createBashLive(deps) {
   }
 
   function syncSweep() {
-    const wanted = watchedDirCount() > 0;
+    const wanted = seats.size > 0;
     if (wanted && !sweepTimer) {
       sweepTimer = setInterval_(() => reap(null), IDLE_SWEEP_MS);
       if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
@@ -508,13 +509,17 @@ function createBashLive(deps) {
     return n;
   }
 
+  function seatCount() {
+    return seats.size;
+  }
+
   function pendingEventCount() {
     let n = 0;
     for (const st of seats.values()) n += st.events.length;
     return n;
   }
 
-  return { read, stop, stopAll, watchedDirCount, pendingEventCount };
+  return { read, stop, stopAll, watchedDirCount, seatCount, pendingEventCount };
 }
 
 module.exports = {
