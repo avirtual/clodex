@@ -61,7 +61,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     const out = String(b.output || '').replace(/\n+$/, '');
     const body = out ? `<pre class="console-block-out">${esc(out)}</pre>` : '';
     let note = '';
-    if (b.backgrounded) {
+    if (b.backgrounded && !out) {
       note = '<div class="console-block-note">the CLI ran this in the background — its output was never sent here</div>';
     } else if (b.truncated) {
       note = `<div class="console-block-note">output truncated by the CLI at ${esc(String(out.length))} chars`
@@ -137,7 +137,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     const records = raw.filter((r) => !st.lastKeys.has(r.key));
     if (raw.length) st.lastKeys = new Set(raw.map((r) => r.key));
     const skipped = typeof res.skipped === 'number' && res.skipped > 0 ? res.skipped : 0;
-    const repeatGap = skipped === st.lastSkipped;
+    const repeatGap = skipped <= st.lastSkipped;
     st.lastSkipped = skipped;
     if (!records.length && (!skipped || repeatGap)) return;
     appendNew(st, skipped ? [{ gap: skipped }, ...records] : records);

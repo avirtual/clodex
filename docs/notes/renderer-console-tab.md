@@ -28,7 +28,8 @@ the rename, where `tool_use_id` is a payload field the record could lack.
 `lastSkipped` exists because `skipped` is not an event. With 50+ records in the
 top group the cursor cannot advance, so every poll re-reports the SAME backlog,
 and a marker per poll fills `MAX_BLOCKS` and scrolls the real blocks out. Keyed
-on the count being unchanged, so a backlog that GROWS is still reported.
+on the count not RISING, so a backlog that grows is reported and one that shrinks
+under the CLI-side prune is not — the smaller loss was inside the larger one.
 
 ## blockNode
 
