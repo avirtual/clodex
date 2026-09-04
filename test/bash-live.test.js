@@ -395,9 +395,11 @@ test('a seat nobody reads again releases its watch WITHOUT another seat being re
     'the watch is released with no read to trigger it — otherwise the fd is held for the process lifetime');
 });
 
-test('the sweep is disarmed once nothing is watched, and re-armed by the next call', async (t) => {
-  // The other half: a timer that outlives its last watch is the same leak in a
+test('the sweep is disarmed once no seat is left, and re-armed by the next call', async (t) => {
+  // The other half: a timer that outlives its last SEAT is the same leak in a
   // cheaper currency, and an unref'd interval running forever is invisible.
+  // Keyed to the seat, not the watch — a watch-keyed condition stopped the
+  // sweep in the gap between two Bash calls, which is the round-2 defect.
   const root = tmpRoot(t);
   const cwd = '/proj/sweep';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
@@ -421,7 +423,8 @@ test('the sweep is disarmed once nothing is watched, and re-armed by the next ca
   clock += 60_000;
   sweep();
   assert.strictEqual(live.watchedDirCount(), 0);
-  assert.strictEqual(sweep, null, 'with nothing watched the sweep stops rather than ticking forever');
+  assert.strictEqual(live.seatCount(), 0, 'ENTER: the seat itself is gone, which is what the sweep keys on');
+  assert.strictEqual(sweep, null, 'with no seat left the sweep stops rather than ticking forever');
 
   observe(root, 'seat2', { id: 'tu-2', command: 'y', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
   live.read('seat2');
