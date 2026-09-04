@@ -4995,10 +4995,19 @@ window.api.onRequestOpenPeersDialog(() => openPeersDialog());
 // live DOM in every window, so a Cancel that silently left the plugin gone would be a lie.
 const pluginsOverlay = document.getElementById('plugins-overlay');
 const pluginsList = document.getElementById('plugins-list');
+const pluginsRegisterNote = document.getElementById('plugins-register-note');
+
+function showPluginsRegisterNote(text, kind) {
+  if (!pluginsRegisterNote) return;
+  pluginsRegisterNote.className = kind === 'warn' ? 'plugin-row-note warn' : 'plugin-row-note';
+  pluginsRegisterNote.textContent = text || '';
+  pluginsRegisterNote.classList.toggle('hidden', !text);
+}
 
 function closePluginsDialog() { pluginsOverlay.classList.add('hidden'); }
 
 async function openPluginsDialog() {
+  showPluginsRegisterNote('');
   await renderPluginsDialog();
   pluginsOverlay.classList.remove('hidden');
 }
@@ -5072,6 +5081,12 @@ async function renderPluginsDialog() {
         : `Failed to activate once (${p.lastError || 'unknown error'}) — one more and it will be held back.`;
       body.appendChild(n);
     }
+    if (p.linkedFrom) {
+      const l = document.createElement('div');
+      l.className = 'plugin-row-note';
+      l.textContent = `Registered from ${p.linkedFrom}`;
+      body.appendChild(l);
+    }
     row.appendChild(cb);
     row.appendChild(body);
     if (p.quarantined) {
@@ -5088,6 +5103,27 @@ async function renderPluginsDialog() {
         await renderPluginsDialog();
       });
       row.appendChild(retry);
+    }
+    if (p.linkedFrom && !window.__CLODEX_WEB__) {
+      const un = document.createElement('button');
+      un.type = 'button';
+      un.className = 'secondary';
+      un.textContent = 'Unregister';
+      un.title = `Remove the link at the plugins folder — ${p.linkedFrom} itself is left alone`;
+      un.addEventListener('click', async () => {
+        un.disabled = true;
+        let r = null;
+        try { r = await window.api.pluginInvoke('_host', 'plugins.unregister', p.id); } catch {}
+        if (!r || !r.ok) {
+          un.disabled = false;
+          showPluginsRegisterNote(`Could not unregister ${p.name || p.id}: ${(r && r.error) || 'unknown error'}`, 'warn');
+          return;
+        }
+        try { await window.api.pluginInvoke('_host', 'plugins.rescan'); } catch {}
+        showPluginsRegisterNote(`Unregistered ${p.name || p.id}. ${p.linkedFrom} was left where it is.`);
+        await renderPluginsDialog();
+      });
+      row.appendChild(un);
     }
     pluginsList.appendChild(row);
     if (pluginBar.settingsSectionOwners().includes(p.id)) {
@@ -5237,6 +5273,41 @@ async function showPluginsFolderListing() {
   pluginsFolderPanel.appendChild(body);
   pluginsFolderPanel.classList.remove('hidden');
 }
+
+const pluginsRegisterBtn = document.getElementById('btn-plugins-register');
+if (window.__CLODEX_WEB__) pluginsRegisterBtn.classList.add('hidden');
+pluginsRegisterBtn.addEventListener('click', async () => {
+  showPluginsRegisterNote('');
+  let dir = null;
+  try { dir = await window.api.selectDirectory(); } catch {}
+  if (!dir) return;
+  pluginsRegisterBtn.disabled = true;
+  try {
+    let v = null;
+    try { v = await window.api.pluginInvoke('_host', 'plugins.validateCandidate', dir); } catch {}
+    if (!v || !v.ok) {
+      showPluginsRegisterNote(`${dir} is not a plugin Clodex can load: ${(v && v.error) || 'unknown error'}`, 'warn');
+      return;
+    }
+    let r = null;
+    try { r = await window.api.pluginInvoke('_host', 'plugins.register', dir); } catch {}
+    if (!r || !r.ok) {
+      showPluginsRegisterNote(`Could not register ${v.name || v.id}: ${(r && r.error) || 'unknown error'}`, 'warn');
+      return;
+    }
+    let scan = null;
+    try { scan = await window.api.pluginInvoke('_host', 'plugins.rescan'); } catch {}
+    const failed = (scan && scan.ok && scan.failed || []).find((f) => f.id === r.id);
+    if (failed) {
+      showPluginsRegisterNote(`Registered ${v.name || v.id} from ${r.target}, but it did not start: ${failed.error || 'unknown error'}`, 'warn');
+    } else {
+      showPluginsRegisterNote(`Registered ${v.name || v.id} from ${r.target}.`);
+    }
+    await renderPluginsDialog();
+  } finally {
+    pluginsRegisterBtn.disabled = false;
+  }
+});
 
 document.getElementById('btn-plugins-reveal').addEventListener('click', async () => {
   if (window.__CLODEX_WEB__) { await showPluginsFolderListing(); return; }
