@@ -5113,7 +5113,7 @@ async function renderPluginsDialog() {
       un.addEventListener('click', async () => {
         un.disabled = true;
         let r = null;
-        try { r = await window.api.pluginInvoke('_host', 'plugins.unregister', p.id); } catch {}
+        try { r = await window.api.pluginInvoke('_host', 'plugins.unregister', [p.id]); } catch {}
         if (!r || !r.ok) {
           un.disabled = false;
           showPluginsRegisterNote(`Could not unregister ${p.name || p.id}: ${(r && r.error) || 'unknown error'}`, 'warn');
@@ -5284,13 +5284,13 @@ pluginsRegisterBtn.addEventListener('click', async () => {
   pluginsRegisterBtn.disabled = true;
   try {
     let v = null;
-    try { v = await window.api.pluginInvoke('_host', 'plugins.validateCandidate', dir); } catch {}
+    try { v = await window.api.pluginInvoke('_host', 'plugins.validateCandidate', [dir]); } catch {}
     if (!v || !v.ok) {
       showPluginsRegisterNote(`${dir} is not a plugin Clodex can load: ${(v && v.error) || 'unknown error'}`, 'warn');
       return;
     }
     let r = null;
-    try { r = await window.api.pluginInvoke('_host', 'plugins.register', dir); } catch {}
+    try { r = await window.api.pluginInvoke('_host', 'plugins.register', [dir]); } catch {}
     if (!r || !r.ok) {
       showPluginsRegisterNote(`Could not register ${v.name || v.id}: ${(r && r.error) || 'unknown error'}`, 'warn');
       return;

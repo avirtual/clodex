@@ -37704,7 +37704,7 @@ ${res.stderr}` : "");
               un.disabled = true;
               let r = null;
               try {
-                r = await window.api.pluginInvoke("_host", "plugins.unregister", p.id);
+                r = await window.api.pluginInvoke("_host", "plugins.unregister", [p.id]);
               } catch {
               }
               if (!r || !r.ok) {
@@ -37874,7 +37874,7 @@ ${res.stderr}` : "");
         try {
           let v = null;
           try {
-            v = await window.api.pluginInvoke("_host", "plugins.validateCandidate", dir);
+            v = await window.api.pluginInvoke("_host", "plugins.validateCandidate", [dir]);
           } catch {
           }
           if (!v || !v.ok) {
@@ -37883,7 +37883,7 @@ ${res.stderr}` : "");
           }
           let r = null;
           try {
-            r = await window.api.pluginInvoke("_host", "plugins.register", dir);
+            r = await window.api.pluginInvoke("_host", "plugins.register", [dir]);
           } catch {
           }
           if (!r || !r.ok) {
