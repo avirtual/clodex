@@ -55,14 +55,12 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     appendPromptFiles: appendPromptFiles !== undefined ? (appendPromptFiles || []) : (prev?.appendPromptFiles || []),
     // Intents gate allowlist. Unlike the fields above (empty = a real clear), the
     // gate's shapes are: an array (incl [] = everything gated, a real value) or null
-    // (all-enabled — the absent/default state). The Edit dialog now OWNS it and sends
+    // (all-enabled — the absent/default state). The Edit dialog OWNS it and sends
     // the CHECKED set (an array; null when the section is hidden); undefined =
     // untouched keeps the persisted gate for any patch that omits intents.
-    // `allowlistFromChecked` is what turns the checked set into the persisted
-    // value: every non-privileged core box checked → null (the living all-enabled
-    // default, stored as ABSENCE), otherwise the subset in catalog order followed
-    // by any granted plugin verbs. It is idempotent on an already-collapsed value,
-    // so a peer patch echoing a previously persisted array resolves to itself.
+    // `allowlistFromChecked` collapses every non-privileged core box checked → null
+    // (the living default, stored as ABSENCE) and is idempotent on an
+    // already-collapsed value, so a peer patch echoing a persisted array is a no-op.
     intents: intents !== undefined
       ? (Array.isArray(intents) ? allowlistFromChecked(intents.map(String)) : null)
       : (Array.isArray(prev?.intents) ? prev.intents : null),
@@ -76,10 +74,8 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     env: env !== undefined
       ? sanitizeFlat(env)
       : ((prev?.env && typeof prev.env === 'object') ? prev.env : {}),
-    // The seat's plugin list. Same two shapes as `intents` — an array (incl []
-    // = this seat has no plugins, a real value) or null (all enabled, stored as
-    // absence) — and the same undefined = untouched rule. A peer patch never
-    // carries the key, so over the wire this resolves to the box's list.
+    // `[]` is a real value here (the seat that has no plugins) and null is the
+    // living all-enabled default, exactly as for `intents` above.
     plugins: plugins !== undefined
       ? (Array.isArray(plugins) ? plugins.map(String) : null)
       : (Array.isArray(prev?.plugins) ? prev.plugins : null),

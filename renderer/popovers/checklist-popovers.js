@@ -4,17 +4,12 @@
 // with a hard restart + terminal re-attach). Self-contained island: DOM handles,
 // dismiss wiring, and bulk-toggle wiring live here; the openers are returned.
 //
-// NOTE these read/write settings and restart via window.api directly
-// (getSettings/getSessionArgs/setSession{Tools,Skills,Agents}/restartSession);
-// that is outside the popoverApi read-only data seam by design. The restart
-// re-attach dance needs core sessionList/createTerminal/addSessionToSidebar/
-// switchSession, injected by reference.
-//   Tools/Agents are LOCAL-only (no peer variant — the bar suppresses them for
-// peer tabs; they're covered remotely via the Edit Session args dialog). SKILLS
-// takes an optional peer `source` ({fetch, save, restartFresh}) so the same
-// popover edits a peer session's skills over the wire (peers-ui builds the
-// source; the box's catalog/library is the truth). Local path: source omitted,
-// byte-equivalent to before.
+// These read/write settings and restart via window.api directly — outside the
+// popoverApi read-only data seam by design. The restart re-attach dance needs
+// core sessionList/createTerminal/addSessionToSidebar/switchSession, injected by
+// reference. Tools/Agents are LOCAL-only. SKILLS takes an optional peer `source`
+// ({fetch, save, restartFresh}) so the same popover edits a peer session's
+// skills over the wire; with `source` omitted the local path is unchanged.
 //
 // DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
@@ -380,10 +375,8 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   }
 
   // --- Plugins (the parent) ------------------------------------------
-  // Above Intents and above Plugin Access because it is the parent of both: an
-  // unticked plugin has no verb rows and no access rows. A tick repaints the two
-  // children off the LIVE checkbox state, which is what the override argument on
-  // both reads is for.
+  // A tick repaints both children off the LIVE checkbox state — the override
+  // argument on both reads is for exactly that.
   const intentsPluginsList = document.getElementById('intents-popover-plugins-list');
 
   async function repaintPluginChildren(name) {
@@ -403,13 +396,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   });
 
   // --- Plugin Access -------------------------------------------------
-  // Same storage rule as the intent gate and the same strict semantics, but its
-  // own block and its own header: "Intents" is what this seat may EMIT, a grant
-  // is what a plugin may READ of it, and an operator scanning for "who can see
-  // my thinking" will not look under a list of verbs. Only SESSION-SCOPED
-  // plugins appear — a global plugin has no per-session decision to offer, so
-  // the block is absent entirely when none is installed, which is every install
-  // that ships today.
+  // Its own block and header: "Intents" is what this seat may EMIT, a grant is
+  // what a plugin may READ of it, and an operator scanning for "who can see my
+  // thinking" will not look under a list of verbs. Only SESSION-SCOPED plugins
+  // offer grants, so the block is absent when none is installed.
   const intentsGrantsBlock = document.getElementById('intents-popover-grants');
   const intentsGrantsList = document.getElementById('intents-popover-grants-list');
 
@@ -488,11 +478,9 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const name = intentsPopover.dataset.name;
     if (!name) return closeIntentsPopover();
     const intents = collectIntentChecklist(popoverIntentsList); // array | null
-    // null, not [], when NOTHING is loaded: with the kill switch on
-    // (CLODEX_PLUGINS=0) or every plugin globally disabled, the checklist draws
-    // no rows and collect returns [] — writing that would permanently strip a
-    // seat of plugins it still has, on a path the operator only meant to edit
-    // intents. null leaves the parent untouched.
+    // null, not [], when NOTHING is loaded (kill switch, or all globally
+    // disabled): the checklist draws no rows and collect returns [], which would
+    // strip a seat of plugins it still has on a path that only edits intents.
     const plugins = getPluginCatalogCache().length ? collectPluginChecklist(intentsPluginsList) : null;
     // Read BEFORE the close: closing does not clear the list, but the two reads
     // must describe the same dialog state, and a later read is a later state.
@@ -500,9 +488,8 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const grants = grantsShown ? collectPluginGrants() : null;
     const restart = intentsPopoverRestart.checked;
     closeIntentsPopover();
-    // PARENT FIRST, then its two children: the server prunes both against the
-    // list it has just been given, so a child write that follows lands on an
-    // already-narrowed seat instead of fighting the prune.
+    // PARENT FIRST: the server prunes both children against the list it has just
+    // been given, so a following child write cannot fight the prune.
     if (plugins) {
       const pr = await window.api.setSessionPlugins(name, plugins);
       if (!pr || !pr.ok) { alert(`Update plugins failed: ${pr && pr.error ? pr.error : 'unknown error'}`); return; }

@@ -1391,7 +1391,7 @@ function readSessionArgs(name) {
     disabledSkills: entry.disabledSkills || [],
     injectSkills: entry.injectSkills || [],
     intents: Array.isArray(entry.intents) ? entry.intents : null, // gate allowlist (null = all-enabled)
-    plugins: Array.isArray(entry.plugins) ? entry.plugins : null, // seat's plugin list (null = all enabled)
+    plugins: Array.isArray(entry.plugins) ? entry.plugins : null,
     execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [], // exec GRANT allowlist (local-only; stripped at the peer wire)
     env: (entry.env && typeof entry.env === 'object') ? entry.env : {}, // per-session env (T46b; local-only, stripped at the peer wire)
     agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)), // scope-filtered offer list
@@ -1416,10 +1416,6 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   persistence.setDisabledTools(name, nextTools);
   persistence.setDisabledSkills(name, nextSkills);
   persistence.setInjectSkills(name, nextInject);
-  // The parent write lands FIRST and the two children are re-resolved against
-  // it, so a save that unticks a plugin and leaves its verb checked cannot
-  // persist the verb: the prune runs on the values about to be written, not on
-  // what is already on disk.
   persistence.setPlugins(name, nextPlugins);
   const prunedArgs = pruneForPlugins({ intents: nextIntents, pluginGrants: beforeKill && beforeKill.pluginGrants }, nextPlugins);
   persistence.setIntents(name, Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents);

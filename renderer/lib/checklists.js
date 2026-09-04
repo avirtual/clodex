@@ -47,9 +47,8 @@ let execLibCache = [];
 // verbs. Empty until the first fetch, which is fine: every render path awaits a
 // refresh before painting, exactly like the exec registry above.
 let intentCatalogCache = [];
-// Loaded-plugin catalog (`plugin:catalog`). Every row here is globally enabled
-// and not quarantined by construction — the loader registers nothing else — so
-// this doubles as the pre-tick set for a NEW seat.
+// Every row here is globally enabled and not quarantined by construction — the
+// loader registers nothing else — so this doubles as a new seat's pre-tick set.
 let pluginCatalogCache = [];
 let claudeToolsCache = [];
 // Global default tool-deny set (the "*" agent-default); new sessions start with
@@ -128,10 +127,8 @@ function collectAgentChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
-// Exec-command grant checklist — checked = this session's seat MAY run that
-// registered command (its persisted `execCommands` allowlist). Plain opt-in
-// checklist over the exec registry; no auto/scope dimension. A command's argv
-// preview is the row hint so the operator sees what a grant actually authorizes.
+// Checked = this seat MAY run that registered command. The argv preview is the
+// row hint so the operator sees what a grant actually authorizes.
 function renderExecChecklist(container, enabledSet) {
   container.innerHTML = '';
   if (!execLibCache.length) {
@@ -157,29 +154,19 @@ function collectExecChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
-// Per-session intent gate — which `[agent:…]` verbs this seat may EMIT (send-side;
-// a gated seat still RECEIVES). Polarity is INVERTED from exec's opt-in: checked =
-// enabled, and the default is ALL checked, because `intents` is an opt-OUT field
-// (absent = everything on, the living all-enabled default). So the row's checked
-// state reproduces `intentEnabled`'s three-line semantics against the SERVED row's
-// own `privileged` flag, where `intentsList` is the raw persisted value (array, or
-// null/undefined = all-enabled), NOT a Set. `name` is never a row (ungateable
-// identity — the engine simply doesn't serve it). Rendered off intentCatalogCache;
+// Polarity is INVERTED from exec's opt-in: checked = enabled, default ALL
+// checked, because `intents` is opt-OUT (absent = everything on). `intentsList`
+// is the raw persisted value, NOT a Set. Rendered off intentCatalogCache;
 // refresh it (setIntentCatalogCache) before painting, like the exec registry.
 //
-// Why the semantics are INLINE here rather than a call to intent-catalog's
-// intentEnabled: the row already carries `privileged` from the engine, and calling
-// the leaf would re-introduce the static require this seam exists to remove — and
-// with it the stale-copy bug, since a plugin verb is not in the leaf's catalog at
-// all (the leaf would answer TRUE for it, "ungateable by omission").
+// The semantics are INLINE rather than a call to intent-catalog's intentEnabled:
+// that leaf would re-introduce the static require this seam exists to remove,
+// and it answers TRUE for a plugin verb it has never heard of.
 function intentRowChecked(row, intentsList) {
   if (!Array.isArray(intentsList)) return !row.privileged;
   return intentsList.includes(row.type);
 }
-// The PARENT of the intent gate below: an unticked plugin contributes no rows to
-// it at all. Absent (never written) means every loaded plugin, so a seat that has
-// never been edited is pre-checked here and byte-identical after a save that
-// changes nothing else.
+// Absent (never written) means every loaded plugin.
 function renderPluginChecklist(container, pluginsList) {
   container.innerHTML = '';
   if (!pluginCatalogCache.length) {
@@ -206,18 +193,15 @@ function collectPluginChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
-// The pre-tick set for a seat that has none: every LOADED plugin, which is the
-// operator's own globally-enabled decision rather than each manifest's
-// `enabledByDefault` — the flag is agent-writable and would pre-tick a plugin
-// the operator never enabled anywhere.
+// Every LOADED plugin — the operator's own globally-enabled decision, NOT each
+// manifest's `enabledByDefault`, which is agent-writable and would pre-tick a
+// plugin the operator never enabled anywhere.
 function defaultPluginTicks() {
   return pluginCatalogCache.map((p) => String(p.id));
 }
 
-// Core rows first and unchanged, then ONE `popover-subhead` per plugin that
-// contributed rows. The grouping is what keeps this list readable at 30
-// plugins: an unticked plugin has no header and no rows, so its row in the
-// Plugins list above is its collapsed form.
+// Core rows first and unchanged, then ONE `popover-subhead` per contributing
+// plugin — an unticked plugin has no header and no rows at all.
 function renderIntentChecklist(container, intentsList) {
   container.innerHTML = '';
   const nameOf = new Map(pluginCatalogCache.map((p) => [String(p.id), p.name || p.id]));

@@ -604,10 +604,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     // plugin that defaulted to granted would reach every seat created before it
     // was installed.
     //
-    // There is no agent-facing writer for this, by omission. `intents` has one
-    // (filtered through withoutPrivilegedIntentsFor) because a seat asking for
-    // its own verbs is meaningful; a seat granting a plugin the right to read
-    // its own thinking is not a decision the seat gets to make.
+    // No agent-facing writer, by omission: a seat granting a plugin the right to
+    // read its own thinking is not a decision the seat gets to make.
     setPluginGrants(name, grants) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -617,10 +615,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         this._save(all);
       }
     },
-    // The PARENT of every per-seat plugin decision: the plugin ids this seat HAS.
-    // Absent means all (the living default `intents` also uses), so unlike
-    // setPluginGrants above an EMPTY array is a real value and must persist — it
-    // is the seat that has no plugins, not the seat that was never configured.
+    // Unlike setPluginGrants above, an EMPTY array is a real value and persists:
+    // absent means ALL, so storing "no plugins" as absence inverts the seat.
     setPlugins(name, plugins) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

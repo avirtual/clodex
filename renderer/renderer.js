@@ -3,12 +3,9 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
-// Both halves of the surfacing gate answer through this one predicate. The web
-// bundle freezes PLUGIN_CAPABILITIES at build time, which is the copy shape
-// `intents:catalog` exists to avoid — safe here only because the bundle ships
-// its own engine built from the same tree, and a PEER row carries no
-// pluginGrants at all, so a scoped plugin fails closed across that seam rather
-// than reading a stale vocabulary.
+// The web bundle freezes PLUGIN_CAPABILITIES at build time — safe only because
+// it ships its own engine from the same tree, and a PEER row carries no
+// pluginGrants, so a scoped plugin fails closed across that seam.
 const { pluginReaches } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
@@ -203,7 +200,7 @@ const teamRolePromptSelect = document.getElementById('input-team-role-prompt');
 let dialogTeamMode = null;   // 'create' | 'join' | null (not an agent / authoring)
 let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
-let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix — Task 15
+let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix
 let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
 const placementRow = document.getElementById('placement-row');
 const inputPlacement = document.getElementById('input-placement');
@@ -1253,7 +1250,7 @@ function createTerminal(name, peer = null) {
     }
     // Typing is evidence the draft was NOT dictated, and this is the only place
     // that sees it: the recording indicator can be lit through an ordinary typed
-    // turn (t571's re-arm writes the trigger character at every turn end), so
+    // turn (the re-arm writes the trigger character at every turn end), so
     // without this the operator's exact typed words submit marked as spoken.
     if (voiceSubmit) voiceSubmit.noteInput(data);
     window.api.writeToSession(name, data);
@@ -1698,9 +1695,7 @@ function populateChecklistsFromCatalogs(cat) {
   renderToolChecklist(inputToolsList, new Set());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
-  // Both served by the LOCAL engine, box-independent (as the static catalog was).
-  // Plugins first: the intent catalog is asked about the set this paints.
-  refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
+  refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache({
     system: (cat.prompts || []).filter((p) => p.kind === 'system'),
     append: (cat.prompts || []).filter((p) => p.kind === 'append'),
@@ -1771,10 +1766,7 @@ const inputBuiltinsList = document.getElementById('input-builtins-list');
 const inputExecList = document.getElementById('input-exec-list');
 const inputIntentList = document.getElementById('input-intent-list');
 const inputPluginList = document.getElementById('input-plugin-list');
-// Ticking a plugin repaints the intent list live, so the operator sees the
-// verbs arrive rather than discovering them at the next open. Newly appearing
-// rows arrive UNTICKED — a plugin verb is privileged and never all-enabled by
-// default — which is why the current checked set is re-read, not preserved.
+// Re-reads the checked set: a newly appearing verb row must arrive UNTICKED.
 if (inputPluginList) {
   inputPluginList.addEventListener('change', () => {
     refreshNewSessionIntents(collectIntentChecklist(inputIntentList));
@@ -1810,9 +1802,7 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   renderExecChecklist(inputExecList, enabledSet);
 }
 
-// The PARENT refresh: the plugin list is painted first, and its ticked set is
-// what `intents:catalog` is then asked about — so the two lists agree on the
-// first frame and not only after the operator touches something.
+// Painted BEFORE the intent list, whose catalog is asked about what this ticks.
 async function refreshNewSessionPlugins(pluginsList) {
   if (inputType.value !== 'claude') return;
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
@@ -2220,9 +2210,8 @@ function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
-  // UNCONDITIONAL, for every session type — see the EDITOR_OWNED note below. A
-  // shell seat that omitted this would read as "cleared", and cleared means
-  // absent, and absent means EVERY plugin.
+  // UNCONDITIONAL, every type: omitted reads as cleared, cleared means absent,
+  // and absent means EVERY plugin (see the EDITOR_OWNED note below).
   const plugins = type === 'claude' ? collectPluginChecklist(inputPluginList) : [];
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
@@ -2702,24 +2691,19 @@ function activePeerConfigurable() {
   return !type || type === 'claude' || type === 'codex';
 }
 
-// Which SESSION-SCOPED plugins may draw for a given session (t190). Answered
-// off sidebarMeta, which already carries a per-row read on a timer — the
-// sidebar paints every session at once, so a single active-session answer would
-// be the wrong shape for row badges.
+// Which SESSION-SCOPED plugins may draw for a given session. Answered off
+// sidebarMeta's per-row read: the sidebar paints every session at once, so a
+// single active-session answer would be the wrong shape for row badges.
 //
-// A plugin absent from `scopedPluginIds` is GLOBAL (or does not exist) and
-// always reaches: this must fail toward today's behaviour, because the set
-// arrives asynchronously and an empty one during startup would otherwise blank
-// every plugin's UI for a frame.
+// A plugin absent from `scopedPluginIds` always reaches: the set arrives
+// asynchronously, and an empty one at startup would blank every plugin's UI.
 let scopedPluginIds = new Set();
 function pluginReachesSession(pluginId, sessionName) {
   if (!scopedPluginIds.has(pluginId)) return true;
   const grants = (sidebarMeta.get(sessionName) || {}).pluginGrants;
-  // The engine's own predicate, not a local re-derivation: it matches whole
-  // tokens against the capability vocabulary, where the split-on-':' this used
-  // to do read a colon-less "demoX" as plugin "demo" (indexOf -1 → slice(0,-1)).
-  // Both halves must answer the same question the same way or the renderer hides
-  // what the engine allows, or worse.
+  // The shared leaf, not a local re-derivation: it matches whole tokens against
+  // the capability vocabulary, where the split-on-':' this used to do read a
+  // colon-less "demoX" as plugin "demo" (indexOf -1 → slice(0,-1)).
   return pluginReaches(pluginId, grants);
 }
 
@@ -3411,7 +3395,7 @@ const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopov
 
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
 
-// Create Team… (t288) — a team with NO seat behind it, which is why it goes
+// Create Team… — a team with NO seat behind it, which is why it goes
 // through teamCreateBare rather than the new-session dialog's teamCreate (that
 // one writes the manifest and spawns the lead indivisibly).
 //
@@ -5442,7 +5426,7 @@ function applySandboxRunning(running, ports = null) {
     sbPortsLine.classList.add('hidden');
   }
   if (running) {
-    // The live url deliberately does NOT go in `href` (t445): the click handler
+    // The live url deliberately does NOT go in `href`: the click handler
     // routes through openExternal so the browser frontend can refuse a link that
     // points at the box's loopback, and a real href hands cmd-click and
     // middle-click a path straight around that gate. `title` carries the address
@@ -6212,9 +6196,8 @@ async function openArgsDialog(name, argsSource = null) {
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
   renderPluginChecklist(argsPluginList, res.plugins);
   argsIntentsSection.style.display = isClaude ? '' : 'none';
-  // Keyed on the plugin list this dialog just painted, not on the persisted one:
-  // the two are the same on open, and the override is what makes a live untick
-  // repaint the verbs rather than waiting for the next open.
+  // Keyed on the list this dialog just painted: the override is what makes a
+  // live untick repaint the verbs.
   setIntentCatalogCache((await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList))) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
   const isExecEditable = isClaude && !argsSource;
@@ -6283,11 +6266,9 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // subset ([] = everything gated, a real value). Both OVERWRITE; undefined-preserve is
   // reserved for a patch that omits intents entirely.
   const intents = argsIntentsSection.style.display === 'none' ? null : collectIntentChecklist(argsIntentsList);
-  // undefined = "untouched" — never [], which would strip the seat of every
-  // plugin. Two cases take it: a hidden section (peer row / non-claude), and a
-  // checklist that drew no rows because NOTHING is loaded (kill switch, or every
-  // plugin globally disabled), where collect's [] is an absence of options
-  // rather than the operator's answer.
+  // undefined = "untouched" — never [], which would strip the seat. A hidden
+  // section, or a checklist that drew no rows because nothing is loaded: there
+  // [] is an absence of options, not the operator's answer.
   const plugins = (argsPluginsSection.style.display === 'none' || !getPluginCatalogCache().length)
     ? undefined
     : collectPluginChecklist(argsPluginList);

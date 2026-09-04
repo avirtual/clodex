@@ -147,19 +147,15 @@ function mergeGrants(checked, unlisted) {
   return [...new Set([...(checked || []), ...(unlisted || [])])];
 }
 
-// The SURFACING predicate — "does this seat HAVE this plugin?". An absent list
-// is the living all-enabled default, NOT the strict absent-=-none rule
-// `pluginGranted` follows: flipping it would strip every pre-upgrade seat of the
-// shipped plugins with no migration to restore them.
+// The SURFACING predicate. An absent list is the living all-enabled default,
+// NOT `pluginGranted`'s strict absent-=-none: flipping it strips every
+// pre-upgrade seat of the shipped plugins with no migration back.
 function seatHasPlugin(pluginId, pluginsList) {
   if (!Array.isArray(pluginsList)) return true;
   return pluginsList.includes(String(pluginId));
 }
 
-// The GRANTS-axis reach, and no longer the surfacing predicate: catalog rows,
-// grammar lines, the fire gate and the feed all key on seatHasPlugin above.
-// Its one remaining caller is renderer.js's pluginReachesSession, which is
-// re-keyed in phase B; nothing in the main process calls it.
+// The GRANTS-axis reach. Not the surfacing predicate — that is seatHasPlugin.
 function pluginReaches(pluginId, grants) {
   return PLUGIN_CAPABILITIES.some((c) => pluginGranted(pluginId, c, grants));
 }

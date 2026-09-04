@@ -188,9 +188,8 @@ function createPluginHostEngine(deps) {
       const entry = readSeatEntry(event.session);
       const grants = (entry && Array.isArray(entry.pluginGrants)) ? entry.pluginGrants : null;
       for (const [pluginId, set] of textHooks) {
-        // The seat gate is the OUTER of the two: a grant token for a plugin the
-        // seat no longer has stays on disk until the seat's next `plugins`
-        // write, and would otherwise keep feeding it turn text.
+        // OUTER of the two: a grant token for a plugin the seat no longer has
+        // sits on disk until its next `plugins` write, and would keep feeding it.
         if (!seatHasPlugin(pluginId, entry && entry.plugins)) continue;
         // Gated on the `turns` capability SPECIFICALLY, not on any grant:
         // a plugin granted only `toolInputs` holding turn text would defeat the

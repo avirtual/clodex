@@ -363,10 +363,6 @@ const API_CONTRACT = [
   { name: 'setSessionSkills', kind: 'invoke', channel: 'session:setSkills' },
   { name: 'setSessionAgents', kind: 'invoke', channel: 'session:setAgents' },
   { name: 'setSessionIntents', kind: 'invoke', channel: 'session:setIntents' },
-  // The PARENT of every per-seat plugin decision, and a separate channel from
-  // setSessionIntents for the same reason grants are: the three are written by
-  // three UI blocks, and folding them would let a save that drew only one of
-  // them clear the other two.
   { name: 'setSessionPlugins', kind: 'invoke', channel: 'session:setPlugins' },
   { name: 'getSkillCatalog', kind: 'invoke', channel: 'session:skillCatalog' },
   { name: 'getAgentCatalog', kind: 'invoke', channel: 'session:agentCatalog' },
@@ -463,15 +459,10 @@ const API_CONTRACT = [
   // renderer: once plugins can register verbs, a renderer
   // that reads its own frozen copy of intent-catalog.js is reading a stale
   // catalog — and the web bundle's copy is frozen at build time.
-  // Takes (name, override): `override` is the LIVE ticked plugin set, so the
-  // list repaints as the operator ticks rather than at the next open.
   { name: 'getIntentCatalog', kind: 'invoke', channel: 'intents:catalog' },
-  // Plugin capability grants (t190). Separate from setIntents on purpose: the
-  // two are written by different UI blocks, and folding them together would let
-  // an intents save silently revoke every grant.
-  // Same (name, override) widening as getIntentCatalog above, and for the same
-  // reason: grants are a CHILD of the seat's plugin list, so an untick must drop
-  // the plugin's grant rows in the same repaint.
+  // Three separate channels — plugins, intents, grants — written by three UI
+  // blocks. Folding any two together lets a save that drew only one of them
+  // silently clear the other.
   { name: 'getSessionPluginGrants', kind: 'invoke', channel: 'session:pluginGrants' },
   { name: 'setSessionPluginGrants', kind: 'invoke', channel: 'session:setPluginGrants' },
 ];

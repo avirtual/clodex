@@ -204,11 +204,8 @@ function nearMissFormHint(text) {
 // reads `entry.worktree.path` to find the tree; with no pointer it takes the
 // `if (!worktree)` arm, drops the record and returns ok, leaving the checkout
 // with nothing in the APP naming it — the delete path can no longer find it and
-// reports success. (Not unrecoverable in general: a ticket-dispatched tree is
-// also named by the TICKET record, and `git worktree list` names any of them.
-// For a spawn-intent tree the session record really is the only pointer.) A
-// pointer to a tree that is already gone instead fails removeWorktree, which
-// KEEPS the record and rides the path out for the operator.
+// reports success. A pointer to a tree that is already gone instead fails
+// removeWorktree, which KEEPS the record and rides the path out for the operator.
 // _ticketTreeHolder reads occupancy off the record too, so a reloaded seat
 // without it is invisible and its LIVE tree can be handed to a second seat.
 // `autoCompact` is stored ONLY as the opt-OUT (`false`; enabling deletes the
@@ -1829,10 +1826,8 @@ function createSessionManager(deps) {
         // absent — never freeze `intents: null` onto the record — while `[]`
         // (everything gated) is a real value that persists.
         ...(Array.isArray(intents) ? { intents: intents.map(String) } : {}),
-        // Same conditional-omit rule as `intents` directly above, and for the
-        // same reason: an ABSENT list is the living all-enabled default, so
-        // freezing `plugins: null` onto the record would be a value, not a
-        // silence. `[]` is a real value and persists.
+        // Same conditional-omit rule as `intents` above: freezing `plugins: null`
+        // onto the record writes a value where the absent list means all.
         ...(Array.isArray(plugins) ? { plugins: plugins.map(String) } : {}),
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
         // Session-scope env. Persisted on the entry so --resume respawns with the

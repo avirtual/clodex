@@ -840,9 +840,8 @@ function registerIpcHandlers(deps) {
         if (Array.isArray(s.pluginGrants) && s.pluginGrants.length) {
           meta[s.name].pluginGrants = [...s.pluginGrants];
         }
-        // Guarded on Array.isArray ALONE, unlike the grants line above: `[]` is a
-        // seat that has no plugins and absent is a seat that has all of them, so
-        // dropping the empty array would flip the strictest seat to the loosest.
+        // Array.isArray ALONE, unlike the grants line above: `[]` is a seat with
+        // no plugins, absent is a seat with all — dropping `[]` inverts it.
         if (Array.isArray(s.plugins)) meta[s.name].plugins = [...s.plugins];
       }
       return { ok: true, meta };
@@ -1107,20 +1106,15 @@ function registerIpcHandlers(deps) {
   // the plugin host — the registry is a module-level table both halves mutate, so
   // it stays authoritative with no host (kill switch, construction failed), where
   // routing through the host would blank the checklist in exactly those cases.
-  // `override` is the LIVE ticked set from the plugin checklist, so the intent
-  // list repaints as the operator ticks rather than at the next open. With
-  // neither a name nor an override the answer is the globally enabled set, which
-  // is what an absent list already resolves to: only a globally enabled plugin
-  // ever registers a row here.
+  // With neither a name nor an override the answer is the globally enabled set,
+  // which is what an absent list resolves to: only a globally enabled plugin
+  // ever registers a row here. `override` is the checklist's LIVE ticked set.
   handle('intents:catalog', (_e, name, override) => {
     if (Array.isArray(override)) return catalogRows(override.map(String));
     const entry = name ? persistence.get(String(name)) : null;
     return catalogRows(entry ? entry.plugins : undefined);
   });
 
-  // The parent write. `pruneForPlugins` runs AFTER it so the two children can
-  // never name a plugin the seat no longer has; each is written back only where
-  // it changed, so an untouched child keeps its stored value byte for byte.
   handle('session:setPlugins', (_e, name, plugins) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found in persistence' };
@@ -1151,10 +1145,9 @@ function registerIpcHandlers(deps) {
     // checklist and the grammar line from the prompt, while the seat keeps
     // firing the verb into a plugin it holds no capability on. The popover's own
     // save order makes that the DEFAULT outcome of an in-dialog revoke.
-    // The list handed to the prune is the GRANTS axis only: a global plugin
-    // offers no grants to revoke, so it stays reached whatever `next` says, and
-    // narrowing it here would drop a verb-only plugin's verbs on every grants
-    // save.
+    // GRANTS axis only: a global plugin offers no grants to revoke, so it stays
+    // reached whatever `next` says. Narrowing this to the granted ids alone would
+    // drop a verb-only plugin's verbs on every grants save.
     const granted = new Set(next.map((g) => String(g).split(':')[0]).filter(Boolean));
     const stillReached = [...new Set(intentRows()
       .filter((r) => r.source && (r.scope !== 'session' || granted.has(r.source)))
