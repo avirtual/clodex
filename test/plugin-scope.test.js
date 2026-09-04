@@ -1097,10 +1097,10 @@ test('ROUND-2 P1: a non-claude type is written the globally-enabled set, never [
   const at = src.indexOf('function collectFormConfig()');
   assert.ok(at > 0, 'ENTER: collectFormConfig was found — a rename makes every assertion below vacuous');
   const body = src.slice(at, at + 1400);
-  assert.match(body, /: defaultPluginTicks\(\)\)/,
+  assert.match(body, /: defaultPluginTicks\(\);/,
     'the non-claude arm materialises the globally-enabled set. `[]` closes a codex seat to every '
-    + 'plugin with no UI to reopen it, and takes its onAgentText feed with it. t655 nests this arm '
-    + 'under the empty-catalog check, which is the ONLY case that now stores absence instead');
+    + 'plugin with no UI to reopen it, and takes its onAgentText feed with it — absent would be the '
+    + 'living default, but this key is EDITOR_OWNED, so it is written either way');
   assert.strictEqual(body.includes('inputPluginList) : [];'), false,
     'and the `[]` this replaced is gone, not merely shadowed');
 });
@@ -1350,24 +1350,47 @@ test('t655: openTemplateEditor fetches the plugin catalog ABOVE its claude guard
     'hoisted, not duplicated');
 });
 
-// ── t655 ride-along: an EMPTY catalog stores ABSENCE, never [] ──────────────
-// `collectFormConfig` wrote `plugins` unconditionally, so a seat created while
-// plugins were globally off (or the kill switch was on) froze at `[]` — closed
-// to every plugin, with no UI able to reopen it because the checklist draws no
-// rows either. `plugins` is EDITOR_OWNED, so OMITTING the key stores absence,
-// which is the living all-enabled default. Same rule the Intents popover's Apply
-// already applies for the same reason.
-test('t655: collectFormConfig omits plugins entirely when the catalog is empty', () => {
+// ── t655 ride-along: the empty-catalog `[]` is KEPT, and why ────────────────
+// The spec asked whether `collectFormConfig`'s unconditional write should store
+// ABSENCE instead of `[]` when the catalog is empty (plugins globally off, or
+// the kill switch on), so a seat created then is not frozen closed. Answer: NO,
+// keep `[]`, and the reasoning that says otherwise has a false premise.
+//
+// The premise is "a seat at [] has no UI that can reopen it". False:
+// renderPluginChecklist draws its rows whenever pluginCatalogCache is non-empty
+// and only shows the "No plugins loaded" hint when it is empty. So the moment
+// any plugin is globally enabled the checklist draws, with every row unticked
+// and tickable — the seat is reopenable by exactly the control that closed it.
+//
+// Storing absence instead would be strictly worse: absence is the LIVING
+// all-enabled default, so a seat created while plugins were off would silently
+// acquire every plugin installed later. That is the one direction this field
+// fails in without anything looking wrong, which is what the t654 pin in
+// intent-checklist-seam.test.js ("writes `plugins` UNCONDITIONALLY") exists to
+// stop — and it stopped this change. "New seats are closed to newcomers" is the
+// design's accepted trade; the empty catalog is not a special case of it.
+test('t655: the design decision is that an empty catalog still writes a list, never absence', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const at = src.indexOf('function collectFormConfig()');
   assert.ok(at > 0, 'ENTER: collectFormConfig was found');
-  const end = src.indexOf('\n}', at);
-  const body = src.slice(at, end);
+  const body = src.slice(at, src.indexOf('\n}', at));
   assert.ok(body.length < 4000, 'ENTER: the slice is one function');
-  assert.match(body, /const plugins = getPluginCatalogCache\(\)\.length/,
-    'the empty catalog is the OUTER question — "we could not ask", not "nothing was ticked"');
-  assert.match(body, /\.\.\.\(plugins \? \{ plugins \} : \{\}\),/,
-    'and a null result omits the key, storing absence rather than a closed []');
-  assert.doesNotMatch(body, /^\s*plugins,$/m,
-    'the unconditional write is gone');
+  assert.doesNotMatch(body, /const plugins = getPluginCatalogCache\(\)\.length/,
+    'the empty catalog is NOT a special case — the reopen argument for it rests on a false premise');
+  assert.doesNotMatch(body, /\.\.\.\(plugins \? \{ plugins \} : \{\}\)/,
+    'and the key is never conditionally spread, or a seat created with plugins off '
+    + 'inherits every plugin installed afterwards');
+
+  // The premise itself, pinned where it can be checked rather than argued: the
+  // checklist's empty-catalog branch is the ONLY thing that suppresses its rows,
+  // so a non-empty catalog always draws tickable rows for a closed seat.
+  const cl = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'lib', 'checklists.js'), 'utf8');
+  const rAt = cl.indexOf('function renderPluginChecklist(');
+  assert.ok(rAt > 0, 'ENTER: renderPluginChecklist was found');
+  const rBody = cl.slice(rAt, cl.indexOf('\n}', rAt));
+  assert.match(rBody, /if \(!pluginCatalogCache\.length\)/,
+    'it bails ONLY on an empty catalog');
+  assert.match(rBody, /cb\.checked = has \? has\.has\(String\(p\.id\)\) : true;/,
+    'and otherwise draws a row per catalog plugin, ticked from the seat list — '
+    + 'so a seat stored as [] draws every row UNTICKED and can be reopened');
 });

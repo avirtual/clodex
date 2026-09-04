@@ -2221,18 +2221,10 @@ function collectFormConfig() {
   const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
   // Written for EVERY type (see the EDITOR_OWNED note below), and a type with no
   // Plugins section gets the globally-enabled set — `[]` would close it for good.
-  //
-  // null on an EMPTY catalog, exactly as the Intents popover's Apply does: an
-  // empty catalog is "we could not ask" (kill switch, all globally disabled),
-  // not "the operator ticked nothing". `plugins` is EDITOR_OWNED, so omitting
-  // the key stores ABSENCE — the living all-enabled default — where `[]` would
-  // freeze the seat closed to every plugin with no UI that can reopen it.
-  const plugins = getPluginCatalogCache().length
-    ? (type === 'claude'
-      ? mergePlugins(collectPluginChecklist(inputPluginList),
-        pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))))
-      : defaultPluginTicks())
-    : null;
+  const plugins = type === 'claude'
+    ? mergePlugins(collectPluginChecklist(inputPluginList),
+      pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))))
+    : defaultPluginTicks();
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
@@ -2248,7 +2240,7 @@ function collectFormConfig() {
     agents: type === 'claude' ? collectAgentChecklist(inputAgentsList) : [],
     execCommands: type === 'claude' ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
-    ...(plugins ? { plugins } : {}),
+    plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],

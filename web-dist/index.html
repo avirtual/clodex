@@ -35287,10 +35287,10 @@ ${detail}` });
         const type = inputType.value;
         const agentType = type === "claude" || type === "codex";
         const intents = type === "claude" ? collectIntentChecklist(inputIntentList) : null;
-        const plugins = getPluginCatalogCache().length ? type === "claude" ? mergePlugins(
+        const plugins = type === "claude" ? mergePlugins(
           collectPluginChecklist(inputPluginList),
           pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id)))
-        ) : defaultPluginTicks() : null;
+        ) : defaultPluginTicks();
         const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
         return {
@@ -35301,7 +35301,7 @@ ${detail}` });
           agents: type === "claude" ? collectAgentChecklist(inputAgentsList) : [],
           execCommands: type === "claude" ? collectExecChecklist(inputExecList) : [],
           ...Array.isArray(intents) ? { intents } : {},
-          ...plugins ? { plugins } : {},
+          plugins,
           ...autoCompactOff ? { autoCompact: false } : {},
           ...noWireOn ? { noWire: true } : {},
           denyBuiltins: type === "claude" ? collectBuiltinChecklist(inputBuiltinsList) : [],
