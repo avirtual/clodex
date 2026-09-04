@@ -1428,13 +1428,11 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   if (!restart) return { ok: true, restarted: false };
   if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
   const restartIntents = Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents;
-  let preservable = beforeKill;
-  if (Array.isArray(beforeKill.pluginGrants)) {
-    const { pluginGrants: _preprune, ...rest } = beforeKill;
-    preservable = prunedArgs.pluginGrants.length
-      ? { ...rest, pluginGrants: prunedArgs.pluginGrants }
-      : rest;
-  }
+  const prunedGrants = (prunedArgs.pluginGrants && prunedArgs.pluginGrants.length)
+    ? prunedArgs.pluginGrants : undefined;
+  const preservable = Array.isArray(beforeKill.pluginGrants)
+    ? { ...beforeKill, pluginGrants: prunedGrants }
+    : beforeKill;
   try {
     if (manager.sessions.has(name)) {
       await manager.kill(name);
@@ -1447,10 +1445,10 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
     return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
-    // Applied to the ASSEMBLED object, not to the spread source: the spread is
-    // what actually reaches the store, so stripping the source would be undone.
+    // Applied to the ASSEMBLED object, not to `beforeKill`: the spread is what
+    // actually reaches the store, so stripping the source would be undone by it.
     // Same reason as restartSession's arm above (t491).
-    persistence.upsert(manager._stripClaimedTree({ ...preservable, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined }));
+    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
