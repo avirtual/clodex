@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A plugin can now be registered from any folder on disk.** Manage Plugins has
+  a **Register Plugin…** button: pick the plugin's folder — a git checkout, a
+  downloaded directory, anywhere — and Clodex validates its manifest and links it
+  into `~/.clodex/plugins` without copying it. Its row says where it points and
+  offers **Unregister**, which removes only the link and never touches your
+  folder. Registering is refused rather than half-done when the folder is not
+  named for the plugin's id, when the id belongs to a plugin built into Clodex,
+  or when something already holds that name. The button is on the desktop app
+  only, and a plugin registered this way has no browser UI when you reach Clodex
+  from a phone or another machine.
+
 ## 5.27.0 — 2026-09-04
 
 - **The Console tab now shows a running command's output while it runs.** Until
