@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.30.0 — 2026-09-05
+
 - **Reviewer seats can carry a shell, with mutating commands blocked.** A second
   reviewer template, `clodex-team-reviewer-shell`, spawns with Bash for
   git/ls/cat/sed/`node --test` so a review can measure instead of deriving;
