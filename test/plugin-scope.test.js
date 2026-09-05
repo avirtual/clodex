@@ -1412,18 +1412,24 @@ test('t655: pluginReachesSession is keyed on the seat list, and the scoped-id se
   assert.strictEqual(typeof seatHasPlugin, 'function', 'ENTER: seatHasPlugin is the surviving predicate');
 });
 
-// The boot/enable paths no longer need a scope set recorded before activation,
-// so the ordering that existed only for it is gone. What must survive is that a
-// FAILED catalog read activates nothing — an exception mid-boot would otherwise
-// leave the plugin bar half-populated.
+// What must survive is that a FAILED catalog read activates nothing — an
+// exception mid-boot would otherwise leave the plugin bar half-populated.
+//
+// t661 gave the enable arm a catalog refill of its own (origin has to be in the
+// cache before the plugin's chrome paints), so the two paths now fail DIFFERENTLY
+// and deliberately: boot returns, because a catalog it cannot read is a catalog
+// it cannot iterate; the enable arm swallows and activates anyway, because it
+// already knows which plugin to activate and a stale cache costs that plugin its
+// chrome until the next fill — not the whole bar.
 test('t655: a rejected plugin catalog activates nothing on either path', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   assert.match(src, /let catalog = null;\n\s*try \{ catalog = await window\.api\.pluginCatalog\(\); \} catch \{ return; \}/,
     'the boot path bails on a rejected catalog rather than iterating a partial one');
   assert.match(src, /for \(const p of catalog \|\| \[\]\)/,
     'and a null catalog iterates nothing by construction');
-  assert.match(src, /if \(payload\.enabled\) activatePluginRenderer\(payload\.id\);/,
-    'the mid-run enable activates directly — the scope set it used to refresh first is gone');
+  assert.match(src, /try \{ setPluginCatalogCache\(\(await window\.api\.pluginCatalog\(\)\) \|\| \[\]\); \} catch \{\}/,
+    'the enable arm\'s refill cannot throw INTO the activation — a rejected catalog there '
+    + 'must cost the plugin its origin row, never its renderer half');
 });
 
 // ── t655 B6 (r3 NIT 2): a quarantined plugin's grants survive an Edit-save ───
