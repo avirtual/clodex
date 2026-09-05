@@ -9,6 +9,6 @@ itself shipped would grant itself exactly that.
 
 ## catalog
 
-`shipped` is a BOOLEAN rather than the loader's root id. Every renderer question
-off it is "does an absent seat list reach this", so exporting the root
-vocabulary would put the rule `root === 'core'` in a second place to drift.
+`shipped` is a BOOLEAN rather than the loader's root id: every renderer question
+off it is "does an absent seat list reach this", which the boolean answers
+directly.

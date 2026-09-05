@@ -55,3 +55,22 @@ test('every class="hidden" id in index.html has a #id.hidden display:none rule',
   assert.deepStrictEqual(missing, [],
     `hidden ids with no #id.hidden{display:none} rule in styles.css (always-visible bug): ${missing.join(', ')}`);
 });
+
+// The ATTRIBUTE sibling of the rule above, and the same failure mode: the footer
+// button's own `display: flex` beats the UA's `[hidden] { display: none }`, so
+// `el.hidden = true` in renderFooterButtons (t661) hides nothing without an
+// explicit rule. Every footer test drives the host and reads `el.hidden`, which
+// stays true either way — deleting this CSS line leaves the whole suite green and
+// shows the operator every plugin's button on every seat.
+test('the footer-button [hidden] rule exists, or el.hidden silently no-ops', () => {
+  const rule = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find(([, sel]) =>
+    /#sidebar-footer\s+\[data-plugin-footer\]\[hidden\]/.test(sel));
+  assert.ok(rule, 'styles.css has a #sidebar-footer [data-plugin-footer][hidden] rule');
+  assert.match(rule[2], /display\s*:\s*none/, 'and that rule sets display:none');
+  // ENTER: the flex rule this one has to beat is really there — without it the
+  // assertion above would be guarding against nothing.
+  const flex = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find(([, sel], ) =>
+    /#sidebar-footer\s+\[data-plugin-footer\]\s*$/.test(sel.trim()) || /#inbox-open,\s*#sidebar-footer\s+\[data-plugin-footer\]/.test(sel));
+  assert.ok(flex && /display\s*:\s*flex/.test(flex[2]),
+    'ENTER: the footer button really is display:flex, which is what the UA [hidden] rule loses to');
+});

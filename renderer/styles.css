@@ -334,11 +334,9 @@ html, body {
    guessing. */
 .footer-badge:empty { display: none; }
 
-/* Opacity only: the button keeps its box, so a seat switch cannot reflow the
-   footer. It stays clickable — the click refuses with a toast, which is the
-   affordance a removed button cannot offer. */
-/* The `display: flex` above beats the UA's `[hidden] { display: none }`, so the
-   host's `el.hidden = true` needs this rule to actually hide anything. */
+/* The `#inbox-open, #sidebar-footer [data-plugin-footer]` rule's `display: flex`
+   beats the UA's `[hidden] { display: none }`, so the host's `el.hidden = true`
+   needs this rule to actually hide anything. */
 #sidebar-footer [data-plugin-footer][hidden] { display: none; }
 
 .inbox-count {

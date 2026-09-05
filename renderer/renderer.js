@@ -2778,10 +2778,12 @@ async function loadPluginRenderers() {
 loadPluginRenderers();
 
 if (window.api.onPluginEvent) {
-  window.api.onPluginEvent((pluginId, topic, payload) => {
+  window.api.onPluginEvent(async (pluginId, topic, payload) => {
     if (pluginId === '_host' && topic === 'plugin-state' && payload && payload.id) {
-      if (payload.enabled) activatePluginRenderer(payload.id);
-      else pluginBar.dispose(payload.id);
+      if (payload.enabled) {
+        try { setPluginCatalogCache((await window.api.pluginCatalog()) || []); } catch {}
+        await activatePluginRenderer(payload.id);
+      } else pluginBar.dispose(payload.id);
       if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
       return;
     }

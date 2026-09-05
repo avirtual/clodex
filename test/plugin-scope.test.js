@@ -496,7 +496,7 @@ test('t661: a plugin cannot declare itself shipped through its manifest', () => 
     }, { hostApi: HOST_API_VERSION, shipped: true, root: 'core' });
     assert.strictEqual(registry.pluginRowFor('fromliar').shipped, false,
       'ENTER: the row registered, and the manifest claim did not reach it');
-    assert.strictEqual(registry.catalogRows(null).includes('fromliar'), false,
+    assert.strictEqual(registry.catalogRows(null).map((r) => r.type).includes('fromliar'), false,
       'so an absent seat list does not get the verb');
     assert.ok(registry.catalogRows(['liar-plug']).map((r) => r.type).includes('fromliar'),
       'CONTROL: the verb is reachable when the seat ticks the plugin');
@@ -716,21 +716,31 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
         { id: 'globalish', name: 'Global One', scope: 'global', enabled: true, quarantined: false, root: 'core' },
         { id: 'scoped-off', name: 'Disabled', scope: 'session', enabled: false, quarantined: false, root: 'core' },
         { id: 'scoped-quar', name: 'Quarantined', scope: 'session', enabled: true, quarantined: true, root: 'core' },
+        // The one CUSTOM row, and it passes every other filter — scoped, enabled,
+        // unquarantined — so its absence below can only be the origin rule. This
+        // handler is the only site that derives origin outside register(), so
+        // without a non-core row here a dropped or inverted argument stays green.
+        { id: 'scoped-user', name: 'From A Folder', scope: 'session', enabled: true, quarantined: false, root: 'user' },
       ],
     },
   });
   const res = f.getGrants('seat');
   assert.strictEqual(res.ok, true);
-  // This fixture's seat carries NO `plugins` key and every status row below is
-  // rooted at 'core', so the seat default admits them all — which is what makes
-  // the scope filter the only one acting in the assertions below.
+  // This fixture's seat carries NO `plugins` key, so the offer is filtered by
+  // scope and by ORIGIN and by nothing else.
   assert.ok(!('plugins' in f.store.seat), 'ENTER: the seat is on the absent-list default');
   // ENTER: the filter kept something. `deepStrictEqual(x, [])` would be true of
   // a status read that returned nothing at all.
   assert.ok(res.plugins.length > 0, 'ENTER: the scoped plugins survived the filter');
   assert.deepStrictEqual(res.plugins.map((p) => p.id), ['scoped-a', 'scoped-b'],
     'a GLOBAL plugin is not offered — it has no per-session decision, and offering it '
-    + 'would invite withholding something that is not withheld');
+    + 'would invite withholding something that is not withheld; and the custom plugin '
+    + 'is not offered either, because the absent-list seat does not have it');
+  // CONTROL for that last clause: the same row IS offered to a seat that names
+  // it, so its absence above is the origin rule and not a row the fixture never
+  // supplied or a filter that drops every non-core plugin outright.
+  assert.deepStrictEqual(f.getGrants('seat', ['scoped-user']).plugins.map((p) => p.id), ['scoped-user'],
+    'a seat that ticks the custom plugin IS offered its grants');
   assert.deepStrictEqual(res.granted, ['scoped-a:turns']);
   assert.deepStrictEqual(res.capabilities, [...PLUGIN_CAPABILITIES]);
   assert.deepStrictEqual(f.getGrants('nope'), { ok: false, error: 'Session not found in persistence' });
@@ -1370,6 +1380,23 @@ test('t655: pluginReachesSession is keyed on the seat list, and the scoped-id se
   assert.match(body, /await window\.api\.pluginCatalog\(\)/, 'ENTER: this is the function that fetches the catalog');
   assert.match(body, /setPluginCatalogCache\(catalog \|\| \[\]\)/,
     'the boot fetch fills the cache pluginReachesSession reads its origins from');
+  // r1 MUST-FIX 1: the same hole mid-run. A plugin ENABLED from Manage Plugins
+  // has no catalog row until something refills the cache, so origin resolves
+  // false and every never-edited seat withholds a plugin it should have — no
+  // footer button, no row badge, and an overlay that toasts a false refusal.
+  // Source-scanned for the same reason as the boot arm: the chrome tests supply
+  // the repaint themselves, so a missing REFILL is invisible to them.
+  const ev = src.indexOf('window.api.onPluginEvent(');
+  assert.ok(ev > 0, 'ENTER: the plugin-event listener was located');
+  const evBody = src.slice(ev, src.indexOf('\n  });', ev));
+  assert.match(evBody, /topic === 'plugin-state'/, 'ENTER: this is the plugin-state arm');
+  assert.match(evBody, /activatePluginRenderer\(payload\.id\)/,
+    'ENTER: the enable arm still activates the renderer half — the refill sits beside it');
+  const fill = evBody.indexOf('setPluginCatalogCache(');
+  assert.ok(fill > -1, 'the enable arm refills the plugin catalog cache');
+  assert.ok(fill < evBody.indexOf('activatePluginRenderer(payload.id)'),
+    'and refills BEFORE activating, or the first paint of the newly enabled plugin '
+    + 'reads an origin the cache cannot answer yet');
   // The grants-axis predicate is RETIRED, not merely unused: a surviving export
   // is an invitation to re-key the UI onto grants and re-open the split between
   // what the chrome shows and what the engine allows.
