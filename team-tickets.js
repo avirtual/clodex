@@ -4024,10 +4024,10 @@ function createTicketMethods(deps, shared) {
         cwd: roleCwd.cwd,
         cwdFallback: roleCwd.fallback,
         tpl,
-        // MERGED onto postureArgs, never replacing them (that is the ticket
-        // arm's shape, and the reason a template can hand a ticket seat posture
-        // its opener does not hold). reviewerModelArgs is an allowlist of one
-        // flag — do not widen it to honor the template's array.
+        // MERGED onto postureArgs except on the shell arm, which REPLACES them:
+        // bypass ignores allow/deny, so inheriting it there voids the allowlist.
+        // reviewerModelArgs is an allowlist of one flag — do not widen it to
+        // honor the template's array.
         // Dropping the rest is an ADJUDICATED decision, not an omission: the
         // rationale is owned by the test 'a reviewer template CANNOT contribute
         // extraArgs'. Mirroring the ticket arm here reverts it.
