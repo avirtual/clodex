@@ -187,6 +187,7 @@ function createBashLive(deps) {
   const realpath = (deps && deps.realpath) || ((d) => {
     try { return fs.realpathSync(d); } catch { return d; }
   });
+  const statFile = (deps && deps.statFile) || ((p) => fs.statSync(p));
   const setInterval_ = (deps && deps.setInterval) || setInterval;
   const clearInterval_ = (deps && deps.clearInterval) || clearInterval;
   const seats = new Map();
@@ -390,6 +391,36 @@ function createBashLive(deps) {
     }
   }
 
+  function creationTimeOf(p) {
+    let s = null;
+    try { s = statFile(p); } catch { return null; }
+    if (!s || typeof s !== 'object') return null;
+    const birth = s.birthtimeMs;
+    if (typeof birth === 'number' && Number.isFinite(birth) && birth > 0) return birth;
+    const m = s.mtimeMs;
+    if (typeof m === 'number' && Number.isFinite(m) && m > 0) return m;
+    return null;
+  }
+
+  function pairByOrder(group, cands) {
+    const obs = [...group].sort((a, b) => a.startedAt - b.startedAt);
+    for (let i = 1; i < obs.length; i += 1) {
+      if (!(obs[i - 1].startedAt < obs[i].startedAt)) return null;
+    }
+    const earliest = obs[0].startedAt;
+    const timed = [];
+    for (const c of cands) {
+      const born = creationTimeOf(c.path);
+      if (born === null || born < earliest) return null;
+      timed.push({ c, born });
+    }
+    timed.sort((a, b) => a.born - b.born);
+    for (let i = 1; i < timed.length; i += 1) {
+      if (!(timed[i - 1].born < timed[i].born)) return null;
+    }
+    return obs.map((o, i) => [o, timed[i].c]);
+  }
+
   function assign(st, observers) {
     const byId = new Map(observers.map((o) => [o.id, o]));
     const claimed = new Set();
@@ -431,22 +462,44 @@ function createBashLive(deps) {
       return;
     }
 
-    const byPath = new Map();
-    for (const c of free) byPath.set(c.path, c);
     let resolvedAny = false;
 
+    const ownerNeedles = new Map();
+    const needleOfOwner = (id) => {
+      if (ownerNeedles.has(id)) return ownerNeedles.get(id);
+      const o = byId.get(id);
+      const n = o ? argvNeedle(o.command) : null;
+      ownerNeedles.set(id, n);
+      return n;
+    };
+
+    const groups = new Map();
     for (const o of waiting) {
       const needle = needles.get(o.id);
       if (!needle) continue;
+      const g = groups.get(needle);
+      if (g) g.push(o);
+      else groups.set(needle, [o]);
+    }
+
+    for (const [needle, group] of groups) {
       const hits = procs.filter((p) => typeof p.args === 'string' && p.args.includes(needle));
       if (!hits.length) continue;
       const files = new Set(hits.map((h) => h.file).filter((f) => st.candidates.has(f)));
-      if (files.size !== 1) continue;
-      const [file] = files;
-      const c = byPath.get(file);
-      if (!c || c.owner) continue;
-      c.owner = o.id;
-      claimed.add(o.id);
+      const cands = [];
+      for (const f of files) {
+        const c = st.candidates.get(f);
+        if (c.owner && needleOfOwner(c.owner) === needle) continue;
+        cands.push(c);
+      }
+      if (cands.length !== group.length) continue;
+      if (cands.some((c) => c.owner)) continue;
+      const pairs = pairByOrder(group, cands);
+      if (!pairs) continue;
+      for (const [o, c] of pairs) {
+        c.owner = o.id;
+        claimed.add(o.id);
+      }
       resolvedAny = true;
     }
     st.probeMisses = resolvedAny ? 0 : misses + 1;
