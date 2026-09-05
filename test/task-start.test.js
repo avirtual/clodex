@@ -1006,8 +1006,6 @@ test('t673: task start reviewer:<name> writes the choice onto the record and nam
 });
 
 test('t673: an unknown reviewer template is refused AT START, before anything is dispatched', () => {
-  // Above the mint: a refusal below it has already reserved the seat name and
-  // cut the worktree for a ticket it then declines to start.
   const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
   f.seat('lead'); f.seat('team-hand');
   const t0 = opened(f);

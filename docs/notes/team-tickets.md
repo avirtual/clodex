@@ -34,7 +34,5 @@ is reaped seconds later.
 
 ## _taskStart
 
-The `reviewer:` validation sits above `_mintTicketSeat`: a refusal below it has
-already reserved the seat name and cut the worktree. `ticket.reviewerTemplate`
-is written above BOTH save arms — the one-shot arm returns before the second
-save, so a write below it survives only on the standing-seat path.
+`ticket.reviewerTemplate` is written above BOTH save arms — the one-shot arm
+returns before the second save, so a write below it survives only on the standing-seat path.
