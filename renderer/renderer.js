@@ -35,7 +35,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -1695,9 +1695,9 @@ async function applySandboxState() {
 
 function populateChecklistsFromCatalogs(cat) {
   setAgentLibCache(cat.agents || []);
-  renderAgentChecklist(inputAgentsList, new Set());
+  renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
   setSkillLibCache(cat.skills || []);
-  renderInjectChecklist(inputInjectSkillsList, new Set());
+  renderInjectChecklist(inputInjectSkillsList, new Set(), null, newSessionSeat());
   renderSkillChecklist(inputSkillsList, [], new Set());
   setClaudeToolsCache(cat.claudeTools || []);
   renderToolChecklist(inputToolsList, new Set());
@@ -1778,6 +1778,7 @@ const inputPluginList = document.getElementById('input-plugin-list');
 if (inputPluginList) {
   inputPluginList.addEventListener('change', () => {
     refreshNewSessionIntents(collectIntentChecklist(inputIntentList));
+    repaintNewSessionBundleRows();
   });
 }
 
@@ -1798,10 +1799,17 @@ const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
 const envSection = document.getElementById('env-section');
 
+// The seat being composed has no persisted record yet, so its membership is the
+// live Plugins checklist in this same dialog — which is why every caller must
+// have painted that list first (refreshNewSessionPlugins).
+function newSessionSeat() {
+  return { plugins: collectPluginChecklist(inputPluginList) };
+}
+
 async function refreshNewSessionInjectSkills(enabledSet = new Set()) {
   if (inputType.value !== 'claude') return;
   setSkillLibCache((await window.api.listSkillLib()) || []);
-  renderInjectChecklist(inputInjectSkillsList, enabledSet);
+  renderInjectChecklist(inputInjectSkillsList, enabledSet, null, newSessionSeat());
 }
 
 async function refreshNewSessionExecCommands(enabledSet = new Set()) {
@@ -1823,6 +1831,18 @@ async function refreshNewSessionPlugins(pluginsList) {
   newSessionPluginsPersisted = Array.isArray(pluginsList) ? pluginsList : null;
   newSessionPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
   renderPluginChecklist(inputPluginList, Array.isArray(pluginsList) ? pluginsList : defaultPluginTicks());
+  repaintNewSessionBundleRows();
+}
+
+// The bundle sections read the Plugins checklist, so they are STALE the moment
+// it repaints or the operator ticks a row. Re-render off the live checkboxes,
+// carrying the flat picks across — collect drops the disabled bundle rows, so
+// what comes back is the flat set the re-render puts straight back.
+function repaintNewSessionBundleRows() {
+  if (inputType.value !== 'claude') return;
+  const seat = newSessionSeat();
+  renderAgentChecklist(inputAgentsList, new Set(collectAgentChecklist(inputAgentsList)), null, seat);
+  renderInjectChecklist(inputInjectSkillsList, new Set(collectInjectChecklist(inputInjectSkillsList)), null, seat);
 }
 
 async function refreshNewSessionIntents(intentsList) {
@@ -2061,7 +2081,7 @@ async function openDialog(prefill = null) {
 
 function populateHostCatalogs(settings, agentLib) {
   setAgentLibCache(agentLib || []);
-  renderAgentChecklist(inputAgentsList, new Set());
+  renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
   refreshNewSessionExecCommands();
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
@@ -2162,7 +2182,7 @@ inputTemplate.addEventListener('change', async () => {
   argsHint.textContent = ARGS_HINTS[t.type] || '';
   applyTypeDefaults({ skipAsyncRefresh: true });
   if (t.type === 'claude') {
-    renderAgentChecklist(inputAgentsList, new Set(t.agents || []));
+    renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
     await refreshNewSessionPlugins(t.plugins);
     await refreshNewSessionIntents(t.intents);
@@ -2471,7 +2491,7 @@ async function openTemplateEditor(tpl = null) {
   // answers [] and writes a closed list into the template file.
   await refreshNewSessionPlugins(tpl && tpl.plugins);
   if (inputType.value === 'claude') {
-    renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []));
+    renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []), null, newSessionSeat());
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
     await refreshNewSessionIntents(tpl && tpl.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
@@ -3391,6 +3411,11 @@ const {
   openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover,
 } = initChecklistPopovers({
   sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta,
+  // The same per-row read pluginReachesSession answers off, and the only one the
+  // renderer has: neither catalog IPC these popovers call carries the seat's own
+  // plugin list. `undefined` (a row with no meta yet) is NOT an array, so
+  // seatHasPlugin falls to the shipped default — the same answer the seat gets.
+  seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
 });
 
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
@@ -6104,11 +6129,31 @@ const argsIntentsList = document.getElementById('args-intents-list');
 const argsIntentsSection = document.getElementById('args-intents-section');
 const argsPluginList = document.getElementById('args-plugin-list');
 const argsPluginsSection = document.getElementById('args-plugins-section');
+// The seat this dialog edits, as the PLUGIN CHECKLIST currently stands rather
+// than as persisted: an untick must grey the bundle rows before Save, or the
+// dialog shows reach it is in the act of removing. On a peer row that section is
+// hidden and unsaveable, so the persisted list is the honest answer there.
+function argsSeat() {
+  return {
+    plugins: argsPluginsSection.style.display === 'none'
+      ? argsPluginsPersisted
+      : mergePlugins(collectPluginChecklist(argsPluginList),
+        pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered)),
+  };
+}
+
 if (argsPluginList) {
   argsPluginList.addEventListener('change', async () => {
     const checked = collectIntentChecklist(argsIntentsList);
     setIntentCatalogCache((await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList))) || []);
     renderIntentChecklist(argsIntentsList, checked);
+    const seat = argsSeat();
+    renderAgentChecklist(argsAgentsList, new Set(collectAgentChecklist(argsAgentsList)),
+      new Set(argsAgentsAuto), seat);
+    if (argsInjectSkillsSection.style.display !== 'none') {
+      renderInjectChecklist(argsInjectSkillsList, new Set(collectInjectChecklist(argsInjectSkillsList)),
+        new Set(argsSkillsInjectAuto), seat);
+    }
   });
 }
 const argsExecList = document.getElementById('args-exec-list');
@@ -6184,8 +6229,19 @@ async function openArgsDialog(name, argsSource = null) {
   const isClaude = res.type === 'claude';
   argsAgentsRow.style.display = isClaude ? '' : 'none';
   argsOtherSection.style.display = isClaude ? '' : 'none';
+  // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section
+  // drawn there takes an untick and silently discards it.
+  const isPluginsEditable = isClaude && !argsSource;
+  argsPluginsSection.style.display = isPluginsEditable ? '' : 'none';
+  // ABOVE the agents render, which now draws bundle rows off this cache: below
+  // it those rows would be grouped by whatever plugin set the LAST dialog left
+  // behind.
+  setPluginCatalogCache((await window.api.pluginCatalog()) || []);
+  argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+  argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
+  renderPluginChecklist(argsPluginList, res.plugins);
   const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
-  renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto);
+  renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto, argsSeat());
   argsAgentsPersisted = res.agents || [];
   argsAgentsRendered = (agentLib || []).map((a) => a.name);
   argsAgentsAuto = [...argsAuto];
@@ -6194,14 +6250,6 @@ async function openArgsDialog(name, argsSource = null) {
   argsToolsSection.style.display = isClaude ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
-  // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section
-  // drawn there takes an untick and silently discards it.
-  const isPluginsEditable = isClaude && !argsSource;
-  argsPluginsSection.style.display = isPluginsEditable ? '' : 'none';
-  setPluginCatalogCache((await window.api.pluginCatalog()) || []);
-  argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
-  argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
-  renderPluginChecklist(argsPluginList, res.plugins);
   argsIntentsSection.style.display = isClaude ? '' : 'none';
   // Keyed on the list this dialog just painted: the override is what makes a
   // live untick repaint the verbs.
@@ -6220,9 +6268,14 @@ async function openArgsDialog(name, argsSource = null) {
     renderSkillChecklist(argsSkillsList, sc.names || [], new Set(sc.disabledSkills || []),
       sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
     setSkillLibCache(sc.skillLib || []);
-    if ((sc.skillLib || []).length) {
+    // Bundle rows count toward showing the section: with an empty flat library
+    // the old gate hid it outright, and a plugin's skills would draw nowhere.
+    // The reconcile below is what keeps that safe — `rendered` stays the FLAT
+    // names, so an all-bundle section collects [] and preserves the persisted
+    // set rather than clearing it.
+    if ((sc.skillLib || []).length || bundleSectionsOf('skills').length) {
       const auto = skillAutoSet(sc.skillLib, name);
-      renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto);
+      renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto, argsSeat());
       argsSkillsInjectPersisted = sc.injectSkills || [];
       argsSkillsInjectRendered = (sc.skillLib || []).map((s) => s.name);
       argsSkillsInjectAuto = [...auto];
@@ -6332,6 +6385,12 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
   openTemplateEditor,
+  // The drawers list what every plugin carries, with no seat to scope it to —
+  // this is a library view, not a per-session grant.
+  bundleSectionsOf,
+  refreshPluginCatalog: async () => {
+    try { setPluginCatalogCache((await window.api.pluginCatalog()) || []); } catch {}
+  },
 }));
 
 

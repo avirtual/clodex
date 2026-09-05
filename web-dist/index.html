@@ -6098,6 +6098,21 @@ body {
 [data-theme=light] .intent-mark-inert {
   background: rgba(154, 107, 30, .14);
 }
+.check-group {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+.agent-checklist > .check-group:first-child {
+  margin-top: 4px;
+}
+.prompt-item.bundle-item {
+  opacity: 0.75;
+  cursor: default;
+}
 
 /* renderer/web/app.css */
 /*! Bundled license information:
@@ -21983,6 +21998,7 @@ ${String(body || "").trim()}
   var require_checklists = __commonJS({
     "renderer/lib/checklists.js"(exports, module) {
       var { esc } = require_format();
+      var { seatHasPlugin } = require_plugin_api();
       var promptLibCache = { system: [], append: [] };
       var agentLibCache = [];
       var skillLibCache = [];
@@ -22051,9 +22067,51 @@ ${String(body || "").trim()}
       function collectAppendChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
       }
-      function renderAgentChecklist(container, enabledSet, autoSet = null) {
+      function bundleSectionsOf(kind) {
+        const out = [];
+        for (const p of pluginCatalogCache) {
+          const names = Array.isArray(p[kind]) ? p[kind] : [];
+          if (!names.length) continue;
+          out.push({ id: String(p.id), name: p.name || String(p.id), names, shipped: p.shipped });
+        }
+        return out;
+      }
+      function seatBundleSections(kind, seat) {
+        if (!seat) return [];
+        return bundleSectionsOf(kind).map((sec) => ({
+          ...sec,
+          has: seatHasPlugin(sec.id, seat.plugins, sec.shipped)
+        }));
+      }
+      function hasBundleRows(kind, seat) {
+        return seatBundleSections(kind, seat).length > 0;
+      }
+      function appendBundleSections(container, kind, seat) {
+        for (const sec of seatBundleSections(kind, seat)) {
+          const head = document.createElement("div");
+          head.className = "check-group";
+          head.textContent = sec.name;
+          container.appendChild(head);
+          for (const n of sec.names) {
+            const row = document.createElement("label");
+            row.className = "agent-check" + (sec.has ? "" : " skill-readonly");
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = `${sec.id}:${n}`;
+            cb.checked = sec.has;
+            cb.disabled = true;
+            const txt = document.createElement("span");
+            const note = sec.has ? ` <span class="skill-src">\xB7 via ${esc(sec.name)}</span>` : ` <span class="skill-src">enable the ${esc(sec.name)} plugin for this session</span>`;
+            txt.innerHTML = `<strong>${esc(n)}</strong>${note}`;
+            row.appendChild(cb);
+            row.appendChild(txt);
+            container.appendChild(row);
+          }
+        }
+      }
+      function renderAgentChecklist(container, enabledSet, autoSet = null, seat = null) {
         container.innerHTML = "";
-        if (!agentLibCache.length) {
+        if (!agentLibCache.length && !hasBundleRows("agents", seat)) {
           container.innerHTML = '<span class="hint-text">No agents in library \u2014 add some via the \u{1F916} Agents drawer.</span>';
           return;
         }
@@ -22072,9 +22130,10 @@ ${String(body || "").trim()}
           row.appendChild(txt);
           container.appendChild(row);
         }
+        appendBundleSections(container, "agents", seat);
       }
       function collectAgentChecklist(container) {
-        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map((cb) => cb.value);
       }
       function renderExecChecklist(container, enabledSet) {
         container.innerHTML = "";
@@ -22190,9 +22249,9 @@ ${String(body || "").trim()}
           btn.addEventListener("click", () => setChecklistAll(listEl, btn.dataset.bulk === "all"));
         });
       }
-      function renderInjectChecklist(container, enabledSet, autoSet = null) {
+      function renderInjectChecklist(container, enabledSet, autoSet = null, seat = null) {
         container.innerHTML = "";
-        if (!skillLibCache.length) {
+        if (!skillLibCache.length && !hasBundleRows("skills", seat)) {
           container.innerHTML = '<span class="hint-text">No skills in library \u2014 add some via the \u{1F9E9} Skills Library (Skills menu).</span>';
           return;
         }
@@ -22211,9 +22270,10 @@ ${String(body || "").trim()}
           row.appendChild(txt);
           container.appendChild(row);
         }
+        appendBundleSections(container, "skills", seat);
       }
       function collectInjectChecklist(container) {
-        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map((cb) => cb.value);
       }
       function renderToolChecklist(container, disabledSet, effective) {
         effective = effective || {};
@@ -22292,6 +22352,7 @@ ${String(body || "").trim()}
         collectAppendChecklist,
         renderAgentChecklist,
         collectAgentChecklist,
+        bundleSectionsOf,
         renderExecChecklist,
         collectExecChecklist,
         renderIntentChecklist,
@@ -25194,7 +25255,25 @@ helper=${d.helperPath}`;
         if (ss) parts.push(`sessions: ${ss}`);
         return parts.length ? `<div class="prompt-item-scope">${esc(parts.join(" \xB7 "))}</div>` : "";
       }
-      function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor }) {
+      function appendBundleGroups(listEl, sections) {
+        for (const sec of sections) {
+          const head = document.createElement("div");
+          head.className = "check-group";
+          head.textContent = sec.name;
+          listEl.appendChild(head);
+          for (const n of sec.names) {
+            const el = document.createElement("div");
+            el.className = "prompt-item bundle-item";
+            el.innerHTML = `
+        <div class="prompt-item-title">${esc(n)}</div>
+        <div class="prompt-item-preview">${esc(`from the ${sec.name} plugin`)}</div>
+      `;
+            listEl.appendChild(el);
+          }
+        }
+      }
+      function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, bundleSectionsOf, refreshPluginCatalog }) {
+        const bundleGroups = (kind) => typeof bundleSectionsOf === "function" ? bundleSectionsOf(kind) : [];
         const promptsDrawer = document.getElementById("prompts-drawer");
         const promptsList = document.getElementById("prompts-list");
         const promptsEmpty = document.getElementById("prompts-empty");
@@ -25330,9 +25409,11 @@ helper=${d.helperPath}`;
         let editingAgentName = null;
         async function refreshAgentsList() {
           const items = await window.api.listAgents();
+          if (refreshPluginCatalog) await refreshPluginCatalog();
+          const groups = bundleGroups("agents");
           setAgentLibCache(items || []);
           agentsListEl.innerHTML = "";
-          if (!items || items.length === 0) {
+          if ((!items || items.length === 0) && !groups.length) {
             agentsEmpty.style.display = "";
             return;
           }
@@ -25357,6 +25438,7 @@ helper=${d.helperPath}`;
             el.addEventListener("click", () => openAgentEditor(a));
             agentsListEl.appendChild(el);
           }
+          appendBundleGroups(agentsListEl, groups);
         }
         function openAgentsDrawer(name) {
           agentsDrawer.classList.remove("hidden");
@@ -25437,9 +25519,11 @@ helper=${d.helperPath}`;
         let editingSkillName = null;
         async function refreshSkillsLibList() {
           const items = await window.api.listSkillLib();
+          if (refreshPluginCatalog) await refreshPluginCatalog();
+          const groups = bundleGroups("skills");
           setSkillLibCache(items || []);
           skillsListEl.innerHTML = "";
-          if (!items || items.length === 0) {
+          if ((!items || items.length === 0) && !groups.length) {
             skillsEmpty.style.display = "";
             return;
           }
@@ -25462,6 +25546,7 @@ helper=${d.helperPath}`;
             el.addEventListener("click", () => openSkillEditor(s));
             skillsListEl.appendChild(el);
           }
+          appendBundleGroups(skillsListEl, groups);
         }
         function openSkillsDrawer(name) {
           skillsDrawer.classList.remove("hidden");
@@ -28767,7 +28852,8 @@ helper=${d.helperPath}`;
         getSkillLibCache,
         setIntentCatalogCache,
         setPluginCatalogCache,
-        getPluginCatalogCache
+        getPluginCatalogCache,
+        bundleSectionsOf
       } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
@@ -28786,7 +28872,11 @@ helper=${d.helperPath}`;
         (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || "").meta })),
         session
       ));
-      function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta }) {
+      function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf }) {
+        function seatFor(name, source = null) {
+          if (source || typeof seatPluginsOf !== "function") return null;
+          return { plugins: seatPluginsOf(name) };
+        }
         const toolsPopover = document.getElementById("tools-popover");
         const toolsPopoverName = document.getElementById("tools-popover-name");
         const popoverToolsList = document.getElementById("popover-tools-list");
@@ -28870,6 +28960,7 @@ helper=${d.helperPath}`;
             alert(source ? `Read skills on peer failed: ${res && res.error ? res.error : "unknown error"}` : "Session not found in persistence.");
             return;
           }
+          setPluginCatalogCache(await window.api.pluginCatalog() || []);
           skillsEditingSource = source;
           renderSkillChecklist(
             popoverSkillsList,
@@ -28879,9 +28970,10 @@ helper=${d.helperPath}`;
             { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope }
           );
           setSkillLibCache(res.skillLib || []);
-          if (getSkillLibCache().length) {
+          const seat = seatFor(name, source);
+          if (getSkillLibCache().length || seat && bundleSectionsOf("skills").length) {
             const auto = skillAutoSet(res.skillLib, name);
-            renderInjectChecklist(popoverInjectSkillsList, new Set(res.injectSkills || []), auto);
+            renderInjectChecklist(popoverInjectSkillsList, new Set(res.injectSkills || []), auto, seat);
             skillsInjectPersisted = res.injectSkills || [];
             skillsInjectRendered = (res.skillLib || []).map((s) => s.name);
             skillsInjectAuto = [...auto];
@@ -28968,9 +29060,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             alert("Session not found in persistence.");
             return;
           }
+          setPluginCatalogCache(await window.api.pluginCatalog() || []);
           setAgentLibCache(res.agents || []);
           const auto = agentAutoSet(res.agents, name);
-          renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []), auto);
+          renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []), auto, seatFor(name));
           agentsPersisted = res.enabled || [];
           agentsRendered = (res.agents || []).map((a) => a.name);
           agentsAuto = [...auto];
@@ -33602,7 +33695,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -35139,9 +35232,9 @@ ${detail}` });
       }
       function populateChecklistsFromCatalogs(cat) {
         setAgentLibCache(cat.agents || []);
-        renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set());
+        renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         setSkillLibCache(cat.skills || []);
-        renderInjectChecklist(inputInjectSkillsList, /* @__PURE__ */ new Set());
+        renderInjectChecklist(inputInjectSkillsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         renderSkillChecklist(inputSkillsList, [], /* @__PURE__ */ new Set());
         setClaudeToolsCache(cat.claudeTools || []);
         renderToolChecklist(inputToolsList, /* @__PURE__ */ new Set());
@@ -35204,6 +35297,7 @@ ${detail}` });
       if (inputPluginList) {
         inputPluginList.addEventListener("change", () => {
           refreshNewSessionIntents(collectIntentChecklist(inputIntentList));
+          repaintNewSessionBundleRows();
         });
       }
       var toolsRow = document.getElementById("tools-row");
@@ -35222,10 +35316,13 @@ ${detail}` });
       var skillsSection = document.getElementById("skills-section");
       var otherSection = document.getElementById("other-section");
       var envSection = document.getElementById("env-section");
+      function newSessionSeat() {
+        return { plugins: collectPluginChecklist(inputPluginList) };
+      }
       async function refreshNewSessionInjectSkills(enabledSet = /* @__PURE__ */ new Set()) {
         if (inputType.value !== "claude") return;
         setSkillLibCache(await window.api.listSkillLib() || []);
-        renderInjectChecklist(inputInjectSkillsList, enabledSet);
+        renderInjectChecklist(inputInjectSkillsList, enabledSet, null, newSessionSeat());
       }
       async function refreshNewSessionExecCommands(enabledSet = /* @__PURE__ */ new Set()) {
         if (inputType.value !== "claude") return;
@@ -35240,6 +35337,13 @@ ${detail}` });
         newSessionPluginsPersisted = Array.isArray(pluginsList2) ? pluginsList2 : null;
         newSessionPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
         renderPluginChecklist(inputPluginList, Array.isArray(pluginsList2) ? pluginsList2 : defaultPluginTicks());
+        repaintNewSessionBundleRows();
+      }
+      function repaintNewSessionBundleRows() {
+        if (inputType.value !== "claude") return;
+        const seat = newSessionSeat();
+        renderAgentChecklist(inputAgentsList, new Set(collectAgentChecklist(inputAgentsList)), null, seat);
+        renderInjectChecklist(inputInjectSkillsList, new Set(collectInjectChecklist(inputInjectSkillsList)), null, seat);
       }
       async function refreshNewSessionIntents(intentsList) {
         if (inputType.value !== "claude") return;
@@ -35484,7 +35588,7 @@ ${detail}` });
       }
       function populateHostCatalogs(settings, agentLib) {
         setAgentLibCache(agentLib || []);
-        renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set());
+        renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         refreshNewSessionExecCommands();
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
@@ -35556,7 +35660,7 @@ ${detail}` });
         argsHint.textContent = ARGS_HINTS[t.type] || "";
         applyTypeDefaults({ skipAsyncRefresh: true });
         if (t.type === "claude") {
-          renderAgentChecklist(inputAgentsList, new Set(t.agents || []));
+          renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
           await refreshNewSessionExecCommands(new Set(t.execCommands || []));
           await refreshNewSessionPlugins(t.plugins);
           await refreshNewSessionIntents(t.intents);
@@ -35845,7 +35949,7 @@ ${detail}` });
         }
         await refreshNewSessionPlugins(tpl && tpl.plugins);
         if (inputType.value === "claude") {
-          renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []));
+          renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []), null, newSessionSeat());
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
           await refreshNewSessionIntents(tpl && tpl.intents);
           renderBuiltinChecklist(inputBuiltinsList, new Set(tpl && tpl.denyBuiltins || []));
@@ -36658,7 +36762,12 @@ Click for live activity`;
         createTerminal,
         addSessionToSidebar,
         switchSession,
-        refreshSidebarMeta
+        refreshSidebarMeta,
+        // The same per-row read pluginReachesSession answers off, and the only one the
+        // renderer has: neither catalog IPC these popovers call carries the seat's own
+        // plugin list. `undefined` (a row with no meta yet) is NOT an array, so
+        // seatHasPlugin falls to the shipped default — the same answer the seat gets.
+        seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins
       });
       var { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
       function openCreateTeamDialog() {
@@ -39157,11 +39266,34 @@ ${res.stderr}` : "");
       var argsIntentsSection = document.getElementById("args-intents-section");
       var argsPluginList = document.getElementById("args-plugin-list");
       var argsPluginsSection = document.getElementById("args-plugins-section");
+      function argsSeat() {
+        return {
+          plugins: argsPluginsSection.style.display === "none" ? argsPluginsPersisted : mergePlugins(
+            collectPluginChecklist(argsPluginList),
+            pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered)
+          )
+        };
+      }
       if (argsPluginList) {
         argsPluginList.addEventListener("change", async () => {
           const checked = collectIntentChecklist(argsIntentsList);
           setIntentCatalogCache(await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList)) || []);
           renderIntentChecklist(argsIntentsList, checked);
+          const seat = argsSeat();
+          renderAgentChecklist(
+            argsAgentsList,
+            new Set(collectAgentChecklist(argsAgentsList)),
+            new Set(argsAgentsAuto),
+            seat
+          );
+          if (argsInjectSkillsSection.style.display !== "none") {
+            renderInjectChecklist(
+              argsInjectSkillsList,
+              new Set(collectInjectChecklist(argsInjectSkillsList)),
+              new Set(argsSkillsInjectAuto),
+              seat
+            );
+          }
         });
       }
       var argsExecList = document.getElementById("args-exec-list");
@@ -39238,8 +39370,14 @@ ${res.stderr}` : "");
         const isClaude = res.type === "claude";
         argsAgentsRow.style.display = isClaude ? "" : "none";
         argsOtherSection.style.display = isClaude ? "" : "none";
+        const isPluginsEditable = isClaude && !argsSource;
+        argsPluginsSection.style.display = isPluginsEditable ? "" : "none";
+        setPluginCatalogCache(await window.api.pluginCatalog() || []);
+        argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+        argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
+        renderPluginChecklist(argsPluginList, res.plugins);
         const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
-        renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto);
+        renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto, argsSeat());
         argsAgentsPersisted = res.agents || [];
         argsAgentsRendered = (agentLib || []).map((a) => a.name);
         argsAgentsAuto = [...argsAuto];
@@ -39248,12 +39386,6 @@ ${res.stderr}` : "");
         argsToolsSection.style.display = isClaude ? "" : "none";
         setClaudeToolsCache(settings?.claudeTools || []);
         renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
-        const isPluginsEditable = isClaude && !argsSource;
-        argsPluginsSection.style.display = isPluginsEditable ? "" : "none";
-        setPluginCatalogCache(await window.api.pluginCatalog() || []);
-        argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
-        argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
-        renderPluginChecklist(argsPluginList, res.plugins);
         argsIntentsSection.style.display = isClaude ? "" : "none";
         setIntentCatalogCache(await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList)) || []);
         renderIntentChecklist(argsIntentsList, res.intents);
@@ -39275,9 +39407,9 @@ ${res.stderr}` : "");
             { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope }
           );
           setSkillLibCache(sc.skillLib || []);
-          if ((sc.skillLib || []).length) {
+          if ((sc.skillLib || []).length || bundleSectionsOf("skills").length) {
             const auto = skillAutoSet(sc.skillLib, name);
-            renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto);
+            renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto, argsSeat());
             argsSkillsInjectPersisted = sc.injectSkills || [];
             argsSkillsInjectRendered = (sc.skillLib || []).map((s) => s.name);
             argsSkillsInjectAuto = [...auto];
@@ -39385,7 +39517,16 @@ ${res.stderr}` : "");
         getActiveSession: () => activeSession,
         setAgentLibCache,
         setSkillLibCache,
-        openTemplateEditor
+        openTemplateEditor,
+        // The drawers list what every plugin carries, with no seat to scope it to —
+        // this is a library view, not a per-session grant.
+        bundleSectionsOf,
+        refreshPluginCatalog: async () => {
+          try {
+            setPluginCatalogCache(await window.api.pluginCatalog() || []);
+          } catch {
+          }
+        }
       }));
       (async function restoreSessions() {
         const restored = await window.api.restoreSessions();

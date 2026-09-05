@@ -56,7 +56,31 @@ function scopeBadgeHtml(meta) {
   return parts.length ? `<div class="prompt-item-scope">${esc(parts.join(' · '))}</div>` : '';
 }
 
-function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor }) {
+// A bundle record lives in the plugin's own directory, so the drawer lists it
+// without the edit/delete controls a library row carries: the file is not the
+// operator's to rewrite from here, and a Delete would remove part of an
+// installed plugin.
+function appendBundleGroups(listEl, sections) {
+  for (const sec of sections) {
+    const head = document.createElement('div');
+    head.className = 'check-group';
+    head.textContent = sec.name;
+    listEl.appendChild(head);
+    for (const n of sec.names) {
+      const el = document.createElement('div');
+      el.className = 'prompt-item bundle-item';
+      el.innerHTML = `
+        <div class="prompt-item-title">${esc(n)}</div>
+        <div class="prompt-item-preview">${esc(`from the ${sec.name} plugin`)}</div>
+      `;
+      listEl.appendChild(el);
+    }
+  }
+}
+
+function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, bundleSectionsOf, refreshPluginCatalog }) {
+  const bundleGroups = (kind) => (typeof bundleSectionsOf === 'function' ? bundleSectionsOf(kind) : []);
+
   const promptsDrawer = document.getElementById('prompts-drawer');
   const promptsList = document.getElementById('prompts-list');
   const promptsEmpty = document.getElementById('prompts-empty');
@@ -207,9 +231,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
 
   async function refreshAgentsList() {
     const items = await window.api.listAgents();
+    if (refreshPluginCatalog) await refreshPluginCatalog();
+    const groups = bundleGroups('agents');
     setAgentLibCache(items || []);
     agentsListEl.innerHTML = '';
-    if (!items || items.length === 0) {
+    if ((!items || items.length === 0) && !groups.length) {
       agentsEmpty.style.display = '';
       return;
     }
@@ -234,6 +260,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       el.addEventListener('click', () => openAgentEditor(a));
       agentsListEl.appendChild(el);
     }
+    appendBundleGroups(agentsListEl, groups);
   }
 
   function openAgentsDrawer(name) {
@@ -330,9 +357,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
 
   async function refreshSkillsLibList() {
     const items = await window.api.listSkillLib();
+    if (refreshPluginCatalog) await refreshPluginCatalog();
+    const groups = bundleGroups('skills');
     setSkillLibCache(items || []);
     skillsListEl.innerHTML = '';
-    if (!items || items.length === 0) {
+    if ((!items || items.length === 0) && !groups.length) {
       skillsEmpty.style.display = '';
       return;
     }
@@ -355,6 +384,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       el.addEventListener('click', () => openSkillEditor(s));
       skillsListEl.appendChild(el);
     }
+    appendBundleGroups(skillsListEl, groups);
   }
 
   function openSkillsDrawer(name) {

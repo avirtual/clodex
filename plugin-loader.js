@@ -47,9 +47,21 @@ function validateManifest(m, dirName, hasBundle = false) {
 
 function readBundle(fs, path, dir, onSkip) {
   const skip = typeof onSkip === 'function' ? onSkip : () => {};
+  // An ABSENT folder and an unreadable one both list as nothing, and only the
+  // first means "this plugin carries none". Separating them is what lets a
+  // rescan refuse to overwrite a good record with the empty result of a
+  // permission error or a half-copied directory.
+  let unreadable = false;
   const listing = (sub) => {
     try { return fs.readdirSync(path.join(dir, sub), { withFileTypes: true }); }
-    catch { return []; }
+    catch (e) {
+      const code = e && e.code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        unreadable = true;
+        skip(sub, `unreadable directory — ${(e && e.message) || e}`);
+      }
+      return [];
+    }
   };
   const skills = [];
   for (const ent of listing('skills')) {
@@ -73,7 +85,7 @@ function readBundle(fs, path, dir, onSkip) {
   }
   skills.sort((a, b) => (a.name < b.name ? -1 : 1));
   agents.sort((a, b) => (a.name < b.name ? -1 : 1));
-  return { skills, agents };
+  return { skills, agents, unreadable };
 }
 
 // Comparable versions are dot-separated runs of digits, compared NUMERICALLY
@@ -300,6 +312,7 @@ function createPluginLoader(deps) {
         stylePath: manifest.style ? path.join(dir, manifest.style) : null,
         skills: bundle.skills,
         agents: bundle.agents,
+        bundleUnreadable: bundle.unreadable,
       };
       const held = claimed.get(manifest.id);
       if (held) {
@@ -443,11 +456,18 @@ function createPluginLoader(deps) {
       seen.add(rec.id);
       const live = running.has(rec.id) ? loadedFrom.get(rec.id) : null;
       if (live) {
-        if (typeof pluginHost.updateBundle === 'function') {
-          try { pluginHost.updateBundle(rec.id, rec.skills, rec.agents); } catch {}
-        }
         const movedDir = live.dir !== rec.dir;
         const movedVersion = (live.version || null) !== (rec.manifest.version || null);
+        // Refresh ONLY a plugin that stayed put and could actually be read. A
+        // moved dir or version keeps its require-cached old engine until the
+        // restart the badge below asks for, so fresh skills against it would
+        // serve a combination no install ever had; and a directory that failed
+        // to list reads as empty, which would blank a good record rather than
+        // leave it alone. A genuine deletion lists fine and still empties it.
+        if (!movedDir && !movedVersion && !rec.bundleUnreadable
+            && typeof pluginHost.updateBundle === 'function') {
+          try { pluginHost.updateBundle(rec.id, rec.skills, rec.agents); } catch {}
+        }
         if (movedDir || movedVersion) {
           restartRequired.set(rec.id, {
             was: live.version, now: rec.manifest.version || null, dirChanged: movedDir,
