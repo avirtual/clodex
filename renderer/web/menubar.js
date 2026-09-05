@@ -177,8 +177,7 @@ function buildLibraryMenu(ctx) {
   const read = async (fn) => {
     try { return (await Promise.resolve(fn ? fn() : [])) || []; } catch { return []; }
   };
-  const bundles = () => read(api.pluginCatalog);
-  const kindRows = async ({ channel, library, empty, pluginEntries, newLabel, manageLabel }) => {
+  const kindRows = async ({ channel, library, empty, pluginEntries, newLabel, manageLabel, bundles }) => {
     const rows = library.length ? library : [{ label: empty, disabled: true }];
     for (const b of await bundles()) {
       const entries = pluginEntries(b);
@@ -206,66 +205,75 @@ function buildLibraryMenu(ctx) {
   };
   return {
     label: 'Library',
-    items: () => [
-      {
-        label: 'Prompts',
-        submenu: async () => kindRows({
-          channel: 'request-open-prompts-drawer',
-          library: promptRows(await read(api.listPrompts), (p, kind) => emit('request-open-prompts-drawer', { kind, name: p.name })),
-          empty: '(no prompts in library)',
-          pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit('request-open-prompts-drawer', { plugin: b.id, kind, name: p.name })),
-          newLabel: 'New Prompt…',
-          manageLabel: 'Manage Prompts…',
-        }),
-      },
-      {
-        label: 'Templates',
-        submenu: async () => kindRows({
-          channel: 'request-open-templates-drawer',
-          library: (await read(api.listTemplates)).filter((t) => !t.plugin)
-            .map((t) => ({ label: trunc(t.name), run: () => emit('request-open-templates-drawer', t.id || t.name) })),
-          empty: '(no templates in library)',
-          pluginEntries: (b) => (b.templates || []).map((name) => bundleRow('request-open-templates-drawer', b, name)),
-          newLabel: 'New Template…',
-          manageLabel: 'Manage Templates…',
-        }),
-      },
-      {
-        label: 'Agents',
-        submenu: async () => kindRows({
-          channel: 'request-open-agents-drawer',
-          library: (await read(api.listAgents)).map((a) => ({ label: described(a), run: () => emit('request-open-agents-drawer', a.name) })),
-          empty: '(no agents in library)',
-          pluginEntries: (b) => (b.agents || []).map((name) => bundleRow('request-open-agents-drawer', b, name)),
-          newLabel: 'New Agent…',
-          manageLabel: 'Manage Agent Types…',
-        }),
-      },
-      {
-        label: 'Skills',
-        submenu: async () => kindRows({
-          channel: 'request-open-skills-drawer',
-          library: (await read(api.listSkillLib)).map((sk) => ({ label: described(sk), run: () => emit('request-open-skills-drawer', sk.name) })),
-          empty: '(no skills in library)',
-          pluginEntries: (b) => (b.skills || []).map((name) => bundleRow('request-open-skills-drawer', b, name)),
-          newLabel: 'New Skill…',
-          manageLabel: 'Manage Skills…',
-        }),
-      },
-      {
-        label: 'Exec Commands',
-        submenu: async () => kindRows({
-          channel: 'request-open-exec-drawer',
-          library: (await read(api.listExecCommands)).map((c) => ({ label: trunc(c.name), run: () => emit('request-open-exec-drawer', c.name) })),
-          empty: '(no exec commands in library)',
-          pluginEntries: () => [],
-          newLabel: 'New Exec Command…',
-          manageLabel: 'Manage Exec Commands…',
-        }),
-      },
-      { sep: true },
-      { label: 'Inbox…', run: () => emit('request-open-inbox-drawer') },
-    ],
+    items: () => {
+      let bundlesOnce = null;
+      const bundles = () => bundlesOnce || (bundlesOnce = read(api.pluginCatalog));
+      return [
+        {
+          label: 'Prompts',
+          submenu: async () => kindRows({
+            channel: 'request-open-prompts-drawer',
+            library: promptRows(await read(api.listPrompts), (p, kind) => emit('request-open-prompts-drawer', { kind, name: p.name })),
+            empty: '(no prompts in library)',
+            pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit('request-open-prompts-drawer', { plugin: b.id, kind, name: p.name })),
+            newLabel: 'New Prompt…',
+            manageLabel: 'Manage Prompts…',
+            bundles,
+          }),
+        },
+        {
+          label: 'Templates',
+          submenu: async () => kindRows({
+            channel: 'request-open-templates-drawer',
+            library: (await read(api.listTemplates)).filter((t) => !t.plugin)
+              .map((t) => ({ label: trunc(t.name), run: () => emit('request-open-templates-drawer', t.id || t.name) })),
+            empty: '(no templates in library)',
+            pluginEntries: (b) => (b.templates || []).map((name) => bundleRow('request-open-templates-drawer', b, name)),
+            newLabel: 'New Template…',
+            manageLabel: 'Manage Templates…',
+            bundles,
+          }),
+        },
+        {
+          label: 'Agents',
+          submenu: async () => kindRows({
+            channel: 'request-open-agents-drawer',
+            library: (await read(api.listAgents)).map((a) => ({ label: described(a), run: () => emit('request-open-agents-drawer', a.name) })),
+            empty: '(no agents in library)',
+            pluginEntries: (b) => (b.agents || []).map((name) => bundleRow('request-open-agents-drawer', b, name)),
+            newLabel: 'New Agent…',
+            manageLabel: 'Manage Agent Types…',
+            bundles,
+          }),
+        },
+        {
+          label: 'Skills',
+          submenu: async () => kindRows({
+            channel: 'request-open-skills-drawer',
+            library: (await read(api.listSkillLib)).map((sk) => ({ label: described(sk), run: () => emit('request-open-skills-drawer', sk.name) })),
+            empty: '(no skills in library)',
+            pluginEntries: (b) => (b.skills || []).map((name) => bundleRow('request-open-skills-drawer', b, name)),
+            newLabel: 'New Skill…',
+            manageLabel: 'Manage Skills…',
+            bundles,
+          }),
+        },
+        {
+          label: 'Exec Commands',
+          submenu: async () => kindRows({
+            channel: 'request-open-exec-drawer',
+            library: (await read(api.listExecCommands)).map((c) => ({ label: trunc(c.name), run: () => emit('request-open-exec-drawer', c.name) })),
+            empty: '(no exec commands in library)',
+            pluginEntries: () => [],
+            newLabel: 'New Exec Command…',
+            manageLabel: 'Manage Exec Commands…',
+            bundles,
+          }),
+        },
+        { sep: true },
+        { label: 'Inbox…', run: () => emit('request-open-inbox-drawer') },
+      ];
+    },
   };
 }
 
