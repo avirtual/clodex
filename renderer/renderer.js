@@ -6119,12 +6119,10 @@ const argsIntentsSection = document.getElementById('args-intents-section');
 const argsPluginList = document.getElementById('args-plugin-list');
 const argsPluginsSection = document.getElementById('args-plugins-section');
 function argsSeat() {
-  return {
-    plugins: argsPluginsSection.style.display === 'none'
-      ? argsPluginsPersisted
-      : mergePlugins(collectPluginChecklist(argsPluginList),
-        pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered)),
-  };
+  if (argsPluginsSection.style.display === 'none') return { plugins: argsPluginsPersisted };
+  const ticked = collectPluginChecklist(argsPluginList);
+  const carried = pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered);
+  return { plugins: mergePlugins(ticked, carried) };
 }
 
 if (argsPluginList) {
