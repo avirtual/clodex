@@ -199,3 +199,39 @@ test('t654: `plugins` is in EDITOR_OWNED — the maintained pair collectFormConf
   assert.ok(list.includes("'plugins'"),
     'an owned key missing here is resurrected by merge-preserve after the operator clears it');
 });
+
+// ── t674: the tools ALLOWLIST, same maintained pair, opposite default ────────
+// `tools` is the reviewer allowlist (`disabledTools` is the unrelated denylist).
+// It is EDITOR_OWNED for the clear direction — an emptied control must remove the
+// stored list — but unlike `plugins` it is written CONDITIONALLY, because absent
+// and `[]` mean different things at the reviewer: absent accepts the full cap,
+// `[]` is refused. So the shape assertions run the other way, and a plain key
+// here would be the defect.
+test('t674: collectFormConfig writes `tools` only when something is ticked — never [] and never null', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const body = src.slice(src.indexOf('function collectFormConfig()'));
+  const end = body.indexOf('\nfunction ');
+  const fn = body.slice(0, end === -1 ? body.length : end);
+  assert.ok(fn.includes('collectFormConfig'), 'ENTER: the function body was actually located');
+
+  assert.match(fn, /\.\.\.\(toolsAllow\.length \? \{ tools: toolsAllow \} : \{\}\)/,
+    'the conditional-spread shape: an empty allowlist omits the key entirely');
+  assert.ok(!/^\s{4}tools,\s*$/m.test(fn),
+    'and never a plain key — that would write [] on every save and refuse every reviewer');
+  assert.ok(!/tools:\s*null/.test(fn),
+    'nor null, which since t674 is refused as a type fault rather than read as absent');
+
+  // The collect is gated on authoring mode: the control is drawn only in the
+  // template editor, so a create-mode collect would read an unrendered checklist.
+  assert.match(fn, /dialogMode === 'template'[^\n]*\n?[^\n]*collectToolAllowChecklist/,
+    'the allowlist is collected only while authoring a template');
+});
+
+test('t674: `tools` is in EDITOR_OWNED — an emptied control must CLEAR, not preserve', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'stores.js'), 'utf8');
+  const owned = src.slice(src.indexOf('const EDITOR_OWNED = new Set(['));
+  const list = owned.slice(0, owned.indexOf(']);'));
+  assert.ok(list.includes("'intents'"), 'ENTER: the EDITOR_OWNED literal was located');
+  assert.ok(list.includes("'tools'"),
+    'without it, merge-preserve resurrects a narrowed reviewer list the operator just cleared');
+});

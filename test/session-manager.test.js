@@ -5011,10 +5011,8 @@ test('team-review (T52): a TEMPLATE NARROWER than the cap is honored (narrows, n
 // is agent-writable, so falling back to the FULL cap is the one repair that must
 // never be automatic: it would grant more than the template asked for. Refuse.
 //
-// This state is not producible from the GUI (collectFormConfig writes no `tools`
-// key and `tools` is not in EDITOR_OWNED), only by authoring the template JSON —
-// which is exactly the reachability the cap itself exists for, and exactly how
-// the beyond-cap sibling above is reached.
+// Since t674 the template editor writes `tools`, so this state is reachable from
+// the GUI too — tick only tools outside the cap other than Bash.
 test('team-review (t299): a template whose tools miss the cap entirely is refused, and burns no reviewer name', async () => {
   // EXISTENCE FIRST. The absence assertion below is equally true of a fixture
   // that never mints anything, so prove the mint DOES happen on this fixture
@@ -5077,10 +5075,11 @@ test('team-review (t299): a template with NO tools key still spawns with the ful
 // because they have different remedies (fix the list vs. fix the type), which is
 // the t297 rule about never merging two reasons into one operator-facing line.
 //
-// Reachability (measured, not inferred): no GUI control writes `tools`, but
-// `templates.save()`'s merge-preserve carries it forward because `tools` is not
-// in EDITOR_OWNED — so a hand-edited malformed value SURVIVES an ordinary GUI
-// edit-in-place, and the dialog renders no control that could clear it.
+// Reachability: `[]` is not writable from the editor (an empty control omits the
+// key), so it arrives by hand-editing the JSON or from another writer. A
+// malformed value no longer survives an ordinary GUI edit-in-place — `tools` is
+// EDITOR_OWNED since t674, so saving the template replaces it with what the
+// control holds.
 test('team-review (t300): tools: [] is refused, not widened to the full cap', async () => {
   // EXISTENCE FIRST: prove this fixture DOES mint before reading anything into
   // the absence below.
@@ -5132,11 +5131,39 @@ test('team-review (t300): a STRING tools is refused as a TYPE fault, with its ow
   ], 'the type fault gets its own remedy, not the fix-the-list one');
 });
 
-// The branch the fix must not touch, driven through the HANDLER rather than the
-// resolver: `null` reads as absent, so the seat spawns with the full cap and no
-// refusal fires. A guard written `rawTools !== undefined` would refuse here.
-test('team-review (t300): an explicit tools: null still spawns with the full cap', async () => {
+// t674 inverted this arm, driven through the HANDLER rather than the resolver:
+// with `tools` in EDITOR_OWNED a null is a written value, not an absence, so it
+// takes the malformed refusal. `typeof null` is 'object', which is what the
+// operator-facing text says — asserted as exact text because the discriminating
+// property is WHICH refusal fired.
+test('team-review (t674): an explicit tools: null is refused as a type fault, and burns no name', async () => {
+  const ok = mkReview({ reviewTemplate: { tools: ['Read'] } });
+  ok.m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  ok.m._handleTeamReview(ok.m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(ok.persistence.get('team-reviewer-1'), 'ENTER: this fixture DOES mint when the template is accepted');
+
   const { m, injected, created, persistence } = mkReview({ reviewTemplate: { tools: null } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned — a null must not resolve to the full cap');
+  assert.strictEqual(persistence.get('team-reviewer-1'), null, 'and no reviewer name was burned');
+  assert.deepStrictEqual(injected, [
+    '[agent:team-review] error: reviewer template "clodex-team-reviewer" has a "tools" that is not '
+    + 'an array (object) — it cannot be intersected with the reviewer cap [Read, Grep, Glob], and '
+    + 'falling back to the full cap would grant more than the template asked for; no reviewer '
+    + 'spawned (make "tools" an array, or remove it to accept the full cap)',
+  ], 'the type-fault refusal, whose remedy — remove the key — is the right one for a null');
+});
+
+// The branch the null move must NOT touch, through the same handler: an absent
+// key still spawns with the full cap. Without this the assertions above are
+// equally true of a guard that refuses every template.
+test('team-review (t674): an ABSENT tools key still spawns with the full cap', async () => {
+  const { m, injected, created, persistence } = mkReview({
+    reviewTemplates: [{ name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer', intents: [] }],
+  });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
@@ -5144,7 +5171,7 @@ test('team-review (t300): an explicit tools: null still spawns with the full cap
   assert.ok(persistence.get('team-reviewer-1'), 'ENTER: and its name was minted');
   const disabledTools = created[0][11];
   assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
-    'the full cap is live — an explicit null is "no value", not a fault');
+    'the full cap is live — absent is the documented default');
   assert.ok(!injected.some((t) => /not an array|none of which are within/.test(t)),
     'and neither refusal fires');
 });

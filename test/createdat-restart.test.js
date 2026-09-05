@@ -293,6 +293,12 @@ test('t673: [agent:context reload] preserves a reviewer seat\'s template', async
     name: 'rv', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, sessionId: 's-9',
     ephemeral: true, reviewFor: 'lead', reviewTicket: 't1',
     reviewerTemplate: 'clodex-team-reviewer-shell',
+    // t674 (carried from t673's r2 review): a NON-null shellDeny through a real
+    // re-create site. The two arity pins assert the 23rd positional is null for an
+    // ordinary seat, and the plumbing test hand-spells its re-create — so a reload
+    // arm that dropped this read would keep both green while respawning the shell
+    // reviewer with its mutating verbs unblocked.
+    shellDeny: ['Bash(rm:*)'],
   };
   eng.stores.persistence.upsert(entry);
   const s = liveSession(eng, 'rv', entry);
@@ -312,6 +318,11 @@ test('t673: [agent:context reload] preserves a reviewer seat\'s template', async
   // assertion can see.
   assert.strictEqual(rec.reviewTicket, 't1', 'and the ticket it routes its verdict to');
   assert.strictEqual(rec.ephemeral, true, 'and the flag that makes accept tear it down');
+
+  // Not a preserved FIELD but a create() ARGUMENT read off the entry, so it fails
+  // in a different place and is asserted on the args rather than on the record.
+  assert.deepStrictEqual(seen[0].args[22], ['Bash(rm:*)'],
+    'the reload passes the seat\'s shellDeny through — a dropped read respawns the shell reviewer uncapped');
 });
 
 test('restore-on-launch keeps the record, so create()\'s own read preserves createdAt', async () => {

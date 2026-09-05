@@ -3964,20 +3964,11 @@ function createTicketMethods(deps, shared) {
       // used to be a second source here and it was inert on every other role,
       // which is what made a `tools:` on a hand read as a restriction and enforce
       // nothing.
-      // THREE states, not two: only an ABSENT `tools` takes the full cap. An empty
-      // array and a wrong-typed value both used to collapse to the same null as
-      // absent, so a template that asked for nothing — or asked malformedly —
-      // spawned with every capped tool. That is the widening direction, reached by
-      // a typo, on a file agents can write.
-      // `null` counts as absent: it is JSON's conventional "no value", and a
-      // template round-tripped through a writer that emits nulls for missing
-      // fields must not start refusing. Safe only while NO editor writes `tools` —
-      // if it ever joins EDITOR_OWNED, a cleared control emitting null starts
-      // meaning "the operator removed every tool", and reading that as "take the
-      // full cap" is the widening this guard exists to kill. Move null to the
-      // malformed/empty arm at the same time.
-      const rawTools = tpl && tpl.tools;
-      const toolsMalformed = rawTools != null && !Array.isArray(rawTools);
+      // Only an ABSENT `tools` takes the full cap. The editor omits the key to mean
+      // absent, so a `null` is some other writer's value and is refused with the
+      // other non-arrays.
+      const rawTools = tpl ? tpl.tools : undefined;
+      const toolsMalformed = rawTools !== undefined && !Array.isArray(rawTools);
       // `[]` survives as `[]` here, and reaches the same empty intersection a
       // disjoint list does — one refusal covers both.
       const requestedTools = Array.isArray(rawTools) ? rawTools : null;
@@ -4065,7 +4056,7 @@ function createTicketMethods(deps, shared) {
         // precondition, which effectiveTools alone no longer carries: [] arises in
         // three ways — a well-formed request that intersects the cap emptily, `[]`
         // itself, and a malformed `tools` (fail-closed above) — but NEVER for an
-        // absent/null `tools`, which takes the non-empty constant. So the guard
+        // ABSENT `tools`, which takes the non-empty constant. So the guard
         // below needs requestedTools truthy to mean "a real request emptied out";
         // malformed carries requestedTools: null and is refused separately.
         requestedTools,

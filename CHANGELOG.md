@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- **Template editor: the tools allowlist is now editable** (it was saved-only). A
+  reviewer template's list is still intersected with the read-only cap.
+
 ## 5.30.0 — 2026-09-05
 
 - **Reviewer seats can carry a shell, with mutating commands blocked.** A second

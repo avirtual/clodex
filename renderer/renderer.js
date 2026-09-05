@@ -36,7 +36,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -1485,6 +1485,8 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   for (const sec of [toolsSection, skillsSection, otherSection]) {
     if (sec) sec.style.display = claudeOnly ? '' : 'none';
   }
+  if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
+  if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
   if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); refreshNewSessionTools(); }
   const agentType = type === 'claude' || type === 'codex';
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
@@ -1785,9 +1787,12 @@ if (inputPluginList) {
 
 const toolsRow = document.getElementById('tools-row');
 const inputToolsList = document.getElementById('input-tools-list');
+const toolsAllowRow = document.getElementById('tools-allow-row');
+const inputToolsAllowList = document.getElementById('input-tools-allow-list');
 const skillsRow = document.getElementById('skills-row');
 const inputSkillsList = document.getElementById('input-skills-list');
 wireBulkToggles(toolsRow, inputToolsList);
+wireBulkToggles(toolsAllowRow, inputToolsAllowList);
 wireBulkToggles(skillsRow, inputSkillsList);
 const injectSkillsRow = document.getElementById('inject-skills-row');
 const inputInjectSkillsList = document.getElementById('input-inject-skills-list');
@@ -2246,6 +2251,9 @@ function collectFormConfig() {
     ? mergePlugins(collectPluginChecklist(inputPluginList),
       pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered))
     : defaultPluginTicks();
+  const toolsAllow = (dialogMode === 'template' && type === 'claude')
+    ? collectToolAllowChecklist(inputToolsAllowList)
+    : [];
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
@@ -2264,6 +2272,7 @@ function collectFormConfig() {
     plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
+    ...(toolsAllow.length ? { tools: toolsAllow } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
     disabledTools: type === 'claude' ? collectToolChecklist(inputToolsList) : [],
     disabledSkills: type === 'claude' ? collectSkillChecklist(inputSkillsList) : [],
@@ -2489,6 +2498,7 @@ async function openTemplateEditor(tpl = null) {
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
     await refreshNewSessionIntents(tpl && tpl.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
+    renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
     await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []));
     await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []));
     await refreshNewSessionInjectSkills(new Set((tpl && tpl.injectSkills) || []));

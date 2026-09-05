@@ -696,7 +696,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
     'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
     'autoCompact', 'noWire', 'denyBuiltins', 'disabledTools', 'disabledSkills',
     'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
-    'plugins',
+    'plugins', 'tools',
   ]);
   const templates = {
     // Confines the SUFFIXED basename, not the bare name: `${name}.json` is what
