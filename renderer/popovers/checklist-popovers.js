@@ -377,6 +377,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   // argument on both reads is for exactly that.
   const intentsPluginsList = document.getElementById('intents-popover-plugins-list');
   let intentsPluginsPersisted = null;
+  let intentsPluginsRendered = [];
 
   async function repaintPluginChildren(name) {
     const ticked = collectPluginChecklist(intentsPluginsList);
@@ -403,7 +404,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   const intentsGrantsList = document.getElementById('intents-popover-grants-list');
 
   // Grants held for plugins this dialog cannot draw a row for. Measured against
-  // the PLUGIN CATALOG, not `res.plugins`: that list is narrowed by the live
+  // the DRAWN catalog, not `res.plugins`: that list is narrowed by the live
   // ticked set, so after an untick the plugin reads as unlistable and its tokens
   // are written back over the prune the same Apply asked for. A carry-forward
   // covers a plugin the operator could not see, never one they saw and unticked.
@@ -414,7 +415,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const caps = (res && res.capabilities) || [];
     const granted = new Set((res && res.granted) || []);
     unlistedGrants = grantsForUnlistedPlugins((res && res.granted) || [],
-      getPluginCatalogCache().map((p) => String(p.id)));
+      intentsPluginsRendered);
     intentsGrantsList.innerHTML = '';
     intentsGrantsBlock.classList.toggle('hidden', !plugins.length);
     if (!plugins.length) return;
@@ -457,6 +458,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     // Rows are SERVED (intents:catalog), so seed the cache first, same as the dialog.
     setPluginCatalogCache((await window.api.pluginCatalog()) || []);
     intentsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+    intentsPluginsRendered = getPluginCatalogCache().map((p) => String(p.id));
     renderPluginChecklist(intentsPluginsList, res.plugins);
     const ticked = collectPluginChecklist(intentsPluginsList);
     setIntentCatalogCache((await window.api.getIntentCatalog(name, ticked)) || []);
@@ -484,9 +486,9 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     // null, not [], when NOTHING is loaded (kill switch, or all globally
     // disabled): the checklist draws no rows and collect returns [], which would
     // strip a seat of plugins it still has on a path that only edits intents.
-    const plugins = getPluginCatalogCache().length
+    const plugins = intentsPluginsRendered.length
       ? mergePlugins(collectPluginChecklist(intentsPluginsList),
-        pluginsForUnlistedPlugins(intentsPluginsPersisted, getPluginCatalogCache().map((p) => String(p.id))))
+        pluginsForUnlistedPlugins(intentsPluginsPersisted, intentsPluginsRendered))
       : null;
     // Read BEFORE the close: closing does not clear the list, but the two reads
     // must describe the same dialog state, and a later read is a later state.
@@ -543,6 +545,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   const popoverPluginsList = document.getElementById('popover-plugins-list');
   const pluginsPopoverRestart = document.getElementById('plugins-popover-restart');
   let pluginsPersisted = null;
+  let popoverPluginsRendered = [];
 
   function closePluginsPopover() {
     pluginsPopover.classList.add('hidden');
@@ -554,6 +557,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
     setPluginCatalogCache((await window.api.pluginCatalog()) || []);
     pluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+    popoverPluginsRendered = getPluginCatalogCache().map((p) => String(p.id));
     renderPluginChecklist(popoverPluginsList, res.plugins);
     pluginsPopoverRestart.checked = false;
     pluginsPopoverName.textContent = name;
@@ -568,9 +572,9 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   document.getElementById('plugins-popover-apply').addEventListener('click', async () => {
     const name = pluginsPopover.dataset.name;
     if (!name) return closePluginsPopover();
-    const plugins = getPluginCatalogCache().length
+    const plugins = popoverPluginsRendered.length
       ? mergePlugins(collectPluginChecklist(popoverPluginsList),
-        pluginsForUnlistedPlugins(pluginsPersisted, getPluginCatalogCache().map((p) => String(p.id))))
+        pluginsForUnlistedPlugins(pluginsPersisted, popoverPluginsRendered))
       : null;
     const restart = pluginsPopoverRestart.checked;
     closePluginsPopover();

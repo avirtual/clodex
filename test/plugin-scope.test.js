@@ -1295,8 +1295,9 @@ test('ROUND-3 NIT3: an UNTICKED plugin\'s grants are dropped, not carried forwar
   const call = body.slice(body.indexOf('grantsForUnlistedPlugins('));
   const stmt = call.slice(0, call.indexOf(';'));
   assert.ok(stmt.includes('grantsForUnlistedPlugins('), 'ENTER: the carry-forward statement was isolated');
-  assert.match(stmt, /getPluginCatalogCache\(\)\.map\(/,
-    'the carry-forward must be measured against the plugin catalog, every drawable id');
+  assert.match(stmt, /intentsPluginsRendered/,
+    'the carry-forward must be measured against the catalog the popover DREW — the live '
+    + 'cache is refilled by onPluginEvent under an open popover, and a tick recomputes this');
   assert.strictEqual(/\bplugins\.map\(/.test(stmt), false,
     'and never against `res.plugins`, which the handler narrows by the live ticked set');
 });
