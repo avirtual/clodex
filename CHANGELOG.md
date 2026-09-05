@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **The memory viewer no longer hangs when a pipe is planted in an agent's
+  memory folder.** An agent writes that folder itself, and opening a named pipe
+  there used to stall the overlay until something wrote to it; such an entry is
+  now skipped like any other non-file. In the same vein — omitted from 5.29.0's
+  notes — a memory file that has more than one name on disk is refused as well,
+  so a store restored by `rsync --link-dest` or by de-duplicating backup tooling
+  can show up empty; copy the files instead of hardlinking them.
+
 ## 5.29.0 — 2026-09-05
 
 - Clodex now ships stock skills (first: clodex-plugin) into `~/.clodex/skills`
