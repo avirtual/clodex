@@ -627,9 +627,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         this._save(all);
       }
     },
-    // The narrowest possible writer, and deliberately so: `cwd` is what every
-    // spawn, the team derivation and the confinement roots all read, so the move
-    // path must be unable to carry a stale sibling field along with it.
     setCwd(name, cwd) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

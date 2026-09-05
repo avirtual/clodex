@@ -639,10 +639,6 @@ function restartSessionWithReattach(name) {
   });
 }
 
-// Pick a folder, then move the seat into it. Unlike a restart, the cwd and the
-// team it derives are what CHANGED, so both come off the result rather than
-// from the old row — snapshotting them here would rebuild the tab under the
-// folder the seat just left.
 function moveSessionWithPicker(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = item ? item.dataset.type || null : null;

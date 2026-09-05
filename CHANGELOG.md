@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Move Session… on a seat's context menu restarts it in another folder,
+  keeping its configuration and conversation.**
 - **New Session refuses a taken name as you type and keeps the dialog open on
   any refusal.** The field now says whether the name belongs to a live session
   or an archived one and greys out Create, and a create that is refused anyway

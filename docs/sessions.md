@@ -227,6 +227,26 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
+| Move (right-click "Move Session…") | kept, `cwd` rewritten | killed + respawned (`--resume`) | tab rebuilt under the new folder |
+
+**Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
+"same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown
+name, a relative or missing or non-directory destination, an unchanged cwd, and a
+seat living in a ticket worktree (that checkout belongs to the ticket loop). It
+does NOT route through `kill()`, which drops the persistence record
+unconditionally — the record is exactly what a move must keep. Instead it sets
+`_moving` on the live session (read by `exitDisposition`, so the exit is
+*expected* and no crash toast fires), kills the pty with the usual 5s SIGKILL
+fallback, waits for the map slot to free, rewrites only `cwd`
+(`persistence.setCwd`) and re-creates from the surviving record in the same
+workspace with `--resume`. Everything else — name, sessionId, prompts, tools,
+agents, plugins, env, stripLevel, label, createdAt — is carried by the record,
+which is why no `_preserveAcrossRestart` is needed here (nothing dropped it).
+Team membership is re-derived from the new cwd by `create()`'s own `resolveTeam`,
+so a seat moved into a team's repo joins that team and one moved out leaves it.
+A respawn that throws leaves the record in place holding the NEW cwd, so the seat
+comes back as the restore path's `{failed:true}` retry/forget row rather than
+vanishing. Moving across workspaces is not offered.
 
 `restartSession` (engine.js) — shared by the local IPC handler and the peer
 restart endpoint. `opts.fresh` drops the resumeId (required for skill roster

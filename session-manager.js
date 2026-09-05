@@ -235,12 +235,6 @@ function isStaleRegistration(existingPid, ownPid, isAlive) {
   return !isAlive(existingPid) || existingPid === ownPid;
 }
 
-// The two questions ptyProc.onExit asks about an exit, answered together
-// because they are complements and drifted apart once: `dropRecord` is exactly
-// "a bash row whose exit nobody asked for", so a flag added to one condition
-// and not the other silently makes an EXPECTED exit also a record-dropping one.
-// Every deliberate end-of-process must therefore appear in `expected`, and a
-// move is one — it kills the pty on purpose to respawn in the new cwd.
 function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving }) {
   const expected = !!(userKilled || shuttingDown || archived || moving);
   return { expected, dropRecord: !agentType && !expected };
@@ -2707,24 +2701,6 @@ function createSessionManager(deps) {
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
-    // Same record, new cwd, restart. The CLI fixes its cwd at spawn, so the only
-    // way to move a seat is to respawn it; `--resume` carries the conversation
-    // (Claude locates a transcript by session id, NOT under the project dir, so
-    // the move keeps the history — measured, see docs/notes/session-manager.md).
-    //
-    // Deliberately NOT routed through kill(), which removes the persistence
-    // record unconditionally: this method's whole contract is that the record
-    // survives with only `cwd` rewritten. It uses archive()'s signalling shape
-    // instead — set a flag the onExit disposition reads, then pty.kill() with the
-    // same SIGKILL fallback — under `_moving` rather than `_archived` so the exit
-    // is expected without also stamping the seat archived.
-    //
-    // No _preserveAcrossRestart either, for the same reason: nothing dropped the
-    // record, so create()'s upsert spread-merges over a record that still carries
-    // createdAt, ephemeral and sessionIds.
-    //
-    // A worktree seat refuses: that checkout belongs to the ticket loop, which
-    // created it and will remove it, and a seat pointed elsewhere would strand it.
     async move(name, newCwd) {
       const entry = getPersistence().get(name);
       if (!entry) return { ok: false, error: `Session not found: ${name}` };
@@ -2735,7 +2711,7 @@ function createSessionManager(deps) {
         return { ok: false, error: 'Destination must be an absolute path' };
       }
       let st = null;
-      try { st = fs.statSync(newCwd); } catch { /* missing — reported below */ }
+      try { st = fs.statSync(newCwd); } catch { st = null; }
       if (!st) return { ok: false, error: `Directory does not exist: ${newCwd}` };
       if (!st.isDirectory()) return { ok: false, error: `Not a directory: ${newCwd}` };
       if (entry.cwd === newCwd) return { ok: false, error: `${name} is already in ${newCwd}` };
@@ -2750,9 +2726,6 @@ function createSessionManager(deps) {
           return { ok: false, error: 'old process did not exit in time — session not moved' };
         }
       }
-      // Written AFTER the exit, not before: the pty is still running in the old
-      // cwd until it goes, and a record naming a directory the live process is
-      // not in is the window a crash would restore from.
       getPersistence().setCwd(name, newCwd);
       const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
       try {
@@ -2770,9 +2743,6 @@ function createSessionManager(deps) {
           Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
         );
       } catch (err) {
-        // The record keeps the NEW cwd and is not dropped, so the seat comes back
-        // as the restore path's `failed: true` retry/forget row rather than
-        // vanishing — the same degrade every other respawn failure takes.
         getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
         return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
       }

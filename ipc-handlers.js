@@ -1736,10 +1736,6 @@ function registerIpcHandlers(deps) {
         label: 'Restart Session',
         click: () => e.sender.send('session:context-action', { action: 'restart', name }),
       },
-      // Agent rows only. Peer and sandbox rows never reach this menu at all
-      // (peers-ui.js builds them and routes to peer:context-menu), so `isAgent`
-      // is the whole gate — it is bash rows it excludes, which have no
-      // conversation to carry and are dropped on exit rather than resumed.
       ...(isAgent ? [{
         label: 'Move Session…',
         click: () => e.sender.send('session:context-action', { action: 'move', name }),
