@@ -609,17 +609,26 @@ about any of them changed to add this.
 
 **A fetched root is a cache; a user root without a sidecar is authority.** A
 `.clodex-source.json` sidecar (`{ source, repo, ref, subpath, commit,
-commitFull, fetchedAt }`) marks a directory as fetched; `update`/`remove` only
-ever touch a sidecar-carrying directory, and a plain user directory sharing an
-id is refused with "not from a source" rather than silently adopted.
+commitFull, fetchedAt, hostVersion }`) marks a directory as fetched;
+`update`/`remove` only ever touch a sidecar-carrying directory, and a plain
+user directory sharing an id is refused with "not from a source" rather than
+silently adopted.
 
 **Spec grammar** (`parseSourceSpec`, `plugin-source.js`): `owner/repo`,
 `owner/repo@ref`, `owner/repo:sub/path`, `owner/repo@ref:sub/path`, and
 `https://github.com/owner/repo(/tree/ref/sub/path)?`, with a trailing `.git`
 stripped. `ref` absent means the repo's default branch. Refused by name: ssh
 remotes, non-github.com hosts, a subpath that is absolute or contains `.`/`..`
-segments, an empty owner. Everything else — README-driven discovery, an index,
-a search — is still out of scope (§10 below is unchanged by this section).
+segments, an empty owner, a repo or owner of `.`/`..`. A ref is encoded PER
+SEGMENT into the tarball/commits URL path, not as one escaped string, so a ref
+containing `/` (a branch like `release/1.0`) reaches GitHub as two path
+segments rather than a literal `%2F`. The `/tree/<ref>/<path>` URL form is
+inherently ambiguous for such a ref — `/tree/release/1.0/plugins/foo` cannot
+be split into ref vs. subpath without knowing which segments are the branch —
+so a ref containing `/` should be given via the `owner/repo@ref:sub/path`
+spec form instead of a URL. Everything else — README-driven discovery, an
+index, a search — is still out of scope (§10 below is unchanged by this
+section).
 
 **Fetch mechanism**: `https.get` on
 `api.github.com/repos/<o>/<r>/tarball/<ref>` (empty path segment when `ref` is
@@ -643,6 +652,19 @@ shown the user before they clicked update. **No automatic update anywhere**:
 nothing schedules a re-fetch, and every path that changes what runs takes an
 explicit id and (for apply) an explicit accepted commit.
 
+**Rescan is the method's own job, not the caller's** (ruling, round 1 rework):
+`plugins.installFromSource`, `plugins.applyUpdate` and
+`plugins.removeSourcePlugin` each call `loader.rescan(api)` themselves on
+success, sharing the same `rescanAndAnnounce()` helper `plugins.rescan` uses —
+an update of a running plugin sets `restartRequired` and refreshes its bundle,
+and a removal runs the removed-loop's `deactivate`/`loadedFrom` cleanup and
+`removed` announce. A caller of these three methods does not additionally
+call `plugins.rescan` itself; that would be a redundant no-op rescan, not a
+second effect. This differs from `plugins.register`, whose caller is expected
+to follow up with an explicit rescan/enable — a source install is not a
+symlink into an unmanaged path, so there is no reason to make phase B redo by
+hand what phase A can already do for it.
+
 **Install always registers DISABLED**, regardless of `enabledByDefault` — the
 decision to fetch code and the decision to run it are two separate clicks
 (§7). Update never touches enable state either way. `setEnabledInSettings`
@@ -654,8 +676,10 @@ a core id is refused by name; an existing symlink at the target says
 "registered link, unregister it first"; an existing real directory WITHOUT a
 sidecar says "not from a source" and is left byte-identical; a sidecar already
 present says "use update instead". `applyUpdate` moves the old copy aside
-(`.old-<id>-<nonce>`) before the rename-in, and restores it on ANY failure
-after that point — a failed update never leaves an id half-installed.
+(`.old-<id>-<nonce>`) before the rename-in, and on any failure after that
+point removes whatever landed at the target and renames the old copy back —
+naming where the old copy is instead, rather than claiming a restore, if
+even that rename fails.
 
 **Temp dirs live under `os.tmpdir()`, not the plugins root.** `discoverRoot`
 places no filter on dot-entries — verified by probe — so a `.fetch-<nonce>`

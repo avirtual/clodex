@@ -44,7 +44,7 @@ function parseSourceSpec(text) {
   if (!owner || !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(owner)) {
     return { ok: false, error: `invalid owner: ${JSON.stringify(owner)}` };
   }
-  if (!repo || !/^[A-Za-z0-9._-]+$/.test(repo)) {
+  if (!repo || !/^[A-Za-z0-9._-]+$/.test(repo) || repo === '.' || repo === '..') {
     return { ok: false, error: `invalid repo name: ${JSON.stringify(repo)}` };
   }
   if (subpath != null) {
@@ -59,6 +59,10 @@ function parseSourceSpec(text) {
   return { ok: true, repo: `${owner}/${repo}`, ref: ref || null, subpath: subpath || null };
 }
 
+function encodeRefPath(ref) {
+  return String(ref).split('/').map(encodeURIComponent).join('/');
+}
+
 function createPluginSource(deps) {
   const { fs, path, https, execFile } = deps || {};
 
@@ -66,13 +70,17 @@ function createPluginSource(deps) {
     if (!https) return Promise.resolve({ ok: false, error: 'no https dependency injected' });
     return new Promise((resolve) => {
       const base = `https://api.github.com/repos/${repo}/tarball`;
-      const url = ref ? `${base}/${encodeURIComponent(ref)}` : base;
+      const url = ref ? `${base}/${encodeRefPath(ref)}` : base;
       const get = (u, redirectsLeft) => {
         const req = https.get(u, { headers: { 'User-Agent': 'Clodex-PluginSource' } }, (res) => {
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume();
             if (redirectsLeft <= 0) { resolve({ ok: false, error: 'too many redirects' }); return; }
-            get(res.headers.location, redirectsLeft - 1);
+            try {
+              get(res.headers.location, redirectsLeft - 1);
+            } catch (e) {
+              resolve({ ok: false, error: `bad redirect location — ${(e && e.message) || e}` });
+            }
             return;
           }
           if (res.statusCode !== 200) {
@@ -98,6 +106,7 @@ function createPluginSource(deps) {
           out.on('finish', () => done({ ok: true, file: destFile }));
           res.pipe(out);
         });
+        req.setTimeout(30_000, () => req.destroy(new Error('timed out')));
         req.on('error', (e) => resolve({ ok: false, error: String((e && e.message) || e) }));
       };
       get(url, 5);
@@ -143,7 +152,7 @@ function createPluginSource(deps) {
   function fetchCommitSha({ repo, ref }) {
     if (!https || !ref) return Promise.resolve(null);
     return new Promise((resolve) => {
-      const url = `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`;
+      const url = `https://api.github.com/repos/${repo}/commits/${encodeRefPath(ref)}`;
       const req = https.get(url, {
         headers: { 'User-Agent': 'Clodex-PluginSource', Accept: 'application/vnd.github+json' },
       }, (res) => {
@@ -158,6 +167,7 @@ function createPluginSource(deps) {
         });
         res.on('error', () => resolve(null));
       });
+      req.setTimeout(30_000, () => req.destroy(new Error('timed out')));
       req.on('error', () => resolve(null));
     });
   }

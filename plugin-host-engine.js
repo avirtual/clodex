@@ -561,6 +561,17 @@ function createPluginHostEngine(deps) {
     return loader.status();
   }
 
+  function rescanAndAnnounce(loader) {
+    const r = loader.rescan(api);
+    for (const id of r.added) announceState(id, true);
+    for (const id of r.removed) announceState(id, false);
+    // A CHANGED plugin gets no announce: nothing about it moved in this
+    // process, and telling windows to re-activate would re-run the OLD cached
+    // module's renderer half for a version the user thinks they just installed.
+    if (r.added.length || r.removed.length) notifyStateChanged();
+    return r;
+  }
+
   const hostMethods = {
     'settings.get': (pluginId) => {
       if (!registered.has(String(pluginId))) return errorEnvelope('no such plugin');
@@ -618,14 +629,7 @@ function createPluginHostEngine(deps) {
     'plugins.rescan': () => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
-      const r = loader.rescan(api);
-      for (const id of r.added) announceState(id, true);
-      for (const id of r.removed) announceState(id, false);
-      // A CHANGED plugin gets no announce: nothing about it moved in this
-      // process, and telling windows to re-activate would re-run the OLD cached
-      // module's renderer half for a version the user thinks they just installed.
-      if (r.added.length || r.removed.length) notifyStateChanged();
-      return { ok: true, ...r };
+      return { ok: true, ...rescanAndAnnounce(loader) };
     },
     'renderer.report': (pluginId, ok, error) => {
       const loader = getLoader && getLoader();
@@ -645,8 +649,9 @@ function createPluginHostEngine(deps) {
       if (!loader) return errorEnvelope('no plugin loader');
       try {
         const r = await loader.installFromSource(String(spec || ''));
-        if (r.ok) { announceState(r.id, false); return { ok: true, ...r }; }
-        return errorEnvelope(r.error);
+        if (!r.ok) return errorEnvelope(r.error);
+        rescanAndAnnounce(loader);
+        return { ok: true, ...r };
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
     },
     'plugins.resolveUpdate': async (pluginId) => {
@@ -663,6 +668,7 @@ function createPluginHostEngine(deps) {
       try {
         const r = await loader.applyUpdate(String(pluginId || ''), String(commit || ''));
         if (!r.ok) return errorEnvelope(r.error);
+        rescanAndAnnounce(loader);
         return { ok: true, ...r };
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
     },
@@ -670,11 +676,9 @@ function createPluginHostEngine(deps) {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
       const r = loader.removeSourcePlugin(String(pluginId || ''));
-      if (r.ok) {
-        try { deactivate(r.id); } catch {}
-        announceState(r.id, false);
-      }
-      return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+      if (!r.ok) return errorEnvelope(r.error);
+      rescanAndAnnounce(loader);
+      return { ok: true, ...r };
     },
   };
 

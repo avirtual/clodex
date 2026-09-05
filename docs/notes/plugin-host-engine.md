@@ -3,15 +3,13 @@
 ## register
 
 `opts.shipped` is the LOADER's root (`plugin-loader.js` passes
-`rec.root === 'core'`), never a manifest field. Only the loader may widen a
-plugin's reach to the seats that have no plugin list — a plugin that could call
-itself shipped would grant itself exactly that.
+`rec.root === 'core'`), never a manifest field — a plugin that could call
+itself shipped would grant itself reach to seats with no plugin list.
 
 ## catalog
 
-`shipped` is a BOOLEAN rather than the loader's root id: every renderer question
-off it is "does an absent seat list reach this", which the boolean answers
-directly.
+`shipped` is a BOOLEAN rather than the loader's root id: every renderer
+question off it is "does an absent seat list reach this".
 
 ## updateBundle
 
@@ -35,6 +33,8 @@ bundle to each window. The drawers read a body they are about to edit through
 
 The five `plugins.*Source*` rows each wrap their own `await` in try/catch:
 dispatch's `_host` branch try/catches `hf(...args)` synchronously, which
-cannot catch a later promise rejection. `applyUpdate` announces nothing on
-success, same as `rescan` for a CHANGED plugin — the dir/version moved under a
-require-cached engine path, the restart-required case, not a fresh load.
+cannot catch a later promise rejection. `installFromSource`/`applyUpdate`/
+`removeSourcePlugin` call the shared `rescanAndAnnounce()` on success, same
+helper `plugins.rescan` uses, instead of hand-rolling `announceState`. A
+running plugin's `applyUpdate` still announces nothing: that is `rescan`'s
+CHANGED case (restart-required), not a fresh load.
