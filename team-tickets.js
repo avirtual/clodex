@@ -1057,6 +1057,7 @@ function createTicketMethods(deps, shared) {
         totals = JSON.parse(fs.readFileSync(path.join(getUserDataPath(), 'wire-totals.json'), 'utf8'));
       } catch { /* no ledger file yet — the overlay below may still answer */ }
       let live = null;
+      let model = null;
       const currentId = (rec && rec.sessionId) || null;
       try {
         const w = this._wireTelemetry && this._wireTelemetry.payload(seatName);
@@ -1085,6 +1086,7 @@ function createTicketMethods(deps, shared) {
             cacheWriteTokens: w.tokens && w.tokens.cacheWrite,
           };
         }
+        if (w && w.sessionId && w.sessionId === currentId && typeof w.model === 'string') model = w.model;
       } catch { /* a telemetry fault costs the freshest turn, not the rollup */ }
       const ledger = teamCost.sumSessions(totals, sessionIds, { currentId, live });
       ledger.ids = sessionIds;
@@ -1093,7 +1095,7 @@ function createTicketMethods(deps, shared) {
       // that spent nothing observable (a Codex reviewer, or one killed before
       // its first main-line turn) reports null rather than 0, so a real review
       // whose cost the wire never saw cannot read as a free one.
-      return { ledger, resolved: ledger.known > 0 };
+      return { ledger, resolved: ledger.known > 0, model };
     },
 
     // Append one review round's spend to the TICKET's artifact, before the seat
@@ -1126,7 +1128,7 @@ function createTicketMethods(deps, shared) {
         if (!team || !ticket) return { ok: false, path: null, error: 'no ticket' };
         const dest = this._ticketDiffDest(team, ticket);
         if (!dest.ok) return { ok: false, path: null, error: dest.error };
-        const { ledger, resolved } = this._reviewLedger(seatName, rec);
+        const { ledger, resolved, model } = this._reviewLedger(seatName, rec);
         const row = teamCost.reviewCostRecord({
           ticket: ticket.id, team: team.name, round, seat: seatName,
           // Off the RECORD, not recomputed from the ticket's round: the label is
@@ -1137,6 +1139,7 @@ function createTicketMethods(deps, shared) {
           wireLabel: (rec && rec.wireLabel) || null,
           template: (rec && rec.reviewerTemplate) || null,
           wallMs: (rec && typeof rec.createdAt === 'number') ? (Date.now() - rec.createdAt) : null,
+          model,
           verdict, mustFix: mustFixCount, ledger, resolved,
         });
         const file = path.join(dest.dir, teamCost.REVIEW_COST_FILE);

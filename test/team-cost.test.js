@@ -435,12 +435,17 @@ test('orphanedCheckouts: a fully claimed tree reports zero, main never counts', 
 
 // --- t673: the A/B fields on a review row ------------------------------------
 //
-// `template` and `wallMs` exist to compare two reviewer templates on real
-// tickets. Both follow the file's measured/null discipline: a review whose
-// template or spawn time could not be read reports null, never a default that
-// would group it with the wrong population or a 0 that drags a median down.
+// `template`, `model` and `wallMs` exist to compare two reviewer templates on
+// real tickets. All three follow the file's measured/null discipline: a review
+// whose template, model or spawn time could not be read reports null, never a
+// default that would group it with the wrong population or a 0 that drags a
+// median down.
+//
+// `model` is separate from `template` because they vary INDEPENDENTLY — the
+// operator moved the default reviewer to another model mid-experiment, so a row
+// carrying only the template attributes that switch to the template.
 
-test('t673: reviewCostRecord carries template and wallMs as literals', () => {
+test('t673: reviewCostRecord carries template, model and wallMs as literals', () => {
   const ledger = tc.sumSessions(
     { sessions: { 'sess-1': { cost: 2, requests: 30, turns: 5, inputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, refusals: 0 } } },
     ['sess-1'],
@@ -448,21 +453,36 @@ test('t673: reviewCostRecord carries template and wallMs as literals', () => {
   const row = tc.reviewCostRecord({
     ticket: 't9', team: 'crew', round: 2, seat: 'crew-reviewer-9-r2',
     verdict: 'ACCEPT', mustFix: 0, ledger, resolved: true, now: 1000,
-    template: 'clodex-team-reviewer-shell', wallMs: 8 * 60 * 1000,
+    template: 'clodex-team-reviewer-shell', model: 'claude-fable-5-1', wallMs: 8 * 60 * 1000,
   });
   assert.strictEqual(row.template, 'clodex-team-reviewer-shell');
+  assert.strictEqual(row.model, 'claude-fable-5-1');
   assert.strictEqual(row.wallMs, 480000);
   assert.strictEqual(row.verdict, 'ACCEPT');
   assert.strictEqual(row.usd, 2, 'ENTER: the ledger really was measured, so the new fields sit beside real spend');
 });
 
-test('t673: an unknown template or spawn time is null, never a default or a zero', () => {
+test('t673: an unknown template, model or spawn time is null, never a default or a zero', () => {
   const row = tc.reviewCostRecord({
     ticket: 't9', team: 'crew', round: 1, seat: 's', ledger: null, resolved: false, now: 1000,
   });
   assert.strictEqual(row.template, null,
     'null groups as "unknown", and review-ab folds it into the default — a DEFAULT written here would be a claim the record cannot make');
+  assert.strictEqual(row.model, null,
+    'the model is observed on the wire payload; absent means unknown, and naming one here would invent a measurement');
   assert.strictEqual(row.wallMs, null, 'a 0 here would drag every median toward zero');
+});
+
+test('t673: an UNRESOLVED ledger still carries the model it was told', () => {
+  // The model does not ride measured(): resolved=false says the LEDGER could not
+  // be summed, which is not a statement about which model billed. Nulling it
+  // here would drop the field on exactly the rows a cost-blind A/B still needs.
+  const row = tc.reviewCostRecord({
+    ticket: 't9', team: 'crew', round: 1, seat: 's', ledger: null, resolved: false, now: 1000,
+    template: 'clodex-team-reviewer', model: 'claude-opus-5',
+  });
+  assert.strictEqual(row.usd, null, 'ENTER: the ledger really is unresolved, so the model below survives that state');
+  assert.strictEqual(row.model, 'claude-opus-5');
 });
 
 test('t673: a negative or non-finite wallMs is refused rather than recorded', () => {

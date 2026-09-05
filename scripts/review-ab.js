@@ -6,6 +6,7 @@ const os = require('node:os');
 
 const DEFAULT_ROOT = path.join(os.homedir(), '.clodex', 'projects');
 const DEFAULT_TEMPLATE = 'clodex-team-reviewer';
+const UNKNOWN_MODEL = 'unknown-model';
 
 function findCostFiles(root) {
   const out = [];
@@ -57,12 +58,16 @@ function fmt(n, digits) {
 function summarize(rows) {
   const groups = new Map();
   for (const r of rows) {
-    const key = (r && r.template) || DEFAULT_TEMPLATE;
+    const template = (r && r.template) || DEFAULT_TEMPLATE;
+    const model = (r && r.model) || UNKNOWN_MODEL;
+    const key = `${template}\u0000${model}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(r);
   }
   const out = [];
-  for (const [template, g] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+  const ordered = [...groups].map(([key, g]) => [key.split('\u0000'), g])
+    .sort(([a], [b]) => (a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])));
+  for (const [[template, model], g] of ordered) {
     const mins = g.map((r) => (typeof r.wallMs === 'number' ? r.wallMs / 60000 : null));
     const verdicts = {};
     for (const r of g) {
@@ -71,6 +76,7 @@ function summarize(rows) {
     }
     out.push({
       template,
+      model,
       n: g.length,
       medianWallMin: pct(mins, 0.5),
       p90WallMin: pct(mins, 0.9),
@@ -86,7 +92,7 @@ function summarize(rows) {
 function render(summary) {
   return summary.map((s) => {
     const mix = Object.keys(s.verdicts).sort().map((k) => `${k}:${s.verdicts[k]}`).join(' ');
-    return `${s.template}  n=${s.n}  wall(med/p90)=${fmt(s.medianWallMin, 1)}/${fmt(s.p90WallMin, 1)}min`
+    return `${s.template}  ${s.model}  n=${s.n}  wall(med/p90)=${fmt(s.medianWallMin, 1)}/${fmt(s.p90WallMin, 1)}min`
       + `  req(med)=${fmt(s.medianRequests, 0)}  usd(med)=${fmt(s.medianUsd, 2)}`
       + `  verdicts[${mix}]  mustFix(mean)=${fmt(s.meanMustFix, 2)}`;
   });

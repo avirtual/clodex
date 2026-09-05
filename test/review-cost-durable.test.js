@@ -845,9 +845,10 @@ test('an unwritable destination costs the row, not the verdict', async () => {
 // --- t673: the A/B fields, end to end ----------------------------------------
 //
 // `template` and `wallMs` are read off the SAME captured record as `wireLabel`,
-// so they are subject to the same teardown this whole file is about: a
-// re-resolution by name would find nothing, and the row would be written with
-// nulls that read as "unknown" rather than as the bug they are.
+// and `model` off the same live payload as the cost, so all of them are subject
+// to the teardown this whole file is about: a re-resolution by name would find
+// nothing, and the row would be written with nulls that read as "unknown"
+// rather than as the bug they are.
 
 const SHELL_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer-shell',
@@ -893,6 +894,92 @@ test('t673: the review row records WHICH template reviewed, after the seat is re
   // instantaneous, which is the number this field exists to get right.
   assert.ok(rows[0].wallMs >= 9 * 60 * 1000 && rows[0].wallMs < 10 * 60 * 1000,
     `wallMs ${rows[0].wallMs} must measure from the seat's spawn, not from the verdict`);
+});
+
+test('t673: the review row records WHICH MODEL billed, off the wire payload', async () => {
+  // The model varies INDEPENDENTLY of the template — the operator moved the
+  // default reviewer to another model mid-experiment — so a row carrying only
+  // the template attributes that switch to the template. wire-totals.json rows
+  // carry no model field, so this is legible only from the live payload, and
+  // only while the seat still resolves by name.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 1, requests: 10 }) });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-r1', model: 'claude-fable-5-1',
+      cost: { usd: 4.5, requests: 44 }, turns: 20, refusals: 1,
+      tokens: { input: 5000, output: 1500, cacheRead: 9000, cacheWrite: 700 },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.model, 'claude-fable-5-1');
+  assert.strictEqual(r.usd, 4.5, 'ENTER: the payload really was the one applied, so the model above came off that same row');
+});
+
+test('t673: a payload with a null cost still yields its model', async () => {
+  // The model is taken on the ID GATE ALONE. The cost check beside it exists to
+  // avoid overlaying an unobserved spend onto a recorded one, which says nothing
+  // about which model billed — and this is the state a seat reaped before its
+  // ledger snapshot lands in. Nulling the model here would drop the field on
+  // exactly the rounds whose cost the file already answers.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 2, requests: 20 }) });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-r1', model: 'claude-opus-5',
+      cost: { usd: null, requests: null }, turns: null, refusals: null,
+      tokens: { input: null, output: null, cacheRead: null, cacheWrite: null },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.usd, 2, 'ENTER: the null-cost payload was correctly NOT overlaid — the file answered');
+  assert.strictEqual(r.model, 'claude-opus-5', 'and the model survived the arm that rejected the cost');
+});
+
+test('t673: a payload for a DIFFERENT session contributes no model', async () => {
+  // Same gate as the cost overlay: a stale per-name map entry from an earlier
+  // round would otherwise stamp this round with the previous seat's model.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 1, requests: 10 }) });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-OTHER', model: 'claude-opus-5',
+      cost: { usd: 9, requests: 90 }, turns: 3, refusals: 0,
+      tokens: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.usd, 1, 'ENTER: the mismatched payload was ignored for cost too');
+  assert.strictEqual(r.model, null, 'an unmatched payload names no model for this row');
+});
+
+test('t673: no wire telemetry at all reports model null', async () => {
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row() });
+  f.m._wireTelemetry = null;
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+  assert.strictEqual(readRows(f, 't1')[0].model, null);
 });
 
 test('t673: a reviewer record with no spawn stamp reports wallMs null, not zero', async () => {

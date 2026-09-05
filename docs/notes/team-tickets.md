@@ -28,3 +28,11 @@ lists Bash therefore resolves to the full cap plus Bash even when it named fewer
 read tools; `beyondCap` deliberately does not report Bash, because reporting it
 would print the "requires operator approval" warning about a grant this arm just
 made on purpose.
+
+## _reviewLedger
+
+The model is taken on the session-ID gate alone, outside the cost check beside
+it. That check exists to avoid overlaying an unobserved spend onto a recorded
+one, which says nothing about which model billed. This is also the only moment
+the model is legible: wire-totals.json rows carry no model field, and the seat
+is reaped seconds later.
