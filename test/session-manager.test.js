@@ -5012,7 +5012,7 @@ test('team-review (T52): a TEMPLATE NARROWER than the cap is honored (narrows, n
 // never be automatic: it would grant more than the template asked for. Refuse.
 //
 // Since t674 the template editor writes `tools`, so this state is reachable from
-// the GUI too — tick only tools the cap does not hold.
+// the GUI too — tick only tools outside the cap other than Bash.
 test('team-review (t299): a template whose tools miss the cap entirely is refused, and burns no reviewer name', async () => {
   // EXISTENCE FIRST. The absence assertion below is equally true of a fixture
   // that never mints anything, so prove the mint DOES happen on this fixture

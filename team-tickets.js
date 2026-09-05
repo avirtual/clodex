@@ -3964,9 +3964,9 @@ function createTicketMethods(deps, shared) {
       // used to be a second source here and it was inert on every other role,
       // which is what made a `tools:` on a hand read as a restriction and enforce
       // nothing.
-      // Only an ABSENT `tools` takes the full cap: the editor owns the key now, so
-      // `null` is a value it wrote, not a missing one, and reading it as the full
-      // cap would widen past what the template asked for.
+      // Only an ABSENT `tools` takes the full cap. The editor omits the key to mean
+      // absent, so a `null` is some other writer's value and is refused with the
+      // other non-arrays.
       const rawTools = tpl ? tpl.tools : undefined;
       const toolsMalformed = rawTools !== undefined && !Array.isArray(rawTools);
       // `[]` survives as `[]` here, and reaches the same empty intersection a

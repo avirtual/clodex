@@ -602,7 +602,7 @@
         <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap)
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="input-tools-allow-list" class="agent-checklist"></div>
-          <span class="hint-text">Separate from the denylist above: this is the template's <code>tools</code> key. Only a <strong>reviewer</strong> seat reads it, and it can only narrow the read-only cap (<code>Read</code>, <code>Grep</code>, <code>Glob</code>) — never widen it. Leave every box unchecked to omit the key, which accepts the full cap; a list that keeps none of the capped tools is refused rather than widened.</span>
+          <span class="hint-text">Separate from the denylist above: this is the template's <code>tools</code> key. Only a <strong>reviewer</strong> seat reads it, intersected with the reviewer cap (plus <code>Bash</code>, shell-capped, if named). Leave every box unchecked to omit the key and accept the default cap.</span>
         </label>
       </details>
       <details id="skills-section" class="dialog-section" style="display:none;">
