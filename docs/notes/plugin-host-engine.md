@@ -30,3 +30,11 @@ Carries names and the plugin's `dir`, never a content BODY: this row is read by
 every renderer at startup, and a body here would broadcast every plugin's whole
 bundle to each window. The drawers read a body they are about to edit through
 `file:peek` against `dir` instead. Pinned by test/plugin-prompt-bundles.test.js.
+
+## hostMethods
+
+The five `plugins.*Source*` rows each wrap their own `await` in try/catch:
+dispatch's `_host` branch try/catches `hf(...args)` synchronously, which
+cannot catch a later promise rejection. `applyUpdate` announces nothing on
+success, same as `rescan` for a CHANGED plugin — the dir/version moved under a
+require-cached engine path, the restart-required case, not a fresh load.

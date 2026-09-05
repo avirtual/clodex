@@ -298,7 +298,7 @@ test('the _host pseudo-plugin stays reachable from the web surface', async () =>
   } finally { b.cleanup(); }
 });
 
-test('_host holds exactly these eleven methods, and no twelfth by inheritance', () => {
+test('_host holds exactly these sixteen methods, and no seventeenth by inheritance', () => {
   // The exemption is a WHOLE-TABLE early return, so a method added to
   // hostMethods is web-reachable the moment it is written, with nothing to edit
   // and nothing to notice — unless it is named in HOST_DESKTOP_ONLY. Same
@@ -307,7 +307,11 @@ test('_host holds exactly these eleven methods, and no twelfth by inheritance', 
   // in the list because the table is pinned WHOLE; the subject below is what
   // proves they are refused on the web surface.
   const HOST_METHODS = [
-    'plugins.listUserRoot', 'plugins.register', 'plugins.rescan', 'plugins.status',
+    'plugins.applyUpdate',
+    'plugins.installFromSource',
+    'plugins.listUserRoot', 'plugins.register', 'plugins.removeSourcePlugin',
+    'plugins.rescan', 'plugins.resolveSource', 'plugins.resolveUpdate',
+    'plugins.status',
     'plugins.unregister', 'plugins.userRoot', 'plugins.validateCandidate',
     'renderer.info', 'renderer.report',
     'settings.get', 'settings.set',
@@ -354,6 +358,35 @@ test('the three _host methods taking a caller-supplied path are desktop-only', a
     fs.rmSync(scratch, { recursive: true, force: true });
     b.cleanup();
   }
+});
+
+test('the five plugin-source _host methods are desktop-only (t683)', async () => {
+  // No loader is wired in bootBothSurfaces() by source config, so every call
+  // below refuses with "no plugin loader" on the DESKTOP surface — that is
+  // fine, because the subject here is the surface check, which runs before
+  // dispatch ever calls the handler. A web caller must get the SAME surface
+  // refusal it gets from every other desktop-only method, not a different one
+  // that would let it distinguish "gated" from "not implemented here".
+  const b = bootBothSurfaces();
+  try {
+    const calls = [
+      ['plugins.resolveSource', ['owner/repo']],
+      ['plugins.installFromSource', ['owner/repo']],
+      ['plugins.resolveUpdate', ['some-id']],
+      ['plugins.applyUpdate', ['some-id', 'abc123']],
+      ['plugins.removeSourcePlugin', ['some-id']],
+    ];
+    for (const [method, args] of calls) {
+      assert.strictEqual(typeof b.host._hostMethodNames().find((n) => n === method), 'string',
+        `ENTER: ${method} is really in the table, so the refusal below is about a method that exists`);
+      assert.deepStrictEqual(await b.web('_host', method, args),
+        { ok: false, error: NOT_ON_THIS_SURFACE },
+        `${method} must not answer an authenticated browser`);
+      const desktop = await b.desktop('_host', method, args);
+      assert.notDeepStrictEqual(desktop, { ok: false, error: NOT_ON_THIS_SURFACE },
+        `${method} must still be served on the desktop surface`);
+    }
+  } finally { b.cleanup(); }
 });
 
 // ════════════════════════════════════════════════════════════════════════════

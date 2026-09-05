@@ -589,36 +589,85 @@ scripts disabled. **Recommend, do not build.**
 
 ---
 
-## 9. Sources — sketched, deliberately not specified
+## 9. Sources — a GitHub fetch (phase A: engine only, no dialog)
 
-**Not implemented. Half a page, and it is meant to be disagreed with.**
+**Phase A implemented** (t683): `plugin-source.js` + five loader methods +
+five `_host` methods. **No UI yet** — Manage Plugins gains no button until
+phase B wires a dialog to `resolveSource`/`installFromSource`. Until then this
+surface is reachable only from another main-process caller or a test.
 
-The framing that keeps remote additive rather than structural:
+The framing that keeps remote additive rather than structural, unchanged from
+the sketch:
 
 > **A source populates a root. It is not a new loading path.**
 
-Discovery reads roots. A source is whatever put files in one — a `git clone`, a
-tarball extraction, a person with a Finder window. Under this framing, adding
-remote support later changes nothing about discovery, precedence, shadowing,
-trust-at-load, or the Electron/web split, because none of them can tell how a
-directory came to exist. That is the property worth protecting; a design where
-"install from GitHub" is a code path *through the loader* gives it up on day one.
+Discovery reads roots. A source is whatever put files in one — here, a tarball
+extraction into `~/.clodex/plugins/<id>/`, exactly like an unzipped or
+symlinked plugin. Discovery, precedence, shadowing, trust-at-load and the
+Electron/web split cannot tell how the directory came to exist, and nothing
+about any of them changed to add this.
 
-What a source would need that a root does not: an identity (where this came
-from), a version or ref, a record of when it was fetched, and a way to update
-that does not lose local edits. Note the last one is where the framing gets
-uncomfortable — a fetched root the user has edited is neither cleanly theirs nor
-cleanly the source's, and "update" has no obviously correct meaning. A design
-that answers this by forbidding local edits to fetched roots is coherent; so is
-one that treats a fetched root as a cache and a user root as authority. **They
-are different products and the choice should be made deliberately, not
-discovered.**
+**A fetched root is a cache; a user root without a sidecar is authority.** A
+`.clodex-source.json` sidecar (`{ source, repo, ref, subpath, commit,
+commitFull, fetchedAt }`) marks a directory as fetched; `update`/`remove` only
+ever touch a sidecar-carrying directory, and a plain user directory sharing an
+id is refused with "not from a source" rather than silently adopted.
 
-Deliberately unanswered here: whether a source is per-plugin or per-collection,
-whether pinning is by tag or commit, and whether an update is ever automatic.
-The last one has an opinion attached, though: **automatic updates of in-process
-code with full application authority is a supply-chain decision, not a
-convenience feature.**
+**Spec grammar** (`parseSourceSpec`, `plugin-source.js`): `owner/repo`,
+`owner/repo@ref`, `owner/repo:sub/path`, `owner/repo@ref:sub/path`, and
+`https://github.com/owner/repo(/tree/ref/sub/path)?`, with a trailing `.git`
+stripped. `ref` absent means the repo's default branch. Refused by name: ssh
+remotes, non-github.com hosts, a subpath that is absolute or contains `.`/`..`
+segments, an empty owner. Everything else — README-driven discovery, an index,
+a search — is still out of scope (§10 below is unchanged by this section).
+
+**Fetch mechanism**: `https.get` on
+`api.github.com/repos/<o>/<r>/tarball/<ref>` (empty path segment when `ref` is
+null), following redirects, streamed to a temp file under `os.tmpdir()` and
+aborted past a 20 MB default cap; extracted with the system `tar -xzf` via
+`execFile` (never a shell, never `npm install`). GitHub's tarball's single
+top-level directory is named `owner-repo-<sha7>`; the abbreviated sha comes
+from that name, and one additional `commits/<ref>` GET is attempted for the
+full sha — `commitFull: true` when it succeeds, `false` (abbreviated sha) when
+the API call fails or is unavailable. **Public repos only** — no token, no
+private-repo support in phase A.
+
+**Commit pinning ruling** (Bogdan + lead, added after the initial sketch): the
+ref the user types is remembered for *display*; what installs and what runs is
+a resolved *commit*. `resolveSource`/`installFromSource` resolve the ref once
+and store the commit; `resolveUpdate(id)` re-resolves the SAME sidecar ref
+(never a caller-supplied one) and returns both shas with nothing written yet;
+`applyUpdate(id, commit)` re-fetches and **refuses if the newly fetched commit
+is not the one the caller passed** — the commit a phase-B dialog would have
+shown the user before they clicked update. **No automatic update anywhere**:
+nothing schedules a re-fetch, and every path that changes what runs takes an
+explicit id and (for apply) an explicit accepted commit.
+
+**Install always registers DISABLED**, regardless of `enabledByDefault` — the
+decision to fetch code and the decision to run it are two separate clicks
+(§7). Update never touches enable state either way. `setEnabledInSettings`
+(the same "explicit set wins forever" store path §4/§10 already used) is the
+only writer of the enabled list here, same as every other install path.
+
+**`installFromSource`/`applyUpdate` refusals mirror `registerUserPlugin`'s**:
+a core id is refused by name; an existing symlink at the target says
+"registered link, unregister it first"; an existing real directory WITHOUT a
+sidecar says "not from a source" and is left byte-identical; a sidecar already
+present says "use update instead". `applyUpdate` moves the old copy aside
+(`.old-<id>-<nonce>`) before the rename-in, and restores it on ANY failure
+after that point — a failed update never leaves an id half-installed.
+
+**Temp dirs live under `os.tmpdir()`, not the plugins root.** `discoverRoot`
+places no filter on dot-entries — verified by probe — so a `.fetch-<nonce>`
+under `~/.clodex/plugins/` would be scanned as a broken plugin candidate on
+every `discover()` until removed. `os.tmpdir()` is off every root discovery
+ever reads. The move-in from there is `renameSync`, falling back to
+`cpSync`+remove on `EXDEV` (a temp filesystem and the plugins root are not
+guaranteed to be the same mount).
+
+Still deliberately unanswered: whether a source is EVER per-collection beyond
+picking one subpath per install call (no picker, no index read), and whether
+phase B's dialog shows anything beyond the warning text §7 already specifies.
 
 ---
 
@@ -733,7 +782,8 @@ Consequences worth stating:
 | §6 Electron-only, lint & parity unaffected | Verified property; no code |
 | §7 trust posture | Posture; no code |
 | §8 npm dependencies | Sketch, not built |
-| §9 sources, remote fetch | Sketch, not built |
+| §9 sources: GitHub fetch, engine + host methods | **Implemented** (desktop only), no dialog — phase B |
+| §9 sources: install/update/remove UI | Not built — phase B |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
 | §10 an install affordance — register a folder from anywhere | **Implemented** (desktop only) |

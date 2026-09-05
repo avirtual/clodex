@@ -632,10 +632,56 @@ function createPluginHostEngine(deps) {
       if (!loader) return { ok: true, counted: false };
       return { ok: true, ...loader.noteRendererActivation(String(pluginId), !!ok, error) };
     },
+    'plugins.resolveSource': async (spec) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      try {
+        const r = await loader.resolveSource(String(spec || ''));
+        return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
+    'plugins.installFromSource': async (spec) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      try {
+        const r = await loader.installFromSource(String(spec || ''));
+        if (r.ok) { announceState(r.id, false); return { ok: true, ...r }; }
+        return errorEnvelope(r.error);
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
+    'plugins.resolveUpdate': async (pluginId) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      try {
+        const r = await loader.resolveUpdate(String(pluginId || ''));
+        return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
+    'plugins.applyUpdate': async (pluginId, commit) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      try {
+        const r = await loader.applyUpdate(String(pluginId || ''), String(commit || ''));
+        if (!r.ok) return errorEnvelope(r.error);
+        return { ok: true, ...r };
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
+    'plugins.removeSourcePlugin': (pluginId) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const r = loader.removeSourcePlugin(String(pluginId || ''));
+      if (r.ok) {
+        try { deactivate(r.id); } catch {}
+        announceState(r.id, false);
+      }
+      return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+    },
   };
 
   const HOST_DESKTOP_ONLY = new Set([
     'plugins.validateCandidate', 'plugins.register', 'plugins.unregister',
+    'plugins.resolveSource', 'plugins.installFromSource', 'plugins.resolveUpdate',
+    'plugins.applyUpdate', 'plugins.removeSourcePlugin',
   ]);
 
   const api = {

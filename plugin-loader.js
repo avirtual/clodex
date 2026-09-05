@@ -1,10 +1,12 @@
 'use strict';
 
+const os = require('os');
 const {
   isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS, PLUGIN_SCOPES, scopeOf,
   PLUGIN_METHOD_SURFACES,
 } = require('./plugin-api');
 const { AGENT_NAME_RE } = require('./catalogs');
+const { createPluginSource } = require('./plugin-source');
 
 function validateManifest(m, dirName, hasBundle = false) {
   if (!m || typeof m !== 'object') return 'manifest is not a JSON object';
@@ -189,12 +191,15 @@ function createPluginLoader(deps) {
     getUiSettings,     // getter: the store seam, assigned in the bootstrap
     log,
     requireModule,     // seam: node's require, injectable so tests load fakes
+    https, execFile,
   } = deps;
 
   const roots = (Array.isArray(rootsIn) && rootsIn.length
     ? rootsIn
     : [{ id: 'core', dir: pluginsDir, label: 'Built in' }]
   ).filter((r) => r && r.dir);
+
+  const source = createPluginSource({ fs, path, https, execFile });
 
   const logIt = (msg) => { try { log.info('plugin', String(msg)); } catch {} };
 
@@ -588,7 +593,10 @@ function createPluginLoader(deps) {
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true })
-        .map((d) => ({ name: d.name, isDir: d.isDirectory() }))
+        .map((d) => ({
+          name: d.name, isDir: d.isDirectory(),
+          source: d.isDirectory() ? source.readSidecar(path.join(dir, d.name)) : null,
+        }))
         .sort((a, b) => a.name.localeCompare(b.name));
     } catch (e) {
       logIt(`could not read the user plugins dir: ${e && e.message}`);
@@ -686,6 +694,192 @@ function createPluginLoader(deps) {
     }
     logIt(`registered ${v.id}: ${link} -> ${target}`);
     return { ok: true, id: v.id, dir: link, target };
+  }
+
+  function nonce() { return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
+  function mkFetchDir() {
+    const dir = path.join(os.tmpdir(), `clodex-plugin-fetch-${nonce()}`);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  function rmQuiet(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+
+  function renameOrCopy(from, to) {
+    try {
+      fs.renameSync(from, to);
+    } catch (e) {
+      if (!e || e.code !== 'EXDEV') throw e;
+      fs.cpSync(from, to, { recursive: true });
+      rmQuiet(from);
+    }
+  }
+
+  async function fetchAndValidate({ repo, ref, subpath }) {
+    const work = mkFetchDir();
+    const fail = (error) => { rmQuiet(work); return { ok: false, error }; };
+    try {
+      const tarFile = path.join(work, 'src.tar.gz');
+      const fetched = await source.fetchTarball({ repo, ref }, tarFile);
+      if (!fetched.ok) return fail(fetched.error);
+      const extracted = await source.extractPlugin(tarFile, path.join(work, 'x'), subpath);
+      if (!extracted.ok) return fail(extracted.error);
+      const full = await source.fetchCommitSha({ repo, ref: ref || extracted.commit });
+      const commit = full || extracted.commit;
+      const commitFull = !!full;
+      if (!commit) return fail('could not determine the fetched commit');
+      let dir = extracted.dir;
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+        if (raw && isValidPluginId(raw.id)) {
+          const renamed = path.join(path.dirname(dir), raw.id);
+          fs.renameSync(dir, renamed);
+          dir = renamed;
+        }
+      } catch {}
+      const v = validateCandidate(dir);
+      if (!v.ok) return fail(v.error);
+      return { ok: true, dir, work, commit, commitFull, manifest: v };
+    } catch (e) {
+      return fail(String((e && e.message) || e));
+    }
+  }
+
+  async function resolveSource(spec) {
+    const parsed = source.parseSourceSpec(spec);
+    if (!parsed.ok) return parsed;
+    const r = await fetchAndValidate(parsed);
+    if (!r.ok) return r;
+    rmQuiet(r.work);
+    return {
+      ok: true,
+      repo: parsed.repo,
+      ref: parsed.ref,
+      subpath: parsed.subpath,
+      commit: r.commit,
+      commitFull: r.commitFull,
+      id: r.manifest.id,
+      manifest: {
+        id: r.manifest.id,
+        name: r.manifest.name,
+        version: r.manifest.version,
+        announce: (r.manifest.announce != null ? r.manifest.announce : null),
+      },
+    };
+  }
+
+  async function installFromSource(spec) {
+    const parsed = source.parseSourceSpec(spec);
+    if (!parsed.ok) return parsed;
+    const r = await fetchAndValidate(parsed);
+    if (!r.ok) return r;
+    const id = r.manifest.id;
+    const root = ensureUserRoot();
+    if (!root) { rmQuiet(r.work); return { ok: false, error: 'no user plugin root configured' }; }
+    const core = discover().find((rec) => rec.id === id && rec.root === 'core');
+    if (core) {
+      rmQuiet(r.work);
+      return { ok: false, error: `"${id}" is the id of a plugin built into Clodex — give the source plugin a different id.` };
+    }
+    const target = path.join(root, id);
+    let lst = null;
+    try { lst = fs.lstatSync(target); } catch { lst = null; }
+    if (lst) {
+      rmQuiet(r.work);
+      if (lst.isSymbolicLink()) {
+        return { ok: false, error: `"${id}" is a registered link, not a directory from a source — unregister it first.` };
+      }
+      const existingSidecar = source.readSidecar(target);
+      return existingSidecar
+        ? { ok: false, error: `"${id}" is already installed from a source — use update instead of installing again.` }
+        : { ok: false, error: `"${id}" already exists in your plugins folder and is not from a source — that folder is yours, not from a source.` };
+    }
+    try {
+      renameOrCopy(r.dir, target);
+    } catch (e) {
+      rmQuiet(r.work);
+      return { ok: false, error: `could not place ${target} — ${(e && e.message) || e}` };
+    }
+    rmQuiet(r.work);
+    source.writeSidecar(target, {
+      source: 'github', repo: parsed.repo, ref: parsed.ref, subpath: parsed.subpath,
+      commit: r.commit, commitFull: r.commitFull, fetchedAt: Date.now(),
+    });
+    setEnabledInSettings(id, false);
+    logIt(`installed ${id} from ${parsed.repo}@${parsed.ref || 'default'} at ${r.commit}`);
+    return { ok: true, id, dir: target, commit: r.commit };
+  }
+
+  async function resolveUpdate(id) {
+    const root = ensureUserRoot();
+    if (!root) return { ok: false, error: 'no user plugin root configured' };
+    const dir = path.join(root, String(id || ''));
+    const sidecar = source.readSidecar(dir);
+    if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
+    const r = await fetchAndValidate({ repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath });
+    if (!r.ok) return r;
+    rmQuiet(r.work);
+    return {
+      ok: true,
+      id: r.manifest.id,
+      previousCommit: sidecar.commit,
+      commit: r.commit,
+      changed: sidecar.commit !== r.commit,
+      manifest: {
+        id: r.manifest.id, name: r.manifest.name, version: r.manifest.version,
+        announce: (r.manifest.announce != null ? r.manifest.announce : null),
+      },
+    };
+  }
+
+  async function applyUpdate(id, commit) {
+    const root = ensureUserRoot();
+    if (!root) return { ok: false, error: 'no user plugin root configured' };
+    const target = path.join(root, String(id || ''));
+    const sidecar = source.readSidecar(target);
+    if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
+    const r = await fetchAndValidate({ repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath });
+    if (!r.ok) return r;
+    if (r.commit !== commit) {
+      rmQuiet(r.work);
+      return { ok: false, error: `the source now resolves to ${r.commit}, not the ${commit} you accepted — resolve the update again` };
+    }
+    const aside = path.join(root, `.old-${id}-${nonce()}`);
+    try {
+      fs.renameSync(target, aside);
+    } catch (e) {
+      rmQuiet(r.work);
+      return { ok: false, error: `could not move the old copy aside — ${(e && e.message) || e}` };
+    }
+    try {
+      renameOrCopy(r.dir, target);
+      rmQuiet(r.work);
+      source.writeSidecar(target, {
+        source: 'github', repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath,
+        commit: r.commit, commitFull: r.commitFull, fetchedAt: Date.now(),
+      });
+      rmQuiet(aside);
+      logIt(`updated ${id}: ${sidecar.commit} -> ${r.commit}`);
+      return { ok: true, id, previousCommit: sidecar.commit, commit: r.commit };
+    } catch (e) {
+      rmQuiet(r.work);
+      try { fs.renameSync(aside, target); } catch {}
+      return { ok: false, error: `update failed and the old copy was restored — ${(e && e.message) || e}` };
+    }
+  }
+
+  function removeSourcePlugin(id) {
+    const root = ensureUserRoot();
+    if (!root) return { ok: false, error: 'no user plugin root configured' };
+    const target = path.join(root, String(id || ''));
+    const sidecar = source.readSidecar(target);
+    if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+    } catch (e) {
+      return { ok: false, error: `could not remove ${target} — ${(e && e.message) || e}` };
+    }
+    logIt(`removed source plugin ${id}`);
+    return { ok: true, id };
   }
 
   function unregisterUserPlugin(id) {
@@ -799,6 +993,7 @@ function createPluginLoader(deps) {
     loadAll, activateById, rescan, ensureUserRoot, listUserRoot, rendererInfo,
     validateCandidate, registerUserPlugin, unregisterUserPlugin, writeBundleFile,
     status, noteRendererActivation, clearFailures, isQuarantined,
+    resolveSource, installFromSource, resolveUpdate, applyUpdate, removeSourcePlugin,
     _validateManifest: validateManifest,
     _isNewerVersion: isNewerVersion,
     _quarantineAfter: QUARANTINE_AFTER,
