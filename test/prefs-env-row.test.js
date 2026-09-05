@@ -99,7 +99,7 @@ test('renderer.js builds env rows through the shared builder, not inline cssText
 // --- titles ------------------------------------------------------------------
 
 test('a long name and its value both carry the full text as a title', () => {
-  const { keyEl, valEl } = build({ key: LONG, value: 'off', secret: false });
+  const { keyEl, valEl } = build({ key: LONG, value: 'off', secret: false }, DEFAULTS);
   assert.strictEqual(keyEl.title, `${LONG} — drops the audience note`, 'a shipped key hovers its note');
   assert.strictEqual(valEl.title, `${LONG}=off`);
 });
