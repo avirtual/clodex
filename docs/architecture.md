@@ -1032,6 +1032,10 @@ and are not, which is why the judgement worth testing is pushed down here.
   default drops it; takes `document` as a parameter so all of that is assertable
   without a browser), **name-suggest.js** (`session-<counter>` minted before the global
   reserved-name set is prefetched, so it must resolve collisions),
+  **name-validity.js** (whether the typed name may be created — the grammar, the
+  live-vs-archived reason line, whether Create is enabled, and whether a
+  `{ok:false}` create reply closes the dialog; it never closes on a refusal, so
+  a configured form survives one),
   **tool-gate.js** (whether Create is allowed given the tools:check report, the
   inline notice, and the missing-CLI overlay plan), **placement.js** (the "Run
   in" selector: `'host'` or a sandbox BOX ID), **prefs-gate.js** (which

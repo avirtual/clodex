@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- **New Session refuses a taken name as you type and keeps the dialog open on
+  any refusal.** The field now says whether the name belongs to a live session
+  or an archived one and greys out Create, and a create that is refused anyway
+  leaves the whole configured form on screen with the reason under the field —
+  instead of closing the dialog and losing it behind an alert.
+
 ## 5.31.1 — 2026-09-06
 
 - `[agent:spawn … template:]` can name a plugin template.

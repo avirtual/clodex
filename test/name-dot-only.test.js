@@ -67,6 +67,21 @@ test('peer-outbox ORIGIN_RE rejects dot-only names, and validOrigin agrees', () 
   assert.equal(validOrigin('peer.one'), true);
 });
 
+test('name-validity SESSION_NAME_RE rejects dot-only names, and the field state agrees', () => {
+  const { SESSION_NAME_RE, nameFieldState } = require('../renderer/lib/name-validity');
+  assertGrammar(SESSION_NAME_RE, 'SESSION_NAME_RE');
+  // Through the seam as well as the constant, for the reason the team-roles case
+  // below gives: the New Session field is gated by nameFieldState, not by anyone
+  // re-testing the exported regex.
+  const empty = { live: new Set(), persisted: new Set(), taken: new Set() };
+  for (const n of DOTS) {
+    assert.equal(nameFieldState(n, empty).kind, 'invalid', `field must refuse ${JSON.stringify(n)}`);
+  }
+  for (const n of LEGAL) {
+    assert.equal(nameFieldState(n, empty).ok, true, `field must still accept ${JSON.stringify(n)}`);
+  }
+});
+
 test('relay-protocol RELAY_NAME_RE rejects dot-only names', () => {
   const { RELAY_NAME_RE } = require('../relay-protocol');
   assertGrammar(RELAY_NAME_RE, 'RELAY_NAME_RE');
@@ -114,6 +129,7 @@ function reFromSource(rel, constName) {
 test('every inline name-gate literal in the tree carries the dot-only guard', () => {
   const FILES = [
     'renderer/renderer.js',
+    'renderer/lib/name-validity.js',
     'renderer/library-drawers.js',
     'ipc-handlers.js',
     'stores.js',

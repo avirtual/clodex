@@ -4094,6 +4094,13 @@ body {
   color: var(--text-dim);
   font-style: italic;
 }
+.hint-text.name-hint-bad {
+  color: var(--accent);
+  font-style: normal;
+}
+#name-hint:empty {
+  display: none;
+}
 .template-picker {
   display: flex;
   gap: 6px;
@@ -6705,6 +6712,7 @@ body {
       </label>
       <label><span id="name-field-label">Name</span>
         <input type="text" id="input-name" placeholder="e.g. alice">
+        <span class="hint-text" id="name-hint"></span>
       </label>
       <label>Type
         <select id="input-type">
@@ -21702,6 +21710,89 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/name-validity.js
+  var require_name_validity = __commonJS({
+    "renderer/lib/name-validity.js"(exports, module) {
+      "use strict";
+      var SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var INVALID_BORDER = "#e94560";
+      var NAME_MESSAGES = {
+        invalid: "Letters, numbers, dot, underscore and hyphen only (1\u201364 characters), and never all dots.",
+        live: "That name is taken by a live session \u2014 pick another name.",
+        persisted: "That name is taken by an archived session \u2014 unarchive it or pick another name.",
+        taken: "That name is already taken \u2014 pick another name."
+      };
+      function asSet(v) {
+        if (v instanceof Set) return v;
+        return new Set(Array.isArray(v) ? v : []);
+      }
+      function reservedSets(reply) {
+        const live = asSet(reply && reply.live);
+        const persisted = asSet(reply && reply.persisted);
+        const taken = /* @__PURE__ */ new Set();
+        for (const n of reply && reply.names || []) {
+          if (!live.has(n) && !persisted.has(n)) taken.add(n);
+        }
+        return { live, persisted, taken };
+      }
+      function reservedUnion(sets) {
+        const s = sets || {};
+        return /* @__PURE__ */ new Set([...asSet(s.live), ...asSet(s.persisted), ...asSet(s.taken)]);
+      }
+      function nameFieldState(raw, sets) {
+        const name = String(raw == null ? "" : raw).trim();
+        const s = sets || {};
+        if (!name) return { ok: false, kind: "empty", message: "" };
+        if (!SESSION_NAME_RE.test(name)) return { ok: false, kind: "invalid", message: NAME_MESSAGES.invalid };
+        if (asSet(s.live).has(name)) return { ok: false, kind: "live", message: NAME_MESSAGES.live };
+        if (asSet(s.persisted).has(name)) return { ok: false, kind: "persisted", message: NAME_MESSAGES.persisted };
+        if (asSet(s.taken).has(name)) return { ok: false, kind: "taken", message: NAME_MESSAGES.taken };
+        return { ok: true, kind: "free", message: "" };
+      }
+      function createButtonState({ nameState, toolGate, mode } = {}) {
+        if (toolGate && toolGate.disabled) {
+          return { disabled: true, title: toolGate.notice && toolGate.notice.text || "" };
+        }
+        if (mode === "template") return { disabled: false, title: "" };
+        const st = nameState || { ok: true, message: "" };
+        if (st.ok) return { disabled: false, title: "" };
+        return { disabled: true, title: st.message || "" };
+      }
+      function paintNameField(els, state) {
+        const message = state && state.message || "";
+        if (els && els.hint) {
+          els.hint.textContent = message;
+          els.hint.className = message ? "hint-text name-hint-bad" : "hint-text";
+        }
+        if (els && els.input) els.input.style.borderColor = message ? INVALID_BORDER : "";
+        return state;
+      }
+      function applyCreateResult(els, result) {
+        if (result && result.ok) {
+          if (els && els.overlay) els.overlay.classList.add("hidden");
+          return true;
+        }
+        paintNameField(els, {
+          ok: false,
+          kind: "refused",
+          message: result && result.error || "unknown error"
+        });
+        return false;
+      }
+      module.exports = {
+        SESSION_NAME_RE,
+        INVALID_BORDER,
+        NAME_MESSAGES,
+        reservedSets,
+        reservedUnion,
+        nameFieldState,
+        createButtonState,
+        paintNameField,
+        applyCreateResult
+      };
+    }
+  });
+
   // renderer/lib/prefs-gate.js
   var require_prefs_gate = __commonJS({
     "renderer/lib/prefs-gate.js"(exports, module) {
@@ -34094,6 +34185,7 @@ ${detail}` });
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
+      var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
       var { prefsGate } = require_prefs_gate();
       var { planNewSession } = require_focus_policy();
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
@@ -34287,7 +34379,26 @@ ${detail}` });
       var dialogTeamName = null;
       var dialogTeamNames = [];
       var dialogReservedNames = /* @__PURE__ */ new Set();
+      var dialogReservedSets = reservedSets(null);
       var lastTeamAutoName = null;
+      var nameHint = document.getElementById("name-hint");
+      var dialogNameState = { ok: true, kind: "free", message: "" };
+      var dialogToolGate = { ok: true, disabled: false, notice: null };
+      function nameFieldEls() {
+        return { input: inputName, hint: nameHint, overlay: dialogOverlay };
+      }
+      function refreshCreateButton() {
+        const state = createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode });
+        btnCreate.disabled = state.disabled;
+        btnCreate.title = state.title;
+        return state;
+      }
+      function refreshNameValidity() {
+        dialogNameState = dialogMode === "template" ? { ok: true, kind: "free", message: "" } : nameFieldState(inputName.value, dialogReservedSets);
+        paintNameField(nameFieldEls(), dialogNameState);
+        refreshCreateButton();
+        return dialogNameState;
+      }
       var placementRow = document.getElementById("placement-row");
       var inputPlacement = document.getElementById("input-placement");
       var placementHint = document.getElementById("placement-hint");
@@ -35476,26 +35587,25 @@ ${detail}` });
         });
       }
       function applyNewSessionToolGate(gate) {
-        if (!newSessionToolNotice) return;
-        if (gate.disabled) {
-          renderSandboxNotice(newSessionToolNotice, gate.notice);
-          if (gate.install) {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "tool-install-btn";
-            btn.textContent = gate.install.label;
-            btn.title = `Run: ${gate.install.command}`;
-            btn.addEventListener("click", () => openInstallSession(gate.install));
-            newSessionToolNotice.appendChild(btn);
+        dialogToolGate = gate;
+        if (newSessionToolNotice) {
+          if (gate.disabled) {
+            renderSandboxNotice(newSessionToolNotice, gate.notice);
+            if (gate.install) {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "tool-install-btn";
+              btn.textContent = gate.install.label;
+              btn.title = `Run: ${gate.install.command}`;
+              btn.addEventListener("click", () => openInstallSession(gate.install));
+              newSessionToolNotice.appendChild(btn);
+            }
+            newSessionToolNotice.classList.remove("hidden");
+          } else {
+            newSessionToolNotice.classList.add("hidden");
           }
-          newSessionToolNotice.classList.remove("hidden");
-          btnCreate.disabled = true;
-          btnCreate.title = gate.notice ? gate.notice.text : "";
-        } else {
-          newSessionToolNotice.classList.add("hidden");
-          btnCreate.disabled = false;
-          btnCreate.title = "";
         }
+        refreshCreateButton();
       }
       async function openInstallSession(install) {
         const params = installSessionParams(install, homeDir);
@@ -35961,6 +36071,7 @@ ${detail}` });
         while (sessionNameTaken(name)) name = `${base}-${n++}`;
         inputName.value = name;
         lastTeamAutoName = name;
+        refreshNameValidity();
       }
       async function refreshCwdSuggestions() {
         if (!cwdSuggestionsList) return;
@@ -36020,7 +36131,7 @@ ${detail}` });
         if (inputEnv) inputEnv.value = "";
         refreshEnvHint();
         applyTypeDefaults();
-        inputName.style.borderColor = "";
+        paintNameField(nameFieldEls(), { ok: true, kind: "free", message: "" });
         const [, , settings, agentLib, boxes, reserved] = await Promise.all([
           refreshTemplatesDropdown(),
           refreshSystemPromptDropdown(),
@@ -36029,10 +36140,12 @@ ${detail}` });
           window.api.sandboxListBoxes(),
           window.api.reservedSessionNames()
         ]);
-        dialogReservedNames = new Set(reserved && reserved.names || []);
+        dialogReservedSets = reservedSets(reserved);
+        dialogReservedNames = reservedUnion(dialogReservedSets);
         if (!prefill && inputName.value === defaultName) {
           inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
         }
+        refreshNameValidity();
         dialogHostSettings = settings;
         dialogHostAgentLib = agentLib || [];
         populateHostCatalogs(settings, dialogHostAgentLib);
@@ -36059,6 +36172,7 @@ ${detail}` });
         setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
         labelProxyDefault(inputProxyMode, settings);
       }
+      inputName.addEventListener("input", () => refreshNameValidity());
       inputType.addEventListener("change", () => applyTypeDefaults());
       inputType.addEventListener("change", () => refreshNewSessionToolGate());
       inputPlacement.addEventListener("change", () => applyPlacement());
@@ -36239,11 +36353,7 @@ ${detail}` });
         const env = collectDialogEnv();
         const supportsPrompts = type === "claude" || type === "codex";
         const systemPromptBody = null;
-        if (!name) return;
-        if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-          inputName.style.borderColor = "#e94560";
-          return;
-        }
+        if (!refreshNameValidity().ok) return;
         if (usesTeamRoot(cwd)) {
           inputCwd.style.borderColor = "#e94560";
           showToast("This template's ${TEAM_ROOT} could not be resolved \u2014 type the project directory, or open the dialog from a session inside the team.", { kind: "warn", duration: 12e3 });
@@ -36258,7 +36368,6 @@ ${detail}` });
             alert(`The "${boxId}" sandbox isn't running \u2014 start it from the Sandboxes panel first.`);
             return;
           }
-          closeDialog();
           const spec = boxHasCreate2(boxId) ? {
             name,
             type,
@@ -36278,10 +36387,8 @@ ${detail}` });
             ...Array.isArray(intents) ? { intents } : {}
           } : { name, type, cwd };
           const res = await window.api.peerCreateSession(boxId, spec);
-          if (!res || res.ok === false) {
-            alert(`Create sandbox session failed: ${res && res.error || "unknown error"}`);
-            return;
-          }
+          const peerOutcome = res && res.ok !== false ? { ok: true } : { ok: false, error: `Create sandbox session failed: ${res && res.error || "unknown error"}` };
+          if (!applyCreateResult(nameFieldEls(), peerOutcome)) return;
           await ensurePeerSessionVisible(boxId, res.name || name);
           openPeerSession(boxId, res.name || name);
           const boxSt = peerStatuses.get(boxId);
@@ -36308,7 +36415,6 @@ ${detail}` });
           worktree = { path: wt.path, branch: wt.branch, base: wt.base || null, repo: wt.repo };
         }
         window.api.noteCwd(cwd);
-        closeDialog();
         if (typeof proxy === "string") window.api.setSettings({ lastCustomProxyUrl: proxy });
         const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== "none";
         const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
@@ -36323,9 +36429,8 @@ ${detail}` });
         } else {
           result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
         }
-        if (!result.ok) {
-          console.error("Failed to create session:", result.error);
-          alert(`Create session failed: ${result.error || "unknown error"}`);
+        if (!applyCreateResult(nameFieldEls(), result)) {
+          console.error("Failed to create session:", result && result.error);
           refreshDiagBanner();
           return;
         }
@@ -36382,6 +36487,8 @@ ${detail}` });
           templateRow.style.display = "none";
           placementRow.style.display = "none";
           greyRichFields(false);
+          dialogNameState = { ok: true, kind: "free", message: "" };
+          paintNameField(nameFieldEls(), dialogNameState);
           applyNewSessionToolGate({ ok: true, disabled: false, notice: null });
         }
       }
@@ -37726,6 +37833,7 @@ Click for live activity`;
         };
         if (!dialogOverlay.classList.contains("hidden")) {
           inputName.value = prefill.name;
+          refreshNameValidity();
           if (inputType.value !== prefill.type) {
             inputType.value = prefill.type;
             applyTypeDefaults();

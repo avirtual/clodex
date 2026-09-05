@@ -404,15 +404,16 @@ function registerIpcHandlers(deps) {
   // `session:reservedNames` unions `manager.sessions.keys()` with
   // `persistence.list()` because session names are keyed GLOBALLY — a
   // reservation check scoped to one workspace would hand out a name that then
-  // fails to create. It returns names only, no cwds and no session state. Read
-  // the rule above as covering the session LISTING, which is the mechanism it
-  // describes; the name NAMESPACE is global by construction and cannot be
-  // scoped without breaking creation.
+  // fails to create. It returns names and no cwds. Read the rule above as
+  // covering the session LISTING, which is the mechanism it describes; the name
+  // NAMESPACE is global by construction and cannot be scoped without breaking
+  // creation.
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   handle('session:reservedNames', () => {
-    const names = new Set(manager.sessions.keys());
-    for (const s of persistence.list()) names.add(s.name);
-    return { ok: true, names: [...names] };
+    const live = new Set(manager.sessions.keys());
+    const persisted = new Set();
+    for (const s of persistence.list()) if (!live.has(s.name)) persisted.add(s.name);
+    return { ok: true, names: [...live, ...persisted], live: [...live], persisted: [...persisted] };
   });
   // Delegates to manager.destroy — kill plus the worktree the record names.
   // This handler used to BE that logic, which is why team-retire (which cannot

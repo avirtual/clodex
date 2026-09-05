@@ -2657,6 +2657,15 @@ html, body {
   font-style: italic;
 }
 
+.hint-text.name-hint-bad {
+  color: var(--accent);
+  font-style: normal;
+}
+
+#name-hint:empty {
+  display: none;
+}
+
 .template-picker {
   display: flex;
   gap: 6px;
