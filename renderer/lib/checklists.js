@@ -70,10 +70,18 @@ function getPromptLibCache() { return promptLibCache; }
 function getSkillLibCache() { return skillLibCache; }
 function getDefaultToolDenyCache() { return defaultToolDenyCache; }
 
+// Keyed by the same `kind` string repaintBundleSections takes, so a repaint
+// that lands both lists empty can show the exact hint the full render would.
+const BUNDLE_EMPTY_HINT = {
+  'prompts/append': '<span class="hint-text">No append prompts in library — add some via the Prompts drawer.</span>',
+  agents: '<span class="hint-text">No agents in library — add some via the 🤖 Agents drawer.</span>',
+  skills: '<span class="hint-text">No skills in library — add some via the 🧩 Skills Library (Skills menu).</span>',
+};
+
 function renderAppendChecklist(container, enabledSet, seat = null) {
   container.innerHTML = '';
   if (!promptLibCache.append.length && !hasBundleRows('prompts/append', seat)) {
-    container.innerHTML = '<span class="hint-text">No append prompts in library — add some via the Prompts drawer.</span>';
+    container.innerHTML = BUNDLE_EMPTY_HINT['prompts/append'];
     return;
   }
   for (const p of promptLibCache.append) {
@@ -162,9 +170,18 @@ function appendBundleSections(container, kind, seat, checkedSet = null) {
   }
 }
 
+// A repaint only ever touches bundle rows, so it must also clear a stale
+// empty-library hint (gaining a bundle after an empty initial render would
+// otherwise append rows below the "No … in library" span) and, symmetrically,
+// restore that hint if the repaint leaves the container with nothing at all
+// (losing the plugin that supplied its only rows).
 function repaintBundleSections(container, kind, seat, checkedSet = null) {
   container.querySelectorAll('.check-group, .bundle-row').forEach((n) => n.remove());
+  container.querySelectorAll('.hint-text').forEach((n) => n.remove());
   appendBundleSections(container, kind, seat, checkedSet);
+  if (!container.children.length && BUNDLE_EMPTY_HINT[kind]) {
+    container.innerHTML = BUNDLE_EMPTY_HINT[kind];
+  }
 }
 
 // `autoSet` (optional) = names auto-INCLUDED for this session by `sessions:`
@@ -175,7 +192,7 @@ function repaintBundleSections(container, kind, seat, checkedSet = null) {
 function renderAgentChecklist(container, enabledSet, autoSet = null, seat = null) {
   container.innerHTML = '';
   if (!agentLibCache.length && !hasBundleRows('agents', seat)) {
-    container.innerHTML = '<span class="hint-text">No agents in library — add some via the 🤖 Agents drawer.</span>';
+    container.innerHTML = BUNDLE_EMPTY_HINT.agents;
     return;
   }
   for (const a of agentLibCache) {
@@ -359,7 +376,7 @@ function wireBulkToggles(popoverEl, listEl) {
 function renderInjectChecklist(container, enabledSet, autoSet = null, seat = null) {
   container.innerHTML = '';
   if (!skillLibCache.length && !hasBundleRows('skills', seat)) {
-    container.innerHTML = '<span class="hint-text">No skills in library — add some via the 🧩 Skills Library (Skills menu).</span>';
+    container.innerHTML = BUNDLE_EMPTY_HINT.skills;
     return;
   }
   for (const s of skillLibCache) {

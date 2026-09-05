@@ -18,20 +18,23 @@ const assert = require('node:assert');
 function el(tag) {
   const e = {
     tagName: tag, className: '', type: '', value: '', checked: false, disabled: false,
-    innerHTML: '', children: [],
+    children: [],
     appendChild(c) { c.parent = e; e.children.push(c); return c; },
 
     querySelectorAll(sel) {
       const flat = [];
       const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
       walk(e);
-      // Both selectors are spelled out rather than pattern-matched: a stub that
+      // Selectors are spelled out rather than pattern-matched: a stub that
       // answered every selector with everything would make the collect
       // assertions vacuous, and the `:not(:disabled)` clause IS the fix under
       // test, so a loose stub would pass against the unfixed collector.
       if (sel === '.check-group, .bundle-row') {
         return flat.filter((c) => c.className === 'check-group'
           || String(c.className).split(' ').includes('bundle-row'));
+      }
+      if (sel === '.hint-text') {
+        return flat.filter((c) => String(c.className).split(' ').includes('hint-text'));
       }
       assert.strictEqual(sel, 'input[type="checkbox"]:checked:not(:disabled)');
       return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox'
@@ -47,6 +50,24 @@ function el(tag) {
     set(v) {
       text = v == null ? '' : String(v);
       e.innerHTML = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    },
+  });
+  // innerHTML is only ever SET here to '' (clear) or the literal hint-text span
+  // markup, never read for its own sake — so the stub only needs to model those
+  // two writes: clear children, and, for a hint span, synthesize one real child
+  // so `.hint-text` cleanup/detection in repaintBundleSections has something to
+  // find and remove.
+  let html = '';
+  Object.defineProperty(e, 'innerHTML', {
+    get: () => html,
+    set(v) {
+      html = v == null ? '' : String(v);
+      e.children.length = 0;
+      if (/class="hint-text"/.test(html)) {
+        const hint = el('span');
+        hint.className = 'hint-text';
+        e.appendChild(hint);
+      }
     },
   });
   return e;
@@ -316,7 +337,7 @@ test('the args skills section keeps its library-only visibility rule for a peer'
     'the seat is hoisted once, so the gate and the render cannot disagree');
   assert.match(body, /\(sc\.skillLib \|\| \[\]\)\.length \|\| \(seat && bundleSectionsOf\('skills'\)\.length\)/,
     'the bundle half of the gate is conditioned on having a seat at all');
-  assert.doesNotMatch(body, /renderInjectChecklist\(argsInjectSkillsList[^)]*argsSeat\(\)\)/,
+  assert.match(body, /renderInjectChecklist\(argsInjectSkillsList, new Set\(sc\.injectSkills \|\| \[\]\), auto, seat\);/,
     'the render takes the hoisted seat, not a second argsSeat() call that could answer differently');
 });
 
@@ -380,4 +401,33 @@ test('repaintBundleSections swaps ONLY the bundle rows, leaving the flat list un
   repaintBundleSections(c, 'agents', { plugins: [] });
   assert.deepStrictEqual(laidOut(c), [['row', 'explorer']],
     'header and rows both gone when the catalog no longer carries a bundle');
+}));
+
+test('repaintBundleSections restores the empty-library hint when the bundle it drew was the only content', () => withDom(() => {
+  // The flat library is empty, so the container's ONLY rows are the bundle's;
+  // repainting that bundle away must leave the "No agents in library" hint
+  // rather than a container with nothing in it and no explanation why.
+  setPluginCatalogCache(CATALOG);
+  setAgentLibCache([]);
+  const c = el('div');
+  renderAgentChecklist(c, new Set(), null, { plugins: ['stocks'] });
+  assert.deepStrictEqual(laidOut(c), [['head', 'Stock Assessments'], ['row', 'stocks:screener']],
+    'ENTER: the only content is the bundle row, so the repaint below can lose it entirely');
+
+  setPluginCatalogCache([]);
+  repaintBundleSections(c, 'agents', { plugins: [] });
+  assert.match(c.innerHTML, /No agents in library/,
+    'the container fell back to the render function\'s own empty-library hint');
+
+  // And the reverse: gaining a bundle after that hint must remove it, or the
+  // rows draw beneath a stale "No agents in library" span. Checked via
+  // querySelectorAll('.hint-text') rather than c.innerHTML: unlike the real
+  // DOM property, the stub's innerHTML is a plain string set on assignment,
+  // not a live serialization, so it would still read the old hint markup
+  // after the repaint's later appendChild calls.
+  setPluginCatalogCache(CATALOG);
+  repaintBundleSections(c, 'agents', { plugins: ['stocks'] });
+  assert.deepStrictEqual(c.querySelectorAll('.hint-text'), [],
+    'the stale hint node is removed once a bundle row exists again');
+  assert.deepStrictEqual(laidOut(c), [['head', 'Stock Assessments'], ['row', 'stocks:screener']]);
 }));
