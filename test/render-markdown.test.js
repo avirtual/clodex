@@ -9,10 +9,10 @@
 // carries a real serializer: a text node escapes on the way out, an explicit
 // innerHTML assignment stores its bytes raw. That asymmetry is the whole
 // mechanism — it is what makes `assert(!html.includes('<script'))` a claim about
-// the leaf rather than about the fixture, and it is what goes red when a
-// textContent is swapped for an innerHTML (the red-proof, journalled at t663).
-// The same escaping-by-round-trip idiom is in plugin-host.test.js's FakeNode,
-// for the same reason: no jsdom in this suite.
+// the leaf rather than about the fixture, and it is what goes red when one of
+// the leaf's textContent writes is swapped for an innerHTML. The same
+// escaping-by-round-trip idiom is in plugin-host.test.js's FakeNode, for the
+// same reason: no jsdom in this suite.
 //
 // The injection table's rows are literal input strings with literal expected
 // text, never inputs run back through the leaf's own escaping rule — a table
