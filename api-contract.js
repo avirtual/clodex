@@ -443,6 +443,8 @@ const API_CONTRACT = [
   { name: 'envScopesGet', kind: 'invoke', channel: 'envScopes:get' },
   { name: 'envScopesSet', kind: 'invoke', channel: 'envScopes:set' },
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
+  { name: 'envDefaultsGet', kind: 'invoke', channel: 'envDefaults:get' },
+  { name: 'envDefaultsRestore', kind: 'invoke', channel: 'envDefaults:restore' },
   // Plugin transport. EXACTLY these five rows —
   // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
   // multiplexed channel over an engine-owned dispatch Map: the injected

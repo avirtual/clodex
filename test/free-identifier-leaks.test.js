@@ -310,6 +310,11 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/session-actions.js',
   'renderer/lib/name-suggest.js',
   'renderer/lib/env-edit.js',
+  // The Preferences ▸ Env row builder (t676). It takes `document` as a parameter
+  // precisely so the row's classes and titles are assertable without a browser;
+  // reaching for renderer.js's ambient `document` instead would put it straight
+  // back out of reach of a test.
+  'renderer/lib/env-row.js',
   // The MCP roster fold (t46). A pure leaf like the rest of lib/, read by
   // context-popover (DOM-bound, untested), so the cheap guard that it never
   // reaches for a renderer.js name is worth having.

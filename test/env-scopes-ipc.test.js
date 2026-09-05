@@ -114,3 +114,53 @@ test('envScopes:set / get target a workspace scope by id', () => {
   assert.deepStrictEqual(get('ws-1').vars, [{ key: 'WK', secret: false, value: 'wv' }]);
   assert.deepStrictEqual(get('global').vars, [], 'the global scope is untouched');
 });
+
+// --- envDefaults:get / :restore (t676) ---------------------------------------
+// The renderer reads the shipped defaults through their own channel rather than
+// requiring resources/env-defaults.json: the web frontend builds window.api from
+// the same api-contract table and has no filesystem at all.
+
+function defaultsFixture(store) {
+  const handlers = new Map();
+  const capture = { handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn) };
+  registerIpcHandlers({ ...capture, envDefaults: store, log: { info() {}, error() {} } });
+  return {
+    get: () => handlers.get('envDefaults:get')(null),
+    restore: () => handlers.get('envDefaults:restore')(null),
+    registered: (ch) => handlers.has(ch),
+  };
+}
+
+test('envDefaults:get returns the shipped file verbatim — values AND notes', () => {
+  const shipped = { A: { value: 'a', note: 'the a note' }, B: { value: 'b', note: 'the b note' } };
+  const { get } = defaultsFixture({ list: () => shipped, restore: () => {} });
+  assert.deepStrictEqual(get(), { ok: true, defaults: shipped },
+    'the note is what the Env page shows on hover, so a get that dropped it would leave every row unexplained');
+});
+
+test('envDefaults:restore calls the store once and reports ok', () => {
+  let calls = 0;
+  const { restore } = defaultsFixture({ list: () => ({}), restore: () => { calls += 1; } });
+  assert.deepStrictEqual(restore(), { ok: true });
+  assert.strictEqual(calls, 1);
+});
+
+test('envDefaults:restore surfaces a throwing store as { ok:false, error }', () => {
+  const { restore } = defaultsFixture({
+    list: () => ({}),
+    restore: () => { throw new Error('disk full'); },
+  });
+  const res = restore();
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /disk full/);
+});
+
+test('a host with no envDefaults store still registers both channels, refusing in shape', () => {
+  // Registration is unconditional so the renderer gets a shaped { ok:false }
+  // rather than an unhandled-channel rejection it does not check for.
+  const { get, restore, registered } = defaultsFixture(undefined);
+  assert.ok(registered('envDefaults:get') && registered('envDefaults:restore'));
+  assert.strictEqual(get().ok, false);
+  assert.match(get().error, /not supported on this host/);
+  assert.strictEqual(restore().ok, false);
+});

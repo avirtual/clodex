@@ -87,6 +87,17 @@ session env), so a remote Edit-Session view omits the section and the wire strip
 `env` in both directions. It applies at the next spawn; ticking "Restart session
 now" applies it immediately (`applySessionArgs` threads the edited env into the
 respawn's `create()`).
+Clodex SHIPS a set of default vars for wrapped seats in `resources/env-defaults.json`
+(`{ KEY: { value, note } }`), seeded into the GLOBAL scope at `initStores` — once per
+key ever, recorded on a `seeded` list in `env-scopes.json`. They are ordinary global
+entries afterwards, so precedence is unchanged and the operator may edit or delete
+them: a deleted default stays deleted across launches (the key is on the `seeded`
+list, so the seeder does not write it again), and "Restore shipped defaults" in
+Preferences ▸ Env clears the shipped keys off that list so the seeder brings back the
+absent ones while leaving edited values alone. `CLAUDE_STREAM_IDLE_TIMEOUT_MS` moved
+here from a baked constant in session-manager.js (t676), so it now sits ABOVE
+`process.env` rather than below it, and a seat spawned through create()'s
+scope-store-unreachable degrade path does not carry it.
 
 **Library scoping (skills + agents).** The `~/.clodex/{skills,agents}/*.md`
 libraries stay FLAT; two OPTIONAL frontmatter keys scope a file:

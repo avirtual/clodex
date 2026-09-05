@@ -251,6 +251,11 @@ bundle), whose packaged form is the Docker image under
 - **env-scopes.js** — merges the GUI-managed environment scopes over the base
   process env for a wrapper PTY, and is the single source for the canonical
   precedence. Pure fs/path, no electron.
+- **env-defaults.js** — reads `resources/env-defaults.json` (Clodex's shipped env
+  vars for wrapped seats) and computes the seed plan stores.js applies into the
+  GLOBAL scope. `planEnvSeed` is where "once per key ever" lives: a key on the
+  file's `seeded` list is never written again, which is what makes an operator's
+  deletion stick across launches. Pure, fs-read only, no electron.
 - **env-file.js** — atomic 0600 `KEY=value` env-file primitives. The shape both
   the sandbox's `auth.env` and the host's `remote.env` use: values that reach a
   process env yet never enter a config store, log or IPC result. Multi-key by
@@ -1011,7 +1016,10 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **meta/session dialog leaves**: **args-model.js** (the Model field as a VIEW
   onto the `--model` token inside extraArgs — no separate persisted field),
   **env-edit.js** (the `KEY=value`-per-line textarea → the flat object `create()`
-  persists), **name-suggest.js** (`session-<counter>` minted before the global
+  persists), **env-row.js** (one Preferences ▸ Env row — its layout CLASSES, its
+  full-text titles, and the "shipped" marker, which tracks the VALUE so an edited
+  default drops it; takes `document` as a parameter so all of that is assertable
+  without a browser), **name-suggest.js** (`session-<counter>` minted before the global
   reserved-name set is prefetched, so it must resolve collisions),
   **tool-gate.js** (whether Create is allowed given the tools:check report, the
   inline notice, and the missing-CLI overlay plan), **placement.js** (the "Run

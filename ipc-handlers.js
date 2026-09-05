@@ -58,7 +58,7 @@ function registerIpcHandlers(deps) {
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
-    agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes,
+    agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes, envDefaults,
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
@@ -1068,6 +1068,20 @@ function registerIpcHandlers(deps) {
     if (!envScopes) return { ok: false, error: 'env scopes not supported on this host' };
     try {
       envScopes.remove(scope === 'global' ? 'global' : String(scope), key);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  handle('envDefaults:get', () => {
+    if (!envDefaults) return { ok: false, error: 'env defaults not supported on this host' };
+    return { ok: true, defaults: envDefaults.list() };
+  });
+  handle('envDefaults:restore', () => {
+    if (!envDefaults) return { ok: false, error: 'env defaults not supported on this host' };
+    try {
+      envDefaults.restore();
       return { ok: true };
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };

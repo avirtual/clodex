@@ -155,6 +155,9 @@ const PINNED_NAMES = [
   // Scoped env vars for wrapper PTYs (T46) — global/workspace editor +
   // New Session dialog. get masks secret values.
   'envScopesGet', 'envScopesSet', 'envScopesDelete',
+  // Clodex's shipped env defaults (t676): the Env page reads their notes for its
+  // row tooltips and its shipped marker, and re-seeds deleted ones.
+  'envDefaultsGet', 'envDefaultsRestore',
   // Plugin transport (plugin-plan.md [internal design doc, not in this repo] §1) — the five rows that carry EVERY
   // plugin, present and future, plus the intent catalog moving from a static
   // renderer require to an IPC read (§2.3 R-INT-4).
@@ -220,8 +223,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 276-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 276, 'pinned list is the full 276-method surface');
+test('contract covers exactly the pinned 278-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 278, 'pinned list is the full 278-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -245,7 +248,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 276, 'window.api has exactly 276 methods');
+    assert.equal(generated.length, 278, 'window.api has exactly 278 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

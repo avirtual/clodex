@@ -2498,6 +2498,15 @@ html, body {
    rows. Keep as a class: an inline style cannot be overridden by the dep-off
    rules below it. */
 .prefs-row { display: flex; align-items: center; gap: 8px; }
+/* An env row's KEY must not truncate before its value does: the name is what
+   identifies the row, the value is often three letters. `flex: 0 1 auto` lets
+   the key take exactly what it needs and shrink only after the value has, which
+   `flex: 1` on the key (against `flex: 2` on the value) did not. */
+.prefs-env-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.prefs-env-row .prefs-env-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prefs-env-row .prefs-env-val { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prefs-env-row button { flex: none; }
+.prefs-env-shipped { flex: none; font-size: 10px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em; }
 .prefs-check { display: flex; align-items: center; gap: 8px; }
 .prefs-check input[type="checkbox"] { margin: 0; }
 .prefs-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none; }

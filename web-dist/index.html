@@ -3840,6 +3840,36 @@ body {
   align-items: center;
   gap: 8px;
 }
+.prefs-env-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.prefs-env-row .prefs-env-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prefs-env-row .prefs-env-val {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prefs-env-row button {
+  flex: none;
+}
+.prefs-env-shipped {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .prefs-check {
   display: flex;
   align-items: center;
@@ -7105,6 +7135,9 @@ body {
           </label>
           <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
         </div>
+        <div class="prefs-row" style="margin-top: 8px;">
+          <button id="prefs-env-restore" class="secondary" type="button" style="flex: none;" title="Bring back any of Clodex's shipped defaults you deleted. Values you edited are left alone.">Restore shipped defaults</button>
+        </div>
         <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </details>
       <details class="prefs-group" data-group="traffic">
@@ -7815,6 +7848,8 @@ body {
         { name: "envScopesGet", kind: "invoke", channel: "envScopes:get" },
         { name: "envScopesSet", kind: "invoke", channel: "envScopes:set" },
         { name: "envScopesDelete", kind: "invoke", channel: "envScopes:delete" },
+        { name: "envDefaultsGet", kind: "invoke", channel: "envDefaults:get" },
+        { name: "envDefaultsRestore", kind: "invoke", channel: "envDefaults:restore" },
         // Plugin transport. EXACTLY these five rows —
         // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
         // multiplexed channel over an engine-owned dispatch Map: the injected
@@ -21745,6 +21780,52 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/env-row.js
+  var require_env_row = __commonJS({
+    "renderer/lib/env-row.js"(exports, module) {
+      "use strict";
+      function envRowView(v, defaults) {
+        const key = v && v.key ? String(v.key) : "";
+        const secret = !!(v && v.secret);
+        const value = secret ? "" : String(v && v.value == null ? "" : v.value);
+        const rec = defaults && Object.prototype.hasOwnProperty.call(defaults, key) ? defaults[key] : null;
+        const shipped = !!rec && !secret && value === String(rec.value == null ? "" : rec.value);
+        const note = rec && rec.note ? String(rec.note) : "";
+        return {
+          key,
+          secret,
+          valueText: secret ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (secret \u2014 set)" : value,
+          nameTitle: note ? `${key} \u2014 ${note}` : key,
+          valueTitle: secret ? `${key} is stored write-only` : `${key}=${value}`,
+          shipped
+        };
+      }
+      function buildEnvRow(doc, view) {
+        const row = doc.createElement("div");
+        row.className = "prefs-env-row";
+        const keyEl = doc.createElement("code");
+        keyEl.className = "prefs-env-name";
+        keyEl.textContent = view.key;
+        keyEl.title = view.nameTitle;
+        row.appendChild(keyEl);
+        if (view.shipped) {
+          const marker = doc.createElement("span");
+          marker.className = "prefs-env-shipped";
+          marker.textContent = "shipped";
+          marker.title = "A Clodex default, still at its shipped value.";
+          row.appendChild(marker);
+        }
+        const valEl = doc.createElement("span");
+        valEl.className = "hint-text prefs-env-val";
+        valEl.textContent = view.valueText;
+        valEl.title = view.valueTitle;
+        row.appendChild(valEl);
+        return { row, keyEl, valEl };
+      }
+      module.exports = { envRowView, buildEnvRow };
+    }
+  });
+
   // renderer/lib/placement.js
   var require_placement = __commonJS({
     "renderer/lib/placement.js"(exports, module) {
@@ -33598,6 +33679,7 @@ ${detail}` });
       var { planNewSession } = require_focus_policy();
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
+      var { envRowView, buildEnvRow } = require_env_row();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
@@ -37296,6 +37378,7 @@ Click for live activity`;
       var prefsEnvValue = document.getElementById("prefs-env-value");
       var prefsEnvSecret = document.getElementById("prefs-env-secret");
       var prefsEnvAdd = document.getElementById("prefs-env-add");
+      var prefsEnvRestore = document.getElementById("prefs-env-restore");
       var prefsEnvState = document.getElementById("prefs-env-state");
       function prefsEnvScopeArg() {
         return prefsEnvScope && prefsEnvScope.value === "workspace" ? currentWorkspaceId || "default" : "global";
@@ -37308,6 +37391,16 @@ Click for live activity`;
       async function refreshPrefsEnv() {
         if (!prefsEnvList) return;
         const scope = prefsEnvScopeArg();
+        let defaults = {};
+        if (scope === "global") {
+          try {
+            const d = await window.api.envDefaultsGet();
+            defaults = d && d.ok && d.defaults || {};
+          } catch {
+            defaults = {};
+          }
+        }
+        if (prefsEnvRestore) prefsEnvRestore.style.display = scope === "global" ? "" : "none";
         const res = await window.api.envScopesGet(scope);
         prefsEnvList.textContent = "";
         if (!res || res.ok === false) {
@@ -37324,19 +37417,10 @@ Click for live activity`;
           return;
         }
         for (const v of vars) {
-          const row = document.createElement("div");
-          row.style.cssText = "display:flex; align-items:center; gap:8px; margin-bottom:4px;";
-          const keyEl = document.createElement("code");
-          keyEl.textContent = v.key;
-          keyEl.style.cssText = "flex:1; overflow:hidden; text-overflow:ellipsis;";
-          const valEl = document.createElement("span");
-          valEl.className = "hint-text";
-          valEl.style.cssText = "flex:2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
-          valEl.textContent = v.secret ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (secret \u2014 set)" : String(v.value == null ? "" : v.value);
+          const { row } = buildEnvRow(document, envRowView(v, defaults));
           const editBtn = document.createElement("button");
           editBtn.className = "secondary";
           editBtn.type = "button";
-          editBtn.style.flex = "none";
           editBtn.textContent = v.secret ? "Replace" : "Edit";
           editBtn.addEventListener("click", () => {
             prefsEnvKey.value = v.key;
@@ -37347,7 +37431,6 @@ Click for live activity`;
           const delBtn = document.createElement("button");
           delBtn.className = "secondary";
           delBtn.type = "button";
-          delBtn.style.flex = "none";
           delBtn.textContent = "\xD7";
           delBtn.title = `Delete ${v.key}`;
           delBtn.addEventListener("click", async () => {
@@ -37358,7 +37441,7 @@ Click for live activity`;
             }
             refreshPrefsEnv();
           });
-          row.append(keyEl, valEl, editBtn, delBtn);
+          row.append(editBtn, delBtn);
           prefsEnvList.appendChild(row);
         }
       }
@@ -37386,6 +37469,15 @@ Click for live activity`;
         refreshPrefsEnv();
       }
       if (prefsEnvAdd) prefsEnvAdd.addEventListener("click", addPrefsEnvVar);
+      if (prefsEnvRestore) prefsEnvRestore.addEventListener("click", async () => {
+        const res = await window.api.envDefaultsRestore();
+        if (!res || res.ok === false) {
+          setPrefsEnvState(res && res.error || "Restore failed.", "error");
+          return;
+        }
+        setPrefsEnvState("Restored the shipped defaults you had deleted.");
+        refreshPrefsEnv();
+      });
       if (prefsEnvScope) prefsEnvScope.addEventListener("change", () => {
         setPrefsEnvState("");
         refreshPrefsEnv();

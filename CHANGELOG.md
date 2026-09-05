@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **Preferences ▸ Env no longer truncates the variable name.** The name column
+  took a fixed third of the row, so a long `CLAUDE_CODE_*` key was cut to an
+  ellipsis while a five-letter value sat in the rest of the row. The name now
+  takes what it needs and the value takes the rest; both carry the full text as
+  a tooltip.
+- **Clodex ships default env vars for wrapped seats** (token reminder off, turn
+  updates off, bash audience note off, cozy teapot relaxed, stream idle timeout
+  30 min) into the global scope on first launch; edit or delete them in
+  Preferences ▸ Env and the change sticks across launches; Restore shipped
+  defaults brings back any you deleted.
 - **A plugin can now ship its own skills and agents, and a seat sees them only
   when it has that plugin.** Drop `skills/<name>/SKILL.md` and `agents/<name>.md`
   into a plugin folder and they arrive namespaced by the plugin's id — invoke a
