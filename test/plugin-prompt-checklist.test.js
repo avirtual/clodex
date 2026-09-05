@@ -3,13 +3,15 @@
 // append checklist as read-only rows grouped under the plugin, and its system
 // prompts fill the system <select> — but only for a seat that holds the plugin.
 //
-// Two properties carry the file. The COLLECT exclusion, for the reason
-// plugin-bundle-checklist.test.js states about skills: a bundle row is drawn
-// checked, and collecting it would write `p:stem` into appendPromptFiles a
-// second time, composing the same body twice at spawn. And the TICK SOURCE: an
-// append row is ticked by the seat's appendPromptFiles, NOT by reach — unlike a
-// skill, which the CLI loads whether or not anything selects it. A row ticked on
-// reach alone would tell the operator the seat reads a prompt it does not.
+// Two properties carry the file, and they are the same fact from both ends. The
+// TICK SOURCE: an append row is ticked by the seat's own appendPromptFiles, NOT
+// by reach — unlike a skill, which the CLI loads whether or not anything selects
+// it — so a row ticked on reach alone would claim a prompt the seat never reads.
+// And the COLLECT ROUND TRIP: because the tick comes from that list, the bundle
+// row is the ONLY representation of a `pluginId:stem` in the form, so the
+// collector must return it. Filtering it out (as the skills collector correctly
+// does for its own rows) sends `appendPromptFiles: []` and silently drops every
+// plugin append prompt on save — including back into the plugin folder.
 //
 // jsdom is not a dependency; the DOM here is the minimum the render functions
 // touch, the same shape test/plugin-bundle-checklist.test.js uses.
@@ -27,15 +29,18 @@ function el(tag) {
       const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
       walk(e);
       // Spelled out rather than pattern-matched: a stub that answered every
-      // selector with everything would make the collect assertion vacuous, and
-      // the `:not(:disabled)` clause IS the fix under test.
+      // selector with everything would make the collect assertions vacuous. The
+      // equality below is what makes this stub fail loudly if the collector's
+      // selector changes, rather than quietly answering the wrong set — it is
+      // how the `:not(:disabled)` regression was caught on the way OUT.
       if (sel === '.check-group, .bundle-row') {
         return flat.filter((c) => c.className === 'check-group'
           || String(c.className).split(' ').includes('bundle-row'));
       }
-      assert.strictEqual(sel, 'input[type="checkbox"]:checked:not(:disabled)');
-      return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox'
-        && c.checked && !c.disabled);
+      assert.strictEqual(sel, 'input[type="checkbox"]:checked',
+        'the append collector must NOT filter disabled rows — a bundle row is the only '
+        + 'representation of a pluginId:stem in the form');
+      return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox' && c.checked);
     },
     remove() { const i = e.parent ? e.parent.children.indexOf(e) : -1; if (i >= 0) e.parent.children.splice(i, 1); },
   };
@@ -153,24 +158,46 @@ test('t679: APPEND: a seat WITHOUT the plugin gets greyed rows telling it how to
   assert.match(rules.html, /enable the Reviewer plugin for this session/);
 }));
 
-test('t679: APPEND: collect returns ONLY library stems, in both membership states', () => withDom(() => {
+test('t679: APPEND: collect RETURNS the namespaced stems, or every dialog drops them', () => withDom(() => {
+  // The opposite of the skills and agents collectors, and the asymmetry is the
+  // whole point. A bundle SKILL row is informational — the CLI loads it with the
+  // plugin, and `injectSkills` is a flat-library list where `p:skill` names
+  // nothing — so those collectors filter disabled rows out. A bundle APPEND row
+  // is the ONLY representation of a `pluginId:stem` in the form, and
+  // `readAppendBodies` composes exactly the stems it is handed. Filtering it out
+  // therefore sends `appendPromptFiles: []`: a New Session started from a plugin
+  // template never boots its own prompt, an Edit Session save silently clears a
+  // namespaced entry the seat already holds, and saving a plugin template
+  // through the drawer writes the empty list back INTO the plugin folder,
+  // destroying the author's list.
   setPluginCatalogCache(CATALOG);
   setPromptLibCache(LIB);
 
-  for (const plugins of [['rev'], []]) {
-    const c = el('div');
-    renderAppendChecklist(c, new Set(['lib-a', 'rev:rules']), { plugins });
+  const held = el('div');
+  renderAppendChecklist(held, new Set(['lib-a', 'rev:rules']), { plugins: ['rev'] });
+  // ENTER: assert the row is on screen AND ticked before asserting it collects —
+  // an unticked row would satisfy the absence below for the wrong reason.
+  const rules = rowsOf(held).find((r) => r.name === 'rev:rules');
+  assert.ok(rules && rules.checked, 'ENTER: the bundle row drew ticked for the holder');
 
-    // ENTER, and the reason this test exists: assert the bundle row DREW before
-    // asserting it is absent from collect. A checklist that drew none satisfies
-    // the absence vacuously, which is the green a missing render would produce.
-    assert.ok(rowsOf(c).map((r) => r.name).includes('rev:rules'),
-      `ENTER: the bundle row is on screen for plugins=${JSON.stringify(plugins)}`);
+  assert.deepStrictEqual(collectAppendChecklist(held), ['lib-a', 'rev:rules'],
+    'the namespaced stem survives the round trip, so a save writes back what the form showed');
 
-    assert.deepStrictEqual(collectAppendChecklist(c), ['lib-a'],
-      'a bundle stem collected here would be written into appendPromptFiles a SECOND time, '
-      + 'and the spawn would compose the same body twice');
-  }
+  // Idempotent by construction: a bundle row is checked only when the set handed
+  // in already named it, so collecting it back can never ADD a stem the seat did
+  // not have. The unticked sibling is what proves that.
+  assert.ok(rowsOf(held).some((r) => r.name === 'rev:extra' && !r.checked),
+    'ENTER: the plugin also ships an append prompt this seat did NOT select');
+  assert.ok(!collectAppendChecklist(held).includes('rev:extra'),
+    'and reach alone does not put it in the list');
+
+  // A NON-holder's row is drawn unticked, so nothing collects it — the seat
+  // cannot be saved holding a prompt it has no way to read.
+  const outsider = el('div');
+  renderAppendChecklist(outsider, new Set(['lib-a']), { plugins: [] });
+  assert.ok(rowsOf(outsider).map((r) => r.name).includes('rev:rules'),
+    'ENTER: the bundle row is on screen for the non-holder too');
+  assert.deepStrictEqual(collectAppendChecklist(outsider), ['lib-a']);
 }));
 
 test('t679: APPEND: no seat argument draws no bundle rows at all', () => withDom(() => {

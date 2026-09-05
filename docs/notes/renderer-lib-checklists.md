@@ -25,15 +25,15 @@ too, or a tick that empties a section strands its header above nothing.
 
 ## appendBundleSections
 
-`checkedSet` splits two meanings a bundle row's tick can carry, which are not
-the same fact. A skill or agent from a held plugin is loaded by the CLI whether
-or not anything selects it, so holding the plugin IS the tick. An append prompt
-is composed only when the seat's `appendPromptFiles` names it, so a row ticked
-on reach alone would claim a prompt the seat never reads. The greyed
-non-member hint stays keyed on reach either way.
+`checkedSet` splits two meanings a bundle row's tick can carry. A skill or agent
+from a held plugin is loaded by the CLI whether or not anything selects it, so
+holding the plugin IS the tick. An append prompt is composed only when the seat's
+`appendPromptFiles` names it, so a row ticked on reach alone claims a prompt the
+seat never reads. The greyed non-member hint stays keyed on reach either way.
 
-## collectAppendChecklist
-
-`:not(:disabled)` for the reason the skills and agents collectors carry it: a
-bundle row is drawn checked, and collecting it would write `pluginId:stem` into
-`appendPromptFiles` a second time, composing the same body twice.
+That tick source is why `collectAppendChecklist` must NOT filter disabled rows
+the way the skills and agents collectors do: a bundle append row is the only
+representation of a `pluginId:stem` in the form, so dropping it sends
+`appendPromptFiles: []`, clearing a seat's entry on save and writing an empty
+list back into the plugin folder. Collecting it is idempotent — it is checked
+only when the set handed in already named it.

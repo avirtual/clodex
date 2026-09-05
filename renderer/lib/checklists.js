@@ -93,7 +93,7 @@ function renderAppendChecklist(container, enabledSet, seat = null) {
   appendBundleSections(container, 'prompts/append', seat, enabledSet);
 }
 function collectAppendChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
 const BUNDLE_KINDS = {

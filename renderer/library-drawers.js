@@ -65,8 +65,9 @@ function appendBundleGroups(listEl, sections, { onEdit = null, onReveal = null }
       const action = sec.editable
         ? (onEdit ? '<button data-action="edit">Edit</button>' : '')
         : (onReveal ? '<button data-action="reveal">Reveal plugin folder</button>' : '');
+      const badge = sec.kind ? ` <span class="prompt-kind-badge">${esc(sec.kind)}</span>` : '';
       el.innerHTML = `
-        <div class="prompt-item-title">${esc(entry.name)}</div>
+        <div class="prompt-item-title">${esc(entry.name)}${badge}</div>
         <div class="prompt-item-preview">${esc(`from the ${sec.name} plugin`)}</div>
         ${action ? `<div class="prompt-item-actions">${action}</div>` : ''}
       `;
@@ -98,9 +99,17 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     templates: `templates/${stem}.json`,
   }[kind]);
   const readBundle = async (sec, kind, stem) => {
-    if (!sec.dir) return '';
-    const r = await window.api.filePeek(`${sec.dir}/${bundleRelPath(kind, stem)}`);
-    return (r && r.ok && r.content != null) ? r.content : '';
+    const file = sec.dir ? `${sec.dir}/${bundleRelPath(kind, stem)}` : null;
+    const r = file ? await window.api.filePeek(file) : null;
+    if (!r || !r.ok || r.binary || r.truncated || r.content == null) {
+      const why = !r || !r.ok ? ((r && r.error) || 'it could not be read')
+        : r.binary ? 'it is not text' : 'it is too large to edit here';
+      alert(`Can't open ${stem} from the ${sec.name} plugin: ${why}.\n\n`
+        + 'Opening it here and saving would overwrite the file with what this editor could show, '
+        + 'so use Reveal plugin folder and edit it in place.');
+      return null;
+    }
+    return r.content;
   };
   const writeBundle = async (sec, kind, stem, body) => {
     const res = await window.api.writePluginBundleFile(sec.id, kind, stem, body);
@@ -176,11 +185,10 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       promptsList.appendChild(el);
     }
     appendBundleGroups(promptsList, groups, {
-      onEdit: async (sec, entry) => openPromptEditor({
-        kind: sec.kind,
-        name: entry.name,
-        body: await readBundle(sec, `prompts/${sec.kind}`, entry.name),
-      }, sec),
+      onEdit: async (sec, entry) => {
+        const body = await readBundle(sec, `prompts/${sec.kind}`, entry.name);
+        if (body != null) openPromptEditor({ kind: sec.kind, name: entry.name, body }, sec);
+      },
       onReveal: revealBundle,
     });
   }
@@ -316,8 +324,10 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       agentsListEl.appendChild(el);
     }
     appendBundleGroups(agentsListEl, groups, {
-      onEdit: async (sec, entry) => openAgentEditor(
-        { name: entry.name, body: await readBundle(sec, 'agents', entry.name) }, sec),
+      onEdit: async (sec, entry) => {
+        const body = await readBundle(sec, 'agents', entry.name);
+        if (body != null) openAgentEditor({ name: entry.name, body }, sec);
+      },
       onReveal: revealBundle,
     });
   }
@@ -458,8 +468,10 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       skillsListEl.appendChild(el);
     }
     appendBundleGroups(skillsListEl, groups, {
-      onEdit: async (sec, entry) => openSkillEditor(
-        { name: entry.name, body: await readBundle(sec, 'skills', entry.name) }, sec),
+      onEdit: async (sec, entry) => {
+        const body = await readBundle(sec, 'skills', entry.name);
+        if (body != null) openSkillEditor({ name: entry.name, body }, sec);
+      },
       onReveal: revealBundle,
     });
   }

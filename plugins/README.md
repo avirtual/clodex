@@ -93,6 +93,14 @@ plugin list holds the plugin gets its skills and agents; a seat that does not,
 never sees them. Disabling the plugin does not retract them from a running seat:
 they are written at spawn, so they go at that seat's **next start**.
 
+A prompt REF does not degrade that gently. A seat whose persisted
+`systemPromptFile` or `appendPromptFiles` names a prompt from a plugin that is no
+longer loaded is **refused at its next start** — the spawn fails with "not
+loaded" rather than booting without the prompt — and a clear or compact rebake
+logs `prompt-refresh-error` and leaves the old prompt in place. Clear the ref
+from the session's settings before you disable or remove the plugin that carries
+it.
+
 They **show but do not toggle.** The Skills, Agents and Append-prompts checklists
 (New Session, Edit Session, the per-session popovers) and the library drawers group
 a plugin's content under the plugin's name, with the rows disabled: a seat that has

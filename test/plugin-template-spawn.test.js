@@ -117,6 +117,70 @@ test('t679: a template that already lists plugins keeps them AND gains its own',
     'a template asking for another plugin must not lose it to the merge');
 });
 
+// ── The form path, all the way to create() ─────────────────────────────────
+
+test('t679: a plugin template\'s appendPromptFiles reach create() ALONGSIDE its plugins', () => {
+  // r1 must-fix. Every earlier assertion in this file stops at the picker row or
+  // the leaf, so all of them stayed green while the form dropped every plugin
+  // append prompt between the checklist and the spawn. This drives the REAL
+  // `session:create` handler and reads the create() call it makes, because that
+  // argument list is the only place the two halves are observable together: the
+  // seat holds the plugin (position 21) and names its prompt (position 15).
+  const { registerIpcHandlers } = require('../ipc-handlers');
+
+  const calls = [];
+  const handlers = new Map();
+  const stub = () => () => {};
+  const base = {
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: () => {},
+    manager: {
+      sessions: new Map(),
+      create: async (...args) => { calls.push(args); return { name: args[0] }; },
+    },
+    persistence: { get: () => null, setStripLevel: () => {} },
+    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    workspaceOfSender: () => 'ws-1',
+  };
+  const deps = new Proxy(base, {
+    get(t, k) { return k in t ? t[k] : stub(); },
+  });
+  registerIpcHandlers(deps);
+
+  const create = handlers.get('session:create');
+  assert.strictEqual(typeof create, 'function', 'ENTER: the real session:create handler registered');
+
+  // Positional, in renderer.js:2440's exact order — that call site is the one
+  // this is standing in for, and an object payload would silently arrive as
+  // `name` and leave every field below undefined.
+  return create({},
+    'seat', 'claude', '/tmp', [], null, null, false, null,
+    [], [], [], [], [],           // agents..injectSkills
+    0,                            // stripLevel
+    'rev:strict',                 // systemPromptFile
+    ['lib-a', 'rev:rules'],       // appendPromptFiles — the r1 defect emptied this
+    [], null, null, false,        // execCommands, intents, env, noWire
+    ['rev'],                      // plugins
+  ).then(() => {
+    assert.strictEqual(calls.length, 1, 'ENTER: create() was called exactly once');
+    const args = calls[0];
+
+    // The whole tail, not a spot check: a partial match reads around exactly the
+    // argument a dropped collector would have emptied. Positions are
+    // create()'s own (session-manager.js:1196), from systemPromptFile onward.
+    assert.deepStrictEqual(args.slice(14), [
+      'rev:strict',                 // systemPromptFile
+      ['lib-a', 'rev:rules'],       // appendPromptFiles — the r1 defect emptied this
+      [],                           // execCommands
+      null,                         // intents
+      null,                         // sessionEnv
+      true,                         // mint
+      false,                        // noWire
+      ['rev'],                      // plugins — what makes both namespaced refs resolvable
+    ], 'the namespaced append stem must arrive with the plugin that can resolve it');
+  });
+});
+
 // ── The write-back channel ─────────────────────────────────────────────────
 
 test('t679: plugins:writeBundleFile routes to the LOADER, whose refusals are the gate', () => {
@@ -174,6 +238,25 @@ test('t679: the drawers read a bundle body through file:peek against the catalog
   const readAt = src.indexOf('const readBundle =');
   assert.ok(readAt > 0, 'ENTER: and one reader');
   const read = src.slice(readAt, src.indexOf('\n  };', readAt));
-  assert.match(read, /window\.api\.filePeek\(`\$\{sec\.dir\}\/\$\{bundleRelPath\(kind, stem\)\}`\)/,
-    'the read composes the catalog dir with the SHARED path table');
+  assert.match(read, /await window\.api\.filePeek\(file\)/,
+    'the read goes through file:peek');
+  assert.match(read, /`\$\{sec\.dir\}\/\$\{bundleRelPath\(kind, stem\)\}`/,
+    'and composes the catalog dir with the SHARED path table');
+  // r1 nit: returning a body for an unreadable, binary or TRUNCATED peek makes
+  // the subsequent save write that placeholder into the plugin folder. All three
+  // must refuse to open, so `truncated` is named explicitly — it is the one that
+  // is `ok: true` with real content and would pass an ok-only check.
+  assert.match(read, /!r \|\| !r\.ok \|\| r\.binary \|\| r\.truncated \|\| r\.content == null/,
+    'a partial or unreadable peek must refuse to open, or saving overwrites the file with it');
+  assert.match(read, /return null;/, 'and the refusal is a null the openers bail on');
+
+  // The null is only a refusal if every caller honours it: an opener that passed
+  // it straight through would open an editor on `null` and save that.
+  const opens = [...src.matchAll(/const body = await readBundle\([^\n]*\);\n\s*([^\n]*)/g)]
+    .map((m) => m[1]);
+  assert.strictEqual(opens.length, 3, 'ENTER: all three bundle openers read through readBundle');
+  for (const line of opens) {
+    assert.match(line, /^if \(body != null\)/,
+      `each opener must bail on the refusal, got: ${line}`);
+  }
 });
