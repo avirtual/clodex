@@ -22,3 +22,12 @@ origin the cache cannot answer yet.
 Answers off `sidebarMeta`'s per-row `plugins` list plus the catalog's `shipped`,
 through the shared `seatHasPlugin` leaf — the sidebar paints every row at once,
 so this cannot key on the active session.
+
+## newSessionPluginsRendered
+
+The catalog ids each session dialog's plugin checklist was DRAWN from, snapshotted
+at draw (`argsPluginsRendered` is the args-dialog twin). The collect sites feed the
+snapshot to `pluginsForUnlistedPlugins` rather than re-reading the shared cache:
+`onPluginEvent`'s enable arm refills that cache while a dialog is open, so a
+carried-forward plugin would become "listed and unticked" between draw and save and
+be dropped. The args guard reads the snapshot's length for the same reason.

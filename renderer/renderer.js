@@ -1811,6 +1811,7 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
 }
 
 let newSessionPluginsPersisted = null;
+let newSessionPluginsRendered = [];
 
 // Painted BEFORE the intent list, whose catalog is asked about what this ticks.
 // The FETCH stays ABOVE the type guard: a non-claude seat draws no checklist but
@@ -1820,6 +1821,7 @@ async function refreshNewSessionPlugins(pluginsList) {
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
   if (inputType.value !== 'claude') return;
   newSessionPluginsPersisted = Array.isArray(pluginsList) ? pluginsList : null;
+  newSessionPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
   renderPluginChecklist(inputPluginList, Array.isArray(pluginsList) ? pluginsList : defaultPluginTicks());
 }
 
@@ -2228,7 +2230,7 @@ function collectFormConfig() {
   // Plugins section gets the globally-enabled set — `[]` would close it for good.
   const plugins = type === 'claude'
     ? mergePlugins(collectPluginChecklist(inputPluginList),
-      pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))))
+      pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered))
     : defaultPluginTicks();
   const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
@@ -6131,6 +6133,7 @@ let argsAgentsPersisted = [];
 let argsAgentsRendered = [];
 let argsAgentsAuto = [];
 let argsPluginsPersisted = null;
+let argsPluginsRendered = [];
 let argsSkillsInjectPersisted = [];
 let argsSkillsInjectRendered = [];
 let argsSkillsInjectAuto = [];
@@ -6197,6 +6200,7 @@ async function openArgsDialog(name, argsSource = null) {
   argsPluginsSection.style.display = isPluginsEditable ? '' : 'none';
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
   argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+  argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
   renderPluginChecklist(argsPluginList, res.plugins);
   argsIntentsSection.style.display = isClaude ? '' : 'none';
   // Keyed on the list this dialog just painted: the override is what makes a
@@ -6271,10 +6275,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const intents = argsIntentsSection.style.display === 'none' ? null : collectIntentChecklist(argsIntentsList);
   // undefined = "untouched", never []: a hidden section or a checklist that drew
   // no rows is an absence of options, not the operator's answer.
-  const plugins = (argsPluginsSection.style.display === 'none' || !getPluginCatalogCache().length)
+  const plugins = (argsPluginsSection.style.display === 'none' || !argsPluginsRendered.length)
     ? undefined
     : mergePlugins(collectPluginChecklist(argsPluginList),
-      pluginsForUnlistedPlugins(argsPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id))));
+      pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered));
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
   // dialog OWNS env — an empty box is {}, a real clear, not a no-op.
