@@ -15,12 +15,13 @@
 // byte-identical moves; only the cache access is seamed.
 //
 // DOM-bound (document.createElement + esc route through the global document),
-// so no unit tests per the R1 rule — move-only fidelity is the guarantee. The
-// exception is the skill rows' read-only decision, which is NOT a move
-// (test/skill-checklist-scope.test.js): an out-of-scope row that still collects
-// into the off list writes an entry that disables nothing.
+// so the MOVED bodies are guaranteed by move-only fidelity. What is not a move
+// is tested: the skill rows' read-only decision, where an out-of-scope row that
+// still collects writes an off-list entry that disables nothing, and the bundle
+// rows, where one that still collects writes a name no flat library holds.
 
 const { esc } = require('./format');
+const { seatHasPlugin } = require('../../plugin-api');
 // NOTE — this file no longer requires intent-catalog. The gateable-intent rows
 // were a static require while the catalog was a compile-time constant; that
 // became wrong twice over (plugin plan MUST-FIX 2): a plugin can register a verb
@@ -94,14 +95,67 @@ function collectAppendChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
+function bundleSectionsOf(kind) {
+  const out = [];
+  for (const p of pluginCatalogCache) {
+    const names = Array.isArray(p[kind]) ? p[kind] : [];
+    if (!names.length) continue;
+    out.push({ id: String(p.id), name: p.name || String(p.id), names, shipped: p.shipped });
+  }
+  return out;
+}
+
+function seatBundleSections(kind, seat) {
+  if (!seat) return [];
+  return bundleSectionsOf(kind).map((sec) => ({
+    ...sec,
+    has: seatHasPlugin(sec.id, seat.plugins, sec.shipped),
+  }));
+}
+
+function hasBundleRows(kind, seat) {
+  return seatBundleSections(kind, seat).length > 0;
+}
+
+function appendBundleSections(container, kind, seat) {
+  for (const sec of seatBundleSections(kind, seat)) {
+    const head = document.createElement('div');
+    head.className = 'check-group';
+    head.textContent = sec.name;
+    container.appendChild(head);
+    for (const n of sec.names) {
+      const row = document.createElement('label');
+      row.className = 'agent-check bundle-row' + (sec.has ? '' : ' skill-readonly');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = `${sec.id}:${n}`;
+      cb.checked = sec.has;
+      cb.disabled = true;
+      const txt = document.createElement('span');
+      const note = sec.has
+        ? ` <span class="skill-src">· via ${esc(sec.name)}</span>`
+        : ` <span class="skill-src">enable the ${esc(sec.name)} plugin for this session</span>`;
+      txt.innerHTML = `<strong>${esc(n)}</strong>${note}`;
+      row.appendChild(cb);
+      row.appendChild(txt);
+      container.appendChild(row);
+    }
+  }
+}
+
+function repaintBundleSections(container, kind, seat) {
+  container.querySelectorAll('.check-group, .bundle-row').forEach((n) => n.remove());
+  appendBundleSections(container, kind, seat);
+}
+
 // `autoSet` (optional) = names auto-INCLUDED for this session by `sessions:`
 // scope. Such a row renders CHECKED + disabled + a dim `· auto` suffix so the
 // forced injection is visible instead of a checkbox that lies (the spawn union
 // re-adds it regardless of the persisted state). collect + the save reconcile
 // exclude auto names so they're never written to the persisted record.
-function renderAgentChecklist(container, enabledSet, autoSet = null) {
+function renderAgentChecklist(container, enabledSet, autoSet = null, seat = null) {
   container.innerHTML = '';
-  if (!agentLibCache.length) {
+  if (!agentLibCache.length && !hasBundleRows('agents', seat)) {
     container.innerHTML = '<span class="hint-text">No agents in library — add some via the 🤖 Agents drawer.</span>';
     return;
   }
@@ -120,9 +174,10 @@ function renderAgentChecklist(container, enabledSet, autoSet = null) {
     row.appendChild(txt);
     container.appendChild(row);
   }
+  appendBundleSections(container, 'agents', seat);
 }
 function collectAgentChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
 }
 
 // Checked = this seat MAY run that registered command. The argv preview is the
@@ -282,9 +337,9 @@ function wireBulkToggles(popoverEl, listEl) {
 
 // `autoSet` (optional): same `sessions:`-scope auto-include semantics as
 // renderAgentChecklist — a matched skill renders CHECKED + disabled + `· auto`.
-function renderInjectChecklist(container, enabledSet, autoSet = null) {
+function renderInjectChecklist(container, enabledSet, autoSet = null, seat = null) {
   container.innerHTML = '';
-  if (!skillLibCache.length) {
+  if (!skillLibCache.length && !hasBundleRows('skills', seat)) {
     container.innerHTML = '<span class="hint-text">No skills in library — add some via the 🧩 Skills Library (Skills menu).</span>';
     return;
   }
@@ -303,9 +358,10 @@ function renderInjectChecklist(container, enabledSet, autoSet = null) {
     row.appendChild(txt);
     container.appendChild(row);
   }
+  appendBundleSections(container, 'skills', seat);
 }
 function collectInjectChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
 }
 
 // Mirror of renderSkillChecklist for tools. `disabledSet` is clodex's own
@@ -414,6 +470,7 @@ function collectSkillChecklist(container) {
 module.exports = {
   renderAppendChecklist, collectAppendChecklist,
   renderAgentChecklist, collectAgentChecklist,
+  bundleSectionsOf, repaintBundleSections,
   renderExecChecklist, collectExecChecklist,
   renderIntentChecklist, collectIntentChecklist, intentRowChecked,
   renderPluginChecklist, collectPluginChecklist, defaultPluginTicks,

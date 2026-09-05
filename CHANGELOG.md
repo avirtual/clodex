@@ -30,7 +30,11 @@ blocks a release.
   `<plugin-id>:<agent>`. A seat whose plugin list excludes the plugin never sees
   either, and disabling the plugin drops them at that seat's next start. A folder
   carrying only skills or agents is now a valid plugin, so a pure content pack
-  needs no code.
+  needs no code. Those skills and agents now also SHOW: the Skills and Agents
+  checklists (New Session, Edit Session, the per-session popovers) and the two
+  library drawers group them under their plugin's name, listed rather than
+  toggleable — a seat that has the plugin sees them marked as arriving with it,
+  and a seat that does not sees what enabling it would add.
 
 ## 5.29.1 — 2026-09-05
 

@@ -18,7 +18,7 @@ const {
   renderIntentChecklist, collectIntentChecklist,
   renderPluginChecklist, collectPluginChecklist,
   setClaudeToolsCache, setSkillLibCache, setAgentLibCache, getSkillLibCache,
-  setIntentCatalogCache, setPluginCatalogCache, getPluginCatalogCache,
+  setIntentCatalogCache, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf,
 } = require('../lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
 const { parseSkillFrontmatter } = require('../../skills-util');
@@ -52,7 +52,12 @@ const agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
 
-function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta }) {
+function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf }) {
+  function seatFor(name, source = null) {
+    if (source || typeof seatPluginsOf !== 'function') return null;
+    return { plugins: seatPluginsOf(name) };
+  }
+
   // --- Tools quick-access popover ------------------------------------------
   // Opened from the status-bar "tools" icon. Reads the session's current
   // disabled set + the known-tool catalog, lets the user toggle, and persists
@@ -147,14 +152,15 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   async function openSkillsPopover(name, anchorBtn, source = null) {
     const res = source ? await source.fetch() : await window.api.getSkillCatalog(name);
     if (!res || !res.ok) { alert(source ? `Read skills on peer failed: ${res && res.error ? res.error : 'unknown error'}` : 'Session not found in persistence.'); return; }
+    setPluginCatalogCache((await window.api.pluginCatalog()) || []);
     skillsEditingSource = source;
     renderSkillChecklist(popoverSkillsList, res.names || [], new Set(res.disabledSkills || []),
       res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope });
-    // Library-injection section: only shown when the library is non-empty.
     setSkillLibCache(res.skillLib || []);
-    if (getSkillLibCache().length) {
+    const seat = seatFor(name, source);
+    if (getSkillLibCache().length || (seat && bundleSectionsOf('skills').length)) {
       const auto = skillAutoSet(res.skillLib, name);
-      renderInjectChecklist(popoverInjectSkillsList, new Set(res.injectSkills || []), auto);
+      renderInjectChecklist(popoverInjectSkillsList, new Set(res.injectSkills || []), auto, seat);
       skillsInjectPersisted = res.injectSkills || [];
       skillsInjectRendered = (res.skillLib || []).map((s) => s.name);
       skillsInjectAuto = [...auto];
@@ -252,9 +258,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   async function openAgentsPopover(name, anchorBtn) {
     const res = await window.api.getAgentCatalog(name);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
+    setPluginCatalogCache((await window.api.pluginCatalog()) || []);
     setAgentLibCache(res.agents || []);
     const auto = agentAutoSet(res.agents, name);
-    renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []), auto);
+    renderAgentChecklist(popoverAgentsList, new Set(res.enabled || []), auto, seatFor(name));
     agentsPersisted = res.enabled || [];
     agentsRendered = (res.agents || []).map((a) => a.name);
     agentsAuto = [...auto];

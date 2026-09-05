@@ -200,6 +200,138 @@ test('t672: a re-scan refreshes bundle content without re-registering the module
     'and the plugin is still registered exactly once');
 });
 
+test('t672 r2: a plugin whose VERSION moved keeps its old bundle, paired with the engine still in the require cache', () => {
+  // The refresh used to run before the moved check, so a version bump served
+  // fresh skills against the require-cached OLD engine — a pairing no install
+  // ever shipped, and the restart badge below is the app admitting it cannot
+  // reload the engine half.
+  const root = mkTree({ stocks: PACK });
+  const { loader } = mkLoader(root);
+  const engine = mkEngine();
+  loader.loadAll(engine);
+
+  const bodyOf = () => {
+    const b = engine.bundles().find((x) => x.id === 'stocks');
+    return b && b.skills[0] && b.skills[0].content;
+  };
+  assert.match(bodyOf(), /Go look it up/, 'ENTER: the seat-visible read is populated at load');
+
+  fs.writeFileSync(path.join(root, 'stocks', 'manifest.json'),
+    JSON.stringify({ ...PACK.manifest, version: '2.0.0' }));
+  fs.writeFileSync(path.join(root, 'stocks', 'skills', 'foo', 'SKILL.md'), '---\ndescription: d\n---\nEDITED\n');
+
+  const r = loader.rescan(engine);
+  assert.deepStrictEqual(r.changed, ['stocks'],
+    'ENTER: the version move was actually detected — otherwise the assertion below is about the ordinary refresh case');
+  assert.match(bodyOf(), /Go look it up/,
+    'the old body stands until the restart the changed badge asks for');
+});
+
+test('t672 r2: a transient listing failure does not blank a good bundle record', () => {
+  // readBundle answers `[]` for an unreadable directory, and updateBundle would
+  // then overwrite a populated record with nothing — a seat spawned after that
+  // rescan silently gets no skills, with no error anywhere and a plugin that
+  // still looks loaded.
+  //
+  // The fixture carries an ENGINE half deliberately. A pure content pack is
+  // validated against the bundle it could read, so unreadable folders drop it
+  // from discovery entirely and rescan deactivates it — a louder failure than
+  // this one, and a different one.
+  const root = mkTree({
+    stocks: {
+      manifest: {
+        id: 'stocks', name: 'Stocks', version: '1.0.0', hostApi: HOST_API_VERSION,
+        entry: { engine: 'engine.js' },
+      },
+      files: { ...PACK.files, 'engine.js': 'module.exports = { activate() {} };' },
+    },
+  });
+  const { loader } = mkLoader(root);
+  const engine = mkEngine();
+  loader.loadAll(engine);
+
+  const namesOf = () => {
+    const b = engine.bundles().find((x) => x.id === 'stocks');
+    return b ? b.skills.map((s) => s.name) : [];
+  };
+  assert.deepStrictEqual(namesOf(), ['foo'], 'ENTER: the record is populated before the failing scan');
+
+  const skillsDir = path.join(root, 'stocks', 'skills');
+  const agentsDir = path.join(root, 'stocks', 'agents');
+  const mode = fs.statSync(skillsDir).mode;
+  fs.chmodSync(skillsDir, 0o000);
+  fs.chmodSync(agentsDir, 0o000);
+  try {
+    const fresh = loader.discover().find((x) => x.id === 'stocks');
+    assert.deepStrictEqual([fresh.skills, fresh.agents], [[], []],
+      'ENTER: discovery really did come back empty — otherwise this test never builds the case it names');
+    loader.rescan(engine);
+    assert.deepStrictEqual(namesOf(), ['foo'],
+      'the good record survives a scan that could read nothing');
+  } finally {
+    fs.chmodSync(skillsDir, mode);
+    fs.chmodSync(agentsDir, mode);
+  }
+
+  // CONTROL: a plugin whose skills were genuinely DELETED still empties, or the
+  // guard above would freeze every bundle at its first content forever.
+  fs.rmSync(path.join(root, 'stocks', 'skills', 'foo'), { recursive: true });
+  fs.rmSync(path.join(root, 'stocks', 'agents', 'bar.md'));
+  loader.rescan(engine);
+  assert.deepStrictEqual(namesOf(), [],
+    'CONTROL: a real removal is not mistaken for a listing failure');
+});
+
+test('t675 r1: an unreadable SKILL.md among readable ones does not blank the record either', () => {
+  // One level down from the directory case above, and the same silent loss: a
+  // per-entry EACCES yields a SHORTER list, not an empty one, so the rescan gate
+  // would write two skills over three and nothing would say so.
+  const root = mkTree({
+    stocks: {
+      manifest: {
+        id: 'stocks', name: 'Stocks', version: '1.0.0', hostApi: HOST_API_VERSION,
+        entry: { engine: 'engine.js' },
+      },
+      files: {
+        'skills/foo/SKILL.md': SKILL_MD,
+        'skills/baz/SKILL.md': SKILL_MD,
+        'agents/bar.md': AGENT_MD,
+        'engine.js': 'module.exports = { activate() {} };',
+      },
+    },
+  });
+  const { loader } = mkLoader(root);
+  const engine = mkEngine();
+  loader.loadAll(engine);
+
+  const namesOf = () => {
+    const b = engine.bundles().find((x) => x.id === 'stocks');
+    return b ? b.skills.map((s) => s.name) : [];
+  };
+  assert.deepStrictEqual(namesOf(), ['baz', 'foo'], 'ENTER: both skills are on the record first');
+
+  const victim = path.join(root, 'stocks', 'skills', 'baz', 'SKILL.md');
+  const mode = fs.statSync(victim).mode;
+  fs.chmodSync(victim, 0o000);
+  try {
+    const fresh = loader.discover().find((x) => x.id === 'stocks');
+    assert.deepStrictEqual(fresh.skills.map((s) => s.name), ['foo'],
+      'ENTER: discovery really did come back SHORT — a full list would make the assertion below vacuous');
+    loader.rescan(engine);
+    assert.deepStrictEqual(namesOf(), ['baz', 'foo'],
+      'the good record survives a scan that could not read one entry');
+  } finally {
+    fs.chmodSync(victim, mode);
+  }
+
+  // CONTROL: a genuinely DELETED skill still leaves, so the guard has not
+  // frozen the record against real edits.
+  fs.rmSync(path.join(root, 'stocks', 'skills', 'baz'), { recursive: true });
+  loader.rescan(engine);
+  assert.deepStrictEqual(namesOf(), ['foo'],
+    'CONTROL: a real removal is not mistaken for a read failure');
+});
+
 // ── Catalog ─────────────────────────────────────────────────────────────────
 
 function mkEngine() {

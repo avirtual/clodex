@@ -3,7 +3,7 @@
 // skills and agents reach a seat as one extra --plugin-dir, and ONLY when that
 // seat has the plugin.
 //
-// This drives the REAL create() claude arm with the REAL writeBundlePlugins
+// This drives the REAL create() claude arm
 // over a temp ~/.clodex, so the argv asserted is the argv a spawn builds and
 // the files asserted are the files a spawn writes. writeBundlePlugins is
 // module-private in engine.js, so it is reconstructed here from the same public

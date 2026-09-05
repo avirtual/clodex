@@ -4688,3 +4688,14 @@ html, body {
 [data-theme="paper"] .intent-mark-inert { background: rgba(133, 90, 20, .14); }
 [data-theme="light"] .intent-mark-fire { background: rgba(193, 95, 60, .12); }
 [data-theme="light"] .intent-mark-inert { background: rgba(154, 107, 30, .14); }
+
+.check-group {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+.agent-checklist > .check-group:first-child { margin-top: 4px; }
+.prompt-item.bundle-item { opacity: 0.75; cursor: default; }

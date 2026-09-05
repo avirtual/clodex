@@ -21,8 +21,8 @@
 // a reassignable let), and setAgentLibCache / setSkillLibCache (checklists.js
 // owns those caches; the two refresh lists re-seed them). esc from lib/format.
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the
-// guarantee.
+// The moved CRUD blocks are guaranteed by move-only fidelity, not by tests. The
+// bundle groups are NOT a move (test/plugin-bundle-drawer.test.js).
 
 const { esc } = require('./lib/format');
 const { splitModelArg } = require('./lib/args-model');
@@ -56,7 +56,27 @@ function scopeBadgeHtml(meta) {
   return parts.length ? `<div class="prompt-item-scope">${esc(parts.join(' · '))}</div>` : '';
 }
 
-function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor }) {
+function appendBundleGroups(listEl, sections) {
+  for (const sec of sections) {
+    const head = document.createElement('div');
+    head.className = 'check-group';
+    head.textContent = sec.name;
+    listEl.appendChild(head);
+    for (const n of sec.names) {
+      const el = document.createElement('div');
+      el.className = 'prompt-item bundle-item';
+      el.innerHTML = `
+        <div class="prompt-item-title">${esc(n)}</div>
+        <div class="prompt-item-preview">${esc(`from the ${sec.name} plugin`)}</div>
+      `;
+      listEl.appendChild(el);
+    }
+  }
+}
+
+function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, bundleSectionsOf, refreshPluginCatalog }) {
+  const bundleGroups = (kind) => (typeof bundleSectionsOf === 'function' ? bundleSectionsOf(kind) : []);
+
   const promptsDrawer = document.getElementById('prompts-drawer');
   const promptsList = document.getElementById('prompts-list');
   const promptsEmpty = document.getElementById('prompts-empty');
@@ -207,9 +227,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
 
   async function refreshAgentsList() {
     const items = await window.api.listAgents();
+    if (refreshPluginCatalog) await refreshPluginCatalog();
+    const groups = bundleGroups('agents');
     setAgentLibCache(items || []);
     agentsListEl.innerHTML = '';
-    if (!items || items.length === 0) {
+    if ((!items || items.length === 0) && !groups.length) {
       agentsEmpty.style.display = '';
       return;
     }
@@ -234,6 +256,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       el.addEventListener('click', () => openAgentEditor(a));
       agentsListEl.appendChild(el);
     }
+    appendBundleGroups(agentsListEl, groups);
   }
 
   function openAgentsDrawer(name) {
@@ -330,9 +353,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
 
   async function refreshSkillsLibList() {
     const items = await window.api.listSkillLib();
+    if (refreshPluginCatalog) await refreshPluginCatalog();
+    const groups = bundleGroups('skills');
     setSkillLibCache(items || []);
     skillsListEl.innerHTML = '';
-    if (!items || items.length === 0) {
+    if ((!items || items.length === 0) && !groups.length) {
       skillsEmpty.style.display = '';
       return;
     }
@@ -355,6 +380,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       el.addEventListener('click', () => openSkillEditor(s));
       skillsListEl.appendChild(el);
     }
+    appendBundleGroups(skillsListEl, groups);
   }
 
   function openSkillsDrawer(name) {

@@ -47,9 +47,17 @@ function validateManifest(m, dirName, hasBundle = false) {
 
 function readBundle(fs, path, dir, onSkip) {
   const skip = typeof onSkip === 'function' ? onSkip : () => {};
+  let unreadable = false;
   const listing = (sub) => {
     try { return fs.readdirSync(path.join(dir, sub), { withFileTypes: true }); }
-    catch { return []; }
+    catch (e) {
+      const code = e && e.code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        unreadable = true;
+        skip(sub, `unreadable directory — ${(e && e.message) || e}`);
+      }
+      return [];
+    }
   };
   const skills = [];
   for (const ent of listing('skills')) {
@@ -57,7 +65,11 @@ function readBundle(fs, path, dir, onSkip) {
     if (!AGENT_NAME_RE.test(ent.name)) { skip(`skills/${ent.name}`, 'not a legal skill name'); continue; }
     let content;
     try { content = fs.readFileSync(path.join(dir, 'skills', ent.name, 'SKILL.md'), 'utf8'); }
-    catch (e) { skip(`skills/${ent.name}`, `no readable SKILL.md — ${(e && e.message) || e}`); continue; }
+    catch (e) {
+      if (e && e.code !== 'ENOENT') unreadable = true;
+      skip(`skills/${ent.name}`, `no readable SKILL.md — ${(e && e.message) || e}`);
+      continue;
+    }
     skills.push({ name: ent.name, content });
   }
   const agents = [];
@@ -68,12 +80,16 @@ function readBundle(fs, path, dir, onSkip) {
     if (!AGENT_NAME_RE.test(name)) { skip(`agents/${ent.name}`, 'not a legal agent name'); continue; }
     let content;
     try { content = fs.readFileSync(path.join(dir, 'agents', ent.name), 'utf8'); }
-    catch (e) { skip(`agents/${ent.name}`, `unreadable — ${(e && e.message) || e}`); continue; }
+    catch (e) {
+      if (e && e.code !== 'ENOENT') unreadable = true;
+      skip(`agents/${ent.name}`, `unreadable — ${(e && e.message) || e}`);
+      continue;
+    }
     agents.push({ name, content });
   }
   skills.sort((a, b) => (a.name < b.name ? -1 : 1));
   agents.sort((a, b) => (a.name < b.name ? -1 : 1));
-  return { skills, agents };
+  return { skills, agents, unreadable };
 }
 
 // Comparable versions are dot-separated runs of digits, compared NUMERICALLY
@@ -300,6 +316,7 @@ function createPluginLoader(deps) {
         stylePath: manifest.style ? path.join(dir, manifest.style) : null,
         skills: bundle.skills,
         agents: bundle.agents,
+        bundleUnreadable: bundle.unreadable,
       };
       const held = claimed.get(manifest.id);
       if (held) {
@@ -443,11 +460,12 @@ function createPluginLoader(deps) {
       seen.add(rec.id);
       const live = running.has(rec.id) ? loadedFrom.get(rec.id) : null;
       if (live) {
-        if (typeof pluginHost.updateBundle === 'function') {
-          try { pluginHost.updateBundle(rec.id, rec.skills, rec.agents); } catch {}
-        }
         const movedDir = live.dir !== rec.dir;
         const movedVersion = (live.version || null) !== (rec.manifest.version || null);
+        if (!movedDir && !movedVersion && !rec.bundleUnreadable
+            && typeof pluginHost.updateBundle === 'function') {
+          try { pluginHost.updateBundle(rec.id, rec.skills, rec.agents); } catch {}
+        }
         if (movedDir || movedVersion) {
           restartRequired.set(rec.id, {
             was: live.version, now: rec.manifest.version || null, dirChanged: movedDir,
