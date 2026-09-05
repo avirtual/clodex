@@ -1442,9 +1442,6 @@ function createSessionManager(deps) {
           // reads our push as the user's and drops every injected skill.
           const userPluginDir = args.includes('--plugin-dir');
           const agentRecords = effectiveInjectedAgents(name, agents);
-          // Accumulated across BOTH overlays and every bundle, then checked
-          // once below: each arm contributes only what it actually scaffolded,
-          // so a warning can never name a definition that never shipped.
           const injectedAgents = [];
           const injectedSkills = [];
           if (!args.includes('--agents')) {
@@ -1455,8 +1452,6 @@ function createSessionManager(deps) {
             cleanupAgentPlugin(name);
           }
           if (!userPluginDir) {
-            // FIRST: its rmSync clears skill-plugins/<seat>, which is where the
-            // bundles below land. Writing them before this deletes them.
             const pluginDir = writeSkillPlugin(name, injectSkills);
             if (pluginDir) args.push('--plugin-dir', pluginDir);
             try {
