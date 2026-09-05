@@ -443,6 +443,9 @@ function createPluginLoader(deps) {
       seen.add(rec.id);
       const live = running.has(rec.id) ? loadedFrom.get(rec.id) : null;
       if (live) {
+        if (typeof pluginHost.updateBundle === 'function') {
+          try { pluginHost.updateBundle(rec.id, rec.skills, rec.agents); } catch {}
+        }
         const movedDir = live.dir !== rec.dir;
         const movedVersion = (live.version || null) !== (rec.manifest.version || null);
         if (movedDir || movedVersion) {

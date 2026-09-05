@@ -155,15 +155,49 @@ test('t672: a plugin with an engine half and no bundle reports empty arrays, not
   assert.deepStrictEqual(rec.agents, []);
 });
 
-test('t672: a re-scan re-reads the bundle from disk', () => {
-  // Discovery-time reads are the design (a spawn must not stat the plugin dir),
-  // so the loader owes a fresh read whenever it re-scans — otherwise an edited
-  // skill ships its old body until the app restarts.
+test('t672: a re-scan refreshes the bundle a SEAT will get, not merely discovery', () => {
+  // Asserted on bundles(), because that is the read the spawn consumes. The
+  // record it serves is written at register() time, and rescan() deliberately
+  // does NOT re-register a running plugin (its engine half is in the require
+  // cache). So without an explicit content refresh an edited skill would ship
+  // its old body until the app restarts — worse than the flat library, which
+  // re-reads at every spawn. discover() is stateless and would pass either way.
   const root = mkTree({ stocks: PACK });
   const { loader } = mkLoader(root);
-  assert.strictEqual(loader.discover()[0].skills[0].content, SKILL_MD, 'ENTER: the first read');
+  const engine = mkEngine();
+  loader.loadAll(engine);
+
+  const bodyOf = () => {
+    const b = engine.bundles().find((x) => x.id === 'stocks');
+    return b && b.skills[0] && b.skills[0].content;
+  };
+  assert.match(bodyOf(), /Go look it up/, 'ENTER: the seat-visible read is populated at load');
+
   fs.writeFileSync(path.join(root, 'stocks', 'skills', 'foo', 'SKILL.md'), '---\ndescription: d\n---\nEDITED\n');
-  assert.match(loader.discover()[0].skills[0].content, /EDITED/);
+  assert.match(bodyOf(), /Go look it up/,
+    'still the old body — an edit alone does not reach a running plugin');
+
+  loader.rescan(engine);
+  assert.match(bodyOf(), /EDITED/, 'the re-scan is what refreshes it');
+});
+
+test('t672: a re-scan refreshes bundle content without re-registering the module', () => {
+  // ENTER for the test above, and the reason updateBundle exists rather than a
+  // re-register: reloading a live engine half needs a restart, so a refresh
+  // that went through register() would either throw on the duplicate id or
+  // launder stale module code into looking fresh.
+  const root = mkTree({ stocks: PACK });
+  const { loader } = mkLoader(root);
+  const engine = mkEngine();
+  loader.loadAll(engine);
+  const before = engine.catalog().find((r) => r.id === 'stocks');
+  assert.ok(before, 'ENTER: registered once');
+
+  const r = loader.rescan(engine);
+  assert.deepStrictEqual([r.added, r.removed, r.changed], [[], [], []],
+    'a content-only edit is not an add, a remove, or a restart-required change');
+  assert.strictEqual(engine.catalog().filter((x) => x.id === 'stocks').length, 1,
+    'and the plugin is still registered exactly once');
 });
 
 // ── Catalog ─────────────────────────────────────────────────────────────────
@@ -199,6 +233,29 @@ test('t672: catalog() carries skill and agent NAMES; bundles() carries the bodie
   assert.deepStrictEqual(engine.bundles(), [
     { id: 'stocks', shipped: true, skills: [{ name: 'foo', content: SKILL_MD }], agents: [{ name: 'bar', content: AGENT_MD }] },
   ], 'bundles() is the spawn read: contents, and only the plugins that have any');
+});
+
+test('t672: a disabled plugin yields no bundle for anyone, and bundles() hands out copies', () => {
+  // Spec §4. It falls out of bundles() iterating the same `registered` map
+  // catalog() uses, but the seat-visible read is worth asserting directly: this
+  // is the whole mechanism by which disabling a plugin drops its skills.
+  const engine = mkEngine();
+  engine.register('stocks', { activate() {} }, { hostApi: HOST_API_VERSION }, {
+    skills: [{ name: 'foo', content: SKILL_MD }],
+    agents: [{ name: 'bar', content: AGENT_MD }],
+  });
+  assert.strictEqual(engine.bundles().length, 1, 'ENTER: the bundle is on offer while registered');
+
+  // A caller that mutated what it got back would corrupt every later spawn.
+  const grabbed = engine.bundles()[0];
+  grabbed.skills[0].content = 'MUTATED';
+  grabbed.skills.push({ name: 'injected', content: 'x' });
+  const fresh = engine.bundles()[0];
+  assert.strictEqual(fresh.skills.length, 1, 'the host kept its own array');
+  assert.match(fresh.skills[0].content, /Go look it up/, 'and its own record');
+
+  engine.deactivate('stocks');
+  assert.deepStrictEqual(engine.bundles(), [], 'disabled: no bundle for any seat');
 });
 
 test('t672: an entry-less plugin registers and appears in the catalog', () => {

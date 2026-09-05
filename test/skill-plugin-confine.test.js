@@ -98,6 +98,14 @@ test('t672: a bundle dir is confined TWICE, and has no cleanup of its own', () =
   assert.ok(idGuard !== -1, 'the plugin id is confined against the seat\'s bundles/ dir');
   assert.ok(idGuard < body.indexOf('fs.rmSync'), 'and before the recursive delete');
 
+  // The fixture in plugin-bundle-spawn.test.js re-creates this function and
+  // cannot carry the mode, so 0600 is pinned here or nowhere: a bundle holds
+  // the same skill and agent bodies the two flat scaffolders write 0600.
+  const writes = body.match(/writeFileSync\(/g) || [];
+  const modes = body.match(/mode: 0o600/g) || [];
+  assert.strictEqual(modes.length, writes.length,
+    `every write in writeBundlePlugins is 0600 (${writes.length} writes, ${modes.length} moded)`);
+
   // Deliberately NO cleanupBundlePlugins: bundles/ lives INSIDE
   // skill-plugins/<seat>, which cleanupSkillPlugin already rm -rf's on exit. A
   // second deleter would be a second unconfined join for no new coverage.

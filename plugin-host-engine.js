@@ -703,7 +703,19 @@ function createPluginHostEngine(deps) {
     bundles() {
       return [...registered.values()]
         .filter((r) => r.skills.length || r.agents.length)
-        .map((r) => ({ id: r.id, shipped: r.shipped === true, skills: r.skills, agents: r.agents }));
+        .map((r) => ({
+          id: r.id,
+          shipped: r.shipped === true,
+          skills: r.skills.map((s) => ({ ...s })),
+          agents: r.agents.map((a) => ({ ...a })),
+        }));
+    },
+    updateBundle(pluginId, skills, agents) {
+      const rec = registered.get(String(pluginId));
+      if (!rec) return false;
+      rec.skills = Array.isArray(skills) ? skills : [];
+      rec.agents = Array.isArray(agents) ? agents : [];
+      return true;
     },
     setEnabled(pluginId, enabled) {
       const id = String(pluginId);

@@ -362,7 +362,10 @@ test('t672: a bundle agent with frontmatter the plugin loader drops is warned ab
   const res = await f.spawn('seat');
   const warns = (res && res.warnings) || [];
   assert.strictEqual(warns.length, 1);
-  assert.match(warns[0], /Agent "bar" sets permissionMode/);
+  // Namespaced, unlike a flat-library agent: two plugins may each ship a `bar`,
+  // and a bare name makes those two warnings indistinguishable. Flat agents
+  // stay bare (agent-plugin-spawn.test.js pins /"picky"/).
+  assert.match(warns[0], /Agent "stocks:bar" sets permissionMode/);
   const md = fs.readFileSync(path.join(bundleDir(f, 'seat', 'stocks'), 'agents', 'bar.md'), 'utf-8');
   assert.ok(!md.includes('permissionMode'), 'and the scaffolded file really omits it');
 });

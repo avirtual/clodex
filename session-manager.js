@@ -1468,7 +1468,7 @@ function createSessionManager(deps) {
               for (const b of writeBundles(name, wanted)) {
                 args.push('--plugin-dir', b.dir);
                 for (const s of b.skills) injectedSkills.push({ name: `${b.id}:${s.name}`, content: s.content });
-                for (const a of b.agents) injectedAgents.push({ ...a, qualified: `${b.id}:${a.name}` });
+                for (const a of b.agents) injectedAgents.push({ ...a, qualified: `${b.id}:${a.name}`, bundle: true });
               }
             } catch (e) {
               warnings.push(`Plugin-owned skills and agents could not be scaffolded for this session: ${(e && e.message) || e}`);
@@ -1481,7 +1481,7 @@ function createSessionManager(deps) {
           for (const rec of injectedAgents) {
             const dropped = DROPPED_AGENT_FIELDS.filter((f) => (rec.meta || {})[f]);
             if (dropped.length) {
-              warnings.push(`Agent "${rec.name}" sets ${dropped.join(', ')}, which the plugin loader ignores — that field has no effect on this session. Move the agent to .claude/agents/ if you need it.`);
+              warnings.push(`Agent "${rec.bundle ? rec.qualified : rec.name}" sets ${dropped.join(', ')}, which the plugin loader ignores — that field has no effect on this session. Move the agent to .claude/agents/ if you need it.`);
             }
           }
           try {
