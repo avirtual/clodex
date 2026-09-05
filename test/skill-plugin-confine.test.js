@@ -48,6 +48,7 @@ const CONFINED = [
   ['cleanupSkillPlugin', 'SKILL_PLUGINS_DIR'],
   ['writeAgentPlugin', 'AGENT_PLUGINS_DIR'],
   ['cleanupAgentPlugin', 'AGENT_PLUGINS_DIR'],
+  ['writeBundlePlugins', 'SKILL_PLUGINS_DIR'],
 ];
 
 test('every recursive delete of a plugin-scaffold dir is confined first', () => {
@@ -83,6 +84,29 @@ test('the two roots are siblings, so neither rebuild deletes the other', () => {
   assert.notStrictEqual(a, b, 'the two scaffold roots must be distinct dirs');
   assert.ok(!a.startsWith(`${b}/`) && !b.startsWith(`${a}/`),
     'neither scaffold root may nest inside the other');
+});
+
+test('t672: a bundle dir is confined TWICE, and has no cleanup of its own', () => {
+  const body = bodyOf('writeBundlePlugins');
+
+  // The seat name and the plugin id are two separate caller-supplied segments,
+  // and the rmSync below joins BOTH. Confining only the seat leaves the id free
+  // to walk back out of bundles/ and delete a sibling seat's scaffold.
+  assert.ok(body.includes(`confine(${'SKILL_PLUGINS_DIR'}, name)`),
+    'the seat name is confined against the skills root');
+  const idGuard = body.indexOf(`confine(path.join(seatDir, ${'BUNDLES_SUBDIR'})`);
+  assert.ok(idGuard !== -1, 'the plugin id is confined against the seat\'s bundles/ dir');
+  assert.ok(idGuard < body.indexOf('fs.rmSync'), 'and before the recursive delete');
+
+  // Deliberately NO cleanupBundlePlugins: bundles/ lives INSIDE
+  // skill-plugins/<seat>, which cleanupSkillPlugin already rm -rf's on exit. A
+  // second deleter would be a second unconfined join for no new coverage.
+  assert.ok(!SRC.includes('function cleanupBundlePlugins'),
+    'bundles die with the seat dir; a separate teardown would be a redundant delete');
+  const bundlesDecl = SRC.match(/^const BUNDLES_SUBDIR = .*$/m);
+  assert.ok(bundlesDecl, 'the bundles subdir name is declared at module scope');
+  assert.doesNotMatch(bundlesDecl[0], /path\.join|REGISTRY_DIR/,
+    'and it is a bare segment under the seat dir, not a root of its own — that nesting is what makes cleanupSkillPlugin reap it');
 });
 
 test('the write/cleanup call sites fail DIFFERENTLY, and deliberately so', () => {

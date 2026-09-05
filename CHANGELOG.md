@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **A plugin can now ship its own skills and agents, and a seat sees them only
+  when it has that plugin.** Drop `skills/<name>/SKILL.md` and `agents/<name>.md`
+  into a plugin folder and they arrive namespaced by the plugin's id — invoke a
+  skill as `/<plugin-id>:<skill>`, delegate to an agent as
+  `<plugin-id>:<agent>`. A seat whose plugin list excludes the plugin never sees
+  either, and disabling the plugin drops them at that seat's next start. A folder
+  carrying only skills or agents is now a valid plugin, so a pure content pack
+  needs no code.
+
 ## 5.29.1 — 2026-09-05
 
 - **A pipe planted in an agent's memory folder no longer hangs the app itself.**

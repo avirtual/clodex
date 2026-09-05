@@ -531,6 +531,7 @@ const SKILL_PLUGIN_NAME = 'clodex-skills';
 // rm -rf their own <root>/<session> on every spawn, so sharing a root would
 // make either one's rebuild delete the other's dir.
 const AGENT_PLUGINS_DIR = path.join(REGISTRY_DIR, 'agent-plugins');
+const BUNDLES_SUBDIR = 'bundles';
 
 
 
@@ -620,6 +621,48 @@ function cleanupAgentPlugin(name) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
+function writeBundlePlugins(name, bundles) {
+  const seatDir = confine(SKILL_PLUGINS_DIR, name);
+  if (seatDir === null) throw new Error(`invalid session name: ${name}`);
+  const out = [];
+  for (const b of bundles || []) {
+    const skillRecords = (b.skills || []).map((s) => ({ name: s.name, content: s.content }));
+    const agentRecords = (b.agents || []).map((a) => {
+      const { meta, body } = parseAgentFrontmatter(a.content);
+      return { name: a.name, meta, body };
+    });
+    const skillPlugin = buildSkillPlugin(skillRecords.map((s) => s.name), skillRecords, b.id);
+    const agentPlugin = buildAgentPlugin(agentRecords.map((a) => a.name), agentRecords, b.id);
+    if (!skillPlugin && !agentPlugin) continue;
+    const dir = confine(path.join(seatDir, BUNDLES_SUBDIR), b.id);
+    if (dir === null) throw new Error(`invalid plugin id: ${b.id}`);
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    const manifestDir = path.join(dir, '.claude-plugin');
+    ensureDir(manifestDir);
+    const manifest = (skillPlugin || agentPlugin).manifest;
+    fs.writeFileSync(path.join(manifestDir, 'plugin.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
+    for (const s of (skillPlugin ? skillPlugin.skills : [])) {
+      const sdir = path.join(dir, 'skills', s.name);
+      ensureDir(sdir);
+      fs.writeFileSync(path.join(sdir, 'SKILL.md'), s.skillMd, { mode: 0o600 });
+    }
+    if (agentPlugin) {
+      const agentsDir = path.join(dir, 'agents');
+      ensureDir(agentsDir);
+      for (const a of agentPlugin.agents) {
+        fs.writeFileSync(path.join(agentsDir, `${a.name}.md`), a.md, { mode: 0o600 });
+      }
+    }
+    out.push({
+      id: b.id,
+      dir,
+      skills: skillPlugin ? skillRecords : [],
+      agents: agentPlugin ? agentRecords : [],
+    });
+  }
+  return out;
+}
+
 
 const CLAUDE_SL_COMPONENTS = ['model', 'context', 'cost', 'cwd', 'git-branch'];
 const CODEX_SL_COMPONENTS = [
@@ -648,7 +691,7 @@ function rebuildAllStatusScripts(manager) {
 
 
 const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, AUTO_COMPACT, shouldAutoCompact, autoCompactDecision, isHumanPtyInput, draftChunkSignal, isDraftOpen, peerStatusLabel, shouldHoldDm, updateApplies, boxWirescopeView } = require('./proxy-util');
-const { buildAgentPlugin, qualifiedAgentName, denyAgentRules, BUILTIN_AGENTS, AGENT_PLUGIN_NAME, DROPPED_AGENT_FIELDS } = require('./agents-util');
+const { buildAgentPlugin, parseAgentFrontmatter, qualifiedAgentName, denyAgentRules, BUILTIN_AGENTS, AGENT_PLUGIN_NAME, DROPPED_AGENT_FIELDS } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { createSubagentStore, noteSubagentTurn, feedSince } = require('./subagent-ring');
 const { classifyNotification } = require('./attention');
@@ -1090,6 +1133,8 @@ const SessionManager = createSessionManager({
     writeVoiceMode,
     writeSkillPlugin,
     writeAgentPlugin,
+    writeBundlePlugins,
+    getPluginBundles: () => (pluginHost ? pluginHost.bundles() : []),
   getPersistence: () => persistence,
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,
