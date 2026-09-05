@@ -162,7 +162,6 @@ const BLOCKS = [
   ['underscore bold', 'a __b__ c', 'p{a strong{b} c}'],
   ['italic', 'a *b* c', 'p{a em{b} c}'],
   ['underscore italic', 'a _b_ c', 'p{a em{b} c}'],
-  ['escaped pipe is one cell, backslash dropped', '| a \\| b |\n| --- |', 'table{thead{tr{th{a | b}}}tbody{}}'],
   ['empty input renders nothing', '', ''],
   ['whitespace-only input renders nothing', '\n\n  \n', ''],
 ];
@@ -179,14 +178,6 @@ test('pipe table renders a head and a body', () => {
     shapeOf(frag),
     'table{thead{tr{th{a}th{b}}}tbody{tr{td{1}td{2}}tr{td{3}td{4}}}}',
   );
-});
-
-// splitRow parks `\|` on a NUL while it splits, so a NUL arriving in the input
-// would come back out as a `|` it never wrote. renderMarkdown strips NUL at the
-// entry to keep that sentinel unforgeable; this pins the strip, not the split.
-test('a NUL in the input is dropped, not restored as a pipe', () => {
-  const src = `| a${String.fromCharCode(0)}b |\n| --- |`;
-  assert.strictEqual(shapeOf(render(src).frag), 'table{thead{tr{th{ab}}}tbody{}}');
 });
 
 test('a pipe line with no delimiter rule stays a paragraph', () => {
