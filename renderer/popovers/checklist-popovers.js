@@ -499,7 +499,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (plugins) {
       const pr = await window.api.setSessionPlugins(name, plugins);
       if (!pr || !pr.ok) { alert(`Update plugins failed: ${pr && pr.error ? pr.error : 'unknown error'}`); return; }
-      refreshSidebarMeta();
+      refreshSidebarMeta({ includePr: false });
     }
     const r = await window.api.setSessionIntents(name, intents);
     if (!r || !r.ok) { alert(`Update intents failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
@@ -577,7 +577,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!plugins) return;
     const r = await window.api.setSessionPlugins(name, plugins);
     if (!r || !r.ok) { alert(`Update plugins failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
-    refreshSidebarMeta();
+    refreshSidebarMeta({ includePr: false });
     if (!restart) return;
     const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     const snapType = item ? item.dataset.type || null : null;

@@ -6473,7 +6473,7 @@ body {
       <div class="popover-title"><span>Plugins — <span id="plugins-popover-name"></span></span><button type="button" class="popover-close" id="plugins-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-plugins-list" class="agent-checklist"></div>
-      <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to this seat — no intents, no sidebar button, no drawer, no access rows; its verbs and access grants drop on Apply. Unticking here is what the 🔒 Intents popover's Plugins section does; that popover also edits the per-verb list.</span>
+      <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to this seat — no intents, no drawer, no access rows; its verbs and access grants drop on Apply. The Intents popover's Plugins section does the same on Claude seats; that popover also edits the per-verb list.</span>
       <label class="tools-popover-restart">
         <input type="checkbox" id="plugins-popover-restart">
         <span class="hint-text">Gate applies immediately. Restart now to also refresh the seat's prompt (until then it still lists a removed plugin's verbs, but the gate already bounces them).</span>
@@ -29173,7 +29173,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               alert(`Update plugins failed: ${pr && pr.error ? pr.error : "unknown error"}`);
               return;
             }
-            refreshSidebarMeta();
+            refreshSidebarMeta({ includePr: false });
           }
           const r = await window.api.setSessionIntents(name, intents);
           if (!r || !r.ok) {
@@ -29256,7 +29256,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             alert(`Update plugins failed: ${r && r.error ? r.error : "unknown error"}`);
             return;
           }
-          refreshSidebarMeta();
+          refreshSidebarMeta({ includePr: false });
           if (!restart) return;
           const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
           const snapType = item ? item.dataset.type || null : null;
