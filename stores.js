@@ -1736,12 +1736,22 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
 
   const ENV_DEFAULTS_SRC = envDefaultsFile || path.join(__dirname, 'resources', 'env-defaults.json');
 
-  function seedEnvDefaults() {
+  // Shared by every env-defaults entry point that would otherwise write into
+  // the real userData under `node --test` (t681): `restore()` used to clear
+  // `seeded` and save BEFORE this same refusal ran inside seedEnvDefaults(),
+  // so a refused restore still stripped the shipped keys off the list and
+  // left the seeder re-armed for the next real launch.
+  function refuseEnvWriteUnderTest() {
     if (process.env.NODE_TEST_CONTEXT
         && registryDir === path.join(os.homedir(), '.clodex')) {
       if (log) log.warn?.('stores', 'refusing to seed env defaults into the real userData under node --test; pass seams.registryDir');
-      return;
+      return true;
     }
+    return false;
+  }
+
+  function seedEnvDefaults() {
+    if (refuseEnvWriteUnderTest()) return;
     const defaults = loadEnvDefaults(ENV_DEFAULTS_SRC);
     const data = envScopes._load();
     const { writes, seeded } = planEnvSeed({ defaults, global: data.global || {}, seeded: data.seeded });
@@ -1755,6 +1765,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   const envDefaults = {
     list() { return loadEnvDefaults(ENV_DEFAULTS_SRC); },
     restore() {
+      if (refuseEnvWriteUnderTest()) return;
       const shipped = new Set(Object.keys(loadEnvDefaults(ENV_DEFAULTS_SRC)));
       const data = envScopes._load();
       data.seeded = (data.seeded || []).filter((k) => !shipped.has(k));

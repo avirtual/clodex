@@ -4266,6 +4266,7 @@ const prefsEnvValue = document.getElementById('prefs-env-value');
 const prefsEnvSecret = document.getElementById('prefs-env-secret');
 const prefsEnvAdd = document.getElementById('prefs-env-add');
 const prefsEnvRestore = document.getElementById('prefs-env-restore');
+const prefsEnvRestoreRow = document.getElementById('prefs-env-restore-row');
 const prefsEnvState = document.getElementById('prefs-env-state');
 
 function prefsEnvScopeArg() {
@@ -4290,7 +4291,7 @@ async function refreshPrefsEnv() {
       defaults = (d && d.ok && d.defaults) || {};
     } catch { defaults = {}; }
   }
-  if (prefsEnvRestore) prefsEnvRestore.style.display = scope === 'global' ? '' : 'none';
+  if (prefsEnvRestoreRow) prefsEnvRestoreRow.style.display = scope === 'global' ? '' : 'none';
   const res = await window.api.envScopesGet(scope);
   prefsEnvList.textContent = '';
   if (!res || res.ok === false) {

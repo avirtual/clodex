@@ -7155,7 +7155,7 @@ body {
           </label>
           <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
         </div>
-        <div class="prefs-row" style="margin-top: 8px;">
+        <div id="prefs-env-restore-row" class="prefs-row" style="margin-top: 8px;">
           <button id="prefs-env-restore" class="secondary" type="button" style="flex: none;" title="Bring back any of Clodex's shipped defaults you deleted. Values you edited are left alone.">Restore shipped defaults</button>
         </div>
         <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
@@ -37888,6 +37888,7 @@ Click for live activity`;
       var prefsEnvSecret = document.getElementById("prefs-env-secret");
       var prefsEnvAdd = document.getElementById("prefs-env-add");
       var prefsEnvRestore = document.getElementById("prefs-env-restore");
+      var prefsEnvRestoreRow = document.getElementById("prefs-env-restore-row");
       var prefsEnvState = document.getElementById("prefs-env-state");
       function prefsEnvScopeArg() {
         return prefsEnvScope && prefsEnvScope.value === "workspace" ? currentWorkspaceId || "default" : "global";
@@ -37909,7 +37910,7 @@ Click for live activity`;
             defaults = {};
           }
         }
-        if (prefsEnvRestore) prefsEnvRestore.style.display = scope === "global" ? "" : "none";
+        if (prefsEnvRestoreRow) prefsEnvRestoreRow.style.display = scope === "global" ? "" : "none";
         const res = await window.api.envScopesGet(scope);
         prefsEnvList.textContent = "";
         if (!res || res.ok === false) {
