@@ -160,13 +160,14 @@ test('DISCOVERY: no restart path re-seeds persistence by hand instead of using t
 });
 
 // t491. The success path is not the only writer of a pre-kill snapshot: every
-// restart's CATCH arm re-upserts one wholesale, and that arm is the LIKELIER one
+// restart's CATCH arm re-upserts one wholesale — `move`'s included, which is a
+// restart in every respect the guard cares about — and that arm is the LIKELIER one
 // in the scenario the guard exists for — the window is held open by a CLI slow to
 // die, and a CLI slow enough to hold it past waitForSessionExit's 8s is the one
 // whose restart then throws. An arm that restores `worktree` while another live
 // seat holds the checkout puts a second record on one tree.
 //
-// A SOURCE-SHAPE guard, and deliberately so. Two of the three arms are reachable
+// A SOURCE-SHAPE guard, and deliberately so. Most of these arms are reachable
 // at runtime only behind fixtures heavy enough that the pin would live somewhere
 // nobody looks (this was found by vacuity-proving each site: deleting the guard on
 // the reload and applySessionArgs arms left the whole suite green). The invariant
@@ -181,7 +182,7 @@ test('t491: every restart catch arm restores its snapshot through the tree guard
   // the arms in engine.js would fail this for a non-reason. A table that promises
   // nothing beats one that promises a check it performs badly, so these are what
   // the count's failure message names, nothing more.
-  const ARMS = ['restartSession', 'applySessionArgs', '[agent:context reload]'];
+  const ARMS = ['restartSession', 'applySessionArgs', 'move', '[agent:context reload]'];
   const seen = [];
   for (const file of ['engine.js', 'session-manager.js']) {
     const lines = fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n');
