@@ -77,9 +77,9 @@ function fakeHost() {
   const registered = [];
   return {
     registered,
-    register(id, mod, manifest) {
+    register(id, mod, manifest, opts) {
       if (id === 'boom') throw new Error('activate exploded');
-      registered.push({ id, mod, manifest });
+      registered.push({ id, mod, manifest, opts });
     },
   };
 }
@@ -561,6 +561,26 @@ test('discovery reads every configured root', () => {
   // has to be able to say so.
   const byId = Object.fromEntries(loader.discover().map((r) => [r.id, r.root]));
   assert.deepStrictEqual(byId, { alpha: 'core', beta: 'user' });
+});
+
+// t661: the loader is the ONLY thing that can call a plugin shipped, and the
+// `core` root is the only root that earns it. This is the first link of the
+// origin thread — if it breaks, every seat with no plugin list silently loses
+// every plugin, which no other pin in this file would see.
+test('t661: loadAll tells the host which plugins are SHIPPED, keyed on the core root', () => {
+  const core = mkTree({ alpha: { manifest: { ...OK_MANIFEST, id: 'alpha' }, files: { 'engine.js': engineFile } } });
+  const user = mkTree({ beta: { manifest: { ...OK_MANIFEST, id: 'beta' }, files: { 'engine.js': engineFile } } });
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: core, label: 'Built in' },
+    { id: 'user', dir: user, label: 'User' },
+  ]);
+  const host = fakeHost();
+  loader.loadAll(host);
+  assert.deepStrictEqual(host.registered.map((r) => r.id).sort(), ['alpha', 'beta'],
+    'ENTER: both halves loaded, so the origins below are a real comparison');
+  const byId = Object.fromEntries(host.registered.map((r) => [r.id, r.opts && r.opts.shipped]));
+  assert.deepStrictEqual(byId, { alpha: true, beta: false },
+    'the core-root plugin is shipped and the user-root one is not');
 });
 
 test('a root that does not exist is a legal, silent state', () => {

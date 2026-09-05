@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Custom plugins now reach only the seats that tick them: a plugin loaded from
+  `~/.clodex/plugins` or a registered folder is off by default for every seat,
+  while the plugins shipped with Clodex stay on. Seats that never had a plugin
+  list lose custom plugins until ticked under 🔌 Plugins….
+- A plugin's sidebar footer button is hidden on a seat that does not have it,
+  instead of dimmed.
+
 ## 5.28.0 — 2026-09-05
 
 - **Live Bash output now shows up for concurrent calls that run the same

@@ -1159,11 +1159,12 @@ test('t190: session-menu entries are hidden AND the stale act is refused', () =>
   assert.equal(picked, 1, 'the provider did not run a second time');
 });
 
-test('t655: the WINDOW-global slots stay REGISTERED and painted, and refuse instead', () => {
-  // A sidebar footer button belongs to the window, not to whichever session is
-  // active; REMOVING it on switch would reflow the footer. t655 keeps it painted
-  // and makes it carry the seat decision as state. Pinned so "make everything
-  // consistent" does not quietly turn the dim back into a vanish.
+test('t655: the WINDOW-global slots stay REGISTERED, and the overlay refuses instead', () => {
+  // The footer button is hidden on a seat that lacks the plugin (t661), but it
+  // stays REGISTERED: a disposal on seat switch would lose the registration the
+  // window owns, and nothing would bring it back on the way to a seat that has
+  // it. The overlay is not even hidden — it refuses, because it is opened by an
+  // act the operator just took.
   const { host, dom } = makeScopedHost(new Map([['demo|seat-a', false]]));
   const footer = el('div', 'sidebar-footer');
   dom.body.appendChild(footer);
@@ -1174,8 +1175,9 @@ test('t655: the WINDOW-global slots stay REGISTERED and painted, and refuse inst
       rhost.ui.surfaces.overlay({ id: 'o', mount: () => {} });
     },
   });
-  assert.ok(footer.querySelector('[data-plugin-footer="demo:b"]'),
-    'the footer button still PAINTS on a seat that does not have the plugin — no layout shift');
+  const btn = footer.querySelector('[data-plugin-footer="demo:b"]');
+  assert.ok(btn, 'the footer button\'s ELEMENT survives a seat that does not have the plugin');
+  assert.equal(btn.hidden, true, 'ENTER: and it really is the hidden case, not a seat that reaches');
   const counts = host._counts();
   assert.equal(counts.sections, 1, 'the settings section is registered regardless of the seat');
   assert.equal(counts.overlays, 1, 'and so is the overlay');
@@ -1252,12 +1254,12 @@ test('t190 REWORK: a stale data-act in the STATUS BAR is refused, like a stale m
   assert.equal(segClicks, 1, 'and its onClick never ran either');
 });
 
-// ── t655: the chrome carries the seat decision as STATE ─────────────────────
-// The per-session slots HIDE; the footer button and the overlay must not, or
-// the footer reflows on every seat switch. They dim and refuse instead. Every
-// assertion here is paired with a CONTROL on the SAME host and the SAME
-// registration, flipping only the seat — a button that never registered would
-// otherwise satisfy every "is not live" assertion.
+// ── t655/t661: what the chrome does on a seat that lacks the plugin ─────────
+// The footer button hides; the overlay refuses out loud instead, because it is
+// opened by an act the operator just took. Every assertion here is paired with a
+// CONTROL on the SAME host and the SAME registration, flipping only the seat — a
+// button that never registered would otherwise satisfy every "is not live"
+// assertion.
 function makeChromeHost(reaches, toasted) {
   const dom = installDom();
   const state = { active: 'seat-a', type: 'claude', isAgent: true, peerQ: false, peerC: false, relayouts: 0 };
@@ -1276,7 +1278,7 @@ function makeChromeHost(reaches, toasted) {
   return { host, state, dom };
 }
 
-test('t655: a footer button DIMS and refuses on a seat without the plugin, and undims on the way back', () => {
+test('t661: a footer button is HIDDEN on a seat without the plugin, and comes back on the way back', () => {
   const reaches = new Map([['demo|seat-a', true], ['demo|seat-b', false]]);
   const toasted = [];
   const { host, state, dom } = makeChromeHost(reaches, toasted);
@@ -1292,7 +1294,7 @@ test('t655: a footer button DIMS and refuses on a seat without the plugin, and u
   const btn = footer.querySelector('[data-plugin-footer="demo:b"]');
   // CONTROL: on a seat that HAS the plugin the button is live in every respect.
   assert.ok(btn, 'ENTER: the button really registered and painted');
-  assert.equal(btn.classList.contains('plugin-footer-dimmed'), false, 'CONTROL: undimmed on seat-a');
+  assert.equal(btn.hidden, false, 'CONTROL: shown on seat-a');
   assert.equal(btn.getAttribute('data-tip'), 'Open the workbench', 'CONTROL: the plugin\'s own tip');
   btn.fire('click');
   assert.equal(clicks, 1, 'CONTROL: the click reaches the plugin');
@@ -1300,26 +1302,24 @@ test('t655: a footer button DIMS and refuses on a seat without the plugin, and u
 
   state.active = 'seat-b';
   host.onSeatSwitched();
-  assert.ok(footer.querySelector('[data-plugin-footer="demo:b"]'),
-    'the button is still THERE — a removed button would reflow the footer');
-  assert.equal(btn.classList.contains('plugin-footer-dimmed'), true, 'it dims for the seat that lacks it');
-  assert.equal(btn.getAttribute('data-tip'), 'Not enabled for seat-b — tick it under Plugins',
-    'and the tip says which seat and where to fix it');
+  assert.equal(btn.hidden, true, 'it is hidden for the seat that lacks it');
+  // The click-time re-check survives the hide: it is the GATE, and a seat switch
+  // between two repaints can still leave a visible button one frame stale.
   btn.fire('click');
   assert.equal(clicks, 1, 'the click does NOT reach the plugin');
   assert.deepEqual(toasted, ['Workbench is not enabled for seat-b'],
-    'it refuses out loud — a button that looks live and does nothing is worse');
+    'and it still refuses out loud when a stale click does arrive');
 
   state.active = 'seat-a';
   host.onSeatSwitched();
-  assert.equal(btn.classList.contains('plugin-footer-dimmed'), false, 'switching back undims');
-  assert.equal(btn.getAttribute('data-tip'), 'Open the workbench', 'and restores the plugin\'s tip');
+  assert.equal(btn.hidden, false, 'switching back shows it again');
+  assert.equal(btn.getAttribute('data-tip'), 'Open the workbench', 'with the plugin\'s own tip');
 });
 
 test('t655: with NO active seat every footer button is live', () => {
   // "reaches() returns true for a falsy seat name" is the window-level reading:
-  // with no seat there is no seat decision. An empty workspace must not paint a
-  // footer full of dimmed buttons.
+  // with no seat there is no seat decision. An empty workspace must not paint an
+  // EMPTY footer either — the buttons come back.
   const reaches = new Map([['demo|seat-a', false]]);
   const toasted = [];
   const { host, state, dom } = makeChromeHost(reaches, toasted);
@@ -1332,11 +1332,11 @@ test('t655: with NO active seat every footer button is live', () => {
   const btn = footer.querySelector('[data-plugin-footer="demo:b"]');
   // ENTER: seat-a really is a seat this plugin does not reach, so the arm below
   // is the no-seat rule and not a fixture that reaches everything.
-  assert.equal(btn.classList.contains('plugin-footer-dimmed'), true, 'ENTER: dimmed while seat-a is active');
+  assert.equal(btn.hidden, true, 'ENTER: hidden while seat-a is active');
 
   state.active = null;
   host.onSeatSwitched();
-  assert.equal(btn.classList.contains('plugin-footer-dimmed'), false, 'no active seat ⇒ undimmed');
+  assert.equal(btn.hidden, false, 'no active seat ⇒ shown');
   btn.fire('click');
   assert.equal(clicks, 1, 'and the click runs');
   assert.deepEqual(toasted, [], 'nothing refused');

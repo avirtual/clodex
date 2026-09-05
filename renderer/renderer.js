@@ -978,9 +978,9 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
     }
   } catch {} finally { metaRefreshInFlight = false; }
   refreshSidebarView();
-  // The footer's dim is answered off sidebarMeta, which does not exist yet when
-  // loadPluginRenderers paints the buttons — without a repaint here the boot
-  // state is UNDIMMED for a seat that lacks the plugin, and on a single-seat
+  // Which footer buttons show is answered off sidebarMeta, which does not exist
+  // yet when loadPluginRenderers paints them — without a repaint here the boot
+  // state SHOWS a button for a seat that lacks the plugin, and on a single-seat
   // workspace no switch ever comes to correct it.
   pluginBar.renderFooterButtons();
 }

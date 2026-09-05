@@ -12,8 +12,9 @@
 // this plugin a capability?", which left every GLOBAL plugin visible everywhere;
 // it is now "does this seat HAVE this plugin?" (`seatHasPlugin` against the
 // seat's own `plugins` list), and every plugin is seat-gated. Grants are demoted
-// to a child of that decision. An ABSENT list is the living all-enabled default,
-// which is what keeps a pre-upgrade seat byte-identical.
+// to a child of that decision. An ABSENT list reaches the SHIPPED plugins only
+// (t661), which keeps a pre-upgrade seat unchanged in everything but the custom
+// plugins it never ticked.
 //
 // So the property under test here is an ABSENCE, which is exactly the shape
 // CLAUDE.md's `## Tests` section warns about: `deepEqual(x, [])` and
@@ -103,14 +104,46 @@ test('pluginGranted is STRICT — an absent list is a refusal, never a default g
   for (const absent of [undefined, null, 'p:turns', { 'p:turns': true }, 0]) {
     assert.strictEqual(pluginGranted('p', 'turns', absent), false,
       `a non-array grants value (${JSON.stringify(absent)}) is a refusal`);
-    assert.strictEqual(seatHasPlugin('p', absent), true,
-      'seatHasPlugin is the OPPOSITE polarity, deliberately: absent means the living '
-      + 'all-enabled default, so a pre-upgrade seat keeps every shipped plugin');
+    assert.strictEqual(seatHasPlugin('p', absent, true), true,
+      'seatHasPlugin is the OPPOSITE polarity for a SHIPPED plugin, deliberately: absent '
+      + 'means the shipped default, so a pre-upgrade seat keeps the shipped plugins');
   }
   assert.strictEqual(seatHasPlugin('p', ['q', 'r']), false,
     'a list that names other plugins does not reach this one');
   assert.strictEqual(seatHasPlugin('p', ['p']), true,
     'CONTROL: a list naming it does reach — so the refusal above is about the input, not a broken predicate');
+});
+
+// ── t661: the absent case splits on ORIGIN ──────────────────────────────────
+// One table over the two axes that decide reach, with every expected value a
+// LITERAL: computing it from `shipped || list.includes(id)` would assert only
+// that the test agrees with the code, and the whole point of the table is the
+// one row where the two axes disagree (custom + absent → false, the ONLY cell
+// this ticket changed).
+test('t661: an absent seat list reaches the SHIPPED plugins and no custom one', () => {
+  const rows = [
+    { what: 'shipped plugin, seat never edited', shipped: true, list: undefined, reaches: true },
+    { what: 'shipped plugin, seat list is null', shipped: true, list: null, reaches: true },
+    { what: 'custom plugin, seat never edited', shipped: false, list: undefined, reaches: false },
+    { what: 'custom plugin, seat list is null', shipped: false, list: null, reaches: false },
+    { what: 'custom plugin the seat NAMES', shipped: false, list: ['p'], reaches: true },
+    { what: 'shipped plugin the seat OMITS', shipped: true, list: ['q'], reaches: false },
+    { what: 'shipped plugin the seat names', shipped: true, list: ['p'], reaches: true },
+    { what: 'custom plugin a list omits', shipped: false, list: ['q'], reaches: false },
+    { what: 'shipped plugin, empty list', shipped: true, list: [], reaches: false },
+    { what: 'custom plugin, empty list', shipped: false, list: [], reaches: false },
+  ];
+  for (const r of rows) {
+    assert.strictEqual(seatHasPlugin('p', r.list, r.shipped), r.reaches, r.what);
+  }
+  // The origin argument is consulted ONLY in the absent case, and only `true`
+  // counts as shipped: a caller that cannot answer must not widen reach.
+  for (const junk of [undefined, null, 'core', 1, {}, 'true']) {
+    assert.strictEqual(seatHasPlugin('p', undefined, junk), false,
+      `a non-true origin (${JSON.stringify(junk)}) is custom — the origin question fails toward withholding`);
+    assert.strictEqual(seatHasPlugin('p', ['p'], junk), true,
+      'CONTROL: an explicit list is the word whatever the origin argument says');
+  }
 });
 
 // ── The manifest gate (plugin-loader.js) ────────────────────────────────────
@@ -403,6 +436,72 @@ test('host.intents.register carries the MANIFEST\'s scope into the registry row'
     assert.ok(only.includes('fromglobal'), 'a ticked plugin\'s verb surfaces');
     assert.strictEqual(only.includes('fromscoped'), false,
       'and an unticked one\'s does not, whatever its scope says');
+  } finally { cleanup(); }
+}));
+
+// t661 through an ENGINE CALLER, not the leaf: `register` is where origin enters
+// the system and `catalogRows` is one of the seven readers downstream of it, so
+// this fails if the thread is broken at any link between them — which the leaf's
+// own table cannot see.
+test('t661: the loader\'s origin reaches the registry, and only a shipped verb survives an absent list', () => withReset(() => {
+  const { engine, cleanup } = mkEngine();
+  try {
+    engine.register('shipped-plug', {
+      activate(h) { h.intents.register(mkRow('fromshipped')); },
+    }, { hostApi: HOST_API_VERSION }, { shipped: true });
+    engine.register('custom-plug', {
+      activate(h) { h.intents.register(mkRow('fromcustom')); },
+    }, { hostApi: HOST_API_VERSION }, { shipped: false });
+
+    assert.strictEqual(registry.pluginRowFor('fromshipped').shipped, true,
+      'ENTER: the shipped row carries its origin');
+    assert.strictEqual(registry.pluginRowFor('fromcustom').shipped, false,
+      'ENTER: and the custom row carries the other one — both really registered');
+
+    const absent = registry.catalogRows(null).map((r) => r.type);
+    assert.ok(absent.includes('fromshipped'),
+      'a seat with no plugin list still gets the shipped verb');
+    assert.strictEqual(absent.includes('fromcustom'), false,
+      'and does NOT get the custom one — the stranded-seat case, which is the point of t661');
+
+    const ticked = registry.catalogRows(['custom-plug']).map((r) => r.type);
+    assert.ok(ticked.includes('fromcustom'),
+      'CONTROL: ticking the custom plugin surfaces its verb, so the absence above is the origin rule '
+      + 'and not a registration that failed');
+    assert.strictEqual(ticked.includes('fromshipped'), false,
+      'and an explicit list that omits the shipped plugin still hides it — origin decides the ABSENT case only');
+  } finally { cleanup(); }
+}));
+
+// The origin cannot be self-declared: a manifest field named `shipped` is the
+// obvious thing a plugin author would try, and it must not be the thing that
+// decides. Only the loader's fourth argument does.
+test('t661: a plugin cannot declare itself shipped through its manifest', () => withReset(() => {
+  const { engine, cleanup } = mkEngine();
+  try {
+    engine.register('liar-plug', {
+      activate(h) { h.intents.register(mkRow('fromliar')); },
+    }, { hostApi: HOST_API_VERSION, shipped: true, root: 'core' });
+    assert.strictEqual(registry.pluginRowFor('fromliar').shipped, false,
+      'ENTER: the row registered, and the manifest claim did not reach it');
+    assert.strictEqual(registry.catalogRows(null).includes('fromliar'), false,
+      'so an absent seat list does not get the verb');
+    assert.ok(registry.catalogRows(['liar-plug']).map((r) => r.type).includes('fromliar'),
+      'CONTROL: the verb is reachable when the seat ticks the plugin');
+  } finally { cleanup(); }
+}));
+
+// The catalog is the renderer's ONLY view of origin, so a `shipped` that never
+// leaves the engine hides every custom plugin's chrome on every seat.
+test('t661: catalog() carries shipped as a boolean, from the register call and not the manifest', () => withReset(() => {
+  const { engine, cleanup } = mkEngine();
+  try {
+    engine.register('ship', { activate() {} }, { hostApi: HOST_API_VERSION }, { shipped: true });
+    engine.register('cust', { activate() {} }, { hostApi: HOST_API_VERSION });
+    engine.register('liar', { activate() {} }, { hostApi: HOST_API_VERSION, shipped: true });
+    const byId = new Map(engine.catalog().map((p) => [p.id, p.shipped]));
+    assert.deepStrictEqual([...byId.entries()], [['ship', true], ['cust', false], ['liar', false]],
+      'the shipped one is true; an omitted opts and a manifest claim are both false');
   } finally { cleanup(); }
 }));
 
@@ -1246,9 +1345,19 @@ test('REWORK NIT: intents.register after deactivate throws rather than defaultin
 // be pinned here is that the renderer calls THAT and not something else.
 test('t655: pluginReachesSession is keyed on the seat list, and the scoped-id set is gone', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  assert.match(src, /function pluginReachesSession\(pluginId, sessionName\) \{\n\s*return seatHasPlugin\(pluginId, \(sidebarMeta\.get\(sessionName\) \|\| \{\}\)\.plugins\);\n\}/,
-    'the renderer answers off sidebarMeta.plugins through the shared leaf — a local '
-    + 'ticked-list re-derivation would drift from the main-process gate');
+  assert.match(src, /function pluginReachesSession\(pluginId, sessionName\) \{\n\s*const rec = getPluginCatalogCache\(\)\.find\(\(p\) => String\(p\.id\) === String\(pluginId\)\);\n\s*return seatHasPlugin\(pluginId, \(sidebarMeta\.get\(sessionName\) \|\| \{\}\)\.plugins, !!\(rec && rec\.shipped\)\);\n\}/,
+    'the renderer answers off sidebarMeta.plugins through the shared leaf, with origin from '
+    + 'the catalog — a local ticked-list re-derivation, or an origin it decided for itself, '
+    + 'would drift from the main-process gate');
+  // t661: the catalog cache is filled by dialogs, so the BOOT path has to fill it
+  // too or `shipped` reads false for everything and the shipped plugins' footer
+  // buttons stay hidden until a session dialog happens to open.
+  const at = src.indexOf('async function loadPluginRenderers(');
+  assert.ok(at > 0, 'ENTER: loadPluginRenderers was located');
+  const body = src.slice(at, src.indexOf('\n}', at));
+  assert.match(body, /await window\.api\.pluginCatalog\(\)/, 'ENTER: this is the function that fetches the catalog');
+  assert.match(body, /setPluginCatalogCache\(catalog \|\| \[\]\)/,
+    'the boot fetch fills the cache pluginReachesSession reads its origins from');
   // The grants-axis predicate is RETIRED, not merely unused: a surviving export
   // is an invitation to re-key the UI onto grants and re-open the split between
   // what the chrome shows and what the engine allows.
@@ -1395,19 +1504,19 @@ test('t655: the design decision is that an empty catalog still writes a list, ne
     + 'so a seat stored as [] draws every row UNTICKED and can be reopened');
 });
 
-// ── t655 r1 MUST-FIX 1: the dim needs a painter on the two non-switch paths ──
+// ── t655 r1 MUST-FIX 1: the paint needs a painter on the two non-switch paths ─
 // `renderFooterButtons` is called at plugin-registration time and from
-// `onSeatSwitched()`, and nowhere else. That leaves the dim wrong in the
-// PERMISSIVE direction on two reachable paths, and the chrome tests cannot see
-// it because they drive `onSeatSwitched()` by hand — a missing CALLER is
-// invisible to a test that supplies the call itself. Hence a source scan.
+// `onSeatSwitched()`, and nowhere else. That leaves the footer wrong on two
+// reachable paths, and the chrome tests cannot see it because they drive
+// `onSeatSwitched()` by hand — a missing CALLER is invisible to a test that
+// supplies the call itself. Hence a source scan.
 //
 //   BOOT: loadPluginRenderers paints the buttons before sidebarMeta exists, so
-//   pluginReachesSession reads `.plugins` off undefined and seatHasPlugin
-//   returns the living-default true — undimmed for a seat that lacks the
-//   plugin. On a single-seat workspace no later switch ever corrects it.
+//   pluginReachesSession reads `.plugins` off undefined and the absent case
+//   resolves on origin alone — a shipped plugin's button shows for a seat that
+//   unticked it. On a single-seat workspace no later switch ever corrects it.
 //   LAST SEAT CLOSED: the `activeSession = null` branch is not a switch, so
-//   buttons dimmed for the seat that just left stay dimmed with no seat active.
+//   buttons hidden for the seat that just left stay hidden with no seat active.
 test('t655 r1: refreshSidebarMeta repaints the footer, closing the boot race', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const at = src.indexOf('async function refreshSidebarMeta(');
@@ -1418,11 +1527,11 @@ test('t655 r1: refreshSidebarMeta repaints the footer, closing the boot race', (
   assert.match(body, /refreshSidebarView\(\);/,
     'ENTER: the existing repaint call is still here — this pin sits beside it');
   assert.match(body, /pluginBar\.renderFooterButtons\(\);/,
-    'the footer must be repainted once sidebarMeta lands, or the dim keeps answering off a '
+    'the footer must be repainted once sidebarMeta lands, or it keeps answering off a '
     + 'meta map that was empty when the buttons were first painted');
 });
 
-test('t655 r1: closing the LAST seat repaints the footer, so nothing stays dimmed', () => {
+test('t655 r1: closing the LAST seat repaints the footer, so nothing stays hidden', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   // The branch, not the whole function: `activeSession = null` is its only
   // occurrence outside the top-level declaration, and the assertion below is
@@ -1436,5 +1545,5 @@ test('t655 r1: closing the LAST seat repaints the footer, so nothing stays dimme
     'ENTER: the branch\'s existing repaint is here — the new call sits beside it');
   assert.match(branch, /pluginBar\.renderFooterButtons\(\);/,
     'with no active seat every button goes live again; this branch is not a switch, '
-    + 'so onSeatSwitched never runs for it and nothing else would undim them');
+    + 'so onSeatSwitched never runs for it and nothing else would un-hide them');
 });
