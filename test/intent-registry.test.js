@@ -86,8 +86,14 @@ function parseIntentLegacy(rawLine) {
     // can never be read as the assignee. Same lockstep rule as t80's filter.
     if (sub === 'add') {
       const park = argToks.includes('park');
-      const rest = argToks.filter((t) => t !== 'park');
-      return { type: 'task', sub, who: rest[0] || null, id: null, park, body };
+      // t673: `reviewer:<template>` joins `park` as a keyed modifier, filtered
+      // out of the positionals. Updated here in lockstep with parseTask, per the
+      // rule below — a shape change that lands in only one copy stops the
+      // differential covering the verb at all.
+      const rvTok = /^reviewer:(.+)$/;
+      const reviewer = (argToks.find((t) => rvTok.test(t)) || '').replace(/^reviewer:/, '') || null;
+      const rest = argToks.filter((t) => t !== 'park' && !rvTok.test(t));
+      return { type: 'task', sub, who: rest[0] || null, id: null, park, reviewer, body };
     }
     if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
     // t80: list carries an optional state filter from the bracket. Updated here
@@ -102,7 +108,13 @@ function parseIntentLegacy(rawLine) {
     // the oracle against the walk (2000 generated lines) found this and only
     // this. Keep the lockstep rule above in force: a new sub-verb lands here
     // in the same commit, or the differential silently stops covering it.
-    if (sub === 'park' || sub === 'start') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
+    if (sub === 'start') {
+      const rvTok = /^reviewer:(.+)$/;
+      const reviewer = (argToks.find((t) => rvTok.test(t)) || '').replace(/^reviewer:/, '') || null;
+      const rest = argToks.filter((t) => !rvTok.test(t));
+      return { type: 'task', sub, id: rest[0] || null, who: null, reviewer, body: '' };
+    }
+    if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
