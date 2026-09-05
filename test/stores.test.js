@@ -2287,11 +2287,10 @@ test('seed: the hand prompt denies both false beliefs about closing a ticket', (
 // The compact rule is a THRESHOLD with an exception, and both prompt copies must
 // carry the same one: hand-673 spent three rework rounds reaching 300k under an
 // append copy that said "Do not compact" flat, while the system copy said to
-// compact at 100k on a NEW dispatch only. The pins are directional — the two
-// doesNotMatch arms are the states that produced the incident (a flat ban, and a
-// rule that fires at `done`), and without them a revert restores a green suite
-// over the contradiction. `at ~150k` is pinned as a literal in both files rather
-// than derived, since the whole rule is the number.
+// compact at 100k on a NEW dispatch only. The doesNotMatch arm is the state that
+// produced the incident, and without it a revert of the append copy restores a
+// green suite over the flat ban. `~150k` is pinned as a literal in both files
+// rather than derived, since the whole rule is the number.
 const REPO_APPEND_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'append');
 test('seed: both hand prompt copies compact on REWORK past 150k, and never at done', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
@@ -2302,7 +2301,16 @@ test('seed: both hand prompt copies compact on REWORK past 150k, and never at do
       `${label} copy keeps the done carve-out — a compact there discards what rework needs`);
     assert.match(text, /JOURNAL\.md and the verdict file/,
       `${label} copy says what the pickup note must point at, or the compact loses the thread`);
-    assert.match(text, /journal/i, `${label} copy orders the journal BEFORE the compact`);
+    // Ordering, not mere presence: a compact that runs before the journal is
+    // written loses exactly what the pickup note is supposed to point at.
+    assert.match(text, /journal the (state of the )?branch( state)? first/,
+      `${label} copy puts the journal BEFORE the compact`);
+    // Anchored at the journal step, not at the file's FIRST compact intent —
+    // the system copy's START CLEAN bullet already carries one above this rule.
+    const j = text.indexOf('journal the');
+    assert.ok(j > 0, `ENTER: ${label} copy actually contains the journal step being ordered`);
+    assert.ok(text.indexOf('[agent:context compact]', j) > j,
+      `${label} copy puts a compact intent AFTER the journal step, not before it`);
     assert.doesNotMatch(text, /^Do not compact\. /m,
       `${label} copy must not carry the flat ban that made a hand work a rework at 300k`);
   }
@@ -2546,7 +2554,10 @@ test('prompts.json migration runs once during construction', () => {
     fs.writeFileSync(path.join(userData, 'prompts.json'),
       JSON.stringify([{ id: '1', title: 'My Prompt', body: 'HELLO' }]));
     const stores = initStores(userData, { registryDir });
-    const migrated = stores.promptLibrary.list().find(p => p.kind === 'append');
+    // By NAME, not "the first append row": this construction seeds too, and
+    // `list()` sorts, so a shipped append prompt sorting ahead of the migrated
+    // one silently became the row every assertion below read.
+    const migrated = stores.promptLibrary.list().find(p => p.kind === 'append' && p.name === 'my-prompt');
     assert.ok(migrated, 'legacy prompt migrated to an append file');
     assert.strictEqual(migrated.body, 'HELLO');
     // the legacy file is renamed aside so it never re-runs
