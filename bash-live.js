@@ -407,10 +407,11 @@ function createBashLive(deps) {
     for (let i = 1; i < obs.length; i += 1) {
       if (!(obs[i - 1].startedAt < obs[i].startedAt)) return null;
     }
+    const earliest = obs[0].startedAt;
     const timed = [];
     for (const c of cands) {
       const born = creationTimeOf(c.path);
-      if (born === null) return null;
+      if (born === null || born < earliest) return null;
       timed.push({ c, born });
     }
     timed.sort((a, b) => a.born - b.born);
@@ -461,9 +462,16 @@ function createBashLive(deps) {
       return;
     }
 
-    const byPath = new Map();
-    for (const c of free) byPath.set(c.path, c);
     let resolvedAny = false;
+
+    const ownerNeedles = new Map();
+    const needleOfOwner = (id) => {
+      if (ownerNeedles.has(id)) return ownerNeedles.get(id);
+      const o = byId.get(id);
+      const n = o ? argvNeedle(o.command) : null;
+      ownerNeedles.set(id, n);
+      return n;
+    };
 
     const groups = new Map();
     for (const o of waiting) {
@@ -478,9 +486,14 @@ function createBashLive(deps) {
       const hits = procs.filter((p) => typeof p.args === 'string' && p.args.includes(needle));
       if (!hits.length) continue;
       const files = new Set(hits.map((h) => h.file).filter((f) => st.candidates.has(f)));
-      if (files.size !== group.length) continue;
-      const cands = [...files].map((f) => byPath.get(f));
-      if (cands.some((c) => !c || c.owner)) continue;
+      const cands = [];
+      for (const f of files) {
+        const c = st.candidates.get(f);
+        if (c.owner && needleOfOwner(c.owner) === needle) continue;
+        cands.push(c);
+      }
+      if (cands.length !== group.length) continue;
+      if (cands.some((c) => c.owner)) continue;
       const pairs = group.length === 1
         ? [[group[0], cands[0]]]
         : pairByOrder(group, cands);

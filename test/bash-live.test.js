@@ -374,9 +374,7 @@ test('two concurrent calls are told apart by argv, each getting ITS OWN file', a
 // its own. Reach the same resolver with two calls whose text is byte-identical
 // -- which is what N subagents running the same command produce -- and one
 // needle matches BOTH processes, the file set has size 2, and master's
-// `files.size !== 1` refused both for the whole run. Measured live: two agents
-// on identical loops, resolved=false for their entire life, while the same
-// command run solo streamed 73 ticks.
+// `files.size !== 1` refused both for the whole run.
 //
 // So a needle group is resolved as a GROUP: K observers, K distinct free files,
 // paired by `startedAt` ascending against file creation time ascending. In the
@@ -390,12 +388,15 @@ test('two concurrent calls are told apart by argv, each getting ITS OWN file', a
 // pairing keys on is the fixture's and not the clock's. Real wall-clock times
 // (offset from now), because an observer older than RESOLVE_WINDOW_MS is
 // dropped before assignment and would vacuum out every assertion downstream.
+// Returns the base so a stubbed creation time can be placed AFTER the group's
+// earliest start, which the resolver requires of a file it will pair.
 function observeSeries(root, cwd, ids, command, uidOpts) {
   const base = Date.now() - 1000;
   ids.forEach((id, i) => {
     observe(root, 'seat', { id, command, cwd, sessionId: 'sess' },
       { ...uidOpts, now: () => base + i * 10 });
   });
+  return base;
 }
 
 async function birthOrdered(files) {
@@ -580,7 +581,7 @@ test('identical text whose files share a creation time refuses the whole group',
   fs.mkdirSync(tasks, { recursive: true });
 
   const cmd = 'go build ./...';
-  observeSeries(root, cwd, ['tu-x', 'tu-y'], cmd, { uid: 7, tmpdir: root });
+  const base = observeSeries(root, cwd, ['tu-x', 'tu-y'], cmd, { uid: 7, tmpdir: root });
   const fa = path.join(tasks, 'bTIEA0001.output');
   const fb = path.join(tasks, 'bTIEB0001.output');
   fs.writeFileSync(fa, 'A-OUT\n');
@@ -599,9 +600,11 @@ test('identical text whose files share a creation time refuses the whole group',
     } finally { live.stopAll(); }
   };
 
+  // Both times sit after the group's earliest start, or the born-before-the-group
+  // guard would refuse and this would pin that instead of the tie.
   const tied = await run(statStub({
-    [fa]: { birthtimeMs: 5000, mtimeMs: 5000 },
-    [fb]: { birthtimeMs: 5000, mtimeMs: 9000 },
+    [fa]: { birthtimeMs: base + 100, mtimeMs: base + 100 },
+    [fb]: { birthtimeMs: base + 100, mtimeMs: base + 900 },
   }));
   assert.deepStrictEqual(tied.map((r) => r.id).sort(), ['tu-x', 'tu-y'], 'ENTER: both rows exist');
   assert.deepStrictEqual(tied.map((r) => r.resolved), [false, false],
@@ -611,8 +614,8 @@ test('identical text whose files share a creation time refuses the whole group',
   // birthtimes, does resolve -- so the tie is what refused it and not some
   // unrelated thing about the fixture never reaching the pairing.
   const split = await run(statStub({
-    [fa]: { birthtimeMs: 5000, mtimeMs: 5000 },
-    [fb]: { birthtimeMs: 5001, mtimeMs: 9000 },
+    [fa]: { birthtimeMs: base + 100, mtimeMs: base + 100 },
+    [fb]: { birthtimeMs: base + 101, mtimeMs: base + 900 },
   }));
   const byId = Object.fromEntries(split.map((r) => [r.id, r.output]));
   assert.match(byId['tu-x'], /A-OUT/, 'ENTER: one birthtime apart and the earlier call gets the earlier file');
@@ -626,7 +629,7 @@ test('mtime stands in for a missing birthtime, and only while it stays strict', 
   fs.mkdirSync(tasks, { recursive: true });
 
   const cmd = 'cargo test';
-  observeSeries(root, cwd, ['tu-m', 'tu-n'], cmd, { uid: 7, tmpdir: root });
+  const base = observeSeries(root, cwd, ['tu-m', 'tu-n'], cmd, { uid: 7, tmpdir: root });
   const fa = path.join(tasks, 'bMTA00001.output');
   const fb = path.join(tasks, 'bMTB00001.output');
   fs.writeFileSync(fa, 'M-OUT\n');
@@ -646,8 +649,8 @@ test('mtime stands in for a missing birthtime, and only while it stays strict', 
   };
 
   const fell = await run(statStub({
-    [fa]: { birthtimeMs: 0, mtimeMs: 4000 },
-    [fb]: { birthtimeMs: 0, mtimeMs: 4001 },
+    [fa]: { birthtimeMs: 0, mtimeMs: base + 400 },
+    [fb]: { birthtimeMs: 0, mtimeMs: base + 401 },
   }));
   const byId = Object.fromEntries(fell.map((r) => [r.id, r.output]));
   assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-m', 'tu-n'], 'ENTER: both rows exist');
@@ -655,18 +658,146 @@ test('mtime stands in for a missing birthtime, and only while it stays strict', 
   assert.match(byId['tu-n'], /N-OUT/, 'and the second call gets the second file');
 
   const tied = await run(statStub({
-    [fa]: { birthtimeMs: 0, mtimeMs: 4000 },
-    [fb]: { birthtimeMs: 0, mtimeMs: 4000 },
+    [fa]: { birthtimeMs: 0, mtimeMs: base + 400 },
+    [fb]: { birthtimeMs: 0, mtimeMs: base + 400 },
   }));
   assert.deepStrictEqual(tied.map((r) => r.resolved), [false, false],
     'the fallback is not a weaker rule: a tie in mtime refuses exactly as a tie in birthtime does');
 
   const unusable = await run(statStub({
     [fa]: { birthtimeMs: NaN, mtimeMs: NaN },
-    [fb]: { birthtimeMs: NaN, mtimeMs: 8000 },
+    [fb]: { birthtimeMs: NaN, mtimeMs: base + 800 },
   }));
   assert.deepStrictEqual(unusable.map((r) => r.resolved), [false, false],
     'and a file whose times are unreadable refuses rather than sorting as zero');
+});
+
+test('a candidate born BEFORE the group started cannot be paired into it', async (t) => {
+  // The file a call writes is created by the CLI a moment AFTER its PreToolUse
+  // hook stamps `startedAt` -- measured +9.8ms on this box -- so a free candidate
+  // older than the earliest member of a group was written by some OTHER call and
+  // must never be paired into it.
+  //
+  // Reachable, and it is a MISATTRIBUTION rather than a missed row: a same-text
+  // call C that went unresolved past RESOLVE_WINDOW_MS has its observer dropped
+  // while its .output stays a candidate (the file is unlinked only at completion)
+  // and its process keeps carrying the needle. Twins A and B then start; on the
+  // tick where A's file is a candidate and B's is not yet, the group is {A,B} and
+  // the files are {C, A} -- two of each. Without this guard A is painted with C's
+  // output and B with A's.
+  const root = tmpRoot(t);
+  const cwd = '/proj/stale';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'tail -f /var/log/system.log';
+  const base = observeSeries(root, cwd, ['tu-a', 'tu-b'], cmd, { uid: 7, tmpdir: root });
+  const stale = path.join(tasks, 'bSTALE001.output');
+  const mine = path.join(tasks, 'bMINE0001.output');
+  fs.writeFileSync(stale, 'C-OUTPUT-FROM-A-DEAD-OBSERVER\n');
+  fs.writeFileSync(mine, 'A-OUT\n');
+
+  const owners = () => [
+    { pid: '9401', args: realArgv(cmd), file: stale },
+    { pid: '9402', args: realArgv(cmd), file: mine },
+  ];
+  const run = async (statFile) => {
+    const live = createBashLive({ REGISTRY_DIR: root, resolveOwners: owners, statFile });
+    try {
+      live.read('seat');
+      await sleep(150);
+      return live.read('seat');
+    } finally { live.stopAll(); }
+  };
+
+  const refused = await run(statStub({
+    [stale]: { birthtimeMs: base - 5000, mtimeMs: base - 5000 },
+    [mine]: { birthtimeMs: base + 50, mtimeMs: base + 50 },
+  }));
+  assert.deepStrictEqual(refused.map((r) => r.id).sort(), ['tu-a', 'tu-b'],
+    'ENTER: both rows exist, so the refusal is over the real pair');
+  assert.deepStrictEqual(refused.map((r) => r.resolved), [false, false],
+    'a file older than the group is someone else\'s, and pairing it would paint the wrong row');
+  assert.ok(refused.every((r) => !/C-OUTPUT/.test(r.output)),
+    'and in particular the dead call\'s bytes reach neither row');
+
+  // ENTER for the refusal: the SAME fixture with the stale file born after the
+  // group does resolve, so it is the birth time that refused and not the shape.
+  const ok = await run(statStub({
+    [stale]: { birthtimeMs: base + 20, mtimeMs: base + 20 },
+    [mine]: { birthtimeMs: base + 50, mtimeMs: base + 50 },
+  }));
+  const byId = Object.fromEntries(ok.map((r) => [r.id, r.output]));
+  assert.match(byId['tu-a'], /C-OUTPUT/, 'ENTER: born after the group, the earlier file pairs to the earlier call');
+  assert.match(byId['tu-b'], /A-OUT/, 'ENTER: and the later file to the later call');
+});
+
+test('a twin that joins AFTER its sibling claimed resolves to its own file', async (t) => {
+  // The staggered fan-out, and the case FINDINGS measured directly: "the moment
+  // a1a953 joined with IDENTICAL text, a1a953 got 0x resolved while a8bc06 kept
+  // streaming". The sibling's claim does not end when it is made -- its file
+  // stays a candidate and its process keeps carrying the shared needle -- so the
+  // joiner sees two files under one needle and, counted naively, is refused for
+  // as long as its sibling runs. A fan-out whose calls do not all become visible
+  // within one probe is the NORMAL case, not a corner.
+  //
+  // A file already owned by a call carrying THIS needle is a settled claim and is
+  // excluded from the count. Ownership by a DIFFERENT-needle call still counts,
+  // which is what keeps 'an ALREADY-OWNED file still counts as a competing claim'
+  // (needle `bee` against group `aye`) refusing.
+  const root = tmpRoot(t);
+  const cwd = '/proj/stagger';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+
+  const cmd = 'npm run watch';
+  const opts = { uid: 7, tmpdir: root };
+  const base = Date.now() - 1000;
+  const fileA = path.join(tasks, 'bFIRST001.output');
+  const fileB = path.join(tasks, 'bSECOND01.output');
+
+  observe(root, 'seat', { id: 'tu-first', command: cmd, cwd, sessionId: 'sess' },
+    { ...opts, now: () => base });
+  fs.writeFileSync(fileA, 'FIRST-OUT\n');
+
+  let joined = false;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: () => (joined
+      ? [
+        { pid: '9501', args: realArgv(cmd), file: fileA },
+        { pid: '9502', args: realArgv(cmd), file: fileB },
+      ]
+      : [{ pid: '9501', args: realArgv(cmd), file: fileA }]),
+    statFile: statStub({
+      [fileA]: { birthtimeMs: base + 10, mtimeMs: base + 10 },
+      [fileB]: { birthtimeMs: base + 510, mtimeMs: base + 510 },
+    }),
+  });
+  t.after(() => live.stopAll());
+
+  live.read('seat');
+  await sleep(150);
+  const first = live.read('seat');
+  assert.strictEqual(first.length, 1, 'ENTER: only the first twin is in flight so far');
+  assert.strictEqual(first[0].resolved, true,
+    'ENTER: and it really claimed its file, so its claim is SETTLED below rather than pending');
+
+  observe(root, 'seat', { id: 'tu-joiner', command: cmd, cwd, sessionId: 'sess' },
+    { ...opts, now: () => base + 500 });
+  fs.writeFileSync(fileB, 'JOINER-OUT\n');
+  joined = true;
+  live.read('seat');
+  await sleep(150);
+  const rows = live.read('seat');
+
+  const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+  assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-first', 'tu-joiner'],
+    'ENTER: both twins have rows');
+  assert.strictEqual(byId['tu-joiner'].resolved, true,
+    'the joiner resolves even though its sibling holds a file under the same needle');
+  assert.match(byId['tu-joiner'].output, /JOINER-OUT/, 'and it gets ITS OWN file, not its sibling\'s');
+  assert.match(byId['tu-first'].output, /FIRST-OUT/, 'while the sibling keeps streaming its own');
 });
 
 test('a wrapper and its forked child sharing one file do not defeat resolution', async (t) => {
