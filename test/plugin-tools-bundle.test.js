@@ -18,6 +18,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -194,6 +195,14 @@ test('verify.js stages a plugin\'s own subdirectories, so an engine can require 
     entry: { engine: 'engine.js' },
   }, null, 2));
 
+  // Marker so the stage's own copy (not the source, which the code never
+  // touches) can be told apart — verify.js does not report its scratch path,
+  // so the stage dir is found by diffing os.tmpdir() before/after the run.
+  // `clodex-verify-data-*` (the UI-settings tmp dir verify.js also mints)
+  // shares the prefix, so it is excluded explicitly rather than by count.
+  const isStageDir = (f) => f.startsWith('clodex-verify-') && !f.startsWith('clodex-verify-data-');
+  const before = new Set(fs.readdirSync(os.tmpdir()).filter(isStageDir));
+
   const r = run(VERIFY, [dir]);
 
   // ENTER: activation must have been REACHED. An unstaged lib/ fails here, and
@@ -205,6 +214,12 @@ test('verify.js stages a plugin\'s own subdirectories, so an engine can require 
   assert.strictEqual(r.code, 0, `a multi-file engine conforms; verify exited ${r.code}\n${r.out}`);
   assert.match(r.out, /PASS {2}ipc tag\(\) answers {2}— -> "from-lib"/,
     'and the value came through the required module, not a stub');
+
+  const after = fs.readdirSync(os.tmpdir()).filter((f) => isStageDir(f) && !before.has(f));
+  assert.strictEqual(after.length, 1, `ENTER: exactly one new stage dir, found ${after.length}`);
+  const stagedPluginDir = path.join(os.tmpdir(), after[0], 'lib-plugin');
+  assert.strictEqual(fs.existsSync(path.join(stagedPluginDir, 'node_modules')), false,
+    'node_modules is skipped by the stage copy, not merely present-and-unread');
   assert.strictEqual(fs.existsSync(path.join(dir, 'node_modules', 'junk', 'index.js')), true,
     'the source node_modules is untouched by the run');
 });
