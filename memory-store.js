@@ -31,6 +31,22 @@ const MEMORY_ID_RE = /^mem-\d+-[a-z0-9]+$/;
 
 const CORE_META_KEYS = ['id', 'scope', 'learned_at', 'source'];
 
+function readUnitFile(file) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY
+      | (fs.constants.O_NOFOLLOW || 0)
+      | (fs.constants.O_NONBLOCK || 0));
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1) return null;
+    return fs.readFileSync(fd, 'utf-8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
 function serializeMemoryUnit(meta, body) {
   const lines = ['---'];
   for (const k of CORE_META_KEYS) {
@@ -101,8 +117,10 @@ function createMemoryStore(rootDir) {
       const out = [];
       for (const f of files) {
         if (!f.endsWith('.md')) continue;
+        const raw = readUnitFile(path.join(dir, f));
+        if (raw === null) continue;
         try {
-          const { meta, body } = parseMemoryUnit(fs.readFileSync(path.join(dir, f), 'utf-8'));
+          const { meta, body } = parseMemoryUnit(raw);
           out.push({
             id: meta.id || f.replace(/\.md$/, ''),
             scope: meta.scope || '',
@@ -170,9 +188,8 @@ function createMemoryStore(rootDir) {
       if (!MEMORY_AGENT_RE.test(agent || '')) throw new Error(`invalid agent name: ${agent}`);
       if (!MEMORY_ID_RE.test(String(id || ''))) throw new Error(`invalid unit id: ${id}`);
       const file = this._file(agent, id);
-      let raw;
-      try { raw = fs.readFileSync(file, 'utf-8'); }
-      catch { throw new Error(`no unit ${id}`); }
+      const raw = readUnitFile(file);
+      if (raw === null) throw new Error(`no unit ${id}`);
       const { meta, body } = parseMemoryUnit(raw);
       if (on) meta[key] = 'true'; else delete meta[key];
       if (!meta.id) meta.id = id;

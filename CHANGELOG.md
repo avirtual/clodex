@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **A pipe planted in an agent's memory folder no longer hangs the app itself.**
+  The 5.29.x fix covered the memory overlay; the same blocking read was still in
+  the core store, which runs at agent boot and on every memory recall — a pipe
+  there froze Clodex rather than one panel. Recall now also refuses hardlinked
+  units, which the overlay already hid, so the two agree on what counts as a
+  memory.
+
 - **Editing a session while a plugin is enabled elsewhere no longer drops that
   plugin from the session on save.** A plugin a session used but that was
   globally off had no row in the dialog's Plugins list and was carried through

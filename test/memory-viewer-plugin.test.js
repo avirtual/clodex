@@ -340,8 +340,23 @@ test('memory-viewer: a HARDLINK planted in the agent dir is neither listed nor r
   } finally { fs.rmSync(outside, { recursive: true, force: true }); cleanup(); }
 });
 
+const VIEWER_ENGINE_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'plugins', 'memory-viewer', 'engine.js'), 'utf-8');
+
+// Declared BEFORE the FIFO subject because it is what keeps that subject's
+// failure readable: a blocking open never returns, so it stops the event loop
+// the test timeout itself lives on and the runner hangs with zero output
+// instead of reddening. This subject turns that regression into one red line,
+// and the subject below skips when it fails so the run still finishes.
+test('memory-viewer: the unit open keeps O_NONBLOCK — without it a planted FIFO hangs the suite', () => {
+  assert.match(VIEWER_ENGINE_SRC, /O_NONBLOCK/,
+    'a blocking open on a planted FIFO hangs the overlay, and hangs this suite with no output');
+});
+
 test('memory-viewer: a FIFO planted in the agent dir is refused without blocking the read',
-  { skip: process.platform === 'win32' ? 'mkfifo and O_NOFOLLOW are POSIX-only' : false },
+  { skip: process.platform === 'win32'
+    ? 'mkfifo and O_NOFOLLOW are POSIX-only'
+    : (/O_NONBLOCK/.test(VIEWER_ENGINE_SRC) ? false : 'O_NONBLOCK is gone from the engine — see the source-shape pin above') },
   async () => {
     // A blocking open on a writerless FIFO never returns, and readUnits runs
     // inside a synchronous IPC handler: the whole overlay hangs, so the
