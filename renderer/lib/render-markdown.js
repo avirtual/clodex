@@ -221,7 +221,10 @@ function renderBlocks(lines, parent, doc, depth = 0) {
 function renderMarkdown(text) {
   const doc = document;
   const frag = doc.createDocumentFragment();
-  const lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
+  const lines = String(text == null ? '' : text)
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u0000/g, '')
+    .split('\n');
   return renderBlocks(lines, frag, doc);
 }
 
