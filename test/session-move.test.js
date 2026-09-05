@@ -108,9 +108,54 @@ function mkMove({ entries = [], teamHome = null, createThrows = null } = {}) {
   m.create = async (...args) => {
     created.push(args);
     if (createThrows) throw new Error(createThrows);
-    m.sessions.set(args[0], { name: args[0], cwd: args[2], backend: null, pty: { pid: 2, kill() {} } });
+    // agentType, like the real create(): _notifyComposition returns on its
+    // absence, so a stub omitting it makes every 'moved in' pin below vacuous.
+    const type = args[1];
+    const spawned = args[0];
+    m.sessions.set(spawned, {
+      name: spawned, cwd: args[2], backend: null,
+      agentType: (type === 'claude' || type === 'codex') ? type : null,
+      // Frees the map slot, like the real onExit — a second, sequential move on
+      // the same seat waits on exactly that and otherwise sits out _waitForExit.
+      pty: { pid: 2, kill() { m.sessions.delete(spawned); } },
+    });
   };
-  return { m, store, persistence, created };
+
+  // move() arms `setTimeout(() => sigkillPid(pid, …), 5000)`, and sigkillPid calls
+  // the REAL process.kill. The test process outlives the timer, so an unintercepted
+  // run SIGKILLs whatever the host happens to have at the seeded pid. Capture rather
+  // than perform — same reason as killsDuring in test/sigkill-pid-guard.test.js.
+  // Depth-counted because two overlapping move() calls are themselves a subject
+  // here: a naive save/restore pair would leave the inner stub installed for good.
+  const kills = [];
+  const armed = [];
+  let depth = 0;
+  let realKill = null;
+  let realSetTimeout = null;
+  const patch = () => {
+    if (depth++ > 0) return;
+    realKill = process.kill;
+    realSetTimeout = global.setTimeout;
+    process.kill = (pid, sig) => { kills.push({ pid, sig }); };
+    // ONLY the 5s backstop is held back. _waitForExit polls on a 100ms timer in
+    // the same window, and swallowing that one hangs the move it is inside.
+    // A source change to the delay would empty `armed` — the ENTER assertion
+    // below fails loudly on that rather than letting the real kill through.
+    global.setTimeout = (cb, ms) => {
+      if (ms === 5000) { armed.push(cb); return { unref() {}, close() {} }; }
+      return realSetTimeout(cb, ms);
+    };
+  };
+  const unpatch = () => {
+    if (--depth > 0) return;
+    process.kill = realKill;
+    global.setTimeout = realSetTimeout;
+  };
+  const realMove = m.move.bind(m);
+  m.move = async (...args) => { patch(); try { return await realMove(...args); } finally { unpatch(); } };
+  const fireBackstops = () => { patch(); try { for (const cb of armed.splice(0)) cb(); } finally { unpatch(); } };
+
+  return { m, store, persistence, created, kills, fireBackstops };
 }
 
 // A live session whose pty.kill() actually frees the map slot, the way the real
@@ -334,14 +379,20 @@ test('a NON-archived record is left alone — move does not invent an archive st
 // ------------------------------------------------------------ re-entrancy
 
 // Two overlapping moves (a double-click on the menu item, or a peer racing the
-// operator) both used to pass the live check. The second's create() throws
-// "already exists" and its catch arm then upserts ITS destination over a seat now
-// running somewhere else — a record naming a folder the live process is not in.
+// operator). The second's create() throws "already exists" and its catch arm then
+// upserts ITS destination over a seat now running somewhere else — a record naming
+// a folder the live process is not in.
+//
+// The gate is a name Set held for the whole call, NOT `_moving` on the live
+// session: `_moving` exists only while a session object does, so on a not-live
+// record (the test below) both callers passed it. Once the first move kills the
+// pty the session object is gone too, and the window a second move slips through
+// is most of the first one.
 test('a second move while one is in flight is refused, and rewrites nothing', async () => {
   const dir = mkTmpRoot('clodex-move-');
   const { m, store, created } = mkMove({ entries: [BASE] });
   const s = seedLive(m, 'seat');
-  s._moving = true;
+  m._movingNames.add('seat');
 
   const r = await m.move('seat', dir);
   assert.strictEqual(r.ok, false);
@@ -349,6 +400,43 @@ test('a second move while one is in flight is refused, and rewrites nothing', as
   assert.strictEqual(store[0].cwd, '/old', 'the record still names the folder the live process is in');
   assert.deepStrictEqual(created, [], 'and nothing was respawned');
   assert.strictEqual(m.sessions.get('seat'), s, 'the in-flight move\'s process was not killed a second time');
+});
+
+test('two concurrent moves on a NOT-LIVE record: the second is refused, one respawn happens', async () => {
+  const a = mkTmpRoot('clodex-move-a-');
+  const b = mkTmpRoot('clodex-move-b-');
+  const { m, store, created } = mkMove({ entries: [BASE] });
+  // No session object, so there is no `_moving` flag anywhere to read — the old
+  // gate passed both of these and the loser's catch arm rewrote the winner's cwd.
+  assert.strictEqual(m.sessions.get('seat'), undefined, 'ENTER: nothing live under that name');
+
+  const [r1, r2] = await Promise.all([m.move('seat', a), m.move('seat', b)]);
+  const refused = [r1, r2].filter((r) => r.error === 'move already in progress');
+  assert.strictEqual(refused.length, 1, 'exactly one of the two was refused');
+  assert.strictEqual(created.length, 1, 'and exactly one respawn happened');
+  assert.strictEqual(store[0].cwd, created[0][2],
+    'the record names the folder the one surviving respawn was given');
+});
+
+test('the name is released when the move ends — a later move on the same seat is not refused forever', async () => {
+  const a = mkTmpRoot('clodex-move-a-');
+  const b = mkTmpRoot('clodex-move-b-');
+  const { m, store } = mkMove({ entries: [BASE] });
+  seedLive(m, 'seat');
+  assert.strictEqual((await m.move('seat', a)).ok, true, 'ENTER: the first move succeeded');
+  const r = await m.move('seat', b);
+  assert.strictEqual(r.ok, true, `a second, sequential move must work (got: ${r.error})`);
+  assert.strictEqual(store[0].cwd, b);
+});
+
+test('the name is released even when the move THROWS its way out', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m } = mkMove({ entries: [BASE] });
+  seedLive(m, 'seat');
+  m._waitForExit = async () => { throw new Error('boom'); };
+  await assert.rejects(() => m.move('seat', dir), /boom/);
+  assert.strictEqual(m._movingNames.has('seat'), false,
+    'a name left in the Set by an early throw wedges that seat against every later move, for the life of the app');
 });
 
 // -------------------------------------------------------- failure degrade
@@ -435,6 +523,32 @@ test('the renderer rebuilds a failed row from res.kept, not just a toast', () =>
   // beside it would put two rows under one data-name.
   assert.ok(body.indexOf('removeSession(name') < body.indexOf('addFailedSessionToSidebar('),
     'the live row is torn down BEFORE the ghost row is added');
+});
+
+// The exit-TIMEOUT arm again, one step later. There the live row is still up, so
+// the branch above stashes instead of drawing — and the pty that outlasted
+// _waitForExit dies a moment later, firing session-exit → removeSession, which
+// has no `failed` guard and would wipe a row drawn beside it. So the ghost has to
+// be drawn FROM the exit handler, the way archivingSessions does it. Source-shape
+// for the same reason as the pin above: an Electron sidebar and a late pty death.
+test('the renderer defers the ghost row to session-exit when the live row is still up', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
+  const fn = src.slice(src.indexOf('function moveSessionWithPicker'));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
+  assert.ok(/sessions\.has\(name\)/.test(body), 'it asks whether the live row survived the failure');
+  assert.ok(/movingFailed\.set\(/.test(body), 'and stashes the row identity rather than drawing it beside the live one');
+
+  const handler = src.slice(src.indexOf('window.api.onSessionExit('));
+  const hBody = handler.slice(0, handler.indexOf('\n});\n') + 1);
+  assert.ok(/movingFailed\.get\(name\)/.test(hBody), 'the exit handler reads the stash');
+  assert.ok(/movingFailed\.delete\(name\)/.test(hBody), 'and clears it, so a later natural exit does not redraw a ghost');
+  assert.ok(/addFailedSessionToSidebar\(/.test(hBody), 'and it is the exit handler that draws the ghost');
+  // removeSession is what wipes the row, so a read taken after it is a read of
+  // nothing — same ordering trap the archivingSessions stash sits in.
+  assert.ok(hBody.indexOf('movingFailed.get(name)') < hBody.indexOf('removeSession(name)'),
+    'the stash is read BEFORE removeSession, and the ghost added after');
+  assert.ok(hBody.indexOf('removeSession(name)') < hBody.indexOf('addFailedSessionToSidebar('),
+    'the ghost is added after the live row is gone — two rows under one data-name otherwise');
 });
 
 // -------------------------------------------- the real onExit wiring
@@ -586,11 +700,17 @@ function mkTeamHome() {
   const home = mkTmpRoot('clodex-move-home-');
   const inRepo = mkTmpRoot('clodex-move-inrepo-');
   const outRepo = mkTmpRoot('clodex-move-outrepo-');
-  const dir = pathReal.join(home, 'teams', 'alpha');
-  fsReal.mkdirSync(dir, { recursive: true });
-  fsReal.writeFileSync(pathReal.join(dir, 'team.json'),
-    JSON.stringify({ root: inRepo, lead: 'lead', roles: { lead: { prompt: 'p' } } }));
-  return { home, inRepo, outRepo };
+  const betaRepo = mkTmpRoot('clodex-move-beta-');
+  const outRepo2 = mkTmpRoot('clodex-move-outrepo2-');
+  const write = (team, root, lead) => {
+    const dir = pathReal.join(home, 'teams', team);
+    fsReal.mkdirSync(dir, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(dir, 'team.json'),
+      JSON.stringify({ root, lead, roles: { lead: { prompt: 'p' }, dev: { prompt: 'p' } } }));
+  };
+  write('alpha', inRepo, 'lead');
+  write('beta', betaRepo, 'blead');
+  return { home, inRepo, outRepo, betaRepo, outRepo2 };
 }
 
 test('team re-derivation: a seat moved INTO a team\'s repo joins that team', async () => {
@@ -615,6 +735,160 @@ test('team re-derivation: a seat moved OUT of a team\'s repo leaves that team', 
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
   assert.strictEqual(r.team, null, 'the result reports no team');
   assert.strictEqual(m.teamNameFor(store[0].cwd), null);
+});
+
+// ------------------------------------------------- composition deltas
+
+// Re-deriving the team is only half of a move across teams: the OLD lead's roster
+// is now stale and the NEW lead never learns a seat arrived. kill() and archive()
+// are the two existing departure notifiers and neither is on this path, and the
+// arrival notifier _maybeInjectComposition returns early on `rosterSentAt`, which
+// every seat that has run carries — so without an explicit pair of calls here
+// both leads are silently wrong.
+//
+// The seat is named `alpha-dev` so its role differs on the two sides: `dev` under
+// alpha (prefix match), none under beta. A body asserted as a literal would pass
+// against a role resolved from the wrong team otherwise.
+function mkDeltas({ from, to, teamHome, live = true, createThrows = null }) {
+  const { m, store, created } = mkMove({
+    entries: [{ ...BASE, name: 'alpha-dev', cwd: from }], teamHome, createThrows,
+  });
+  // `cwd` explicitly: the shipped session object always carries one and
+  // _notifyComposition resolves the OLD team off it, so a fixture omitting it
+  // makes every departure pin below assert an absence for the wrong reason.
+  if (live) seedLive(m, 'alpha-dev', { cwd: from });
+  const passive = [];
+  m._deliverPassive = (target, sender, body, kind) => passive.push({ target, sender, body, kind });
+  m._rebakeDigest = () => {};
+  const seatIn = (name, cwd) => m.sessions.set(name, { name, agentType: 'claude', cwd });
+  return { m, store, created, passive, seatIn, move: () => m.move('alpha-dev', to) };
+}
+
+test('a seat moved OUT of team alpha: alpha\'s lead is told it left', async () => {
+  const { home, inRepo, outRepo } = mkTeamHome();
+  const d = mkDeltas({ from: inRepo, to: outRepo, teamHome: home });
+  d.seatIn('lead', inRepo);
+  assert.strictEqual(d.m.teamNameFor(inRepo), 'alpha', 'ENTER: it starts on alpha');
+  assert.strictEqual(d.m.teamNameFor(outRepo), null, 'ENTER: and lands teamless');
+
+  const r = await d.move();
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(d.passive, [{
+    target: 'lead', sender: 'team',
+    body: '[team alpha] seat alpha-dev moved out (role: dev)',
+    kind: 'dm',
+  }], 'exactly one delta, to the OLD lead, resolved against the OLD cwd');
+});
+
+test('a seat moved INTO team beta: beta\'s lead is told it arrived', async () => {
+  const { home, betaRepo, outRepo } = mkTeamHome();
+  const d = mkDeltas({ from: outRepo, to: betaRepo, teamHome: home });
+  d.seatIn('blead', betaRepo);
+  assert.strictEqual(d.m.teamNameFor(outRepo), null, 'ENTER: it starts teamless');
+  assert.strictEqual(d.m.teamNameFor(betaRepo), 'beta', 'ENTER: and lands on beta');
+
+  const r = await d.move();
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(d.passive, [{
+    target: 'blead', sender: 'team',
+    body: '[team beta] seat alpha-dev moved in',
+    kind: 'dm',
+  }], 'the arrival body, with no role — `alpha-dev` matches no beta role');
+});
+
+test('a move between two teams tells BOTH leads, each about its own side', async () => {
+  const { home, inRepo, betaRepo } = mkTeamHome();
+  const d = mkDeltas({ from: inRepo, to: betaRepo, teamHome: home });
+  d.seatIn('lead', inRepo);
+  d.seatIn('blead', betaRepo);
+  assert.strictEqual(d.m.teamNameFor(inRepo), 'alpha', 'ENTER: alpha on one side');
+  assert.strictEqual(d.m.teamNameFor(betaRepo), 'beta', 'ENTER: beta on the other');
+
+  const r = await d.move();
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(d.passive.map((p) => `${p.target}: ${p.body}`), [
+    'lead: [team alpha] seat alpha-dev moved out (role: dev)',
+    'blead: [team beta] seat alpha-dev moved in',
+  ], 'departure first, arrival second — and neither lead hears the other team\'s half');
+});
+
+test('a NOT-LIVE record still tells the old lead — there is no session object to read the old cwd off', async () => {
+  const { home, inRepo, outRepo } = mkTeamHome();
+  const d = mkDeltas({ from: inRepo, to: outRepo, teamHome: home, live: false });
+  d.seatIn('lead', inRepo);
+  assert.strictEqual(d.m.sessions.get('alpha-dev'), undefined, 'ENTER: nothing live under that name');
+
+  const r = await d.move();
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(d.passive.map((p) => p.body),
+    ['[team alpha] seat alpha-dev moved out (role: dev)'],
+    'the departure is built from the persisted entry, not from a session that is not there');
+});
+
+test('a move WITHIN one team is no membership change — no delta at all', async () => {
+  const { home, inRepo } = mkTeamHome();
+  const sub = pathReal.join(inRepo, 'sub');
+  fsReal.mkdirSync(sub, { recursive: true });
+  const d = mkDeltas({ from: inRepo, to: sub, teamHome: home });
+  d.seatIn('lead', inRepo);
+  // ENTER: both sides really do resolve to the SAME team. Without this the empty
+  // `passive` below is equally true of a fixture where neither side has a team.
+  assert.strictEqual(d.m.teamNameFor(inRepo), 'alpha');
+  assert.strictEqual(d.m.teamNameFor(sub), 'alpha');
+
+  const r = await d.move();
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(d.passive, [], 'the lead already has this seat and still has it');
+});
+
+test('a move between two TEAMLESS folders is silent', async () => {
+  const { home, inRepo, outRepo, outRepo2 } = mkTeamHome();
+  const d = mkDeltas({ from: outRepo, to: outRepo2, teamHome: home });
+  d.seatIn('lead', inRepo); // a live lead exists — so an empty result is a gate, not an empty box
+  assert.strictEqual(d.m.teamNameFor(outRepo), null, 'ENTER: teamless on both sides');
+  assert.strictEqual(d.m.teamNameFor(outRepo2), null);
+
+  const r = await d.move();
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(d.passive, []);
+});
+
+test('a FAILED respawn sends no delta — the seat is in neither team in any usable sense', async () => {
+  const { home, inRepo, betaRepo } = mkTeamHome();
+  const d = mkDeltas({ from: inRepo, to: betaRepo, teamHome: home, createThrows: 'spawn exploded' });
+  d.seatIn('lead', inRepo);
+  d.seatIn('blead', betaRepo);
+
+  const r = await d.move();
+  assert.strictEqual(r.kept, true, 'ENTER: the failure arm ran');
+  assert.deepStrictEqual(d.passive, [],
+    'the retry row carries the new cwd, and a later successful retry goes through create()');
+});
+
+// -------------------------------------------------------- the sigkill backstop
+
+// seedLive seeds a real-looking pid and move() arms a real `process.kill(pid,
+// SIGKILL)` at 5s. The test process outlives that timer, so an uncaptured run
+// SIGKILLs whatever the HOST has at that pid. mkMove intercepts; this is the
+// ENTER that the interception is not vacuous.
+test('ENTER: the move backstop really is armed for the live pid, and would really call process.kill', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, kills, fireBackstops } = mkMove({ entries: [BASE] });
+  seedLive(m, 'seat');
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(kills, [], 'nothing has fired yet — the backstop is on a delay');
+  fireBackstops();
+  assert.deepStrictEqual(kills, [{ pid: 4242, sig: 'SIGKILL' }],
+    'the seeded pid reaches process.kill — captured here, and NOT performed against the host');
+});
+
+test('a move on a NOT-LIVE seat arms no backstop — there is no process to kill', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, kills, fireBackstops } = mkMove({ entries: [BASE] });
+  await m.move('seat', dir);
+  fireBackstops();
+  assert.deepStrictEqual(kills, []);
 });
 
 // ---------------------------------------------------------- the menu item

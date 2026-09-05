@@ -17,6 +17,8 @@ blocks a release.
   keeping its configuration and conversation.** If the restart in the new folder
   fails, the seat stays in the sidebar as a retry/forget row rather than
   disappearing until the next launch.
+- **A moved seat's old and new team leads are told it left and arrived**, so
+  neither lead's roster goes quietly stale when a move changes team membership.
 - **New Session refuses a taken name as you type and keeps the dialog open on
   any refusal.** The field now says whether the name belongs to a live session
   or an archived one and greys out Create, and a create that is refused anyway
