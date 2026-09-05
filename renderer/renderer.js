@@ -639,6 +639,35 @@ function restartSessionWithReattach(name) {
   });
 }
 
+function moveSessionWithPicker(name) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapType = item ? item.dataset.type || null : null;
+  const snapBackend = item ? item.dataset.backend || null : null;
+  const snapNoWire = item ? item.dataset.noWire === '1' : false;
+  return window.api.selectDirectory().then((dir) => {
+    if (!dir) return;
+    return window.api.moveSession(name, dir).then((res) => {
+      if (!res || !res.ok) {
+        if (res && res.kept) {
+          removeSession(name, { keepPersisted: true });
+          addFailedSessionToSidebar({
+            name, type: res.type || snapType, cwd: res.cwd,
+            error: res.error, team: res.team || null, backend: snapBackend,
+          });
+        }
+        showToast(`Move failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name });
+        return;
+      }
+      if (snapType || res.type) {
+        createTerminal(name);
+        addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire);
+        switchSession(name);
+      }
+      showToast(`${name} moved to ${res.cwd}, restarting`, { name });
+    });
+  });
+}
+
 window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background }) => {
   switch (action) {
     case 'editArgs':
@@ -646,6 +675,9 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
       break;
     case 'restart':
       restartSessionWithReattach(name);
+      break;
+    case 'move':
+      moveSessionWithPicker(name);
       break;
     case 'reattach':
       if (type) {

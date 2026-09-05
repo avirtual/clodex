@@ -130,6 +130,19 @@ function bodyAfter(src, anchor) {
 // reads `beforeKill`, not `entry`, and a derived expectation would paper over
 // exactly that. `call` likewise: the manager is `manager` in four of them and
 // `this` inside SessionManager.
+// DELIBERATELY ABSENT: session-manager.js's `move(name, newCwd)`. The mint census
+// tells you a `mint: false` site is also a row here, and that rule holds for the
+// five below — but move is a mint:false site that CHANGES the cwd on purpose, so
+// it fails both assertions by construction rather than by defect. Its third
+// argument is `newCwd`, not `entry.cwd` (the whole feature), and it reads
+// `entry.worktree` to refuse a ticket seat, which the second test forbids. Adding
+// it here to "complete" the table would pin the opposite of what move means.
+//
+// The worktree read is a REFUSAL guard, not provenance a spawn consults: move
+// never passes it to create(). The staleness this file warns about still touches
+// it in one direction — a seat whose tree was removed by hand keeps the pointer
+// and is refused a move it could safely take. Conservative, and the recovery is
+// the same delete-and-recreate the operator has today.
 const RESUME_SITES = [
   {
     file: 'ipc-handlers.js',

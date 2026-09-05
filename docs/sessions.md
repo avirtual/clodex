@@ -189,9 +189,13 @@ error that takes the process down) → `_sendToSession('session-exit')`
 **before** `_cleanup` (cleanup removes the session from the map that window
 resolution needs; the reverse order strands a dead sidebar tab) → remote
 notify → persistence (only a *bash natural exit* removes the entry — an
-`_archived` bash shell keeps it) → `_cleanup`. The `expected` flag on the
-exit event folds in `_archived` alongside `_userKilled`/`_shuttingDown`, so
-an archive exit stays silent (no crash toast).
+`_archived` or `_moving` bash shell keeps it) → `_cleanup`. Both questions are
+answered by one leaf, `exitDisposition`: `expected` folds in `_archived` and
+`_moving` alongside `_userKilled`/`_shuttingDown` (so neither an archive nor a
+move exit raises a crash toast), and the record-drop is its exact complement for
+a bash row — `dropRecord === !agentType && !expected`. They are computed together
+because a flag added to one and not the other makes an expected exit also drop
+the record.
 
 `_cleanup` runs on every exit path; the parked-DM dir is removed **only on
 explicit user-kill** (`_userKilled`) — unconditional removal would eat
@@ -227,6 +231,51 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
+| Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
+
+**Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
+"same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown
+name, a relative or missing or non-directory destination, an unchanged cwd, and a
+seat living in a ticket worktree (that checkout belongs to the ticket loop). It
+does NOT route through `kill()`, which drops the persistence record
+unconditionally — the record is exactly what a move must keep. Instead it sets
+`_moving` on the live session (read by `exitDisposition`, so the exit is
+*expected* and no crash toast fires), kills the pty with the usual 5s SIGKILL
+fallback, waits for the map slot to free, rewrites `cwd`
+(`persistence.setCwd`) and re-creates from the surviving record in the same
+workspace with `--resume`. Everything else — name, sessionId, prompts, tools,
+agents, plugins, env, stripLevel, label, createdAt — is carried by the record,
+which is why a move needs neither `_preserveAcrossRestart` nor the stripLevel/
+label re-assert every kill()-based respawn owes: those rebuild a dropped record
+from spawn args, while create()'s upsert here spread-merges over one still
+standing.
+Team membership is re-derived from the new cwd by `create()`'s own `resolveTeam`,
+so a seat moved into a team's repo joins that team and one moved out leaves it.
+An archived record is un-stamped (`setArchived(name, false)`) as part of the move,
+because the move spawns it live and the stamp would otherwise bring it back dimmed
+next launch. The `create()` catch arm clears it a second time: that arm re-upserts
+the snapshot read at the top of `move()`, which still carries `archivedAt`, and
+`upsert` spread-merges — so the stamp comes back unless it is cleared after. The
+snapshot there must stay an inline `{ ...entry }` literal: the t491 scanner in
+`test/preserve-across-restart.test.js` finds every restart catch arm by that shape,
+and hoisting it into a variable makes the arm invisible to it.
+
+A second `move()` while one is in flight is refused off the live session's
+`_moving` flag: both used to pass the live check, and the loser's catch arm would
+then upsert ITS destination over a seat running in the winner's.
+
+Both failure arms — the exit that outlasts `_waitForExit`, and a `create()` that
+throws — return `{ ok:false, kept:true, error, type, cwd, team }`, and the renderer
+turns that into the same **failed ghost row** the restore path builds
+(`addFailedSessionToSidebar`, whose click calls `session:retrySpawn`), after a
+`removeSession(name, { keepPersisted: true })` — on the exit-timeout arm the pty
+may still be alive, so no `session-exit` has fired and the live row is still
+there; adding the ghost beside it would put two rows under one `data-name`. The
+row is not cosmetic: on the common arm the pty is dead and `session-exit` removed the
+live tab, so without it the seat is invisible until the next launch. The `cwd` the
+result carries is the one the record actually holds — the destination when the
+record was rewritten, the origin when the move never got that far. Moving across
+workspaces is not offered.
 
 `restartSession` (engine.js) — shared by the local IPC handler and the peer
 restart endpoint. `opts.fresh` drops the resumeId (required for skill roster

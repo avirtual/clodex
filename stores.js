@@ -627,6 +627,14 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         this._save(all);
       }
     },
+    setCwd(name, cwd) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry && typeof cwd === 'string' && cwd) {
+        entry.cwd = cwd;
+        this._save(all);
+      }
+    },
     setExecCommands(name, execCommands) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

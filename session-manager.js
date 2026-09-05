@@ -235,6 +235,11 @@ function isStaleRegistration(existingPid, ownPid, isAlive) {
   return !isAlive(existingPid) || existingPid === ownPid;
 }
 
+function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving }) {
+  const expected = !!(userKilled || shuttingDown || archived || moving);
+  return { expected, dropRecord: !agentType && !expected };
+}
+
 // node-pty's execvp failure in the forked child is silent (no stderr) — it
 // surfaces as a bare code-1 exit within a couple seconds of spawn. Excludes
 // deliberate exits, signals, and anything past the fast-fail window (a later
@@ -2039,7 +2044,13 @@ function createSessionManager(deps) {
         // aborts the whole app (SIGABRT). Mark dead so deferred ops bail.
         session._dead = true;
         log.info('session', `exit ${name} code=${exitCode}${signal ? ` signal=${signal}` : ''}`);
-        const expected = !!(session._userKilled || session._shuttingDown || session._archived);
+        const { expected, dropRecord } = exitDisposition({
+          agentType,
+          userKilled: session._userKilled,
+          shuttingDown: session._shuttingDown,
+          archived: session._archived,
+          moving: session._moving,
+        });
         const missingTool = missingToolOnExit({
           expected, exitCode, signal,
           elapsedMs: Date.now() - (session.spawnedAt || 0), cmd, whichBin,
@@ -2053,7 +2064,7 @@ function createSessionManager(deps) {
           body: `code=${exitCode}${signal ? ` signal=${signal}` : ''}${expected ? '' : ' unexpected'}`,
         });
         if (getRemoteServer()) { try { getRemoteServer().notifyExit(name, exitCode); } catch {} }
-        if (!agentType && !session._shuttingDown && !session._userKilled && !session._archived) {
+        if (dropRecord) {
           getPersistence().remove(name);
         }
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
@@ -2688,6 +2699,71 @@ function createSessionManager(deps) {
       s._archived = true;
       try { s.pty.kill(); } catch {}
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+    }
+
+    async move(name, newCwd) {
+      const entry = getPersistence().get(name);
+      if (!entry) return { ok: false, error: `Session not found: ${name}` };
+      if (entry.worktree && entry.worktree.path) {
+        return { ok: false, error: `${name} runs in a ticket worktree (${entry.worktree.path}) — that checkout belongs to the ticket loop, so it cannot be moved.` };
+      }
+      if (typeof newCwd !== 'string' || !newCwd || !path.isAbsolute(newCwd)) {
+        return { ok: false, error: 'Destination must be an absolute path' };
+      }
+      let st = null;
+      try { st = fs.statSync(newCwd); } catch { st = null; }
+      if (!st) return { ok: false, error: `Directory does not exist: ${newCwd}` };
+      if (!st.isDirectory()) return { ok: false, error: `Not a directory: ${newCwd}` };
+      if (entry.cwd === newCwd) return { ok: false, error: `${name} is already in ${newCwd}` };
+
+      const s = this.sessions.get(name);
+      if (s && s._moving) return { ok: false, error: 'move already in progress' };
+      if (s) {
+        log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${s.pty.pid}`);
+        s._moving = true;
+        try { s.pty.kill(); } catch {}
+        setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+        if (!await this._waitForExit(name)) {
+          return {
+            ok: false, kept: true,
+            error: 'old process did not exit in time — session not moved',
+            type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+          };
+        }
+      }
+      getPersistence().setCwd(name, newCwd);
+      if (entry.archivedAt) getPersistence().setArchived(name, false);
+      const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
+      try {
+        await this.create(
+          name, entry.type, newCwd, entry.extraArgs || [], entry.sessionId || null, workspaceId,
+          entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+          entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+          entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+          Array.isArray(entry.execCommands) ? entry.execCommands : [],
+          Array.isArray(entry.intents) ? entry.intents : null,
+          (entry.env && typeof entry.env === 'object') ? entry.env : null,
+          false,
+          entry.noWire === true,
+          Array.isArray(entry.plugins) ? entry.plugins : null,
+          Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+        );
+      } catch (err) {
+        getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
+        if (entry.archivedAt) getPersistence().setArchived(name, false);
+        return {
+          ok: false, kept: true,
+          error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
+          type: entry.type, cwd: newCwd, team: this.teamNameFor(newCwd),
+        };
+      }
+      return {
+        ok: true,
+        cwd: newCwd,
+        type: entry.type,
+        backend: (this.sessions.get(name) || {}).backend || null,
+        team: this.teamNameFor(newCwd),
+      };
     }
 
     // The exits that DROP a record run without a live session, so they cannot read
@@ -6532,4 +6608,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, deniedBodyDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };
+module.exports = { createSessionManager, deniedBodyDisposition, exitDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };
