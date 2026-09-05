@@ -84,7 +84,7 @@ test('a REGISTERED plugin verb diverges the same way — which is why the seam t
   // without the filter, this registration alone turns that test red, and the
   // failure would look like a broken seam rather than a plugin row being served.
   // The registry is a module-level table shared by every test in the process.
-  registry.registerIntent({ verb: 'seamprobe', label: 'Seam probe', parse: () => null }, 'seam-fake');
+  registry.registerIntent({ verb: 'seamprobe', label: 'Seam probe', parse: () => null }, 'seam-fake', { shipped: true });
   try {
     const row = registry.catalogRows().find((r) => r.type === 'seamprobe');
     assert.ok(row, 'the verb really is served in the catalog');

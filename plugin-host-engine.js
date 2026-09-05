@@ -504,9 +504,6 @@ function createPluginHostEngine(deps) {
     notifyStateChanged();
   }
 
-// `opts.shipped` is the LOADER's root, not a manifest field: a plugin that could
-// declare its own origin would reach every seat with no plugin list. Anything but
-// `true` is custom, so the loader is the only thing that can widen reach.
   function register(pluginId, mod, manifest = {}, opts = {}) {
 // Backstop: the loader refuses reserved ids before this — the invariant belongs
 // at both doors, not just the outer one.
@@ -693,9 +690,6 @@ function createPluginHostEngine(deps) {
         // A scope that arrived later than the first paint would show a scoped
         // plugin's UI on every session for a frame.
         scope: scopeOf(r.manifest),
-        // A BOOLEAN, not the loader's root id: every renderer question off this
-        // is "does an absent seat list reach it", and shipping the root
-        // vocabulary would put `root === 'core'` in a second place to drift.
         shipped: r.shipped === true,
         enabledByDefault: r.manifest.enabledByDefault !== false,
       }));

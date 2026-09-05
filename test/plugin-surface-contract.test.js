@@ -345,7 +345,7 @@ test('an intent handler is called handler(SessionHandle, intent) — argument OR
         handler: (a, b) => { seen.push([a, b]); },
       });
     },
-  }, { hostApi: HOST_API_VERSION });
+  }, { hostApi: HOST_API_VERSION }, { shipped: true });
   void off;
   try {
     const SessionManager = createSessionManager({
@@ -454,9 +454,9 @@ test('the SEAT LIST changes which seats a verb surfaces to, and nothing about th
   });
   try {
     engine.register('glob-p', { activate(h) { h.intents.register(mk('globverb')); } },
-      { hostApi: HOST_API_VERSION });
+      { hostApi: HOST_API_VERSION }, { shipped: true });
     engine.register('scoped-p', { activate(h) { h.intents.register(mk('scopedverb')); } },
-      { hostApi: HOST_API_VERSION, scope: 'session' });
+      { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
 
     // The MATRIX, such as it is: two plugins, four seat lists, one table. t654
     // moved the axis from grants to the seat's own `plugins`, and with it the
@@ -464,7 +464,7 @@ test('the SEAT LIST changes which seats a verb surfaces to, and nothing about th
     const surface = (plugins) => intentRegistry.catalogRows(plugins)
       .filter((r) => r.source !== 'core').map((r) => r.type).sort();
     assert.deepStrictEqual(surface(null), ['globverb', 'scopedverb'],
-      'ENTER: both verbs registered, and an absent list is the living all-enabled default');
+      'ENTER: both verbs registered, and an absent list reaches both — they are shipped');
     assert.deepStrictEqual(surface([]), [],
       'a seat that has no plugins sees neither, whatever their scopes say');
     assert.deepStrictEqual(surface(['scoped-p']), ['scopedverb'],

@@ -147,9 +147,12 @@ function harness({ catalog, persisted, setPluginsResult = { ok: true } } = {}) {
   };
 }
 
+// Both SHIPPED: an absent seat list resolves on origin (t661), so a fixture
+// without the field would draw every row unticked and the all-ticked assertion
+// below could not distinguish "pre-upgrade seat" from "custom plugin".
 const CATALOG = [
-  { id: 'github', name: 'GitHub' },
-  { id: 'workbench', name: 'Workbench' },
+  { id: 'github', name: 'GitHub', shipped: true },
+  { id: 'workbench', name: 'Workbench', shipped: true },
 ];
 
 test('Apply writes ONLY session:setPlugins — never intents, never grants', async () => {
@@ -237,10 +240,31 @@ test('a pre-upgrade seat (plugins absent) opens all-ticked and Apply makes the l
     await h.api.openPluginsPopover('seat-f', null);
     const rows = h.list().children.flatMap((r) => r.children).filter((c) => c.type === 'checkbox');
     assert.deepStrictEqual(rows.map((c) => c.checked), [true, true],
-      'ENTER: an absent list is the living all-enabled default, so every row is ticked');
+      'ENTER: an absent list takes the shipped default, and both rows are shipped');
     await h.apply();
     const [, , plugins] = h.calls.find((c) => c[0] === 'setSessionPlugins');
     assert.deepStrictEqual(plugins, ['github', 'workbench']);
+  } finally { h.restore(); }
+});
+
+test('t661: on that same seat a CUSTOM plugin opens UNticked, and Apply leaves it out', async () => {
+  // The other half of the row above, and the migration this ticket is for: the
+  // popover is where a stranded seat is repaired, so it must show the operator
+  // the reach the gate actually grants — an all-ticked draw here would hand back
+  // the custom plugin on the next Apply.
+  const h = harness({
+    catalog: [{ id: 'github', name: 'GitHub', shipped: true }, { id: 'stocks', name: 'Stocks', shipped: false }],
+    persisted: null,
+  });
+  try {
+    await h.api.openPluginsPopover('seat-g', null);
+    const rows = h.list().children.flatMap((r) => r.children).filter((c) => c.type === 'checkbox');
+    assert.deepStrictEqual(rows.map((c) => c.checked), [true, false],
+      'the shipped plugin is ticked and the custom one is not');
+    await h.apply();
+    const [, , plugins] = h.calls.find((c) => c[0] === 'setSessionPlugins');
+    assert.deepStrictEqual(plugins, ['github'],
+      'and Apply writes the list the operator was shown, custom plugin excluded');
   } finally { h.restore(); }
 });
 

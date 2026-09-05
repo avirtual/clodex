@@ -943,7 +943,7 @@ test('gate: a plugin verb whose plugin the seat does not have BOUNCES, allowlist
     verb: 'seatgated',
     parse: (l) => (l === '[agent:seatgated]' ? { probe: 'seatgated' } : null),
     promptLines: '  [agent:seatgated]   a plugin verb.',
-  }, 'gated-plug', { scope: 'session' });
+  }, 'gated-plug', { scope: 'session', shipped: true });
   try {
     // CONTROL: with the plugin held, the verb passes the gate — so the bounce
     // below is the seat filter, not a verb the registry refuses outright.
@@ -959,13 +959,13 @@ test('gate: a plugin verb whose plugin the seat does not have BOUNCES, allowlist
     assert.strictEqual(injected[0], '[agent:seatgated] the seatgated intent is disabled for this session',
       'the verb is refused even though the allowlist still names it');
 
-    // And the living default is preserved: a pre-upgrade seat with no `plugins`
-    // key fires it exactly as before.
+    // And the seat default is preserved for a SHIPPED plugin: a pre-upgrade seat
+    // with no `plugins` key fires it exactly as before.
     const pre = mkGate(['seatgated'], undefined);
     await pre.m._handleIntent('a', { type: 'seatgated' });
     assert.strictEqual(
       pre.injected.filter((t) => t.includes('is disabled for this session')).length, 0,
-      'a seat on the absent-list default is unaffected',
+      'a seat on the absent-list default is unaffected — the plugin is shipped',
     );
   } finally {
     registry._resetPluginRows();
@@ -12403,8 +12403,11 @@ const intentRegistry = require('../intent-registry');
 // an ASYNC fn returned its promise — i.e. at fn's first await, with the test
 // body still to come — and every dispatch after that point would find an empty
 // registry. (It did. One test caught it.)
+// `shipped: true` (t661): these seats carry no `plugins` list, which the seat
+// gate resolves on origin — registered as custom, every verb below would bounce
+// before reaching the dispatch wiring this section exists to pin.
 function withVerb(spec, fn) {
-  intentRegistry.registerIntent(spec, spec.source || 'fake-plugin');
+  intentRegistry.registerIntent(spec, spec.source || 'fake-plugin', { shipped: true });
   const reset = () => intentRegistry._resetPluginRows();
   let out;
   try { out = fn(); } catch (e) { reset(); throw e; }

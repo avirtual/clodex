@@ -32,10 +32,9 @@ function initPluginHost({
   // The `reaches(` call sites below are the list — deliberately uncounted here,
   // since a comment that counts its siblings goes stale as one is added.
   // Per-session slots and the footer button HIDE on false; the OVERLAY refuses
-  // and toasts instead, because it is opened by an act the operator just took
-  // and silently doing nothing would read as a broken plugin.
-  // `settingsSections` are ungated: the Plugins dialog configures a plugin
-  // process-wide, so a seat decision has nothing to say there.
+  // and toasts, because an act the operator just took must not do nothing
+  // silently. `settingsSections` are ungated: the Plugins dialog configures a
+  // plugin process-wide, so a seat decision has nothing to say there.
   function reaches(pluginId, sessionName) {
     if (typeof pluginReachesSession !== 'function') return true;
     if (!sessionName) return true;

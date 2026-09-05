@@ -2769,10 +2769,6 @@ async function loadPluginRenderers() {
   if (!window.api.pluginCatalog) return;
   let catalog = null;
   try { catalog = await window.api.pluginCatalog(); } catch { return; }
-  // The only fill on the BOOT path — every other one hangs off a dialog opening.
-  // pluginReachesSession reads `shipped` from this cache, and an empty cache
-  // answers "custom" for everything, which hides the footer buttons of the
-  // shipped plugins until the operator happens to open a session dialog.
   setPluginCatalogCache(catalog || []);
   for (const p of catalog || []) {
     if (!p || !p.enabled) continue;

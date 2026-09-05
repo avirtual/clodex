@@ -154,13 +154,9 @@ function mergePlugins(checked, unlisted) {
   return [...new Set([...(checked || []).map(String), ...(unlisted || []).map(String)])];
 }
 
-// The SURFACING predicate, and the ONE resolution of the absent case — every
-// reader of a seat's plugin list routes through here so they cannot disagree.
-// An explicit list is the word. An ABSENT list reaches the SHIPPED plugins only:
-// a custom plugin (~/.clodex/plugins or a registered folder) must not arrive on
-// a seat the operator never ticked it onto. `shipped` is threaded by the caller
-// rather than looked up, and anything but `true` resolves to custom, so a caller
-// that cannot answer the origin question fails toward withholding.
+// The ONE resolution of the absent case, so the readers cannot disagree.
+// `shipped` is threaded by the caller and anything but `true` withholds: an
+// origin nobody could answer must not widen reach.
 function seatHasPlugin(pluginId, pluginsList, shipped) {
   if (!Array.isArray(pluginsList)) return shipped === true;
   return pluginsList.includes(String(pluginId));

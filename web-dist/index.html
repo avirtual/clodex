@@ -23659,13 +23659,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
           promptLines: spec.promptLines != null ? String(spec.promptLines) : null,
           handler: typeof spec.handler === "function" ? spec.handler : null,
           source: src,
-          // The MANIFEST's scope, threaded by the host at register() — never read off
-          // `spec`, which is the plugin's own argument. A plugin that could declare its
-          // own scope could declare itself global and undo the operator's decision.
+          // Both threaded by the host at register(), never read off `spec`: a plugin that
+          // could declare its own scope could declare itself global, and one that could
+          // call itself shipped would reach every seat with no plugin list.
           scope: opts.scope === "session" ? "session" : DEFAULT_PLUGIN_SCOPE,
-          // Threaded by the host from the LOADER's root, for the same reason as `scope`
-          // and never off `spec`: a plugin that could call itself shipped would reach
-          // every seat that never edited a plugin list.
           shipped: opts.shipped === true
         });
         pluginRows.push(row);
