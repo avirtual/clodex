@@ -14,8 +14,7 @@
 // Forcing one factory would require parameterizing all of that as callbacks —
 // exactly the behavior-change risk move-only forbids here. A future dedicated
 // pass could de-dup agents+skills alone as a reviewable change; it is NOT
-// smuggled into this move. Each block is byte-identical modulo the +2 factory
-// indent and the getActiveSession() seam below.
+// smuggled into this move.
 //
 // FLAG (cross-island params): getActiveSession (prompt inject → activeSession is
 // a reassignable let), and setAgentLibCache / setSkillLibCache (checklists.js
