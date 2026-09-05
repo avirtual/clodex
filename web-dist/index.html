@@ -29096,7 +29096,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const granted = new Set(res && res.granted || []);
           unlistedGrants = grantsForUnlistedPlugins(
             res && res.granted || [],
-            getPluginCatalogCache().map((p) => String(p.id))
+            intentsPluginsRendered
           );
           intentsGrantsList.innerHTML = "";
           intentsGrantsBlock.classList.toggle("hidden", !plugins.length);

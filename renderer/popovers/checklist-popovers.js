@@ -404,7 +404,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   const intentsGrantsList = document.getElementById('intents-popover-grants-list');
 
   // Grants held for plugins this dialog cannot draw a row for. Measured against
-  // the PLUGIN CATALOG, not `res.plugins`: that list is narrowed by the live
+  // the DRAWN catalog, not `res.plugins`: that list is narrowed by the live
   // ticked set, so after an untick the plugin reads as unlistable and its tokens
   // are written back over the prune the same Apply asked for. A carry-forward
   // covers a plugin the operator could not see, never one they saw and unticked.
@@ -415,7 +415,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const caps = (res && res.capabilities) || [];
     const granted = new Set((res && res.granted) || []);
     unlistedGrants = grantsForUnlistedPlugins((res && res.granted) || [],
-      getPluginCatalogCache().map((p) => String(p.id)));
+      intentsPluginsRendered);
     intentsGrantsList.innerHTML = '';
     intentsGrantsBlock.classList.toggle('hidden', !plugins.length);
     if (!plugins.length) return;

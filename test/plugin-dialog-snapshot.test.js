@@ -27,7 +27,7 @@
 // popover, refill the cache under it and read the payload the real Apply writes —
 // a stronger route, taken wherever it is available.
 //
-// EVALUATING THE STATEMENT DOES NOT FIX ITS POSITION. Both extraction subjects
+// EVALUATING THE STATEMENT DOES NOT FIX ITS POSITION. The extraction subjects
 // stub the snapshot they feed in, so a fill moved down into the save handler —
 // re-reading the refilled cache under the right variable name — would still pass
 // them. The position subject below is what forbids that, for all four sites: the
@@ -267,7 +267,9 @@ function popEl(tag = 'div') {
 
 // `catalog` is what pluginCatalog() serves at open; the test refills the shared
 // cache afterwards to stand in for onPluginEvent's enable arm.
-function popoverHarness({ catalog, persisted }) {
+function popoverHarness({
+  catalog, persisted, grantPlugins = [], grantCaps = [], grantedTokens = [],
+}) {
   const prev = {
     doc: global.document, win: global.window, css: global.CSS, alert: global.alert,
   };
@@ -287,7 +289,9 @@ function popoverHarness({ catalog, persisted }) {
       getSessionArgs: async () => ({ ok: true, plugins: persisted, intents: [], execCommands: [] }),
       pluginCatalog: async () => catalog,
       getIntentCatalog: async () => [],
-      getSessionPluginGrants: async () => ({ ok: true, plugins: [], capabilities: [], granted: [] }),
+      getSessionPluginGrants: async () => ({
+        ok: true, plugins: grantPlugins, capabilities: grantCaps, granted: grantedTokens,
+      }),
       setSessionPlugins: async (name, plugins) => { calls.push(['setSessionPlugins', name, plugins]); return { ok: true }; },
       setSessionIntents: async (...a) => { calls.push(['setSessionIntents', ...a]); return { ok: true }; },
       setSessionPluginGrants: async (...a) => { calls.push(['setSessionPluginGrants', ...a]); return { ok: true }; },
@@ -386,29 +390,76 @@ test('t671: the Plugins popover Apply keeps a plugin enabled between draw and ap
   } finally { empty.restore(); }
 });
 
+// The grants half, found by reviewer-671-r1. `renderPluginGrants` recomputes
+// `unlistedGrants` on EVERY plugins-list tick (repaintPluginChildren), not only at
+// open, so with the basis re-read from the cache a refill plus one tick makes the
+// carried plugin "listed", leaving it no grants row to have been ticked:
+// mergeGrants(checked, []) then overwrites the grant set, and the setPlugins
+// handler prunes that plugin's verbs from the seat's intents on the same Apply.
+test('t671: a tick after a refill does not drop the grants of an undrawn plugin', async () => {
+  const h = popoverHarness({
+    catalog: DRAWN,
+    persisted: PERSISTED,
+    grantPlugins: [{ id: 'workbench', name: 'Workbench' }],
+    grantCaps: ['thinking'],
+    grantedTokens: ['workbench:thinking', 'stocks:thinking'],
+  });
+  try {
+    await h.api.openIntentsPopover('seat-g1', null);
+    // ENTER: the grants block drew a row for the listed plugin only, so
+    // `stocks:thinking` is carried rather than ticked — the case under test.
+    const grantRows = h.els.get('intents-popover-grants-list').children
+      .filter((c) => c.type === 'checkbox' || (c.children || []).some((x) => x.type === 'checkbox'));
+    assert.ok(grantRows.length > 0, 'ENTER: the grants block drew at least one row');
+    const drawnTokens = h.els.get('intents-popover-grants-list').children
+      .flatMap((r) => r.children || []).filter((c) => c.type === 'checkbox').map((c) => c.value);
+    assert.deepStrictEqual(drawnTokens, ['workbench:thinking'],
+      'ENTER: only the listed plugin has a grants row — `stocks:thinking` is carried');
+
+    // The enable arm refills the cache, then the operator ticks a plugin box —
+    // which is what re-enters renderPluginGrants.
+    setPluginCatalogCache(REFILLED);
+    await h.els.get('intents-popover-plugins-list').fire('change');
+
+    await h.apply('intents-popover-apply');
+    const wrote = h.calls.find((c) => c[0] === 'setSessionPluginGrants');
+    assert.ok(wrote, 'ENTER: the apply reached the grants write at all');
+    assert.ok(wrote[2].includes('stocks:thinking'),
+      'a tick after the refill must not silently revoke a grant the operator never saw');
+  } finally { h.restore(); }
+});
+
 // nit 1 on the t668 review: the subjects above stub or re-run the snapshot, so a
 // fill that moved down into the save handler would satisfy every one of them
 // while reading the very cache the snapshot exists to stop reading.
+// `applyTo` is the NEXT SITE MARKER, never a bare `\n}\n`: a terminator-bounded
+// slice ends at whatever column-0 brace the body grows first, and a body that
+// stops short of its own fill makes the containment assertion below pass by
+// missing it. The ENTER re-checks that the slice still reaches the site's own
+// carry-forward call.
 const FILL_SITES = [
   {
     what: 'the New Session dialog', src: rendererSrc, file: 'renderer.js',
     fill: 'newSessionPluginsRendered', render: 'renderPluginChecklist(inputPluginList,',
-    applyFrom: 'function collectFormConfig(', applyTo: '\n}\n',
+    applyFrom: 'function collectFormConfig(', applyTo: '\nfunction collectDialogEnv(',
   },
   {
     what: 'the args dialog', src: rendererSrc, file: 'renderer.js',
     fill: 'argsPluginsRendered', render: 'renderPluginChecklist(argsPluginList,',
-    applyFrom: "document.getElementById('btn-args-save').addEventListener", applyTo: '\n});\n',
+    applyFrom: "document.getElementById('btn-args-save').addEventListener",
+    applyTo: '\n({ refreshTemplatesList: templatesDrawerRefresh }',
   },
   {
     what: 'the Intents popover', src: popoverSrc, file: 'checklist-popovers.js',
     fill: 'intentsPluginsRendered', render: 'renderPluginChecklist(intentsPluginsList,',
-    applyFrom: "document.getElementById('intents-popover-apply').addEventListener", applyTo: '\n  });\n',
+    applyFrom: "document.getElementById('intents-popover-apply').addEventListener",
+    applyTo: "document.addEventListener('mousedown'",
   },
   {
     what: 'the Plugins popover', src: popoverSrc, file: 'checklist-popovers.js',
     fill: 'popoverPluginsRendered', render: 'renderPluginChecklist(popoverPluginsList,',
-    applyFrom: "document.getElementById('plugins-popover-apply').addEventListener", applyTo: '\n  });\n',
+    applyFrom: "document.getElementById('plugins-popover-apply').addEventListener",
+    applyTo: "document.addEventListener('mousedown'",
   },
 ];
 
@@ -431,6 +482,9 @@ for (const site of FILL_SITES) {
     assert.ok(start > -1, `ENTER: ${site.what}'s collect/apply function was located`);
     const end = site.src.indexOf(site.applyTo, start);
     assert.ok(end > start, `ENTER: ${site.what}'s collect/apply function was bounded`);
+    assert.ok(site.src.slice(start, end).includes('pluginsForUnlistedPlugins('),
+      `ENTER: the slice for ${site.what} reaches its own carry-forward call — a slice `
+      + 'cut short of the apply body would satisfy the containment check vacuously');
     assert.ok(iFill < start || iFill > end,
       `${site.fill} is assigned inside the collect/apply body — a snapshot filled `
       + 'there reads the refilled cache under a new name, which is the original bug');
