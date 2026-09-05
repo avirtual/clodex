@@ -13,8 +13,11 @@ blocks a release.
 
 ## Unreleased
 
-- **Each seat now decides which plugins it has.** New and Edit Session grow a
-  **Plugins** list above Intents, and so does the 🔒 Intents popover. Untick a
+- **Each seat now decides which plugins it has.** The `⚙ session ▾` menu grows a
+  **🔌 Plugins…** entry — the seat's plugin list, where you already edit its
+  tools, skills and intents — and **Codex seats have it too**, which is the only
+  place they can edit that list. New and Edit Session grow a **Plugins** list
+  above Intents, and so does the 🔒 Intents popover. Untick a
   plugin for a seat and it contributes nothing to it: no rows in that seat's
   intent list, no grammar in its prompt, no fired verbs, no turn feed. Its
   intents are grouped under its name when it is ticked, so a box with thirty

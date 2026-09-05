@@ -337,6 +337,20 @@
         <button id="intents-popover-apply" type="button">Apply</button>
       </div>
     </div>
+    <div id="plugins-popover" class="hidden">
+      <div class="popover-title"><span>Plugins — <span id="plugins-popover-name"></span></span><button type="button" class="popover-close" id="plugins-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+      <div id="popover-plugins-list" class="agent-checklist"></div>
+      <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to this seat — no intents, no sidebar button, no drawer, no access rows; its verbs and access grants drop on Apply. Unticking here is what the 🔒 Intents popover's Plugins section does; that popover also edits the per-verb list.</span>
+      <label class="tools-popover-restart">
+        <input type="checkbox" id="plugins-popover-restart">
+        <span class="hint-text">Gate applies immediately. Restart now to also refresh the seat's prompt (until then it still lists a removed plugin's verbs, but the gate already bounces them).</span>
+      </label>
+      <div class="popover-actions">
+        <button id="plugins-popover-cancel" class="secondary" type="button">Cancel</button>
+        <button id="plugins-popover-apply" type="button">Apply</button>
+      </div>
+    </div>
     <div id="team-roles-popover" class="hidden">
       <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
       <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
