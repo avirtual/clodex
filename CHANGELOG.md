@@ -13,10 +13,11 @@ blocks a release.
 
 ## Unreleased
 
-- **Reviewer seats can carry a read-only shell.** A second reviewer template,
-  `clodex-team-reviewer-shell`, runs git/ls/cat/sed/`node --test` under a fixed
-  allowlist; pick it per ticket with `reviewer:clodex-team-reviewer-shell` on
-  task add. The default reviewer is unchanged.
+- **Reviewer seats can carry a shell.** A second reviewer template,
+  `clodex-team-reviewer-shell`, spawns with Bash for git/ls/cat/sed/`node --test`
+  so a review can measure instead of deriving; pick it per ticket with
+  `reviewer:clodex-team-reviewer-shell` on task add. The default reviewer is
+  unchanged, and remains the one to use where a shell is not wanted.
 
 ## 5.29.1 — 2026-09-05
 
