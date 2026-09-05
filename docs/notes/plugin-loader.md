@@ -4,22 +4,22 @@
 
 `unreadable` separates a read that FAILED from content that is absent — only
 the first means a permission error, not a deletion. Set for the directory
-listing AND each per-entry read, so one bad `SKILL.md` gives a SHORT list,
-not a blanked record. `ENOENT` never sets it: that is a real absence.
+listing AND each per-entry read, so one bad `SKILL.md` gives a SHORT list, not
+a blanked record. `ENOENT` never sets it — a real absence.
 
 ## rescan
 
-The bundle refresh is gated on neither-moved AND readable. A moved dir or
-version keeps its require-cached OLD engine until restart, so refreshing
-content would pair fresh skills with an engine no install shipped; refreshing
-an unreadable listing would blank a good record.
+The bundle refresh is gated on neither-moved, readable, AND not already
+`restartRequired` — the last covers a same-dir same-version `applyUpdate`,
+which sets it itself since a commit-pinned update need not bump the version.
+All three keep a require-cached OLD engine, so refreshing content would pair
+fresh skills with it; refreshing an unreadable listing would blank a record.
 
 ## namespaceTemplateRefs
 
-An already-namespaced ref is left alone deliberately: a plugin may name
-ANOTHER plugin's prompt, so rewriting is conditional on the absent colon. It
-also merges the plugin's own id into `plugins`, which makes picking a
-template GRANT the plugin rather than require it.
+An already-namespaced ref is left alone: a plugin may name ANOTHER plugin's
+prompt, so rewriting is conditional on the absent colon. It also merges the
+plugin's own id into `plugins`, making picking a template GRANT it.
 
 ## writeBundleFile
 
@@ -36,5 +36,5 @@ broken. `fetchAndValidate` renames the extracted dir to the manifest's own id
 — GitHub's top dir is `owner-repo-<sha>`, not what `validateCandidate` wants.
 `renameOrCopy` falls back to `cpSync` only on `EXDEV`. `applyUpdate` moves the
 old copy aside before the rename-in; on a later failure the possibly-partial
-target is removed before the old copy is renamed back, and "restored" is
-claimed only if that rename succeeds — else the error names `.old-*` instead.
+target is removed before the old copy is renamed back, claiming "restored"
+only if that rename succeeds.

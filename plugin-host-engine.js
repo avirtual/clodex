@@ -647,12 +647,13 @@ function createPluginHostEngine(deps) {
     'plugins.installFromSource': async (spec) => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
+      let r;
       try {
-        const r = await loader.installFromSource(String(spec || ''));
-        if (!r.ok) return errorEnvelope(r.error);
-        rescanAndAnnounce(loader);
-        return { ok: true, ...r };
+        r = await loader.installFromSource(String(spec || ''));
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+      if (!r.ok) return errorEnvelope(r.error);
+      try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
+      catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
     },
     'plugins.resolveUpdate': async (pluginId) => {
       const loader = getLoader && getLoader();
@@ -665,20 +666,21 @@ function createPluginHostEngine(deps) {
     'plugins.applyUpdate': async (pluginId, commit) => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
+      let r;
       try {
-        const r = await loader.applyUpdate(String(pluginId || ''), String(commit || ''));
-        if (!r.ok) return errorEnvelope(r.error);
-        rescanAndAnnounce(loader);
-        return { ok: true, ...r };
+        r = await loader.applyUpdate(String(pluginId || ''), String(commit || ''));
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+      if (!r.ok) return errorEnvelope(r.error);
+      try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
+      catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
     },
     'plugins.removeSourcePlugin': (pluginId) => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
       const r = loader.removeSourcePlugin(String(pluginId || ''));
       if (!r.ok) return errorEnvelope(r.error);
-      rescanAndAnnounce(loader);
-      return { ok: true, ...r };
+      try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
+      catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
     },
   };
 

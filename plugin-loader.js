@@ -535,7 +535,7 @@ function createPluginLoader(deps) {
       if (live) {
         const movedDir = live.dir !== rec.dir;
         const movedVersion = (live.version || null) !== (rec.manifest.version || null);
-        if (!movedDir && !movedVersion && !rec.bundleUnreadable
+        if (!movedDir && !movedVersion && !rec.bundleUnreadable && !restartRequired.has(rec.id)
             && typeof pluginHost.updateBundle === 'function') {
           try {
             pluginHost.updateBundle(rec.id, rec.skills, rec.agents, rec.prompts, rec.templates);
@@ -545,8 +545,8 @@ function createPluginLoader(deps) {
           restartRequired.set(rec.id, {
             was: live.version, now: rec.manifest.version || null, dirChanged: movedDir,
           });
-          changed.push(rec.id);
         }
+        if (movedDir || movedVersion || restartRequired.has(rec.id)) changed.push(rec.id);
         continue;
       }
       if (!isEnabled(rec)) continue;
@@ -852,7 +852,7 @@ function createPluginLoader(deps) {
     if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
     const r = await fetchAndValidate({ repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath });
     if (!r.ok) return r;
-    if (r.commit !== commit) {
+    if (!commitsMatch(r.commit, commit)) {
       rmQuiet(r.work);
       return { ok: false, error: `the source now resolves to ${r.commit}, not the ${commit} you accepted — resolve the update again` };
     }
@@ -871,6 +871,8 @@ function createPluginLoader(deps) {
         commit: r.commit, commitFull: r.commitFull, fetchedAt: Date.now(), hostVersion: HOST_API_VERSION,
       });
       rmQuiet(aside);
+      const live = loadedFrom.get(id);
+      if (live) restartRequired.set(id, { was: live.version, now: r.manifest.version || null, dirChanged: false });
       logIt(`updated ${id}: ${sidecar.commit} -> ${r.commit}`);
       return { ok: true, id, previousCommit: sidecar.commit, commit: r.commit };
     } catch (e) {

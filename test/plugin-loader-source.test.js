@@ -269,8 +269,8 @@ test('installFromSource refuses on a candidate that fails validateCandidate, lea
   require('node:child_process').execFileSync('tar', ['-czf', tarFile, '-C', stage, 'owner-repo-bad0001']);
   const bytes = fs.readFileSync(tarFile);
   const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
-  const before = fs.existsSync('/tmp') ? fs.readdirSync(require('node:os').tmpdir())
-    .filter((n) => n.startsWith('clodex-plugin-fetch-')) : [];
+  const before = fs.readdirSync(require('node:os').tmpdir())
+    .filter((n) => n.startsWith('clodex-plugin-fetch-'));
   const r = await loader.installFromSource('owner/repo');
   assert.strictEqual(r.ok, false);
   assert.ok(!fs.existsSync(userDir) || fs.readdirSync(userDir).length === 0, 'nothing landed in the user root');
@@ -430,9 +430,13 @@ test('applyUpdate restores the old copy when writeSidecar fails AFTER the rename
   // Distinct from the rename-in failure above: here the new copy has already
   // landed at `target` (rename-in succeeded) before the failure hits, so the
   // catch must first clear the occupied target before renaming the old copy
-  // back — the exact ENOTEMPTY hole review round 1 found.
+  // back — the exact ENOTEMPTY hole review round 1 found. The install and
+  // update tarballs must differ (a marker file), or "the old manifest is
+  // back" cannot tell the old copy from the new one — only the `.old-*`
+  // leftover assertion would carry the red.
   const installBytes = buildTarballBytes('abc1234', 'demo');
-  const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: installBytes }] });
+  const updateBytes = buildTarballBytes('def5678', 'demo', { 'NEWFILE.txt': 'v2' });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
   await loader.installFromSource('owner/repo@main');
   const before = fs.readFileSync(path.join(userDir, 'demo', 'manifest.json'), 'utf8');
   const target = path.join(userDir, 'demo');
@@ -448,15 +452,56 @@ test('applyUpdate restores the old copy when writeSidecar fails AFTER the rename
     const resolved = await loader.resolveUpdate('demo');
     const r = await loader.applyUpdate('demo', resolved.commit);
     assert.strictEqual(r.ok, false);
-    assert.match(r.error, /restored/);
+    assert.match(r.error, /old copy was restored/);
   } finally {
     fs.writeFileSync = realWriteFileSync;
   }
   assert.ok(fs.existsSync(target), 'the old copy is back at target');
   assert.strictEqual(fs.readFileSync(path.join(target, 'manifest.json'), 'utf8'), before,
-    'the old manifest is back, byte for byte — the new (un-sidecarred) copy did not win');
+    'the old manifest is back, byte for byte');
+  assert.ok(!fs.existsSync(path.join(target, 'NEWFILE.txt')),
+    'the new copy did not win — its marker file is absent');
   const leftovers = fs.readdirSync(userDir).filter((n) => n.startsWith('.old-demo-'));
   assert.deepStrictEqual(leftovers, [], 'no stray moved-aside directory left behind');
+});
+
+function fakePluginHost() {
+  const live = new Set();
+  const updateBundleCalls = [];
+  return {
+    updateBundleCalls,
+    register(id) { live.add(String(id)); },
+    catalog() { return [...live].map((id) => ({ id })); },
+    deactivate(id) { live.delete(String(id)); },
+    updateBundle(...args) { updateBundleCalls.push(args); },
+  };
+}
+
+test('applyUpdate on a loaded plugin leaves it restart-required even at the SAME version (t683 r2 MUST-FIX)', async () => {
+  // A commit-pinned update very often carries the SAME manifest.version — the
+  // whole reason the design pins by sha rather than version (a branch moves
+  // without a bump). rescan's moved-dir/moved-version check alone would miss
+  // this and pair fresh skills with the stale require-cached engine.
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo'); // same version, different commit
+  const { loader, getUi } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  await loader.installFromSource('owner/repo@main');
+  loader.setEnabledInSettings('demo', true);
+  assert.ok((getUi().plugins.enabled || []).includes('demo'), 'ENTER: demo is explicitly enabled');
+  const pluginHost = fakePluginHost();
+  const activated = loader.activateById('demo', pluginHost);
+  assert.strictEqual(activated.ok, true, JSON.stringify(activated));
+
+  const resolved = await loader.resolveUpdate('demo');
+  const applied = await loader.applyUpdate('demo', resolved.commit);
+  assert.strictEqual(applied.ok, true, JSON.stringify(applied));
+
+  const r = loader.rescan(pluginHost);
+  assert.deepStrictEqual(r.changed, ['demo'], 'the same-version, same-dir update must still be reported changed');
+  assert.deepStrictEqual(pluginHost.updateBundleCalls, [],
+    'updateBundle must NOT run for a plugin flagged restart-required — that would pair fresh content with the stale engine');
+  const row = loader.status().plugins.find((p) => p.id === 'demo');
+  assert.ok(row && row.restartRequired, 'the settings row carries restartRequired');
 });
 
 // ════════════════════════════════════════════════════════════════════════════

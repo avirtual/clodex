@@ -905,7 +905,11 @@ test('_host plugins.installFromSource rescans and announces the new plugin on su
     'the install ran a real rescan, not a hand-rolled disabled announce');
 });
 
-test('_host plugins.applyUpdate rescans, leaving a loaded plugin restart-required', async () => {
+test('_host plugins.applyUpdate delegates to loader.rescan and announces nothing for a CHANGED plugin', async () => {
+  // "Leaves a loaded plugin restart-required" is pinned at the LOADER level
+  // (test/plugin-loader-source.test.js) — this test proves only that the host
+  // method delegates to rescan and reuses its announce shape, via a stub that
+  // asserts nothing about restartRequired itself.
   const manager = makeManager();
   let rescanCalls = 0;
   const loader = fakeLoader({
@@ -917,7 +921,7 @@ test('_host plugins.applyUpdate rescans, leaving a loaded plugin restart-require
   assert.strictEqual(r.ok, true);
   assert.strictEqual(rescanCalls, 1, 'applyUpdate must call loader.rescan itself, not leave it to the caller');
   assert.deepEqual(manager.sent.filter((s) => s.channel === 'plugin-event'), [],
-    'no announce for a CHANGED plugin — rescan ran and reported it restart-required');
+    'no announce for a CHANGED plugin — same shape plugins.rescan uses');
 });
 
 test('_host plugins.removeSourcePlugin rescans and announces the plugin removed', async () => {
