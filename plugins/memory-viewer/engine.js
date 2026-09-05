@@ -148,7 +148,7 @@ function readUnits(agent) {
     let text;
     let fd = null;
     try {
-      fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
       const st = fs.fstatSync(fd);
       if (!st.isFile() || st.nlink !== 1) continue;
       text = fs.readFileSync(fd, 'utf8');

@@ -20,12 +20,15 @@
 //   5. The agent FOLDER must resolve to itself, and units are judged through the
 //      open fd. Confinement to the root alone admits a sibling alias, and a
 //      path-based guard admits a hardlink, whose realpath is already in-dir.
+//   6. The open itself is non-blocking, so a FIFO planted in the folder is
+//      refused instead of hanging the synchronous read forever.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
@@ -336,6 +339,30 @@ test('memory-viewer: a HARDLINK planted in the agent dir is neither listed nor r
       'the refusal is a read refusal — it deletes nothing');
   } finally { fs.rmSync(outside, { recursive: true, force: true }); cleanup(); }
 });
+
+test('memory-viewer: a FIFO planted in the agent dir is refused without blocking the read',
+  { skip: process.platform === 'win32' ? 'mkfifo and O_NOFOLLOW are POSIX-only' : false },
+  async () => {
+    // A blocking open on a writerless FIFO never returns, and readUnits runs
+    // inside a synchronous IPC handler: the whole overlay hangs, so the
+    // assertion that matters is that this test finishes at all.
+    const { host, root, cleanup } = boot();
+    try {
+      writeUnit(root, 'clodex', 'mem-1-aaaaaa', { body: 'the control body' });
+      const planted = path.join(root, 'clodex', 'planted.md');
+      execFileSync('mkfifo', [planted]);
+
+      const res = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
+
+      // ENTER: the control unit survives, so the absence below is the FIFO
+      // being refused and not the whole folder going dark.
+      assert.deepEqual(res.units.map((u) => u.key), ['mem-1-aaaaaa'],
+        'the pipe is absent and the real unit beside it survives');
+      assert.equal(res.units[0].body, 'the control body');
+      assert.ok(fs.existsSync(planted),
+        'the refusal is a read refusal — it deletes nothing');
+    } finally { cleanup(); }
+  });
 
 test('memory-viewer: the store still reads when the ROOT itself is behind a symlink', async () => {
   // The guard compares against the RESOLVED root, so it must resolve the root
