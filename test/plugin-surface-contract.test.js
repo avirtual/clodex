@@ -73,7 +73,7 @@ const RHOST_CONTRACT = [
     kind: 'ns',
     members: ['openPath', 'pickDirectory', 'showToast', 'statusBar', 'sidebar', 'sessionMenu', 'settings', 'surfaces'],
   },
-  { name: 'lib', kind: 'ns', members: ['renderDiffHtml'] },
+  { name: 'lib', kind: 'ns', members: ['renderDiffHtml', 'renderMarkdown'] },
   { name: 'onDispose', kind: 'fn' },
   { name: 'setInterval', kind: 'fn' },
   { name: 'clearInterval', kind: 'fn' },

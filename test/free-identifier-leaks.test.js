@@ -288,6 +288,9 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/constants.js',
   'renderer/lib/format.js',
   'renderer/lib/render-html.js',
+  // The markdown-to-DOM leaf frozen into rhost.lib: a reach for a renderer.js
+  // name here would be a published plugin surface quietly acquiring core state.
+  'renderer/lib/render-markdown.js',
   'renderer/lib/checklists.js',
   'renderer/lib/team-roles.js',
   'renderer/lib/popover-drag.js',

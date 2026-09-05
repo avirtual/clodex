@@ -29,6 +29,9 @@ blocks a release.
   never displayed, and nothing is deleted. An agent folder that is itself a link
   to another agent's folder is refused too, so one agent's memories can never be
   shown under another's name. Real memories are unaffected.
+- Plugins get `rhost.lib.renderMarkdown`, a safe markdown-to-DOM renderer:
+  headings, lists, tables, fences, inline styles and allowlisted links, never
+  raw HTML.
 
 ## 5.28.0 — 2026-09-05
 
