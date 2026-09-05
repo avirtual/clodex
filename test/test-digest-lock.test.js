@@ -571,13 +571,26 @@ test('lock: npm test reclaims a lock whose holder is dead, and releases on exit'
 // what separates "the script emitted the marker" from "the path happens to
 // contain that string" — a spawn error naming the fixture path satisfies any
 // substring grep, and does it in the case where the script emitted nothing.
-function runDigest({ tap, exit, cwd }) {
+function runDigest({
+  tap, exit, cwd, seed, holdLock,
+}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t88-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
   fs.mkdirSync(path.join(root, 'bin'));
   fs.writeFileSync(path.join(root, 'bin', 'node'),
     `#!/bin/sh\ncat <<'CLX_TAP'\n${tap}\nCLX_TAP\nexit ${exit}\n`, { mode: 0o755 });
+  if (holdLock) {
+    // The lock is rooted at the script's own checkout, which here is the
+    // fixture. OUR pid, so the holder is alive by construction and no process
+    // is harmed; the wait loop then spins to its 30s cap and refuses. The cap
+    // is real time, so `sleep` is stubbed out on the same PATH the node stub
+    // rides — 15 iterations of the SHIPPED loop, none of them waited on.
+    const lock = path.join(root, '.test-digest.lock');
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+    fs.writeFileSync(path.join(root, 'bin', 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
   // CLODEX_HOME into the fixture, or a failing case here writes the preserved
   // output into the developer's REAL ~/.clodex and destroys the dump they are
   // most likely reading — the suite must not clobber the artifact it ships.
@@ -589,6 +602,10 @@ function runDigest({ tap, exit, cwd }) {
   };
   delete env.NODE_TEST_CONTEXT;
   const keep = path.join(home, 'test-failures', 'last.txt');
+  if (seed !== undefined) {
+    fs.mkdirSync(path.dirname(keep), { recursive: true });
+    fs.writeFileSync(keep, seed);
+  }
   try {
     const res = withRetry('runDigest', () => spawnSync(
       '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
@@ -818,6 +835,44 @@ test('keep: a GREEN run writes nothing at all', () => {
   assert.strictEqual(r.kept, null,
     'a green run wrote a failure dump: the file would then be a LIE the next reader trusts, '
     + 'showing a failure that is not current');
+});
+
+const SENTINEL = 'not ok 1 - A FAILURE FROM AN EARLIER RUN\n';
+
+test('keep: a green run removes the dump an earlier failure left', () => {
+  // The dump is one fixed file with no expiry, so after a green run it holds a
+  // failure OLDER than the verdict just printed. An agent cats it as evidence
+  // about the run it just made and reads a regression that is already fixed —
+  // twice on t654/t655. The green arm is where the file stops being true.
+  const r = runDigest({ ...PASS_CASE, seed: SENTINEL });
+  assert.strictEqual(r.digest, `[${r.tree}] 3/3 green`,
+    'ENTER: the green arm did not run, so nothing below is about a green run');
+  assert.strictEqual(r.kept, null,
+    'a green run left the older failure dump in place, which the next reader takes for evidence '
+    + 'about this run');
+});
+
+test('keep: a failing run OVERWRITES the older dump rather than being cleared', () => {
+  // CONTROL for the green clear: the removal must be the green arm's, not a
+  // blanket wipe that costs a failing run the evidence it just captured.
+  const r = runDigest({ ...RICH_FAIL_CASE, seed: SENTINEL });
+  assert.ok(r.kept !== null, 'ENTER: the failing run preserved nothing, so there is nothing to judge');
+  assert.match(r.kept, /^ *not ok 1 - the failing subtest$/m,
+    'the current failure is not in the file — the clear reached the failing arm');
+  assert.ok(!r.kept.includes('A FAILURE FROM AN EARLIER RUN'),
+    'the older dump survived alongside the current one');
+});
+
+test('keep: a lock refusal leaves the older dump untouched', () => {
+  // CONTROL for the green clear in the other direction: a refusal MEASURED
+  // NOTHING, so it has no standing to destroy the last real failure. Only a
+  // verdict may invalidate the dump.
+  const r = runDigest({ ...PASS_CASE, seed: SENTINEL, holdLock: true });
+  assert.match(r.digest || '', /not starting a second/,
+    'ENTER: the run was not refused, so this is not exercising the refusal arm at all');
+  assert.strictEqual(r.kept, SENTINEL,
+    'a refused run changed the dump: it ran no tests, so anything it does to the file replaces '
+    + 'real evidence with none');
 });
 
 test('keep: a stale dump from an earlier failure is replaced, not appended to', () => {

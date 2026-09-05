@@ -280,8 +280,8 @@ fail=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="fail" {n=$3} END{print n+0}')
 #
 # The cost of one fixed path is that a second tree's failure clobbers the first
 # before anyone reads it. The box-wide lock above already serializes runs, and
-# the header written below names the tree, the commit and the time, so a stale
-# or foreign dump is detectable on sight rather than silently misread.
+# the header written below names the tree, the commit and the time, so a
+# foreign dump is detectable on sight rather than silently misread.
 keep_dir=${CLODEX_HOME:-$HOME/.clodex}/test-failures
 keep=$keep_dir/last.txt
 # Display form for the digest line, which is capped at 180 chars and where the
@@ -397,6 +397,11 @@ if [ "$tests" -eq 0 ]; then
 fi
 
 if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ]; then
+  # A green run makes any dump on disk older than the verdict just printed, and
+  # the reader is an agent who cats it as evidence about the run it just made.
+  # Only the green arm: a refusal measured nothing, so it must not destroy the
+  # last real failure.
+  rm -f "$keep" 2>/dev/null
   printf '[%s] %s/%s green\n' "$tree" "$pass" "$tests" 1>&2
   exit 0
 fi
