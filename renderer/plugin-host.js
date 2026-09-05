@@ -5,6 +5,7 @@
 
 const { esc } = require('./lib/format');
 const { renderDiffHtml } = require('./lib/render-html');
+const { renderMarkdown } = require('./lib/render-markdown');
 
 function initPluginHost({
   getActiveSession,          // () -> session name | null
@@ -522,7 +523,7 @@ function initPluginHost({
           overlay: (s) => surfaces.overlay({ ...s, pluginId }),
         }),
       }),
-      lib: Object.freeze({ renderDiffHtml }),
+      lib: Object.freeze({ renderDiffHtml, renderMarkdown }),
       onDispose: (fn) => disposable(pluginId, fn),
       setInterval: (fn, ms, ...a) => {
         const h = setInterval(fn, ms, ...a);

@@ -1076,7 +1076,7 @@ rhost = {
     surfaces:    { overlay },
   },
 
-  lib: { renderDiffHtml },             // sanctioned shared core leaves
+  lib: { renderDiffHtml, renderMarkdown },  // sanctioned shared core leaves
 
   onDispose(fn),                       // -> dispose
   setInterval, clearInterval,          // host-wrapped — auto-cleared on teardown
@@ -1136,9 +1136,20 @@ Neither this nor `openPath` is one of the seven UI slots; they take no spec and
 register nothing.
 
 `rhost.lib.renderDiffHtml` renders a unified diff to HTML, the same way core's
-own diff views do. There is deliberately **no markdown renderer** on `rhost.lib`
-at `"1"`, so a plugin displaying untrusted content — a file it read, an agent's
-text — builds DOM nodes and sets each leaf's `textContent`, never `innerHTML`.
+own diff views do.
+
+`rhost.lib.renderMarkdown(text)` renders markdown to a `DocumentFragment` you
+append where you like. It covers ATX headings, paragraphs (hard wraps fold),
+unordered and ordered lists, blockquotes, fenced code, pipe tables, and inline
+code / bold / italic / links. It **never emits raw HTML**: markup in the input
+stays text, there is no image support at all (an `<img src>` is a network fetch
+on untrusted input), and a link renders as an `<a>` only when its href is
+`http:`, `https:` or `mailto:` — anything else, `javascript:` and `data:`
+included, renders as the literal text it was written as. It exists so that the
+rule it embodies is written once: a plugin displaying untrusted content — a file
+it read, an agent's text — builds DOM nodes and sets each leaf's `textContent`,
+never `innerHTML`. Hand it the text rather than hand-rolling that, and you
+inherit the pinned version of it.
 
 ### Cleaning up after yourself
 

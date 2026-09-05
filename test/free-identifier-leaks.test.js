@@ -288,6 +288,11 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/constants.js',
   'renderer/lib/format.js',
   'renderer/lib/render-html.js',
+  // The markdown-to-DOM leaf frozen into rhost.lib (t663). It reaches for
+  // `document` and nothing else by design — every leaf it builds is a text node
+  // — so a reach for a renderer.js name here would be a sanctioned plugin
+  // surface quietly acquiring core state.
+  'renderer/lib/render-markdown.js',
   'renderer/lib/checklists.js',
   'renderer/lib/team-roles.js',
   'renderer/lib/popover-drag.js',

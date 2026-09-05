@@ -22,6 +22,9 @@ blocks a release.
   next save also drops any capability grants it held for one.
 - A plugin's sidebar footer button is hidden on a seat that does not have it,
   instead of dimmed.
+- Plugins get `rhost.lib.renderMarkdown`, a safe markdown-to-DOM renderer:
+  headings, lists, tables, fences, inline styles and allowlisted links, never
+  raw HTML.
 
 ## 5.28.0 — 2026-09-05
 
