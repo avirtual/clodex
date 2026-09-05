@@ -34,13 +34,19 @@ pack is the only composition a real trial has built a working plugin from.
 ## `scaffold.js` — start from something that already passes
 
 ```
-node plugins/tools/scaffold.js my-plugin [target-dir]
+node plugins/tools/scaffold.js my-plugin [target-dir] [--skill <name>]
 ```
 
 Writes `manifest.json`, `engine.js`, `renderer.js` with the id and directory name
 generated from one argument, so they cannot disagree. The id is checked with the
 host's own `isValidPluginId`, which also refuses reserved names a bare regex
 test would accept. The result passes `verify.js` before you write any logic.
+
+`--skill <name>` also writes `skills/<name>/SKILL.md` — a two-line stub with the
+frontmatter the CLI needs — so the plugin ships a skill the seats that have it
+invoke as `/<plugin-id>:<name>`. The name is checked against the host's
+`AGENT_NAME_RE`, the same rule the loader applies when it reads the bundle, so a
+name the app would skip is refused here instead of written and silently ignored.
 
 ## `verify.js` — does this plugin actually run?
 
@@ -60,8 +66,16 @@ and registers at least one surface, each declared ipc method answers without
 crashing, session hooks fire without logging an error, and `deactivate()`
 releases everything.
 
+It also reports the **content bundle** the loader read out of the folder: how many
+skills and agents it accepted, each under its `<plugin-id>:<name>`, and one line
+per entry it skipped with the loader's own reason (a name failing `AGENT_NAME_RE`,
+a `skills/<name>/` with no readable `SKILL.md`). The counts come from the real
+`readBundle` by way of `discover()`, not a second reading, so what you see is what
+a seat would get. A bundle entry counts as a registered surface, which is what
+lets a content-only plugin — a manifest naming neither half — pass.
+
 Lines beginning `note` are observations, not requirements — an intent verb is
-optional, so its absence is reported and never failed.
+optional, so its absence is reported and never failed, and so is an empty bundle.
 
 A plugin that only *parses* is not a plugin that *works*: `node --check` is the
 floor here, not the test.

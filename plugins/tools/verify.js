@@ -65,7 +65,15 @@ for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-verify-'));
 const staged = path.join(stage, path.basename(path.resolve(dir)));
 fs.mkdirSync(staged, { recursive: true });
-for (const f of fs.readdirSync(dir)) fs.copyFileSync(path.join(dir, f), path.join(staged, f));
+for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+  const from = path.join(dir, ent.name);
+  const to = path.join(staged, ent.name);
+  if (ent.isDirectory()) {
+    if (ent.name === 'skills' || ent.name === 'agents') fs.cpSync(from, to, { recursive: true });
+    continue;
+  }
+  fs.copyFileSync(from, to);
+}
 
 // ------------------------------------------------------------------- stubs
 const sent = [];
@@ -121,6 +129,7 @@ const engine = createPluginHostEngine({
 
 // -------------------------------------------------------------- discovery
 let rec;
+const logsBeforeDiscover = logged.length;
 try {
   rec = loader.discover().find((r) => r.id === manifest.id);
 } catch (e) { fatal('loader.discover() runs', e.message); }
@@ -139,6 +148,17 @@ if (declaredRenderer) {
 if (rec.manifest.style) {
   record('declared style file exists', fs.existsSync(path.join(staged, rec.manifest.style)), rec.manifest.style);
 }
+
+const bundleSkills = rec.skills || [];
+const bundleAgents = rec.agents || [];
+note('skills', bundleSkills.length ? `${bundleSkills.length}: ${bundleSkills.map((s) => `${manifest.id}:${s.name}`).join(', ')}` : 'none');
+note('agents', bundleAgents.length ? `${bundleAgents.length}: ${bundleAgents.map((a) => `${manifest.id}:${a.name}`).join(', ')}` : 'none');
+const skipped = logged.slice(logsBeforeDiscover)
+  .map((l) => l.match(/skipping ((?:skills|agents)\/.*)$/))
+  .filter(Boolean)
+  .map((m) => m[1]);
+for (const s of skipped) note('bundle entry skipped', s);
+if (rec.bundleUnreadable) note('bundle partly unreadable', 'a skills/ or agents/ read failed — the entries behind it are missing, not empty');
 
 // -------------------------------------------------------------- activation
 // Snapshot the registry's plugin rows so the verb check OBSERVES what got
@@ -165,10 +185,14 @@ try {
 if (!activated) { report(); process.exit(1); }
 
 // ------------------------------------------------- did it actually DO anything
+// A content bundle counts here: a skills/agents-only plugin registers no ipc
+// method and no hook by construction, so requiring one would fail the very
+// plugin shape the loader was changed to accept.
 const keys = engine._dispatchKeys().filter((k) => k.startsWith(`${manifest.id}:`));
 const hookCounts = engine._hookCounts();
-record('registered at least one surface', keys.length > 0 || hookCounts.create > 0 || hookCounts.exit > 0,
-  `ipc methods: ${keys.length ? keys.join(', ') : 'none'} | onCreate: ${hookCounts.create} | onExit: ${hookCounts.exit}`);
+const bundleCount = bundleSkills.length + bundleAgents.length;
+record('registered at least one surface', keys.length > 0 || hookCounts.create > 0 || hookCounts.exit > 0 || bundleCount > 0,
+  `ipc methods: ${keys.length ? keys.join(', ') : 'none'} | onCreate: ${hookCounts.create} | onExit: ${hookCounts.exit} | bundle entries: ${bundleCount}`);
 
 // Every declared ipc method must answer without CRASHING. It is called with no
 // arguments, so a handler that replies "a session name is required" has passed:

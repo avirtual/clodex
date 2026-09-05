@@ -145,7 +145,36 @@ all covered in §4:
    dropped are indistinguishable from the caller. If your plugin needs to know
    its text landed, it has to observe the agent doing something.
 
-### 3.4 Read a session's context and telemetry
+### 3.4 Ship skills and subagents
+
+A plugin folder can carry `skills/<name>/SKILL.md` and `agents/<name>.md`, and
+every seat that has the plugin gets them — namespaced by the plugin's id, so the
+skill is invoked as `/<plugin-id>:<skill>` and the agent is delegated to as
+`<plugin-id>:<agent>`. This is the one capability with **no code at all**: a
+manifest naming neither half is valid when the directory carries one of those
+directories, so a pure content pack is a legal plugin.
+
+It is also the one place where a plugin changes what an agent can *reach* rather
+than what it can *do to Clodex*, and the reach is real — a skill is instructions
+the seat loads, an agent is a subagent it can delegate to.
+
+Three properties bound what to build on it:
+
+- **Per seat, by the plugin tick.** A seat whose plugin list excludes the plugin
+  never sees either. Content follows the plugin, and there is no per-skill switch:
+  the checklists and library drawers show a plugin's skills and agents as
+  read-only rows under its name.
+- **Bound at spawn.** They are written when the seat starts, so enabling or
+  disabling the plugin — or editing the files — reaches a running seat only at its
+  next start.
+- **A bad entry costs only itself.** A name that fails `AGENT_NAME_RE` or a skill
+  directory with no readable `SKILL.md` is skipped with a logged reason; the rest
+  of the bundle loads.
+
+The layout, the name rule and the visibility rule are in
+[`README.md`](README.md); the manifest half of it is §2 of the contract.
+
+### 3.5 Read a session's context and telemetry
 
 A plugin can list sessions (globally or per workspace), get a handle with
 `name`, `type`, `cwd`, `workspaceId` and liveness, ask `fsScope` for a session's
