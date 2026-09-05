@@ -80,9 +80,6 @@ function makeEl(tag = 'div') {
   return el;
 }
 
-// The ids checklist-popovers resolves. An unknown id THROWS rather than returning
-// null: a fixture that quietly answered null would leave a listener unwired and
-// every assertion below reading an inert object.
 function makeDocument() {
   const els = new Map();
   const get = (id) => {
@@ -128,18 +125,19 @@ function harness({ catalog, persisted, setPluginsResult = { ok: true } } = {}) {
     },
   };
 
-  let metaRefreshes = 0;
+  const metaArgs = [];
   const api = initChecklistPopovers({
     sessionList: { querySelector: () => null },
     createTerminal() {}, addSessionToSidebar() {}, switchSession() {},
-    refreshSidebarMeta: () => { metaRefreshes++; },
+    refreshSidebarMeta: (opts) => { metaArgs.push(opts); },
   });
 
   return {
     api,
     els,
     calls,
-    metaRefreshes: () => metaRefreshes,
+    metaArgs,
+    metaRefreshes: () => metaArgs.length,
     list: () => els.get('popover-plugins-list'),
     apply: () => els.get('plugins-popover-apply').fire('click'),
     restore() {
@@ -197,6 +195,11 @@ test('an EMPTY catalog makes Apply a no-op — it must not strip the seat', asyn
   const h = harness({ catalog: [], persisted: ['github'] });
   try {
     await h.api.openPluginsPopover('seat-c', null);
+    // ENTER: the open really ran and the checklist really drew the kill-switch
+    // hint. Every assertion below is an absence, and all of them hold vacuously
+    // against an unwired Apply listener that never fired at all.
+    assert.match(h.list().innerHTML, /No plugins loaded/,
+      'ENTER: the empty-catalog hint was drawn');
     await h.apply();
     assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'setSessionPlugins'), [],
       'a kill-switched catalog draws no rows; writing [] would strip every plugin');
@@ -212,6 +215,10 @@ test('C4: refreshSidebarMeta fires once on a successful write', async () => {
     await h.apply();
     assert.strictEqual(h.metaRefreshes(), 1,
       'the t655 footer dim must follow the write, not the 30s timer');
+    assert.deepStrictEqual(h.metaArgs[0], { includePr: false },
+      'the default includePr:true runs git rev-parse + gh pr view (seconds per cwd) '
+      + 'before the footer repaints, and holds metaRefreshInFlight for that window; '
+      + 'plugins rides the record tier either way');
   } finally { h.restore(); }
 });
 
@@ -238,6 +245,30 @@ test('a pre-upgrade seat (plugins absent) opens all-ticked and Apply makes the l
     const [, , plugins] = h.calls.find((c) => c[0] === 'setSessionPlugins');
     assert.deepStrictEqual(plugins, ['github', 'workbench']);
   } finally { h.restore(); }
+});
+
+test('C4: the intents Apply repaints between the plugins write and the intents write', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'popovers', 'checklist-popovers.js'), 'utf8');
+  const start = src.indexOf("document.getElementById('intents-popover-apply')");
+  const end = src.indexOf("document.addEventListener('mousedown'", start);
+  assert.ok(start > 0 && end > start,
+    'ENTER: the intents Apply listener body was located and bounded');
+  const body = src.slice(start, end);
+
+  const iPlugins = body.indexOf('setSessionPlugins(name, plugins)');
+  const iMeta = body.indexOf('refreshSidebarMeta({ includePr: false })');
+  const iIntents = body.indexOf('setSessionIntents(');
+  assert.ok(iPlugins > -1, 'the intents Apply still writes the plugins parent');
+  assert.ok(iMeta > -1,
+    'and repaints with includePr:false — the default tier shells out to git and gh, '
+    + 'up to seconds per cwd, holding metaRefreshInFlight before the footer moves');
+  assert.ok(iIntents > -1, 'and writes the intents child');
+  assert.ok(iPlugins < iMeta && iMeta < iIntents,
+    'PARENT FIRST, then the repaint, then the child: the setPlugins handler prunes '
+    + 'intents against the list it was handed, so the child write must follow it');
 });
 
 test('the opener is exported and routeSessionAction reaches it', () => {
