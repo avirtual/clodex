@@ -22,6 +22,11 @@ blocks a release.
   next save also drops any capability grants it held for one.
 - A plugin's sidebar footer button is hidden on a seat that does not have it,
   instead of dimmed.
+- **The memory viewer no longer follows symlinks out of an agent's memory
+  folder.** An agent writes that folder itself, so a link planted there used to
+  be read and its contents shown to you as if it were a memory. Entries that
+  resolve outside the folder are now skipped: they are not listed, their text is
+  never displayed, and nothing is deleted. Real memories are unaffected.
 
 ## 5.28.0 — 2026-09-05
 

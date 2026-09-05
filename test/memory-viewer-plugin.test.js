@@ -13,6 +13,10 @@
 //      a traversal ref never reaches core.
 //   3. The unit id is NOT vetted plugin-side: core's MEMORY_ID_RE owns that
 //      grammar and a second copy would drift.
+//   4. Reads are confined by REALPATH, not by the lexical dirname. The agent
+//      writes its own memory folder, so an entry there can be a symlink aimed
+//      anywhere on disk; following one renders a file of the agent's choosing in
+//      the operator's viewer.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -203,6 +207,123 @@ test('memory-viewer: a unit with NO id line is still deletable', async () => {
     assert.deepEqual(removals, [{ agent: 'clodex', id: 'mem-3-cccccc' }]);
     assert.equal(fs.existsSync(file), false);
   } finally { cleanup(); }
+});
+
+// ── reads are confined by REALPATH, not by the lexical dirname ──────────────
+// `~/.clodex/library/memory/<agent>/` is a directory the agent itself writes, so
+// a `.md` entry there is not evidence of a file inside it. Confining by
+// path.dirname and then reading `path.join(dir, entry)` follows a planted
+// symlink to anything readable and renders it to the operator. Each of these
+// carries a CONTROL unit beside the plant: a guard that refuses everything is
+// indistinguishable from a working one when only the refusal is asserted.
+
+test('memory-viewer: a symlink out of the agent dir is neither listed nor read', async () => {
+  const { host, root, cleanup } = boot();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-secret-'));
+  try {
+    // Well-formed as a unit, so nothing but the containment check can exclude
+    // it: a parse failure would produce the same empty list for the wrong reason.
+    const secret = path.join(outside, 'secret.md');
+    fs.writeFileSync(secret, '---\nid: secret\nlearned_at: 2026-07-30T10:00:00.000Z\n---\n\nSECRET BODY\n');
+
+    const control = writeUnit(root, 'clodex', 'mem-1-aaaaaa', { body: 'the control body' });
+    fs.symlinkSync(secret, path.join(root, 'clodex', 'planted.md'));
+
+    const res = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
+
+    // ENTER: the control unit is present, so the assertions below run against a
+    // list the guard did NOT empty.
+    assert.deepEqual(res.units.map((u) => u.key), ['mem-1-aaaaaa'],
+      'the planted link is absent and the real unit beside it survives');
+    assert.equal(res.units[0].body, 'the control body');
+    assert.equal(JSON.stringify(res).includes('SECRET BODY'), false,
+      'the out-of-root body never reaches the renderer, under any key');
+    assert.ok(fs.existsSync(control) && fs.existsSync(secret),
+      'the refusal is a read refusal — it deletes nothing');
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); cleanup(); }
+});
+
+test('memory-viewer: a symlink to a SIBLING agent dir prefix is refused too', async () => {
+  // `startsWith(base)` without path.sep admits `<root>/clodex-evil/x.md` while
+  // reading agent `clodex`. The separator is what makes the prefix a boundary.
+  const { host, root, cleanup } = boot();
+  try {
+    writeUnit(root, 'clodex-evil', 'mem-9-zzzzzz', { body: 'NEIGHBOUR BODY' });
+    const control = writeUnit(root, 'clodex', 'mem-1-aaaaaa', { body: 'the control body' });
+
+    fs.symlinkSync(path.join(root, 'clodex-evil', 'mem-9-zzzzzz.md'), path.join(root, 'clodex', 'planted.md'));
+
+    const res = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
+    // ENTER: the control survives, so an empty-list guard cannot pass this.
+    assert.deepEqual(res.units.map((u) => u.key), ['mem-1-aaaaaa']);
+    assert.equal(JSON.stringify(res).includes('NEIGHBOUR BODY'), false);
+    assert.ok(fs.existsSync(control));
+  } finally { cleanup(); }
+});
+
+test('memory-viewer: an agent dir that is itself a symlink out is not listed and reads empty', async () => {
+  // `agent` arrives over IPC and need not have come from the agents listing, so
+  // the folder is confined on the read path as well as excluded from the list.
+  const { host, root, cleanup } = boot();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-secret-'));
+  try {
+    fs.writeFileSync(path.join(outside, 'secret.md'),
+      '---\nid: secret\nlearned_at: 2026-07-30T10:00:00.000Z\n---\n\nSECRET BODY\n');
+    fs.symlinkSync(outside, path.join(root, 'elsewhere'));
+    writeUnit(root, 'clodex', 'mem-1-aaaaaa', { body: 'the control body' });
+
+    const agents = await host.dispatch('memory-viewer', 'agents', [], 'desktop');
+    // ENTER: the real agent is listed, so this is not a blanket empty listing.
+    assert.deepEqual(agents.agents.map((a) => a.agent), ['clodex'],
+      'a symlinked folder is not an agent row; the real one still is');
+
+    const res = await host.dispatch('memory-viewer', 'units', ['elsewhere'], 'desktop');
+    assert.deepEqual(res.units, [], 'and naming it directly over IPC reads nothing');
+    assert.equal(JSON.stringify(res).includes('SECRET BODY'), false);
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); cleanup(); }
+});
+
+test('memory-viewer: the store still reads when the ROOT itself is behind a symlink', async () => {
+  // The guard compares against the RESOLVED root, so it must resolve the root
+  // too — comparing a resolved entry against an unresolved root refuses every
+  // legitimate unit, and on macOS /var → /private/var makes that the real case.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-link-'));
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-real-'));
+  const prevHome = process.env.HOME;
+  try {
+    fs.mkdirSync(path.join(home, '.clodex', 'library'), { recursive: true });
+    fs.symlinkSync(real, path.join(home, '.clodex', 'library', 'memory'));
+    writeUnit(path.join(home, '.clodex', 'library', 'memory'), 'clodex', 'mem-1-aaaaaa', { body: 'through the link' });
+
+    process.env.HOME = home;
+    delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
+    const engine = require('../plugins/memory-viewer/engine');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-data-'));
+    const host = createPluginHostEngine({
+      manager: {
+        sessions: new Map(),
+        list: () => [], listForWorkspace: () => [],
+        _broadcast() {}, _sendToSession() {}, windowForWorkspace: () => null,
+      },
+      getUiSettings: () => ({ get: () => ({}), set: () => {} }),
+      log: { info: () => {}, error: () => {} },
+      userDataPath: dir,
+      fs, path,
+      gitWorktree: {},
+      libraryKinds: { memory: () => ({ ok: true }) },
+    });
+    host.register('memory-viewer', engine, { hostApi: HOST_API_VERSION });
+
+    const res = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
+    assert.deepEqual(res.units.map((u) => u.body), ['through the link'],
+      'a symlinked root resolves on both sides of the comparison, so units still list');
+    fs.rmSync(dir, { recursive: true, force: true });
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(real, { recursive: true, force: true });
+  }
 });
 
 test('memory-viewer: the engine registers exactly four rows, its two mutations among them', async () => {
