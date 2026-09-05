@@ -44,7 +44,8 @@ plugins/<id>/
                               VERBATIM and unscoped (§14)
 ```
 
-At least one half is required. A plugin with only an engine half is a pure data
+At least one half is required, unless the directory carries a content bundle
+(`skills/` or `agents/` — §2). A plugin with only an engine half is a pure data
 or automation plugin (it can register intent verbs and session hooks, and has no
 UI). A plugin with only a renderer half is pure UI with no privileged access.
 Most useful plugins have both, because the renderer half cannot touch the
@@ -153,7 +154,7 @@ the menu bar has a tick next to it.
 | `name` | no | Human-readable label for the Plugins menu and the Manage Plugins dialog. Defaults to `id`. |
 | `version` | no | Free-form string, displayed to the user. Nothing parses it. |
 | `hostApi` | yes | Must be exactly `"1"`. A string, not a number. |
-| `entry` | yes | An object. `entry.engine` and `entry.renderer` are paths relative to the plugin directory; each is optional individually but at least one must be present, and each must be a string if present. |
+| `entry` | yes | An object. `entry.engine` and `entry.renderer` are paths relative to the plugin directory; each is optional individually but at least one must be present *unless the directory carries a content bundle* (below), and each must be a string if present. |
 | `style` | no | Path to a CSS file, relative to the plugin directory. Loaded as **text** and injected per window. |
 | `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. It decides GLOBAL loading only, and says nothing about which seats a loaded plugin reaches — that is the seat list of §2.1, where the origin rule (shipped vs. custom) is the one this field cannot influence. |
 | `announce` | no | One sentence describing what the plugin does. Shown as the description line in the Manage Plugins dialog. |
@@ -163,6 +164,35 @@ the menu bar has a tick next to it.
 Unknown fields are ignored, not refused. That is deliberate: it lets a future
 version add optional fields without breaking your manifest, and lets you carry
 your own metadata.
+
+### A content bundle relaxes the `entry` rule
+
+Beside the halves, the directory may carry skills and subagents as files:
+`skills/<name>/SKILL.md` and `agents/<name>.md`. They are not declared in the
+manifest — the loader reads the two directories directly — and they reach only
+the seats whose plugin list holds the plugin, namespaced as
+`/<plugin-id>:<skill>` and `<plugin-id>:<agent>`.
+
+Their names are checked against `AGENT_NAME_RE`, the host's shared session-name
+rule: `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`. Two cases are **skipped with a logged
+reason**: an entry whose name fails that rule, and a `skills/<name>/` directory
+with no readable `SKILL.md`. Either way the rest of the bundle still loads.
+
+Two more are **ignored silently, with no log line at all** — an `agents/` entry
+that is not a `.md` file, and a `skills/` entry that is not a directory. They are
+not treated as malformed entries but as things that were never bundle entries, so
+an `agents/notes.txt` beside your subagents costs you nothing. The consequence to
+expect is the debugging one: an agent written as `helper.markdown` does not appear
+and produces no log line to explain why.
+
+**A manifest whose `entry` names neither half is valid when the directory carries
+a `skills/` or `agents/` entry the loader accepted.** So `entry: {}` is a refusal
+for a code plugin and legal for a content-only one, and a pure content pack needs
+no JavaScript. `entry` is still required as an object.
+
+The full authoring picture — layout, per-seat visibility, when a change reaches a
+running seat, and that the checklists list this content rather than toggling it —
+is in [`README.md`](./README.md).
 
 ### Why a manifest gets refused
 
@@ -188,7 +218,11 @@ The refusals, and what to do about each:
   genuinely required: an absent `hostApi` is refused, not defaulted.
 - **`entry` is missing or isn't an object.**
 - **`entry.engine` or `entry.renderer` is present but isn't a string.**
-- **`entry` names neither half.** An empty `entry: {}` is refused.
+- **`entry` names neither half, and the directory carries no content bundle.**
+  An empty `entry: {}` is refused unless a `skills/` or `agents/` entry was
+  accepted — see the bundle rule above. The refusal names both halves of the
+  condition, so a content plugin whose only entry was skipped for a bad name
+  reads as this refusal rather than as silence.
 - **An entry path or the `style` path escapes the plugin directory.** Paths are
   resolved and must land inside your own directory; `"engine": "../../session-manager.js"`
   is refused. This is the runtime twin of the static boundary lint (§12) —

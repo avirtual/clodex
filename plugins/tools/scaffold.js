@@ -13,11 +13,33 @@ const path = require('path');
 
 const REPO = path.resolve(__dirname, '..', '..');
 const { HOST_API_VERSION, isValidPluginId, PLUGIN_ID_RE } = require(path.join(REPO, 'plugin-api.js'));
+const { AGENT_NAME_RE } = require(path.join(REPO, 'catalogs.js'));
 
-const id = process.argv[2];
+const argv = process.argv.slice(2);
+const positional = [];
+let skillName = null;
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--skill') {
+    if (argv[i + 1] === undefined) {
+      console.error('refused: --skill needs a name');
+      process.exit(2);
+    }
+    skillName = argv[++i];
+    continue;
+  }
+  if (argv[i].startsWith('--skill=')) { skillName = argv[i].slice('--skill='.length); continue; }
+  positional.push(argv[i]);
+}
+
+const id = positional[0];
 if (!id) {
-  console.error('usage: scaffold.js <plugin-id> [target-dir]');
+  console.error('usage: scaffold.js <plugin-id> [target-dir] [--skill <name>]');
   console.error(`  id must match ${PLUGIN_ID_RE}`);
+  console.error(`  skill name must match ${AGENT_NAME_RE}`);
+  process.exit(2);
+}
+if (skillName != null && !AGENT_NAME_RE.test(skillName)) {
+  console.error(`refused: "${skillName}" is not a usable skill name (${AGENT_NAME_RE})`);
   process.exit(2);
 }
 // Validated by the host's own predicate, not a copy of its regex: this refuses
@@ -27,7 +49,7 @@ if (!isValidPluginId(id)) {
   process.exit(2);
 }
 
-const parent = process.argv[3] || path.join(REPO, 'plugins');
+const parent = positional[1] || path.join(REPO, 'plugins');
 const dir = path.join(parent, id);
 if (fs.existsSync(dir)) { console.error(`refused: ${dir} already exists`); process.exit(2); }
 
@@ -78,6 +100,20 @@ fs.writeFileSync(path.join(dir, 'manifest.json'), `${JSON.stringify(manifest, nu
 fs.writeFileSync(path.join(dir, 'engine.js'), engine);
 fs.writeFileSync(path.join(dir, 'renderer.js'), renderer);
 
+if (skillName) {
+  const skillDir = path.join(dir, 'skills', skillName);
+  fs.mkdirSync(skillDir, { recursive: true });
+  const skill = `---
+name: ${skillName}
+description: TODO: one sentence telling an agent when to invoke /${id}:${skillName}.
+---
+TODO: the instructions the agent follows once it invokes this skill.
+Only a seat that has the ${id} plugin can see it, and it arrives as /${id}:${skillName}.
+`;
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill);
+}
+
 console.log(`created ${dir}`);
+if (skillName) console.log(`  skill:      skills/${skillName}/SKILL.md  ->  /${id}:${skillName}`);
 const shown = dir.startsWith(REPO + path.sep) ? path.relative(REPO, dir) : dir;
 console.log(`  verify it:  node plugins/tools/verify.js ${shown}`);

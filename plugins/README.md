@@ -20,7 +20,8 @@ A directory with a manifest and up to two JavaScript halves:
   style.css        optional — injected per plugin, per window
 ```
 
-At least one half is required, and **the directory name is the id**.
+At least one half is required — unless the directory ships skills or agents
+instead, below — and **the directory name is the id**.
 
 The split is the thing to understand first. The **engine half** runs in the
 Clodex engine — it can touch the filesystem, the session manager and the network,
@@ -35,6 +36,54 @@ A plugin contributes UI through seven named slots — status-bar actions and
 segments, a sidebar footer button, a session row badge, a session-menu provider,
 a Preferences section, and a full-window overlay — described with their specs in
 §6 of the contract.
+
+## Skills and agents
+
+A plugin can also carry Claude Code **skills** and **subagents**. They are
+content, not code: two directories beside the halves, read by the loader's
+`readBundle` and handed to the seats that have the plugin.
+
+```
+<id>/
+  skills/
+    <skill-name>/
+      SKILL.md   required — the skill; a directory with no readable SKILL.md is skipped
+  agents/
+    <agent-name>.md         the subagent; a non-.md file is ignored
+```
+
+Both names are checked against `AGENT_NAME_RE` — `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`,
+the same rule session names obey. A name that fails it is skipped with a reason in
+the app's log, and the rest of the bundle still loads: one bad entry does not cost
+you the others.
+
+They arrive **namespaced by the plugin's id**. A skill `review` in plugin
+`my-plugin` is invoked as `/my-plugin:review`; an agent `auditor` in the same
+plugin is delegated to as `my-plugin:auditor`. The namespace is the plugin id, so
+two plugins may ship a skill of the same name without colliding.
+
+**Visibility is per seat, and it is the plugin's seat list that decides it** —
+the same list of §2.1 that gates everything else a plugin reaches. A seat whose
+plugin list holds the plugin gets its skills and agents; a seat that does not,
+never sees them. Disabling the plugin does not retract them from a running seat:
+they are written at spawn, so they go at that seat's **next start**.
+
+They **show but do not toggle.** The Skills and Agents checklists (New Session,
+Edit Session, the per-session popovers) and the two library drawers group a
+plugin's content under the plugin's name, with the rows disabled: a seat that has
+the plugin sees them marked as arriving with it, and a seat that does not sees
+what enabling the plugin would add. There is no per-skill switch, because the
+plugin tick is the switch.
+
+**A plugin may be content only.** A manifest whose `entry` names neither half is
+valid when the directory carries a `skills/` or `agents/` entry, so a pure content
+pack needs no JavaScript at all — just `manifest.json` and the two directories.
+
+Editing one means editing the **plugin folder**, not anything in the app. These
+are the plugin's files: Manage Plugins ▸ Re-scan re-reads them without a restart,
+and a seat picks the new text up at its next start. They are not records in the
+user's own skill and agent library, so the library's editors cannot change them —
+the drawers list them, read-only, under the plugin they came from.
 
 ## Where your plugin goes
 

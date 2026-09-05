@@ -18,6 +18,10 @@ blocks a release.
 - A hand seat that receives rework past ~150k context now journals and compacts
   before continuing, instead of working the rework in a context that no longer
   fits; and the red-proof rule says to commit first.
+- **Plugin docs and scaffold cover skills and agents bundles**: the launchpad
+  README, the capability list and the API contract describe the folder layout and
+  the per-seat visibility rule, `scaffold.js --skill` writes a starter skill, and
+  `verify.js` reports what bundle a plugin folder carries.
 
 ## 5.30.0 — 2026-09-05
 
