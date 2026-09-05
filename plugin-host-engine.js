@@ -520,6 +520,10 @@ function createPluginHostEngine(deps) {
       id: pluginId, manifest, mod, shipped: opts.shipped === true,
       skills: Array.isArray(opts.skills) ? opts.skills : [],
       agents: Array.isArray(opts.agents) ? opts.agents : [],
+      prompts: Array.isArray(opts.prompts) ? opts.prompts : [],
+      templates: Array.isArray(opts.templates) ? opts.templates : [],
+      editable: opts.editable === true,
+      dir: opts.dir || null,
     });
     const host = buildHost(pluginId);
     try {
@@ -696,25 +700,42 @@ function createPluginHostEngine(deps) {
         scope: scopeOf(r.manifest),
         shipped: r.shipped === true,
         enabledByDefault: r.manifest.enabledByDefault !== false,
-        skills: r.skills.map((s) => s.name),
-        agents: r.agents.map((a) => a.name),
+        // Every entry carries its BODY, not just its name: the library drawers
+        // open an editor on a bundle record, and this is the only read that
+        // reaches them — `bundles()` is engine-side and no IPC serves it.
+        skills: r.skills.map((s) => ({ name: s.name, body: s.content })),
+        agents: r.agents.map((a) => ({ name: a.name, body: a.content })),
+        // A prompt is identified by name AND kind, because the two rails it can
+        // land on — the system <select> and the append checklist — are different
+        // UI, and a system and an append prompt may share a stem.
+        prompts: r.prompts.map((p) => ({ name: p.name, kind: p.kind, body: p.body })),
+        templates: r.templates.map((t) => ({ name: t.name, body: t.body })),
+        editable: r.editable === true,
+        dir: r.dir || null,
       }));
     },
     bundles() {
       return [...registered.values()]
-        .filter((r) => r.skills.length || r.agents.length)
+        .filter((r) => r.skills.length || r.agents.length || r.prompts.length || r.templates.length)
         .map((r) => ({
           id: r.id,
+          name: r.manifest.name || r.id,
           shipped: r.shipped === true,
+          editable: r.editable === true,
+          dir: r.dir || null,
           skills: r.skills.map((s) => ({ ...s })),
           agents: r.agents.map((a) => ({ ...a })),
+          prompts: r.prompts.map((p) => ({ ...p })),
+          templates: r.templates.map((t) => ({ name: t.name, body: { ...t.body } })),
         }));
     },
-    updateBundle(pluginId, skills, agents) {
+    updateBundle(pluginId, skills, agents, prompts, templates) {
       const rec = registered.get(String(pluginId));
       if (!rec) return false;
       rec.skills = Array.isArray(skills) ? skills : [];
       rec.agents = Array.isArray(agents) ? agents : [];
+      rec.prompts = Array.isArray(prompts) ? prompts : [];
+      rec.templates = Array.isArray(templates) ? templates : [];
       return true;
     },
     setEnabled(pluginId, enabled) {

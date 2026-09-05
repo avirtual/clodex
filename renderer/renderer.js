@@ -242,6 +242,11 @@ const nameFieldLabel = document.getElementById('name-field-label');
 
 let dialogMode = 'create';
 let editingTemplateId = null;
+// The plugin section a template being edited came from, or null for a library
+// template. Non-null routes the save into the plugin folder and forbids a
+// rename: the file inside the plugin is named for its stem, and the drawer has
+// no verb that deletes the old one.
+let editingTemplateBundle = null;
 let templatesDrawerRefresh = null;
 
 function promptText(title, initial = '') {
@@ -1711,8 +1716,8 @@ function populateChecklistsFromCatalogs(cat) {
     system: (cat.prompts || []).filter((p) => p.kind === 'system'),
     append: (cat.prompts || []).filter((p) => p.kind === 'append'),
   });
-  fillSystemPromptSelect(inputSystemPrompt, '');
-  renderAppendChecklist(inputAppendList, new Set());
+  fillSystemPromptSelect(inputSystemPrompt, '', newSessionSeat());
+  renderAppendChecklist(inputAppendList, new Set(), newSessionSeat());
   setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
 }
 
@@ -1741,31 +1746,76 @@ async function loadPromptLib() {
   });
 }
 
-function fillSystemPromptSelect(selectEl, current) {
+// A namespaced option is offered ONLY to a seat that holds the plugin: picking
+// one the seat cannot reach makes create() refuse the spawn outright, so the
+// option would be a trap rather than a hint. `current` survives whatever the
+// offering is, so an already-persisted ref is never silently cleared by a
+// dialog opened while the plugin is disabled.
+function fillSystemPromptSelect(selectEl, current, seat = null) {
   while (selectEl.options.length > 1) selectEl.remove(1);
+  const values = [];
   for (const p of getPromptLibCache().system) {
     const opt = document.createElement('option');
     opt.value = p.name;
     opt.textContent = p.name;
     selectEl.appendChild(opt);
+    values.push(p.name);
   }
-  selectEl.value = current && getPromptLibCache().system.some(p => p.name === current) ? current : '';
+  for (const sec of bundleSectionsOf('prompts/system')) {
+    if (!seat || !seatHasPlugin(sec.id, seat.plugins, sec.shipped)) continue;
+    for (const n of sec.names) {
+      const opt = document.createElement('option');
+      opt.value = `${sec.id}:${n}`;
+      opt.textContent = `${n} — from the ${sec.name} plugin`;
+      selectEl.appendChild(opt);
+      values.push(opt.value);
+    }
+  }
+  if (current && !values.includes(current)) {
+    const opt = document.createElement('option');
+    opt.value = current;
+    opt.textContent = current;
+    selectEl.appendChild(opt);
+    values.push(current);
+  }
+  selectEl.value = current && values.includes(current) ? current : '';
 }
 
 async function refreshSystemPromptDropdown() {
   await loadPromptLib();
-  fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value);
-  renderAppendChecklist(inputAppendList, new Set());
+  fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, newSessionSeat());
+  renderAppendChecklist(inputAppendList, new Set(), newSessionSeat());
 }
 
 async function refreshTemplatesDropdown() {
   const list = await window.api.listTemplates();
   while (inputTemplate.options.length > 1) inputTemplate.remove(1);
+  const byPlugin = new Map();
   for (const t of list) {
+    if (t.plugin) {
+      if (!byPlugin.has(t.plugin)) byPlugin.set(t.plugin, { label: t.pluginName || t.plugin, rows: [] });
+      byPlugin.get(t.plugin).rows.push(t);
+      continue;
+    }
     const opt = document.createElement('option');
     opt.value = t.id;
     opt.textContent = t.name;
     inputTemplate.appendChild(opt);
+  }
+  // Listed whether or not the dialog's current plugin ticks hold the plugin:
+  // selecting one applies the template's own `plugins`, which the loader has
+  // already merged its plugin into, so starting it GRANTS the plugin rather
+  // than needing it beforehand.
+  for (const [, group] of byPlugin) {
+    const og = document.createElement('optgroup');
+    og.label = `from the ${group.label} plugin`;
+    for (const t of group.rows) {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name.includes(':') ? t.name.slice(t.name.indexOf(':') + 1) : t.name;
+      og.appendChild(opt);
+    }
+    inputTemplate.appendChild(og);
   }
   templateRow.style.display = list.length > 0 ? '' : 'none';
   return list;
@@ -1842,6 +1892,12 @@ function repaintNewSessionBundleRows() {
   const seat = newSessionSeat();
   repaintBundleSections(inputAgentsList, 'agents', seat);
   repaintBundleSections(inputInjectSkillsList, 'skills', seat);
+  // The append rail keeps the operator's current ticks across the repaint; the
+  // system rail is a <select>, so its whole offering is rebuilt around the value
+  // already chosen.
+  repaintBundleSections(inputAppendList, 'prompts/append', seat,
+    new Set(collectAppendChecklist(inputAppendList)));
+  fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, seat);
 }
 
 async function refreshNewSessionIntents(intentsList) {
@@ -2011,6 +2067,8 @@ async function refreshCwdSuggestions() {
 
 async function openDialog(prefill = null) {
   editingTemplateId = null;
+  editingTemplateBundle = null;
+  inputName.readOnly = false;
   overlayDismissed = false; // fresh open re-checks: the prominence overlay may re-raise
   if (toolOverlay) toolOverlay.classList.add('hidden');
   setDialogMode('create'); // reset chrome if the last use was a template edit
@@ -2185,6 +2243,10 @@ inputTemplate.addEventListener('change', async () => {
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
     await refreshNewSessionPlugins(t.plugins);
     await refreshNewSessionIntents(t.intents);
+    // BELOW the plugin refresh, which seeds both the catalog these rails group
+    // by and the ticks newSessionSeat() reads.
+    fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || '', newSessionSeat());
+    renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
     await refreshNewSessionTools(new Set(t.disabledTools || []));
     await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -2201,6 +2263,12 @@ inputTemplate.addEventListener('change', async () => {
 btnTemplateDelete.addEventListener('click', async () => {
   const id = inputTemplate.value;
   if (!id) return;
+  // A plugin template's file lives in the plugin folder, which removeTemplate
+  // does not reach — it would delete nothing and report success.
+  if (id.includes(':')) {
+    showToast('That template comes from a plugin — remove it from the plugin folder.', { kind: 'warn' });
+    return;
+  }
   await window.api.removeTemplate(id);
   await refreshTemplatesDropdown();
   inputTemplate.value = '';
@@ -2461,10 +2529,12 @@ function setDialogMode(mode) {
   }
 }
 
-async function openTemplateEditor(tpl = null) {
+async function openTemplateEditor(tpl = null, bundle = null) {
   editingTemplateId = tpl ? tpl.id : null;
+  editingTemplateBundle = bundle;
   inputType.value = (tpl && tpl.type) || 'claude';
   inputName.value = (tpl && tpl.name) || '';
+  inputName.readOnly = !!bundle;
   inputCwd.value = (tpl && tpl.cwd) || homeDir;
   {
     const { model, rest } = splitModelArg((tpl && tpl.extraArgs) || []);
@@ -2483,16 +2553,20 @@ async function openTemplateEditor(tpl = null) {
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setAgentLibCache((await window.api.listAgents()) || []);
   const agentType = inputType.value === 'claude' || inputType.value === 'codex';
-  if (agentType) {
-    await loadPromptLib();
-    fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '');
-    renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []));
-  }
+  if (agentType) await loadPromptLib();
   // ABOVE the guard, like refreshNewSessionPlugins' own fetch and for the same
   // reason: a non-claude template draws no checklist but collectFormConfig still
   // saves defaultPluginTicks(), which reads this cache. Below the guard it
   // answers [] and writes a closed list into the template file.
   await refreshNewSessionPlugins(tpl && tpl.plugins);
+  // BELOW the plugin refresh, which is what seeds the catalog the two prompt
+  // rails group their bundle rows by — and what paints the plugin checklist
+  // newSessionSeat() reads. Above it both rails answer to the PREVIOUS
+  // template's plugin set.
+  if (agentType) {
+    fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '', newSessionSeat());
+    renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []), newSessionSeat());
+  }
   if (inputType.value === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []), null, newSessionSeat());
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
@@ -2517,6 +2591,18 @@ async function saveTemplateFromForm() {
     return;
   }
   const cfg = collectFormConfig();
+  if (editingTemplateBundle) {
+    const res = await window.api.writePluginBundleFile(
+      editingTemplateBundle.id, 'templates', name, JSON.stringify({ ...cfg, name }, null, 2));
+    if (res && res.ok === false) {
+      alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || 'unknown error'}`);
+      return;
+    }
+    closeDialog();
+    await refreshTemplatesDropdown();
+    if (templatesDrawerRefresh) templatesDrawerRefresh();
+    return;
+  }
   if (editingTemplateId) {
     const list = await window.api.listTemplates();
     const clash = list.find(t => t.id !== editingTemplateId && (t.name || '').toLowerCase() === name.toLowerCase());
@@ -6152,6 +6238,9 @@ if (argsPluginList) {
     if (argsInjectSkillsSection.style.display !== 'none') {
       repaintBundleSections(argsInjectSkillsList, 'skills', seat);
     }
+    repaintBundleSections(argsAppendList, 'prompts/append', seat,
+      new Set(collectAppendChecklist(argsAppendList)));
+    fillSystemPromptSelect(argsSystemPrompt, argsSystemPrompt.value, seat);
   });
 }
 const argsExecList = document.getElementById('args-exec-list');
@@ -6222,8 +6311,6 @@ async function openArgsDialog(name, argsSource = null) {
   argsPromptRow.style.display = isAgent ? '' : 'none';
   argsAppendRow.style.display = isAgent ? '' : 'none';
   argsAppendSection.style.display = isAgent ? '' : 'none';
-  fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || '');
-  renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []));
   const isClaude = res.type === 'claude';
   argsAgentsRow.style.display = isClaude ? '' : 'none';
   argsOtherSection.style.display = isClaude ? '' : 'none';
@@ -6235,6 +6322,12 @@ async function openArgsDialog(name, argsSource = null) {
   argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
   argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
   renderPluginChecklist(argsPluginList, res.plugins);
+  // Both prompt rails moved BELOW the catalog fetch and the plugin render, for
+  // the reason plugin-bundle-checklist.test.js pins on the agents render: they
+  // draw bundle rows off pluginCatalogCache, and argsSeat() reads the plugin
+  // checklist this line paints.
+  fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || '', argsSeat());
+  renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []), argsSeat());
   const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
   renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto, argsSeat());
   argsAgentsPersisted = res.agents || [];

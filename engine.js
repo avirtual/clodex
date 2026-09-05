@@ -362,18 +362,94 @@ function isDigested(entry, sessionId) {
 
 
 
-function resolveSystemPromptFile(stem) {
+// `<plugin-id>:<stem>`. The FIRST colon splits, so a library prompt can never be
+// mistaken for a namespaced one: a bare stem cannot contain a colon (the name
+// regex forbids it), and a leading colon leaves an empty id and is not a ref.
+function splitPluginPromptRef(stem) {
+  const s = String(stem || '');
+  const i = s.indexOf(':');
+  if (i <= 0) return null;
+  return { pluginId: s.slice(0, i), stem: s.slice(i + 1) };
+}
+
+function pluginBundleFor(pluginId) {
+  if (!pluginHost || typeof pluginHost.bundles !== 'function') return null;
+  try { return (pluginHost.bundles() || []).find((b) => b.id === pluginId) || null; }
+  catch { return null; }
+}
+
+// THROWS where the library path returns null, and the asymmetry is the point: a
+// missing library prompt degrades to the CLI default, but a namespaced stem the
+// seat cannot reach means the template that named it was resolved against the
+// wrong seat — spawning anyway produces a seat silently missing the prompt it
+// was configured with.
+function resolvePluginBundleForPrompt(ref, seatPlugins) {
+  const b = pluginBundleFor(ref.pluginId);
+  if (!b) throw new Error(`prompt "${ref.pluginId}:${ref.stem}" comes from the "${ref.pluginId}" plugin, which is not loaded`);
+  if (!seatHasPlugin(b.id, seatPlugins, b.shipped)) {
+    throw new Error(`prompt "${ref.pluginId}:${ref.stem}" needs the "${ref.pluginId}" plugin, which this session does not hold`);
+  }
+  return b;
+}
+
+function resolveSystemPromptFile(stem, seatPlugins) {
   if (!stem) return null;
+  const ref = splitPluginPromptRef(stem);
+  if (ref) {
+    const b = resolvePluginBundleForPrompt(ref, seatPlugins);
+    const has = (b.prompts || []).some((p) => p.kind === 'system' && p.name === ref.stem);
+    if (!has || !b.dir) return null;
+    const p = path.join(b.dir, 'prompts', 'system', `${ref.stem}.md`);
+    try { fs.accessSync(p, fs.constants.R_OK); return p; }
+    catch { return null; }
+  }
   const p = promptLibrary._file('system', stem);
   try { fs.accessSync(p, fs.constants.R_OK); return p; }
   catch { return null; }
 }
 
-function readAppendBodies(stems) {
+function readAppendBodies(stems, seatPlugins) {
   const out = [];
   for (const stem of stems || []) {
+    const ref = splitPluginPromptRef(stem);
+    if (ref) {
+      const b = resolvePluginBundleForPrompt(ref, seatPlugins);
+      const hit = (b.prompts || []).find((p) => p.kind === 'append' && p.name === ref.stem);
+      if (hit && hit.body != null && hit.body.trim()) out.push(hit.body);
+      continue;
+    }
     const body = promptLibrary.raw('append', stem);
     if (body != null && body.trim()) out.push(body);
+  }
+  return out;
+}
+
+// The codex half of the same resolution: it reads BODIES rather than a path, so
+// it cannot share resolveSystemPromptFile.
+function readSystemPromptBody(stem, seatPlugins) {
+  if (!stem) return null;
+  const ref = splitPluginPromptRef(stem);
+  if (ref) {
+    const b = resolvePluginBundleForPrompt(ref, seatPlugins);
+    const hit = (b.prompts || []).find((p) => p.kind === 'system' && p.name === ref.stem);
+    return hit ? hit.body : null;
+  }
+  return promptLibrary.raw('system', stem);
+}
+
+// Every template the app offers: the user's library, then one namespaced entry
+// per plugin template. `plugins` is already merged by the loader's read, so a
+// seat started from one holds the plugin that shipped it.
+function listAllTemplates() {
+  const out = templates.list();
+  if (!pluginHost || typeof pluginHost.bundles !== 'function') return out;
+  let bundles;
+  try { bundles = pluginHost.bundles() || []; } catch { return out; }
+  for (const b of bundles) {
+    for (const t of b.templates || []) {
+      const id = `${b.id}:${t.name}`;
+      out.push({ ...t.body, name: id, id, plugin: b.id, pluginName: b.name || b.id });
+    }
   }
   return out;
 }
@@ -953,7 +1029,7 @@ const { termAvailableFor, vetTermCommand } = require('./drawer-avail');
 const { createSessionManager } = require('./session-manager');
 
 const { createPluginHostEngine } = require('./plugin-host-engine');
-const { pluginsEnabled } = require('./plugin-api');
+const { pluginsEnabled, seatHasPlugin } = require('./plugin-api');
 const gitWorktree = require('./git-worktree');
 // Phase 2: discovery + the enabled set. Declared beside the host because
 // setEnabled reaches it through a getter — the loader is constructed AFTER the
@@ -1135,6 +1211,8 @@ const SessionManager = createSessionManager({
     writeSkillPlugin,
     writeAgentPlugin,
     writeBundlePlugins,
+    readSystemPromptBody,
+    listAllTemplates,
     getPluginBundles: () => (pluginHost ? pluginHost.bundles() : []),
   getPersistence: () => persistence,
   getTemplates: () => templates,
@@ -2095,6 +2173,8 @@ const toolCache = createToolCache({ whichBin });
     getBashLive: () => bashLive,
     getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,
+    getPluginLoader: () => pluginLoader,
+    listAllTemplates,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,

@@ -40,12 +40,31 @@ function validateManifest(m, dirName, hasBundle = false) {
   if (m.entry.engine && typeof m.entry.engine !== 'string') return 'manifest.entry.engine must be a string';
   if (m.entry.renderer && typeof m.entry.renderer !== 'string') return 'manifest.entry.renderer must be a string';
   if (!m.entry.engine && !m.entry.renderer && !hasBundle) {
-    return 'manifest.entry names neither an engine nor a renderer half, and the directory carries no skills/ or agents/ entry';
+    return 'manifest.entry names neither an engine nor a renderer half, and the directory carries no skills/, agents/, prompts/ or templates/ entry';
   }
   return null;
 }
 
-function readBundle(fs, path, dir, onSkip) {
+const BUNDLE_PROMPT_KINDS = ['system', 'append'];
+
+// A template inside a plugin names that plugin's own prompts by bare stem, and
+// this rewrite is what keeps it from dangling: the stem a template ships is
+// resolved against the plugin, never against the user's library, so moving the
+// plugin between roots cannot silently repoint it at a same-named library file.
+// An already-namespaced ref is left alone — a plugin may legitimately name
+// another plugin's prompt.
+function namespaceTemplateRefs(tpl, pluginId) {
+  const qualify = (stem) => (typeof stem === 'string' && stem && !stem.includes(':')
+    ? `${pluginId}:${stem}` : stem);
+  const out = { ...tpl };
+  if (out.systemPromptFile) out.systemPromptFile = qualify(out.systemPromptFile);
+  if (Array.isArray(out.appendPromptFiles)) out.appendPromptFiles = out.appendPromptFiles.map(qualify);
+  const held = Array.isArray(out.plugins) ? out.plugins.map(String) : [];
+  out.plugins = [...new Set([...held, String(pluginId)])];
+  return out;
+}
+
+function readBundle(fs, path, dir, onSkip, pluginId) {
   const skip = typeof onSkip === 'function' ? onSkip : () => {};
   let unreadable = false;
   const listing = (sub) => {
@@ -87,9 +106,57 @@ function readBundle(fs, path, dir, onSkip) {
     }
     agents.push({ name, content });
   }
+  const prompts = [];
+  for (const kind of BUNDLE_PROMPT_KINDS) {
+    for (const ent of listing(path.join('prompts', kind))) {
+      if (!ent.isFile() && !ent.isSymbolicLink()) continue;
+      if (!ent.name.endsWith('.md')) continue;
+      const name = ent.name.slice(0, -3);
+      if (!AGENT_NAME_RE.test(name)) { skip(`prompts/${kind}/${ent.name}`, 'not a legal prompt name'); continue; }
+      let body;
+      try { body = fs.readFileSync(path.join(dir, 'prompts', kind, ent.name), 'utf8'); }
+      catch (e) {
+        if (e && e.code !== 'ENOENT') unreadable = true;
+        skip(`prompts/${kind}/${ent.name}`, `unreadable — ${(e && e.message) || e}`);
+        continue;
+      }
+      prompts.push({ name, kind, body });
+    }
+  }
+  const templates = [];
+  for (const ent of listing('templates')) {
+    if (!ent.isFile() && !ent.isSymbolicLink()) continue;
+    if (!ent.name.endsWith('.json')) continue;
+    const name = ent.name.slice(0, -'.json'.length);
+    if (!AGENT_NAME_RE.test(name)) { skip(`templates/${ent.name}`, 'not a legal template name'); continue; }
+    let raw;
+    try { raw = fs.readFileSync(path.join(dir, 'templates', ent.name), 'utf8'); }
+    catch (e) {
+      if (e && e.code !== 'ENOENT') unreadable = true;
+      skip(`templates/${ent.name}`, `unreadable — ${(e && e.message) || e}`);
+      continue;
+    }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      skip(`templates/${ent.name}`, `not valid JSON — ${(e && e.message) || e}`);
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      skip(`templates/${ent.name}`, 'not a JSON object');
+      continue;
+    }
+    templates.push({ name, body: namespaceTemplateRefs(parsed, pluginId || path.basename(dir)) });
+  }
   skills.sort((a, b) => (a.name < b.name ? -1 : 1));
   agents.sort((a, b) => (a.name < b.name ? -1 : 1));
-  return { skills, agents, unreadable };
+  prompts.sort((a, b) => (a.name < b.name ? -1 : 1));
+  templates.sort((a, b) => (a.name < b.name ? -1 : 1));
+  return { skills, agents, prompts, templates, unreadable };
+}
+
+function bundleIsEmpty(bundle) {
+  return !(bundle.skills.length || bundle.agents.length
+    || bundle.prompts.length || bundle.templates.length);
 }
 
 // Comparable versions are dot-separated runs of digits, compared NUMERICALLY
@@ -284,10 +351,10 @@ function createPluginLoader(deps) {
       }
       const bundle = readBundle(fs, path, dir, (what, reason) => {
         logIt(`${ent.name}: skipping ${what} — ${reason}`);
-      });
+      }, manifest && manifest.id);
       // The dirname compared is the one in the ROOT, not the symlink target's:
       // what the user named the directory is what they meant the id to be.
-      const why = validateManifest(manifest, ent.name, !!(bundle.skills.length || bundle.agents.length));
+      const why = validateManifest(manifest, ent.name, !bundleIsEmpty(bundle));
       if (why) { logIt(`skipping ${ent.name}: ${why}`); note(ent.name, why); continue; }
       const entry = manifest.entry || {};
       for (const half of ['engine', 'renderer']) {
@@ -316,6 +383,12 @@ function createPluginLoader(deps) {
         stylePath: manifest.style ? path.join(dir, manifest.style) : null,
         skills: bundle.skills,
         agents: bundle.agents,
+        prompts: bundle.prompts,
+        templates: bundle.templates,
+        // The ownership rule, resolved once here rather than by each reader
+        // comparing root ids: a plugin under the user's own ~/.clodex/plugins
+        // is theirs to edit in the app, and every other root is read-only.
+        editable: root.id === 'user',
         bundleUnreadable: bundle.unreadable,
       };
       const held = claimed.get(manifest.id);
@@ -391,6 +464,10 @@ function createPluginLoader(deps) {
         shipped: rec.root === 'core',
         skills: rec.skills || [],
         agents: rec.agents || [],
+        prompts: rec.prompts || [],
+        templates: rec.templates || [],
+        editable: rec.editable === true,
+        dir: rec.dir,
       });
       logIt(`loaded ${rec.id} v${rec.manifest.version || '?'}`);
       verbConflicts.delete(rec.id);
@@ -464,7 +541,9 @@ function createPluginLoader(deps) {
         const movedVersion = (live.version || null) !== (rec.manifest.version || null);
         if (!movedDir && !movedVersion && !rec.bundleUnreadable
             && typeof pluginHost.updateBundle === 'function') {
-          try { pluginHost.updateBundle(rec.id, rec.skills, rec.agents); } catch {}
+          try {
+            pluginHost.updateBundle(rec.id, rec.skills, rec.agents, rec.prompts, rec.templates);
+          } catch {}
         }
         if (movedDir || movedVersion) {
           restartRequired.set(rec.id, {
@@ -549,8 +628,8 @@ function createPluginLoader(deps) {
       return { ok: false, error: `${manifestPath} is not valid JSON — ${(e && e.message) || e}` };
     }
     const dirName = path.basename(abs);
-    const bundle = readBundle(fs, path, abs);
-    const why = validateManifest(manifest, dirName, !!(bundle.skills.length || bundle.agents.length));
+    const bundle = readBundle(fs, path, abs, null, manifest && manifest.id);
+    const why = validateManifest(manifest, dirName, !bundleIsEmpty(bundle));
     if (why) {
       if (manifest && typeof manifest === 'object' && isValidPluginId(manifest.id)
           && !RESERVED_PLUGIN_IDS.has(manifest.id) && manifest.id !== dirName) {
@@ -655,6 +734,47 @@ function createPluginLoader(deps) {
     return { rendererPath: rec.rendererPath, css };
   }
 
+  const BUNDLE_FILE_PATHS = {
+    skills: (stem) => ['skills', stem, 'SKILL.md'],
+    agents: (stem) => ['agents', `${stem}.md`],
+    'prompts/system': (stem) => ['prompts', 'system', `${stem}.md`],
+    'prompts/append': (stem) => ['prompts', 'append', `${stem}.md`],
+    templates: (stem) => ['templates', `${stem}.json`],
+  };
+
+  // Two independent refusals, and neither is redundant. `editable` carries the
+  // ownership ruling, so a core plugin is refused even for a perfectly legal
+  // stem; `insideDir` re-checks the assembled path, so a stem that slipped the
+  // name regex could still not land outside the plugin's own directory.
+  function writeBundleFile(id, kind, stem, body) {
+    const rel = BUNDLE_FILE_PATHS[String(kind)];
+    if (!rel) return { ok: false, error: `unknown bundle kind: ${kind}` };
+    const name = String(stem || '');
+    if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `invalid name: ${JSON.stringify(stem)}` };
+    const rec = discover().find((r) => r.id === String(id));
+    if (!rec) return { ok: false, error: `no such plugin: ${id}` };
+    if (!rec.editable) {
+      return {
+        ok: false,
+        error: `"${rec.id}" comes from ${rec.rootLabel || rec.root} and is read-only here — only a plugin in your own plugins folder can be edited in the app.`,
+      };
+    }
+    const parts = rel(name);
+    const relPath = path.join(...parts);
+    if (!insideDir(path, rec.dir, relPath)) {
+      return { ok: false, error: `${relPath} escapes the plugin directory` };
+    }
+    const file = path.join(rec.dir, relPath);
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, String(body ?? ''), { mode: 0o600 });
+    } catch (e) {
+      return { ok: false, error: `could not write ${file} — ${(e && e.message) || e}` };
+    }
+    logIt(`${rec.id}: wrote ${relPath}`);
+    return { ok: true, id: rec.id, file };
+  }
+
   // What the settings Plugins section renders: one row per DISCOVERED plugin —
   // present on disk, whatever its state — plus the directories that failed
   // validation. A plugin that is quarantined must still appear, otherwise the
@@ -690,7 +810,7 @@ function createPluginLoader(deps) {
   return {
     discover, isEnabled, enabledSet, setEnabledInSettings,
     loadAll, activateById, rescan, ensureUserRoot, listUserRoot, rendererInfo,
-    validateCandidate, registerUserPlugin, unregisterUserPlugin,
+    validateCandidate, registerUserPlugin, unregisterUserPlugin, writeBundleFile,
     status, noteRendererActivation, clearFailures, isQuarantined,
     _validateManifest: validateManifest,
     _isNewerVersion: isNewerVersion,
@@ -698,4 +818,7 @@ function createPluginLoader(deps) {
   };
 }
 
-module.exports = { createPluginLoader, validateManifest, isNewerVersion };
+module.exports = {
+  createPluginLoader, validateManifest, isNewerVersion,
+  readBundle, namespaceTemplateRefs, BUNDLE_PROMPT_KINDS,
+};

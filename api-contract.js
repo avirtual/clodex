@@ -467,6 +467,11 @@ const API_CONTRACT = [
   // silently clear the other.
   { name: 'getSessionPluginGrants', kind: 'invoke', channel: 'session:pluginGrants' },
   { name: 'setSessionPluginGrants', kind: 'invoke', channel: 'session:setPluginGrants' },
+  // An ordinary capability row like fileWrite, NOT part of the frozen five-row
+  // plugin transport: this is the APP editing a plugin's own content files, and
+  // the loader refuses every root but the user's, so a plugin can never reach it
+  // to write into a built-in copy of itself.
+  { name: 'writePluginBundleFile', kind: 'invoke', channel: 'plugins:writeBundleFile' },
 ];
 
 module.exports = { API_CONTRACT };

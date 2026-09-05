@@ -70,9 +70,9 @@ function getPromptLibCache() { return promptLibCache; }
 function getSkillLibCache() { return skillLibCache; }
 function getDefaultToolDenyCache() { return defaultToolDenyCache; }
 
-function renderAppendChecklist(container, enabledSet) {
+function renderAppendChecklist(container, enabledSet, seat = null) {
   container.innerHTML = '';
-  if (!promptLibCache.append.length) {
+  if (!promptLibCache.append.length && !hasBundleRows('prompts/append', seat)) {
     container.innerHTML = '<span class="hint-text">No append prompts in library — add some via the Prompts drawer.</span>';
     return;
   }
@@ -90,17 +90,44 @@ function renderAppendChecklist(container, enabledSet) {
     row.appendChild(txt);
     container.appendChild(row);
   }
+  appendBundleSections(container, 'prompts/append', seat, enabledSet);
 }
+// `:not(:disabled)` for the same reason the skills and agents collectors carry
+// it: a bundle row is drawn CHECKED, and collecting it would write
+// `pluginId:stem` into appendPromptFiles a second time — the seat already reads
+// it, so the duplicate composes the same body twice.
 function collectAppendChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
 }
 
+// `prompts/system` and `prompts/append` read the SAME catalog field and split on
+// each entry's kind, because the two rails they feed are different UI: one
+// replaces the CLI default, the other composes.
+const BUNDLE_KINDS = {
+  skills: { field: 'skills', promptKind: null },
+  agents: { field: 'agents', promptKind: null },
+  templates: { field: 'templates', promptKind: null },
+  'prompts/system': { field: 'prompts', promptKind: 'system' },
+  'prompts/append': { field: 'prompts', promptKind: 'append' },
+};
+
 function bundleSectionsOf(kind) {
+  const spec = BUNDLE_KINDS[kind] || { field: kind, promptKind: null };
   const out = [];
   for (const p of pluginCatalogCache) {
-    const names = Array.isArray(p[kind]) ? p[kind] : [];
-    if (!names.length) continue;
-    out.push({ id: String(p.id), name: p.name || String(p.id), names, shipped: p.shipped });
+    const raw = Array.isArray(p[spec.field]) ? p[spec.field] : [];
+    // A bare string is still accepted so a catalog from an older engine (or a
+    // test fixture written against one) lists its names instead of nothing.
+    const entries = raw
+      .filter((e) => !spec.promptKind || (e && e.kind === spec.promptKind))
+      .map((e) => (e && typeof e === 'object' ? e : { name: e }))
+      .filter((e) => typeof e.name === 'string' && e.name);
+    if (!entries.length) continue;
+    out.push({
+      id: String(p.id), name: p.name || String(p.id),
+      names: entries.map((e) => e.name), entries,
+      shipped: p.shipped, editable: p.editable === true, dir: p.dir || null,
+    });
   }
   return out;
 }
@@ -117,19 +144,26 @@ function hasBundleRows(kind, seat) {
   return seatBundleSections(kind, seat).length > 0;
 }
 
-function appendBundleSections(container, kind, seat) {
+// `checkedSet` splits the two meanings a bundle row's tick can carry, and they
+// are NOT the same fact. A skill or agent from a held plugin is loaded by the
+// CLI whether or not anything selects it, so holding the plugin IS the tick. An
+// append prompt is composed only when the seat's appendPromptFiles names it, so
+// a row ticked on reach alone would claim a prompt the seat never reads. The
+// greyed hint stays keyed on reach either way — that axis is unchanged.
+function appendBundleSections(container, kind, seat, checkedSet = null) {
   for (const sec of seatBundleSections(kind, seat)) {
     const head = document.createElement('div');
     head.className = 'check-group';
     head.textContent = sec.name;
     container.appendChild(head);
     for (const n of sec.names) {
+      const value = `${sec.id}:${n}`;
       const row = document.createElement('label');
       row.className = 'agent-check bundle-row' + (sec.has ? '' : ' skill-readonly');
       const cb = document.createElement('input');
       cb.type = 'checkbox';
-      cb.value = `${sec.id}:${n}`;
-      cb.checked = sec.has;
+      cb.value = value;
+      cb.checked = checkedSet ? checkedSet.has(value) : sec.has;
       cb.disabled = true;
       const txt = document.createElement('span');
       const note = sec.has
@@ -143,9 +177,9 @@ function appendBundleSections(container, kind, seat) {
   }
 }
 
-function repaintBundleSections(container, kind, seat) {
+function repaintBundleSections(container, kind, seat, checkedSet = null) {
   container.querySelectorAll('.check-group, .bundle-row').forEach((n) => n.remove());
-  appendBundleSections(container, kind, seat);
+  appendBundleSections(container, kind, seat, checkedSet);
 }
 
 // `autoSet` (optional) = names auto-INCLUDED for this session by `sessions:`

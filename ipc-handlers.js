@@ -65,7 +65,7 @@ function registerIpcHandlers(deps) {
     getSandbox, getSandboxManager,
     enableDrawerServices, enableLocalTerminal, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
     syncTerminalReports,
-    getPluginHost, surfaceOfSender,
+    getPluginHost, getPluginLoader, listAllTemplates, surfaceOfSender,
   } = deps;
 
   async function spawnFromParams(e, p) {
@@ -458,7 +458,10 @@ function registerIpcHandlers(deps) {
     catch { return { ok: false }; }
   });
 
-  handle('templates:list', () => templates.list());
+  // The plugin half is READ-only on this channel: save/saveByName/remove below
+  // still go to the library store, so a picker offering a `p:t` row cannot turn
+  // into a write back into the plugin folder by that row being edited.
+  handle('templates:list', () => (listAllTemplates ? listAllTemplates() : templates.list()));
   handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
   handle('templates:saveByName', (_e, template) => {
     const t = templates.saveByName(template);
@@ -1109,6 +1112,11 @@ function registerIpcHandlers(deps) {
   handle('plugin:catalog', () => {
     const host = getPluginHost && getPluginHost();
     return host ? host.catalog() : [];
+  });
+  handle('plugins:writeBundleFile', (_e, pluginId, kind, stem, body) => {
+    const loader = getPluginLoader && getPluginLoader();
+    if (!loader) return { ok: false, error: 'no plugin loader' };
+    return loader.writeBundleFile(String(pluginId || ''), String(kind || ''), String(stem || ''), body);
   });
   handle('plugin:setEnabled', async (_e, pluginId, enabled) => {
     const host = getPluginHost && getPluginHost();
