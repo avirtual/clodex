@@ -122,14 +122,16 @@ test('memoryStore: forget cannot reach a file outside the agent dir', () => {
 
 // ── stores.js libraries ─────────────────────────────────────────────────────
 
-// Same shape as test/stores.test.js freshStores(): seeding disabled via a
-// resourcesDir that does not exist, so the shipped library defaults don't
-// appear in the list() assertions below.
+// Same shape as test/stores.test.js freshStores(): both seed sources point at
+// paths that do not exist, so neither the shipped library defaults nor the
+// shipped skills appear in the list() assertions below.
 function tmpStores() {
   const userData = mkTmpRoot('clodex-confine-ud-');
   const registryDir = mkTmpRoot('clodex-confine-reg-');
   const stores = initStores(userData, {
-    log: console, registryDir, resourcesDir: path.join(registryDir, '__no_seed__'),
+    log: console, registryDir,
+    resourcesDir: path.join(registryDir, '__no_seed__'),
+    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
   });
   return { stores, dir: registryDir };
 }

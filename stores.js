@@ -384,7 +384,7 @@ function sanitizeSpeakRate(raw) {
   return Number.isInteger(raw) && raw >= 80 && raw <= 400 ? raw : DEFAULT_UI_SETTINGS.speakRate;
 }
 
-function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
+function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResourcesDir } = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
   const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
@@ -1481,40 +1481,22 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // apart -- so it is reported, never repaired (see the branch for why).
   // Best-effort: a failed read/copy is logged and skipped, never thrown.
   const SEED_SRC = resourcesDir || path.join(__dirname, 'resources', 'library');
+  const SKILLS_SEED_SRC = skillsResourcesDir || path.join(__dirname, 'resources', 'skills');
   const SEED_STATE_NAME = '.seed-state.json';
   // Sibling of .seed-state.json, deliberately NOT a reserved key inside it:
   // .seed-state.json is documented as a flat relPath -> hash map, and a reserved
   // key would have to be skipped by every present and future consumer of it. The
-  // walk iterates SEED_SRC, so a file existing only under destRoot is never
-  // visited and needs no skip.
+  // walk iterates the SOURCE root, so a file existing only under destRoot is
+  // never visited and needs no skip.
   const SEED_REPORT_NAME = '.seed-report.json';
   // Cannot collide with a session name (the name grammar has no space), so the
   // inbox drawer's path links resolve as an ordinary miss rather than against
   // some unrelated live seat.
   const SEED_REPORT_FROM = 'Clodex library';
   const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
-  function seedLibraryDefaults() {
-    const destRoot = path.join(registryDir, 'library');
-    // Safety net, NOT a substitute for the registryDir seam (t359): under
-    // `node --test`, refuse to seed the operator's real home. The suite seeded
-    // the live library from whatever branch happened to be checked out, and a
-    // future caller that forgets the seam would silently do it again. A test
-    // that means to exercise seeding passes a temp registryDir, so this only
-    // ever fires on the path that is already a mistake.
-    //
-    // Keys on whatever homedir() says NOW, so a test that fakes HOME and then
-    // passes a registryDir matching it (terminal-reports-pref does) has its
-    // seeding silently suppressed — expect an unseeded library there rather
-    // than debugging it as a seed bug.
-    if (process.env.NODE_TEST_CONTEXT
-        && registryDir === path.join(os.homedir(), '.clodex')) {
-      // Optional-call: several initStores callers pass {info, error} only, so a
-      // bare log.warn would make the safety net itself the crash.
-      if (log) log.warn?.('stores', 'refusing to seed the real ~/.clodex under node --test; pass seams.registryDir');
-      return;
-    }
+  function seedRoot(srcRoot, destRoot, rootLabel) {
     let src;
-    try { src = fs.statSync(SEED_SRC); } catch { return; } // no seed tree shipped
+    try { src = fs.statSync(srcRoot); } catch { return; } // no seed tree shipped
     if (!src.isDirectory()) return;
     const statePath = path.join(destRoot, SEED_STATE_NAME);
     let state = {};
@@ -1526,7 +1508,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     const stack = [''];
     while (stack.length) {
       const rel = stack.pop();
-      const absSrc = path.join(SEED_SRC, rel);
+      const absSrc = path.join(srcRoot, rel);
       let entries;
       try { entries = fs.readdirSync(absSrc, { withFileTypes: true }); }
       catch (e) { if (log) log.info?.('seed', `readdir skipped ${rel} (${e && e.message})`); continue; }
@@ -1537,7 +1519,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         if (ent.name === SEED_STATE_NAME) continue;
         const dest = path.join(destRoot, childRel);
         try {
-          const srcBytes = fs.readFileSync(path.join(SEED_SRC, childRel));
+          const srcBytes = fs.readFileSync(path.join(srcRoot, childRel));
           const shippedHash = sha256(srcBytes);
           if (!fs.existsSync(dest)) {
             ensureDir(path.dirname(dest));
@@ -1615,7 +1597,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       const fixIt = advice(rels.length);
       // warn, not info: a withheld upgrade was invisible for 8 days and 20
       // shipped revisions once, and the silence WAS the bug.
-      if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${rels.join(', ')}. ${fixIt}`);
+      if (log) log.warn?.('seed', `${stranded.length} ${rootLabel} file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${rels.join(', ')}. ${fixIt}`);
       const fresh = stranded.filter((s) => reported[s.rel] !== s.shippedHash);
       if (fresh.length && notifications) {
         // Recording a hash as announced is a promise that the operator was
@@ -1630,7 +1612,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           const rec = notifications.add({
             from: SEED_REPORT_FROM,
             workspaceId: null,
-            body: `A shipped update is being withheld from ${fresh.length} file(s) in your Clodex library, because each differs from both the shipped copy and the version Clodex last wrote there:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${advice(fresh.length)}`,
+            body: `A shipped update is being withheld from ${fresh.length} ${rootLabel} file(s) under ${destRoot}, because each differs from both the shipped copy and the version Clodex last wrote there:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${advice(fresh.length)}`,
           });
           delivered = !!(rec && notifications.list().some((n) => n.id === rec.id));
         } catch (e) { if (log) log.info?.('seed', `inbox note skipped (${e && e.message})`); }
@@ -1658,6 +1640,29 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       try { ensureDir(destRoot); atomicWriteFileSync(statePath, JSON.stringify(state, null, 2)); }
       catch (e) { if (log) log.info?.('seed', `state write skipped (${e && e.message})`); }
     }
+  }
+
+  function seedLibraryDefaults() {
+    // Safety net, NOT a substitute for the registryDir seam (t359): under
+    // `node --test`, refuse to seed the operator's real home. The suite seeded
+    // the live library from whatever branch happened to be checked out, and a
+    // future caller that forgets the seam would silently do it again. A test
+    // that means to exercise seeding passes a temp registryDir, so this only
+    // ever fires on the path that is already a mistake.
+    //
+    // Keys on whatever homedir() says NOW, so a test that fakes HOME and then
+    // passes a registryDir matching it (terminal-reports-pref does) has its
+    // seeding silently suppressed — expect an unseeded library there rather
+    // than debugging it as a seed bug.
+    if (process.env.NODE_TEST_CONTEXT
+        && registryDir === path.join(os.homedir(), '.clodex')) {
+      // Optional-call: several initStores callers pass {info, error} only, so a
+      // bare log.warn would make the safety net itself the crash.
+      if (log) log.warn?.('stores', 'refusing to seed the real ~/.clodex under node --test; pass seams.registryDir');
+      return;
+    }
+    seedRoot(SEED_SRC, path.join(registryDir, 'library'), 'library');
+    seedRoot(SKILLS_SEED_SRC, SKILLS_LIB_DIR, 'skills');
   }
 
   // Holds secret VALUES at rest: every write chmods 0600. Reads NEVER mask (the
@@ -1729,7 +1734,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
 
   migratePromptsJson(); // one-shot: prompts.json -> library/prompts/append/*.md
   migrateTemplatesJson(); // one-shot: templates.json -> library/templates/*.json
-  seedLibraryDefaults(); // seed-if-absent: shipped library defaults -> ~/.clodex/library
+  seedLibraryDefaults();
 
   return {
     persistence, templates, workspaces, promptLibrary,
