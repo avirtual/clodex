@@ -494,9 +494,7 @@ function createBashLive(deps) {
       }
       if (cands.length !== group.length) continue;
       if (cands.some((c) => c.owner)) continue;
-      const pairs = group.length === 1
-        ? [[group[0], cands[0]]]
-        : pairByOrder(group, cands);
+      const pairs = pairByOrder(group, cands);
       if (!pairs) continue;
       for (const [o, c] of pairs) {
         c.owner = o.id;

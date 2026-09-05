@@ -29,12 +29,12 @@ Ownership is fd 1: the child shell's stdout IS the `.output` file, verified with
 
 Dedupes on the FILE, not the pid: a subshell that forks without exec'ing keeps its parent's
 argv, and both pids then hold fd 1 on the same `.output`. Calls with identical command text
-share one needle and pair to files by start order instead. Creation time is `birthtimeMs`
-(200 back-to-back pairs here were strictly ordered; macOS 15 APFS, sub-ms); `mtimeMs` only
-substitutes where birthtime is absent, and orders by last write. Against the live registry
-a call's own `.output` was born 9.8ms AFTER its PreToolUse `startedAt` while other calls'
-files sat tens of seconds before it -- that gap is what rejects a file older than the group.
+share one needle and pair by start order instead. Creation time is `birthtimeMs` (200
+back-to-back pairs here were strictly ordered; macOS 15 APFS, sub-ms). Measured live, a call's
+own `.output` was born 9.8ms AFTER its PreToolUse `startedAt` while other calls' files sat tens
+of seconds before it -- that gap is what rejects a file older than the caller. Where birthtime
+is absent `mtimeMs` substitutes and orders by LAST WRITE, so a stale same-text call still
+writing looks freshly born and that membership test weakens to nothing.
 
-Each probe is ~26ms of SYNCHRONOUS work on the Electron main thread, so `PROBE_BACKOFF_MS`
-stops a never-resolving call paying that twice a second (5.2% -> 0.30% duty cycle over 5
-minutes).
+Each probe is ~26ms of SYNCHRONOUS work on the Electron main thread, so `PROBE_BACKOFF_MS` stops
+a never-resolving call paying that twice a second (5.2% -> 0.30% duty cycle over 5 minutes).

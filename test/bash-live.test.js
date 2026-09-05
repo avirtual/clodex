@@ -800,6 +800,90 @@ test('a twin that joins AFTER its sibling claimed resolves to its own file', asy
   assert.match(byId['tu-first'].output, /FIRST-OUT/, 'while the sibling keeps streaming its own');
 });
 
+test('a lone joiner is not handed a stale file just because its sibling\'s was excluded', async (t) => {
+  // Excluding the sibling's settled claim can take a group down to ONE observer
+  // and ONE surviving file, which is the shape a solo call has -- so the file
+  // that survives must still be shown to belong to the caller. It is the same
+  // stale-candidate misattribution as 'a candidate born BEFORE the group started',
+  // reached through the exclusion instead of through a two-observer group: a
+  // same-text call whose observer aged out leaves its .output free and its
+  // process matching, and on the tick before the joiner's own file is seeded
+  // that dead file is the only survivor. Counting reaches 1 === 1 and, without a
+  // creation-time check on this branch, the joiner is painted with a dead call's
+  // bytes -- which master refused, seeing two files.
+  const cmd = 'jest --watch';
+  const base = Date.now() - 1000;
+
+  // A tree per run: the two runs differ only in when the surviving file was born,
+  // and a shared registry would carry the first run's joiner into the second.
+  const run = async (tag, joinerBody, bornMs) => {
+    const root = tmpRoot(t);
+    const cwd = `/proj/lone-joiner-${tag}`;
+    const opts = { uid: 7, tmpdir: root };
+    const tasks = tasksDirFor(cwd, 'sess', opts);
+    fs.mkdirSync(tasks, { recursive: true });
+    const fileA = path.join(tasks, 'bSIB00001.output');
+    const survivor = path.join(tasks, `b${tag}0001.output`);
+    fs.writeFileSync(fileA, 'SIB-OUT\n');
+    fs.writeFileSync(survivor, joinerBody);
+
+    // The sibling claims first, exactly as in the test above, so its file is a
+    // SETTLED same-needle claim by the time the joiner is assigned.
+    observe(root, 'seat', { id: 'tu-sib', command: cmd, cwd, sessionId: 'sess' },
+      { ...opts, now: () => base });
+
+    let joined = false;
+    const live = createBashLive({
+      REGISTRY_DIR: root,
+      resolveOwners: () => (joined
+        ? [
+          { pid: '9601', args: realArgv(cmd), file: fileA },
+          { pid: '9602', args: realArgv(cmd), file: survivor },
+        ]
+        : [{ pid: '9601', args: realArgv(cmd), file: fileA }]),
+      statFile: statStub({
+        [fileA]: { birthtimeMs: base + 10, mtimeMs: base + 10 },
+        [survivor]: { birthtimeMs: bornMs, mtimeMs: bornMs },
+      }),
+    });
+    try {
+      live.read('seat');
+      await sleep(150);
+      const first = live.read('seat');
+      assert.strictEqual(first.length, 1, 'ENTER: only the sibling is in flight so far');
+      assert.strictEqual(first[0].resolved, true,
+        'ENTER: and it claimed its file, so the exclusion below has a settled claim to drop');
+
+      observe(root, 'seat', { id: 'tu-late', command: cmd, cwd, sessionId: 'sess' },
+        { ...opts, now: () => base + 500 });
+      joined = true;
+      live.read('seat');
+      await sleep(150);
+      return live.read('seat');
+    } finally { live.stopAll(); }
+  };
+
+  const refused = await run('DEAD', 'DEAD-CALL-OUTPUT\n', base - 4000);
+  const byId = Object.fromEntries(refused.map((r) => [r.id, r]));
+  assert.deepStrictEqual(Object.keys(byId).sort(), ['tu-late', 'tu-sib'],
+    'ENTER: the joiner has a row of its own, so the refusal is not an absent row');
+  assert.strictEqual(byId['tu-late'].resolved, false,
+    'a file born before the joiner started cannot be its output, one survivor or not');
+  assert.ok(refused.every((r) => !/DEAD-CALL/.test(r.output)),
+    'and the dead call\'s bytes reach no row at all');
+  assert.match(byId['tu-sib'].output, /SIB-OUT/,
+    'ENTER: while the sibling keeps its own, so the refusal is aimed at the joiner alone');
+
+  // CONTROL: the same K=1-after-exclusion shape, with the survivor born AFTER the
+  // joiner started -- it resolves, so the refusal above is the creation time and
+  // not the exclusion path refusing everything it touches.
+  const ok = await run('OWN', 'LATE-OUT\n', base + 520);
+  const okById = Object.fromEntries(ok.map((r) => [r.id, r]));
+  assert.strictEqual(okById['tu-late'].resolved, true,
+    'ENTER: a survivor born after the joiner started is its own file');
+  assert.match(okById['tu-late'].output, /LATE-OUT/, 'ENTER: and its content reaches the row');
+});
+
 test('a wrapper and its forked child sharing one file do not defeat resolution', async (t) => {
   // MEASURED on this box, not hypothesised: a zsh subshell that forks WITHOUT
   // exec'ing keeps the parent's argv verbatim, and both processes hold fd 1 on
