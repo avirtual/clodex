@@ -80,8 +80,11 @@ These are cheap to state and expensive to discover:
   checklist — the line is simply not parsed, nothing is logged, and the agent
   sees an unrecognised intent. **Say this in your README.** Every user hits it
   once, and from the inside it looks like the plugin is broken. The converse is
-  worth knowing too: a plugin with **no** verb has nothing to enable per seat,
-  so its UI follows the seat's Plugins list only — there is no second checklist.
+  worth knowing too: a plugin with **no** verb has nothing to enable in that
+  checklist, and the seat's Plugins list is then the only place it is turned on
+  per seat.
+- **Verbs share one global namespace.** Two plugins cannot register the same
+  verb; the second fails to load. See `plugin-sources.md` §4a.
 - **A path a user or an agent named must be realpath'd on EVERY read**, and the
   resolved string prefix-checked against the root you confine to. A lexical
   join is defeated by a symlink inside the tree pointing out of it — the join
@@ -89,8 +92,6 @@ These are cheap to state and expensive to discover:
   you: it answers "local session, which cwd", and §4's `fsScope` passage says
   so in as many words ("not workspace scoping, not cwd confinement, not a
   sandbox"). Read that passage before you write the first `readFileSync`.
-- **Verbs share one global namespace.** Two plugins cannot register the same
-  verb; the second fails to load. See `plugin-sources.md` §4a.
 - **Handlers are synchronous.** A returned promise is logged and ignored, so a
   rejection becomes silence. Do the synchronous part, schedule the rest, inject
   the answer when it lands.

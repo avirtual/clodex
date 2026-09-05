@@ -2008,7 +2008,7 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   caller. There is no acknowledgement channel and no plan for one at `"1"`; a
   plugin that must know its text arrived has to observe the effect instead. The
   four rules that follow from this, including the newline hazard, are with
-  `inject` itself in §4 rather than here, because they bite while you are
+  `inject` itself in §4.1 rather than here, because they bite while you are
   writing the call rather than while you are designing around a gap.
 - **A renderer half cannot ask which surface it is running on** (§2.2). There is
   no `rhost.surface`. A UI built against a desktop-only method therefore looks
