@@ -7891,7 +7891,12 @@ body {
         // blocks. Folding any two together lets a save that drew only one of them
         // silently clear the other.
         { name: "getSessionPluginGrants", kind: "invoke", channel: "session:pluginGrants" },
-        { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" }
+        { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" },
+        // An ordinary capability row like fileWrite, NOT part of the frozen five-row
+        // plugin transport: this is the APP editing a plugin's own content files, and
+        // the loader refuses every root but the user's, so a plugin can never reach it
+        // to write into a built-in copy of itself.
+        { name: "writePluginBundleFile", kind: "invoke", channel: "plugins:writeBundleFile" }
       ];
       module.exports = { API_CONTRACT };
     }
@@ -22129,9 +22134,9 @@ ${String(body || "").trim()}
       function getDefaultToolDenyCache() {
         return defaultToolDenyCache;
       }
-      function renderAppendChecklist(container, enabledSet) {
+      function renderAppendChecklist(container, enabledSet, seat = null) {
         container.innerHTML = "";
-        if (!promptLibCache.append.length) {
+        if (!promptLibCache.append.length && !hasBundleRows("prompts/append", seat)) {
           container.innerHTML = '<span class="hint-text">No append prompts in library \u2014 add some via the Prompts drawer.</span>';
           return;
         }
@@ -22149,16 +22154,34 @@ ${String(body || "").trim()}
           row.appendChild(txt);
           container.appendChild(row);
         }
+        appendBundleSections(container, "prompts/append", seat, enabledSet);
       }
       function collectAppendChecklist(container) {
-        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map((cb) => cb.value);
       }
+      var BUNDLE_KINDS = {
+        skills: { field: "skills", promptKind: null },
+        agents: { field: "agents", promptKind: null },
+        templates: { field: "templates", promptKind: null },
+        "prompts/system": { field: "prompts", promptKind: "system" },
+        "prompts/append": { field: "prompts", promptKind: "append" }
+      };
       function bundleSectionsOf(kind) {
+        const spec = BUNDLE_KINDS[kind] || { field: kind, promptKind: null };
         const out = [];
         for (const p of pluginCatalogCache) {
-          const names = Array.isArray(p[kind]) ? p[kind] : [];
-          if (!names.length) continue;
-          out.push({ id: String(p.id), name: p.name || String(p.id), names, shipped: p.shipped });
+          const raw = Array.isArray(p[spec.field]) ? p[spec.field] : [];
+          const entries = raw.filter((e) => !spec.promptKind || e && e.kind === spec.promptKind).map((e) => e && typeof e === "object" ? e : { name: e }).filter((e) => typeof e.name === "string" && e.name);
+          if (!entries.length) continue;
+          out.push({
+            id: String(p.id),
+            name: p.name || String(p.id),
+            names: entries.map((e) => e.name),
+            entries,
+            shipped: p.shipped,
+            editable: p.editable === true,
+            dir: p.dir || null
+          });
         }
         return out;
       }
@@ -22172,19 +22195,20 @@ ${String(body || "").trim()}
       function hasBundleRows(kind, seat) {
         return seatBundleSections(kind, seat).length > 0;
       }
-      function appendBundleSections(container, kind, seat) {
+      function appendBundleSections(container, kind, seat, checkedSet = null) {
         for (const sec of seatBundleSections(kind, seat)) {
           const head = document.createElement("div");
           head.className = "check-group";
           head.textContent = sec.name;
           container.appendChild(head);
           for (const n of sec.names) {
+            const value = `${sec.id}:${n}`;
             const row = document.createElement("label");
             row.className = "agent-check bundle-row" + (sec.has ? "" : " skill-readonly");
             const cb = document.createElement("input");
             cb.type = "checkbox";
-            cb.value = `${sec.id}:${n}`;
-            cb.checked = sec.has;
+            cb.value = value;
+            cb.checked = checkedSet ? checkedSet.has(value) : sec.has;
             cb.disabled = true;
             const txt = document.createElement("span");
             const note = sec.has ? ` <span class="skill-src">\xB7 via ${esc(sec.name)}</span>` : ` <span class="skill-src">enable the ${esc(sec.name)} plugin for this session</span>`;
@@ -22195,9 +22219,9 @@ ${String(body || "").trim()}
           }
         }
       }
-      function repaintBundleSections(container, kind, seat) {
+      function repaintBundleSections(container, kind, seat, checkedSet = null) {
         container.querySelectorAll(".check-group, .bundle-row").forEach((n) => n.remove());
-        appendBundleSections(container, kind, seat);
+        appendBundleSections(container, kind, seat, checkedSet);
       }
       function renderAgentChecklist(container, enabledSet, autoSet = null, seat = null) {
         container.innerHTML = "";
@@ -25386,25 +25410,54 @@ helper=${d.helperPath}`;
         if (ss) parts.push(`sessions: ${ss}`);
         return parts.length ? `<div class="prompt-item-scope">${esc(parts.join(" \xB7 "))}</div>` : "";
       }
-      function appendBundleGroups(listEl, sections) {
+      function appendBundleGroups(listEl, sections, { onEdit = null, onReveal = null } = {}) {
         for (const sec of sections) {
           const head = document.createElement("div");
           head.className = "check-group";
           head.textContent = sec.name;
           listEl.appendChild(head);
-          for (const n of sec.names) {
+          for (const entry of sec.entries || sec.names.map((n) => ({ name: n }))) {
             const el = document.createElement("div");
             el.className = "prompt-item bundle-item";
+            const action = sec.editable ? onEdit ? '<button data-action="edit">Edit</button>' : "" : onReveal ? '<button data-action="reveal">Reveal plugin folder</button>' : "";
             el.innerHTML = `
-        <div class="prompt-item-title">${esc(n)}</div>
+        <div class="prompt-item-title">${esc(entry.name)}</div>
         <div class="prompt-item-preview">${esc(`from the ${sec.name} plugin`)}</div>
+        ${action ? `<div class="prompt-item-actions">${action}</div>` : ""}
       `;
+            const editBtn = action && sec.editable ? el.querySelector('[data-action="edit"]') : null;
+            if (editBtn) {
+              editBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                onEdit(sec, entry);
+              });
+            }
+            const revealBtn = action && !sec.editable ? el.querySelector('[data-action="reveal"]') : null;
+            if (revealBtn) {
+              revealBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                onReveal(sec, entry);
+              });
+            }
             listEl.appendChild(el);
           }
         }
       }
       function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, bundleSectionsOf, refreshPluginCatalog }) {
         const bundleGroups = (kind) => typeof bundleSectionsOf === "function" ? bundleSectionsOf(kind) : [];
+        const revealBundle = (sec) => {
+          if (!sec.dir || !window.api.fileReveal) return;
+          window.api.fileReveal(sec.dir);
+        };
+        const writeBundle = async (sec, kind, stem, body) => {
+          const res = await window.api.writePluginBundleFile(sec.id, kind, stem, body);
+          if (res && res.ok === false) {
+            alert(`Could not save into the ${sec.name} plugin: ${res.error || "unknown error"}`);
+            return false;
+          }
+          if (refreshPluginCatalog) await refreshPluginCatalog();
+          return true;
+        };
         const promptsDrawer = document.getElementById("prompts-drawer");
         const promptsList = document.getElementById("prompts-list");
         const promptsEmpty = document.getElementById("prompts-empty");
@@ -25419,10 +25472,16 @@ helper=${d.helperPath}`;
         const promptsNew = document.getElementById("prompts-new");
         const promptsClose = document.getElementById("prompts-close");
         let editingPrompt = null;
+        let editingPromptBundle = null;
         async function refreshPromptsList() {
           const items = await window.api.listPrompts();
+          if (refreshPluginCatalog) await refreshPluginCatalog();
+          const groups = [
+            ...bundleGroups("prompts/system").map((g) => ({ ...g, kind: "system" })),
+            ...bundleGroups("prompts/append").map((g) => ({ ...g, kind: "append" }))
+          ];
           promptsList.innerHTML = "";
-          if (items.length === 0) {
+          if (items.length === 0 && !groups.length) {
             promptsEmpty.style.display = "";
             return;
           }
@@ -25460,6 +25519,13 @@ helper=${d.helperPath}`;
             });
             promptsList.appendChild(el);
           }
+          appendBundleGroups(promptsList, groups, {
+            onEdit: (sec, entry) => openPromptEditor(
+              { kind: sec.kind, name: entry.name, body: entry.body || "" },
+              sec
+            ),
+            onReveal: revealBundle
+          });
         }
         function openPromptsDrawer() {
           promptsDrawer.classList.remove("hidden");
@@ -25468,16 +25534,17 @@ helper=${d.helperPath}`;
         function closePromptsDrawer() {
           promptsDrawer.classList.add("hidden");
         }
-        function openPromptEditor(prompt2 = null) {
+        function openPromptEditor(prompt2 = null, bundle = null) {
+          editingPromptBundle = bundle;
           if (prompt2) {
             editingPrompt = { kind: prompt2.kind, name: prompt2.name };
-            promptEditorTitle.textContent = "Edit Prompt";
+            promptEditorTitle.textContent = bundle ? `Edit Prompt \u2014 ${bundle.name} plugin` : "Edit Prompt";
             promptKind.value = prompt2.kind;
             promptKind.disabled = true;
             promptName.value = prompt2.name;
             promptName.readOnly = true;
             promptBody.value = prompt2.body;
-            promptDelete.style.display = "";
+            promptDelete.style.display = bundle ? "none" : "";
           } else {
             editingPrompt = null;
             promptEditorTitle.textContent = "New Prompt";
@@ -25494,6 +25561,7 @@ helper=${d.helperPath}`;
         function closePromptEditor() {
           promptEditor.classList.add("hidden");
           editingPrompt = null;
+          editingPromptBundle = null;
         }
         promptsClose.addEventListener("click", closePromptsDrawer);
         promptsNew.addEventListener("click", () => openPromptEditor(null));
@@ -25507,6 +25575,13 @@ helper=${d.helperPath}`;
             return;
           }
           promptName.style.borderColor = "";
+          if (editingPromptBundle) {
+            if (await writeBundle(editingPromptBundle, `prompts/${kind}`, name, body)) {
+              closePromptEditor();
+              refreshPromptsList();
+            }
+            return;
+          }
           const res = await window.api.savePrompt(kind, name, body);
           if (res && res.ok === false) {
             alert(`Save prompt failed: ${res.error || "unknown error"}`);
@@ -25538,6 +25613,7 @@ helper=${d.helperPath}`;
         const agentsNew = document.getElementById("agents-new");
         const agentsClose = document.getElementById("agents-close");
         let editingAgentName = null;
+        let editingAgentBundle = null;
         async function refreshAgentsList() {
           const items = await window.api.listAgents();
           if (refreshPluginCatalog) await refreshPluginCatalog();
@@ -25569,7 +25645,10 @@ helper=${d.helperPath}`;
             el.addEventListener("click", () => openAgentEditor(a));
             agentsListEl.appendChild(el);
           }
-          appendBundleGroups(agentsListEl, groups);
+          appendBundleGroups(agentsListEl, groups, {
+            onEdit: (sec, entry) => openAgentEditor({ name: entry.name, body: entry.body }, sec),
+            onReveal: revealBundle
+          });
         }
         function openAgentsDrawer(name) {
           agentsDrawer.classList.remove("hidden");
@@ -25580,17 +25659,20 @@ helper=${d.helperPath}`;
         function closeAgentsDrawer() {
           agentsDrawer.classList.add("hidden");
         }
-        async function openAgentEditor(agent = null) {
+        async function openAgentEditor(agent = null, bundle = null) {
+          editingAgentBundle = bundle;
           if (agent) {
             editingAgentName = agent.name;
-            agentEditorTitle.textContent = "Edit Agent";
+            agentEditorTitle.textContent = bundle ? `Edit Agent \u2014 ${bundle.name} plugin` : "Edit Agent";
             agentNameInput.value = agent.name;
-            agentContent.value = await window.api.getAgent(agent.name) || "";
-            agentDelete.style.display = "";
+            agentContent.value = bundle ? agent.body || "" : await window.api.getAgent(agent.name) || "";
+            agentNameInput.readOnly = !!bundle;
+            agentDelete.style.display = bundle ? "none" : "";
           } else {
             editingAgentName = null;
             agentEditorTitle.textContent = "New Agent";
             agentNameInput.value = "";
+            agentNameInput.readOnly = false;
             agentContent.value = "---\ndescription: Fast read-only repo search.\ntools: Read, Grep, Glob\nmodel: haiku\n---\nYou are a focused explorer. Return conclusions, not file dumps.";
             agentDelete.style.display = "none";
           }
@@ -25601,6 +25683,7 @@ helper=${d.helperPath}`;
         function closeAgentEditor() {
           agentEditor.classList.add("hidden");
           editingAgentName = null;
+          editingAgentBundle = null;
         }
         agentsClose.addEventListener("click", closeAgentsDrawer);
         agentsNew.addEventListener("click", () => openAgentEditor(null));
@@ -25609,6 +25692,13 @@ helper=${d.helperPath}`;
           const content = agentContent.value;
           if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             agentNameInput.style.borderColor = "#e94560";
+            return;
+          }
+          if (editingAgentBundle) {
+            if (await writeBundle(editingAgentBundle, "agents", name, content)) {
+              closeAgentEditor();
+              refreshAgentsList();
+            }
             return;
           }
           const res = await window.api.saveAgent(name, content);
@@ -25648,6 +25738,7 @@ helper=${d.helperPath}`;
         const skillsNew = document.getElementById("skills-new");
         const skillsClose = document.getElementById("skills-close");
         let editingSkillName = null;
+        let editingSkillBundle = null;
         async function refreshSkillsLibList() {
           const items = await window.api.listSkillLib();
           if (refreshPluginCatalog) await refreshPluginCatalog();
@@ -25677,7 +25768,10 @@ helper=${d.helperPath}`;
             el.addEventListener("click", () => openSkillEditor(s));
             skillsListEl.appendChild(el);
           }
-          appendBundleGroups(skillsListEl, groups);
+          appendBundleGroups(skillsListEl, groups, {
+            onEdit: (sec, entry) => openSkillEditor({ name: entry.name, body: entry.body }, sec),
+            onReveal: revealBundle
+          });
         }
         function openSkillsDrawer(name) {
           skillsDrawer.classList.remove("hidden");
@@ -25688,17 +25782,20 @@ helper=${d.helperPath}`;
         function closeSkillsDrawer() {
           skillsDrawer.classList.add("hidden");
         }
-        async function openSkillEditor(skill = null) {
+        async function openSkillEditor(skill = null, bundle = null) {
+          editingSkillBundle = bundle;
           if (skill) {
             editingSkillName = skill.name;
-            skillEditorTitle.textContent = "Edit Skill";
+            skillEditorTitle.textContent = bundle ? `Edit Skill \u2014 ${bundle.name} plugin` : "Edit Skill";
             skillNameInput.value = skill.name;
-            skillContent.value = await window.api.getSkillLib(skill.name) || "";
-            skillDelete.style.display = "";
+            skillContent.value = bundle ? skill.body || "" : await window.api.getSkillLib(skill.name) || "";
+            skillNameInput.readOnly = !!bundle;
+            skillDelete.style.display = bundle ? "none" : "";
           } else {
             editingSkillName = null;
             skillEditorTitle.textContent = "New Skill";
             skillNameInput.value = "";
+            skillNameInput.readOnly = false;
             skillContent.value = "---\ndescription: When to use this skill \u2014 be specific so the model picks it at the right moment.\n---\nStep-by-step instructions for the model.";
             skillDelete.style.display = "none";
           }
@@ -25709,6 +25806,7 @@ helper=${d.helperPath}`;
         function closeSkillEditor() {
           skillEditor.classList.add("hidden");
           editingSkillName = null;
+          editingSkillBundle = null;
         }
         skillsClose.addEventListener("click", closeSkillsDrawer);
         skillsNew.addEventListener("click", () => openSkillEditor(null));
@@ -25717,6 +25815,13 @@ helper=${d.helperPath}`;
           const content = skillContent.value;
           if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             skillNameInput.style.borderColor = "#e94560";
+            return;
+          }
+          if (editingSkillBundle) {
+            if (await writeBundle(editingSkillBundle, "skills", name, content)) {
+              closeSkillEditor();
+              refreshSkillsLibList();
+            }
             return;
           }
           const res = await window.api.saveSkillLib(name, content);
@@ -25881,9 +25986,11 @@ helper=${d.helperPath}`;
           return parts.join(" \xB7 ") || "(defaults)";
         }
         async function refreshTemplatesList() {
-          const items = await window.api.listTemplates() || [];
+          const items = (await window.api.listTemplates() || []).filter((t) => !t.plugin);
+          if (refreshPluginCatalog) await refreshPluginCatalog();
+          const groups = bundleGroups("templates");
           templatesListEl.innerHTML = "";
-          if (items.length === 0) {
+          if (items.length === 0 && !groups.length) {
             templatesEmpty.style.display = "";
             return;
           }
@@ -25916,6 +26023,13 @@ helper=${d.helperPath}`;
             });
             templatesListEl.appendChild(el);
           }
+          appendBundleGroups(templatesListEl, groups, {
+            onEdit: (sec, entry) => {
+              closeTemplatesDrawer();
+              openTemplateEditor({ ...entry.body, name: entry.name, id: `${sec.id}:${entry.name}` }, sec);
+            },
+            onReveal: revealBundle
+          });
         }
         function openTemplatesDrawer() {
           templatesDrawer.classList.remove("hidden");
@@ -34052,6 +34166,7 @@ ${detail}` });
       var nameFieldLabel = document.getElementById("name-field-label");
       var dialogMode = "create";
       var editingTemplateId = null;
+      var editingTemplateBundle = null;
       var templatesDrawerRefresh = null;
       function promptText(title, initial = "") {
         return new Promise((resolve) => {
@@ -35379,8 +35494,8 @@ ${detail}` });
           system: (cat.prompts || []).filter((p) => p.kind === "system"),
           append: (cat.prompts || []).filter((p) => p.kind === "append")
         });
-        fillSystemPromptSelect(inputSystemPrompt, "");
-        renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set());
+        fillSystemPromptSelect(inputSystemPrompt, "", newSessionSeat());
+        renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set(), newSessionSeat());
         setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
       }
       async function restoreHostCatalogs() {
@@ -35395,29 +35510,65 @@ ${detail}` });
           append: all.filter((p) => p.kind === "append")
         });
       }
-      function fillSystemPromptSelect(selectEl, current) {
+      function fillSystemPromptSelect(selectEl, current, seat = null) {
         while (selectEl.options.length > 1) selectEl.remove(1);
+        const values = [];
         for (const p of getPromptLibCache().system) {
           const opt = document.createElement("option");
           opt.value = p.name;
           opt.textContent = p.name;
           selectEl.appendChild(opt);
+          values.push(p.name);
         }
-        selectEl.value = current && getPromptLibCache().system.some((p) => p.name === current) ? current : "";
+        for (const sec of bundleSectionsOf("prompts/system")) {
+          if (!seat || !seatHasPlugin(sec.id, seat.plugins, sec.shipped)) continue;
+          for (const n of sec.names) {
+            const opt = document.createElement("option");
+            opt.value = `${sec.id}:${n}`;
+            opt.textContent = `${n} \u2014 from the ${sec.name} plugin`;
+            selectEl.appendChild(opt);
+            values.push(opt.value);
+          }
+        }
+        if (current && !values.includes(current)) {
+          const opt = document.createElement("option");
+          opt.value = current;
+          opt.textContent = current;
+          selectEl.appendChild(opt);
+          values.push(current);
+        }
+        selectEl.value = current && values.includes(current) ? current : "";
       }
       async function refreshSystemPromptDropdown() {
         await loadPromptLib();
-        fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value);
-        renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set());
+        fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, newSessionSeat());
+        renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set(), newSessionSeat());
       }
       async function refreshTemplatesDropdown() {
         const list = await window.api.listTemplates();
         while (inputTemplate.options.length > 1) inputTemplate.remove(1);
+        const byPlugin = /* @__PURE__ */ new Map();
         for (const t of list) {
+          if (t.plugin) {
+            if (!byPlugin.has(t.plugin)) byPlugin.set(t.plugin, { label: t.pluginName || t.plugin, rows: [] });
+            byPlugin.get(t.plugin).rows.push(t);
+            continue;
+          }
           const opt = document.createElement("option");
           opt.value = t.id;
           opt.textContent = t.name;
           inputTemplate.appendChild(opt);
+        }
+        for (const [, group] of byPlugin) {
+          const og = document.createElement("optgroup");
+          og.label = `from the ${group.label} plugin`;
+          for (const t of group.rows) {
+            const opt = document.createElement("option");
+            opt.value = t.id;
+            opt.textContent = t.name.includes(":") ? t.name.slice(t.name.indexOf(":") + 1) : t.name;
+            og.appendChild(opt);
+          }
+          inputTemplate.appendChild(og);
         }
         templateRow.style.display = list.length > 0 ? "" : "none";
         return list;
@@ -35481,6 +35632,13 @@ ${detail}` });
         const seat = newSessionSeat();
         repaintBundleSections(inputAgentsList, "agents", seat);
         repaintBundleSections(inputInjectSkillsList, "skills", seat);
+        repaintBundleSections(
+          inputAppendList,
+          "prompts/append",
+          seat,
+          new Set(collectAppendChecklist(inputAppendList))
+        );
+        fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, seat);
       }
       async function refreshNewSessionIntents(intentsList) {
         if (inputType.value !== "claude") return;
@@ -35661,6 +35819,8 @@ ${detail}` });
       }
       async function openDialog(prefill = null) {
         editingTemplateId = null;
+        editingTemplateBundle = null;
+        inputName.readOnly = false;
         overlayDismissed = false;
         if (toolOverlay) toolOverlay.classList.add("hidden");
         setDialogMode("create");
@@ -35801,6 +35961,8 @@ ${detail}` });
           await refreshNewSessionExecCommands(new Set(t.execCommands || []));
           await refreshNewSessionPlugins(t.plugins);
           await refreshNewSessionIntents(t.intents);
+          fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || "", newSessionSeat());
+          renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
           renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
           await refreshNewSessionTools(new Set(t.disabledTools || []));
           await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -35816,6 +35978,10 @@ ${detail}` });
       btnTemplateDelete.addEventListener("click", async () => {
         const id = inputTemplate.value;
         if (!id) return;
+        if (id.includes(":")) {
+          showToast("That template comes from a plugin \u2014 remove it from the plugin folder.", { kind: "warn" });
+          return;
+        }
         await window.api.removeTemplate(id);
         await refreshTemplatesDropdown();
         inputTemplate.value = "";
@@ -36057,10 +36223,12 @@ ${detail}` });
           applyNewSessionToolGate({ ok: true, disabled: false, notice: null });
         }
       }
-      async function openTemplateEditor(tpl = null) {
+      async function openTemplateEditor(tpl = null, bundle = null) {
         editingTemplateId = tpl ? tpl.id : null;
+        editingTemplateBundle = bundle;
         inputType.value = tpl && tpl.type || "claude";
         inputName.value = tpl && tpl.name || "";
+        inputName.readOnly = !!bundle;
         inputCwd.value = tpl && tpl.cwd || homeDir;
         {
           const { model, rest } = splitModelArg(tpl && tpl.extraArgs || []);
@@ -36081,12 +36249,12 @@ ${detail}` });
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
         setAgentLibCache(await window.api.listAgents() || []);
         const agentType = inputType.value === "claude" || inputType.value === "codex";
-        if (agentType) {
-          await loadPromptLib();
-          fillSystemPromptSelect(inputSystemPrompt, tpl && tpl.systemPromptFile || "");
-          renderAppendChecklist(inputAppendList, new Set(tpl && tpl.appendPromptFiles || []));
-        }
+        if (agentType) await loadPromptLib();
         await refreshNewSessionPlugins(tpl && tpl.plugins);
+        if (agentType) {
+          fillSystemPromptSelect(inputSystemPrompt, tpl && tpl.systemPromptFile || "", newSessionSeat());
+          renderAppendChecklist(inputAppendList, new Set(tpl && tpl.appendPromptFiles || []), newSessionSeat());
+        }
         if (inputType.value === "claude") {
           renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []), null, newSessionSeat());
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
@@ -36110,6 +36278,22 @@ ${detail}` });
           return;
         }
         const cfg = collectFormConfig();
+        if (editingTemplateBundle) {
+          const res = await window.api.writePluginBundleFile(
+            editingTemplateBundle.id,
+            "templates",
+            name,
+            JSON.stringify({ ...cfg, name }, null, 2)
+          );
+          if (res && res.ok === false) {
+            alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || "unknown error"}`);
+            return;
+          }
+          closeDialog();
+          await refreshTemplatesDropdown();
+          if (templatesDrawerRefresh) templatesDrawerRefresh();
+          return;
+        }
         if (editingTemplateId) {
           const list = await window.api.listTemplates();
           const clash = list.find((t) => t.id !== editingTemplateId && (t.name || "").toLowerCase() === name.toLowerCase());
@@ -39429,6 +39613,13 @@ ${res.stderr}` : "");
           if (argsInjectSkillsSection.style.display !== "none") {
             repaintBundleSections(argsInjectSkillsList, "skills", seat);
           }
+          repaintBundleSections(
+            argsAppendList,
+            "prompts/append",
+            seat,
+            new Set(collectAppendChecklist(argsAppendList))
+          );
+          fillSystemPromptSelect(argsSystemPrompt, argsSystemPrompt.value, seat);
         });
       }
       var argsExecList = document.getElementById("args-exec-list");
@@ -39500,8 +39691,6 @@ ${res.stderr}` : "");
         argsPromptRow.style.display = isAgent ? "" : "none";
         argsAppendRow.style.display = isAgent ? "" : "none";
         argsAppendSection.style.display = isAgent ? "" : "none";
-        fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || "");
-        renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []));
         const isClaude = res.type === "claude";
         argsAgentsRow.style.display = isClaude ? "" : "none";
         argsOtherSection.style.display = isClaude ? "" : "none";
@@ -39511,6 +39700,8 @@ ${res.stderr}` : "");
         argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
         argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
         renderPluginChecklist(argsPluginList, res.plugins);
+        fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || "", argsSeat());
+        renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []), argsSeat());
         const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
         renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto, argsSeat());
         argsAgentsPersisted = res.agents || [];

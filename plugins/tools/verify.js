@@ -152,14 +152,25 @@ if (rec.manifest.style) {
 
 const bundleSkills = rec.skills || [];
 const bundleAgents = rec.agents || [];
-note('skills', bundleSkills.length ? `${bundleSkills.length}: ${bundleSkills.map((s) => `${manifest.id}:${s.name}`).join(', ')}` : 'none');
-note('agents', bundleAgents.length ? `${bundleAgents.length}: ${bundleAgents.map((a) => `${manifest.id}:${a.name}`).join(', ')}` : 'none');
+const bundlePrompts = rec.prompts || [];
+const bundleTemplates = rec.templates || [];
+const listed = (rows, label) => note(label, rows.length
+  ? `${rows.length}: ${rows.map((r) => `${manifest.id}:${r.name}`).join(', ')}`
+  : 'none');
+listed(bundleSkills, 'skills');
+listed(bundleAgents, 'agents');
+listed(bundlePrompts.filter((p) => p.kind === 'system'), 'prompts (system)');
+listed(bundlePrompts.filter((p) => p.kind === 'append'), 'prompts (append)');
+listed(bundleTemplates, 'templates');
+note('editable in the app', rec.editable
+  ? 'yes — this copy is under the user plugins root'
+  : 'no — a copy under this root is read-only in the app, which is what a built-in gets');
 const skipped = logged.slice(logsBeforeDiscover)
-  .map((l) => l.match(/skipping ((?:skills|agents)\/.*)$/))
+  .map((l) => l.match(/skipping ((?:skills|agents|prompts|templates)\/.*)$/))
   .filter(Boolean)
   .map((m) => m[1]);
 for (const s of skipped) note('bundle entry skipped', s);
-if (rec.bundleUnreadable) note('bundle partly unreadable', 'a skills/ or agents/ read failed — the entries behind it are missing, not empty');
+if (rec.bundleUnreadable) note('bundle partly unreadable', 'a content directory read failed — the entries behind it are missing, not empty');
 
 // -------------------------------------------------------------- activation
 // Snapshot the registry's plugin rows so the verb check OBSERVES what got
@@ -188,7 +199,8 @@ if (!activated) { report(); process.exit(1); }
 // ------------------------------------------------- did it actually DO anything
 const keys = engine._dispatchKeys().filter((k) => k.startsWith(`${manifest.id}:`));
 const hookCounts = engine._hookCounts();
-const bundleCount = bundleSkills.length + bundleAgents.length;
+const bundleCount = bundleSkills.length + bundleAgents.length
+  + bundlePrompts.length + bundleTemplates.length;
 record('registered at least one surface', keys.length > 0 || hookCounts.create > 0 || hookCounts.exit > 0 || bundleCount > 0,
   `ipc methods: ${keys.length ? keys.join(', ') : 'none'} | onCreate: ${hookCounts.create} | onExit: ${hookCounts.exit} | bundle entries: ${bundleCount}`);
 

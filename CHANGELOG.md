@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- A plugin can now ship prompts and templates alongside its skills and agents,
+  listed under the plugin's name wherever the library is offered; a template from
+  a plugin starts a seat that holds the plugin. Content from a plugin in your own
+  `~/.clodex/plugins/` is editable in the app and saves back into the plugin
+  folder; content from a built-in plugin is read-only, with a reveal-folder action
+  instead.
+
 ## 5.30.1 — 2026-09-05
 
 - **Template editor: the tools allowlist is now editable** (it was saved-only). A

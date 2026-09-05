@@ -200,6 +200,9 @@ const PINNED_NAMES = [
   // is the only drawer channel that writes caller-supplied text into an
   // agent's next request rather than running something on the host.
   'drawerArmSelection', 'drawerReleaseSelection', 'drawerInspectSelection',
+  // t679: the app editing a plugin's own content files, refused for every root
+  // but the user's. Appended deliberately as the surface grew.
+  'writePluginBundleFile',
 ];
 
 test('table is well-formed: every row has name, valid kind, non-empty channel', () => {
@@ -223,8 +226,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 278-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 278, 'pinned list is the full 278-method surface');
+test('contract covers exactly the pinned 279-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 279, 'pinned list is the full 279-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -248,7 +251,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 278, 'window.api has exactly 278 methods');
+    assert.equal(generated.length, 279, 'window.api has exactly 279 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
