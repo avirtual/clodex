@@ -20,4 +20,6 @@ The bundle a seat gets is served from the `registered` record, written at
 re-register a plugin that is already running, so without this an edited skill
 would ship its old body until the app restarted. Content only: refreshing the
 MODULE this way would launder stale require-cached code into looking fresh,
-which is exactly what the restart-required badge exists to prevent.
+which is exactly what the restart-required badge exists to prevent. The loader
+decides WHEN to call it — a moved or unreadable plugin is skipped, see
+docs/notes/plugin-loader.md.
