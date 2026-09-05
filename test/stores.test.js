@@ -1552,6 +1552,38 @@ test('seed skills: a missing skills source is a no-op, not a throw', () => {
   }
 });
 
+// The two routing facts a first-time plugin author needs BEFORE they read the
+// 2,000-line contract, asserted on the seeded copy so the shipped prose and the
+// file an agent actually opens are pinned in one go. Phrases, not lines: the
+// wording around them is free to change.
+test('seed skills: the seeded skill routes a viewer, and states the realpath rule', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  try {
+    initStores(userData, { registryDir });
+    const text = fs.readFileSync(path.join(registryDir, 'skills', 'clodex-plugin.md'), 'utf-8');
+
+    const rows = text.split('\n').filter((l) => l.startsWith('|'));
+    const viewer = rows.findIndex((l) => /§6\.3/.test(l) && /§6\.7/.test(l));
+    const anyUi = rows.findIndex((l) => /Any UI at all/.test(l));
+    assert.ok(anyUi >= 0, 'ENTER: the generic UI row is in the table, so the order below compares two real rows');
+    assert.ok(viewer >= 0,
+      'the routing table carries a row sending the button+overlay+read shape at §6.3 and §6.7');
+    assert.ok(viewer < anyUi,
+      'and the specific viewer row sits ABOVE the generic "Any UI at all" row, or nobody reaches it');
+
+    const step3 = text.slice(text.indexOf('## Step 3'), text.indexOf('## Step 4'));
+    assert.ok(step3.length > 0, 'ENTER: Step 3 is a real slice, not an empty one from two missing headings');
+    assert.match(step3, /realpath/i,
+      'Step 3 states the realpath rule for a path a user or an agent named');
+    assert.match(step3, /every read/i,
+      'and says it applies on EVERY read, which is the half a lexical join gets wrong');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
 // --- T26: all three default team role prompts ship + brief the live protocols
 const TEAM_ROLE_PROMPTS = ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer'];
 const REPO_SYSTEM_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');

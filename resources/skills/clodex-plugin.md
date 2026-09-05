@@ -43,6 +43,7 @@ with a `hostApi` mismatch, you read docs for a different host.
 | The manifest | §2 |
 | An `[agent:…]` verb | §7, then `host.intents` in §4 |
 | Anything touching the filesystem, sessions or network | §4 (the engine `host`) |
+| A viewer: a button, an overlay, and reading files | §6.3, §6.7, §8, and the `fsScope` part of §4 (§4.2) — the commonest shape there is |
 | Any UI at all | §6 — seven named slots, pick yours, read that subsection |
 | A full application surface inside Clodex | §6.7 (overlay) |
 | Talking between your two halves | §8 (`invoke`) |
@@ -50,9 +51,11 @@ with a `hostApi` mismatch, you read docs for a different host.
 | Enable/disable, failure, quarantine behaviour | §10 |
 | What you are NOT allowed to reach | §12 and §13 — read these before designing, not after |
 
-Two shipped plugins are readable in an afternoon and are better than any
-summary: **git-branches** (badge + settings panel + a verb) and **workbench**
-(a full overlay). Read one whose shape matches yours.
+Three shipped plugins are readable in an afternoon and are better than any
+summary: **git-branches** (badge + settings panel + a verb), **memory-viewer**
+(footer button + overlay + two panes + `invoke` for the filesystem — the viewer
+shape, and the closest match if you are building one) and **workbench** (a full
+overlay). Read one whose shape matches yours.
 
 ## Step 3 — the facts that cause wrong turns
 
@@ -76,9 +79,19 @@ These are cheap to state and expensive to discover:
   inert everywhere until the operator ticks it in the session's ⚙ Intents
   checklist — the line is simply not parsed, nothing is logged, and the agent
   sees an unrecognised intent. **Say this in your README.** Every user hits it
-  once, and from the inside it looks like the plugin is broken.
+  once, and from the inside it looks like the plugin is broken. The converse is
+  worth knowing too: a plugin with **no** verb has nothing to enable in that
+  checklist, and the seat's Plugins list is then the only place it is turned on
+  per seat.
 - **Verbs share one global namespace.** Two plugins cannot register the same
   verb; the second fails to load. See `plugin-sources.md` §4a.
+- **A path a user or an agent named must be realpath'd on EVERY read**, and the
+  resolved string prefix-checked against the root you confine to. A lexical
+  join is defeated by a symlink inside the tree pointing out of it — the join
+  stays under the root and the open does not. `fsScope` does not do this for
+  you: it answers "local session, which cwd", and §4's `fsScope` passage says
+  so in as many words ("not workspace scoping, not cwd confinement, not a
+  sandbox"). Read that passage before you write the first `readFileSync`.
 - **Handlers are synchronous.** A returned promise is logged and ignored, so a
   rejection becomes silence. Do the synchronous part, schedule the rest, inject
   the answer when it lands.
@@ -92,15 +105,21 @@ These are cheap to state and expensive to discover:
 
 ## Step 4 — where it lives, and registering it
 
-A plugin can live anywhere on disk, including its own git repo. Two ways in:
+A plugin can live anywhere on disk, including its own git repo. Two ways in,
+and they are not equals:
 
-- **Register it** (no copy): Clodex → Plugins → **Register Plugin…**, pick the
-  folder. Clodex validates the manifest and symlinks it into `~/.clodex/plugins`.
-  The row shows where it points and offers Unregister, which removes only the
-  link. **The folder must be named for the plugin id** — this is the one refusal
-  users hit by accident.
+- **Register it — the default, and what you should tell your user to do.**
+  Clodex → Plugins → **Register Plugin…**, pick the folder. Clodex validates the
+  manifest and symlinks it into `~/.clodex/plugins`. Registration records where
+  the plugin came from: the row shows where it points and offers Unregister,
+  which removes only the link. **The folder must be named for the plugin id** —
+  this is the one refusal users hit by accident.
 - **Copy or symlink it** into `~/.clodex/plugins/<id>/` by hand, then press
-  Re-scan.
+  Re-scan. This is the escape hatch, for when the dialog is not available to
+  you — a script, a headless box. It loads identically. A hand-made *symlink*
+  is indistinguishable from a registered one afterwards, so it keeps the
+  provenance line and the Unregister button; a *copy* keeps neither, and the
+  row cannot say where it came from.
 
 Do not pick an id that a plugin built into Clodex already uses; registration
 refuses it, because only one copy of an id can run and precedence decides which.
