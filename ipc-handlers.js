@@ -404,10 +404,10 @@ function registerIpcHandlers(deps) {
   // `session:reservedNames` unions `manager.sessions.keys()` with
   // `persistence.list()` because session names are keyed GLOBALLY — a
   // reservation check scoped to one workspace would hand out a name that then
-  // fails to create. It returns names and no cwds. Read
-  // the rule above as covering the session LISTING, which is the mechanism it
-  // describes; the name NAMESPACE is global by construction and cannot be
-  // scoped without breaking creation.
+  // fails to create. It returns names and no cwds. Read the rule above as
+  // covering the session LISTING, which is the mechanism it describes; the name
+  // NAMESPACE is global by construction and cannot be scoped without breaking
+  // creation.
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   handle('session:reservedNames', () => {
     const live = new Set(manager.sessions.keys());
