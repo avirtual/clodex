@@ -22,10 +22,16 @@ than deleting an index entry.
 Deletion is permanent. There is no archive, no trash and no undo.
 
 Only units created by `[agent:memory remember]` can be deleted here. This
-surface lists every `*.md` file with frontmatter it finds, but Clodex will
-refuse to delete one whose name is not a generated unit id — a hand-authored
-`project-notes.md` shows up and can be read, and removing it is a job for the
-shell. The refusal happens before anything is unlinked.
+surface lists every `*.md` file with frontmatter that lives *inside* the agent's
+own folder, but Clodex will refuse to delete one whose name is not a generated
+unit id — a hand-authored `project-notes.md` shows up and can be read, and
+removing it is a job for the shell. The refusal happens before anything is
+unlinked.
+
+An entry that resolves outside that folder is skipped entirely: the folder is
+the agent's to write, so a symlink planted there is the agent choosing what the
+viewer shows you, not a memory. Skipped means not listed and not read — never
+deleted.
 
 The delete goes through `host.library.remove('memory', …)` rather than
 unlinking the file this plugin can plainly see. Removing a unit obliges a

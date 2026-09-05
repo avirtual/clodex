@@ -1,46 +1,47 @@
 'use strict';
 
 /**
- * memory-viewer — engine half. Exactly one mutation: `forget`. It goes through
- * host.library.remove, never fs.unlinkSync on the file this module can plainly
- * see — deleting a unit obliges a boot-digest rewrite for any live claude
- * session, which is core's to perform and whose timing a plugin cannot know.
- * That obligation is the whole reason the seam exists; a direct unlink here
- * would leave live agents serving a memory that no longer exists.
+ * memory-viewer — engine half. `forget` goes through host.library.remove, never
+ * fs.unlinkSync on the file this module can plainly see: deleting a unit obliges
+ * a boot-digest rewrite core owns and whose timing a plugin cannot know, so a
+ * direct unlink would leave live agents serving a memory that is gone.
  */
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// Core's memory root, re-derived rather than imported: nothing exports it to
-// plugins, and requiring core's memory-store is exactly the reach-around the
-// boundary lint refuses. If core ever moves the library root, this plugin
-// silently shows an empty list — that is the accepted failure mode of this
-// coupling, not a bug in the directory walk below.
+// Re-derived rather than imported: nothing exports it to plugins, and requiring
+// core's memory-store is the reach-around the boundary lint refuses. If core
+// moves the library root this plugin shows an empty list — the coupling's
+// accepted failure mode, not a bug in the walk below.
 const MEMORY_ROOT = path.join(os.homedir(), '.clodex', 'library', 'memory');
 
-// Same rule as core's session names — a character filter, nothing more. It is
-// NOT the containment check: `.` is in the class, so '.' and '..' both match
-// it. Confinement is enforced positively in agentDir(); keep it that way if
-// this regex is ever loosened.
+// Same rule as core's session names — a character filter, nothing more. NOT the
+// containment check: `.` is in the class, so '.' and '..' both match it, and
+// agentDir() is where confinement is enforced. Keep it there if this loosens.
 const AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 let host = null;
+let realRootCache = null;
 
-// ---------------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------------
+// Cached only on SUCCESS: core creates the root at its first save, which can
+// follow this plugin's load, so caching a failure blanks the list for the process.
+function realRoot() {
+  if (realRootCache !== null) return realRootCache;
+  try {
+    realRootCache = fs.realpathSync(MEMORY_ROOT);
+  } catch (_) {
+    return null;
+  }
+  return realRootCache;
+}
 
 /**
- * `---\nkey: value\n---\n\nbody`. `pinned: true` is written only when pinned;
- * absent means unpinned — do not expect `pinned: false` on disk.
- *
- * `key` (the caller's, from the filename) is the DELETE TARGET, because core
- * resolves a unit as `<dir>/<id>.md` — the basename is the real identity and
- * the `id:` line is only a claim about it. They can disagree: the store is
- * documented as hand-authorable. Deleting by `meta.id` would unlink a
- * different file than the one whose body the confirmation shows.
+ * `key` (from the filename) is the DELETE TARGET: core resolves a unit as
+ * `<dir>/<id>.md`, so the basename is the identity and `id:` only a claim about
+ * it. They can disagree — the store is hand-authorable — and deleting by
+ * `meta.id` would unlink a different file than the confirmation showed.
  */
 function parseUnit(text, key) {
   const s = String(text);
@@ -57,8 +58,6 @@ function parseUnit(text, key) {
 
   return {
     key,
-    // Same fallback core's list() uses, so a unit with no `id:` line displays
-    // its filename rather than an empty string.
     id: meta.id || key,
     // A disagreement is shown, not silently resolved: the delete targets `key`,
     // so the user must be able to see that the id on screen is not it.
@@ -75,12 +74,16 @@ function parseUnit(text, key) {
 }
 
 function listAgentDirs() {
+  const root = realRoot();
+  if (root === null) return [];
   let names;
   try {
-    names = fs.readdirSync(MEMORY_ROOT, { withFileTypes: true });
+    names = fs.readdirSync(root, { withFileTypes: true });
   } catch (_) {
-    return []; // no root yet — no agent has ever saved a memory
+    return [];
   }
+  // A Dirent's isDirectory() does not follow the link, so a symlinked folder is
+  // false here and never becomes an agent row. Do not swap it for a statSync.
   return names
     .filter((d) => d.isDirectory() && AGENT_NAME_RE.test(d.name))
     .map((d) => d.name)
@@ -88,21 +91,48 @@ function listAgentDirs() {
 }
 
 /**
- * The resolved directory for `agent`, or null if it is not a single child of
- * MEMORY_ROOT. `agent` arrives over IPC from the renderer, so this is the only
- * sanctioned way to turn it into a path: the dirname comparison rejects '.',
- * '..' and anything else that resolves elsewhere, whatever the regex allows.
+ * The directory for `agent`, or null if it is not a single child of the resolved
+ * MEMORY_ROOT. `agent` arrives over IPC, so this is the only sanctioned way to
+ * turn it into a path: the dirname comparison rejects '.', '..' and anything
+ * else lexically elsewhere, whatever the regex allows. LEXICAL only — it says
+ * nothing about what that dir or its entries RESOLVE to, so every read below
+ * owes confineToDir() a call as well.
  */
 function agentDir(agent) {
   if (typeof agent !== 'string' || !AGENT_NAME_RE.test(agent)) return null;
-  const dir = path.resolve(MEMORY_ROOT, agent);
-  if (path.dirname(dir) !== path.resolve(MEMORY_ROOT)) return null;
+  const root = realRoot();
+  if (root === null) return null;
+  const dir = path.resolve(root, agent);
+  if (path.dirname(dir) !== root) return null;
   return dir;
+}
+
+/**
+ * The real path of `entryPath` if it resolves strictly inside the ALREADY
+ * RESOLVED `base`, else null. An agent writes its own memory folder, so an entry
+ * there may be a symlink aimed anywhere on disk. `path.sep` is load-bearing: a
+ * bare prefix test also admits `clodex-evil` beside `clodex`.
+ */
+function confineToDir(base, entryPath) {
+  let real;
+  try {
+    real = fs.realpathSync(entryPath);
+  } catch (_) {
+    return null;
+  }
+  return real.startsWith(base + path.sep) ? real : null;
 }
 
 function readUnits(agent) {
   const dir = agentDir(agent);
   if (dir === null) return [];
+  // Every entry below is compared against THIS, not the lexical dir. The folder
+  // must land inside the root itself: an agent that replaced its memory dir with
+  // a symlink out would otherwise get everything under the target rendered, and
+  // listAgentDirs refusing to LIST it is not the guard — `agent` arrives over
+  // IPC and need not have come from that listing.
+  const base = confineToDir(realRoot(), dir);
+  if (base === null) return [];
   let files;
   try {
     files = fs.readdirSync(dir);
@@ -112,9 +142,11 @@ function readUnits(agent) {
   const units = [];
   for (const f of files) {
     if (!f.endsWith('.md')) continue;
+    const real = confineToDir(base, path.join(dir, f));
+    if (real === null) continue;
     let text;
     try {
-      text = fs.readFileSync(path.join(dir, f), 'utf8');
+      text = fs.readFileSync(real, 'utf8');
     } catch (_) {
       continue; // deleted between readdir and read — skip, don't fail the list
     }
@@ -122,9 +154,8 @@ function readUnits(agent) {
     if (u) units.push(u);
   }
   // Newest first. learned_at is ISO-8601 so a plain string comparison orders
-  // correctly; units missing it sink to the end rather than throwing. Not
-  // localeCompare — that is collation-sensitive about punctuation, which is
-  // not what an ISO timestamp wants.
+  // correctly and units missing it sink to the end. Not localeCompare — that is
+  // collation-sensitive about punctuation, which an ISO timestamp is not.
   units.sort((a, b) => {
     const x = String(a.learned_at);
     const y = String(b.learned_at);
@@ -134,10 +165,9 @@ function readUnits(agent) {
   return units;
 }
 
-// Uncached by design. This runs only when the user opens the overlay, so the
-// disk read is paid once per open and the answer is never stale. A cache here
-// would buy nothing and reintroduce the staleness bound the badge removal was
-// meant to delete.
+// The unit reads are uncached by design: this runs only when the user opens the
+// overlay, so a cache would buy nothing and reintroduce the staleness bound the
+// badge removal deleted.
 function computeAgents() {
   return listAgentDirs().map((agent) => {
     const units = readUnits(agent);
@@ -151,13 +181,12 @@ function computeAgents() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Activation
-// ---------------------------------------------------------------------------
-
 module.exports.activate = (h) => {
-  // Re-enable reuses this module object; start from zero.
+  // Re-enable reuses this module object; start from zero. The resolved root is
+  // part of that state — a root removed and recreated between enables resolves
+  // somewhere new, and a survivor would keep pointing at the old inode.
   host = h;
+  realRootCache = null;
 
   host.ipc.handle('agents', () => {
     return { ok: true, agents: computeAgents() };

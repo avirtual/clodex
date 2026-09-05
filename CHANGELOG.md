@@ -15,6 +15,11 @@ blocks a release.
 
 - Clodex now ships stock skills (first: clodex-plugin) into `~/.clodex/skills`
   on launch; edited copies are never overwritten, same as team prompts.
+- **The memory viewer no longer follows symlinks out of an agent's memory
+  folder.** An agent writes that folder itself, so a link planted there used to
+  be read and its contents shown to you as if it were a memory. Entries that
+  resolve outside the folder are now skipped: they are not listed, their text is
+  never displayed, and nothing is deleted. Real memories are unaffected.
 
 ## 5.28.0 — 2026-09-05
 
