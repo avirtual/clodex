@@ -11,7 +11,7 @@ and the safe direction is the same — contribute nothing.
 ## move
 
 `--resume <id>` is NOT confined to the transcript's project directory. Measured
-against the real `claude` binary (5.31.1, 2026-09-07): a conversation started in
+against the real `claude` binary (Claude Code 2.1.261, 2026-09-07): a conversation started in
 one directory resumed successfully from an unrelated one, replaying 27,717 cached
 tokens, with the transcript left under the ORIGINAL project dir. So a moved seat
 keeps its conversation and no transcript is copied. An id that does not exist
