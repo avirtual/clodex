@@ -222,3 +222,34 @@ test('bundleSectionsOf lists every contributing plugin, seat-independently', () 
     'the plugin carrying no skills contributes no section');
   assert.deepStrictEqual(bundleSectionsOf('agents').map((s) => s.names), [['screener']]);
 }));
+
+// ── The args dialog's fetch/render ORDERING ─────────────────────────────────
+// A source-shape pin, because no runtime fixture here drives openArgsDialog: it
+// awaits five IPC reads and paints ~15 sections. The property is real and
+// invisible from the code being edited — the agents render draws bundle rows off
+// pluginCatalogCache, so a catalog fetch BELOW it groups this session's rows
+// under whatever plugin set the previously-opened dialog left behind.
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('openArgsDialog seeds the plugin catalog BEFORE it renders the agents checklist', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('async function openArgsDialog');
+  assert.ok(at > 0, 'ENTER: openArgsDialog was found');
+  const end = src.indexOf('\n}', at);
+  assert.ok(end > at, 'ENTER: the function body slice is bounded');
+  const body = src.slice(at, end);
+
+  const fetchAt = body.indexOf('setPluginCatalogCache((await window.api.pluginCatalog())');
+  const agentsAt = body.indexOf('renderAgentChecklist(argsAgentsList');
+  assert.ok(fetchAt > 0, 'ENTER: the catalog fetch is in this function');
+  assert.ok(agentsAt > 0, 'ENTER: and the agents render is too');
+  assert.ok(fetchAt < agentsAt,
+    'the catalog must be fresh before the agents checklist draws its bundle rows, or they are '
+    + 'grouped by the previous dialog\'s plugin set');
+
+  // The skills render is inside a later conditional block and reads the same
+  // cache; it is below the fetch by construction, and this asserts it stays so.
+  const skillsAt = body.indexOf('renderInjectChecklist(argsInjectSkillsList');
+  assert.ok(skillsAt > fetchAt, 'the inject checklist draws off the same fresh catalog');
+});

@@ -1799,9 +1799,6 @@ const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
 const envSection = document.getElementById('env-section');
 
-// The seat being composed has no persisted record yet, so its membership is the
-// live Plugins checklist in this same dialog — which is why every caller must
-// have painted that list first (refreshNewSessionPlugins).
 function newSessionSeat() {
   return { plugins: collectPluginChecklist(inputPluginList) };
 }
@@ -1834,10 +1831,6 @@ async function refreshNewSessionPlugins(pluginsList) {
   repaintNewSessionBundleRows();
 }
 
-// The bundle sections read the Plugins checklist, so they are STALE the moment
-// it repaints or the operator ticks a row. Re-render off the live checkboxes,
-// carrying the flat picks across — collect drops the disabled bundle rows, so
-// what comes back is the flat set the re-render puts straight back.
 function repaintNewSessionBundleRows() {
   if (inputType.value !== 'claude') return;
   const seat = newSessionSeat();
@@ -3411,10 +3404,6 @@ const {
   openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover,
 } = initChecklistPopovers({
   sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta,
-  // The same per-row read pluginReachesSession answers off, and the only one the
-  // renderer has: neither catalog IPC these popovers call carries the seat's own
-  // plugin list. `undefined` (a row with no meta yet) is NOT an array, so
-  // seatHasPlugin falls to the shipped default — the same answer the seat gets.
   seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
 });
 
@@ -6129,10 +6118,6 @@ const argsIntentsList = document.getElementById('args-intents-list');
 const argsIntentsSection = document.getElementById('args-intents-section');
 const argsPluginList = document.getElementById('args-plugin-list');
 const argsPluginsSection = document.getElementById('args-plugins-section');
-// The seat this dialog edits, as the PLUGIN CHECKLIST currently stands rather
-// than as persisted: an untick must grey the bundle rows before Save, or the
-// dialog shows reach it is in the act of removing. On a peer row that section is
-// hidden and unsaveable, so the persisted list is the honest answer there.
 function argsSeat() {
   return {
     plugins: argsPluginsSection.style.display === 'none'
@@ -6233,9 +6218,6 @@ async function openArgsDialog(name, argsSource = null) {
   // drawn there takes an untick and silently discards it.
   const isPluginsEditable = isClaude && !argsSource;
   argsPluginsSection.style.display = isPluginsEditable ? '' : 'none';
-  // ABOVE the agents render, which now draws bundle rows off this cache: below
-  // it those rows would be grouped by whatever plugin set the LAST dialog left
-  // behind.
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
   argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
   argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
@@ -6268,11 +6250,6 @@ async function openArgsDialog(name, argsSource = null) {
     renderSkillChecklist(argsSkillsList, sc.names || [], new Set(sc.disabledSkills || []),
       sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
     setSkillLibCache(sc.skillLib || []);
-    // Bundle rows count toward showing the section: with an empty flat library
-    // the old gate hid it outright, and a plugin's skills would draw nowhere.
-    // The reconcile below is what keeps that safe — `rendered` stays the FLAT
-    // names, so an all-bundle section collects [] and preserves the persisted
-    // set rather than clearing it.
     if ((sc.skillLib || []).length || bundleSectionsOf('skills').length) {
       const auto = skillAutoSet(sc.skillLib, name);
       renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto, argsSeat());
@@ -6385,8 +6362,6 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
   openTemplateEditor,
-  // The drawers list what every plugin carries, with no seat to scope it to —
-  // this is a library view, not a per-session grant.
   bundleSectionsOf,
   refreshPluginCatalog: async () => {
     try { setPluginCatalogCache((await window.api.pluginCatalog()) || []); } catch {}

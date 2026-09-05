@@ -53,9 +53,6 @@ const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
 
 function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf }) {
-  // Bundle rows are drawn against the LOCAL plugin catalog, so a peer row gets
-  // none: the plugins that seat holds are its own box's, and grouping its skills
-  // under this Mac's plugin names would assert a membership nothing here knows.
   function seatFor(name, source = null) {
     if (source || typeof seatPluginsOf !== 'function') return null;
     return { plugins: seatPluginsOf(name) };
@@ -155,18 +152,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   async function openSkillsPopover(name, anchorBtn, source = null) {
     const res = source ? await source.fetch() : await window.api.getSkillCatalog(name);
     if (!res || !res.ok) { alert(source ? `Read skills on peer failed: ${res && res.error ? res.error : 'unknown error'}` : 'Session not found in persistence.'); return; }
-    // Seeded at every open, as the plugin-owning popovers do: this popover has
-    // no other reason to touch the catalog, so without it the bundle sections
-    // would draw off whatever the last dialog left in the cache, or nothing.
     setPluginCatalogCache((await window.api.pluginCatalog()) || []);
     skillsEditingSource = source;
     renderSkillChecklist(popoverSkillsList, res.names || [], new Set(res.disabledSkills || []),
       res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope });
-    // Library-injection section: shown when the flat library is non-empty, or
-    // when a plugin the seat could hold carries skills of its own — otherwise a
-    // bundle's skills would draw nowhere. The Apply reconcile keeps that safe:
-    // `rendered` is the FLAT names, so an all-bundle section collects [] and
-    // preserves the persisted set instead of clearing it.
     setSkillLibCache(res.skillLib || []);
     const seat = seatFor(name, source);
     if (getSkillLibCache().length || (seat && bundleSectionsOf('skills').length)) {

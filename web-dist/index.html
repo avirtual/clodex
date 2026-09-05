@@ -36763,10 +36763,6 @@ Click for live activity`;
         addSessionToSidebar,
         switchSession,
         refreshSidebarMeta,
-        // The same per-row read pluginReachesSession answers off, and the only one the
-        // renderer has: neither catalog IPC these popovers call carries the seat's own
-        // plugin list. `undefined` (a row with no meta yet) is NOT an array, so
-        // seatHasPlugin falls to the shipped default — the same answer the seat gets.
         seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins
       });
       var { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
@@ -39518,8 +39514,6 @@ ${res.stderr}` : "");
         setAgentLibCache,
         setSkillLibCache,
         openTemplateEditor,
-        // The drawers list what every plugin carries, with no seat to scope it to —
-        // this is a library view, not a per-session grant.
         bundleSectionsOf,
         refreshPluginCatalog: async () => {
           try {

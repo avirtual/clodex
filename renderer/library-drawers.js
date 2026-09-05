@@ -21,8 +21,8 @@
 // a reassignable let), and setAgentLibCache / setSkillLibCache (checklists.js
 // owns those caches; the two refresh lists re-seed them). esc from lib/format.
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the
-// guarantee.
+// The moved CRUD blocks are guaranteed by move-only fidelity, not by tests. The
+// bundle groups are NOT a move (test/plugin-bundle-drawer.test.js).
 
 const { esc } = require('./lib/format');
 const { splitModelArg } = require('./lib/args-model');
@@ -56,10 +56,6 @@ function scopeBadgeHtml(meta) {
   return parts.length ? `<div class="prompt-item-scope">${esc(parts.join(' · '))}</div>` : '';
 }
 
-// A bundle record lives in the plugin's own directory, so the drawer lists it
-// without the edit/delete controls a library row carries: the file is not the
-// operator's to rewrite from here, and a Delete would remove part of an
-// installed plugin.
 function appendBundleGroups(listEl, sections) {
   for (const sec of sections) {
     const head = document.createElement('div');

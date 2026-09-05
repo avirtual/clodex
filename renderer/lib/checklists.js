@@ -15,10 +15,10 @@
 // byte-identical moves; only the cache access is seamed.
 //
 // DOM-bound (document.createElement + esc route through the global document),
-// so no unit tests per the R1 rule — move-only fidelity is the guarantee. The
-// exception is the skill rows' read-only decision, which is NOT a move
-// (test/skill-checklist-scope.test.js): an out-of-scope row that still collects
-// into the off list writes an entry that disables nothing.
+// so the MOVED bodies are guaranteed by move-only fidelity. What is not a move
+// is tested: the skill rows' read-only decision, where an out-of-scope row that
+// still collects writes an off-list entry that disables nothing, and the bundle
+// rows, where one that still collects writes a name no flat library holds.
 
 const { esc } = require('./format');
 const { seatHasPlugin } = require('../../plugin-api');
@@ -105,9 +105,6 @@ function bundleSectionsOf(kind) {
   return out;
 }
 
-// A checklist draws bundle rows only for a surface that told it WHICH seat it is
-// editing: without one, `seatHasPlugin`'s absent case would answer for the
-// shipped default and every row would claim reach this seat may not have.
 function seatBundleSections(kind, seat) {
   if (!seat) return [];
   return bundleSectionsOf(kind).map((sec) => ({
