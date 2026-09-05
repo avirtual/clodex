@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **The Agents and Skills menus, and the Prompts…/Templates…/Exec Commands…/Inbox…
+  items under Window, are replaced by one Library menu** with a submenu per kind;
+  each lists the library's own entries first and then every contributing plugin's
+  content under the plugin's name. Show IPC Traffic… (Cmd+Shift+B) now lives under
+  View. Team roles can now name a plugin template.
 - A plugin can now ship prompts and templates alongside its skills and agents,
   listed under the plugin's name wherever the library is offered; a template from
   a plugin starts a seat that holds the plugin. Content from a plugin in your own

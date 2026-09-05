@@ -239,7 +239,7 @@ function registerIpcHandlers(deps) {
       let execDefs = null;
       const findings = teamPreflight(team, {
         exists: (abs) => { try { return fs.existsSync(abs); } catch { return false; } },
-        listTemplates: () => templates.list(),
+        listTemplates: () => (listAllTemplates ? listAllTemplates() : templates.list()),
         // execLibrary.list() already parses every def and keeps both `argv` and
         // `cwd` — the two strings the runner expands, so both must survive to
         // the leaf. Reading the one file again by name would be a second parse
@@ -459,9 +459,10 @@ function registerIpcHandlers(deps) {
   });
 
   handle('templates:list', () => (listAllTemplates ? listAllTemplates() : templates.list()));
-  handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
+  handle('templates:save', (_e, template) => { templates.save(template); refreshAppMenu(); return templates.list(); });
   handle('templates:saveByName', (_e, template) => {
     const t = templates.saveByName(template);
+    refreshAppMenu();
     return { ok: true, template: t, templates: templates.list() };
   });
   handle('templates:remove', (_e, id) => {
@@ -469,6 +470,7 @@ function registerIpcHandlers(deps) {
     // it reads like every other refusal on this surface instead of rejecting
     // the invoke, and so the caller can tell it apart from a real delete.
     try { templates.remove(id); } catch { /* refused name — nothing was deleted */ }
+    refreshAppMenu();
     return templates.list();
   });
   handle('templates:exportFromSession', (_e, name, templateName) => {
@@ -507,12 +509,18 @@ function registerIpcHandlers(deps) {
 
   handle('prompts:list', (_e, kind) => promptLibrary.list(kind));
   handle('prompts:save', (_e, kind, name, body) => {
-    try { return { ok: true, prompts: promptLibrary.save(kind, name, body) }; }
+    let prompts;
+    try { prompts = promptLibrary.save(kind, name, body); }
     catch (err) { return { ok: false, error: err.message }; }
+    refreshAppMenu();
+    return { ok: true, prompts };
   });
   handle('prompts:remove', (_e, kind, name) => {
-    try { return { ok: true, prompts: promptLibrary.remove(kind, name) }; }
+    let prompts;
+    try { prompts = promptLibrary.remove(kind, name); }
     catch (err) { return { ok: false, error: err.message, prompts: promptLibrary.list() }; }
+    refreshAppMenu();
+    return { ok: true, prompts };
   });
 
   handle('agents:list', () => agentLibrary.list());
@@ -562,13 +570,18 @@ function registerIpcHandlers(deps) {
     }
     const check = validateExecDef(def, name);
     if (!check.ok) return { ok: false, error: check.error };
-    try {
-      return { ok: true, commands: execLibrary.save(name, JSON.stringify(def, null, 2)) };
-    } catch (err) { return { ok: false, error: err.message }; }
+    let commands;
+    try { commands = execLibrary.save(name, JSON.stringify(def, null, 2)); }
+    catch (err) { return { ok: false, error: err.message }; }
+    refreshAppMenu();
+    return { ok: true, commands };
   });
   handle('exec:remove', (_e, name) => {
-    try { return { ok: true, commands: execLibrary.remove(name) }; }
+    let commands;
+    try { commands = execLibrary.remove(name); }
     catch (err) { return { ok: false, error: err.message, commands: execLibrary.list() }; }
+    refreshAppMenu();
+    return { ok: true, commands };
   });
 
   handle('notifications:list', () => notifications.list());

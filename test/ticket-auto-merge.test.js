@@ -184,6 +184,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,
     getTemplates: () => ({ list: () => [SHIPPED_REVIEWER_TEMPLATE] }),
+    listAllTemplates: () => [SHIPPED_REVIEWER_TEMPLATE],
     notifyOS: () => {},
     intentEnabled,
     withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor,

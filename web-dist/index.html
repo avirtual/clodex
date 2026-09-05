@@ -8468,10 +8468,6 @@ body {
               { label: "New Workspace", run: () => newWorkspace() },
               { label: "New Session\u2026", accel: `${ACCEL_ALT}T`, run: () => emit("request-open-new-dialog") },
               { sep: true },
-              { label: "Prompts\u2026", run: () => emit("request-open-prompts-drawer") },
-              { label: "Templates\u2026", run: () => emit("request-open-templates-drawer") },
-              { label: "Exec Commands\u2026", run: () => emit("request-open-exec-drawer") },
-              { label: "Inbox\u2026", run: () => emit("request-open-inbox-drawer") },
               { label: "Sandboxes\u2026", run: () => emit("request-open-sandbox-dialog") },
               { sep: true },
               { label: "Rename Workspace\u2026", run: () => emit("request-rename-workspace") },
@@ -8490,49 +8486,14 @@ body {
               { label: "Restart Clodex\u2026", run: () => confirmRestart(invoke) }
             ]
           },
-          {
-            label: "Agents",
-            items: async () => {
-              const lib = await Promise.resolve(api.listAgents ? api.listAgents() : []).catch(() => []);
-              const rows = [];
-              if (lib && lib.length) {
-                for (const a of lib) rows.push({ label: trunc(a.description ? `${a.name}  \u2014  ${a.description}` : a.name), run: () => emit("request-open-agents-drawer", a.name) });
-              } else {
-                rows.push({ label: "(no agents in library)", disabled: true });
-              }
-              rows.push(
-                { sep: true },
-                { label: "New Agent\u2026", run: () => emit("request-open-agents-drawer", ":new") },
-                { label: "Manage Agent Types\u2026", run: () => emit("request-open-agents-drawer", null) },
-                { sep: true },
-                { label: "Show IPC Traffic\u2026", run: () => emit("request-open-ipc-log") }
-              );
-              return rows;
-            }
-          },
-          {
-            label: "Skills",
-            items: async () => {
-              const lib = await Promise.resolve(api.listSkillLib ? api.listSkillLib() : []).catch(() => []);
-              const rows = [];
-              if (lib && lib.length) {
-                for (const s of lib) rows.push({ label: trunc(s.description ? `${s.name}  \u2014  ${s.description}` : s.name), run: () => emit("request-open-skills-drawer", s.name) });
-              } else {
-                rows.push({ label: "(no skills in library)", disabled: true });
-              }
-              rows.push(
-                { sep: true },
-                { label: "New Skill\u2026", run: () => emit("request-open-skills-drawer", ":new") },
-                { label: "Manage Skills\u2026", run: () => emit("request-open-skills-drawer", null) }
-              );
-              return rows;
-            }
-          },
+          buildLibraryMenu(ctx),
           {
             label: "View",
             items: () => {
               const cur = getTheme ? getTheme() : null;
               return [
+                { label: "Show IPC Traffic\u2026", run: () => emit("request-open-ipc-log") },
+                { sep: true },
                 {
                   label: "Theme",
                   submenu: () => THEMES.map((t) => ({
@@ -8591,6 +8552,105 @@ body {
             }
           }
         ];
+      }
+      function buildLibraryMenu(ctx) {
+        const { emit, api } = ctx;
+        const read = async (fn) => {
+          try {
+            return await Promise.resolve(fn ? fn() : []) || [];
+          } catch {
+            return [];
+          }
+        };
+        const bundles = () => read(api.pluginCatalog);
+        const kindRows = async ({ channel, library, empty, pluginEntries, newLabel, manageLabel }) => {
+          const rows = library.length ? library : [{ label: empty, disabled: true }];
+          for (const b of await bundles()) {
+            const entries = pluginEntries(b);
+            if (!entries.length) continue;
+            rows.push({ sep: true }, { head: b.name || b.id }, ...entries);
+          }
+          rows.push(
+            { sep: true },
+            { label: newLabel, run: () => emit(channel, ":new") },
+            { label: manageLabel, run: () => emit(channel, null) }
+          );
+          return rows;
+        };
+        const described = (e) => trunc(e.description ? `${e.name}  \u2014  ${e.description}` : e.name);
+        const bundleRow = (channel, b, name) => ({ label: trunc(name), run: () => emit(channel, { plugin: b.id, name }) });
+        const promptRows = (rows, click) => {
+          const out = [];
+          for (const kind of ["system", "append"]) {
+            const ofKind = rows.filter((p) => p && p.kind === kind);
+            if (!ofKind.length) continue;
+            out.push({ head: kind === "system" ? "System" : "Append" });
+            for (const p of ofKind) out.push({ label: trunc(p.name), run: () => click(p, kind) });
+          }
+          return out;
+        };
+        return {
+          label: "Library",
+          items: () => [
+            {
+              label: "Prompts",
+              submenu: async () => kindRows({
+                channel: "request-open-prompts-drawer",
+                library: promptRows(await read(api.listPrompts), (p, kind) => emit("request-open-prompts-drawer", { kind, name: p.name })),
+                empty: "(no prompts in library)",
+                pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit("request-open-prompts-drawer", { plugin: b.id, kind, name: p.name })),
+                newLabel: "New Prompt\u2026",
+                manageLabel: "Manage Prompts\u2026"
+              })
+            },
+            {
+              label: "Templates",
+              submenu: async () => kindRows({
+                channel: "request-open-templates-drawer",
+                library: (await read(api.listTemplates)).filter((t) => !t.plugin).map((t) => ({ label: trunc(t.name), run: () => emit("request-open-templates-drawer", t.id || t.name) })),
+                empty: "(no templates in library)",
+                pluginEntries: (b) => (b.templates || []).map((name) => bundleRow("request-open-templates-drawer", b, name)),
+                newLabel: "New Template\u2026",
+                manageLabel: "Manage Templates\u2026"
+              })
+            },
+            {
+              label: "Agents",
+              submenu: async () => kindRows({
+                channel: "request-open-agents-drawer",
+                library: (await read(api.listAgents)).map((a) => ({ label: described(a), run: () => emit("request-open-agents-drawer", a.name) })),
+                empty: "(no agents in library)",
+                pluginEntries: (b) => (b.agents || []).map((name) => bundleRow("request-open-agents-drawer", b, name)),
+                newLabel: "New Agent\u2026",
+                manageLabel: "Manage Agent Types\u2026"
+              })
+            },
+            {
+              label: "Skills",
+              submenu: async () => kindRows({
+                channel: "request-open-skills-drawer",
+                library: (await read(api.listSkillLib)).map((sk) => ({ label: described(sk), run: () => emit("request-open-skills-drawer", sk.name) })),
+                empty: "(no skills in library)",
+                pluginEntries: (b) => (b.skills || []).map((name) => bundleRow("request-open-skills-drawer", b, name)),
+                newLabel: "New Skill\u2026",
+                manageLabel: "Manage Skills\u2026"
+              })
+            },
+            {
+              label: "Exec Commands",
+              submenu: async () => kindRows({
+                channel: "request-open-exec-drawer",
+                library: (await read(api.listExecCommands)).map((c) => ({ label: trunc(c.name), run: () => emit("request-open-exec-drawer", c.name) })),
+                empty: "(no exec commands in library)",
+                pluginEntries: () => [],
+                newLabel: "New Exec Command\u2026",
+                manageLabel: "Manage Exec Commands\u2026"
+              })
+            },
+            { sep: true },
+            { label: "Inbox\u2026", run: () => emit("request-open-inbox-drawer") }
+          ]
+        };
       }
       function buildPluginsMenu(status, ctx) {
         if (!status || !status.ok) return null;
@@ -8880,7 +8940,7 @@ body {
           });
         }
       }
-      module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, navQuery, BAR_H, THEMES };
+      module.exports = { mount, buildMenus, buildLibraryMenu, buildPluginsMenu, buildTeamsMenu, navQuery, BAR_H, THEMES };
     }
   });
 
@@ -22204,7 +22264,7 @@ ${String(body || "").trim()}
             const cb = document.createElement("input");
             cb.type = "checkbox";
             cb.value = value;
-            cb.checked = checkedSet ? checkedSet.has(value) : sec.has;
+            cb.checked = sec.has && (checkedSet ? checkedSet.has(value) : true);
             cb.disabled = true;
             const txt = document.createElement("span");
             const note = sec.has ? ` <span class="skill-src">\xB7 via ${esc(sec.name)}</span>` : ` <span class="skill-src">enable the ${esc(sec.name)} plugin for this session</span>`;
@@ -25474,6 +25534,21 @@ Opening it here and saving would overwrite the file with what this editor could 
           if (refreshPluginCatalog) await refreshPluginCatalog();
           return true;
         };
+        const bundleTarget = (kind, arg) => {
+          if (!arg || typeof arg !== "object" || !arg.plugin) return null;
+          const sec = bundleGroups(kind).find((g) => g.id === String(arg.plugin));
+          return sec ? { sec, name: String(arg.name || "") } : null;
+        };
+        const openBundleEntry = async (kind, arg, open) => {
+          const t = bundleTarget(kind, arg);
+          if (!t) return;
+          if (!t.sec.editable) {
+            revealBundle(t.sec);
+            return;
+          }
+          const body = await readBundle(t.sec, kind, t.name);
+          if (body != null) open(t.sec, t.name, body);
+        };
         const promptsDrawer = document.getElementById("prompts-drawer");
         const promptsList = document.getElementById("prompts-list");
         const promptsEmpty = document.getElementById("prompts-empty");
@@ -25499,7 +25574,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           promptsList.innerHTML = "";
           if (items.length === 0 && !groups.length) {
             promptsEmpty.style.display = "";
-            return;
+            return items;
           }
           promptsEmpty.style.display = "none";
           for (const p of items) {
@@ -25542,10 +25617,23 @@ Opening it here and saving would overwrite the file with what this editor could 
             },
             onReveal: revealBundle
           });
+          return items;
         }
-        function openPromptsDrawer() {
+        async function openPromptsDrawer(arg) {
           promptsDrawer.classList.remove("hidden");
-          refreshPromptsList();
+          const items = await refreshPromptsList();
+          if (arg === ":new") {
+            openPromptEditor(null);
+            return;
+          }
+          if (!arg || typeof arg !== "object") return;
+          const kind = arg.kind === "system" ? "system" : "append";
+          if (arg.plugin) {
+            await openBundleEntry(`prompts/${kind}`, arg, (sec, name, body) => openPromptEditor({ kind, name, body }, sec));
+            return;
+          }
+          const p = (items || []).find((x) => x.kind === kind && x.name === arg.name);
+          if (p) openPromptEditor(p);
         }
         function closePromptsDrawer() {
           promptsDrawer.classList.add("hidden");
@@ -25669,11 +25757,13 @@ Opening it here and saving would overwrite the file with what this editor could 
             onReveal: revealBundle
           });
         }
-        function openAgentsDrawer(name) {
+        async function openAgentsDrawer(name) {
           agentsDrawer.classList.remove("hidden");
-          refreshAgentsList();
+          await refreshAgentsList();
           if (name === ":new") openAgentEditor(null);
-          else if (name) openAgentEditor({ name });
+          else if (name && typeof name === "object") {
+            await openBundleEntry("agents", name, (sec, stem, body) => openAgentEditor({ name: stem, body }, sec));
+          } else if (name) openAgentEditor({ name });
         }
         function closeAgentsDrawer() {
           agentsDrawer.classList.add("hidden");
@@ -25795,11 +25885,13 @@ Opening it here and saving would overwrite the file with what this editor could 
             onReveal: revealBundle
           });
         }
-        function openSkillsDrawer(name) {
+        async function openSkillsDrawer(name) {
           skillsDrawer.classList.remove("hidden");
-          refreshSkillsLibList();
+          await refreshSkillsLibList();
           if (name === ":new") openSkillEditor(null);
-          else if (name) openSkillEditor({ name });
+          else if (name && typeof name === "object") {
+            await openBundleEntry("skills", name, (sec, stem, body) => openSkillEditor({ name: stem, body }, sec));
+          } else if (name) openSkillEditor({ name });
         }
         function closeSkillsDrawer() {
           skillsDrawer.classList.add("hidden");
@@ -25984,7 +26076,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         window.api.onRequestOpenSkillsDrawer((name) => openSkillsDrawer(name));
         window.api.onRequestOpenAgentsDrawer((name) => openAgentsDrawer(name));
         window.api.onRequestOpenExecDrawer((name) => openExecDrawer(name));
-        window.api.onRequestOpenPromptsDrawer(() => openPromptsDrawer());
+        window.api.onRequestOpenPromptsDrawer((arg) => openPromptsDrawer(arg));
         const templatesDrawer = document.getElementById("templates-drawer");
         const templatesListEl = document.getElementById("templates-list");
         const templatesEmpty = document.getElementById("templates-empty");
@@ -26016,7 +26108,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           templatesListEl.innerHTML = "";
           if (items.length === 0 && !groups.length) {
             templatesEmpty.style.display = "";
-            return;
+            return { items, pluginTemplates };
           }
           templatesEmpty.style.display = "none";
           for (const t of items) {
@@ -26057,10 +26149,36 @@ Opening it here and saving would overwrite the file with what this editor could 
             },
             onReveal: revealBundle
           });
+          return { items, pluginTemplates };
         }
-        function openTemplatesDrawer() {
+        async function openTemplatesDrawer(arg) {
           templatesDrawer.classList.remove("hidden");
-          refreshTemplatesList();
+          const { items, pluginTemplates } = await refreshTemplatesList();
+          if (arg === ":new") {
+            closeTemplatesDrawer();
+            openTemplateEditor(null);
+            return;
+          }
+          if (!arg) return;
+          if (typeof arg === "object") {
+            const t = bundleTarget("templates", arg);
+            if (!t) return;
+            if (!t.sec.editable) {
+              revealBundle(t.sec);
+              return;
+            }
+            const id = `${t.sec.id}:${t.name}`;
+            const tpl2 = pluginTemplates.get(id);
+            if (!tpl2) return;
+            closeTemplatesDrawer();
+            openTemplateEditor({ ...tpl2, name: t.name, id }, t.sec);
+            return;
+          }
+          const tpl = items.find((x) => x.id === arg);
+          if (tpl) {
+            closeTemplatesDrawer();
+            openTemplateEditor(tpl);
+          }
         }
         function closeTemplatesDrawer() {
           templatesDrawer.classList.add("hidden");
@@ -26070,7 +26188,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           closeTemplatesDrawer();
           openTemplateEditor(null);
         });
-        window.api.onRequestOpenTemplatesDrawer(() => openTemplatesDrawer());
+        window.api.onRequestOpenTemplatesDrawer((arg) => openTemplatesDrawer(arg));
         return { refreshTemplatesList };
       }
       module.exports = { initLibraryDrawers };

@@ -730,6 +730,7 @@ function createPluginHostEngine(deps) {
       rec.agents = Array.isArray(agents) ? agents : [];
       rec.prompts = Array.isArray(prompts) ? prompts : [];
       rec.templates = Array.isArray(templates) ? templates : [];
+      notifyStateChanged();
       return true;
     },
     setEnabled(pluginId, enabled) {

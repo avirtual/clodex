@@ -119,6 +119,18 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     if (refreshPluginCatalog) await refreshPluginCatalog();
     return true;
   };
+  const bundleTarget = (kind, arg) => {
+    if (!arg || typeof arg !== 'object' || !arg.plugin) return null;
+    const sec = bundleGroups(kind).find((g) => g.id === String(arg.plugin));
+    return sec ? { sec, name: String(arg.name || '') } : null;
+  };
+  const openBundleEntry = async (kind, arg, open) => {
+    const t = bundleTarget(kind, arg);
+    if (!t) return;
+    if (!t.sec.editable) { revealBundle(t.sec); return; }
+    const body = await readBundle(t.sec, kind, t.name);
+    if (body != null) open(t.sec, t.name, body);
+  };
 
   const promptsDrawer = document.getElementById('prompts-drawer');
   const promptsList = document.getElementById('prompts-list');
@@ -149,7 +161,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     promptsList.innerHTML = '';
     if (items.length === 0 && !groups.length) {
       promptsEmpty.style.display = '';
-      return;
+      return items;
     }
     promptsEmpty.style.display = 'none';
     for (const p of items) {
@@ -190,11 +202,21 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       },
       onReveal: revealBundle,
     });
+    return items;
   }
 
-  function openPromptsDrawer() {
+  async function openPromptsDrawer(arg) {
     promptsDrawer.classList.remove('hidden');
-    refreshPromptsList();
+    const items = await refreshPromptsList();
+    if (arg === ':new') { openPromptEditor(null); return; }
+    if (!arg || typeof arg !== 'object') return;
+    const kind = arg.kind === 'system' ? 'system' : 'append';
+    if (arg.plugin) {
+      await openBundleEntry(`prompts/${kind}`, arg, (sec, name, body) => openPromptEditor({ kind, name, body }, sec));
+      return;
+    }
+    const p = (items || []).find((x) => x.kind === kind && x.name === arg.name);
+    if (p) openPromptEditor(p);
   }
 
   function closePromptsDrawer() {
@@ -331,13 +353,13 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     });
   }
 
-  function openAgentsDrawer(name) {
+  async function openAgentsDrawer(name) {
     agentsDrawer.classList.remove('hidden');
-    refreshAgentsList();
-    // Deep-link from the Agents menu: ':new' opens a blank editor, any other
-    // name jumps straight into that type's editor.
+    await refreshAgentsList();
     if (name === ':new') openAgentEditor(null);
-    else if (name) openAgentEditor({ name });
+    else if (name && typeof name === 'object') {
+      await openBundleEntry('agents', name, (sec, stem, body) => openAgentEditor({ name: stem, body }, sec));
+    } else if (name) openAgentEditor({ name });
   }
   function closeAgentsDrawer() {
     agentsDrawer.classList.add('hidden');
@@ -475,11 +497,13 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     });
   }
 
-  function openSkillsDrawer(name) {
+  async function openSkillsDrawer(name) {
     skillsDrawer.classList.remove('hidden');
-    refreshSkillsLibList();
+    await refreshSkillsLibList();
     if (name === ':new') openSkillEditor(null);
-    else if (name) openSkillEditor({ name });
+    else if (name && typeof name === 'object') {
+      await openBundleEntry('skills', name, (sec, stem, body) => openSkillEditor({ name: stem, body }, sec));
+    } else if (name) openSkillEditor({ name });
   }
   function closeSkillsDrawer() {
     skillsDrawer.classList.add('hidden');
@@ -685,7 +709,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   window.api.onRequestOpenSkillsDrawer((name) => openSkillsDrawer(name));
   window.api.onRequestOpenAgentsDrawer((name) => openAgentsDrawer(name));
   window.api.onRequestOpenExecDrawer((name) => openExecDrawer(name));
-  window.api.onRequestOpenPromptsDrawer(() => openPromptsDrawer());
+  window.api.onRequestOpenPromptsDrawer((arg) => openPromptsDrawer(arg));
 
   // ---------------------------------------------------------------------------
   // Templates library — saved session configs (~/Library/.../templates.json).
@@ -733,7 +757,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     templatesListEl.innerHTML = '';
     if (items.length === 0 && !groups.length) {
       templatesEmpty.style.display = '';
-      return;
+      return { items, pluginTemplates };
     }
     templatesEmpty.style.display = 'none';
     for (const t of items) {
@@ -771,11 +795,27 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       },
       onReveal: revealBundle,
     });
+    return { items, pluginTemplates };
   }
 
-  function openTemplatesDrawer() {
+  async function openTemplatesDrawer(arg) {
     templatesDrawer.classList.remove('hidden');
-    refreshTemplatesList();
+    const { items, pluginTemplates } = await refreshTemplatesList();
+    if (arg === ':new') { closeTemplatesDrawer(); openTemplateEditor(null); return; }
+    if (!arg) return;
+    if (typeof arg === 'object') {
+      const t = bundleTarget('templates', arg);
+      if (!t) return;
+      if (!t.sec.editable) { revealBundle(t.sec); return; }
+      const id = `${t.sec.id}:${t.name}`;
+      const tpl = pluginTemplates.get(id);
+      if (!tpl) return;
+      closeTemplatesDrawer();
+      openTemplateEditor({ ...tpl, name: t.name, id }, t.sec);
+      return;
+    }
+    const tpl = items.find((x) => x.id === arg);
+    if (tpl) { closeTemplatesDrawer(); openTemplateEditor(tpl); }
   }
   function closeTemplatesDrawer() {
     templatesDrawer.classList.add('hidden');
@@ -784,7 +824,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   templatesClose.addEventListener('click', closeTemplatesDrawer);
   templatesNew.addEventListener('click', () => { closeTemplatesDrawer(); openTemplateEditor(null); });
 
-  window.api.onRequestOpenTemplatesDrawer(() => openTemplatesDrawer());
+  window.api.onRequestOpenTemplatesDrawer((arg) => openTemplatesDrawer(arg));
 
   // Hand the core the drawer's list refresh so a dialog-side template save (from
   // the reused New Session dialog) can repaint an open drawer.

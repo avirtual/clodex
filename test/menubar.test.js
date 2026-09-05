@@ -25,6 +25,14 @@ function recordingCtx() {
   const api = {
     listAgents: async () => [{ name: 'agent-one', description: 'first' }],
     listSkillLib: async () => [{ name: 'skill-one', description: 'a skill' }],
+    listPrompts: async () => [{ name: 'lib-append', kind: 'append', body: 'A' }, { name: 'lib-sys', kind: 'system', body: 'S' }],
+    listTemplates: async () => [{ id: 'tpl-one', name: 'tpl-one' }, { id: 'rev:audit', name: 'rev:audit', plugin: 'rev' }],
+    listExecCommands: async () => [{ name: 'cmd-one' }],
+    pluginCatalog: async () => [{
+      id: 'rev', name: 'Reviewer', editable: true, dir: '/p/rev',
+      skills: ['scan'], agents: ['critic'], templates: ['audit'],
+      prompts: [{ name: 'rules', kind: 'append' }, { name: 'strict', kind: 'system' }],
+    }],
     listWorkspaces: async () => [{ id: 'w1', name: 'Alpha' }, { id: 'w2', name: 'Beta' }],
     currentWorkspace: async () => 'w1',
     peerList: async () => [
@@ -52,10 +60,10 @@ async function walkRows(rows) {
   }
 }
 
-test('menu tree mirrors the Electron app menu: File / Agents / Skills / View / Teams / Window', () => {
+test('menu tree mirrors the Electron app menu: File / Library / View / Teams / Window', () => {
   const { ctx } = recordingCtx();
   const menus = buildMenus(ctx);
-  assert.deepEqual(menus.map((m) => m.label), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window']);
+  assert.deepEqual(menus.map((m) => m.label), ['File', 'Library', 'View', 'Teams', 'Window']);
 });
 
 test('every menu action targets a real channel (request-*/set-theme are on-channels)', async () => {
@@ -74,8 +82,50 @@ test('every menu action targets a real channel (request-*/set-theme are on-chann
   for (const c of ['request-open-new-dialog', 'request-open-prompts-drawer', 'request-open-agents-drawer',
     'request-open-skills-drawer', 'request-open-ipc-log', 'request-rename-workspace',
     'request-open-preferences', 'request-open-peers-dialog', 'request-open-peer-session']) {
-    assert.ok(chans.includes(c), `File/Agents/Skills/Window emits ${c}`);
+    assert.ok(chans.includes(c), `File/Library/Window emits ${c}`);
   }
+});
+
+test('t680: the Library menu carries one submenu per kind, library first, then each plugin under its name', async () => {
+  const { ctx, rec } = recordingCtx();
+  const lib = buildMenus(ctx).find((m) => m.label === 'Library');
+  const top = await Promise.resolve(lib.items());
+  assert.deepStrictEqual(top.map((r) => r.label || (r.sep ? '—' : '?')),
+    ['Prompts', 'Templates', 'Agents', 'Skills', 'Exec Commands', '—', 'Inbox…']);
+
+  const shape = (rows) => rows.map((r) => (r.sep ? '—' : r.head ? `[${r.head}]` : r.label));
+  const sub = async (label) => shape(await Promise.resolve(top.find((r) => r.label === label).submenu()));
+  assert.deepStrictEqual(await sub('Prompts'), [
+    '[System]', 'lib-sys', '[Append]', 'lib-append',
+    '—', '[Reviewer]', '[System]', 'strict', '[Append]', 'rules',
+    '—', 'New Prompt…', 'Manage Prompts…',
+  ]);
+  assert.deepStrictEqual(await sub('Templates'),
+    ['tpl-one', '—', '[Reviewer]', 'audit', '—', 'New Template…', 'Manage Templates…'],
+    'a plugin template shows its stem, not the plugin-id:stem row the flat list carries');
+  assert.deepStrictEqual(await sub('Agents'),
+    ['agent-one  —  first', '—', '[Reviewer]', 'critic', '—', 'New Agent…', 'Manage Agent Types…']);
+  assert.deepStrictEqual(await sub('Skills'),
+    ['skill-one  —  a skill', '—', '[Reviewer]', 'scan', '—', 'New Skill…', 'Manage Skills…']);
+  assert.deepStrictEqual(await sub('Exec Commands'),
+    ['cmd-one', '—', 'New Exec Command…', 'Manage Exec Commands…']);
+
+  const prompts = await Promise.resolve(top.find((r) => r.label === 'Prompts').submenu());
+  prompts.find((r) => r.label === 'rules').run();
+  prompts.find((r) => r.label === 'lib-sys').run();
+  const agents = await Promise.resolve(top.find((r) => r.label === 'Agents').submenu());
+  agents.find((r) => r.label === 'critic').run();
+  assert.deepStrictEqual(rec.emits, [
+    ['request-open-prompts-drawer', { plugin: 'rev', kind: 'append', name: 'rules' }],
+    ['request-open-prompts-drawer', { kind: 'system', name: 'lib-sys' }],
+    ['request-open-agents-drawer', { plugin: 'rev', name: 'critic' }],
+  ], 'a plugin entry carries {plugin, name}; a library prompt carries {kind, name}');
+
+  const file = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'File').items());
+  assert.deepStrictEqual(file.map((r) => r.label).filter((l) => /Prompts…|Templates…|Exec Commands…|Inbox…/.test(l || '')), [],
+    'the four items left File for the Library menu');
+  const view = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'View').items());
+  assert.ok(view.some((r) => r.label === 'Show IPC Traffic…'), 'IPC traffic moved to View with the Agents menu gone');
 });
 
 test('New Session… carries the Alt+T accelerator hint (its real browser Alt chord)', async () => {
@@ -95,7 +145,7 @@ test('New Session… carries the Alt+T accelerator hint (its real browser Alt ch
 test('Theme submenu emits set-theme for each of the four themes', async () => {
   const { ctx, rec } = recordingCtx();
   const view = buildMenus(ctx).find((m) => m.label === 'View');
-  const [themeRow] = await Promise.resolve(view.items());
+  const themeRow = (await Promise.resolve(view.items())).find((r) => r.label === 'Theme');
   await walkRows([themeRow]);
   const themed = rec.emits.filter((e) => e[0] === 'set-theme').map((e) => e[1]);
   assert.deepEqual(themed, THEMES.map((t) => t.key), 'one set-theme per theme, in order');
@@ -157,8 +207,8 @@ test('mount builds #clx-menubar under #main and tags it .has-web-menubar', () =>
     const bar = main.children.find((c) => c.id === 'clx-menubar');
     assert.ok(bar, 'the menu bar mounts inside #main');
     const tops = bar.children.filter((c) => c.className === 'clx-top');
-    assert.deepEqual(tops.map((t) => t.textContent), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'],
-      'six themed top-level menu titles, in order');
+    assert.deepEqual(tops.map((t) => t.textContent), ['File', 'Library', 'View', 'Teams', 'Window'],
+      'five themed top-level menu titles, in order');
     // A <style> is injected for the bar's look.
     assert.ok(head.children.some((c) => c.tag === 'style'), 'bar styles are injected');
   } finally {
@@ -278,9 +328,9 @@ function mountWithPlugins(status) {
 test('mount inserts Plugins between View and Window when there is something to show', async () => {
   const m = mountWithPlugins(STATUS_ONE);
   try {
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'], 'not there synchronously');
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window'], 'not there synchronously');
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Plugins', 'Teams', 'Window'],
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Plugins', 'Teams', 'Window'],
       'inserted at the desktop position (app-menus.js:609), not appended at the end');
   } finally { m.restore(); }
 });
@@ -289,7 +339,7 @@ test('mount inserts NO Plugins element when there is nothing to show', async () 
   const m = mountWithPlugins({ ok: true, plugins: [], problems: [] });
   try {
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'],
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window'],
       'absent, not empty — an empty menu reads as a broken feature');
   } finally { m.restore(); }
 });
@@ -307,7 +357,7 @@ test('mount REMOVES the Plugins element when the last plugin goes', async () => 
     assert.equal(m.listeners.length, 1, 'mount subscribes to the plugin-state broadcast');
     m.listeners[0]('_host', 'plugin-state', { id: 'demo', enabled: false });
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'], 'gone again');
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window'], 'gone again');
   } finally { m.restore(); }
 });
 

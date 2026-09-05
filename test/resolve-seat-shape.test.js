@@ -30,7 +30,7 @@ const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 // default answers "this path belongs to no team", which is what the guard must
 // treat as "not re-parented" — a null owner is the ordinary case (no nested
 // team.json anywhere), not a reason to fall back.
-function managerWith(templatesList, { leadArgs = [], resolveTeam = () => null } = {}) {
+function managerWith(templatesList, { leadArgs = [], resolveTeam = () => null, listAllTemplates } = {}) {
   const SessionManager = createSessionManager({
     os,
     fs,
@@ -42,6 +42,7 @@ function managerWith(templatesList, { leadArgs = [], resolveTeam = () => null } 
       setStripLevel() {}, setAutoCompact() {},
     }),
     getTemplates: () => ({ list: () => templatesList }),
+    listAllTemplates,
     // Identity, deliberately: these tests are about the SHAPE the resolver
     // assembles. The privileged-intent strip has its own tests, and stubbing it
     // to identity means a shape difference here cannot be an artifact of it.
@@ -1176,4 +1177,15 @@ test('t673: EVERY shape that admits a shell carries the full deny list', () => {
     }
   }
   assert.strictEqual(checked, 10, 'ENTER: every template was reached by BOTH routes — a loop that fell through asserts nothing');
+});
+
+test('t680: a role template named <plugin>:<stem> resolves through listAllTemplates, not the library alone', () => {
+  const pluginTpl = { name: 'rev:audit', id: 'rev:audit', plugin: 'rev', type: 'claude', extraArgs: ['--model', 'opus'] };
+  const m = managerWith([], { listAllTemplates: () => [pluginTpl] });
+  const shape = m._templateShape('rev:audit');
+  assert.ok(shape, 'ENTER: the plugin template was found');
+  assert.strictEqual(shape.tpl, pluginTpl);
+  assert.deepStrictEqual(shape.extraArgs, ['--model', 'opus']);
+  assert.strictEqual(managerWith([])._templateShape('rev:audit'), null,
+    'without the seam only the library is consulted, and the library does not carry it');
 });

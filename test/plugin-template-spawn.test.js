@@ -120,12 +120,10 @@ test('t679: a template that already lists plugins keeps them AND gains its own',
 // ── The form path, all the way to create() ─────────────────────────────────
 
 test('t679: a plugin template\'s appendPromptFiles reach create() ALONGSIDE its plugins', () => {
-  // r1 must-fix. Every earlier assertion in this file stops at the picker row or
-  // the leaf, so all of them stayed green while the form dropped every plugin
-  // append prompt between the checklist and the spawn. This drives the REAL
-  // `session:create` handler and reads the create() call it makes, because that
-  // argument list is the only place the two halves are observable together: the
-  // seat holds the plugin (position 21) and names its prompt (position 15).
+  // Forwarding pin. This drives the REAL `session:create` handler and reads the
+  // create() call it makes, because that argument list is the only place the two
+  // halves are observable together: the seat holds the plugin (position 21) and
+  // names its prompt (position 15).
   const { registerIpcHandlers } = require('../ipc-handlers');
 
   const calls = [];
@@ -158,7 +156,7 @@ test('t679: a plugin template\'s appendPromptFiles reach create() ALONGSIDE its 
     [], [], [], [], [],           // agents..injectSkills
     0,                            // stripLevel
     'rev:strict',                 // systemPromptFile
-    ['lib-a', 'rev:rules'],       // appendPromptFiles — the r1 defect emptied this
+    ['lib-a', 'rev:rules'],       // appendPromptFiles
     [], null, null, false,        // execCommands, intents, env, noWire
     ['rev'],                      // plugins
   ).then(() => {
@@ -170,7 +168,7 @@ test('t679: a plugin template\'s appendPromptFiles reach create() ALONGSIDE its 
     // create()'s own (session-manager.js:1196), from systemPromptFile onward.
     assert.deepStrictEqual(args.slice(14), [
       'rev:strict',                 // systemPromptFile
-      ['lib-a', 'rev:rules'],       // appendPromptFiles — the r1 defect emptied this
+      ['lib-a', 'rev:rules'],       // appendPromptFiles
       [],                           // execCommands
       null,                         // intents
       null,                         // sessionEnv
@@ -254,7 +252,7 @@ test('t679: the drawers read a bundle body through file:peek against the catalog
   // it straight through would open an editor on `null` and save that.
   const opens = [...src.matchAll(/const body = await readBundle\([^\n]*\);\n\s*([^\n]*)/g)]
     .map((m) => m[1]);
-  assert.strictEqual(opens.length, 3, 'ENTER: all three bundle openers read through readBundle');
+  assert.strictEqual(opens.length, 4, 'ENTER: all four bundle openers read through readBundle');
   for (const line of opens) {
     assert.match(line, /^if \(body != null\)/,
       `each opener must bail on the refusal, got: ${line}`);

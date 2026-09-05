@@ -36,4 +36,5 @@ the way the skills and agents collectors do: a bundle append row is the only
 representation of a `pluginId:stem` in the form, so dropping it sends
 `appendPromptFiles: []`, clearing a seat's entry on save and writing an empty
 list back into the plugin folder. Collecting it is idempotent — it is checked
-only when the set handed in already named it.
+only when the set handed in named it AND the seat still holds the plugin, so
+un-holding a plugin drops its prompts at save rather than persisting a refused ref.

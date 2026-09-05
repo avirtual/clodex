@@ -129,6 +129,7 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,
     getTemplates: () => ({ list: () => [] }),
+    listAllTemplates: () => [],
     notifyOS: () => {},
     intentEnabled,
     withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor,

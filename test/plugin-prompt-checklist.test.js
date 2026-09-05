@@ -198,6 +198,17 @@ test('t679: APPEND: collect RETURNS the namespaced stems, or every dialog drops 
   assert.ok(rowsOf(outsider).map((r) => r.name).includes('rev:rules'),
     'ENTER: the bundle row is on screen for the non-holder too');
   assert.deepStrictEqual(collectAppendChecklist(outsider), ['lib-a']);
+
+  // A seat that HOLDS the stem but no longer the plugin (Edit Session with `rev`
+  // unticked): the row must draw unticked so the save drops the stem, or the
+  // next start is refused "does not hold".
+  const unheld = el('div');
+  renderAppendChecklist(unheld, new Set(['lib-a', 'rev:rules']), { plugins: [] });
+  const stale = rowsOf(unheld).find((r) => r.name === 'rev:rules');
+  assert.ok(stale, 'ENTER: the row is on screen for the un-holder');
+  assert.strictEqual(stale.checked, false, 'named by the seat but unreachable: NOT ticked');
+  assert.deepStrictEqual(collectAppendChecklist(unheld), ['lib-a'],
+    'un-holding the plugin drops its prompts at save');
 }));
 
 test('t679: APPEND: no seat argument draws no bundle rows at all', () => withDom(() => {
