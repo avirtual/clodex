@@ -66,7 +66,12 @@ function mkMove({ entries = [], teamHome = null, createThrows = null } = {}) {
   const store = entries.map((e) => ({ ...e }));
   const persistence = {
     list: () => store,
-    get: (n) => store.find((e) => e.name === n) || null,
+    // A COPY, like the real store: stores.js `get()` re-parses the file, so the
+    // caller holds a snapshot. Handing out the live object instead makes every
+    // later mutation retroactively visible through `entry`, which silently
+    // vacuums out any pin about a field the move clears and the catch arm
+    // restores — measured: it left the catch arm's setArchived unpinned.
+    get: (n) => { const e = store.find((x) => x.name === n); return e ? { ...e } : null; },
     upsert: (e) => {
       const i = store.findIndex((x) => x.name === e.name);
       if (i >= 0) store[i] = { ...store[i], ...e }; else store.push({ ...e });
