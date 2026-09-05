@@ -501,8 +501,8 @@ body {
 .footer-badge:empty {
   display: none;
 }
-#sidebar-footer [data-plugin-footer].plugin-footer-dimmed {
-  opacity: 0.4;
+#sidebar-footer [data-plugin-footer][hidden] {
+  display: none;
 }
 .inbox-count {
   margin-left: auto;
@@ -6758,7 +6758,7 @@ body {
         </label>
         <label id="plugins-row">Plugins
           <div id="input-plugin-list" class="agent-checklist"></div>
-          <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to it — no intents below, no grammar in its prompt, no turn feed. New seats start with every plugin you have enabled in Preferences &#9656; Plugins ticked.</span>
+          <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to it — no intents below, no grammar in its prompt, no turn feed. New seats start with the plugins shipped with Clodex ticked; one you installed yourself is off until you tick it here.</span>
         </label>
         <label id="intents-row">Intents
           <div id="input-intent-list" class="agent-checklist"></div>
@@ -19916,8 +19916,8 @@ ${i3.join("\n")}
       function mergePlugins(checked, unlisted) {
         return [.../* @__PURE__ */ new Set([...(checked || []).map(String), ...(unlisted || []).map(String)])];
       }
-      function seatHasPlugin(pluginId, pluginsList) {
-        if (!Array.isArray(pluginsList)) return true;
+      function seatHasPlugin(pluginId, pluginsList, shipped) {
+        if (!Array.isArray(pluginsList)) return shipped === true;
         return pluginsList.includes(String(pluginId));
       }
       var HOST_PSEUDO_ID = "_host";
@@ -22117,7 +22117,7 @@ ${String(body || "").trim()}
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.value = p.id;
-          cb.checked = has ? has.has(String(p.id)) : true;
+          cb.checked = has ? has.has(String(p.id)) : !!p.shipped;
           if (p.announce) row.dataset.tip = p.announce;
           const txt = document.createElement("span");
           txt.innerHTML = `<strong>${esc(p.name || p.id)}</strong>${p.announce ? " \u2014 " + esc(p.announce) : ""}`;
@@ -22130,7 +22130,7 @@ ${String(body || "").trim()}
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
       }
       function defaultPluginTicks() {
-        return pluginCatalogCache.map((p) => String(p.id));
+        return pluginCatalogCache.filter((p) => p.shipped).map((p) => String(p.id));
       }
       function renderIntentChecklist(container, intentsList) {
         container.innerHTML = "";
@@ -23659,10 +23659,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           promptLines: spec.promptLines != null ? String(spec.promptLines) : null,
           handler: typeof spec.handler === "function" ? spec.handler : null,
           source: src,
-          // The MANIFEST's scope, threaded by the host at register() — never read off
-          // `spec`, which is the plugin's own argument. A plugin that could declare its
-          // own scope could declare itself global and undo the operator's decision.
-          scope: opts.scope === "session" ? "session" : DEFAULT_PLUGIN_SCOPE
+          // Both threaded by the host at register(), never read off `spec`: a plugin that
+          // could declare its own scope could declare itself global, and one that could
+          // call itself shipped would reach every seat with no plugin list.
+          scope: opts.scope === "session" ? "session" : DEFAULT_PLUGIN_SCOPE,
+          shipped: opts.shipped === true
         });
         pluginRows.push(row);
         let disposed = false;
@@ -23692,7 +23693,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function rowVisibleTo(row, plugins) {
         if (!row) return true;
-        return seatHasPlugin(row.source, plugins);
+        return seatHasPlugin(row.source, plugins, row.shipped);
       }
       function visiblePluginRows(plugins) {
         return pluginRows.filter((r) => rowVisibleTo(r, plugins));
@@ -23725,20 +23726,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function intentEnabledForSeat(type, entry) {
         const row = pluginRowFor(type);
         if (!row) return intentEnabled(type, entry && entry.intents);
-        return seatHasPlugin(row.source, entry && entry.plugins) && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
+        return seatHasPlugin(row.source, entry && entry.plugins, row.shipped) && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
       }
       function pruneForPlugins(entry, pluginsList) {
         const src = entry || {};
         const intents = Array.isArray(src.intents) ? src.intents.filter((t) => {
           const row = pluginRowFor(t);
-          return !row || seatHasPlugin(row.source, pluginsList);
+          return !row || seatHasPlugin(row.source, pluginsList, row.shipped);
         }) : null;
         const pluginGrants = Array.isArray(src.pluginGrants) ? src.pluginGrants.filter((g) => {
           const at = String(g).indexOf(":");
           if (at <= 0) return false;
           const id = String(g).slice(0, at);
-          if (!pluginRows.some((r) => r.source === id)) return true;
-          return seatHasPlugin(id, pluginsList);
+          const row = pluginRows.find((r) => r.source === id);
+          if (!row) return true;
+          return seatHasPlugin(id, pluginsList, row.shipped);
         }) : null;
         return { intents, pluginGrants };
       }
@@ -32899,10 +32901,8 @@ ${detail}` });
             el.querySelector(".footer-glyph").textContent = b.glyph ? String(b.glyph) : "";
             el.querySelector(".footer-label").textContent = b.label ? String(b.label) : "";
             const seat = getActiveSession ? getActiveSession() : null;
-            const dimmed = !reaches(b.pluginId, seat);
-            el.classList.toggle("plugin-footer-dimmed", dimmed);
-            if (dimmed) el.setAttribute("data-tip", `Not enabled for ${seat} \u2014 tick it under Plugins`);
-            else if (b.tip) el.setAttribute("data-tip", String(b.tip));
+            el.hidden = !reaches(b.pluginId, seat);
+            if (b.tip) el.setAttribute("data-tip", String(b.tip));
             else el.removeAttribute("data-tip");
             let badge = null;
             if (typeof b.badge === "function") {
@@ -35828,7 +35828,8 @@ ${detail}` });
         return !type || type === "claude" || type === "codex";
       }
       function pluginReachesSession(pluginId, sessionName) {
-        return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins);
+        const rec = getPluginCatalogCache().find((p) => String(p.id) === String(pluginId));
+        return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins, !!(rec && rec.shipped));
       }
       var pluginBar = initPluginHost({
         getActiveSession: () => activeSession,
@@ -35886,6 +35887,7 @@ ${detail}` });
         } catch {
           return;
         }
+        setPluginCatalogCache(catalog || []);
         for (const p of catalog || []) {
           if (!p || !p.enabled) continue;
           await activatePluginRenderer(p.id);
@@ -35893,10 +35895,15 @@ ${detail}` });
       }
       loadPluginRenderers();
       if (window.api.onPluginEvent) {
-        window.api.onPluginEvent((pluginId, topic, payload) => {
+        window.api.onPluginEvent(async (pluginId, topic, payload) => {
           if (pluginId === "_host" && topic === "plugin-state" && payload && payload.id) {
-            if (payload.enabled) activatePluginRenderer(payload.id);
-            else pluginBar.dispose(payload.id);
+            if (payload.enabled) {
+              try {
+                setPluginCatalogCache(await window.api.pluginCatalog() || []);
+              } catch {
+              }
+              await activatePluginRenderer(payload.id);
+            } else pluginBar.dispose(payload.id);
             if (pluginsOverlay && !pluginsOverlay.classList.contains("hidden")) renderPluginsDialog();
             return;
           }

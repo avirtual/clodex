@@ -199,11 +199,13 @@ test('fake plugin: activation reaches every engine extension point exactly once'
     // declares none resolves to 'global'. `enabledByDefault` rides the same row
     // and defaults TRUE for a manifest that omits it, matching the loader's
     // isEnabled — a row that reported false here would show the operator a
-    // default the loader does not apply.
+    // default the loader does not apply. `shipped` is FALSE for the opposite
+    // reason: it comes from register's opts, which only the loader fills, so a
+    // direct register is custom and cannot widen its own reach.
     assert.deepStrictEqual(engine.catalog(), [
       {
         id: 'fake', name: 'Fake', version: '0.0.1', enabled: true, announce: null,
-        scope: 'global', enabledByDefault: true,
+        scope: 'global', shipped: false, enabledByDefault: true,
       },
     ]);
   });
@@ -323,8 +325,10 @@ test('fake plugin: the turn-text feed reaches a GRANTED seat only, and only afte
     // The ONE registration in this file that declares a scope: everywhere else
     // the fake is global (see the catalog row test), and the feed refuses a
     // global manifest whatever grants a session carries. A real turn-text
-    // consumer is session-scoped by construction.
-    engine.register('fake', mod, { scope: 'session' });
+    // consumer is session-scoped by construction. `shipped` (t661) because these
+    // seats carry no plugin list, and the feed's outer gate would withhold a
+    // custom plugin before any grant was read — see the header note.
+    engine.register('fake', mod, { scope: 'session' }, { shipped: true });
 
     engine.hooks.fireAgentText({ session: 'seat-a', text: 'hello there', source: 'wire', isTurnEnd: true });
     // Deferred by contract: this junction also dispatches intents, so a
@@ -998,7 +1002,7 @@ test('fake plugin (intents): the verb is live on BOTH feeds — with a body on j
   await withReset(async () => {
     const { m, engine } = makeWiredPair();
     const { mod, record } = makeEnginePlugin();
-    engine.register('fake', mod);          // activation is what registers the verb
+    engine.register('fake', mod, {}, { shipped: true });   // activation is what registers the verb
 
     const text = '[agent:fake-note] line one\nline two\n[agent:who]';
 
@@ -1072,7 +1076,7 @@ test('fake plugin (intents): the verb joins the catalog, the prompt and the near
     const { engine } = makeEngine();
     const coreCatalogLen = intentRegistry.catalogRows().length;
     const { mod } = makeEnginePlugin();
-    engine.register('fake', mod);
+    engine.register('fake', mod, {}, { shipped: true });
 
     // R-INT-4 — the checklist the renderer renders is served from here.
     const rows = intentRegistry.catalogRows();

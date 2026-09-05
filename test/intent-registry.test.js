@@ -709,8 +709,12 @@ test('bodyMode of an unknown or malformed intent is none', () => {
 
 // --- plugin rows: rules P1-P5 -------------------------------------------------
 
+// `shipped: true` because the surfacing tests below read the catalog with NO
+// seat list, which t661 resolves on origin: registered as custom, every row
+// here would be withheld and the ORDER properties this file pins could not be
+// observed at all. Origin itself is pinned in test/plugin-scope.test.js.
 function withPluginVerb(spec, fn) {
-  const dispose = registry.registerIntent(spec, spec.source || 'fake-plugin');
+  const dispose = registry.registerIntent(spec, spec.source || 'fake-plugin', { shipped: true });
   try { return fn(dispose); } finally { registry._resetPluginRows(); }
 }
 

@@ -12,8 +12,9 @@
 // this plugin a capability?", which left every GLOBAL plugin visible everywhere;
 // it is now "does this seat HAVE this plugin?" (`seatHasPlugin` against the
 // seat's own `plugins` list), and every plugin is seat-gated. Grants are demoted
-// to a child of that decision. An ABSENT list is the living all-enabled default,
-// which is what keeps a pre-upgrade seat byte-identical.
+// to a child of that decision. An ABSENT list reaches the SHIPPED plugins only
+// (t661), which keeps a pre-upgrade seat unchanged in everything but the custom
+// plugins it never ticked.
 //
 // So the property under test here is an ABSENCE, which is exactly the shape
 // CLAUDE.md's `## Tests` section warns about: `deepEqual(x, [])` and
@@ -103,14 +104,46 @@ test('pluginGranted is STRICT — an absent list is a refusal, never a default g
   for (const absent of [undefined, null, 'p:turns', { 'p:turns': true }, 0]) {
     assert.strictEqual(pluginGranted('p', 'turns', absent), false,
       `a non-array grants value (${JSON.stringify(absent)}) is a refusal`);
-    assert.strictEqual(seatHasPlugin('p', absent), true,
-      'seatHasPlugin is the OPPOSITE polarity, deliberately: absent means the living '
-      + 'all-enabled default, so a pre-upgrade seat keeps every shipped plugin');
+    assert.strictEqual(seatHasPlugin('p', absent, true), true,
+      'seatHasPlugin is the OPPOSITE polarity for a SHIPPED plugin, deliberately: absent '
+      + 'means the shipped default, so a pre-upgrade seat keeps the shipped plugins');
   }
   assert.strictEqual(seatHasPlugin('p', ['q', 'r']), false,
     'a list that names other plugins does not reach this one');
   assert.strictEqual(seatHasPlugin('p', ['p']), true,
     'CONTROL: a list naming it does reach — so the refusal above is about the input, not a broken predicate');
+});
+
+// ── t661: the absent case splits on ORIGIN ──────────────────────────────────
+// One table over the two axes that decide reach, with every expected value a
+// LITERAL: computing it from `shipped || list.includes(id)` would assert only
+// that the test agrees with the code, and the whole point of the table is the
+// one row where the two axes disagree (custom + absent → false, the ONLY cell
+// this ticket changed).
+test('t661: an absent seat list reaches the SHIPPED plugins and no custom one', () => {
+  const rows = [
+    { what: 'shipped plugin, seat never edited', shipped: true, list: undefined, reaches: true },
+    { what: 'shipped plugin, seat list is null', shipped: true, list: null, reaches: true },
+    { what: 'custom plugin, seat never edited', shipped: false, list: undefined, reaches: false },
+    { what: 'custom plugin, seat list is null', shipped: false, list: null, reaches: false },
+    { what: 'custom plugin the seat NAMES', shipped: false, list: ['p'], reaches: true },
+    { what: 'shipped plugin the seat OMITS', shipped: true, list: ['q'], reaches: false },
+    { what: 'shipped plugin the seat names', shipped: true, list: ['p'], reaches: true },
+    { what: 'custom plugin a list omits', shipped: false, list: ['q'], reaches: false },
+    { what: 'shipped plugin, empty list', shipped: true, list: [], reaches: false },
+    { what: 'custom plugin, empty list', shipped: false, list: [], reaches: false },
+  ];
+  for (const r of rows) {
+    assert.strictEqual(seatHasPlugin('p', r.list, r.shipped), r.reaches, r.what);
+  }
+  // The origin argument is consulted ONLY in the absent case, and only `true`
+  // counts as shipped: a caller that cannot answer must not widen reach.
+  for (const junk of [undefined, null, 'core', 1, {}, 'true']) {
+    assert.strictEqual(seatHasPlugin('p', undefined, junk), false,
+      `a non-true origin (${JSON.stringify(junk)}) is custom — the origin question fails toward withholding`);
+    assert.strictEqual(seatHasPlugin('p', ['p'], junk), true,
+      'CONTROL: an explicit list is the word whatever the origin argument says');
+  }
 });
 
 // ── The manifest gate (plugin-loader.js) ────────────────────────────────────
@@ -173,12 +206,13 @@ function mkRow(verb, extra = {}) {
   };
 }
 
-test('an ABSENT plugins list surfaces every plugin — the living default that keeps pre-upgrade seats whole', () => withReset(() => {
-  registry.registerIntent(mkRow('glob'), 'globby', { scope: 'global' });
-  registry.registerIntent(mkRow('scoped'), 'scopey', { scope: 'session' });
+test('an ABSENT plugins list surfaces every SHIPPED plugin — what keeps pre-upgrade seats whole', () => withReset(() => {
+  registry.registerIntent(mkRow('glob'), 'globby', { scope: 'global', shipped: true });
+  registry.registerIntent(mkRow('scoped'), 'scopey', { scope: 'session', shipped: true });
   // A pre-upgrade seat has no `plugins` key at all, and SCOPE no longer enters
   // into it: t654 made every plugin seat-gated, so the scoped row rides the same
-  // default as the global one.
+  // default as the global one. ORIGIN is what decides that default (t661), and
+  // both rows here are shipped — the custom half is pinned separately.
   for (const plugins of [undefined, null, 'nonsense', 42]) {
     const rows = registry.catalogRows(plugins);
     assert.ok(rows.some((r) => r.type === 'glob'),
@@ -224,7 +258,7 @@ test('a plugin the seat does NOT have is ABSENT from every feed, scope irrelevan
 }));
 
 test('the seat gate hides; intentEnabledFor still does not enforce it — intentEnabledForSeat does', () => withReset(() => {
-  registry.registerIntent(mkRow('scoped2'), 'scopey2', { scope: 'session' });
+  registry.registerIntent(mkRow('scoped2'), 'scopey2', { scope: 'session', shipped: true });
   // `intentEnabledFor` is the intents-only predicate and stays that way: it
   // answers off the allowlist alone, with no knowledge of the seat's plugins.
   assert.strictEqual(registry.intentEnabledFor('scoped2', null), false);
@@ -238,7 +272,7 @@ test('the seat gate hides; intentEnabledFor still does not enforce it — intent
   assert.strictEqual(registry.intentEnabledForSeat('scoped2', { intents: ['scoped2'], plugins: [] }), false,
     'a stale allowlist entry cannot fire a verb whose plugin the seat no longer has');
   assert.strictEqual(registry.intentEnabledForSeat('scoped2', { intents: ['scoped2'] }), true,
-    'and the absent list is still the living default — a pre-upgrade seat is unaffected');
+    'and a SHIPPED plugin still rides the absent list — a pre-upgrade seat is unaffected');
   // A scoped plugin's PARSING is unchanged: the row still parses on every feed.
   // Seat gating is a visibility property, not an isolation one.
   assert.deepStrictEqual(registry.parseWithRegistry('[agent:scoped2]'), { probe: 'scoped2', type: 'scoped2' });
@@ -275,12 +309,12 @@ test('two plugins are visible independently — a tick reaches only its own', ()
 test('catalogRows with 3 plugins registered and 1 ticked returns core + exactly that one\'s rows', () => withReset(() => {
   const core = registry.catalogRows([]).length;
   assert.ok(core > 0, 'ENTER: the core rows are the baseline this counts against');
-  registry.registerIntent(mkRow('p1a'), 'plug-one');
-  registry.registerIntent(mkRow('p1b'), 'plug-one');
-  registry.registerIntent(mkRow('p2a'), 'plug-two', { scope: 'session' });
-  registry.registerIntent(mkRow('p3a'), 'plug-three');
+  registry.registerIntent(mkRow('p1a'), 'plug-one', { shipped: true });
+  registry.registerIntent(mkRow('p1b'), 'plug-one', { shipped: true });
+  registry.registerIntent(mkRow('p2a'), 'plug-two', { scope: 'session', shipped: true });
+  registry.registerIntent(mkRow('p3a'), 'plug-three', { shipped: true });
   assert.strictEqual(registry.catalogRows(undefined).length, core + 4,
-    'ENTER: all four plugin rows registered — the absent list surfaces every one');
+    'ENTER: all four plugin rows registered — the absent list surfaces every shipped one');
   const ticked = registry.catalogRows(['plug-one']);
   assert.strictEqual(ticked.length, core + 2, 'core rows plus plug-one\'s two verbs, and nothing else');
   assert.deepStrictEqual(ticked.filter((r) => r.source !== 'core').map((r) => r.type), ['p1a', 'p1b']);
@@ -318,7 +352,9 @@ test('with an ABSENT plugins list, every surfacing fn ignores the argument entir
   // the invariance is gone with it: an explicit list now decides a global
   // plugin's visibility too. What survives — and is the property that keeps a
   // pre-upgrade seat whole — is that every NON-ARRAY value is the same answer.
-  registry.registerIntent(mkRow('g1'), 'g-src');
+  // t661 splits WHAT that answer is on origin, not how many answers there are:
+  // a shipped plugin surfaces on all five probes, a custom one on none.
+  registry.registerIntent(mkRow('g1'), 'g-src', { shipped: true });
   const probes = [undefined, null, 'nonsense', 42, { plugins: ['g-src'] }];
   const base = {
     catalog: registry.catalogRows(),
@@ -340,6 +376,15 @@ test('with an ABSENT plugins list, every surfacing fn ignores the argument entir
   // an ARRAY answers, and answers differently.
   assert.strictEqual(registry.catalogRows([]).some((r) => r.type === 'g1'), false,
     'an explicit empty list is NOT the absent list — that distinction is the whole field');
+  // The other contrast, t661's: origin decides the absent case, and a CUSTOM row
+  // answers the opposite way on the very probes the loop just called invariant.
+  registry.registerIntent(mkRow('c1'), 'c-src');
+  for (const p of probes) {
+    assert.strictEqual(registry.catalogRows(p).some((r) => r.type === 'c1'), false,
+      `a custom plugin does not surface for ${JSON.stringify(p)}`);
+  }
+  assert.ok(registry.catalogRows(['c-src']).some((r) => r.type === 'c1'),
+    'CONTROL: it surfaces the moment a list names it — so the absences are the origin rule');
 }));
 
 test('allowlistFromChecked is seat-blind — an unsurfaced row cannot be checked', () => withReset(() => {
@@ -382,10 +427,10 @@ test('host.intents.register carries the MANIFEST\'s scope into the registry row'
   try {
     engine.register('scoped-plug', {
       activate(h) { h.intents.register(mkRow('fromscoped')); },
-    }, { hostApi: HOST_API_VERSION, scope: 'session' });
+    }, { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     engine.register('global-plug', {
       activate(h) { h.intents.register(mkRow('fromglobal')); },
-    }, { hostApi: HOST_API_VERSION });
+    }, { hostApi: HOST_API_VERSION }, { shipped: true });
 
     assert.strictEqual(registry.pluginRowFor('fromscoped').scope, 'session');
     assert.strictEqual(registry.pluginRowFor('fromglobal').scope, 'global',
@@ -398,11 +443,77 @@ test('host.intents.register carries the MANIFEST\'s scope into the registry row'
     assert.ok(absent.includes('fromglobal'),
       'ENTER: the global verb registered — so the absences below are the gate, not an empty registry');
     assert.ok(absent.includes('fromscoped'),
-      'ENTER: and so did the scoped one — the absent list is the all-enabled default for both');
+      'ENTER: and so did the scoped one — both are shipped, so the absent list carries both');
     const only = registry.catalogRows(['global-plug']).map((r) => r.type);
     assert.ok(only.includes('fromglobal'), 'a ticked plugin\'s verb surfaces');
     assert.strictEqual(only.includes('fromscoped'), false,
       'and an unticked one\'s does not, whatever its scope says');
+  } finally { cleanup(); }
+}));
+
+// t661 through an ENGINE CALLER, not the leaf: `register` is where origin enters
+// the system and `catalogRows` is one of the seven readers downstream of it, so
+// this fails if the thread is broken at any link between them — which the leaf's
+// own table cannot see.
+test('t661: the loader\'s origin reaches the registry, and only a shipped verb survives an absent list', () => withReset(() => {
+  const { engine, cleanup } = mkEngine();
+  try {
+    engine.register('shipped-plug', {
+      activate(h) { h.intents.register(mkRow('fromshipped')); },
+    }, { hostApi: HOST_API_VERSION }, { shipped: true });
+    engine.register('custom-plug', {
+      activate(h) { h.intents.register(mkRow('fromcustom')); },
+    }, { hostApi: HOST_API_VERSION }, { shipped: false });
+
+    assert.strictEqual(registry.pluginRowFor('fromshipped').shipped, true,
+      'ENTER: the shipped row carries its origin');
+    assert.strictEqual(registry.pluginRowFor('fromcustom').shipped, false,
+      'ENTER: and the custom row carries the other one — both really registered');
+
+    const absent = registry.catalogRows(null).map((r) => r.type);
+    assert.ok(absent.includes('fromshipped'),
+      'a seat with no plugin list still gets the shipped verb');
+    assert.strictEqual(absent.includes('fromcustom'), false,
+      'and does NOT get the custom one — the stranded-seat case, which is the point of t661');
+
+    const ticked = registry.catalogRows(['custom-plug']).map((r) => r.type);
+    assert.ok(ticked.includes('fromcustom'),
+      'CONTROL: ticking the custom plugin surfaces its verb, so the absence above is the origin rule '
+      + 'and not a registration that failed');
+    assert.strictEqual(ticked.includes('fromshipped'), false,
+      'and an explicit list that omits the shipped plugin still hides it — origin decides the ABSENT case only');
+  } finally { cleanup(); }
+}));
+
+// The origin cannot be self-declared: a manifest field named `shipped` is the
+// obvious thing a plugin author would try, and it must not be the thing that
+// decides. Only the loader's fourth argument does.
+test('t661: a plugin cannot declare itself shipped through its manifest', () => withReset(() => {
+  const { engine, cleanup } = mkEngine();
+  try {
+    engine.register('liar-plug', {
+      activate(h) { h.intents.register(mkRow('fromliar')); },
+    }, { hostApi: HOST_API_VERSION, shipped: true, root: 'core' });
+    assert.strictEqual(registry.pluginRowFor('fromliar').shipped, false,
+      'ENTER: the row registered, and the manifest claim did not reach it');
+    assert.strictEqual(registry.catalogRows(null).map((r) => r.type).includes('fromliar'), false,
+      'so an absent seat list does not get the verb');
+    assert.ok(registry.catalogRows(['liar-plug']).map((r) => r.type).includes('fromliar'),
+      'CONTROL: the verb is reachable when the seat ticks the plugin');
+  } finally { cleanup(); }
+}));
+
+// The catalog is the renderer's ONLY view of origin, so a `shipped` that never
+// leaves the engine hides every custom plugin's chrome on every seat.
+test('t661: catalog() carries shipped as a boolean, from the register call and not the manifest', () => withReset(() => {
+  const { engine, cleanup } = mkEngine();
+  try {
+    engine.register('ship', { activate() {} }, { hostApi: HOST_API_VERSION }, { shipped: true });
+    engine.register('cust', { activate() {} }, { hostApi: HOST_API_VERSION });
+    engine.register('liar', { activate() {} }, { hostApi: HOST_API_VERSION, shipped: true });
+    const byId = new Map(engine.catalog().map((p) => [p.id, p.shipped]));
+    assert.deepStrictEqual([...byId.entries()], [['ship', true], ['cust', false], ['liar', false]],
+      'the shipped one is true; an omitted opts and a manifest claim are both false');
   } finally { cleanup(); }
 }));
 
@@ -465,7 +576,7 @@ function ipcFixture({ entries = {}, pluginStatus = null } = {}) {
 }
 
 test('intents:catalog resolves the seat\'s plugins off the NAMED session', () => withReset(() => {
-  registry.registerIntent(mkRow('ipcscoped'), 'ipc-plug', { scope: 'session' });
+  registry.registerIntent(mkRow('ipcscoped'), 'ipc-plug', { scope: 'session', shipped: true });
   const f = ipcFixture({
     entries: {
       has: { name: 'has', plugins: ['ipc-plug'] },
@@ -481,7 +592,7 @@ test('intents:catalog resolves the seat\'s plugins off the NAMED session', () =>
   assert.ok(types('hasnt').length > 0, 'ENTER: a seat without it still gets the core catalog');
   assert.strictEqual(types('hasnt').includes('ipcscoped'), false, 'and not the plugin row');
   assert.ok(types('bare').includes('ipcscoped'),
-    'a pre-upgrade seat with NO plugins key takes the living default and sees everything');
+    'a pre-upgrade seat with NO plugins key takes the shipped default and sees this row');
   assert.ok(types('nosuchsession').includes('ipcscoped'),
     'and an unknown name is the same absent-list answer, not "none"');
   // The t190 ruling — "an absent name means no grants, so scoped rows do not
@@ -600,26 +711,36 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
     entries: { seat: { name: 'seat', pluginGrants: ['scoped-a:turns'] } },
     pluginStatus: {
       plugins: [
-        { id: 'scoped-a', name: 'Scoped A', scope: 'session', enabled: true, quarantined: false },
-        { id: 'scoped-b', name: 'Scoped B', scope: 'session', enabled: true, quarantined: false },
-        { id: 'globalish', name: 'Global One', scope: 'global', enabled: true, quarantined: false },
-        { id: 'scoped-off', name: 'Disabled', scope: 'session', enabled: false, quarantined: false },
-        { id: 'scoped-quar', name: 'Quarantined', scope: 'session', enabled: true, quarantined: true },
+        { id: 'scoped-a', name: 'Scoped A', scope: 'session', enabled: true, quarantined: false, root: 'core' },
+        { id: 'scoped-b', name: 'Scoped B', scope: 'session', enabled: true, quarantined: false, root: 'core' },
+        { id: 'globalish', name: 'Global One', scope: 'global', enabled: true, quarantined: false, root: 'core' },
+        { id: 'scoped-off', name: 'Disabled', scope: 'session', enabled: false, quarantined: false, root: 'core' },
+        { id: 'scoped-quar', name: 'Quarantined', scope: 'session', enabled: true, quarantined: true, root: 'core' },
+        // The one CUSTOM row, and it passes every other filter — scoped, enabled,
+        // unquarantined — so its absence below can only be the origin rule. This
+        // handler is the only site that derives origin outside register(), so
+        // without a non-core row here a dropped or inverted argument stays green.
+        { id: 'scoped-user', name: 'From A Folder', scope: 'session', enabled: true, quarantined: false, root: 'user' },
       ],
     },
   });
   const res = f.getGrants('seat');
   assert.strictEqual(res.ok, true);
-  // This fixture's seat carries NO `plugins` key, so it takes the living
-  // all-enabled default — which is what makes the scope filter the only one
-  // acting in the assertions below.
+  // This fixture's seat carries NO `plugins` key, so the offer is filtered by
+  // scope and by ORIGIN and by nothing else.
   assert.ok(!('plugins' in f.store.seat), 'ENTER: the seat is on the absent-list default');
   // ENTER: the filter kept something. `deepStrictEqual(x, [])` would be true of
   // a status read that returned nothing at all.
   assert.ok(res.plugins.length > 0, 'ENTER: the scoped plugins survived the filter');
   assert.deepStrictEqual(res.plugins.map((p) => p.id), ['scoped-a', 'scoped-b'],
     'a GLOBAL plugin is not offered — it has no per-session decision, and offering it '
-    + 'would invite withholding something that is not withheld');
+    + 'would invite withholding something that is not withheld; and the custom plugin '
+    + 'is not offered either, because the absent-list seat does not have it');
+  // CONTROL for that last clause: the same row IS offered to a seat that names
+  // it, so its absence above is the origin rule and not a row the fixture never
+  // supplied or a filter that drops every non-core plugin outright.
+  assert.deepStrictEqual(f.getGrants('seat', ['scoped-user']).plugins.map((p) => p.id), ['scoped-user'],
+    'a seat that ticks the custom plugin IS offered its grants');
   assert.deepStrictEqual(res.granted, ['scoped-a:turns']);
   assert.deepStrictEqual(res.capabilities, [...PLUGIN_CAPABILITIES]);
   assert.deepStrictEqual(f.getGrants('nope'), { ok: false, error: 'Session not found in persistence' });
@@ -660,7 +781,7 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
 test('a plugin\'s grammar line reaches only a seat that HAS it', () => withReset(() => {
   const { createSessionManager } = require('../session-manager');
   const intentRegistry = require('../intent-registry');
-  intentRegistry.registerIntent(mkRow('promptverb'), 'prompt-plug', { scope: 'session' });
+  intentRegistry.registerIntent(mkRow('promptverb'), 'prompt-plug', { scope: 'session', shipped: true });
 
   const SessionManager = createSessionManager({
     buildIpcPrompt: require('../ipc-prompt').buildIpcPrompt,
@@ -684,7 +805,7 @@ test('a plugin\'s grammar line reaches only a seat that HAS it', () => withReset
   // equally true of a prompt builder that dropped every plugin line.
   const held = m._realIpcFor(recipeFor(['prompt-plug']), null).realIpc;
   assert.ok(held.includes(LINE), 'CONTROL: a seat that has the plugin is told about the verb');
-  // The absent list is the living default and must ALSO carry the line — that is
+  // A SHIPPED plugin rides the absent list and must ALSO carry the line — that is
   // what keeps a pre-upgrade seat's prompt byte-identical.
   assert.ok(m._realIpcFor(recipeFor(null), null).realIpc.includes(LINE),
     'CONTROL: and so is a pre-upgrade seat whose recipe carries no list at all');
@@ -1246,9 +1367,36 @@ test('REWORK NIT: intents.register after deactivate throws rather than defaultin
 // be pinned here is that the renderer calls THAT and not something else.
 test('t655: pluginReachesSession is keyed on the seat list, and the scoped-id set is gone', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  assert.match(src, /function pluginReachesSession\(pluginId, sessionName\) \{\n\s*return seatHasPlugin\(pluginId, \(sidebarMeta\.get\(sessionName\) \|\| \{\}\)\.plugins\);\n\}/,
-    'the renderer answers off sidebarMeta.plugins through the shared leaf — a local '
-    + 'ticked-list re-derivation would drift from the main-process gate');
+  assert.match(src, /function pluginReachesSession\(pluginId, sessionName\) \{\n\s*const rec = getPluginCatalogCache\(\)\.find\(\(p\) => String\(p\.id\) === String\(pluginId\)\);\n\s*return seatHasPlugin\(pluginId, \(sidebarMeta\.get\(sessionName\) \|\| \{\}\)\.plugins, !!\(rec && rec\.shipped\)\);\n\}/,
+    'the renderer answers off sidebarMeta.plugins through the shared leaf, with origin from '
+    + 'the catalog — a local ticked-list re-derivation, or an origin it decided for itself, '
+    + 'would drift from the main-process gate');
+  // t661: the catalog cache is filled by dialogs, so the BOOT path has to fill it
+  // too or `shipped` reads false for everything and the shipped plugins' footer
+  // buttons stay hidden until a session dialog happens to open.
+  const at = src.indexOf('async function loadPluginRenderers(');
+  assert.ok(at > 0, 'ENTER: loadPluginRenderers was located');
+  const body = src.slice(at, src.indexOf('\n}', at));
+  assert.match(body, /await window\.api\.pluginCatalog\(\)/, 'ENTER: this is the function that fetches the catalog');
+  assert.match(body, /setPluginCatalogCache\(catalog \|\| \[\]\)/,
+    'the boot fetch fills the cache pluginReachesSession reads its origins from');
+  // r1 MUST-FIX 1: the same hole mid-run. A plugin ENABLED from Manage Plugins
+  // has no catalog row until something refills the cache, so origin resolves
+  // false and every never-edited seat withholds a plugin it should have — no
+  // footer button, no row badge, and an overlay that toasts a false refusal.
+  // Source-scanned for the same reason as the boot arm: the chrome tests supply
+  // the repaint themselves, so a missing REFILL is invisible to them.
+  const ev = src.indexOf('window.api.onPluginEvent(');
+  assert.ok(ev > 0, 'ENTER: the plugin-event listener was located');
+  const evBody = src.slice(ev, src.indexOf('\n  });', ev));
+  assert.match(evBody, /topic === 'plugin-state'/, 'ENTER: this is the plugin-state arm');
+  assert.match(evBody, /activatePluginRenderer\(payload\.id\)/,
+    'ENTER: the enable arm still activates the renderer half — the refill sits beside it');
+  const fill = evBody.indexOf('setPluginCatalogCache(');
+  assert.ok(fill > -1, 'the enable arm refills the plugin catalog cache');
+  assert.ok(fill < evBody.indexOf('activatePluginRenderer(payload.id)'),
+    'and refills BEFORE activating, or the first paint of the newly enabled plugin '
+    + 'reads an origin the cache cannot answer yet');
   // The grants-axis predicate is RETIRED, not merely unused: a surviving export
   // is an invitation to re-key the UI onto grants and re-open the split between
   // what the chrome shows and what the engine allows.
@@ -1264,18 +1412,24 @@ test('t655: pluginReachesSession is keyed on the seat list, and the scoped-id se
   assert.strictEqual(typeof seatHasPlugin, 'function', 'ENTER: seatHasPlugin is the surviving predicate');
 });
 
-// The boot/enable paths no longer need a scope set recorded before activation,
-// so the ordering that existed only for it is gone. What must survive is that a
-// FAILED catalog read activates nothing — an exception mid-boot would otherwise
-// leave the plugin bar half-populated.
+// What must survive is that a FAILED catalog read activates nothing — an
+// exception mid-boot would otherwise leave the plugin bar half-populated.
+//
+// t661 gave the enable arm a catalog refill of its own (origin has to be in the
+// cache before the plugin's chrome paints), so the two paths now fail DIFFERENTLY
+// and deliberately: boot returns, because a catalog it cannot read is a catalog
+// it cannot iterate; the enable arm swallows and activates anyway, because it
+// already knows which plugin to activate and a stale cache costs that plugin its
+// chrome until the next fill — not the whole bar.
 test('t655: a rejected plugin catalog activates nothing on either path', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   assert.match(src, /let catalog = null;\n\s*try \{ catalog = await window\.api\.pluginCatalog\(\); \} catch \{ return; \}/,
     'the boot path bails on a rejected catalog rather than iterating a partial one');
   assert.match(src, /for \(const p of catalog \|\| \[\]\)/,
     'and a null catalog iterates nothing by construction');
-  assert.match(src, /if \(payload\.enabled\) activatePluginRenderer\(payload\.id\);/,
-    'the mid-run enable activates directly — the scope set it used to refresh first is gone');
+  assert.match(src, /try \{ setPluginCatalogCache\(\(await window\.api\.pluginCatalog\(\)\) \|\| \[\]\); \} catch \{\}/,
+    'the enable arm\'s refill cannot throw INTO the activation — a rejected catalog there '
+    + 'must cost the plugin its origin row, never its renderer half');
 });
 
 // ── t655 B6 (r3 NIT 2): a quarantined plugin's grants survive an Edit-save ───
@@ -1362,9 +1516,9 @@ test('t655: openTemplateEditor fetches the plugin catalog ABOVE its claude guard
 // any plugin is globally enabled the checklist draws, with every row unticked
 // and tickable — the seat is reopenable by exactly the control that closed it.
 //
-// Storing absence instead would be strictly worse: absence is the LIVING
-// all-enabled default, so a seat created while plugins were off would silently
-// acquire every plugin installed later. That is the one direction this field
+// Storing absence instead would be strictly worse: absence takes the SHIPPED
+// default, so a seat created while plugins were off would silently acquire every
+// shipped plugin installed later. That is the one direction this field
 // fails in without anything looking wrong, which is what the t654 pin in
 // intent-checklist-seam.test.js ("writes `plugins` UNCONDITIONALLY") exists to
 // stop — and it stopped this change. "New seats are closed to newcomers" is the
@@ -1390,24 +1544,24 @@ test('t655: the design decision is that an empty catalog still writes a list, ne
   const rBody = cl.slice(rAt, cl.indexOf('\n}', rAt));
   assert.match(rBody, /if \(!pluginCatalogCache\.length\)/,
     'it bails ONLY on an empty catalog');
-  assert.match(rBody, /cb\.checked = has \? has\.has\(String\(p\.id\)\) : true;/,
+  assert.match(rBody, /cb\.checked = has \? has\.has\(String\(p\.id\)\) : !!p\.shipped;/,
     'and otherwise draws a row per catalog plugin, ticked from the seat list — '
     + 'so a seat stored as [] draws every row UNTICKED and can be reopened');
 });
 
-// ── t655 r1 MUST-FIX 1: the dim needs a painter on the two non-switch paths ──
+// ── t655 r1 MUST-FIX 1: the paint needs a painter on the two non-switch paths ─
 // `renderFooterButtons` is called at plugin-registration time and from
-// `onSeatSwitched()`, and nowhere else. That leaves the dim wrong in the
-// PERMISSIVE direction on two reachable paths, and the chrome tests cannot see
-// it because they drive `onSeatSwitched()` by hand — a missing CALLER is
-// invisible to a test that supplies the call itself. Hence a source scan.
+// `onSeatSwitched()`, and nowhere else. That leaves the footer wrong on two
+// reachable paths, and the chrome tests cannot see it because they drive
+// `onSeatSwitched()` by hand — a missing CALLER is invisible to a test that
+// supplies the call itself. Hence a source scan.
 //
 //   BOOT: loadPluginRenderers paints the buttons before sidebarMeta exists, so
-//   pluginReachesSession reads `.plugins` off undefined and seatHasPlugin
-//   returns the living-default true — undimmed for a seat that lacks the
-//   plugin. On a single-seat workspace no later switch ever corrects it.
+//   pluginReachesSession reads `.plugins` off undefined and the absent case
+//   resolves on origin alone — a shipped plugin's button shows for a seat that
+//   unticked it. On a single-seat workspace no later switch ever corrects it.
 //   LAST SEAT CLOSED: the `activeSession = null` branch is not a switch, so
-//   buttons dimmed for the seat that just left stay dimmed with no seat active.
+//   buttons hidden for the seat that just left stay hidden with no seat active.
 test('t655 r1: refreshSidebarMeta repaints the footer, closing the boot race', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const at = src.indexOf('async function refreshSidebarMeta(');
@@ -1418,11 +1572,11 @@ test('t655 r1: refreshSidebarMeta repaints the footer, closing the boot race', (
   assert.match(body, /refreshSidebarView\(\);/,
     'ENTER: the existing repaint call is still here — this pin sits beside it');
   assert.match(body, /pluginBar\.renderFooterButtons\(\);/,
-    'the footer must be repainted once sidebarMeta lands, or the dim keeps answering off a '
+    'the footer must be repainted once sidebarMeta lands, or it keeps answering off a '
     + 'meta map that was empty when the buttons were first painted');
 });
 
-test('t655 r1: closing the LAST seat repaints the footer, so nothing stays dimmed', () => {
+test('t655 r1: closing the LAST seat repaints the footer, so nothing stays hidden', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   // The branch, not the whole function: `activeSession = null` is its only
   // occurrence outside the top-level declaration, and the assertion below is
@@ -1436,5 +1590,5 @@ test('t655 r1: closing the LAST seat repaints the footer, so nothing stays dimme
     'ENTER: the branch\'s existing repaint is here — the new call sits beside it');
   assert.match(branch, /pluginBar\.renderFooterButtons\(\);/,
     'with no active seat every button goes live again; this branch is not a switch, '
-    + 'so onSeatSwitched never runs for it and nothing else would undim them');
+    + 'so onSeatSwitched never runs for it and nothing else would un-hide them');
 });

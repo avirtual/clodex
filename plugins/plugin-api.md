@@ -155,7 +155,7 @@ the menu bar has a tick next to it.
 | `hostApi` | yes | Must be exactly `"1"`. A string, not a number. |
 | `entry` | yes | An object. `entry.engine` and `entry.renderer` are paths relative to the plugin directory; each is optional individually but at least one must be present, and each must be a string if present. |
 | `style` | no | Path to a CSS file, relative to the plugin directory. Loaded as **text** and injected per window. |
-| `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. |
+| `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. It decides GLOBAL loading only, and says nothing about which seats a loaded plugin reaches — that is the seat list of §2.1, where the origin rule (shipped vs. custom) is the one this field cannot influence. |
 | `announce` | no | One sentence describing what the plugin does. Shown as the description line in the Manage Plugins dialog. |
 | `scope` | no | `"global"` (the default) or `"session"`. A `session`-scoped plugin **consumes seat data and therefore offers capability grants** — see §2.1. It no longer decides visibility: every plugin is gated by the seat's own plugin list. Absent means `global`. |
 | `surfaces` | no | An object mapping a method name to `"any"`. A method listed as `"any"` may be called from the browser surface as well as the desktop app; **anything you do not list is desktop-only**. Absent means the whole plugin is desktop-only. See §2.2 — this is the one manifest field whose default costs you reach rather than granting it. |
@@ -216,7 +216,10 @@ the `⚙ session ▾` menu (the dedicated editor, and the only one a **Codex** s
 has — a codex seat consumes its plugin list exactly like a claude one, but has
 no Intents popover), the Intents popover's *Plugins* sub-section, and New/Edit
 Session. A seat with no list at all — one never edited since this shipped — has
-every plugin, which is what keeps existing seats unchanged.
+the SHIPPED plugins (those loaded from Clodex's own `plugins/` directory) and no
+custom ones. A plugin installed from `~/.clodex/plugins` or a registered folder
+therefore reaches a seat only once someone ticks it there: a seat that predates
+the plugin does not silently acquire it, and neither does a new one.
 
 `scope` used to decide this, and no longer does — the seat list is now the only
 thing that decides what a plugin reaches. **What `scope: "session"` means today
@@ -241,18 +244,19 @@ plugin *reaches*:
 | `rhost.ui.sidebar.rowBadge` | painted on ticked seats' rows | absent from other rows |
 | `rhost.ui.sessionMenu.addProvider` | offered on ticked seats | absent, and a stale act is refused |
 | `rhost.ui.statusBar.addAction` / `addSegment` | drawn on ticked seats | absent, and a stale act is refused |
-| `rhost.ui.sidebar.footerButton` | live | dimmed while an unticked seat is active; the click toasts and refuses |
+| `rhost.ui.sidebar.footerButton` | live | absent while an unticked seat is active; a click that races a seat switch toasts and refuses |
 | `rhost.ui.settings.section` | always | **always** |
 | `rhost.ui.surfaces.overlay` | openable | refused while an unticked seat is active; an open one closes on switch |
 | `host.sessions.*` / `rhost.sessions.*` *(enumeration)* | unchanged | **unchanged at every scope** |
 | `host.sessions.onAgentText` | only with `scope: "session"` AND the `turns` grant | never delivers |
 
-The chrome rows — footer button and overlay — belong to the *window*, so they
-are never removed on a seat switch: removing them would reflow the footer on
-every hop and show MORE buttons with nothing selected than with a seat selected.
-They carry the seat decision as STATE instead, dimmed and refusing, which tells
-the operator why rather than silently doing nothing. With no active seat every
-button is live: with no seat there is no seat decision.
+A footer button is REMOVED from the footer on a seat that does not have the
+plugin, not dimmed: an operator running thirty plugins with two ticked wants two
+buttons, not twenty-eight greyed ones. The click keeps its own check as the gate
+— a seat switch between two repaints can leave a visible button one frame stale
+— and refuses out loud when it fires. The overlay is not hidden the same way,
+because it is opened by an act the operator just took: it refuses and toasts.
+With no active seat every button is live: with no seat there is no seat decision.
 
 `rhost.ui.settings.section` is the one row gated by nothing, and deliberately:
 a settings section configures the plugin process-wide — a poll interval is not

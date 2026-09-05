@@ -549,7 +549,7 @@ test('P3: pluginGrammarLines renders a line ONLY for a granted seat', () => {
   try {
     intentRegistry.registerIntent({
       verb: 'branch', parse: () => null, promptLines: '  [agent:branch] Report the branch.',
-    }, 'demo');
+    }, 'demo', { shipped: true });
     // Absent list = the living all-enabled default for ORDINARY verbs, but a
     // plugin verb is privileged, so this seat gets nothing and its prompt is
     // byte-identical to the pin — the reboot precedent, reproduced.

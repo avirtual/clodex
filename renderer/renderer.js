@@ -978,9 +978,9 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
     }
   } catch {} finally { metaRefreshInFlight = false; }
   refreshSidebarView();
-  // The footer's dim is answered off sidebarMeta, which does not exist yet when
-  // loadPluginRenderers paints the buttons — without a repaint here the boot
-  // state is UNDIMMED for a seat that lacks the plugin, and on a single-seat
+  // Which footer buttons show is answered off sidebarMeta, which does not exist
+  // yet when loadPluginRenderers paints them — without a repaint here the boot
+  // state SHOWS a button for a seat that lacks the plugin, and on a single-seat
   // workspace no switch ever comes to correct it.
   pluginBar.renderFooterButtons();
 }
@@ -2715,7 +2715,8 @@ function activePeerConfigurable() {
 // Answered off sidebarMeta's per-row read, not off the active session: the
 // sidebar paints every row at once.
 function pluginReachesSession(pluginId, sessionName) {
-  return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins);
+  const rec = getPluginCatalogCache().find((p) => String(p.id) === String(pluginId));
+  return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins, !!(rec && rec.shipped));
 }
 
 const pluginBar = initPluginHost({
@@ -2768,6 +2769,7 @@ async function loadPluginRenderers() {
   if (!window.api.pluginCatalog) return;
   let catalog = null;
   try { catalog = await window.api.pluginCatalog(); } catch { return; }
+  setPluginCatalogCache(catalog || []);
   for (const p of catalog || []) {
     if (!p || !p.enabled) continue;
     await activatePluginRenderer(p.id);
@@ -2776,10 +2778,12 @@ async function loadPluginRenderers() {
 loadPluginRenderers();
 
 if (window.api.onPluginEvent) {
-  window.api.onPluginEvent((pluginId, topic, payload) => {
+  window.api.onPluginEvent(async (pluginId, topic, payload) => {
     if (pluginId === '_host' && topic === 'plugin-state' && payload && payload.id) {
-      if (payload.enabled) activatePluginRenderer(payload.id);
-      else pluginBar.dispose(payload.id);
+      if (payload.enabled) {
+        try { setPluginCatalogCache((await window.api.pluginCatalog()) || []); } catch {}
+        await activatePluginRenderer(payload.id);
+      } else pluginBar.dispose(payload.id);
       if (pluginsOverlay && !pluginsOverlay.classList.contains('hidden')) renderPluginsDialog();
       return;
     }

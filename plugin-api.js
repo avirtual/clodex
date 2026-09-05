@@ -154,11 +154,11 @@ function mergePlugins(checked, unlisted) {
   return [...new Set([...(checked || []).map(String), ...(unlisted || []).map(String)])];
 }
 
-// The SURFACING predicate. An absent list is the living all-enabled default,
-// NOT `pluginGranted`'s strict absent-=-none: flipping it strips every
-// pre-upgrade seat of the shipped plugins with no migration back.
-function seatHasPlugin(pluginId, pluginsList) {
-  if (!Array.isArray(pluginsList)) return true;
+// The ONE resolution of the absent case, so the readers cannot disagree.
+// `shipped` is threaded by the caller and anything but `true` withholds: an
+// origin nobody could answer must not widen reach.
+function seatHasPlugin(pluginId, pluginsList, shipped) {
+  if (!Array.isArray(pluginsList)) return shipped === true;
   return pluginsList.includes(String(pluginId));
 }
 

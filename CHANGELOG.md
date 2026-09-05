@@ -15,6 +15,13 @@ blocks a release.
 
 - Clodex now ships stock skills (first: clodex-plugin) into `~/.clodex/skills`
   on launch; edited copies are never overwritten, same as team prompts.
+- Custom plugins now reach only the seats that tick them: a plugin loaded from
+  `~/.clodex/plugins` or a registered folder is off by default for every seat,
+  while the plugins shipped with Clodex stay on. Seats that never had a plugin
+  list lose custom plugins until ticked under 🔌 Plugins…, and such a seat's
+  next save also drops any capability grants it held for one.
+- A plugin's sidebar footer button is hidden on a seat that does not have it,
+  instead of dimmed.
 
 ## 5.28.0 — 2026-09-05
 

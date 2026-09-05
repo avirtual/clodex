@@ -188,9 +188,10 @@ function createPluginHostEngine(deps) {
       const entry = readSeatEntry(event.session);
       const grants = (entry && Array.isArray(entry.pluginGrants)) ? entry.pluginGrants : null;
       for (const [pluginId, set] of textHooks) {
+        const rec = registered.get(pluginId);
         // OUTER of the two: a grant token for a plugin the seat no longer has
         // sits on disk until its next `plugins` write, and would keep feeding it.
-        if (!seatHasPlugin(pluginId, entry && entry.plugins)) continue;
+        if (!seatHasPlugin(pluginId, entry && entry.plugins, rec && rec.shipped)) continue;
         // Gated on the `turns` capability SPECIFICALLY, not on any grant:
         // a plugin granted only `toolInputs` holding turn text would defeat the
         // whole point of splitting the grants by risk.
@@ -199,7 +200,6 @@ function createPluginHostEngine(deps) {
         // grants persist per session and survive an upgrade that flips a
         // manifest session→global, so a stale token would keep delivering to a
         // plugin the grants editor no longer even lists.
-        const rec = registered.get(pluginId);
         if (!rec || scopeOf(rec.manifest) !== 'session') continue;
         for (const fn of set) {
           try { fn(event); } catch (e) {
@@ -371,7 +371,7 @@ function createPluginHostEngine(deps) {
           // exists to prevent. Refuse rather than default.
           const rec = registered.get(pluginId);
           if (!rec) throw new Error(`plugin ${pluginId} is not registered — intents.register after deactivate`);
-          const undo = registerIntent(row, pluginId, { scope: scopeOf(rec.manifest) });
+          const undo = registerIntent(row, pluginId, { scope: scopeOf(rec.manifest), shipped: rec.shipped });
           return disposable(pluginId, undo);
         },
       }),
@@ -504,7 +504,7 @@ function createPluginHostEngine(deps) {
     notifyStateChanged();
   }
 
-  function register(pluginId, mod, manifest = {}) {
+  function register(pluginId, mod, manifest = {}, opts = {}) {
 // Backstop: the loader refuses reserved ids before this — the invariant belongs
 // at both doors, not just the outer one.
     if (RESERVED_PLUGIN_IDS.has(pluginId)) {
@@ -516,7 +516,7 @@ function createPluginHostEngine(deps) {
     if (want !== HOST_API_VERSION) {
       throw new Error(`plugin ${pluginId} wants hostApi "${want}" but this host is "${HOST_API_VERSION}"`);
     }
-    registered.set(pluginId, { id: pluginId, manifest, mod });
+    registered.set(pluginId, { id: pluginId, manifest, mod, shipped: opts.shipped === true });
     const host = buildHost(pluginId);
     try {
       if (mod && typeof mod.activate === 'function') mod.activate(host);
@@ -690,6 +690,7 @@ function createPluginHostEngine(deps) {
         // A scope that arrived later than the first paint would show a scoped
         // plugin's UI on every session for a frame.
         scope: scopeOf(r.manifest),
+        shipped: r.shipped === true,
         enabledByDefault: r.manifest.enabledByDefault !== false,
       }));
     },

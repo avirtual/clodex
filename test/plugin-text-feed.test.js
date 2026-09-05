@@ -19,6 +19,13 @@
 // field is not false". Per CLAUDE.md's `## Tests`, an absence is TRUE of a
 // fixture that never wired anything, so each one below is paired with a CONTROL
 // arm that makes the same fixture deliver.
+//
+// Every registration here passes `{ shipped: true }` (t661). The seats in this
+// file carry no `plugins` list, and the feed's OUTER gate resolves an absent
+// list on origin: registered as custom, every plugin here would be withheld
+// before its grant was ever read, and each CONTROL arm would fail for a reason
+// that has nothing to do with grants. The origin rule has its own pins in
+// test/plugin-scope.test.js; what this file tests is the layer below it.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -83,7 +90,7 @@ test('the feed is gated on the `turns` grant — not on holding ANY capability',
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
 
     // No grants at all: a session that never opted in.
     entries.seat = { name: 'seat' };
@@ -121,7 +128,7 @@ test('grants are read at DELIVERY, so a revoke lands on the next turn', async ()
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
 
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
     engine.hooks.fireAgentText(wireEv({ text: 'one' }));
@@ -150,8 +157,8 @@ test('grants are per-SESSION and per-PLUGIN — one seat\'s grant is not another
   try {
     const a = [];
     const b = [];
-    engine.register('plug-a', recorder(a), { hostApi: HOST_API_VERSION, scope: 'session' });
-    engine.register('plug-b', recorder(b), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('plug-a', recorder(a), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    engine.register('plug-b', recorder(b), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
 
     entries.seat1 = { name: 'seat1', pluginGrants: ['plug-a:turns'] };
     entries.seat2 = { name: 'seat2', pluginGrants: ['plug-b:turns'] };
@@ -171,7 +178,7 @@ test('an unknown session, or no persistence at all, delivers nothing', async () 
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     engine.hooks.fireAgentText(wireEv({ session: 'ghost' }));
@@ -204,7 +211,7 @@ test('an unknown session, or no persistence at all, delivers nothing', async () 
       telemetrySnapshot: () => null, getLoader: () => null,
       // getPersistence deliberately absent
     });
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     engine.hooks.fireAgentText(wireEv());
     await settle();
     assert.strictEqual(seen.length, 0, 'no persistence ⇒ no grants ⇒ refusal, never an open door');
@@ -217,7 +224,7 @@ test('isTurnEnd and reads are NULL on jsonl — never false, never []', async ()
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     engine.hooks.fireAgentText({
@@ -274,7 +281,7 @@ test('isTurnEnd is a real false on the wire — a tool-loop hop is a known "no"'
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     engine.hooks.fireAgentText(wireEv({ isTurnEnd: false, text: 'mid-turn hop' }));
@@ -288,7 +295,7 @@ test('the event is frozen, and its arrays are copies — a subscriber cannot rea
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     // The live arrays the wire collector hands core — the same objects
@@ -320,8 +327,8 @@ test('every subscriber gets the SAME frozen event object', async () => {
   try {
     const a = [];
     const b = [];
-    engine.register('plug-a', recorder(a), { hostApi: HOST_API_VERSION, scope: 'session' });
-    engine.register('plug-b', recorder(b), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('plug-a', recorder(a), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    engine.register('plug-b', recorder(b), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['plug-a:turns', 'plug-b:turns'] };
 
     engine.hooks.fireAgentText(wireEv());
@@ -341,7 +348,7 @@ test('dispatch is DEFERRED — the junction\'s stack unwinds before any subscrib
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     engine.hooks.fireAgentText(wireEv());
@@ -359,7 +366,7 @@ test('the grant read is deferred too — no sessions.json parse on the intent st
   const { engine, entries, reads, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     engine.hooks.fireAgentText(wireEv());
@@ -378,7 +385,7 @@ test('a plugin whose manifest is GLOBAL receives nothing, even holding a turns t
   const { engine, entries, cleanup } = mkEngine();
   try {
     const seen = [];
-    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'global' });
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'global' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     engine.hooks.fireAgentText(wireEv());
@@ -394,7 +401,7 @@ test('a plugin whose manifest is GLOBAL receives nothing, even holding a turns t
     const { engine, entries, cleanup } = mkEngine();
     try {
       const seen = [];
-      engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION });
+      engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION }, { shipped: true });
       entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
       engine.hooks.fireAgentText(wireEv());
@@ -409,7 +416,7 @@ test('a plugin whose manifest is GLOBAL receives nothing, even holding a turns t
     const { engine, entries, cleanup } = mkEngine();
     try {
       const seen = [];
-      engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+      engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
       entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
       engine.hooks.fireAgentText(wireEv());
@@ -425,8 +432,8 @@ test('a throwing subscriber is contained, and does not stop the next one', async
     const seen = [];
     engine.register('bad-plug', {
       activate(h) { h.sessions.onAgentText(() => { throw new Error('subscriber blew up'); }); },
-    }, { hostApi: HOST_API_VERSION, scope: 'session' });
-    engine.register('good-plug', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+    }, { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    engine.register('good-plug', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['bad-plug:turns', 'good-plug:turns'] };
 
     engine.hooks.fireAgentText(wireEv());
@@ -444,7 +451,7 @@ test('the returned disposer stops delivery, and deactivate() stops it too', asyn
     let off = null;
     engine.register('archiver', {
       activate(h) { off = h.sessions.onAgentText((ev) => seen.push(ev)); },
-    }, { hostApi: HOST_API_VERSION, scope: 'session' });
+    }, { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     engine.hooks.fireAgentText(wireEv({ text: 'one' }));
@@ -466,7 +473,7 @@ test('the returned disposer stops delivery, and deactivate() stops it too', asyn
     const { engine, entries, cleanup } = mkEngine();
     try {
       const seen = [];
-      engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' });
+      engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
       entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
       engine.hooks.fireAgentText(wireEv({ text: 'one' }));
@@ -490,7 +497,7 @@ test('a global plugin subscribing is TOLD, not silently ignored', () => {
   try {
     engine.register('archiver', {
       activate(h) { h.sessions.onAgentText(() => {}); },
-    }, { hostApi: HOST_API_VERSION });
+    }, { hostApi: HOST_API_VERSION }, { shipped: true });
     assert.ok(logged.some((l) => /onAgentText/.test(l) && /"scope": "session"/.test(l)),
       'the log names the field to add');
   } finally { cleanup(); }
@@ -502,7 +509,7 @@ test('a global plugin subscribing is TOLD, not silently ignored', () => {
     try {
       engine.register('archiver', {
         activate(h) { h.sessions.onAgentText(() => {}); },
-      }, { hostApi: HOST_API_VERSION, scope: 'session' });
+      }, { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
       assert.ok(!logged.some((l) => /onAgentText/.test(l)), 'CONTROL: nothing logged for the correct case');
     } finally { cleanup(); }
   }
@@ -518,7 +525,7 @@ test('subscribing AFTER deactivate is refused — a late timer cannot resurrect 
   try {
     let host = null;
     engine.register('archiver', { activate(h) { host = h; } },
-      { hostApi: HOST_API_VERSION, scope: 'session' });
+      { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     engine.deactivate('archiver');
 
     const off = host.sessions.onAgentText(() => {});
@@ -539,7 +546,7 @@ test('onAgentText refuses a non-function and still returns a callable disposer',
     let off;
     engine.register('archiver', {
       activate(h) { off = h.sessions.onAgentText('not a function'); },
-    }, { hostApi: HOST_API_VERSION, scope: 'session' });
+    }, { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     assert.strictEqual(engine._hookCounts().text, 0, 'nothing was subscribed');
     assert.strictEqual(typeof off, 'function', 'but the caller still gets a disposer to hold');
     assert.doesNotThrow(() => off(), 'and calling it is safe');

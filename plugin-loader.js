@@ -331,7 +331,7 @@ function createPluginLoader(deps) {
       }
       const mod = rec.enginePath ? requireModule(rec.enginePath) : {};
       if (rec.enginePath && priorVersion === undefined) requiredPaths.set(rec.enginePath, nowVersion);
-      pluginHost.register(rec.id, mod, rec.manifest);
+      pluginHost.register(rec.id, mod, rec.manifest, { shipped: rec.root === 'core' });
       logIt(`loaded ${rec.id} v${rec.manifest.version || '?'}`);
       verbConflicts.delete(rec.id);
       loadedFrom.set(rec.id, { dir: rec.dir, version: rec.manifest.version || null });
