@@ -68,8 +68,26 @@ const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
 // confused lead — but team.json is agent-writable, so a lead could widen its own
 // reviewer to every tool. This code-level constant is the ceiling: the effective
 // allowlist is the INTERSECTION of it and any manifest `tools`. A manifest may
-// NARROW below the cap; it can never widen past it.
+// NARROW below the cap; past it, only the shell below is ever added.
 const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
+
+const REVIEWER_SHELL_DENY = [
+  'Bash(rm:*)', 'Bash(rmdir:*)', 'Bash(mv:*)', 'Bash(cp:*)', 'Bash(touch:*)',
+  'Bash(mkdir:*)', 'Bash(chmod:*)', 'Bash(chown:*)', 'Bash(ln:*)', 'Bash(tee:*)',
+  'Bash(dd:*)', 'Bash(truncate:*)',
+  'Bash(sed -i:*)', 'Bash(sed --in-place:*)', 'Bash(perl -i:*)',
+  'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git checkout:*)',
+  'Bash(git switch:*)', 'Bash(git reset:*)', 'Bash(git restore:*)',
+  'Bash(git stash:*)', 'Bash(git push:*)', 'Bash(git pull:*)', 'Bash(git fetch:*)',
+  'Bash(git merge:*)', 'Bash(git rebase:*)', 'Bash(git clean:*)',
+  'Bash(git worktree:*)', 'Bash(git branch -d:*)', 'Bash(git branch -D:*)',
+  'Bash(git tag:*)',
+  'Bash(npm:*)', 'Bash(npx:*)', 'Bash(yarn:*)', 'Bash(pnpm:*)', 'Bash(bun:*)',
+  'Bash(node -e:*)', 'Bash(node --eval:*)',
+  'Bash(curl:*)', 'Bash(wget:*)', 'Bash(ssh:*)', 'Bash(scp:*)',
+  'Bash(kill:*)', 'Bash(pkill:*)', 'Bash(killall:*)',
+];
+const REVIEWER_SHELL_TOOL = 'Bash';
 
 // The reviewer seat's env comes from a template, which — like team.json — is
 // agent-writable, and env is an AUTHORITY surface (ANTHROPIC_BASE_URL, proxy and
@@ -235,6 +253,7 @@ const ticketTaskDirLine = (dir, raw) => {
   return `TASK DIR: ${dir}${rule}${rule ? taskDirCreateClause : ''}\n`;
 };
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
+const REVIEWER_PROMPT_PREFIX = 'clodex-team-reviewer';
 
 const REVIEWER_FALLBACK = {
   systemPromptFile: 'clodex-team-reviewer',
@@ -680,14 +699,15 @@ function createTicketMethods(deps, shared) {
       const def = team.roles && team.roles.reviewer;
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 
-      const templateName = def.template || DEFAULT_REVIEWER_TEMPLATE;
+      const templateOverride = (opts && opts.template) || null;
+      const templateName = templateOverride || def.template || DEFAULT_REVIEWER_TEMPLATE;
       // Caught, because this handler is reached from an unawaited async
       // _handleIntent: an uncaught throw here becomes an unhandled rejection and
       // the lead is told NOTHING. The resolver's purpose guard is deliberately
       // fail-closed, and fail-closed is only useful if it is also fail-visible.
       let shape;
       try {
-        shape = this.resolveSeatShape(team, 'reviewer', 'review', session);
+        shape = this.resolveSeatShape(team, 'reviewer', 'review', session, templateOverride);
       } catch (err) {
         // Not err.message alone: a non-Error throw would report "error: undefined",
         // which tells the lead nothing at all.
@@ -837,6 +857,7 @@ function createTicketMethods(deps, shared) {
         // the fallback destination when the ticket cannot be resolved.
         ...(reviewTicket ? { reviewTicket } : {}),
         ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
+        reviewerTemplate: shape.tpl ? shape.tpl.name : DEFAULT_REVIEWER_TEMPLATE,
       });
 
       let promptWarn = '';
@@ -878,6 +899,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
+            false, null, shape.shellDeny,
           );
           // The rule is "reported ONCE", and this is the one caller that can
           // report twice: a reviewer whose prompt rides as system fails the
@@ -1036,6 +1058,7 @@ function createTicketMethods(deps, shared) {
         totals = JSON.parse(fs.readFileSync(path.join(getUserDataPath(), 'wire-totals.json'), 'utf8'));
       } catch { /* no ledger file yet — the overlay below may still answer */ }
       let live = null;
+      let model = null;
       const currentId = (rec && rec.sessionId) || null;
       try {
         const w = this._wireTelemetry && this._wireTelemetry.payload(seatName);
@@ -1064,6 +1087,7 @@ function createTicketMethods(deps, shared) {
             cacheWriteTokens: w.tokens && w.tokens.cacheWrite,
           };
         }
+        if (w && w.sessionId && w.sessionId === currentId && typeof w.model === 'string') model = w.model;
       } catch { /* a telemetry fault costs the freshest turn, not the rollup */ }
       const ledger = teamCost.sumSessions(totals, sessionIds, { currentId, live });
       ledger.ids = sessionIds;
@@ -1072,7 +1096,7 @@ function createTicketMethods(deps, shared) {
       // that spent nothing observable (a Codex reviewer, or one killed before
       // its first main-line turn) reports null rather than 0, so a real review
       // whose cost the wire never saw cannot read as a free one.
-      return { ledger, resolved: ledger.known > 0 };
+      return { ledger, resolved: ledger.known > 0, model };
     },
 
     // Append one review round's spend to the TICKET's artifact, before the seat
@@ -1105,7 +1129,7 @@ function createTicketMethods(deps, shared) {
         if (!team || !ticket) return { ok: false, path: null, error: 'no ticket' };
         const dest = this._ticketDiffDest(team, ticket);
         if (!dest.ok) return { ok: false, path: null, error: dest.error };
-        const { ledger, resolved } = this._reviewLedger(seatName, rec);
+        const { ledger, resolved, model } = this._reviewLedger(seatName, rec);
         const row = teamCost.reviewCostRecord({
           ticket: ticket.id, team: team.name, round, seat: seatName,
           // Off the RECORD, not recomputed from the ticket's round: the label is
@@ -1114,6 +1138,9 @@ function createTicketMethods(deps, shared) {
           // spend was tagged with. The two disagree exactly when the seat fell
           // back to the counter name, which is the case worth being able to see.
           wireLabel: (rec && rec.wireLabel) || null,
+          template: (rec && rec.reviewerTemplate) || null,
+          wallMs: (rec && typeof rec.createdAt === 'number') ? (Date.now() - rec.createdAt) : null,
+          model,
           verdict, mustFix: mustFixCount, ledger, resolved,
         });
         const file = path.join(dest.dir, teamCost.REVIEW_COST_FILE);
@@ -3835,7 +3862,7 @@ function createTicketMethods(deps, shared) {
     // `opener` is the session doing the spawning (the lead). It is not derivable
     // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
     // is the permission posture.
-    resolveSeatShape(team, roleKey, purpose, opener) {
+    resolveSeatShape(team, roleKey, purpose, opener, templateOverride = null) {
       // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
       // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
       // spawn a reviewer with no tool cap, no forced claude and no env fallback,
@@ -3847,7 +3874,9 @@ function createTicketMethods(deps, shared) {
       const def = (team && team.roles && team.roles[roleKey]) || null;
       const review = purpose === 'review';
       const shape = this._templateShape(
-        review ? ((def && def.template) || DEFAULT_REVIEWER_TEMPLATE) : (def && def.template),
+        review
+          ? (templateOverride || (def && def.template) || DEFAULT_REVIEWER_TEMPLATE)
+          : (def && def.template),
       );
       const tpl = (shape && shape.tpl) || null;
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
@@ -3891,6 +3920,7 @@ function createTicketMethods(deps, shared) {
           // Reviewer-only concept: no cap applies off the review path, so there is
           // no allowlist to report. Present so both purposes return one key set.
           effectiveTools: null,
+          shellDeny: null,
           // null even when the template DOES carry `tools`: this field means "what
           // the reviewer cap was asked to intersect", and off the review path
           // nothing is asked of the cap — reporting a request no arm honored would
@@ -3951,16 +3981,21 @@ function createTicketMethods(deps, shared) {
       // `[]` survives as `[]` here, and reaches the same empty intersection a
       // disjoint list does — one refusal covers both.
       const requestedTools = Array.isArray(rawTools) ? rawTools : null;
+      const wantsShell = !toolsMalformed && !!requestedTools && requestedTools.includes(REVIEWER_SHELL_TOOL);
       // Fail-closed on malformed, so the SHAPE alone cannot spawn a widened seat
       // even if a future caller forgets the refusal. Only the caller can make it
       // visible, and only the caller can bail before the name is minted.
-      const effectiveTools = toolsMalformed
+      const cappedTools = toolsMalformed
         ? []
         : (requestedTools
           ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
           : REVIEWER_TOOL_CAP.slice());
+      const effectiveTools = wantsShell
+        ? [...REVIEWER_TOOL_CAP, REVIEWER_SHELL_TOOL]
+        : cappedTools;
       const beyondCap = requestedTools
-        ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
+        ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t)
+          && !(wantsShell && t === REVIEWER_SHELL_TOOL))
         : [];
 
       // Presence test only — _templateShape still owns the FILTERING. The
@@ -4010,6 +4045,7 @@ function createTicketMethods(deps, shared) {
         // rationale is owned by the test 'a reviewer template CANNOT contribute
         // extraArgs'. Mirroring the ticket arm here reverts it.
         extraArgs: [...postureArgs, ...modelArgs.args],
+        shellDeny: wantsShell ? REVIEWER_SHELL_DENY.slice() : null,
         // A --model that was present and refused. Carried, not re-derived at the
         // call site: re-parsing would put a second copy of the allowlist there.
         modelRefused: modelArgs.refused,
@@ -4424,6 +4460,15 @@ function createTicketMethods(deps, shared) {
       });
     },
 
+    _reviewerTemplateNames() {
+      try {
+        return getTemplates().list()
+          .filter((t) => t && typeof t.systemPromptFile === 'string'
+            && t.systemPromptFile.startsWith(REVIEWER_PROMPT_PREFIX))
+          .map((t) => t.name).filter(Boolean);
+      } catch { return []; }
+    },
+
     _taskAdd(session, team, intent, reply) {
       // Read before the permission check, not after: a non-lead's spec is the longest
       // payload any ticket verb carries, and the check below is the one rejection in
@@ -4435,6 +4480,14 @@ function createTicketMethods(deps, shared) {
       if (intent.who) {
         assignee = this._resolveAssignee(team, intent.who);
         if (!assignee) { reply(`error: ${this._assigneeMissText(team, intent.who)}${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
+      }
+      const reviewerTemplate = intent.reviewer || null;
+      if (reviewerTemplate) {
+        const known = this._reviewerTemplateNames();
+        if (!known.includes(reviewerTemplate)) {
+          reply(`error: no template "${reviewerTemplate}" in the library — reviewer templates available: [${known.join(', ')}]${this._spillRejectedPayload(session, 'task add', spec)}`);
+          return;
+        }
       }
       const tickets = ticketsStore.load(team.root);
       const now = Date.now();
@@ -4452,6 +4505,7 @@ function createTicketMethods(deps, shared) {
         // Omitting it here would file every new ticket as already started.
         startedAt: null,
         ...(parked ? { parked: true } : {}),
+        ...(reviewerTemplate ? { reviewerTemplate } : {}),
       };
       const taskDir = extractTaskDir(spec);
       if (taskDir) ticket.taskDir = taskDir;
@@ -4465,13 +4519,14 @@ function createTicketMethods(deps, shared) {
       // running" — and every later loop step has to hang off that seam. Dispatch
       // now lives in `_taskStart` alone; two spawn paths for one job is the
       // defect this split exists to avoid, so do not restore a delivery here.
+      const rvNote = reviewerTemplate ? ` — reviewer template: ${reviewerTemplate}` : '';
       if (parked) {
-        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it`);
+        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it${rvNote}`);
         return;
       }
-      reply(assignee
+      reply((assignee
         ? `ticket ${ticket.id} → ${assignee} (not started) — [agent:task start ${ticket.id}] mints its tree and seat and delivers the spec`
-        : `ticket ${ticket.id} (backlog)`);
+        : `ticket ${ticket.id} (backlog)`) + rvNote);
     },
 
     // The dispatch half `add` used to do inline. Split out so there is a seam
@@ -4499,6 +4554,14 @@ function createTicketMethods(deps, shared) {
       // net costs nothing — those tickets never reach a dispatch on this path.
       const noTaskDir = this._ticketTaskDirRefusal(team, ticket, 'start', ticketStarted(ticket));
       if (noTaskDir) { log.info('intent', `task start by ${session.name}: ${ticket.id} refused — no task dir`); reply(noTaskDir); return; }
+      const startReviewer = intent.reviewer || null;
+      if (startReviewer) {
+        const known = this._reviewerTemplateNames();
+        if (!known.includes(startReviewer)) {
+          reply(`error: no template "${startReviewer}" in the library — reviewer templates available: [${known.join(', ')}]`);
+          return;
+        }
+      }
       const assignee = ticket.assignee;
       // The role the ticket was FILED under, which is what mints the seat name and
       // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
@@ -4578,6 +4641,8 @@ function createTicketMethods(deps, shared) {
       // dispatch without recording that it did — an unstamped dispatched ticket
       // is startable a second time, which is the tree collision this fixes.
       ticket.startedAt = ticket.lastActivityAt;
+      if (startReviewer) ticket.reviewerTemplate = startReviewer;
+      const rvNote = startReviewer ? ` — reviewer template: ${startReviewer}` : '';
       const unparked = wasParked ? ' (unparked)' : '';
       if (oneShot && minted.ok) {
         // Re-pinned from the role to the seat BEFORE the save, because
@@ -4593,9 +4658,9 @@ function createTicketMethods(deps, shared) {
         log.info('intent', dispatchMode === 'spawn'
           ? `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, shared checkout`
           : `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
-        reply(dispatchMode === 'spawn'
+        reply((dispatchMode === 'spawn'
           ? `ticket ${ticket.id}${unparked} → spawning ${minted.name} in the shared checkout (no branch)`
-          : `ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
+          : `ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`) + rvNote);
         return;
       }
       // A mint failure is NOT fatal: the ticket stays role-assigned and takes the
@@ -4609,7 +4674,7 @@ function createTicketMethods(deps, shared) {
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
       log.info('intent', `task start by ${session.name}: ${ticket.id} → ${ticket.assignee}${wasParked ? ' (unparked)' : ''}`);
-      reply(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}`);
+      reply(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}${rvNote}`);
     },
 
     _taskAssign(session, team, intent, reply) {
@@ -6245,6 +6310,7 @@ function createTicketMethods(deps, shared) {
       // human. Errors become escalations; a success is logged.
       this._handleTeamReview(leadSession, scope, {
         ticketId,
+        template: ticket.reviewerTemplate || null,
         onReply: (msg) => {
           const m = String(msg == null ? '' : msg);
           // An UNBRIEFED reviewer is a review that will not happen: the seat

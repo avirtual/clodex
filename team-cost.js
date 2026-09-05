@@ -315,6 +315,7 @@ const REVIEW_COST_VERSION = 1;
 function reviewCostRecord({
   ticket, team, round, seat, wireLabel = null, verdict = null, mustFix = null,
   ledger = null, resolved = true, now = Date.now(),
+  template = null, wallMs = null, model = null,
 }) {
   const l = ledger || sumSessions(null, []);
   const measured = (v) => (resolved ? v : null);
@@ -332,6 +333,10 @@ function reviewCostRecord({
     // file in the verdict body. Copying it here would put the same text in two
     // places that drift.
     mustFix: typeof mustFix === 'number' ? mustFix : null,
+    template: template || null,
+    model: model || null,
+    wallMs: (typeof wallMs === 'number' && Number.isFinite(wallMs) && wallMs >= 0)
+      ? Math.round(wallMs) : null,
     closedAt: now,
     sessions: {
       ids: l.ids || [], known: l.known, total: l.total,

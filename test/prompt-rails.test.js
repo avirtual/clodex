@@ -27,6 +27,11 @@ test('isAppendRail: session-class stock clodex-team-* qualify; lead/reviewer nev
   // stock-name rule — the join picker is session-class only.
   assert.strictEqual(isAppendRail('clodex-team-lead', ''), false, 'lead prompt excluded (there is one lead)');
   assert.strictEqual(isAppendRail('clodex-team-reviewer', ''), false, 'reviewer prompt excluded (subagent-class)');
+  // t673 added a SECOND reviewer prompt, which matches the stock-name rule and
+  // would therefore be offered by default. It is subagent-class exactly like its
+  // sibling: a join picker that offered it would attach a reviewer's verdict
+  // grammar to a session seat's append rail.
+  assert.strictEqual(isAppendRail('clodex-team-reviewer-shell', ''), false, 'the shell reviewer prompt is subagent-class too');
   assert.strictEqual(isAppendRail('my-delta', '---\nrail: append\n---\n'), true, 'declared append qualifies');
   assert.strictEqual(isAppendRail('house-rules', '---\nrail: replace\n---\n'), false, 'replace-class excluded');
   assert.strictEqual(isAppendRail('bare-prompt', 'just a prompt body'), false, 'undeclared excluded');
@@ -37,6 +42,7 @@ test('appendRailPrompts filters { name, body } rows to the picker offering', () 
     { name: 'clodex-team-hand', body: 'stock delta' },       // session-class stock → in
     { name: 'clodex-team-lead', body: 'stock delta' },       // non-session stock → OUT
     { name: 'clodex-team-reviewer', body: 'stock delta' },   // non-session stock → OUT
+    { name: 'clodex-team-reviewer-shell', body: 'stock delta' }, // t673, same → OUT
     { name: 'reviewer-plus', body: '---\nrail: append\n---\nx' }, // declared → in
     { name: 'full-persona', body: '---\nrail: replace\n---\nx' }, // excluded
     { name: 'legacy', body: 'no front matter' },             // excluded

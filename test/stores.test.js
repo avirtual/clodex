@@ -2310,6 +2310,70 @@ test('seed (T52): ships the reviewer template into a fresh registry (byte-exact)
   }
 });
 
+// t673: the shell reviewer ships as a SECOND template beside the default, and
+// the seed is what puts it in reach of `reviewer:<name>` — a template the
+// library does not hold is refused at task add.
+const REPO_REVIEWER_SHELL_TPL = path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer-shell.json');
+
+test('seed (t673): ships the SHELL reviewer template too (byte-exact), with Bash in its tools', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  try {
+    const stores = initStores(userData, { registryDir });
+    const dest = path.join(registryDir, 'library', 'templates', 'clodex-team-reviewer-shell.json');
+    assert.ok(fs.existsSync(dest), 'clodex-team-reviewer-shell.json seeded on construction');
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), fs.readFileSync(REPO_REVIEWER_SHELL_TPL, 'utf-8'),
+      'byte-for-byte the shipped template');
+    const seeded = stores.templates.list().find((t) => t.name === 'clodex-team-reviewer-shell');
+    assert.ok(seeded, 'seeded shell reviewer template is listed');
+    assert.strictEqual(seeded.systemPromptFile, 'clodex-team-reviewer-shell',
+      'its OWN prompt — pointing at the default prompt would tell the seat it has no shell');
+    assert.deepStrictEqual(seeded.intents, []);
+    // Bash is the opt-in. Without it in `tools` the resolver admits no shell and
+    // this template is the default reviewer wearing a different name.
+    assert.deepStrictEqual(seeded.tools, ['Read', 'Grep', 'Glob', 'Bash']);
+    assert.deepStrictEqual(seeded.env, {
+      CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1',
+      CLODEX_SPAWNER_HINT: 'off', CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000',
+    });
+
+    // The DEFAULT is untouched by the experiment — the whole premise is that it
+    // stays available as the fallback.
+    const dflt = stores.templates.list().find((t) => t.name === 'clodex-team-reviewer');
+    assert.deepStrictEqual(dflt.tools, ['Read', 'Grep', 'Glob'], 'the default reviewer gains no shell');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('seed (t673): the shell reviewer PROMPT ships, and differs from the default in exactly the shell paragraph', () => {
+  const dir = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');
+  const dflt = fs.readFileSync(path.join(dir, 'clodex-team-reviewer.md'), 'utf-8').split('\n');
+  const shell = fs.readFileSync(path.join(dir, 'clodex-team-reviewer-shell.md'), 'utf-8').split('\n');
+  assert.ok(shell.some((l) => /YOUR SHELL IS TRUSTED/.test(l)), 'the shell seat is told it has one');
+  assert.ok(!shell.some((l) => /YOU HAVE NO SHELL/.test(l)), 'and is NOT also told it has none');
+  assert.ok(dflt.some((l) => /YOU HAVE NO SHELL/.test(l)), 'ENTER: the default still says the opposite — the two prompts really do differ here');
+  // The gap no deny rule can close. A prompt that only listed the denied verbs
+  // would leave the seat believing the CLI stops every write, which for a
+  // redirection it does not.
+  assert.ok(shell.some((l) => /Never redirect into a file/.test(l)),
+    'the shell seat OWNS redirections — `>` is shell syntax, not argv, so no deny rule matches it');
+
+  // The verdict grammar is the reviewer's contract with the ticket loop, and it
+  // must be word-for-word identical or the two arms of the A/B are not
+  // comparable. Compared as the TAIL both files share rather than by grepping
+  // for a phrase: a paragraph dropped from the shell copy would still pass a
+  // grep for the phrases that remain.
+  const tailFrom = (lines, marker) => {
+    const i = lines.findIndex((l) => l.includes(marker));
+    assert.ok(i > 0, `ENTER: the marker ${marker} was found — otherwise the tail compared is empty`);
+    return lines.slice(i).join('\n');
+  };
+  assert.strictEqual(tailFrom(shell, 'ISSUE INDEPENDENT CALLS TOGETHER'), tailFrom(dflt, 'ISSUE INDEPENDENT CALLS TOGETHER'),
+    'everything from the next bullet onward is byte-identical, verdict grammar included');
+});
+
 test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () => {
   const { stores, cleanup } = freshStores();
   try {

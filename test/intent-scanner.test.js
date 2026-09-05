@@ -276,27 +276,55 @@ test('parseIntent: an escaped reboot is reported, not dispatched', () => {
 
 test('parseIntent: task add — bracket-arg optional (backlog vs mint+assign)', () => {
   assert.deepStrictEqual(parseIntent('[agent:task add] build the widget'),
-    { type: 'task', sub: 'add', who: null, id: null, park: false, body: 'build the widget' });
+    { type: 'task', sub: 'add', who: null, id: null, park: false, reviewer: null, body: 'build the widget' });
   assert.deepStrictEqual(parseIntent('[agent:task add hand] build the widget'),
-    { type: 'task', sub: 'add', who: 'hand', id: null, park: false, body: 'build the widget' });
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: false, reviewer: null, body: 'build the widget' });
 });
 
 test('parseIntent: task add park — the modifier never lands in `who` (t174)', () => {
   // The whole point of filtering rather than positional-reading: `add park hand`
   // must file for `hand`, not for a seat named "park" with no assignee recorded.
   assert.deepStrictEqual(parseIntent('[agent:task add park hand] spec'),
-    { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'spec' });
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: true, reviewer: null, body: 'spec' });
   // Either order, because both read naturally and a lead should not have to
   // remember which.
   assert.deepStrictEqual(parseIntent('[agent:task add hand park] spec'),
-    { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'spec' });
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: true, reviewer: null, body: 'spec' });
   // Parked backlog: no assignee at all is still a legal park.
   assert.deepStrictEqual(parseIntent('[agent:task add park] spec'),
-    { type: 'task', sub: 'add', who: null, id: null, park: true, body: 'spec' });
+    { type: 'task', sub: 'add', who: null, id: null, park: true, reviewer: null, body: 'spec' });
   // Only the exact token. `parked` is a plausible typo and must resolve as an
   // assignee (which the handler then rejects) rather than silently parking.
   assert.deepStrictEqual(parseIntent('[agent:task add parked] spec'),
-    { type: 'task', sub: 'add', who: 'parked', id: null, park: false, body: 'spec' });
+    { type: 'task', sub: 'add', who: 'parked', id: null, park: false, reviewer: null, body: 'spec' });
+});
+
+test('parseIntent: task add reviewer: — a KEYED modifier, never the assignee (t673)', () => {
+  // Modelled on `park` and filtered the same way: the token selects the review
+  // template for this ticket, so reading it positionally would file the ticket
+  // for a seat named `reviewer:clodex-team-reviewer-shell`.
+  assert.deepStrictEqual(parseIntent('[agent:task add reviewer:rv-shell hand] spec'),
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: false, reviewer: 'rv-shell', body: 'spec' });
+  // Either order, and composable with park — both are position-free modifiers.
+  assert.deepStrictEqual(parseIntent('[agent:task add hand park reviewer:rv-shell] spec'),
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: true, reviewer: 'rv-shell', body: 'spec' });
+  // No assignee at all is still a legal selection.
+  assert.deepStrictEqual(parseIntent('[agent:task add reviewer:rv-shell] spec'),
+    { type: 'task', sub: 'add', who: null, id: null, park: false, reviewer: 'rv-shell', body: 'spec' });
+  // Only the COLON form. A bare `reviewer` is the role name and must resolve as
+  // an assignee — the team really has a reviewer role, so silently reading it as
+  // a template selection would drop the assignee on a plausible line.
+  assert.deepStrictEqual(parseIntent('[agent:task add reviewer] spec'),
+    { type: 'task', sub: 'add', who: 'reviewer', id: null, park: false, reviewer: null, body: 'spec' });
+});
+
+test('parseIntent: task start reviewer: — the id survives the modifier (t673)', () => {
+  assert.deepStrictEqual(parseIntent('[agent:task start reviewer:rv-shell t7]'),
+    { type: 'task', sub: 'start', id: 't7', who: null, reviewer: 'rv-shell', body: '' });
+  // The id stays FIRST positional regardless of where the modifier sits: a
+  // filter applied after the positional read would take the token as the id.
+  assert.deepStrictEqual(parseIntent('[agent:task start t7 reviewer:rv-shell]'),
+    { type: 'task', sub: 'start', id: 't7', who: null, reviewer: 'rv-shell', body: '' });
 });
 
 test('parseIntent: task park — id only, no body (t174)', () => {

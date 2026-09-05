@@ -101,6 +101,7 @@ async function restoreSessionsForWorkspace({
         false,             // mint — a restore re-creates a persisted name by design
         entry.noWire === true,
         Array.isArray(entry.plugins) ? entry.plugins : null,
+        Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
       );
       restored.push({
         name: entry.name,

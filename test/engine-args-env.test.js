@@ -47,18 +47,22 @@ test('args-edit restart threads the persisted env into create() (19th positional
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.restarted, true);
   assert.strictEqual(captured.length, 1, 'create was called once');
-  // 22, because create() grew three positionals past env (mint, then noWire, then
-  // the seat's plugin list). The count is still asserted rather than only the
-  // index: env sits at 18 and a signature that lost a LATER argument would leave
-  // 18 correct while the tail silently defaults — which is how noWire would stop
-  // surviving a restart with nothing else failing.
-  assert.strictEqual(captured[0].length, 22, 'create got the full 22-positional signature');
+  // 23, because create() grew four positionals past env (mint, then noWire, then
+  // the seat's plugin list, then the reviewer shell deny rules). The count is
+  // still asserted rather than only the index: env sits at 18 and a signature
+  // that lost a LATER argument would leave 18 correct while the tail silently
+  // defaults — which is how noWire would stop surviving a restart with nothing
+  // else failing, and how the shell reviewer's deny rules did stop surviving one.
+  assert.strictEqual(captured[0].length, 23, 'create got the full 23-positional signature');
   assert.deepStrictEqual(captured[0][18], { AWS_PROFILE: 'acct', DB: 'x' }, 'the persisted env is threaded as the 19th arg — not dropped');
   assert.strictEqual(captured[0][20], false,
     'and the 21st is noWire, resolved off the persisted entry — an args edit must not un-wire an ordinary seat');
   assert.strictEqual(captured[0][21], null,
     'and the 22nd is the seat plugin list — null here, since this entry has none, '
     + 'which is the living all-enabled default rather than a seat stripped of plugins');
+  assert.strictEqual(captured[0][22], null,
+    'and the 23rd is the reviewer shell deny list — null for an ordinary seat, which is '
+    + 'what makes it ADDITIVE: an args edit must not hand a non-reviewer a rule set');
 });
 
 // t189 — the arm that carries the claim. The `false` above is satisfied by a

@@ -105,6 +105,16 @@ function parseReboot(cleaned) {
   return m ? { type: 'reboot', body: m[1] } : null;
 }
 
+const REVIEWER_TOKEN_RE = /^reviewer:(.+)$/;
+
+function reviewerToken(argToks) {
+  for (const t of argToks) {
+    const m = REVIEWER_TOKEN_RE.exec(t);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 function parseTask(cleaned) {
   const m = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|respec|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
@@ -119,12 +129,18 @@ function parseTask(cleaned) {
     // Position-free because both orders read naturally; the cost is that a seat
     // literally named `park` is unaddressable here and needs `assign`.
     const park = argToks.includes('park');
-    const rest = argToks.filter((t) => t !== 'park');
-    return { type: 'task', sub, who: rest[0] || null, id: null, park, body };
+    const reviewer = reviewerToken(argToks);
+    const rest = argToks.filter((t) => t !== 'park' && !REVIEWER_TOKEN_RE.test(t));
+    return { type: 'task', sub, who: rest[0] || null, id: null, park, reviewer, body };
   }
   if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
   if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
-  if (sub === 'park' || sub === 'start') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
+  if (sub === 'start') {
+    const reviewer = reviewerToken(argToks);
+    const rest = argToks.filter((t) => !REVIEWER_TOKEN_RE.test(t));
+    return { type: 'task', sub, id: rest[0] || null, who: null, reviewer, body: '' };
+  }
+  if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
   return { type: 'task', sub, id: argToks[0] || null, who: null, body };
 }
 

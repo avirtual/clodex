@@ -2049,6 +2049,7 @@ function registerIpcHandlers(deps) {
         false,             // mint — retry re-spawns an existing record
         entry.noWire === true,
         Array.isArray(entry.plugins) ? entry.plugins : null,
+        Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
       );
       return { ok: true };
     } catch (err) {

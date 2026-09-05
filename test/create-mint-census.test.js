@@ -245,7 +245,13 @@ const EXPECTED = [
   // filename order, so their rows move with them. The reload row above stayed
   // behind; it is the only one of the four that is not ticket machinery.
   { file: 'team-tickets.js', mint: true, noWire: '(tpl && tpl.noWire) === true', label: '[agent:spawn] intent — agent-initiated new seat. DOES carry the flag, unlike the privileged-intent strip beside it: wire-off REMOVES a capability rather than granting one, and it cannot redirect traffic (proxyBase is nulled outright, never pointed where the template chose).' },
-  { file: 'team-tickets.js', mint: true, noWire: false, label: 'team-review reviewer seat — ephemeral, monotonic name, always brand new. Never wire-off: it is a short-lived seat Clodex spawns, and the wire is what its verdict rides.' },
+  // t673: this row's noWire is now `'false'` rather than `false` — it is passed
+  // EXPLICITLY, not defaulted. The value is unchanged and the reasoning below
+  // still holds; what changed is that the reviewer arm must reach create()'s
+  // 23rd positional (`shellDeny`, the code-owned Bash deny rules), so noWire and
+  // plugins are written out to get there. Both are written as the defaults they
+  // replace, which is why this is a spelling change and not a behaviour one.
+  { file: 'team-tickets.js', mint: true, noWire: 'false', label: 'team-review reviewer seat — ephemeral, monotonic name, always brand new. Never wire-off: it is a short-lived seat Clodex spawns, and the wire is what its verdict rides.' },
   { file: 'team-tickets.js', mint: true, noWire: false, label: 'branch-per-ticket seat — [agent:task add] to a role with `worktree: true` mints a one-shot seat in its own git worktree. Always new: the name carries the ticket number, and a taken name never reaches create() — it is either the ticket\'s own live seat (spec re-sent), its archived record (held, with the recovery named), or a tree still held by a live seat (refused). Never wire-off: it is a working seat Clodex spawns on the lead\'s behalf, with no operator checkbox behind it, and the same reasoning as the reviewer row.' },
 ];
 

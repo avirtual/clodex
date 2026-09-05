@@ -512,9 +512,12 @@ test('DISCRIMINATION: a decision recorded in the LEDGER silences the report', ()
 
   // Recording it at a call site is one of the three cures the failure message
   // names; check that cure actually works rather than trusting the message.
+  // The literal must match the list in session-manager.js exactly, or the
+  // replace is a no-op and the ENTER below catches it. t673 appended
+  // `reviewerTemplate` to that list.
   const sessionManagerSrc = real.sessionManagerSrc.replace(
-    "['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']",
-    "['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'gadget']");
+    "['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate']",
+    "['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate', 'gadget']");
   assert.notStrictEqual(sessionManagerSrc, real.sessionManagerSrc, 'ENTER: the call-site list was actually widened');
   const after = undecidedFields({ ...real, storesSrc, sessionManagerSrc }).undecided;
   assert.ok(!after.includes('gadget'),

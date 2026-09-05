@@ -145,13 +145,13 @@ function opened(f, who = 'hand', body = 'the spec') {
 
 test('grammar: [agent:task start <id>] parses id-positional with no body', () => {
   assert.deepStrictEqual(parseIntent('[agent:task start t7]'),
-    { type: 'task', sub: 'start', id: 't7', who: null, body: '' });
+    { type: 'task', sub: 'start', id: 't7', who: null, reviewer: null, body: '' });
   // Trailing prose is DISCARDED, not captured: start takes no body, and text
   // after the bracket is the lead thinking out loud.
   assert.deepStrictEqual(parseIntent('[agent:task start t7] go on then'),
-    { type: 'task', sub: 'start', id: 't7', who: null, body: '' });
+    { type: 'task', sub: 'start', id: 't7', who: null, reviewer: null, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:task start]'),
-    { type: 'task', sub: 'start', id: null, who: null, body: '' });
+    { type: 'task', sub: 'start', id: null, who: null, reviewer: null, body: '' });
 });
 
 test('grammar: start carries no body, so it cannot swallow the next line of the turn', () => {
@@ -924,4 +924,107 @@ test('t629: a live holder whose ticket carries a REMOVED role key falls through 
     `the named target must be one assign accepts — got ${target}`);
   assert.strictEqual(target, 'team-hand',
     'the live seat is the recoverable target, and it is the seat the same sentence names as the holder');
+});
+
+// --- t673: per-ticket reviewer template selection ---------------------------
+//
+// The selection is stored on the RECORD, which is what makes a rework round
+// reuse round 1's reviewer without a second place to keep the choice. All three
+// facts below are about the record, because that is the only durable half —
+// the spawn reads it fresh every round.
+
+const SHELL_TPL = 'clodex-team-reviewer-shell';
+
+// `systemPromptFile` is carried because the reviewer-name filter reads it: a
+// template briefed by a HAND's prompt is not a reviewer arm, and a fixture that
+// omitted the field would exercise a list the real one never produces.
+function withTemplates(names) {
+  return { getTemplates: () => ({ list: () => names.map((name) => ({ name, systemPromptFile: name })) }) };
+}
+
+test('t673: task add reviewer:<name> stores the choice on the record and names it back', () => {
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: false, reviewer: SHELL_TPL, body: 'the spec' });
+  const t = f.one('t1');
+  assert.ok(t, 'ENTER: the ticket was actually filed — a refused add would leave every assertion below vacuous');
+  assert.strictEqual(t.reviewerTemplate, SHELL_TPL);
+  assert.match(f.notes(), /reviewer template: clodex-team-reviewer-shell/,
+    'the lead is told the override took, not left to infer it from silence');
+});
+
+test('t673: an unknown reviewer template is refused AT ADD, with the list, and no ticket is filed', () => {
+  // At add rather than at review time: a name that resolves to nothing becomes a
+  // reviewer that fails to spawn after the work is done — an escalation on a
+  // finished ticket instead of a typo the lead can fix in the line it just typed.
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: false, reviewer: 'no-such-template', body: 'the spec' });
+  assert.deepStrictEqual(f.load(), [], 'nothing is filed — the refusal is not advisory');
+  assert.match(f.notes(), /no template "no-such-template"/);
+  assert.match(f.notes(), /clodex-team-reviewer-shell/, 'the available names are printed, so the fix needs no second guess');
+});
+
+test('t673: a template that is not a REVIEWER template is refused as a reviewer arm', () => {
+  // The cap still holds, so this was never a hole — but a hand's template
+  // spawned as the reviewer labels an A/B row with an arm that does not exist,
+  // and the refusal text already promised "reviewer templates available".
+  const f = mkStart({
+    getTemplates: () => ({
+      list: () => [
+        { name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer' },
+        { name: SHELL_TPL, systemPromptFile: SHELL_TPL },
+        { name: 'clodex-hand-seat', systemPromptFile: 'clodex-hand-brief' },
+      ],
+    }),
+  });
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: false, reviewer: 'clodex-hand-seat', body: 'the spec' });
+  assert.deepStrictEqual(f.load(), [], 'the hand template is not offerable as a reviewer');
+  const notes = f.notes();
+  assert.match(notes, /no template "clodex-hand-seat"/);
+  assert.match(notes, /clodex-team-reviewer-shell/, 'ENTER: the list really was printed, so its ABSENCE below is meaningful');
+  assert.ok(!/clodex-hand-seat.*available|available.*clodex-hand-seat/s.test(notes.replace(/no template "clodex-hand-seat"/, '')),
+    'and the hand template is not offered in it');
+});
+
+test('t673: task start reviewer:<name> writes the choice onto the record and names it back', () => {
+  // The other half of the spec\'s selection surface. It parsed and was silently
+  // discarded: no error, no note, and the DEFAULT reviewer — a no-op on exactly
+  // the arm the A/B has to be able to pick.
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  f.seat('lead'); f.seat('team-hand');
+  const t0 = opened(f);
+  assert.ok(!t0.reviewerTemplate, 'ENTER: the ticket starts with no template, so the write below is what put it there');
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'start', who: null, id: t0.id, park: false, reviewer: SHELL_TPL, body: '' });
+  assert.strictEqual(f.one(t0.id).reviewerTemplate, SHELL_TPL);
+  assert.match(f.notes(), /reviewer template: clodex-team-reviewer-shell/);
+});
+
+test('t673: an unknown reviewer template is refused AT START, before anything is dispatched', () => {
+  // Above the mint: a refusal below it has already reserved the seat name and
+  // cut the worktree for a ticket it then declines to start.
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  f.seat('lead'); f.seat('team-hand');
+  const t0 = opened(f);
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'start', who: null, id: t0.id, park: false, reviewer: 'no-such-template', body: '' });
+  const after = f.one(t0.id);
+  assert.match(f.notes(), /no template "no-such-template"/);
+  assert.ok(!after.reviewerTemplate, 'nothing was written');
+  assert.ok(!after.startedAt, 'and the ticket was NOT started — the refusal is not advisory');
+});
+
+test('t673: a ticket with no reviewer: token carries no reviewerTemplate at all', () => {
+  // Absent, not null: every pre-upgrade record omits the key, and the spawn path
+  // reads absent as "the team's own reviewer". A stored null would be a second
+  // spelling of the same state.
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  const t = opened(f);
+  assert.ok(!Object.prototype.hasOwnProperty.call(t, 'reviewerTemplate'),
+    'the key is omitted, matching how `parked` is written');
 });

@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **Reviewer seats can carry a shell, with mutating commands blocked.** A second
+  reviewer template, `clodex-team-reviewer-shell`, spawns with Bash for
+  git/ls/cat/sed/`node --test` so a review can measure instead of deriving;
+  writes, deletes, commits, package managers and network fetches are refused by
+  the CLI. Pick it per ticket with `reviewer:clodex-team-reviewer-shell` on task
+  add or task start. The default reviewer is unchanged, and remains the one to use where a
+  shell is not wanted.
 - **Preferences ▸ Env no longer truncates the variable name.** The name column
   took a fixed third of the row, so a long `CLAUDE_CODE_*` key was cut to an
   ellipsis while a five-letter value sat in the rest of the row. The name now

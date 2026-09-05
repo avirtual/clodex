@@ -307,5 +307,9 @@ test('the scoped name does not disturb the rest of the reservation', () => {
   assert.deepStrictEqual(rec, {
     name: 'team-reviewer-1-r1', ephemeral: true, reviewFor: 'lead', reviewTicket: 't1',
     wireLabel: 'team.t1.review-r1',
+    // t673: which template reviewed, so the review cost row can name the arm of
+    // the A/B this round belongs to. Written even when it is the default — the
+    // row must say what SPAWNED, not what was overridden.
+    reviewerTemplate: 'clodex-team-reviewer',
   });
 });

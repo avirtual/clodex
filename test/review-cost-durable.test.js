@@ -841,3 +841,213 @@ test('an unwritable destination costs the row, not the verdict', async () => {
   assert.ok(f.logs.some((l) => l.level === 'warn' && /review cost/.test(l.msg) && /unrecoverable/.test(l.msg)),
     'and the loss is logged: the seat is gone, so this round can never be priced again');
 });
+
+// --- t673: the A/B fields, end to end ----------------------------------------
+//
+// `template` and `wallMs` are read off the SAME captured record as `wireLabel`,
+// and `model` off the same live payload as the cost, so all of them are subject
+// to the teardown this whole file is about: a re-resolution by name would find
+// nothing, and the row would be written with nulls that read as "unknown"
+// rather than as the bug they are.
+
+const SHELL_REVIEWER_TEMPLATE = {
+  name: 'clodex-team-reviewer-shell',
+  systemPromptFile: 'clodex-team-reviewer-shell',
+  intents: [],
+  tools: ['Read', 'Grep', 'Glob', 'Bash'],
+  env: {},
+};
+
+test('t673: the review row records WHICH template reviewed, after the seat is reaped', async () => {
+  const f = mkFixture({ getTemplates: () => ({ list: () => [SHIPPED_REVIEWER_TEMPLATE, SHELL_REVIEWER_TEMPLATE] }) });
+  reviewingTicket(f);
+  // The ticket's own selection, as `task add reviewer:<name>` writes it.
+  const ts = f.tstore.load(f.team.root);
+  ts[0].reviewerTemplate = 'clodex-team-reviewer-shell';
+  f.tstore.save(f.team.root, ts);
+
+  const before = new Set(f.persistence.list().map((e) => e.name));
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/t1.diff');
+  const rec = f.persistence.list().find((e) => !before.has(e.name));
+  assert.ok(rec, 'ENTER: the loop actually spawned a reviewer — otherwise there is no row to assert about');
+  assert.strictEqual(rec.reviewerTemplate, 'clodex-team-reviewer-shell',
+    'the seat record carries the template that RESOLVED, which is what the row is written from');
+  // createdAt is stamped by create(), which this fixture stubs to a no-op — so
+  // it is supplied here rather than left absent. Absent is a REAL state (a
+  // record predating the field) and it is asserted as null in the next subject;
+  // conflating the two would leave the measured arm untested.
+  const spawnedAt = Date.now() - 9 * 60 * 1000;
+  f.persistence.upsert({ name: rec.name, sessionId: 'sess-r1', createdAt: spawnedAt });
+  const s = f.seat(rec.name);
+  s.sessionId = 'sess-r1';
+  writeTotals(f, { 'sess-r1': row() });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const rows = readRows(f, 't1');
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].template, 'clodex-team-reviewer-shell',
+    'the A/B groups on this field; a null here would file the shell round under the default');
+  // ~9 minutes, from the seat's OWN spawn stamp. A wallMs measured from anything
+  // later (the verdict's arrival, the row's write) would report every review as
+  // instantaneous, which is the number this field exists to get right.
+  assert.ok(rows[0].wallMs >= 9 * 60 * 1000 && rows[0].wallMs < 10 * 60 * 1000,
+    `wallMs ${rows[0].wallMs} must measure from the seat's spawn, not from the verdict`);
+});
+
+test('t673: the review row records WHICH MODEL billed, off the wire payload', async () => {
+  // The model varies INDEPENDENTLY of the template — the operator moved the
+  // default reviewer to another model mid-experiment — so a row carrying only
+  // the template attributes that switch to the template. wire-totals.json rows
+  // carry no model field, so this is legible only from the live payload, and
+  // only while the seat still resolves by name.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 1, requests: 10 }) });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-r1', model: 'claude-fable-5-1',
+      cost: { usd: 4.5, requests: 44 }, turns: 20, refusals: 1,
+      tokens: { input: 5000, output: 1500, cacheRead: 9000, cacheWrite: 700 },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.model, 'claude-fable-5-1');
+  assert.strictEqual(r.usd, 4.5, 'ENTER: the payload really was the one applied, so the model above came off that same row');
+});
+
+test('t673: a payload with a null cost still yields its model', async () => {
+  // The model is taken on the ID GATE ALONE. The cost check beside it exists to
+  // avoid overlaying an unobserved spend onto a recorded one, which says nothing
+  // about which model billed — and this is the state a seat reaped before its
+  // ledger snapshot lands in. Nulling the model here would drop the field on
+  // exactly the rounds whose cost the file already answers.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 2, requests: 20 }) });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-r1', model: 'claude-opus-5',
+      cost: { usd: null, requests: null }, turns: null, refusals: null,
+      tokens: { input: null, output: null, cacheRead: null, cacheWrite: null },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.usd, 2, 'ENTER: the null-cost payload was correctly NOT overlaid — the file answered');
+  assert.strictEqual(r.model, 'claude-opus-5', 'and the model survived the arm that rejected the cost');
+});
+
+test('t673: a payload for a DIFFERENT session contributes no model', async () => {
+  // Same gate as the cost overlay: a stale per-name map entry from an earlier
+  // round would otherwise stamp this round with the previous seat's model.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row({ cost: 1, requests: 10 }) });
+  f.m._wireTelemetry = {
+    payload: () => ({
+      sessionId: 'sess-OTHER', model: 'claude-opus-5',
+      cost: { usd: 9, requests: 90 }, turns: 3, refusals: 0,
+      tokens: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+    }),
+  };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const r = readRows(f, 't1')[0];
+  assert.strictEqual(r.usd, 1, 'ENTER: the mismatched payload was ignored for cost too');
+  assert.strictEqual(r.model, null, 'an unmatched payload names no model for this row');
+});
+
+test('t673: no wire telemetry at all reports model null', async () => {
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row() });
+  f.m._wireTelemetry = null;
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+  assert.strictEqual(readRows(f, 't1')[0].model, null);
+});
+
+test('t673: a reviewer record with no spawn stamp reports wallMs null, not zero', async () => {
+  // The record predating the field. A 0 would enter the A/B as an
+  // instantaneous review and drag the median of whichever group it lands in.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  assert.ok(!f.persistence.get(rec.name).createdAt, 'ENTER: this record genuinely carries no spawn stamp');
+  writeTotals(f, { 'sess-r1': row() });
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+  assert.strictEqual(readRows(f, 't1')[0].wallMs, null);
+});
+
+test('t673: a ticket that chose no template files its row under the default', async () => {
+  // The other arm of the A/B, and the one every pre-t673 row is in: absent on
+  // the record means the team's own reviewer, and review-ab folds a null
+  // template into the default group.
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1', 'sess-r1');
+  writeTotals(f, { 'sess-r1': row() });
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT');
+  assertReaped(f, rec.name);
+
+  const rows = readRows(f, 't1');
+  assert.strictEqual(rows[0].template, 'clodex-team-reviewer',
+    'the row names the template that spawned, which for an unoverridden ticket is the default');
+});
+
+test('t673: a rework round reuses the ticket\'s reviewer template', async () => {
+  // The record is the only place the choice lives, and _spawnTicketReview reads
+  // it fresh on every spawn — so nothing has to carry it across the round
+  // boundary. A round-1-only read would silently put round 2 in the other arm of
+  // the A/B, which is exactly the comparison this ticket exists to make.
+  const f = mkFixture({ getTemplates: () => ({ list: () => [SHIPPED_REVIEWER_TEMPLATE, SHELL_REVIEWER_TEMPLATE] }) });
+  reviewingTicket(f);
+  const ts = f.tstore.load(f.team.root);
+  ts[0].reviewerTemplate = 'clodex-team-reviewer-shell';
+  f.tstore.save(f.team.root, ts);
+
+  const spawn = (sessionId) => {
+    const before = new Set(f.persistence.list().map((e) => e.name));
+    f.m._spawnTicketReview(f.team, 't1', '/tmp/t1.diff');
+    const rec = f.persistence.list().find((e) => !before.has(e.name));
+    assert.ok(rec, 'ENTER: a reviewer was spawned for this round');
+    f.persistence.upsert({ name: rec.name, sessionId, createdAt: Date.now() - 60 * 1000 });
+    f.seat(rec.name).sessionId = sessionId;
+    return f.persistence.get(rec.name);
+  };
+
+  const r1 = spawn('sess-r1');
+  writeTotals(f, { 'sess-r1': row() });
+  await f.m._handleReviewDone(f.m.sessions.get(r1.name), 'VERDICT: REWORK\n\nMUST-FIX\n- a');
+
+  const t = f.one('t1');
+  t.loopStep = 'review';
+  f.tstore.save(f.team.root, [t]);
+
+  const r2 = spawn('sess-r2');
+  assert.notStrictEqual(r2.name, r1.name, 'ENTER: round 2 is a different seat');
+  writeTotals(f, { 'sess-r1': row(), 'sess-r2': row() });
+  await f.m._handleReviewDone(f.m.sessions.get(r2.name), 'VERDICT: ACCEPT');
+
+  const rows = readRows(f, 't1');
+  assert.strictEqual(rows.length, 2);
+  assert.deepStrictEqual(rows.map((r) => r.template),
+    ['clodex-team-reviewer-shell', 'clodex-team-reviewer-shell'],
+    'both rounds ran under the ticket\'s chosen template');
+});

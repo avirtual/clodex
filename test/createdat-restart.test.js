@@ -280,6 +280,40 @@ function mkManagerWithStore(extraDeps = {}) {
   return { m, persistence, stop };
 }
 
+// t673: `reviewerTemplate` rides the SAME preserved-field list, and for a reason
+// this file's subject makes concrete. A reviewer that reloads is killed and
+// re-created; the field says which of two templates is under test in the A/B,
+// and it is read at review close, after the reload. Dropped across the seam, the
+// row is written with template:null and review-ab files that round under the
+// DEFAULT — a wrong attribution in the measurement the template exists to
+// produce, and silent, because null is also the legitimate "unknown".
+test('t673: [agent:context reload] preserves a reviewer seat\'s template', async () => {
+  const eng = mkEngine();
+  const entry = {
+    name: 'rv', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, sessionId: 's-9',
+    ephemeral: true, reviewFor: 'lead', reviewTicket: 't1',
+    reviewerTemplate: 'clodex-team-reviewer-shell',
+  };
+  eng.stores.persistence.upsert(entry);
+  const s = liveSession(eng, 'rv', entry);
+  s.agentType = 'claude';
+  const { seen, removals } = probe(eng);
+  eng.manager._injectReloadHandoff = () => {};
+
+  eng.manager._handleContextIntent(s, 'reload', 'continue the review');
+  for (let i = 0; i < 200 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+
+  assertEntered(seen, removals, 'rv', '[agent:context reload]');
+  const rec = seen[0].recordAtCreate;
+  assert.strictEqual(rec && rec.reviewerTemplate, 'clodex-team-reviewer-shell',
+    'the template must survive the reload, or the review row is attributed to the wrong arm of the A/B');
+  // Its neighbours on the same list, asserted together: the failure mode is a
+  // list edited to add one name and drop another, which no single-field
+  // assertion can see.
+  assert.strictEqual(rec.reviewTicket, 't1', 'and the ticket it routes its verdict to');
+  assert.strictEqual(rec.ephemeral, true, 'and the flag that makes accept tear it down');
+});
+
 test('restore-on-launch keeps the record, so create()\'s own read preserves createdAt', async () => {
   const { m, persistence, stop } = mkManagerWithStore();
   // Restore-on-launch: the entry was never removed (archive/quit/natural exit
