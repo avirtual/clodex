@@ -2,19 +2,24 @@
 
 // Run: node --test test/session-move.test.js
 //
-// "Move Session…" — same record, new cwd, restart. Three layers, each pinned
+// "Move Session…" — same record, new cwd, restart. Four layers, each pinned
 // against the thing it can silently get wrong:
 //
 //   exitDisposition   the leaf ptyProc.onExit reads. A move kills the pty on
 //                     purpose, so the exit must read as EXPECTED (no
 //                     missing-binary toast) without dropping a bash row's record.
 //   manager.move      the refusals, the record-preserving rewrite, the team
-//                     re-derivation from the new cwd, and the failure degrade.
+//                     re-derivation from the new cwd, and both failure degrades.
+//   ptyProc.onExit    that the callback create() installs actually ASKS the leaf
+//                     with the session's `_moving`. Answering right and asking
+//                     wrong are independent failures, and the leaf table cannot
+//                     see the second one.
 //   session:context-menu  which rows are offered the item at all.
 //
 // The manager tests drive the REAL move() with a stubbed create()/pty, because
 // what is under test is the ORDER of kill → setCwd → create and the record that
-// survives it — not a spawn.
+// survives it — not a spawn. The onExit tests are the opposite: they need the
+// real create(), because the wiring is what they are about.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
