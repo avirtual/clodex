@@ -245,7 +245,10 @@ fallback, waits for the map slot to free, rewrites only `cwd`
 (`persistence.setCwd`) and re-creates from the surviving record in the same
 workspace with `--resume`. Everything else — name, sessionId, prompts, tools,
 agents, plugins, env, stripLevel, label, createdAt — is carried by the record,
-which is why no `_preserveAcrossRestart` is needed here (nothing dropped it).
+which is why a move needs neither `_preserveAcrossRestart` nor the stripLevel/
+label re-assert every kill()-based respawn owes: those rebuild a dropped record
+from spawn args, while create()'s upsert here spread-merges over one still
+standing.
 Team membership is re-derived from the new cwd by `create()`'s own `resolveTeam`,
 so a seat moved into a team's repo joins that team and one moved out leaves it.
 A respawn that throws leaves the record in place holding the NEW cwd, so the seat

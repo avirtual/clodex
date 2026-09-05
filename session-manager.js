@@ -2746,9 +2746,6 @@ function createSessionManager(deps) {
         getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
         return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
       }
-      const lvl = stripLevelOf(entry);
-      if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
-      if (entry.label) getPersistence().setLabel(name, entry.label);
       return {
         ok: true,
         cwd: newCwd,

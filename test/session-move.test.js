@@ -270,7 +270,11 @@ test('move persists the new cwd only AFTER the old process is gone', async () =>
   assert.strictEqual(store[0].cwd, dir, 'and it is rewritten once the process is gone');
 });
 
-test('move re-asserts stripLevel and label, which are not spawn args', async () => {
+// stripLevel and label are NOT re-asserted by move(), unlike every kill()-based
+// respawn: those drop the record and rebuild it from spawn args, while a move
+// leaves it standing and create()'s upsert spread-merges over it. So this pins
+// the SURVIVAL, not a setter call — it goes red when move routes through kill().
+test('stripLevel and label survive a move — the record they live on was never dropped', async () => {
   const dir = mkTmpRoot('clodex-move-');
   const { m, store } = mkMove({ entries: [BASE] });
   seedLive(m, 'seat');
