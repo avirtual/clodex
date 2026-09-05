@@ -15,6 +15,8 @@ merely violate the spirit of the thing: the test suite fails the build for it
 - [2.2 Surfaces: which transports may call a method](#22-surfaces-which-transports-may-call-a-method)
 - [3. The two halves, and the law that separates them](#3-the-two-halves-and-the-law-that-separates-them)
 - [4. The engine `host` object](#4-the-engine-host-object)
+- [4.1 `inject` is typing, not messaging](#41-inject-is-typing-not-messaging--four-rules)
+- [4.2 `fsScope` — the local-cwd gate, and what it does not do](#42-fsscope--the-local-cwd-gate-and-what-it-does-not-do)
 - [5. The renderer `rhost` object](#5-the-renderer-rhost-object)
 - [6. The seven UI slots](#6-the-seven-ui-slots)
 - [7. Intents — contributing an `[agent:…]` verb](#7-intents--contributing-an-agent-verb)
@@ -557,7 +559,7 @@ meaning: if the agent is mid-turn, hold the text and deliver it with its next
 turn rather than interrupting. Pass `{ parkable: false }` only for something
 that genuinely cannot wait.
 
-#### `inject` is typing, not messaging — four rules
+#### 4.1 `inject` is typing, not messaging — four rules
 
 `inject` is the narrowest part of this API and the easiest to misuse, because it
 looks like "send a message" and is actually "type this at a prompt". Everything
@@ -656,6 +658,8 @@ something), not the call.
 There is **no length cap** — text is never truncated at any point on this path,
 at any size. Size is the one thing you do not have to worry about here.
 
+#### 4.2 `fsScope` — the local-cwd gate, and what it does not do
+
 **`fsScope(name)`** is the one you must use before touching the filesystem on a
 session's behalf. It returns `{ cwd }` for a local session with a working
 directory, and otherwise `{ error }` where error is:
@@ -690,9 +694,8 @@ and is this local?* It is not:
   workspace's cwd is reachable through it. Compare `handle.workspaceId` against a
   workspace you established yourself when that matters (§14).
 - **not cwd confinement.** It hands you a cwd; nothing stops you — or a path bug
-  in your own code — resolving out of it. A lexical join is not enough: a symlink
-  *inside* the cwd pointing outside it resolves out, and `fsScope` neither knows
-  nor cares. Confining reads to the cwd is your code's job.
+  in your own code — resolving out of it. Confining reads to the cwd is your
+  code's job, and the rule below is how that job is done.
 - **not a sandbox.** Your engine half is in-process Node with `require('fs')` and
   the app's full authority. Everything in this document is a **contract, not a
   containment boundary**; see §12.
@@ -700,6 +703,22 @@ and is this local?* It is not:
 That distinction is worth stating this bluntly because the reassuring version of
 it was written into three other places in this codebase and was false in all of
 them.
+
+**The confinement rule, for any plugin that opens a path a user or an agent
+named.** Resolve the candidate with `fs.realpathSync` and prefix-check the
+resolved string against the root you are confining to, on **every read** — not
+once per directory listing, and not on the string you built by joining. A
+lexical join is defeated by a symlink *inside* the tree pointing out of it: the
+join stays under the root, the open does not, and no host code sees either. Two
+details the check needs to be worth writing: compare against the root with a
+trailing separator, or `/data-old` passes as inside `/data`; and resolve the
+root itself once through `realpathSync` too, since a root reached through a
+symlink never prefix-matches a resolved child. `realpathSync` throws on a
+missing path, so a `catch` that refuses is the safe arm.
+
+This rule is stated here and nowhere else in this document — §14's known-gap
+entry points at it rather than repeating it, because two copies of a security
+rule drift and the weaker copy is the one someone reads.
 
 ### Session hooks
 
@@ -1113,7 +1132,9 @@ Neither this nor `openPath` is one of the seven UI slots; they take no spec and
 register nothing.
 
 `rhost.lib.renderDiffHtml` renders a unified diff to HTML, the same way core's
-own diff views do.
+own diff views do. There is deliberately **no markdown renderer** on `rhost.lib`
+at `"1"`, so a plugin displaying untrusted content — a file it read, an agent's
+text — builds DOM nodes and sets each leaf's `textContent`, never `innerHTML`.
 
 ### Cleaning up after yourself
 
@@ -1966,8 +1987,8 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   no host code sees the paths you build from the cwd it returns. If a session name can reach your
   handler from somewhere you do not control, a cwd in another workspace is reachable through it.
   Compare `handle.workspaceId` against a workspace you established yourself when that matters to
-  you, and confine your own path joins (a lexical check is not enough — a symlink inside the cwd
-  resolves out of it). Closing the workspace half in the host would mean carrying a caller workspace
+  you, and confine your own path joins by the realpath rule in §4.2, which is where that rule is
+  stated. Closing the workspace half in the host would mean carrying a caller workspace
   on the transport — additive, but not yet decided. The transport now carries a caller *surface*
   (§2.2), which is the same shape of fact and shows the plumbing is available; it answers "desktop
   or browser", not "which window", so it does not close this gap.
