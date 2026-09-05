@@ -420,6 +420,11 @@ test('the renderer rebuilds a failed row from res.kept, not just a toast', () =>
   assert.ok(/addFailedSessionToSidebar\(/.test(body),
     'and rebuilds the row the session-exit already removed — session:retrySpawn is what that row calls');
   assert.ok(/cwd: res\.cwd/.test(body), 'from the cwd the manager reports, not the stale sidebar dataset');
+  // The exit-timeout arm returns while the pty may still be alive, so no
+  // session-exit has fired and the LIVE row is still there. Adding the ghost row
+  // beside it would put two rows under one data-name.
+  assert.ok(body.indexOf('removeSession(name') < body.indexOf('addFailedSessionToSidebar('),
+    'the live row is torn down BEFORE the ghost row is added');
 });
 
 // -------------------------------------------- the real onExit wiring

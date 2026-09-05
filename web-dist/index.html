@@ -34777,6 +34777,7 @@ ${detail}` });
           return window.api.moveSession(name, dir).then((res) => {
             if (!res || !res.ok) {
               if (res && res.kept) {
+                removeSession(name, { keepPersisted: true });
                 addFailedSessionToSidebar({
                   name,
                   type: res.type || snapType,

@@ -241,7 +241,7 @@ does NOT route through `kill()`, which drops the persistence record
 unconditionally — the record is exactly what a move must keep. Instead it sets
 `_moving` on the live session (read by `exitDisposition`, so the exit is
 *expected* and no crash toast fires), kills the pty with the usual 5s SIGKILL
-fallback, waits for the map slot to free, rewrites only `cwd`
+fallback, waits for the map slot to free, rewrites `cwd`
 (`persistence.setCwd`) and re-creates from the surviving record in the same
 workspace with `--resume`. Everything else — name, sessionId, prompts, tools,
 agents, plugins, env, stripLevel, label, createdAt — is carried by the record,
@@ -256,16 +256,22 @@ because the move spawns it live and the stamp would otherwise bring it back dimm
 next launch. The `create()` catch arm clears it a second time: that arm re-upserts
 the snapshot read at the top of `move()`, which still carries `archivedAt`, and
 `upsert` spread-merges — so the stamp comes back unless it is cleared after. The
-snapshot must stay an inline `{ ...entry }` literal there; `test/preserve-across-
-restart.test.js`'s t491 scanner finds these arms by that shape. A second `move()` while one is in flight is refused off the live
-session's `_moving` flag: both used to pass the live check, and the loser's catch
-arm would then upsert ITS destination over a seat running in the winner's.
+snapshot there must stay an inline `{ ...entry }` literal: the t491 scanner in
+`test/preserve-across-restart.test.js` finds every restart catch arm by that shape,
+and hoisting it into a variable makes the arm invisible to it.
+
+A second `move()` while one is in flight is refused off the live session's
+`_moving` flag: both used to pass the live check, and the loser's catch arm would
+then upsert ITS destination over a seat running in the winner's.
 
 Both failure arms — the exit that outlasts `_waitForExit`, and a `create()` that
 throws — return `{ ok:false, kept:true, error, type, cwd, team }`, and the renderer
 turns that into the same **failed ghost row** the restore path builds
-(`addFailedSessionToSidebar`, whose click calls `session:retrySpawn`). The row is
-not cosmetic: by then the pty is dead and `session-exit` has already removed the
+(`addFailedSessionToSidebar`, whose click calls `session:retrySpawn`), after a
+`removeSession(name, { keepPersisted: true })` — on the exit-timeout arm the pty
+may still be alive, so no `session-exit` has fired and the live row is still
+there; adding the ghost beside it would put two rows under one `data-name`. The
+row is not cosmetic: on the common arm the pty is dead and `session-exit` removed the
 live tab, so without it the seat is invisible until the next launch. The `cwd` the
 result carries is the one the record actually holds — the destination when the
 record was rewritten, the origin when the move never got that far. Moving across

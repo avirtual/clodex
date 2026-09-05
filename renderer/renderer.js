@@ -649,6 +649,7 @@ function moveSessionWithPicker(name) {
     return window.api.moveSession(name, dir).then((res) => {
       if (!res || !res.ok) {
         if (res && res.kept) {
+          removeSession(name, { keepPersisted: true });
           addFailedSessionToSidebar({
             name, type: res.type || snapType, cwd: res.cwd,
             error: res.error, team: res.team || null, backend: snapBackend,
