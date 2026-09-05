@@ -943,6 +943,19 @@ test('_host plugins.removeSourcePlugin rescans and announces the plugin removed'
     'removal ran the removed-loop via rescan, not a hand-rolled deactivate');
 });
 
+test('_host plugins.installFromSource reports ok:true with a rescanError when rescan throws AFTER the install committed (t683 r2 nit)', async () => {
+  const manager = makeManager();
+  const loader = fakeLoader({
+    installFromSource: async () => ({ ok: true, id: 'demo', dir: '/x/demo', commit: 'abc1234' }),
+    rescan: () => { throw new Error('rescan blew up'); },
+  });
+  const { engine } = makeHost({ manager, loader });
+  const r = await engine.dispatch('_host', 'plugins.installFromSource', ['owner/repo'], 'desktop');
+  assert.strictEqual(r.ok, true, 'the install itself succeeded and must not be reported as a failure');
+  assert.strictEqual(r.id, 'demo');
+  assert.match(r.rescanError, /rescan blew up/);
+});
+
 test('_host plugins.installFromSource does not rescan when the loader refuses', async () => {
   const manager = makeManager();
   const loader = fakeLoader({

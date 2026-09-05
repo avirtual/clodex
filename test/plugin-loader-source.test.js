@@ -377,6 +377,18 @@ test('applyUpdate refuses a sha mismatch against the commit the caller accepted'
     'the installed copy is untouched by a refused update');
 });
 
+test('applyUpdate accepts an abbreviated-vs-full commit match, not just an exact string (t683 r2 nit)', async () => {
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo');
+  const { loader } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  await loader.installFromSource('owner/repo@main');
+  // Accept the FULL-length form of the same commit the fetch will resolve to
+  // the abbreviated 'def5678' — a strict !== would wrongly refuse this.
+  const full = 'def5678900000000000000000000000000000000';
+  const r = await loader.applyUpdate('demo', full);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+});
+
 test('applyUpdate replaces the copy in place, keeps enable state, and updates the sidecar', async () => {
   const installBytes = buildTarballBytes('abc1234', 'demo');
   const updateBytes = buildTarballBytes('def5678', 'demo', { 'NEWFILE.txt': 'v2' });
