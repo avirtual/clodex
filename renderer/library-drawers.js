@@ -20,9 +20,6 @@
 // FLAG (cross-island params): getActiveSession (prompt inject → activeSession is
 // a reassignable let), and setAgentLibCache / setSkillLibCache (checklists.js
 // owns those caches; the two refresh lists re-seed them). esc from lib/format.
-//
-// The moved CRUD blocks are guaranteed by move-only fidelity, not by tests. The
-// bundle groups are NOT a move (test/plugin-bundle-drawer.test.js).
 
 const { esc } = require('./lib/format');
 const { splitModelArg } = require('./lib/args-model');
