@@ -469,7 +469,7 @@ function createTicketMethods(deps, shared) {
           tpl = obj;
         } else {
           const wanted = v.toLowerCase();
-          const all = getTemplates().list();
+          const all = allTemplates();
           const matches = all.filter(t => (t.name || '').toLowerCase() === wanted);
           if (matches.length === 0) {
             const names = all.map(t => t.name).filter(Boolean);
@@ -4548,13 +4548,6 @@ function createTicketMethods(deps, shared) {
       const noTaskDir = this._ticketTaskDirRefusal(team, ticket, 'start', ticketStarted(ticket));
       if (noTaskDir) { log.info('intent', `task start by ${session.name}: ${ticket.id} refused — no task dir`); reply(noTaskDir); return; }
       const startReviewer = intent.reviewer || null;
-      if (startReviewer) {
-        const known = this._reviewerTemplateNames();
-        if (!known.includes(startReviewer)) {
-          reply(`error: no template "${startReviewer}" in the library — reviewer templates available: [${known.join(', ')}]`);
-          return;
-        }
-      }
       const assignee = ticket.assignee;
       // The role the ticket was FILED under, which is what mints the seat name and
       // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
@@ -4621,6 +4614,13 @@ function createTicketMethods(deps, shared) {
         // phrasing, and the two replies are told apart by it across the suite.
         reply(`error: ticket ${intent.id} is already started — ${holder} holds it; [agent:task assign ${intent.id} ${this._resolvableAssignTarget(team, ticket)}] re-sends the spec to it`);
         return;
+      }
+      if (startReviewer) {
+        const known = this._reviewerTemplateNames();
+        if (!known.includes(startReviewer)) {
+          reply(`error: no template "${startReviewer}" in the library — reviewer templates available: [${known.join(', ')}]`);
+          return;
+        }
       }
       // Start IS the dispatch, so it unparks — parking means "not started yet",
       // and a started ticket left flagged stays exempt from the stall watchdog,
