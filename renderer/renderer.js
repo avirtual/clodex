@@ -648,6 +648,12 @@ function moveSessionWithPicker(name) {
     if (!dir) return;
     return window.api.moveSession(name, dir).then((res) => {
       if (!res || !res.ok) {
+        if (res && res.kept) {
+          addFailedSessionToSidebar({
+            name, type: res.type || snapType, cwd: res.cwd,
+            error: res.error, team: res.team || null, backend: snapBackend,
+          });
+        }
         showToast(`Move failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name });
         return;
       }

@@ -2717,16 +2717,22 @@ function createSessionManager(deps) {
       if (entry.cwd === newCwd) return { ok: false, error: `${name} is already in ${newCwd}` };
 
       const s = this.sessions.get(name);
+      if (s && s._moving) return { ok: false, error: 'move already in progress' };
       if (s) {
         log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${s.pty.pid}`);
         s._moving = true;
         try { s.pty.kill(); } catch {}
         setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
         if (!await this._waitForExit(name)) {
-          return { ok: false, error: 'old process did not exit in time — session not moved' };
+          return {
+            ok: false, kept: true,
+            error: 'old process did not exit in time — session not moved',
+            type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+          };
         }
       }
       getPersistence().setCwd(name, newCwd);
+      if (entry.archivedAt) getPersistence().setArchived(name, false);
       const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
       try {
         await this.create(
@@ -2744,7 +2750,12 @@ function createSessionManager(deps) {
         );
       } catch (err) {
         getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
-        return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
+        if (entry.archivedAt) getPersistence().setArchived(name, false);
+        return {
+          ok: false, kept: true,
+          error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
+          type: entry.type, cwd: newCwd, team: this.teamNameFor(newCwd),
+        };
       }
       return {
         ok: true,

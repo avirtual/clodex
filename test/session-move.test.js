@@ -20,6 +20,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
+const osReal = require('node:os');
+const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 
 const { createSessionManager, exitDisposition } = require('../session-manager');
 const { createTeamManifest } = require('../team-manifest');
@@ -71,6 +73,11 @@ function mkMove({ entries = [], teamHome = null, createThrows = null } = {}) {
     setCwd: (n, cwd) => { const e = store.find((x) => x.name === n); if (e && cwd) e.cwd = cwd; },
     setStripLevel: (n, lvl) => { const e = store.find((x) => x.name === n); if (e) { if (lvl >= 1) e.stripLevel = lvl; else delete e.stripLevel; } },
     setLabel: (n, label) => { const e = store.find((x) => x.name === n); if (e) e.label = label; },
+    setArchived: (n, on) => {
+      const e = store.find((x) => x.name === n);
+      if (!e) return;
+      if (on) e.archivedAt = Date.now(); else delete e.archivedAt;
+    },
   };
   const tm = teamHome ? createTeamManifest({ fs: fsReal, clodexHome: teamHome }) : null;
   const SessionManager = createSessionManager({
@@ -283,13 +290,55 @@ test('stripLevel and label survive a move — the record they live on was never 
   assert.strictEqual(store[0].label, 'My Seat');
 });
 
-test('move works on an ARCHIVED (not live) seat — no process to kill', async () => {
+test('move works on a NOT-LIVE seat — no process to kill', async () => {
   const dir = mkTmpRoot('clodex-move-');
   const { m, store, created } = mkMove({ entries: [BASE] });
   const r = await m.move('seat', dir); // nothing in m.sessions
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
   assert.strictEqual(store[0].cwd, dir);
   assert.strictEqual(created.length, 1, 'it is respawned in the new folder');
+});
+
+// A move spawns the seat LIVE. Leaving the archive stamp on the record it spawned
+// from means the next launch restores it as a dimmed archived row — a seat the
+// operator just moved and is typing into, greyed out and not resumed.
+test('move on an ARCHIVED record clears the archive stamp — it comes back live, not dimmed', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, store, created } = mkMove({ entries: [{ ...BASE, archivedAt: 9090 }] });
+  assert.strictEqual(store[0].archivedAt, 9090, 'ENTER: it starts archived');
+
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(store[0].archivedAt, undefined, 'the stamp is gone');
+  assert.strictEqual(store[0].cwd, dir);
+  assert.strictEqual(created.length, 1);
+});
+
+test('a NON-archived record is left alone — move does not invent an archive stamp', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, store } = mkMove({ entries: [BASE] });
+  await m.move('seat', dir);
+  assert.ok(!('archivedAt' in store[0]), 'no archivedAt key was written');
+});
+
+// ------------------------------------------------------------ re-entrancy
+
+// Two overlapping moves (a double-click on the menu item, or a peer racing the
+// operator) both used to pass the live check. The second's create() throws
+// "already exists" and its catch arm then upserts ITS destination over a seat now
+// running somewhere else — a record naming a folder the live process is not in.
+test('a second move while one is in flight is refused, and rewrites nothing', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, store, created } = mkMove({ entries: [BASE] });
+  const s = seedLive(m, 'seat');
+  s._moving = true;
+
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'move already in progress');
+  assert.strictEqual(store[0].cwd, '/old', 'the record still names the folder the live process is in');
+  assert.deepStrictEqual(created, [], 'and nothing was respawned');
+  assert.strictEqual(m.sessions.get('seat'), s, 'the in-flight move\'s process was not killed a second time');
 });
 
 // -------------------------------------------------------- failure degrade
@@ -307,6 +356,211 @@ test('a failed respawn KEEPS the record at the new cwd — the retry/forget row,
   assert.ok(after, 'the record is still there — this is the pre-v0.5.3 "agents vanish" bug');
   assert.strictEqual(after.cwd, dir, 'holding the NEW cwd, so the restore retries the move');
   assert.strictEqual(after.sessionId, 'sess-abc', 'and still the conversation');
+});
+
+// The record surviving is only half of it. The pty is already dead and the row
+// already gone from the sidebar by the time create() throws, so without these
+// fields the renderer has nothing to rebuild a row from and the seat is invisible
+// until the next launch.
+test('the failed-respawn result carries what the retry ROW needs: kept, the NEW cwd, the type', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m } = mkMove({ entries: [BASE], createThrows: 'spawn exploded' });
+  seedLive(m, 'seat');
+  const r = await m.move('seat', dir);
+
+  assert.strictEqual(r.kept, true, 'the flag the renderer branches on');
+  assert.strictEqual(r.cwd, dir, 'the NEW cwd — retrySpawn re-creates from the record, which now holds it');
+  assert.strictEqual(r.type, 'claude', 'the row needs a type for its chip and its retry');
+  assert.ok('team' in r, 'and the team key so the row groups under the destination');
+});
+
+// The catch arm re-upserts a SNAPSHOT of the record as it was read at the top of
+// move() — which still carried the archive stamp the move had just cleared. A
+// spread-merge would put it straight back, and the seat the operator is about to
+// retry would come back dimmed.
+test('a failed respawn does not resurrect the archive stamp the move cleared', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, store } = mkMove({ entries: [{ ...BASE, archivedAt: 9090 }], createThrows: 'spawn exploded' });
+  seedLive(m, 'seat');
+  assert.strictEqual(store[0].archivedAt, 9090, 'ENTER: it starts archived');
+
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.kept, true, 'ENTER: the failure arm ran');
+  assert.strictEqual(store[0].archivedAt, undefined, 'the stamp stayed gone');
+  assert.strictEqual(store[0].cwd, dir, 'and the record still holds the destination');
+});
+
+test('the exit-TIMEOUT result also carries a retry row, at the OLD cwd — that move never happened', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, store, created } = mkMove({ entries: [BASE] });
+  const s = seedLive(m, 'seat');
+  // The pty ignored SIGTERM past the deadline. SIGKILL is armed at 5s, so it is
+  // dead by the time an operator sees anything — but it never ran in the
+  // destination, so the row must name where it actually was.
+  s.pty.kill = () => {};
+  m._waitForExit = async () => false;
+
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.kept, true);
+  assert.strictEqual(r.cwd, '/old', 'the OLD cwd — the record was never rewritten');
+  assert.strictEqual(r.type, 'claude');
+  assert.strictEqual(store[0].cwd, '/old', 'and the record agrees');
+  assert.deepStrictEqual(created, [], 'nothing was respawned');
+});
+
+// A source-shape pin, like the peer/sandbox one below: this branch runs only
+// against a live Electron sidebar, and the failure it guards is the ABSENCE of a
+// call — a toast-only arm passes every runtime assertion about the toast.
+test('the renderer rebuilds a failed row from res.kept, not just a toast', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
+  const fn = src.slice(src.indexOf('function moveSessionWithPicker'));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
+  assert.ok(/res\.kept/.test(body), 'it branches on the kept flag');
+  assert.ok(/addFailedSessionToSidebar\(/.test(body),
+    'and rebuilds the row the session-exit already removed — session:retrySpawn is what that row calls');
+  assert.ok(/cwd: res\.cwd/.test(body), 'from the cwd the manager reports, not the stale sidebar dataset');
+});
+
+// -------------------------------------------- the real onExit wiring
+
+// The leaf table at the top of this file proves exitDisposition ANSWERS
+// correctly. It cannot prove ptyProc.onExit ASKS it correctly: delete the one
+// `moving: session._moving` argument and every leaf test above stays green while
+// every real move reports a crash ("exited unexpectedly (signal 15)") and, for a
+// bash row, drops the record. So this one goes through the real create() with a
+// fake pty, captures the callback create() installed, and fires it.
+function mkExitProbe() {
+  const root = mkTmpRoot('clodex-move-exit-');
+  const removed = [];
+  const sent = [];
+  let onExit = null;
+  const SessionManager = createSessionManager({
+    REGISTRY_DIR: root,
+    MSG_DIR: pathReal.join(root, 'messages'),
+    PENDING_DIR: pathReal.join(root, 'pending'),
+    fs: fsReal, path: pathReal, os: osReal,
+    pathFor: pathForReal, runDirFor: runDirForReal,
+    ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }),
+    setupClaudeHook: (n) => {
+      fsReal.mkdirSync(runDirForReal(root, n), { recursive: true });
+      return pathReal.join(root, 'settings.json');
+    },
+    bakePrompt: (_r, _n, realIpc) => realIpc,
+    promptCacheDir: () => pathReal.join(root, 'cache'),
+    readCache: () => null,
+    buildIpcPrompt: () => 'IPC\n',
+    mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
+    readAppendBodies: () => [],
+    resolveSystemPromptFile: () => null,
+    pluginGrammarLines: () => [],
+    resolveTeam: () => null,
+    formatTeamBlock: () => '',
+    matchSeatRole: () => null,
+    getAgentLibrary: () => ({ list: () => [] }),
+    unionEnabled: () => [],
+    writeAgentPlugin: () => null,
+    effectiveInjectedAgents: () => [],
+    writeSkillPlugin: () => null,
+    effectiveInjectedSkills: () => [],
+    getPersistence: () => ({
+      list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {},
+      remove: (n) => removed.push(n),
+    }),
+    getUiSettings: () => ({ get: () => ({}) }),
+    getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
+    getUserDataPath: () => root,
+    getRemoteServer: () => null,
+    memoryStore: { list: () => [] },
+    composeDigest: () => null,
+    resolveProxyBase: () => null,
+    resolveProxyAgentId: ({ name }) => `clodex-${name}-rt`,
+    normalizeProxyBase: (v) => v,
+    lastTranscriptWrite: () => null,
+    registry: { register: () => {}, unregister: () => {} },
+    Transport: class {
+      static async isSocketLive() { return false; }
+      async start() {}
+      stop() {}
+    },
+    JsonlWatcher: class { start() {} stop() {} },
+    pty: {
+      spawn: () => ({
+        pid: 4242,
+        onData() {},
+        onExit(fn) { onExit = fn; },
+        kill() {},
+        write() {}, resize() {},
+      }),
+    },
+    notifyOS: () => {},
+    collectSystemDiagnostics: () => ({}),
+    whichBin: () => null,
+    diagWarning: () => '',
+    diagSummary: () => '',
+    // _cleanup runs off the same onExit callback, AFTER the assertions' event —
+    // unstubbed it throws there and the fire() call never returns.
+    cleanupClaudeHook: () => {},
+    cleanupCodexHook: () => {},
+    cleanupSkillPlugin: () => {},
+    cleanupAgentPlugin: () => {},
+    log: { info() {}, warn() {}, error() {} },
+    DEFAULT_WORKSPACE_ID: 'default',
+  });
+  const m = new SessionManager();
+  m._sendToSession = (...args) => sent.push(args);
+  m._broadcast = () => {};
+  const spawn = async (name, type = 'claude') => {
+    await m.create(name, type, osReal.tmpdir(), [], null, 'ws');
+    const s = m.sessions.get(name);
+    try { if (s.sentinel) s.sentinel.stop(); } catch {}
+    try { if (s.watcher) s.watcher.stop(); } catch {}
+    try { if (s.ctxWatcher) s.ctxWatcher.close(); } catch {}
+    clearTimeout(s._bootDrainTimer);
+    return s;
+  };
+  return { m, spawn, removed, sent, fire: (payload) => onExit(payload) };
+}
+
+const exitEvent = (sent) => (sent.find((a) => a[1] === 'session-exit') || [])[4] || null;
+
+test('onExit reads _moving off the session: a moved agent seat exits EXPECTED, record intact', async () => {
+  const { spawn, removed, sent, fire } = mkExitProbe();
+  const s = await spawn('seat');
+  s._moving = true;
+  fire({ exitCode: 0, signal: 15 });
+
+  const ev = exitEvent(sent);
+  assert.ok(ev, 'ENTER: the session-exit event was emitted at all');
+  assert.strictEqual(ev.expected, true,
+    'an unexpected exit toasts "exited unexpectedly (signal 15)" on every single move');
+  assert.deepStrictEqual(removed, [], 'and the record the move is about to rewrite was not dropped');
+});
+
+test('onExit without _moving still reports an agent crash as UNEXPECTED', async () => {
+  const { spawn, sent, fire } = mkExitProbe();
+  await spawn('seat');
+  fire({ exitCode: 1, signal: 15 });
+  assert.strictEqual(exitEvent(sent).expected, false,
+    'the flag is what flips it — not something that reads expected for every exit');
+});
+
+test('onExit reads _moving for a BASH row too: its record is not dropped mid-move', async () => {
+  const { spawn, removed, sent, fire } = mkExitProbe();
+  const s = await spawn('shell', 'bash');
+  s._moving = true;
+  fire({ exitCode: 0, signal: 15 });
+  assert.strictEqual(exitEvent(sent).expected, true);
+  assert.deepStrictEqual(removed, [],
+    'a bash row exiting on its own IS dropped — the move flag is the only thing suppressing it here');
+});
+
+test('a bash row exiting on its own IS dropped — ENTER for the assertion above', async () => {
+  const { spawn, removed, fire } = mkExitProbe();
+  await spawn('shell', 'bash');
+  fire({ exitCode: 0, signal: null });
+  assert.deepStrictEqual(removed, ['shell'],
+    'without this, the previous test\'s empty `removed` would also pass against a manager that never removes');
 });
 
 // ------------------------------------------------- team re-derivation

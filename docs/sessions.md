@@ -231,7 +231,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
-| Move (right-click "Move Session…") | kept, `cwd` rewritten | killed + respawned (`--resume`) | tab rebuilt under the new folder |
+| Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
 
 **Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
 "same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown
@@ -251,9 +251,25 @@ from spawn args, while create()'s upsert here spread-merges over one still
 standing.
 Team membership is re-derived from the new cwd by `create()`'s own `resolveTeam`,
 so a seat moved into a team's repo joins that team and one moved out leaves it.
-A respawn that throws leaves the record in place holding the NEW cwd, so the seat
-comes back as the restore path's `{failed:true}` retry/forget row rather than
-vanishing. Moving across workspaces is not offered.
+An archived record is un-stamped (`setArchived(name, false)`) as part of the move,
+because the move spawns it live and the stamp would otherwise bring it back dimmed
+next launch. The `create()` catch arm clears it a second time: that arm re-upserts
+the snapshot read at the top of `move()`, which still carries `archivedAt`, and
+`upsert` spread-merges — so the stamp comes back unless it is cleared after. The
+snapshot must stay an inline `{ ...entry }` literal there; `test/preserve-across-
+restart.test.js`'s t491 scanner finds these arms by that shape. A second `move()` while one is in flight is refused off the live
+session's `_moving` flag: both used to pass the live check, and the loser's catch
+arm would then upsert ITS destination over a seat running in the winner's.
+
+Both failure arms — the exit that outlasts `_waitForExit`, and a `create()` that
+throws — return `{ ok:false, kept:true, error, type, cwd, team }`, and the renderer
+turns that into the same **failed ghost row** the restore path builds
+(`addFailedSessionToSidebar`, whose click calls `session:retrySpawn`). The row is
+not cosmetic: by then the pty is dead and `session-exit` has already removed the
+live tab, so without it the seat is invisible until the next launch. The `cwd` the
+result carries is the one the record actually holds — the destination when the
+record was rewritten, the origin when the move never got that far. Moving across
+workspaces is not offered.
 
 `restartSession` (engine.js) — shared by the local IPC handler and the peer
 restart endpoint. `opts.fresh` drops the resumeId (required for skill roster
