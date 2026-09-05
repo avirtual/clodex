@@ -1205,7 +1205,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellAllow = null) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1410,7 +1410,7 @@ function createSessionManager(deps) {
           // the frozen prompt below, not just cosmetic.
           let hookInstalled = false;
           if (!args.includes('--settings')) {
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, Array.isArray(shellAllow) ? shellAllow : []);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : []);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }

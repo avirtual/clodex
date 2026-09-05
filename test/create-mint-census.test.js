@@ -248,7 +248,7 @@ const EXPECTED = [
   // t673: this row's noWire is now `'false'` rather than `false` — it is passed
   // EXPLICITLY, not defaulted. The value is unchanged and the reasoning below
   // still holds; what changed is that the reviewer arm must reach create()'s
-  // 23rd positional (`shellAllow`, the code-owned Bash allowlist), so noWire and
+  // 23rd positional (`shellDeny`, the code-owned Bash deny rules), so noWire and
   // plugins are written out to get there. Both are written as the defaults they
   // replace, which is why this is a spelling change and not a behaviour one.
   { file: 'team-tickets.js', mint: true, noWire: 'false', label: 'team-review reviewer seat — ephemeral, monotonic name, always brand new. Never wire-off: it is a short-lived seat Clodex spawns, and the wire is what its verdict rides.' },

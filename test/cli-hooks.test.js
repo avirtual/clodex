@@ -983,59 +983,60 @@ test('a malformed hook payload leaves the observer silent and successful', () =>
   }
 });
 
-// --- t673: permissions.allow, the wall a shell reviewer runs behind ----------
+// --- t673: permissions.deny, the wall a shell reviewer runs behind -----------
 //
-// The allowlist is meaningless without the permission MODE that honors it
-// (--permission-mode dontAsk; --dangerously-skip-permissions ignores allow and
-// deny alike), and the mode is argv, pinned in resolve-seat-shape.test.js. This
-// file owns the other half: that the rules reach the settings file at all, and
-// that writing them does not disturb the deny block beside them.
+// deny is the only half that REFUSES: `permissions.allow` is a pre-approval
+// list, so a command merely absent from it still runs. Measured on CLI 2.1.261,
+// and deny holds even under --dangerously-skip-permissions, which is why the
+// shell arm can inherit the lead's posture (pinned in resolve-seat-shape.test.js).
+// This file owns the other half: that the extra rules reach the settings file,
+// merged into the ONE deny block rather than a second key beside it.
 
-const SHELL_ALLOW = ['Bash(git diff:*)', 'Bash(ls:*)', 'Bash(node --test:*)'];
+const SHELL_DENY = ['Bash(rm:*)', 'Bash(touch:*)', 'Bash(git commit:*)'];
 
-test('t673: allowRules land in settings.permissions.allow, BESIDE the deny list', () => {
+test('t673: extraDenyRules MERGE into the single permissions.deny block', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
-  // A deny AND an allow in one call: deny outranks allow in the CLI, so the two
-  // compose — and an implementation that assigned `permissions` twice would drop
-  // whichever it wrote first. Only a fixture carrying both can see that.
-  h.setupClaudeHook('sh1', null, null, [], ['Edit', 'Write'], [], null, null, SHELL_ALLOW);
+  // Tool denies AND shell denies in one call: they share one key, so an
+  // implementation that wrote `permissions` twice, or emitted a second block,
+  // would drop one set. Only a fixture carrying both can see that.
+  h.setupClaudeHook('sh1', null, null, [], ['Edit', 'Write'], [], null, null, SHELL_DENY);
   const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'sh1', 'settings'), 'utf-8'));
-  assert.deepStrictEqual(settings.permissions.allow, SHELL_ALLOW);
-  assert.ok(settings.permissions.deny.includes('Edit'), 'ENTER: the deny list is non-empty, so the survival of BOTH keys is what is being asserted');
-  assert.ok(settings.permissions.deny.includes('Write'));
+  assert.deepStrictEqual(settings.permissions.deny, ['Edit', 'Write', ...SHELL_DENY]);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(settings.permissions, 'allow'), false,
+    'an allow block would be pre-approval, not a wall — this mechanism must never write one');
 });
 
-test('t673: an empty allowRules writes no allow key at all — the unchanged shape', () => {
-  // Every non-shell seat takes this path, which is why it is the default: an
-  // `allow: []` is not the same as no allow key to the CLI, and shipping one on
-  // every seat would be a permissions change nobody asked for.
+test('t673: an empty extraDenyRules leaves the deny block exactly as it was', () => {
+  // Every non-shell seat takes this path, which is why it is the default: the
+  // shell rules must be additive, visible on the shell arm and absent everywhere
+  // else.
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('sh2', null, null, [], ['Edit'], [], null, null, []);
   const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'sh2', 'settings'), 'utf-8'));
-  assert.ok(!Object.prototype.hasOwnProperty.call(settings.permissions, 'allow'),
-    'no allow key when nothing was allowed');
-  assert.deepStrictEqual(settings.permissions.deny, ['Edit'], 'and the deny block is untouched');
+  assert.deepStrictEqual(settings.permissions.deny, ['Edit']);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(settings.permissions, 'allow'), false);
 });
 
-test('t673: allow rules survive with no deny list, and the generated hook script is unchanged', () => {
-  // The script bytes are pinned elsewhere; this asserts the allow plumbing did
-  // not reach them. permissions is a settings-object concern only.
+test('t673: shell denies survive with no tool denies, and are deduped', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
-  h.setupClaudeHook('sh3', null, null, [], [], [], null, null, SHELL_ALLOW);
-  const withAllow = fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'hook'), 'utf-8');
+  // A duplicate across the two sources: dedup is what makes merging safe, and a
+  // concatenation would pass every other assertion here.
+  h.setupClaudeHook('sh3', null, null, [], ['Bash(rm:*)'], [], null, null, SHELL_DENY);
+  const withDeny = fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'hook'), 'utf-8');
   const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'settings'), 'utf-8'));
-  assert.deepStrictEqual(settings.permissions.allow, SHELL_ALLOW);
-  assert.ok(!Object.prototype.hasOwnProperty.call(settings.permissions, 'deny'), 'nothing was denied');
+  // 'Bash(rm:*)' is not in CLAUDE_TOOLS, so the disabledTools filter drops it and
+  // it arrives only from the shell list — one copy either way.
+  assert.deepStrictEqual(settings.permissions.deny, SHELL_DENY);
 
   // The SAME registry dir and the same agent name, so the only difference
-  // between the two runs is the allowlist: the script bytes embed the registry
+  // between the two runs is the deny list: the script bytes embed the registry
   // path in several forms, and a two-dir fixture would have to normalize each
   // one to compare — a normalization that is itself the thing most likely to be
   // wrong.
   h.setupClaudeHook('sh3', null, null, [], [], [], null, null, []);
   const without = fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'hook'), 'utf-8');
-  assert.strictEqual(withAllow, without, 'the allowlist must not reach the generated script bytes');
+  assert.strictEqual(withDeny, without, 'the deny rules must not reach the generated script bytes');
 });

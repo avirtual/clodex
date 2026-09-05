@@ -47,7 +47,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, allowRules = []) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = []) {
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     const scriptPath = pathFor(REGISTRY_DIR, name, 'hook');
@@ -521,12 +521,9 @@ JSEOF
     const denyRules = [...new Set([
       ...denyAgentRules(denyBuiltins),
       ...(Array.isArray(disabledTools) ? disabledTools : []).filter((t) => toolSet.has(t)),
+      ...(Array.isArray(extraDenyRules) ? extraDenyRules : []).filter(Boolean),
     ])];
     if (denyRules.length) settings.permissions = { deny: denyRules };
-    const allowList = [...new Set((Array.isArray(allowRules) ? allowRules : []).filter(Boolean))];
-    if (allowList.length) {
-      settings.permissions = { ...(settings.permissions || {}), allow: allowList };
-    }
     // skillOverrides:{name:"off"} REMOVES the skill from the injected roster,
     // reclaiming its per-turn tokens; a Skill(name) deny still pays the listing.
     const skillsOff = [...new Set((Array.isArray(disabledSkills) ? disabledSkills : []).filter(Boolean))];

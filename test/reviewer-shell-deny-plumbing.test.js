@@ -1,20 +1,19 @@
 'use strict';
-// Run: node --test test/reviewer-shell-allow-plumbing.test.js
+// Run: node --test test/reviewer-shell-deny-plumbing.test.js
 //
-// t673 — the ONE line that carries the shell allowlist from create()'s options
+// t673 — the ONE line that carries the shell deny rules from create()'s options
 // into the generated settings file.
 //
 // This file exists because of a red-proof that came back GREEN. Deleting the
-// `shellAllow` argument at create()'s call to setupClaudeHook broke nothing:
-// resolve-seat-shape.test.js pins the allowlist onto the resolved SHAPE,
-// cli-hooks.test.js pins setupClaudeHook writing an allow block when handed
-// one, and neither executes the line between them. The seat would have spawned
-// with the shape carrying the allowlist, the settings file carrying no allow
-// block, and a suite of 6,400 tests green over a reviewer whose shell was
-// governed by nothing.
+// shell-rules argument at create()'s call to setupClaudeHook broke nothing:
+// resolve-seat-shape.test.js pins the rules onto the resolved SHAPE,
+// cli-hooks.test.js pins setupClaudeHook merging rules it is handed, and neither
+// executes the line between them. The seat would have spawned with the shape
+// carrying the rules, the settings file carrying none of them, and a suite of
+// 6,400 tests green over a reviewer whose shell was governed by nothing.
 //
 // So the subject here is the SEAM, not either end: drive the real create()
-// claude arm and capture the arguments setupClaudeHook actually received.
+// claude arm into the real setupClaudeHook and read the settings file it wrote.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -22,18 +21,29 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
+const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const SHELL_ALLOW = ['Bash(git diff:*)', 'Bash(ls:*)', 'Bash(node --test:*)'];
+const SHELL_DENY = ['Bash(rm:*)', 'Bash(touch:*)', 'Bash(git commit:*)'];
+const TOOL_DENY = ['Edit', 'Write'];
 
 function mkManager() {
-  const root = mkTmpRoot('clx-shellallow-');
+  const root = mkTmpRoot('clx-shelldeny-');
   const ensureDir = (d) => fs.mkdirSync(d, { recursive: true });
   const store = new Map();
   // Every call, not just the last: create() must reach the hook exactly once per
   // spawn, and a second call with different arguments would overwrite the file.
   const hookCalls = [];
+  // The REAL hook, wrapped only to count: a stub would pin create() handing off
+  // an argument and prove nothing about the settings file, which is the artifact
+  // the CLI actually reads.
+  const hooks = createCliHooks({
+    REGISTRY_DIR: root,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+  });
 
   const SessionManager = createSessionManager({
     REGISTRY_DIR: root,
@@ -62,13 +72,12 @@ function mkManager() {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     WIRE_SHADOW: false,
     WIRE_INTENTS_LIVE: false,
-    // The capture. Named parameters rather than `...args` so a signature change
-    // that reorders them fails here loudly instead of silently shifting which
-    // value this test calls the allowlist.
-    setupClaudeHook: (n, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, allowRules) => {
-      hookCalls.push({ name: n, disabledTools, allowRules });
-      fs.mkdirSync(runDirFor(root, n), { recursive: true });
-      return path.join(root, 'settings.json');
+    // Named parameters rather than `...args` so a signature change that reorders
+    // them fails here loudly instead of silently shifting which value this test
+    // calls the shell rules.
+    setupClaudeHook: (n, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, extraDenyRules) => {
+      hookCalls.push({ name: n, disabledTools, extraDenyRules });
+      return hooks.setupClaudeHook(n, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, extraDenyRules);
     },
     setupCodexHook: () => {},
     cleanupClaudeHook: () => {}, cleanupCodexHook: () => {},
@@ -115,37 +124,44 @@ function mkManager() {
     clearTimeout(s._bootDrainTimer);
   };
   // Not wrapped in try/catch: a create() that threw before reaching the hook
-  // would satisfy an "allowlist absent" assertion for entirely the wrong reason.
-  const spawn = async (name, { disabledTools = [], shellAllow = null } = {}) => {
+  // would satisfy a "rules absent" assertion for entirely the wrong reason.
+  const spawn = async (name, { disabledTools = [], shellDeny = null } = {}) => {
     await m.create(name, 'claude', os.tmpdir(), [], null, 'ws', null, false, null,
-      [], [], disabledTools, [], [], null, [], [], null, null, true, true, null, shellAllow);
+      [], [], disabledTools, [], [], null, [], [], null, null, true, true, null, shellDeny);
     stop(name);
   };
-  return { m, spawn, hookCalls, root };
+  const settingsOf = (name) => JSON.parse(fs.readFileSync(pathFor(root, name, 'settings'), 'utf-8'));
+  return { m, spawn, hookCalls, settingsOf, root };
 }
 
-test('t673: create() carries shellAllow through to setupClaudeHook', async () => {
+test('t673: create() carries shellDeny into the settings file deny block', async () => {
   const f = mkManager();
-  await f.spawn('shell-seat', { disabledTools: ['Edit'], shellAllow: SHELL_ALLOW });
-  assert.strictEqual(f.hookCalls.length, 1, 'ENTER: the hook was set up exactly once — the arguments below are that call\'s');
-  // The LITERAL list, in order: this is the seam a green red-proof found
+  await f.spawn('shell-seat', { disabledTools: TOOL_DENY, shellDeny: SHELL_DENY });
+  assert.strictEqual(f.hookCalls.length, 1, 'ENTER: the hook was set up exactly once — the settings file below is that call\'s');
+  // The literal union, in order: this is the seam a green red-proof found
   // unguarded, so an assertion that only checked truthiness would leave the
-  // interesting failure (a truncated or reordered list) unpinned.
-  assert.deepStrictEqual(f.hookCalls[0].allowRules, SHELL_ALLOW);
+  // interesting failure (a truncated, reordered or separately-keyed list)
+  // unpinned.
+  const settings = f.settingsOf('shell-seat');
+  assert.deepStrictEqual(settings.permissions.deny, ['Edit', 'Write', 'Bash(rm:*)', 'Bash(touch:*)', 'Bash(git commit:*)']);
+  // An allow block is PRE-APPROVAL, not a wall — a command absent from it still
+  // runs. Writing one here would look like a tightening and be a widening.
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(settings.permissions, 'allow'), false);
   // The neighbouring argument, asserted in the same call: both ride the same
   // parameter list, and a shift of one is the failure mode a single-argument
   // assertion cannot see.
-  assert.deepStrictEqual(f.hookCalls[0].disabledTools, ['Edit']);
+  assert.deepStrictEqual(f.hookCalls[0].disabledTools, TOOL_DENY);
 });
 
-test('t673: a seat with no shellAllow hands the hook an empty list, never undefined', async () => {
+test('t673: a seat with no shellDeny hands the hook an empty list, never undefined', async () => {
   // Every non-reviewer spawn takes this path. `undefined` would reach
   // setupClaudeHook's default and behave the same today — but the default is
   // one edit away from mattering, and an explicit [] is what the parameter
   // means here.
   const f = mkManager();
-  await f.spawn('plain-seat');
+  await f.spawn('plain-seat', { disabledTools: TOOL_DENY });
   assert.strictEqual(f.hookCalls.length, 1);
-  assert.deepStrictEqual(f.hookCalls[0].allowRules, [],
-    'no allowlist means an empty list, which setupClaudeHook writes as no allow block at all');
+  assert.deepStrictEqual(f.hookCalls[0].extraDenyRules, []);
+  assert.deepStrictEqual(f.settingsOf('plain-seat').permissions.deny, TOOL_DENY,
+    'no shell rules means the deny block is exactly what the tool cap produced');
 });

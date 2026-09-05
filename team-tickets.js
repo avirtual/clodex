@@ -71,11 +71,21 @@ const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
 // NARROW below the cap; past it, only the shell below is ever added.
 const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
 
-const REVIEWER_SHELL_ALLOW = [
-  'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
-  'Bash(git merge-base:*)', 'Bash(git rev-parse:*)', 'Bash(git branch --show-current)',
-  'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(sed -n:*)',
-  'Bash(wc:*)', 'Bash(node --test:*)', 'Bash(npx node --test:*)',
+const REVIEWER_SHELL_DENY = [
+  'Bash(rm:*)', 'Bash(rmdir:*)', 'Bash(mv:*)', 'Bash(cp:*)', 'Bash(touch:*)',
+  'Bash(mkdir:*)', 'Bash(chmod:*)', 'Bash(chown:*)', 'Bash(ln:*)', 'Bash(tee:*)',
+  'Bash(dd:*)', 'Bash(truncate:*)',
+  'Bash(sed -i:*)', 'Bash(sed --in-place:*)', 'Bash(perl -i:*)',
+  'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git checkout:*)',
+  'Bash(git switch:*)', 'Bash(git reset:*)', 'Bash(git restore:*)',
+  'Bash(git stash:*)', 'Bash(git push:*)', 'Bash(git pull:*)', 'Bash(git fetch:*)',
+  'Bash(git merge:*)', 'Bash(git rebase:*)', 'Bash(git clean:*)',
+  'Bash(git worktree:*)', 'Bash(git branch -d:*)', 'Bash(git branch -D:*)',
+  'Bash(git tag:*)',
+  'Bash(npm:*)', 'Bash(npx:*)', 'Bash(yarn:*)', 'Bash(pnpm:*)', 'Bash(bun:*)',
+  'Bash(node -e:*)', 'Bash(node --eval:*)',
+  'Bash(curl:*)', 'Bash(wget:*)', 'Bash(ssh:*)', 'Bash(scp:*)',
+  'Bash(kill:*)', 'Bash(pkill:*)', 'Bash(killall:*)',
 ];
 const REVIEWER_SHELL_TOOL = 'Bash';
 
@@ -888,7 +898,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
-            false, null, shape.shellAllow,
+            false, null, shape.shellDeny,
           );
           // The rule is "reported ONCE", and this is the one caller that can
           // report twice: a reviewer whose prompt rides as system fails the
@@ -3906,8 +3916,7 @@ function createTicketMethods(deps, shared) {
           // Reviewer-only concept: no cap applies off the review path, so there is
           // no allowlist to report. Present so both purposes return one key set.
           effectiveTools: null,
-          shellAllow: null,
-          posture: null,
+          shellDeny: null,
           // null even when the template DOES carry `tools`: this field means "what
           // the reviewer cap was asked to intersect", and off the review path
           // nothing is asked of the cap — reporting a request no arm honored would
@@ -4024,18 +4033,15 @@ function createTicketMethods(deps, shared) {
         cwd: roleCwd.cwd,
         cwdFallback: roleCwd.fallback,
         tpl,
-        // MERGED onto postureArgs except on the shell arm, which REPLACES them:
-        // bypass ignores allow/deny, so inheriting it there voids the allowlist.
-        // reviewerModelArgs is an allowlist of one flag — do not widen it to
-        // honor the template's array.
+        // MERGED onto postureArgs, never replacing them (that is the ticket
+        // arm's shape, and the reason a template can hand a ticket seat posture
+        // its opener does not hold). reviewerModelArgs is an allowlist of one
+        // flag — do not widen it to honor the template's array.
         // Dropping the rest is an ADJUDICATED decision, not an omission: the
         // rationale is owned by the test 'a reviewer template CANNOT contribute
         // extraArgs'. Mirroring the ticket arm here reverts it.
-        extraArgs: wantsShell
-          ? ['--permission-mode', 'dontAsk', ...modelArgs.args]
-          : [...postureArgs, ...modelArgs.args],
-        shellAllow: wantsShell ? REVIEWER_SHELL_ALLOW.slice() : null,
-        posture: wantsShell ? 'dontAsk' : null,
+        extraArgs: [...postureArgs, ...modelArgs.args],
+        shellDeny: wantsShell ? REVIEWER_SHELL_DENY.slice() : null,
         // A --model that was present and refused. Carried, not re-derived at the
         // call site: re-parsing would put a second copy of the allowlist there.
         modelRefused: modelArgs.refused,

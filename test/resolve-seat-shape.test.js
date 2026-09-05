@@ -78,8 +78,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
-    shellAllow: null,
-    posture: null,
+    shellDeny: null,
     modelRefused: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
@@ -117,8 +116,7 @@ test('review purpose: the whole shape, with no template', () => {
     // what distinguishes it from a template that asked for nothing USABLE.
     requestedTools: null,
     toolsMalformed: false,
-    shellAllow: null,
-    posture: null,
+    shellDeny: null,
     modelRefused: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
@@ -172,8 +170,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     effectiveTools: ['Read', 'Grep'],
     requestedTools: ['Read', 'Grep'],
     toolsMalformed: false,
-    shellAllow: null,
-    posture: null,
+    shellDeny: null,
     modelRefused: null,
     systemPromptFile: 'rv-brief',
     appendPromptFiles: [],
@@ -226,8 +223,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
-    shellAllow: null,
-    posture: null,
+    shellDeny: null,
     modelRefused: null,
     beyondCap: [],
     promptEscaped: null,
@@ -274,7 +270,7 @@ test('a CODEX lead still gets a claude reviewer', () => {
   );
 });
 
-// The exemplar was Bash until t673 admitted it under REVIEWER_SHELL_ALLOW. Edit
+// The exemplar was Bash until t673 admitted it beside REVIEWER_SHELL_DENY. Edit
 // carries the property this test is about — a tool outside the cap that no code
 // path admits — and it is the stronger exemplar for it: a WRITE tool on a seat
 // sold as read-only is the overreach that matters most.
@@ -355,9 +351,9 @@ test('t300: an ABSENT tools — and an explicit null — still take the full cap
 
 test('a reviewer template cannot widen past the cap even naming every tool', () => {
   // t673 changed what "every tool" yields, and the change is bounded, not a
-  // loosening: Bash is now admitted BY CODE under REVIEWER_SHELL_ALLOW, so a
-  // template naming everything gets the cap plus a shell that can only run the
-  // read-only verbs in that list. Every OTHER tool it named is still refused,
+  // loosening: Bash is now admitted BY CODE beside REVIEWER_SHELL_DENY, so a
+  // template naming everything gets the cap plus a shell whose mutating verbs
+  // that list refuses. Every OTHER tool it named is still refused,
   // which is the property this test has always been about. Asserting the
   // ceiling as a literal rather than as "cap plus whatever the code admits":
   // a computed expectation here would agree with any future admission.
@@ -773,8 +769,7 @@ test('role cwd: the ticket arm boots the seat in the role subdirectory — whole
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
-    shellAllow: null,
-    posture: null,
+    shellDeny: null,
     modelRefused: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
@@ -810,8 +805,7 @@ test('role cwd: a role WITHOUT one still boots at the team root — whole shape'
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
-    shellAllow: null,
-    posture: null,
+    shellDeny: null,
     modelRefused: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
@@ -850,8 +844,7 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     effectiveTools: REVIEWER_CAP,
     requestedTools: null,
     toolsMalformed: false,
-    shellAllow: null,
-    posture: null,
+    shellDeny: null,
     modelRefused: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
@@ -982,22 +975,31 @@ test('role cwd: a nested team resolving to the SAME root is not a re-parent', ()
   assert.strictEqual(shape.cwd, path.join(team.root, 'api'));
 });
 
-// --- t673: the read-only shell reviewer -------------------------------------
+// --- t673: the shell reviewer ------------------------------------------------
 //
 // The shell is admitted by CODE, on a template's opt-in. Both halves matter and
-// each is worthless alone: the opt-in without the code-owned allowlist is an
-// agent-writable template granting itself an unrestricted Bash, and the
-// allowlist without the posture swap is decorative, because
-// --dangerously-skip-permissions ignores allow/deny entirely.
+// each is worthless alone: the opt-in without the code-owned deny list is an
+// agent-writable template granting itself an unrestricted Bash, and the deny
+// list without the opt-in governs a shell no seat has.
 
-const REVIEWER_SHELL_ALLOW = [
-  'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
-  'Bash(git merge-base:*)', 'Bash(git rev-parse:*)', 'Bash(git branch --show-current)',
-  'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(sed -n:*)',
-  'Bash(wc:*)', 'Bash(node --test:*)', 'Bash(npx node --test:*)',
+const REVIEWER_SHELL_DENY = [
+  'Bash(rm:*)', 'Bash(rmdir:*)', 'Bash(mv:*)', 'Bash(cp:*)', 'Bash(touch:*)',
+  'Bash(mkdir:*)', 'Bash(chmod:*)', 'Bash(chown:*)', 'Bash(ln:*)', 'Bash(tee:*)',
+  'Bash(dd:*)', 'Bash(truncate:*)',
+  'Bash(sed -i:*)', 'Bash(sed --in-place:*)', 'Bash(perl -i:*)',
+  'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git checkout:*)',
+  'Bash(git switch:*)', 'Bash(git reset:*)', 'Bash(git restore:*)',
+  'Bash(git stash:*)', 'Bash(git push:*)', 'Bash(git pull:*)', 'Bash(git fetch:*)',
+  'Bash(git merge:*)', 'Bash(git rebase:*)', 'Bash(git clean:*)',
+  'Bash(git worktree:*)', 'Bash(git branch -d:*)', 'Bash(git branch -D:*)',
+  'Bash(git tag:*)',
+  'Bash(npm:*)', 'Bash(npx:*)', 'Bash(yarn:*)', 'Bash(pnpm:*)', 'Bash(bun:*)',
+  'Bash(node -e:*)', 'Bash(node --eval:*)',
+  'Bash(curl:*)', 'Bash(wget:*)', 'Bash(ssh:*)', 'Bash(scp:*)',
+  'Bash(kill:*)', 'Bash(pkill:*)', 'Bash(killall:*)',
 ];
 
-test('t673: a reviewer template listing Bash resolves to cap+Bash with the code-owned allowlist', () => {
+test('t673: a reviewer template listing Bash resolves to cap+Bash with the code-owned deny list', () => {
   const m = managerWith(
     [{ name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] }],
     { leadArgs: ['--dangerously-skip-permissions'] },
@@ -1006,32 +1008,39 @@ test('t673: a reviewer template listing Bash resolves to cap+Bash with the code-
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
   assert.deepStrictEqual(shape.effectiveTools, ['Read', 'Grep', 'Glob', 'Bash']);
   assert.ok(!shape.disabledTools.includes('Bash'), 'Bash must not be denied back out through the tool denylist');
-  // The LITERAL list, not REVIEWER_SHELL_ALLOW re-exported from the source: a
+  // The LITERAL list, not REVIEWER_SHELL_DENY re-exported from the source: a
   // test that imported the constant it checks would pass for any edit to it,
-  // including one that added `Bash(rm:*)`.
-  assert.deepStrictEqual(shape.shellAllow, REVIEWER_SHELL_ALLOW);
-  assert.strictEqual(shape.posture, 'dontAsk');
-  // Every entry is a read-only verb. A mutating one admitted here reaches a seat
-  // whose whole premise is that it cannot change the tree it reviews.
-  for (const rule of shape.shellAllow) {
-    assert.match(rule, /^Bash\((git (diff|log|show|status|merge-base|rev-parse|branch)|ls|cat|head|tail|sed -n|wc|node --test|npx node --test)/,
-      `${rule} is not one of the read-only verbs this seat is allowed`);
+  // including one that deleted `Bash(rm:*)`.
+  assert.deepStrictEqual(shape.shellDeny, REVIEWER_SHELL_DENY);
+  // Matching is prefix-on-argv, so a rule with no `Bash(` wrapper or no prefix
+  // body matches nothing and is a hole that reads like a wall.
+  for (const rule of shape.shellDeny) {
+    assert.match(rule, /^Bash\([a-z]/, `${rule} is not a Bash argv-prefix rule`);
   }
+  // The two spellings of the same mutation. `sed -i` alone leaves
+  // `sed --in-place` running, which prefix matching cannot fold together.
+  assert.ok(shape.shellDeny.includes('Bash(sed -i:*)') && shape.shellDeny.includes('Bash(sed --in-place:*)'),
+    'both spellings must be listed — prefix matching does not know they are the same flag');
 });
 
-test('t673: a shell reviewer spawns under dontAsk, NOT the lead bypass posture', () => {
-  // The wall is the permission MODE. Under --dangerously-skip-permissions the
-  // allowlist above is ignored by the CLI and the seat has an unrestricted
-  // shell, so inheriting the lead's posture here silently voids the design.
+test('t673: a shell reviewer carries the LEAD\'S posture, like every other seat', () => {
+  // Measured on CLI 2.1.261: permissions.deny is honored even under
+  // --dangerously-skip-permissions, so the deny block does not need a posture
+  // of its own and the shell arm stays uniform with the ticket arm.
   const m = managerWith(
     [{ name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] }],
     { leadArgs: ['--dangerously-skip-permissions'] },
   );
   const team = teamWith({ reviewer: { template: 'rv-shell' } });
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
-  assert.deepStrictEqual(shape.extraArgs, ['--permission-mode', 'dontAsk']);
-  assert.ok(!shape.extraArgs.includes('--dangerously-skip-permissions'),
-    'the bypass posture must be DROPPED for this seat, not merged with dontAsk');
+  assert.deepStrictEqual(shape.extraArgs, ['--dangerously-skip-permissions']);
+  // A lead WITHOUT the bypass hands the shell seat nothing, rather than a mode
+  // of the shell arm's own choosing.
+  const plain = managerWith(
+    [{ name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] }],
+    { leadArgs: [] },
+  );
+  assert.deepStrictEqual(plain.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs, []);
 });
 
 test('t673: a shell reviewer still honors the --model carve-out, after the posture', () => {
@@ -1045,7 +1054,7 @@ test('t673: a shell reviewer still honors the --model carve-out, after the postu
   const team = teamWith({ reviewer: { template: 'rv-shell' } });
   assert.deepStrictEqual(
     m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
-    ['--permission-mode', 'dontAsk', '--model', 'sonnet'],
+    ['--dangerously-skip-permissions', '--model', 'sonnet'],
     'the template\'s own --allowedTools must still lose; only --model rides',
   );
 });
@@ -1064,13 +1073,12 @@ test('t673: Bash is admitted, so it is NOT reported beyond the cap — Edit stil
   assert.ok(shape.disabledTools.includes('Edit'), 'and Edit is denied, not merely reported');
 });
 
-test('t673: a reviewer that did NOT ask for Bash carries no allowlist and no posture override', () => {
+test('t673: a reviewer that did NOT ask for Bash carries no shell deny rules', () => {
   // The default reviewer is the fallback this experiment must not disturb.
   const m = managerWith([], { leadArgs: ['--dangerously-skip-permissions'] });
   const team = teamWith({ reviewer: {} });
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
-  assert.strictEqual(shape.shellAllow, null, 'null is what create() reads as "write no allow block"');
-  assert.strictEqual(shape.posture, null);
+  assert.strictEqual(shape.shellDeny, null, 'null is what create() reads as "add no rules to the deny block"');
   assert.deepStrictEqual(shape.extraArgs, ['--dangerously-skip-permissions'],
     'the untouched default still inherits the lead posture');
   assert.ok(shape.disabledTools.includes('Bash'), 'and Bash stays denied for it');
@@ -1084,9 +1092,10 @@ test('t673: a per-ticket template override selects the reviewer template', () =>
   const team = teamWith({ reviewer: { template: 'rv-default' } });
   const withoutOverride = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
   assert.strictEqual(withoutOverride.tpl.name, 'rv-default', 'ENTER: the role default is what an unoverridden ticket gets');
+  assert.strictEqual(withoutOverride.shellDeny, null, 'ENTER: and it is not a shell shape, so the override below changes something');
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD, 'rv-shell');
   assert.strictEqual(shape.tpl.name, 'rv-shell', 'the ticket\'s choice outranks the role\'s');
-  assert.strictEqual(shape.posture, 'dontAsk');
+  assert.deepStrictEqual(shape.shellDeny, REVIEWER_SHELL_DENY);
 });
 
 test('t673: the override does NOT apply on the ticket arm', () => {
@@ -1099,15 +1108,17 @@ test('t673: the override does NOT apply on the ticket arm', () => {
   const team = teamWith({ hand: { worktree: true, template: 'ht' } });
   const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD, 'rv-shell');
   assert.strictEqual(shape.tpl.name, 'ht', 'the hand keeps its own template');
-  assert.strictEqual(shape.shellAllow, null);
+  assert.strictEqual(shape.shellDeny, null);
 });
 
-test('t673: NO --dangerously-skip-permissions reaches a resolved shape carrying shellAllow', () => {
+test('t673: EVERY shape that admits a shell carries the full deny list', () => {
   // The property as a UNIVERSAL over the resolver's output, not as one fixture:
-  // the posture and the allowlist are set in two adjacent expressions, and an
-  // edit that made one conditional on something else would leave the other
-  // green. Every reviewer template shape that admits a shell is enumerated here
-  // — including the ones that reach it through a per-ticket override.
+  // the tool admission and the deny list are set in two separate expressions,
+  // and an edit that made one conditional on something else would leave the
+  // other green — a seat with Bash and no rules is exactly the unrestricted
+  // shell the code-owned list exists to prevent. Every reviewer template shape
+  // that admits a shell is enumerated here, including the ones that reach it
+  // through a per-ticket override.
   const shellTemplates = [
     { name: 'a', type: 'claude', cwd: '/repo', tools: ['Bash'] },
     { name: 'b', type: 'claude', cwd: '/repo', tools: ['Read', 'Bash'] },
@@ -1122,11 +1133,9 @@ test('t673: NO --dangerously-skip-permissions reaches a resolved shape carrying 
       m.resolveSeatShape(teamWith({ reviewer: { template: tpl.name } }), 'reviewer', 'review', LEAD),
       m.resolveSeatShape(teamWith({ reviewer: {} }), 'reviewer', 'review', LEAD, tpl.name),
     ]) {
-      assert.ok(shape.shellAllow, `ENTER: template ${tpl.name} really did resolve to a SHELL shape — a shape with no allowlist would satisfy the assertion below vacuously`);
-      assert.ok(!shape.extraArgs.includes('--dangerously-skip-permissions'),
-        `template ${tpl.name}: the bypass posture voids the allowlist entirely — the CLI ignores allow/deny under it`);
-      assert.deepStrictEqual(shape.extraArgs.slice(0, 2), ['--permission-mode', 'dontAsk'],
-        `template ${tpl.name}: dontAsk must lead the argv`);
+      assert.ok(shape.effectiveTools.includes('Bash'), `ENTER: template ${tpl.name} really did resolve to a SHELL shape — a shape without Bash would satisfy the assertion below for the wrong reason`);
+      assert.deepStrictEqual(shape.shellDeny, REVIEWER_SHELL_DENY,
+        `template ${tpl.name}: a shell with no deny rules is an unrestricted shell`);
       checked += 1;
     }
   }
