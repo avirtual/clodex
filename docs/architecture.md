@@ -976,16 +976,14 @@ answer differently.
 ### renderer/lib — pure leaves
 
 Unit-tested and free of renderer state; peers-ui and the popovers are imperative
-and are not, which is why the judgement worth testing is pushed down here. Most
-are DOM-free; a few reach for `document` to escape, build or measure —
-`render-html.js`, `render-markdown.js`, `popover-place.js`.
+and are not, which is why the judgement worth testing is pushed down here.
 
 - **constants.js**, **format.js** (string formatters), **render-html.js**
   (DOM-string builders).
 - **render-markdown.js** — `renderMarkdown(text)` → a `DocumentFragment` built
-  node by node, every leaf set through `textContent`. The one leaf here that
-  takes UNTRUSTED input, so its shape is its security property: no raw HTML
-  path, no images, and hrefs allowlisted to http/https/mailto. Frozen into
+  node by node, every leaf set through `textContent`. Its shape is its security
+  property: no raw HTML path, no images, hrefs allowlisted to http/https, and a
+  blockquote depth cap so hostile nesting cannot overflow the stack. Frozen into
   `rhost.lib` beside `renderDiffHtml`, which is why widening it is a published
   API change rather than a local edit.
 - **checklists.js** — render/collect checklist pairs; owns the library caches

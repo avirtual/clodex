@@ -32576,7 +32576,8 @@ ${detail}` });
   var require_render_markdown = __commonJS({
     "renderer/lib/render-markdown.js"(exports, module) {
       "use strict";
-      var SAFE_SCHEME = /^(?:https?:\/\/|mailto:)/i;
+      var SAFE_SCHEME = /^https?:\/\//i;
+      var MAX_QUOTE_DEPTH = 8;
       var FENCE = /^ {0,3}(`{3,}|~{3,})\s*(\S*)\s*$/;
       var HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
       var QUOTE = /^ {0,3}> ?(.*)$/;
@@ -32595,7 +32596,7 @@ ${detail}` });
         let s = line.trim();
         if (s.startsWith("|")) s = s.slice(1);
         if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
-        return s.split(new RegExp("(?<!\\\\)\\|")).map((c) => c.replace(/\\\|/g, "|").trim());
+        return s.replace(/\\\|/g, "\0").split("|").map((c) => c.replace(/\u0000/g, "|").trim());
       }
       function startsBlock(line) {
         return !line.trim() || FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || BULLET.test(line) || ORDERED.test(line);
@@ -32659,7 +32660,7 @@ ${detail}` });
         parent.appendChild(pre);
         return j < lines.length ? j + 1 : j;
       }
-      function renderQuote(lines, i, parent, doc) {
+      function renderQuote(lines, i, parent, doc, depth) {
         const body = [];
         let j = i;
         while (j < lines.length) {
@@ -32669,7 +32670,13 @@ ${detail}` });
           j++;
         }
         const quote = doc.createElement("blockquote");
-        renderBlocks(body, quote, doc);
+        if (depth >= MAX_QUOTE_DEPTH) {
+          const p = doc.createElement("p");
+          appendInline(p, body.join(" "), doc);
+          quote.appendChild(p);
+        } else {
+          renderBlocks(body, quote, doc, depth + 1);
+        }
         parent.appendChild(quote);
         return j;
       }
@@ -32744,7 +32751,7 @@ ${detail}` });
         parent.appendChild(p);
         return j;
       }
-      function renderBlocks(lines, parent, doc) {
+      function renderBlocks(lines, parent, doc, depth = 0) {
         let i = 0;
         while (i < lines.length) {
           const line = lines[i];
@@ -32765,7 +32772,7 @@ ${detail}` });
             continue;
           }
           if (QUOTE.test(line)) {
-            i = renderQuote(lines, i, parent, doc);
+            i = renderQuote(lines, i, parent, doc, depth);
             continue;
           }
           if (BULLET.test(line) || ORDERED.test(line)) {

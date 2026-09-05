@@ -1,6 +1,7 @@
 'use strict';
 
-const SAFE_SCHEME = /^(?:https?:\/\/|mailto:)/i;
+const SAFE_SCHEME = /^https?:\/\//i;
+const MAX_QUOTE_DEPTH = 8;
 const FENCE = /^ {0,3}(`{3,}|~{3,})\s*(\S*)\s*$/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
@@ -25,7 +26,7 @@ function splitRow(line) {
   let s = line.trim();
   if (s.startsWith('|')) s = s.slice(1);
   if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
-  return s.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').trim());
+  return s.replace(/\\\|/g, '\u0000').split('|').map((c) => c.replace(/\u0000/g, '|').trim());
 }
 
 function startsBlock(line) {
@@ -98,7 +99,7 @@ function renderFence(lines, i, parent, doc) {
   return j < lines.length ? j + 1 : j;
 }
 
-function renderQuote(lines, i, parent, doc) {
+function renderQuote(lines, i, parent, doc, depth) {
   const body = [];
   let j = i;
   while (j < lines.length) {
@@ -108,7 +109,13 @@ function renderQuote(lines, i, parent, doc) {
     j++;
   }
   const quote = doc.createElement('blockquote');
-  renderBlocks(body, quote, doc);
+  if (depth >= MAX_QUOTE_DEPTH) {
+    const p = doc.createElement('p');
+    appendInline(p, body.join(' '), doc);
+    quote.appendChild(p);
+  } else {
+    renderBlocks(body, quote, doc, depth + 1);
+  }
   parent.appendChild(quote);
   return j;
 }
@@ -189,7 +196,7 @@ function renderParagraph(lines, i, parent, doc) {
   return j;
 }
 
-function renderBlocks(lines, parent, doc) {
+function renderBlocks(lines, parent, doc, depth = 0) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -203,7 +210,7 @@ function renderBlocks(lines, parent, doc) {
       i++;
       continue;
     }
-    if (QUOTE.test(line)) { i = renderQuote(lines, i, parent, doc); continue; }
+    if (QUOTE.test(line)) { i = renderQuote(lines, i, parent, doc, depth); continue; }
     if (BULLET.test(line) || ORDERED.test(line)) { i = renderList(lines, i, parent, doc); continue; }
     if (line.includes('|') && isTableRule(lines[i + 1])) { i = renderTable(lines, i, parent, doc); continue; }
     i = renderParagraph(lines, i, parent, doc);

@@ -21,6 +21,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const VOID = new Set(['BR', 'HR', 'IMG', 'INPUT']);
 
@@ -193,7 +195,6 @@ test('a safe link becomes an anchor carrying the href', () => {
 for (const [name, src, href] of [
   ['http', '[a](http://example.com)', 'http://example.com'],
   ['https', '[a](https://example.com)', 'https://example.com'],
-  ['mailto', '[a](mailto:x@example.com)', 'mailto:x@example.com'],
 ]) {
   test(`allowlisted scheme: ${name}`, () => {
     const { frag } = render(src);
@@ -202,6 +203,16 @@ for (const [name, src, href] of [
     assert.strictEqual(a.getAttribute('href'), href);
   });
 }
+
+// mailto is NOT allowlisted, and the reason is not "it is dangerous": external-link.js
+// admits only http/https to shell.openExternal, so a mailto anchor in the Electron
+// window is inert — a dead affordance rendered onto untrusted content. It renders as
+// the literal text it was written as, exactly like a rejected javascript: link.
+test('a mailto link renders as text, not an anchor', () => {
+  const { frag, text } = render('[a](mailto:x@example.com)');
+  assert.strictEqual(shapeOf(frag), 'p{[a](mailto:x@example.com)}');
+  assert.ok(text.includes('[a](mailto:x@example.com)'), 'the source survives as text');
+});
 
 // ── Injection ───────────────────────────────────────────────────────────────
 //
@@ -350,6 +361,7 @@ test('no href on any anchor escapes the allowlist', () => {
     '[d](mailto:x@example.com)',
     '[e](file:///etc/passwd)',
     '[f](  javascript:alert(1)  )',
+    '[g](http://ok2.example)',
   ].join('\n\n'));
 
   const hrefs = frag.descendants()
@@ -358,7 +370,47 @@ test('no href on any anchor escapes the allowlist', () => {
 
   // ENTER: the two safe rows must have produced anchors — an empty list would
   // satisfy the allowlist assertion vacuously.
-  assert.deepStrictEqual(hrefs, ['https://ok.example', 'mailto:x@example.com']);
+  assert.deepStrictEqual(hrefs, ['https://ok.example', 'http://ok2.example']);
+});
+
+// A SOURCE-SHAPE pin, and it has to be: build/build-web.js targets safari16, and
+// esbuild cannot LOWER a lookbehind — it emits `new RegExp("(?<!…)")` into
+// web-dist, which throws SyntaxError at CALL time on Safari 16.0-16.3, out of a
+// function whose whole premise is not throwing on untrusted input. Nothing at
+// runtime here can see that: node has lookbehind, so every fixture passes, and
+// web-dist-fresh.test.js compares bytes rather than parsing them. Raising the
+// build target is not the fix — the floor is deliberate.
+test('the leaf uses no regex lookbehind (esbuild cannot lower it below safari16)', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'lib', 'render-markdown.js'), 'utf8',
+  );
+  // ENTER: the file must have been read at all — an empty string satisfies every
+  // absence below.
+  assert.ok(src.includes('function splitRow'), 'read the wrong file, or it moved');
+  assert.ok(
+    !src.includes('(?<'),
+    'a lookbehind in this leaf ships as a runtime `new RegExp` and throws on'
+    + ' Safari 16.0-16.3 (build target safari16). Split on a sentinel instead.',
+  );
+});
+
+test('a deeply nested blockquote is capped rather than overflowing the stack', () => {
+  // ENTER: 6000 levels is far past any stack this recursion has; the pre-cap code
+  // raised RangeError here.
+  const src = '>'.repeat(6000);
+  assert.ok(src.length === 6000);
+  let out = null;
+  assert.doesNotThrow(() => { out = render(src); }, 'must not throw on hostile nesting');
+  assert.ok(out.frag.children.length >= 1, 'it still renders something');
+});
+
+// CONTROL for the cap: a realistic depth must still nest, or the fix above could
+// have been "stop nesting at all" and the test would not know.
+test('a 3-deep blockquote still nests', () => {
+  assert.strictEqual(
+    shapeOf(render('> > > deep').frag),
+    'blockquote{blockquote{blockquote{p{deep}}}}',
+  );
 });
 
 test('a fence never becomes markup, however it is fed', () => {
