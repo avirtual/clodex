@@ -346,15 +346,20 @@ function mkEngine() {
 
 test('t672: catalog() carries skill and agent NAMES; bundles() carries the bodies', () => {
   const engine = mkEngine();
-  engine.register('stocks', { activate() {} }, { hostApi: HOST_API_VERSION, name: 'Stocks' }, {
+  engine.register('stocks', { activate() {} }, {
+    hostApi: HOST_API_VERSION, name: 'Stocks', version: '1.4.0', announce: 'Live stock quotes',
+  }, {
     shipped: true,
     skills: [{ name: 'foo', content: SKILL_MD }],
     agents: [{ name: 'bar', content: AGENT_MD }],
   });
+  engine.register('bare', { activate() {} }, { hostApi: HOST_API_VERSION }, {
+    skills: [{ name: 'foo', content: SKILL_MD }],
+  });
   engine.register('plain', { activate() {} }, { hostApi: HOST_API_VERSION });
 
   const rows = new Map(engine.catalog().map((r) => [r.id, r]));
-  assert.deepStrictEqual([...rows.keys()].sort(), ['plain', 'stocks'], 'ENTER: both registered');
+  assert.deepStrictEqual([...rows.keys()].sort(), ['bare', 'plain', 'stocks'], 'ENTER: all three registered');
   assert.deepStrictEqual(rows.get('stocks').skills, ['foo'], 'names only — the renderer draws headers');
   assert.deepStrictEqual(rows.get('stocks').agents, ['bar']);
   assert.ok(!JSON.stringify(rows.get('stocks')).includes('Go look it up'),
@@ -363,11 +368,18 @@ test('t672: catalog() carries skill and agent NAMES; bundles() carries the bodie
   assert.deepStrictEqual(rows.get('plain').agents, []);
 
   assert.deepStrictEqual(engine.bundles(), [{
-    id: 'stocks', name: 'Stocks', shipped: true, editable: false, dir: null,
+    id: 'stocks', name: 'Stocks', version: '1.4.0', announce: 'Live stock quotes',
+    shipped: true, editable: false, dir: null,
     skills: [{ name: 'foo', content: SKILL_MD }],
     agents: [{ name: 'bar', content: AGENT_MD }],
     prompts: [], templates: [],
-  }], 'bundles() is the spawn read: contents, and only the plugins that have any');
+  }, {
+    id: 'bare', name: 'bare', version: null, announce: null,
+    shipped: false, editable: false, dir: null,
+    skills: [{ name: 'foo', content: SKILL_MD }],
+    agents: [],
+    prompts: [], templates: [],
+  }], 'bundles() is the spawn read: contents plus the manifest identity the scaffold stamps, and only the plugins that have any');
 });
 
 test('t672: a disabled plugin yields no bundle for anyone, and bundles() hands out copies', () => {

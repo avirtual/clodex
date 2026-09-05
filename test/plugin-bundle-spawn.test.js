@@ -71,8 +71,12 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
         const { meta, body } = parseAgentFrontmatter(a.content);
         return { name: a.name, meta, body };
       });
-      const sp = buildSkillPlugin(skillRecords.map((s) => s.name), skillRecords, b.id);
-      const ap = buildAgentPlugin(agentRecords.map((a) => a.name), agentRecords, b.id);
+      const manifestOpts = {
+        version: b.version || '0.0.0',
+        description: b.announce || `Clodex plugin ${b.name || b.id}`,
+      };
+      const sp = buildSkillPlugin(skillRecords.map((s) => s.name), skillRecords, b.id, manifestOpts);
+      const ap = buildAgentPlugin(agentRecords.map((a) => a.name), agentRecords, b.id, manifestOpts);
       if (!sp && !ap) continue;
       const dir = confine(path.join(seatDir, BUNDLES_SUBDIR), b.id);
       if (dir === null) throw new Error(`invalid plugin id: ${b.id}`);

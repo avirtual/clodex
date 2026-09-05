@@ -90,7 +90,7 @@ function agentMd(name, meta, body) {
 // no longer on disk are skipped silently (a session can outlive a deleted
 // agent). The manifest name MUST differ from the skills plugin's: two
 // --plugin-dir entries sharing one both load and collide, last wins, silently.
-function buildAgentPlugin(names, library, pluginName = AGENT_PLUGIN_NAME) {
+function buildAgentPlugin(names, library, pluginName = AGENT_PLUGIN_NAME, opts = {}) {
   if (!Array.isArray(names) || names.length === 0) return null;
   const byName = new Map((library || []).map((a) => [a.name, a]));
   const agents = [];
@@ -102,8 +102,8 @@ function buildAgentPlugin(names, library, pluginName = AGENT_PLUGIN_NAME) {
   if (!agents.length) return null;
   const manifest = {
     name: pluginName,
-    version: '0.0.0',
-    description: 'clodex session-injected subagents',
+    version: (opts && opts.version) || '0.0.0',
+    description: (opts && opts.description) || 'clodex session-injected subagents',
     author: { name: 'clodex' },
   };
   return { manifest, agents };
