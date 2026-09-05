@@ -178,21 +178,30 @@ test('memoryStore: agent pin and operator pin are INDEPENDENT flags', () => {
 // through the fd rather than by path.
 
 const MEMORY_STORE_SRC = fs.readFileSync(path.join(__dirname, '..', 'memory-store.js'), 'utf-8');
-const NONBLOCK_PINNED = /O_NONBLOCK/.test(MEMORY_STORE_SRC);
+
+// BOTH tokens, because either one alone still hangs. O_NONBLOCK is what lets
+// the OPEN return on a writerless pipe; isFile() is what stops the READ that
+// follows, which blocks on the same pipe even through a non-blocking fd
+// (measured: dropping only isFile() hung this file with no output).
+const OPEN_SHAPE = [/O_NONBLOCK/, /isFile\(\)/];
 
 // Declared BEFORE the FIFO subjects because it is what keeps their failure
-// readable: a blocking open never returns, so it stops the event loop the test
+// readable: a blocking read never returns, so it stops the event loop the test
 // timeout itself lives on and the runner hangs with zero output instead of
 // reddening. This subject turns that regression into one red line, and the
 // subjects below skip when it fails so the run still finishes.
-test('memoryStore: the unit open keeps O_NONBLOCK — without it a planted FIFO hangs the suite', () => {
-  assert.match(MEMORY_STORE_SRC, /O_NONBLOCK/,
-    'a blocking open on a planted FIFO hangs the main process at agent boot, and hangs this suite with no output');
+test('memoryStore: the unit open stays non-blocking — without it a planted FIFO hangs the suite', () => {
+  for (const re of OPEN_SHAPE) {
+    assert.match(MEMORY_STORE_SRC, re,
+      `${re} is gone: a planted FIFO then hangs the main process at agent boot, and hangs this suite with no output`);
+  }
 });
 
 const fifoSkip = process.platform === 'win32'
   ? 'mkfifo and O_NOFOLLOW are POSIX-only'
-  : (NONBLOCK_PINNED ? false : 'O_NONBLOCK is gone from memory-store.js — see the source-shape pin above');
+  : (OPEN_SHAPE.every((re) => re.test(MEMORY_STORE_SRC))
+    ? false
+    : 'the non-blocking open shape is gone from memory-store.js — see the source-shape pin above');
 
 test('memoryStore: a FIFO planted beside a real unit is skipped and list() RETURNS', { skip: fifoSkip }, () => {
   const { store, dir } = tmpStore();
@@ -200,7 +209,7 @@ test('memoryStore: a FIFO planted beside a real unit is skipped and list() RETUR
   execFileSync('mkfifo', [path.join(dir, 'alpha', 'planted.md')]);
 
   // The assertion that matters is that this line is ever reached: a blocking
-  // open on a writerless FIFO never returns.
+  // read of a writerless FIFO never returns, and list() runs at agent boot.
   const units = store.list('alpha');
 
   // ENTER: the control unit survives, so the absence below is the pipe being
