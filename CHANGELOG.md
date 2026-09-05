@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.28.0 — 2026-09-05
+
 - **Live Bash output now shows up for concurrent calls that run the same
   command.** Fan a subagent out over N agents all running one command and those
   calls used to show the "could not be told apart" row for their whole run; they
