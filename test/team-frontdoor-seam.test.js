@@ -24,7 +24,11 @@ function registerWith(overrides = {}) {
     on: (ch, fn) => { handlers[ch] = fn; },
   };
   const stub = () => () => {};
-  const deps = new Proxy({ ...capture, ...overrides }, {
+  const deps = new Proxy({
+    ...capture,
+    ...(overrides.templates && !overrides.listAllTemplates ? { listAllTemplates: () => overrides.templates.list() } : {}),
+    ...overrides,
+  }, {
     get(target, prop) {
       if (prop in target) return target[prop];
       return stub();

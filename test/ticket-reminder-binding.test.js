@@ -164,6 +164,7 @@ function mkFixture() {
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,
     getTemplates: () => ({ list: () => [] }),
+    listAllTemplates: () => [],
     getRemindScheduler: () => scheduler,
     // The REAL parser, as engine.js injects it. Omitting it does not fail
     // loudly by luck — it arrived as `undefined` here first time round and every
