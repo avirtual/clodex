@@ -1146,8 +1146,7 @@ stays text, there is no image support at all (an `<img src>` is a network fetch
 on untrusted input), and a link renders as an `<a>` only when its href is
 `http:` or `https:` — anything else, `javascript:`, `data:` and `mailto:`
 included, renders as the literal text it was written as. `mailto:` is excluded
-because core hands only http/https to `shell.openExternal`, so such an anchor
-would be inert: a dead affordance rendered onto untrusted content. Anchors it
+because core admits only `http`/`https` to `shell.openExternal`. Anchors it
 does emit carry `target="_blank"` and `rel="noreferrer noopener"`. Deeply nested
 blockquotes stop nesting past a fixed depth rather than recursing, so hostile
 input cannot overflow the stack.
