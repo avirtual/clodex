@@ -420,6 +420,7 @@ function registerIpcHandlers(deps) {
   // reach an ipcMain handler) leaked every tree it discarded. One implementation
   // now, so a new delete route inherits it instead of reimplementing half.
   handle('session:kill', async (_e, name) => manager.destroy(name));
+  handle('session:move', async (_e, name, newCwd) => manager.move(name, newCwd));
   handle('session:flushPending', (_e, name) => manager.flushPending(name));
   handle('session:peekPending', (_e, name) => manager.peekPendingFor(name));
   handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
@@ -1735,6 +1736,14 @@ function registerIpcHandlers(deps) {
         label: 'Restart Session',
         click: () => e.sender.send('session:context-action', { action: 'restart', name }),
       },
+      // Agent rows only. Peer and sandbox rows never reach this menu at all
+      // (peers-ui.js builds them and routes to peer:context-menu), so `isAgent`
+      // is the whole gate — it is bash rows it excludes, which have no
+      // conversation to carry and are dropped on exit rather than resumed.
+      ...(isAgent ? [{
+        label: 'Move Session…',
+        click: () => e.sender.send('session:context-action', { action: 'move', name }),
+      }] : []),
       { type: 'separator' },
       {
         label: 'Reveal Working Directory in Finder',

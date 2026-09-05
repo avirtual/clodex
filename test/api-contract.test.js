@@ -100,7 +100,7 @@ const PINNED_NAMES = [
   // browser frontend, plus its live state.
   'peerOpenWeb', 'peerCloseWeb', 'onPeerWebTunnel',
   'onSessionPeerControl', 'getSessionArgs', 'getSessionHistory', 'discoverSessions', 'setSessionArgs',
-  'restartSession', 'setSessionTools', 'setSessionSkills', 'setSessionAgents',
+  'restartSession', 'moveSession', 'setSessionTools', 'setSessionSkills', 'setSessionAgents',
   'setSessionIntents', 'setSessionPlugins', 'getSkillCatalog', 'getAgentCatalog', 'getSkillCatalogFor',
   'getToolCatalogFor', 'listWorkspaces', 'currentWorkspace', 'setWorkspaceName',
   // The voice-mode selector's read of ~/.claude/settings.json, and the direct
@@ -226,8 +226,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 279-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 279, 'pinned list is the full 279-method surface');
+test('contract covers exactly the pinned 280-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 280, 'pinned list is the full 280-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -251,7 +251,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 279, 'window.api has exactly 279 methods');
+    assert.equal(generated.length, 280, 'window.api has exactly 280 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

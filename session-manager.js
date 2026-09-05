@@ -235,6 +235,17 @@ function isStaleRegistration(existingPid, ownPid, isAlive) {
   return !isAlive(existingPid) || existingPid === ownPid;
 }
 
+// The two questions ptyProc.onExit asks about an exit, answered together
+// because they are complements and drifted apart once: `dropRecord` is exactly
+// "a bash row whose exit nobody asked for", so a flag added to one condition
+// and not the other silently makes an EXPECTED exit also a record-dropping one.
+// Every deliberate end-of-process must therefore appear in `expected`, and a
+// move is one — it kills the pty on purpose to respawn in the new cwd.
+function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving }) {
+  const expected = !!(userKilled || shuttingDown || archived || moving);
+  return { expected, dropRecord: !agentType && !expected };
+}
+
 // node-pty's execvp failure in the forked child is silent (no stderr) — it
 // surfaces as a bare code-1 exit within a couple seconds of spawn. Excludes
 // deliberate exits, signals, and anything past the fast-fail window (a later
@@ -2039,7 +2050,13 @@ function createSessionManager(deps) {
         // aborts the whole app (SIGABRT). Mark dead so deferred ops bail.
         session._dead = true;
         log.info('session', `exit ${name} code=${exitCode}${signal ? ` signal=${signal}` : ''}`);
-        const expected = !!(session._userKilled || session._shuttingDown || session._archived);
+        const { expected, dropRecord } = exitDisposition({
+          agentType,
+          userKilled: session._userKilled,
+          shuttingDown: session._shuttingDown,
+          archived: session._archived,
+          moving: session._moving,
+        });
         const missingTool = missingToolOnExit({
           expected, exitCode, signal,
           elapsedMs: Date.now() - (session.spawnedAt || 0), cmd, whichBin,
@@ -2053,7 +2070,7 @@ function createSessionManager(deps) {
           body: `code=${exitCode}${signal ? ` signal=${signal}` : ''}${expected ? '' : ' unexpected'}`,
         });
         if (getRemoteServer()) { try { getRemoteServer().notifyExit(name, exitCode); } catch {} }
-        if (!agentType && !session._shuttingDown && !session._userKilled && !session._archived) {
+        if (dropRecord) {
           getPersistence().remove(name);
         }
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
@@ -2688,6 +2705,87 @@ function createSessionManager(deps) {
       s._archived = true;
       try { s.pty.kill(); } catch {}
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+    }
+
+    // Same record, new cwd, restart. The CLI fixes its cwd at spawn, so the only
+    // way to move a seat is to respawn it; `--resume` carries the conversation
+    // (Claude locates a transcript by session id, NOT under the project dir, so
+    // the move keeps the history — measured, see docs/notes/session-manager.md).
+    //
+    // Deliberately NOT routed through kill(), which removes the persistence
+    // record unconditionally: this method's whole contract is that the record
+    // survives with only `cwd` rewritten. It uses archive()'s signalling shape
+    // instead — set a flag the onExit disposition reads, then pty.kill() with the
+    // same SIGKILL fallback — under `_moving` rather than `_archived` so the exit
+    // is expected without also stamping the seat archived.
+    //
+    // No _preserveAcrossRestart either, for the same reason: nothing dropped the
+    // record, so create()'s upsert spread-merges over a record that still carries
+    // createdAt, ephemeral and sessionIds.
+    //
+    // A worktree seat refuses: that checkout belongs to the ticket loop, which
+    // created it and will remove it, and a seat pointed elsewhere would strand it.
+    async move(name, newCwd) {
+      const entry = getPersistence().get(name);
+      if (!entry) return { ok: false, error: `Session not found: ${name}` };
+      if (entry.worktree && entry.worktree.path) {
+        return { ok: false, error: `${name} runs in a ticket worktree (${entry.worktree.path}) — that checkout belongs to the ticket loop, so it cannot be moved.` };
+      }
+      if (typeof newCwd !== 'string' || !newCwd || !path.isAbsolute(newCwd)) {
+        return { ok: false, error: 'Destination must be an absolute path' };
+      }
+      let st = null;
+      try { st = fs.statSync(newCwd); } catch { /* missing — reported below */ }
+      if (!st) return { ok: false, error: `Directory does not exist: ${newCwd}` };
+      if (!st.isDirectory()) return { ok: false, error: `Not a directory: ${newCwd}` };
+      if (entry.cwd === newCwd) return { ok: false, error: `${name} is already in ${newCwd}` };
+
+      const s = this.sessions.get(name);
+      if (s) {
+        log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${s.pty.pid}`);
+        s._moving = true;
+        try { s.pty.kill(); } catch {}
+        setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+        if (!await this._waitForExit(name)) {
+          return { ok: false, error: 'old process did not exit in time — session not moved' };
+        }
+      }
+      // Written AFTER the exit, not before: the pty is still running in the old
+      // cwd until it goes, and a record naming a directory the live process is
+      // not in is the window a crash would restore from.
+      getPersistence().setCwd(name, newCwd);
+      const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
+      try {
+        await this.create(
+          name, entry.type, newCwd, entry.extraArgs || [], entry.sessionId || null, workspaceId,
+          entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+          entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+          entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+          Array.isArray(entry.execCommands) ? entry.execCommands : [],
+          Array.isArray(entry.intents) ? entry.intents : null,
+          (entry.env && typeof entry.env === 'object') ? entry.env : null,
+          false,
+          entry.noWire === true,
+          Array.isArray(entry.plugins) ? entry.plugins : null,
+          Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+        );
+      } catch (err) {
+        // The record keeps the NEW cwd and is not dropped, so the seat comes back
+        // as the restore path's `failed: true` retry/forget row rather than
+        // vanishing — the same degrade every other respawn failure takes.
+        getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
+        return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
+      }
+      const lvl = stripLevelOf(entry);
+      if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
+      if (entry.label) getPersistence().setLabel(name, entry.label);
+      return {
+        ok: true,
+        cwd: newCwd,
+        type: entry.type,
+        backend: (this.sessions.get(name) || {}).backend || null,
+        team: this.teamNameFor(newCwd),
+      };
     }
 
     // The exits that DROP a record run without a live session, so they cannot read
@@ -6532,4 +6630,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, deniedBodyDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };
+module.exports = { createSessionManager, deniedBodyDisposition, exitDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };

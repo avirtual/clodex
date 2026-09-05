@@ -639,6 +639,32 @@ function restartSessionWithReattach(name) {
   });
 }
 
+// Pick a folder, then move the seat into it. Unlike a restart, the cwd and the
+// team it derives are what CHANGED, so both come off the result rather than
+// from the old row — snapshotting them here would rebuild the tab under the
+// folder the seat just left.
+function moveSessionWithPicker(name) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapType = item ? item.dataset.type || null : null;
+  const snapBackend = item ? item.dataset.backend || null : null;
+  const snapNoWire = item ? item.dataset.noWire === '1' : false;
+  return window.api.selectDirectory().then((dir) => {
+    if (!dir) return;
+    return window.api.moveSession(name, dir).then((res) => {
+      if (!res || !res.ok) {
+        showToast(`Move failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name });
+        return;
+      }
+      if (snapType || res.type) {
+        createTerminal(name);
+        addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire);
+        switchSession(name);
+      }
+      showToast(`${name} moved to ${res.cwd}, restarting`, { name });
+    });
+  });
+}
+
 window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background }) => {
   switch (action) {
     case 'editArgs':
@@ -646,6 +672,9 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
       break;
     case 'restart':
       restartSessionWithReattach(name);
+      break;
+    case 'move':
+      moveSessionWithPicker(name);
       break;
     case 'reattach':
       if (type) {
