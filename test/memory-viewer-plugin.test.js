@@ -17,6 +17,9 @@
 //      writes its own memory folder, so an entry there can be a symlink aimed
 //      anywhere on disk; following one renders a file of the agent's choosing in
 //      the operator's viewer.
+//   5. The agent FOLDER must resolve to itself, and units are judged through the
+//      open fd. Confinement to the root alone admits a sibling alias, and a
+//      path-based guard admits a hardlink, whose realpath is already in-dir.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -280,6 +283,57 @@ test('memory-viewer: an agent dir that is itself a symlink out is not listed and
     const res = await host.dispatch('memory-viewer', 'units', ['elsewhere'], 'desktop');
     assert.deepEqual(res.units, [], 'and naming it directly over IPC reads nothing');
     assert.equal(JSON.stringify(res).includes('SECRET BODY'), false);
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); cleanup(); }
+});
+
+test('memory-viewer: an agent dir aliased to a SIBLING agent dir renders nothing', async () => {
+  // Confining the folder to the ROOT is not enough: `<root>/alias -> <root>/real`
+  // never leaves the root, so every per-entry check passes and agent `alias`
+  // renders `real`'s memories under its own name. The folder must resolve to
+  // itself, which a legitimate one does and an alias cannot.
+  const { host, root, cleanup } = boot();
+  try {
+    writeUnit(root, 'real', 'mem-7-rrrrrr', { body: 'the sibling body' });
+    fs.symlinkSync(path.join(root, 'real'), path.join(root, 'alias'));
+
+    const aliased = await host.dispatch('memory-viewer', 'units', ['alias'], 'desktop');
+    assert.deepEqual(aliased.units, [], 'the aliased name reads nothing');
+    assert.equal(JSON.stringify(aliased).includes('the sibling body'), false,
+      "the sibling's body never reaches the renderer under the alias");
+
+    // CONTROL: the real folder still reads, so this is a refusal of the alias
+    // and not of the store — an engine that returned [] always would pass above.
+    const direct = await host.dispatch('memory-viewer', 'units', ['real'], 'desktop');
+    assert.deepEqual(direct.units.map((u) => u.body), ['the sibling body'],
+      'the real folder is unaffected');
+  } finally { cleanup(); }
+});
+
+test('memory-viewer: a HARDLINK planted in the agent dir is neither listed nor read', async () => {
+  // A hardlink's realpath IS the in-dir path, so every path-based guard admits
+  // it and readFileSync serves the outside file's bytes. Only the open-time
+  // link count can tell it from a real unit.
+  const { host, root, cleanup } = boot();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-secret-'));
+  try {
+    // Well-formed as a unit, so only the containment check can exclude it.
+    const secret = path.join(outside, 'secret.md');
+    fs.writeFileSync(secret, '---\nid: secret\nlearned_at: 2026-07-30T10:00:00.000Z\n---\n\nHARDLINKED BODY\n');
+
+    const control = writeUnit(root, 'clodex', 'mem-1-aaaaaa', { body: 'the control body' });
+    fs.linkSync(secret, path.join(root, 'clodex', 'planted.md'));
+
+    const res = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
+
+    // ENTER: the control unit survives, so the absence below is the hardlink
+    // being refused and not the whole folder going dark.
+    assert.deepEqual(res.units.map((u) => u.key), ['mem-1-aaaaaa'],
+      'the hardlink is absent and the real unit beside it survives');
+    assert.equal(res.units[0].body, 'the control body');
+    assert.equal(JSON.stringify(res).includes('HARDLINKED BODY'), false,
+      'the outside file\'s text never reaches the renderer, under any key');
+    assert.ok(fs.existsSync(control) && fs.existsSync(secret),
+      'the refusal is a read refusal — it deletes nothing');
   } finally { fs.rmSync(outside, { recursive: true, force: true }); cleanup(); }
 });
 

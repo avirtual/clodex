@@ -65,11 +65,11 @@ function confirmText(agent, u) {
 /**
  * A failed delete, in words the user can act on.
  *
- * This surface lists every `*.md` with frontmatter, but core only deletes units
- * matching its own id grammar, so a hand-authored `project-notes.md` gets a
- * button, a confirmation, and then a refusal. The grammar is deliberately NOT
- * mirrored here — a second copy would drift from core's — so the refusal is
- * translated after the fact instead.
+ * This surface lists every `*.md` with frontmatter in the agent's folder, but
+ * core only deletes units matching its own id grammar, so a hand-authored
+ * `project-notes.md` gets a button, a confirmation, and then a refusal. The
+ * grammar is deliberately NOT mirrored here — a second copy would drift from
+ * core's — so the refusal is translated after the fact instead.
  */
 function deleteErrorText(res) {
   const raw = (res && res.error) || 'unknown error';

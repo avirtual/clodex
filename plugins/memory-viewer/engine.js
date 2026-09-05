@@ -126,13 +126,13 @@ function confineToDir(base, entryPath) {
 function readUnits(agent) {
   const dir = agentDir(agent);
   if (dir === null) return [];
-  // Every entry below is compared against THIS, not the lexical dir. The folder
-  // must land inside the root itself: an agent that replaced its memory dir with
-  // a symlink out would otherwise get everything under the target rendered, and
-  // listAgentDirs refusing to LIST it is not the guard — `agent` arrives over
-  // IPC and need not have come from that listing.
+  // The folder must resolve to ITSELF, not merely inside the root: an agent that
+  // replaced its memory dir with a symlink gets nothing, whether it aims out of
+  // the root or at a SIBLING agent's folder, whose memories would otherwise
+  // render under this agent's name. listAgentDirs refusing to list such a dir is
+  // not the guard — `agent` arrives over IPC, not necessarily from that listing.
   const base = confineToDir(realRoot(), dir);
-  if (base === null) return [];
+  if (base !== dir) return [];
   let files;
   try {
     files = fs.readdirSync(dir);
@@ -144,11 +144,18 @@ function readUnits(agent) {
     if (!f.endsWith('.md')) continue;
     const real = confineToDir(base, path.join(dir, f));
     if (real === null) continue;
+    // Judged through the FD: `real` re-resolves at open, a hardlink is in-dir.
     let text;
+    let fd = null;
     try {
-      text = fs.readFileSync(real, 'utf8');
+      fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.nlink !== 1) continue;
+      text = fs.readFileSync(fd, 'utf8');
     } catch (_) {
-      continue; // deleted between readdir and read — skip, don't fail the list
+      continue;
+    } finally {
+      if (fd !== null) fs.closeSync(fd);
     }
     const u = parseUnit(text, f.replace(/\.md$/, ''));
     if (u) units.push(u);
@@ -184,7 +191,7 @@ function computeAgents() {
 module.exports.activate = (h) => {
   // Re-enable reuses this module object; start from zero. The resolved root is
   // part of that state — a root removed and recreated between enables resolves
-  // somewhere new, and a survivor would keep pointing at the old inode.
+  // somewhere new.
   host = h;
   realRootCache = null;
 
