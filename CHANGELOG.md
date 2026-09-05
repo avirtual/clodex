@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.31.0 — 2026-09-05
+
 - **The Agents and Skills menus, and the Prompts…/Templates…/Exec Commands…/Inbox…
   items under Window, are replaced by one Library menu** with a submenu per kind;
   each lists the library's own entries first and then every contributing plugin's
