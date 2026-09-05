@@ -75,6 +75,7 @@ function mkHttpsStub(script) {
     get(url, opts, cb) {
       const req = new EventEmitter();
       req.on = req.on.bind(req);
+      req.setTimeout = () => req;
       if (/\/commits\//.test(url)) {
         // No commits API stub configured — behave like an offline/failed
         // lookup, which fetchCommitSha treats as "keep the abbreviated sha".
@@ -324,6 +325,39 @@ test('applyUpdate restores the old copy when the swap fails after move-aside', a
   }
   assert.strictEqual(fs.readFileSync(path.join(userDir, 'demo', 'manifest.json'), 'utf8'), before,
     'the old copy is back in place, byte for byte');
+  const leftovers = fs.readdirSync(userDir).filter((n) => n.startsWith('.old-demo-'));
+  assert.deepStrictEqual(leftovers, [], 'no stray moved-aside directory left behind');
+});
+
+test('applyUpdate restores the old copy when writeSidecar fails AFTER the rename-in succeeds', async () => {
+  // Distinct from the rename-in failure above: here the new copy has already
+  // landed at `target` (rename-in succeeded) before the failure hits, so the
+  // catch must first clear the occupied target before renaming the old copy
+  // back — the exact ENOTEMPTY hole review round 1 found.
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: installBytes }] });
+  await loader.installFromSource('owner/repo@main');
+  const before = fs.readFileSync(path.join(userDir, 'demo', 'manifest.json'), 'utf8');
+  const target = path.join(userDir, 'demo');
+  const sidecarFile = path.join(target, '.clodex-source.json');
+  const realWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function patched(file, ...rest) {
+    if (String(file).startsWith(`${sidecarFile}.tmp-`)) {
+      throw new Error('injected sidecar-write failure');
+    }
+    return realWriteFileSync(file, ...rest);
+  };
+  try {
+    const resolved = await loader.resolveUpdate('demo');
+    const r = await loader.applyUpdate('demo', resolved.commit);
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /restored/);
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+  }
+  assert.ok(fs.existsSync(target), 'the old copy is back at target');
+  assert.strictEqual(fs.readFileSync(path.join(target, 'manifest.json'), 'utf8'), before,
+    'the old manifest is back, byte for byte — the new (un-sidecarred) copy did not win');
   const leftovers = fs.readdirSync(userDir).filter((n) => n.startsWith('.old-demo-'));
   assert.deepStrictEqual(leftovers, [], 'no stray moved-aside directory left behind');
 });

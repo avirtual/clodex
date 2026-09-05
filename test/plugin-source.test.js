@@ -105,6 +105,7 @@ test('fetchTarball follows exactly one redirect to the final tarball', async () 
     get(url, opts, cb) {
       calls.push(url);
       const req = new EventEmitter();
+      req.setTimeout = () => req;
       if (calls.length === 1) {
         cb(mkResponse({ statusCode: 302, headers: { location: 'https://codeload.example/real.tar.gz' } }));
       } else {
