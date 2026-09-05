@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- Clodex now ships stock skills (first: clodex-plugin) into `~/.clodex/skills`
+  on launch; edited copies are never overwritten, same as team prompts.
+
 ## 5.28.0 — 2026-09-05
 
 - **Live Bash output now shows up for concurrent calls that run the same

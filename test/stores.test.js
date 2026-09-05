@@ -13,14 +13,16 @@ const { initStores } = require('../stores');
 const { shellCapGranted } = require('../peer-shell');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-// Fresh temp userData + registry dirs, and a stores bundle over them. Seeding is
-// disabled here (resourcesDir → a path that doesn't exist) so the shipped library
-// defaults don't pollute the per-store assertions below; the seed step has its
-// own dedicated tests that exercise it explicitly.
+// Fresh temp userData + registry dirs, and a stores bundle over them. BOTH seed
+// sources are pointed at paths that don't exist, so neither the shipped library
+// defaults nor the shipped skills pollute the per-store assertions below; the
+// seed step has its own dedicated tests that exercise it explicitly.
 function freshStores() {
   const userData = mkTmpRoot('stores-ud-');
   const registryDir = mkTmpRoot('stores-reg-');
-  const stores = initStores(userData, { log: console, registryDir, resourcesDir: path.join(registryDir, '__no_seed__') });
+  const stores = initStores(userData, { log: console, registryDir,
+    resourcesDir: path.join(registryDir, '__no_seed__'),
+    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__') });
   return { userData, registryDir, stores,
     cleanup() {
       fs.rmSync(userData, { recursive: true, force: true });
@@ -1407,6 +1409,147 @@ test('seed report: a MIXED run pluralises each channel by its own count', () => 
     assert.match(warns[0].msg, /edited them deliberately/,
       'the log restates BOTH stranded files, so it stays plural -- the two channels differ');
   });
+});
+
+// --- the SKILLS root seeds beside the library one ---------------------------
+// Skills live at registryDir/skills, a SIBLING of library/, so the seeder walks
+// two (src, dest) pairs. Each dest root owns its .seed-state.json /
+// .seed-report.json, and both channels must name the root: an operator told
+// "clodex-plugin.md" with no root goes looking under library/, where it is not.
+// A temp registryDir is mandatory here — the seeder refuses the real ~/.clodex
+// under node --test, so a fixture that forgets the seam gets a silent no-op.
+const REPO_SKILL = path.join(__dirname, '..', 'resources', 'skills', 'clodex-plugin.md');
+const skillsReportPath = (registryDir) => path.join(registryDir, 'skills', '.seed-report.json');
+
+// userData + registryDir + a hermetic SKILLS source, with the library source
+// pointed at nothing so the shipped library tree never lands in the assertions.
+function withSkillSeedDirs(fn) {
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  const skillsResourcesDir = mkTmpRoot('stores-skillres-');
+  try {
+    fn({ userData, registryDir, skillsResourcesDir,
+      resourcesDir: path.join(registryDir, '__no_seed__') });
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+    fs.rmSync(skillsResourcesDir, { recursive: true, force: true });
+  }
+}
+
+test('seed skills: the shipped clodex-plugin skill lands in a fresh registry (byte-exact, 0600)', () => {
+  // The DEFAULT skills source (__dirname/resources/skills) is exercised — no
+  // skillsResourcesDir override — so this pins the real shipped tree.
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  try {
+    const stores = initStores(userData, { registryDir });
+    const dest = path.join(registryDir, 'skills', 'clodex-plugin.md');
+    assert.ok(fs.existsSync(dest), 'clodex-plugin.md seeded on construction');
+    assert.deepStrictEqual(fs.readFileSync(dest), fs.readFileSync(REPO_SKILL),
+      'byte-for-byte the shipped copy');
+    // A skill store file holds an operator's own prose and is read back by the
+    // spawn path; skillLibrary.save writes 0600 and a seeded one must match, or
+    // the mode depends on which door the file came through.
+    assert.strictEqual(fs.statSync(dest).mode & 0o777, 0o600, 'seeded skill is 0600');
+    const seeded = stores.skillLibrary.list().find((s) => s.name === 'clodex-plugin');
+    assert.ok(seeded, 'the seeded skill surfaces through skillLibrary.list()');
+    assert.match(seeded.description, /Clodex plugin/,
+      'and carries the description parsed from its frontmatter');
+    assert.ok(fs.existsSync(path.join(registryDir, 'skills', '.seed-state.json')),
+      'ENTER: the manifest is there to be mis-listed');
+    assert.deepStrictEqual(stores.skillLibrary.list().map((s) => s.name), ['clodex-plugin'],
+      'the .seed-state.json sibling is not listed as a skill');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('seed skills: an operator-edited skill survives a moved ship, and the report names the skills root', () => {
+  withSkillSeedDirs(({ userData, registryDir, resourcesDir, skillsResourcesDir }) => {
+    const shipped = path.join(skillsResourcesDir, 'clodex-plugin.md');
+    fs.writeFileSync(shipped, '---\ndescription: V1\n---\nV1 body');
+
+    initStores(userData, { registryDir, resourcesDir, skillsResourcesDir });
+    const dest = path.join(registryDir, 'skills', 'clodex-plugin.md');
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), '---\ndescription: V1\n---\nV1 body',
+      'ENTER: the first run seeded, or there is nothing for the operator to edit');
+
+    // The operator edits it, and the ship moves on underneath them.
+    fs.writeFileSync(dest, '---\ndescription: MINE\n---\nmy own body');
+    fs.writeFileSync(shipped, '---\ndescription: V2\n---\nV2 body');
+    const log = captureLog();
+
+    const stores = initStores(userData, { log, registryDir, resourcesDir, skillsResourcesDir });
+
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), '---\ndescription: MINE\n---\nmy own body',
+      'the operator edit is never clobbered');
+    const warns = log.seedWarnings();
+    assert.strictEqual(warns.length, 1, 'ENTER: the file is stranded (one report line)');
+    assert.match(warns[0].msg, /clodex-plugin\.md/, 'the log names the stranded skill');
+    assert.match(warns[0].msg, /\bskills file\(s\)/,
+      'and calls it a SKILLS file, not a library one');
+    const notes = inboxNotes(stores);
+    assert.strictEqual(notes.length, 1, 'ENTER: one inbox note');
+    assert.match(notes[0].body, /clodex-plugin\.md/, 'the note names the stranded skill');
+    assert.ok(notes[0].body.includes(`under ${path.join(registryDir, 'skills')}`),
+      'the note points at the skills root, or the operator looks under library/ and finds nothing');
+  });
+});
+
+test('seed skills: the two roots keep independent report state', () => {
+  withSkillSeedDirs(({ userData, registryDir, skillsResourcesDir }) => {
+    // A real library source alongside, healthy: it seeds and strands nothing.
+    const resourcesDir = mkTmpRoot('stores-res-');
+    try {
+      fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+      fs.writeFileSync(path.join(resourcesDir, 'templates', 'reviewer.json'), '{}');
+      // The skill is stranded: dest matches neither its stamp nor the ship.
+      const shipped = path.join(skillsResourcesDir, 'clodex-plugin.md');
+      fs.writeFileSync(shipped, 'SHIPPED_V2');
+      const dest = path.join(registryDir, 'skills', 'clodex-plugin.md');
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, 'OPERATOR_EDIT');
+      fs.writeFileSync(path.join(registryDir, 'skills', '.seed-state.json'),
+        JSON.stringify({ 'clodex-plugin.md': sha256(Buffer.from('SHIPPED_V1')) }));
+      const log = captureLog();
+
+      initStores(userData, { log, registryDir, resourcesDir, skillsResourcesDir });
+
+      assert.strictEqual(log.seedWarnings().length, 1,
+        'ENTER: exactly one root stranded anything');
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(skillsReportPath(registryDir), 'utf-8')),
+        { 'clodex-plugin.md': sha256(Buffer.from('SHIPPED_V2')) },
+        'the skills root records its own stranding');
+      assert.strictEqual(fs.existsSync(seedReportPath(registryDir)), false,
+        'and the library root, which stranded nothing, gets no report file');
+      assert.deepStrictEqual(readSeedState(registryDir), {
+        [path.join('templates', 'reviewer.json')]: sha256(Buffer.from('{}')),
+      }, 'the library manifest holds only library files: the two states never merge');
+    } finally {
+      fs.rmSync(resourcesDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('seed skills: a missing skills source is a no-op, not a throw', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  try {
+    const stores = initStores(userData, {
+      registryDir,
+      resourcesDir: path.join(registryDir, '__no_seed__'),
+      skillsResourcesDir: path.join(registryDir, 'no-such-skills'),
+    });
+    assert.deepStrictEqual(stores.skillLibrary.list(), [],
+      'construction succeeds and seeds nothing');
+    assert.strictEqual(fs.existsSync(path.join(registryDir, 'skills', '.seed-state.json')), false,
+      'no manifest is written for a source that is not there');
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
 });
 
 // --- T26: all three default team role prompts ship + brief the live protocols
