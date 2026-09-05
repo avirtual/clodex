@@ -146,14 +146,16 @@ them.
 
 - **Menu → open a drawer/dialog** (app-menus.js): `request-open-new-dialog`,
   `request-open-preferences`, `request-open-peers-dialog`,
-  `request-open-peer-session` (`id, name`), `request-open-agents-drawer`
-  (`name`), `request-open-skills-drawer` (`name`), `request-open-exec-drawer`
-  (`name`), `request-open-inbox-drawer`, `request-open-prompts-drawer`,
-  `request-open-templates-drawer`, `request-open-ipc-log`,
+  `request-open-peer-session` (`id, name`), `request-open-exec-drawer`
+  (`name`), `request-open-inbox-drawer`, `request-open-ipc-log`,
   `request-rename-workspace`, `request-switch-session` (`name` — session-manager
   `voiceSelect` sends this one too, ahead of the tap, so the named seat is on
   screen before its recorder lights),
   `request-open-team-roles` (`name`), `request-open-team-create`.
+  - `request-open-prompts-drawer` — library `{ kind, name }`, plugin `{ plugin, kind, name }`, `:new`, or `null` (Manage).
+  - `request-open-templates-drawer` — library the template id (or name), plugin `{ plugin, name }`, `:new`, or `null`.
+  - `request-open-agents-drawer` — library a bare name, plugin `{ plugin, name }`, `:new`, or `null`.
+  - `request-open-skills-drawer` — library a bare name, plugin `{ plugin, name }`, `:new`, or `null`.
 - **`set-theme`** (`name`) — app-menus theme submenu (the browser sets its own
   theme in-page).
 - **`zoom-nudge`** — Electron `zoomFactor` refit (app-menus + main.js
