@@ -25,7 +25,8 @@ blocks a release.
   globally off had no row in the dialog's Plugins list and was carried through
   the save untouched — unless someone enabled it, in another window, while the
   dialog sat open, in which case saving quietly removed it from that session.
-  Each dialog now saves against the list it actually drew.
+  Each dialog now saves against the list it actually drew, and so do the
+  Intents… and Plugins… popovers, which had the same gap.
 
 - **The memory viewer no longer hangs when a pipe is planted in an agent's
   memory folder.** An agent writes that folder itself, and opening a named pipe

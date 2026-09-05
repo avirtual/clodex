@@ -1,7 +1,8 @@
 'use strict';
-// plugin-dialog-snapshot.test.js — t668 / design debt B7: each session dialog
-// carries the catalog ids its plugin checklist was DRAWN from, and the collect
-// site reads that snapshot instead of the shared cache.
+// plugin-dialog-snapshot.test.js — t668 / design debt B7, extended by t671: each
+// of the four plugin-checklist surfaces (New Session dialog, args dialog, Intents
+// popover, Plugins popover) carries the catalog ids its checklist was DRAWN from,
+// and the collect site reads that snapshot instead of the shared cache.
 //
 // THE INTERLEAVING THIS PINS. `pluginsForUnlistedPlugins` carries forward a
 // persisted plugin id the checklist could not draw a row for. Its "listed" basis
@@ -13,14 +14,25 @@
 // drops it. Recoverable only by re-ticking a row the operator never saw go blank.
 //
 // WHY THE SHIPPED SOURCE IS EXTRACTED AND RUN rather than asserted against.
-// Both collect sites are in renderer.js, which no test can require (DOM-bound,
-// window.api at load). A source-shape scan could say "the snapshot identifier
-// appears here", but that is one grep away from passing over a snapshot that is
-// filled from the cache at collect time anyway — the same bug spelled with a new
-// variable. Extracting the statement and EVALUATING it against the real leaves
-// (renderPluginChecklist / collectPluginChecklist / mergePlugins /
+// The two dialog collect sites are in renderer.js, which no test can require
+// (DOM-bound, window.api at load). A source-shape scan could say "the snapshot
+// identifier appears here", but that is one grep away from passing over a
+// snapshot that is filled from the cache at collect time anyway — the same bug
+// spelled with a new variable. Extracting the statement and EVALUATING it against
+// the real leaves (renderPluginChecklist / collectPluginChecklist / mergePlugins /
 // pluginsForUnlistedPlugins) asserts the value that reaches persistence. The
-// idiom is test/dialog-escape-parity.test.js's.
+// idiom is test/dialog-escape-parity.test.js's. The two POPOVER sites are in
+// checklist-popovers.js, which IS requireable against a DOM stub
+// (test/plugins-popover.test.js does it), so those two subjects open the real
+// popover, refill the cache under it and read the payload the real Apply writes —
+// a stronger route, taken wherever it is available.
+//
+// EVALUATING THE STATEMENT DOES NOT FIX ITS POSITION. Both extraction subjects
+// stub the snapshot they feed in, so a fill moved down into the save handler —
+// re-reading the refilled cache under the right variable name — would still pass
+// them. The position subject below is what forbids that, for all four sites: the
+// fill is assigned exactly once, above its own renderPluginChecklist call, and
+// outside the collect/apply function entirely.
 //
 // `getPluginCatalogCache` is deliberately in the stub set even though the fixed
 // source never calls it at collect: without it, reverting the fix would throw a
@@ -221,3 +233,206 @@ test('t668: the args-dialog save keeps a plugin enabled between draw and save', 
   });
   assert.strictEqual(hidden, undefined, 'CONTROL: the hidden-section arm is unchanged');
 }));
+
+// --- t671: the two popovers, through the real module ------------------------
+
+const POPOVERS = path.join(__dirname, '..', 'renderer', 'popovers', 'checklist-popovers.js');
+const popoverSrc = fs.readFileSync(POPOVERS, 'utf8');
+
+function popEl(tag = 'div') {
+  const classes = new Set();
+  const handlers = new Map();
+  const e = {
+    tagName: tag, dataset: {}, style: {}, value: '', type: '', checked: false,
+    textContent: '', children: [], isConnected: true, offsetWidth: 300, offsetHeight: 200,
+    classList: {
+      add: (c) => classes.add(c), remove: (c) => classes.delete(c),
+      contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)),
+    },
+    set innerHTML(v) { e._html = v; if (v === '') e.children = []; },
+    get innerHTML() { return e._html || ''; },
+    appendChild: (c) => { e.children.push(c); return c; },
+    contains: () => false,
+    closest: () => null,
+    getBoundingClientRect: () => ({ left: 10, top: 10, width: 100, height: 20, bottom: 30 }),
+    addEventListener: (t, fn) => { if (!handlers.has(t)) handlers.set(t, []); handlers.get(t).push(fn); },
+    fire: async (t, ev = {}) => { for (const fn of handlers.get(t) || []) await fn(ev); },
+    querySelector: () => null,
+    querySelectorAll: (sel) => (sel === 'input[type="checkbox"]:checked'
+      ? e.children.flatMap((row) => row.children || []).filter((c) => c.type === 'checkbox' && c.checked)
+      : []),
+  };
+  return e;
+}
+
+// `catalog` is what pluginCatalog() serves at open; the test refills the shared
+// cache afterwards to stand in for onPluginEvent's enable arm.
+function popoverHarness({ catalog, persisted }) {
+  const prev = {
+    doc: global.document, win: global.window, css: global.CSS, alert: global.alert,
+  };
+  const els = new Map();
+  const get = (id) => { if (!els.has(id)) els.set(id, popEl()); return els.get(id); };
+  global.document = {
+    getElementById: get, createElement: (t) => popEl(t), addEventListener() {}, querySelector: () => null,
+  };
+  global.CSS = { escape: (s) => s };
+  global.alert = () => {};
+  const calls = [];
+  global.window = {
+    innerWidth: 1200,
+    innerHeight: 800,
+    api: {
+      getSettings: async () => ({ claudeTools: [] }),
+      getSessionArgs: async () => ({ ok: true, plugins: persisted, intents: [], execCommands: [] }),
+      pluginCatalog: async () => catalog,
+      getIntentCatalog: async () => [],
+      getSessionPluginGrants: async () => ({ ok: true, plugins: [], capabilities: [], granted: [] }),
+      setSessionPlugins: async (name, plugins) => { calls.push(['setSessionPlugins', name, plugins]); return { ok: true }; },
+      setSessionIntents: async (...a) => { calls.push(['setSessionIntents', ...a]); return { ok: true }; },
+      setSessionPluginGrants: async (...a) => { calls.push(['setSessionPluginGrants', ...a]); return { ok: true }; },
+      restartSession: async () => ({ ok: true }),
+    },
+  };
+  const api = require('../renderer/popovers/checklist-popovers').initChecklistPopovers({
+    sessionList: { querySelector: () => null },
+    createTerminal() {}, addSessionToSidebar() {}, switchSession() {},
+    refreshSidebarMeta() {},
+  });
+  return {
+    api,
+    calls,
+    els,
+    ticks: (listId) => els.get(listId).children
+      .flatMap((r) => r.children || []).filter((c) => c.type === 'checkbox'),
+    apply: (id) => els.get(id).fire('click'),
+    restore() {
+      global.document = prev.doc; global.window = prev.win;
+      global.CSS = prev.css; global.alert = prev.alert;
+    },
+  };
+}
+
+test('t671: the Intents popover Apply keeps a plugin enabled between draw and apply', async () => {
+  const h = popoverHarness({ catalog: DRAWN, persisted: PERSISTED });
+  try {
+    await h.api.openIntentsPopover('seat-i', null);
+    // ENTER: the checklist really drew no row for the carried plugin. With a row,
+    // the operator's tick would carry it and this subject would pass over an
+    // apply that re-reads the cache.
+    assert.deepStrictEqual(h.ticks('intents-popover-plugins-list').map((c) => c.value), ['workbench'],
+      'ENTER: only the listed plugin has a row — `stocks` is carried, not ticked');
+
+    // The enable arm fires in another window while the popover sits open.
+    setPluginCatalogCache(REFILLED);
+
+    await h.apply('intents-popover-apply');
+    const wrote = h.calls.find((c) => c[0] === 'setSessionPlugins');
+    assert.ok(wrote, 'ENTER: the apply reached the plugins write at all');
+    assert.deepStrictEqual(wrote[2].slice().sort(), ['stocks', 'workbench'],
+      'the mid-popover refill does not turn a carried plugin into an unticked one');
+  } finally { h.restore(); }
+});
+
+test('t671: the Intents popover still obeys an untick, and an empty DRAW still writes nothing', async () => {
+  const h = popoverHarness({ catalog: DRAWN, persisted: PERSISTED });
+  try {
+    await h.api.openIntentsPopover('seat-i2', null);
+    for (const c of h.ticks('intents-popover-plugins-list')) c.checked = false;
+    setPluginCatalogCache(REFILLED);
+    await h.apply('intents-popover-apply');
+    assert.deepStrictEqual(h.calls.find((c) => c[0] === 'setSessionPlugins')[2], ['stocks'],
+      'CONTROL: the drawn plugin obeys its box while the undrawn one still rides through');
+  } finally { h.restore(); }
+
+  // The guard now reads the snapshot: a kill-switched catalog drew no rows, and a
+  // refill landing afterwards must not make the popover speak for a list it never
+  // showed.
+  const empty = popoverHarness({ catalog: [], persisted: PERSISTED });
+  try {
+    await empty.api.openIntentsPopover('seat-i3', null);
+    setPluginCatalogCache(REFILLED);
+    await empty.apply('intents-popover-apply');
+    assert.deepStrictEqual(empty.calls.filter((c) => c[0] === 'setSessionPlugins'), [],
+      'an empty DRAW writes no plugins even though the cache has rows by now');
+    assert.ok(empty.calls.some((c) => c[0] === 'setSessionIntents'),
+      'ENTER: the apply ran to the intents write — the absence above is the guard, not a bail');
+  } finally { empty.restore(); }
+});
+
+test('t671: the Plugins popover Apply keeps a plugin enabled between draw and apply', async () => {
+  const h = popoverHarness({ catalog: DRAWN, persisted: PERSISTED });
+  try {
+    await h.api.openPluginsPopover('seat-p', null);
+    assert.deepStrictEqual(h.ticks('popover-plugins-list').map((c) => c.value), ['workbench'],
+      'ENTER: only the listed plugin has a row — `stocks` is carried, not ticked');
+
+    setPluginCatalogCache(REFILLED);
+
+    await h.apply('plugins-popover-apply');
+    const wrote = h.calls.find((c) => c[0] === 'setSessionPlugins');
+    assert.ok(wrote, 'ENTER: the apply reached the plugins write at all');
+    assert.deepStrictEqual(wrote[2].slice().sort(), ['stocks', 'workbench'],
+      'the mid-popover refill does not drop the carried plugin from an edited seat');
+  } finally { h.restore(); }
+
+  const empty = popoverHarness({ catalog: [], persisted: PERSISTED });
+  try {
+    await empty.api.openPluginsPopover('seat-p2', null);
+    setPluginCatalogCache(REFILLED);
+    await empty.apply('plugins-popover-apply');
+    assert.deepStrictEqual(empty.calls.filter((c) => c[0] === 'setSessionPlugins'), [],
+      'CONTROL: the empty-DRAW guard reads the snapshot, not the refilled cache');
+  } finally { empty.restore(); }
+});
+
+// nit 1 on the t668 review: the subjects above stub or re-run the snapshot, so a
+// fill that moved down into the save handler would satisfy every one of them
+// while reading the very cache the snapshot exists to stop reading.
+const FILL_SITES = [
+  {
+    what: 'the New Session dialog', src: rendererSrc, file: 'renderer.js',
+    fill: 'newSessionPluginsRendered', render: 'renderPluginChecklist(inputPluginList,',
+    applyFrom: 'function collectFormConfig(', applyTo: '\n}\n',
+  },
+  {
+    what: 'the args dialog', src: rendererSrc, file: 'renderer.js',
+    fill: 'argsPluginsRendered', render: 'renderPluginChecklist(argsPluginList,',
+    applyFrom: "document.getElementById('btn-args-save').addEventListener", applyTo: '\n});\n',
+  },
+  {
+    what: 'the Intents popover', src: popoverSrc, file: 'checklist-popovers.js',
+    fill: 'intentsPluginsRendered', render: 'renderPluginChecklist(intentsPluginsList,',
+    applyFrom: "document.getElementById('intents-popover-apply').addEventListener", applyTo: '\n  });\n',
+  },
+  {
+    what: 'the Plugins popover', src: popoverSrc, file: 'checklist-popovers.js',
+    fill: 'popoverPluginsRendered', render: 'renderPluginChecklist(popoverPluginsList,',
+    applyFrom: "document.getElementById('plugins-popover-apply').addEventListener", applyTo: '\n  });\n',
+  },
+];
+
+for (const site of FILL_SITES) {
+  test(`t671: ${site.what}'s snapshot is filled at DRAW, not at apply`, () => {
+    // `let X = [];` does not match — the declaration is not a fill.
+    const fills = [...site.src.matchAll(new RegExp(`^[ \\t]*${site.fill} = .*$`, 'gm'))];
+    assert.strictEqual(fills.length, 1,
+      `ENTER: exactly one statement assigns ${site.fill} in ${site.file}; `
+      + 'two would leave this subject asserting about whichever came first');
+    const iFill = fills[0].index;
+
+    const iRender = site.src.indexOf(site.render);
+    assert.ok(iRender > -1, `ENTER: ${site.what}'s renderPluginChecklist call was located`);
+    assert.ok(iFill < iRender,
+      `${site.fill} must be assigned BEFORE the checklist is drawn from it — `
+      + 'a fill after the draw is a fill from whatever the cache holds by then');
+
+    const start = site.src.indexOf(site.applyFrom);
+    assert.ok(start > -1, `ENTER: ${site.what}'s collect/apply function was located`);
+    const end = site.src.indexOf(site.applyTo, start);
+    assert.ok(end > start, `ENTER: ${site.what}'s collect/apply function was bounded`);
+    assert.ok(iFill < start || iFill > end,
+      `${site.fill} is assigned inside the collect/apply body — a snapshot filled `
+      + 'there reads the refilled cache under a new name, which is the original bug');
+  });
+}

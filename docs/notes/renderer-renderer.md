@@ -31,3 +31,9 @@ snapshot to `pluginsForUnlistedPlugins` rather than re-reading the shared cache:
 `onPluginEvent`'s enable arm refills that cache while a dialog is open, so a
 carried-forward plugin would become "listed and unticked" between draw and save and
 be dropped. The args guard reads the snapshot's length for the same reason.
+
+`intentsPluginsRendered` and `popoverPluginsRendered` in
+`renderer/popovers/checklist-popovers.js` are the same pair for the Intents… and
+Plugins… popovers, which stay open across that refill too; both guards read the
+snapshot's length. All four fills are position-pinned by
+`test/plugin-dialog-snapshot.test.js`.

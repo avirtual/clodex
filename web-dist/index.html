@@ -29069,6 +29069,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         const intentsPluginsList = document.getElementById("intents-popover-plugins-list");
         let intentsPluginsPersisted = null;
+        let intentsPluginsRendered = [];
         async function repaintPluginChildren(name) {
           const ticked = collectPluginChecklist(intentsPluginsList);
           const checkedIntents = collectIntentChecklist(popoverIntentsList);
@@ -29137,6 +29138,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           setPluginCatalogCache(await window.api.pluginCatalog() || []);
           intentsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+          intentsPluginsRendered = getPluginCatalogCache().map((p) => String(p.id));
           renderPluginChecklist(intentsPluginsList, res.plugins);
           const ticked = collectPluginChecklist(intentsPluginsList);
           setIntentCatalogCache(await window.api.getIntentCatalog(name, ticked) || []);
@@ -29161,9 +29163,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const name = intentsPopover.dataset.name;
           if (!name) return closeIntentsPopover();
           const intents = collectIntentChecklist(popoverIntentsList);
-          const plugins = getPluginCatalogCache().length ? mergePlugins(
+          const plugins = intentsPluginsRendered.length ? mergePlugins(
             collectPluginChecklist(intentsPluginsList),
-            pluginsForUnlistedPlugins(intentsPluginsPersisted, getPluginCatalogCache().map((p) => String(p.id)))
+            pluginsForUnlistedPlugins(intentsPluginsPersisted, intentsPluginsRendered)
           ) : null;
           const grantsShown = !intentsGrantsBlock.classList.contains("hidden");
           const grants = grantsShown ? collectPluginGrants() : null;
@@ -29221,6 +29223,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const popoverPluginsList = document.getElementById("popover-plugins-list");
         const pluginsPopoverRestart = document.getElementById("plugins-popover-restart");
         let pluginsPersisted = null;
+        let popoverPluginsRendered = [];
         function closePluginsPopover() {
           pluginsPopover.classList.add("hidden");
           pluginsPopover.dataset.name = "";
@@ -29233,6 +29236,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           setPluginCatalogCache(await window.api.pluginCatalog() || []);
           pluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+          popoverPluginsRendered = getPluginCatalogCache().map((p) => String(p.id));
           renderPluginChecklist(popoverPluginsList, res.plugins);
           pluginsPopoverRestart.checked = false;
           pluginsPopoverName.textContent = name;
@@ -29246,9 +29250,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         document.getElementById("plugins-popover-apply").addEventListener("click", async () => {
           const name = pluginsPopover.dataset.name;
           if (!name) return closePluginsPopover();
-          const plugins = getPluginCatalogCache().length ? mergePlugins(
+          const plugins = popoverPluginsRendered.length ? mergePlugins(
             collectPluginChecklist(popoverPluginsList),
-            pluginsForUnlistedPlugins(pluginsPersisted, getPluginCatalogCache().map((p) => String(p.id)))
+            pluginsForUnlistedPlugins(pluginsPersisted, popoverPluginsRendered)
           ) : null;
           const restart = pluginsPopoverRestart.checked;
           closePluginsPopover();
