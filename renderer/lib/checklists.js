@@ -47,8 +47,6 @@ let execLibCache = [];
 // verbs. Empty until the first fetch, which is fine: every render path awaits a
 // refresh before painting, exactly like the exec registry above.
 let intentCatalogCache = [];
-// Every row here is globally enabled and not quarantined by construction — the
-// loader registers nothing else — so this doubles as a new seat's pre-tick set.
 let pluginCatalogCache = [];
 let claudeToolsCache = [];
 // Global default tool-deny set (the "*" agent-default); new sessions start with
@@ -179,7 +177,7 @@ function renderPluginChecklist(container, pluginsList) {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = p.id;
-    cb.checked = has ? has.has(String(p.id)) : true;
+    cb.checked = has ? has.has(String(p.id)) : !!p.shipped;
     if (p.announce) row.dataset.tip = p.announce;
     const txt = document.createElement('span');
     txt.innerHTML = `<strong>${esc(p.name || p.id)}</strong>${p.announce ? ' — ' + esc(p.announce) : ''}`;
@@ -192,11 +190,13 @@ function collectPluginChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
-// Every LOADED plugin — the operator's own globally-enabled decision, NOT each
-// manifest's `enabledByDefault`, which is agent-writable and would pre-tick a
-// plugin the operator never enabled anywhere.
+// The SHIPPED loaded plugins, which is the same set a seat with no list reaches
+// (seatHasPlugin's absent case) — a new seat and a pre-upgrade one must start
+// from the same place or the dialog hands out reach the gate then withholds.
+// Not each manifest's `enabledByDefault`, which is agent-writable and would
+// pre-tick a plugin the operator never enabled anywhere.
 function defaultPluginTicks() {
-  return pluginCatalogCache.map((p) => String(p.id));
+  return pluginCatalogCache.filter((p) => p.shipped).map((p) => String(p.id));
 }
 
 // Core rows first and unchanged, then ONE `popover-subhead` per contributing

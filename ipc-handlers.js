@@ -1175,7 +1175,7 @@ function registerIpcHandlers(deps) {
       capabilities: [...PLUGIN_CAPABILITIES],
       plugins: (status.plugins || [])
         .filter((p) => p.scope === 'session' && p.enabled && !p.quarantined)
-        .filter((p) => seatHasPlugin(p.id, seatPlugins))
+        .filter((p) => seatHasPlugin(p.id, seatPlugins, p.root === 'core'))
         .map((p) => ({ id: p.id, name: p.name })),
       granted: Array.isArray(entry.pluginGrants) ? [...entry.pluginGrants] : [],
     };

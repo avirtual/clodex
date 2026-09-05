@@ -2,7 +2,9 @@
 
 ## seatHasPlugin
 
-Absent list = TRUE (the living all-enabled default), which is the opposite
-polarity to `pluginGranted`'s absent = refusal. The two are deliberately
-different: flipping this one strips every pre-upgrade seat of the shipped
-plugins with no migration back.
+Absent list = SHIPPED-ONLY, which is neither `pluginGranted`'s absent = refusal
+nor the all-enabled default this had before t661. The seat default splits on
+ORIGIN: a plugin loaded from the repo's own plugins/ root reaches a seat with no
+list, a custom one does not. A pre-upgrade seat therefore LOSES custom plugins
+until they are ticked, which is the intended migration — one tick on the seats
+that should have them.

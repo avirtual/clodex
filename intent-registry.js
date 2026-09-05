@@ -268,6 +268,10 @@ function registerIntent(spec, source, opts = {}) {
 // `spec`, which is the plugin's own argument. A plugin that could declare its
 // own scope could declare itself global and undo the operator's decision.
     scope: opts.scope === 'session' ? 'session' : DEFAULT_PLUGIN_SCOPE,
+// Threaded by the host from the LOADER's root, for the same reason as `scope`
+// and never off `spec`: a plugin that could call itself shipped would reach
+// every seat that never edited a plugin list.
+    shipped: opts.shipped === true,
   });
   pluginRows.push(row);
   let disposed = false;
@@ -303,7 +307,7 @@ function pluginRowFor(type) {
 
 function rowVisibleTo(row, plugins) {
   if (!row) return true;
-  return seatHasPlugin(row.source, plugins);
+  return seatHasPlugin(row.source, plugins, row.shipped);
 }
 
 function visiblePluginRows(plugins) {
@@ -354,7 +358,7 @@ function intentEnabledFor(type, intentsList) {
 function intentEnabledForSeat(type, entry) {
   const row = pluginRowFor(type);
   if (!row) return intentEnabled(type, entry && entry.intents);
-  return seatHasPlugin(row.source, entry && entry.plugins)
+  return seatHasPlugin(row.source, entry && entry.plugins, row.shipped)
     && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
 }
 
@@ -367,7 +371,7 @@ function pruneForPlugins(entry, pluginsList) {
   const intents = Array.isArray(src.intents)
     ? src.intents.filter((t) => {
       const row = pluginRowFor(t);
-      return !row || seatHasPlugin(row.source, pluginsList);
+      return !row || seatHasPlugin(row.source, pluginsList, row.shipped);
     })
     : null;
   const pluginGrants = Array.isArray(src.pluginGrants)
@@ -378,8 +382,9 @@ function pruneForPlugins(entry, pluginsList) {
       // The same `!row` exemption the verbs half applies: a QUARANTINED plugin is
       // rowless AND absent from the catalog snapshot every editor saves, so
       // pruning against that snapshot would revoke its grants irreversibly.
-      if (!pluginRows.some((r) => r.source === id)) return true;
-      return seatHasPlugin(id, pluginsList);
+      const row = pluginRows.find((r) => r.source === id);
+      if (!row) return true;
+      return seatHasPlugin(id, pluginsList, row.shipped);
     })
     : null;
   return { intents, pluginGrants };

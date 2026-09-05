@@ -31,10 +31,11 @@ function initPluginHost({
 } = {}) {
   // The `reaches(` call sites below are the list — deliberately uncounted here,
   // since a comment that counts its siblings goes stale as one is added.
-  // Per-session slots HIDE on false; the footer button and the overlay REFUSE
-  // instead — dimmed and toasted, never removed, or the chrome reflows on every
-  // seat switch. `settingsSections` are ungated: the Plugins dialog configures a
-  // plugin process-wide, so a seat decision has nothing to say there.
+  // Per-session slots and the footer button HIDE on false; the OVERLAY refuses
+  // and toasts instead, because it is opened by an act the operator just took
+  // and silently doing nothing would read as a broken plugin.
+  // `settingsSections` are ungated: the Plugins dialog configures a plugin
+  // process-wide, so a seat decision has nothing to say there.
   function reaches(pluginId, sessionName) {
     if (typeof pluginReachesSession !== 'function') return true;
     if (!sessionName) return true;
@@ -279,8 +280,8 @@ function initPluginHost({
         }
         el.addEventListener('click', () => {
           // Re-read at CLICK time, not off the paint: a seat switch between the
-          // two repaints leaves a live-looking button one frame stale, and the
-          // dim is an affordance, not the gate.
+          // two repaints leaves a visible button one frame stale, and the paint
+          // is an affordance, not the gate.
           const seat = getActiveSession ? getActiveSession() : null;
           if (!reaches(b.pluginId, seat)) {
             if (showToast) showToast(`${b.label || b.id} is not enabled for ${seat}`);
@@ -293,10 +294,8 @@ function initPluginHost({
       el.querySelector('.footer-glyph').textContent = b.glyph ? String(b.glyph) : '';
       el.querySelector('.footer-label').textContent = b.label ? String(b.label) : '';
       const seat = getActiveSession ? getActiveSession() : null;
-      const dimmed = !reaches(b.pluginId, seat);
-      el.classList.toggle('plugin-footer-dimmed', dimmed);
-      if (dimmed) el.setAttribute('data-tip', `Not enabled for ${seat} — tick it under Plugins`);
-      else if (b.tip) el.setAttribute('data-tip', String(b.tip));
+      el.hidden = !reaches(b.pluginId, seat);
+      if (b.tip) el.setAttribute('data-tip', String(b.tip));
       else el.removeAttribute('data-tip');
       let badge = null;
       if (typeof b.badge === 'function') {
