@@ -14,6 +14,12 @@ blocks a release.
 ## Unreleased
 
 - `[agent:spawn … template:]` can name a plugin template.
+- **The shipped hand prompt tells a hand to delegate lookups and red-proof
+  loops to subagents** when the Agent tool is on its seat, and to keep every
+  edit and commit itself — the seat's bill is requests times carried context,
+  and a throwaway subagent returns one result instead of ten. It also stops
+  claiming a ticket worktree has no `node_modules`: a single test file runs
+  raw there, and only the full suite goes through the granted command.
 
 ## 5.31.0 — 2026-09-05
 
