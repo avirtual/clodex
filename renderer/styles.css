@@ -4307,9 +4307,11 @@ html, body {
    max-height caps still bound the drag. `resize` needs overflow != visible:
    the single-scroll shells already have overflow-y:auto; the flex-column
    shells (fixed header + internally scrolling list) get overflow:hidden. */
-#tools-popover, #skills-popover, #agents-popover, #intents-popover, #plugins-popover {
+#tools-popover, #skills-popover, #agents-popover, #plugins-popover {
   overflow: hidden;
 }
+#intents-popover { overflow-y: auto; }
+#intents-popover #popover-intents-list { flex: 0 0 auto; }
 #tools-popover, #skills-popover, #agents-popover, #intents-popover, #plugins-popover,
 #ctx-popover, #cost-popover, #bust-popover, #files-popover,
 #file-peek-modal {

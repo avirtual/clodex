@@ -5594,9 +5594,14 @@ body {
 #tools-popover,
 #skills-popover,
 #agents-popover,
-#intents-popover,
 #plugins-popover {
   overflow: hidden;
+}
+#intents-popover {
+  overflow-y: auto;
+}
+#intents-popover #popover-intents-list {
+  flex: 0 0 auto;
 }
 #tools-popover,
 #skills-popover,
