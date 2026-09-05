@@ -47,12 +47,6 @@ function validateManifest(m, dirName, hasBundle = false) {
 
 const BUNDLE_PROMPT_KINDS = ['system', 'append'];
 
-// A template inside a plugin names that plugin's own prompts by bare stem, and
-// this rewrite is what keeps it from dangling: the stem a template ships is
-// resolved against the plugin, never against the user's library, so moving the
-// plugin between roots cannot silently repoint it at a same-named library file.
-// An already-namespaced ref is left alone — a plugin may legitimately name
-// another plugin's prompt.
 function namespaceTemplateRefs(tpl, pluginId) {
   const qualify = (stem) => (typeof stem === 'string' && stem && !stem.includes(':')
     ? `${pluginId}:${stem}` : stem);
@@ -385,9 +379,6 @@ function createPluginLoader(deps) {
         agents: bundle.agents,
         prompts: bundle.prompts,
         templates: bundle.templates,
-        // The ownership rule, resolved once here rather than by each reader
-        // comparing root ids: a plugin under the user's own ~/.clodex/plugins
-        // is theirs to edit in the app, and every other root is read-only.
         editable: root.id === 'user',
         bundleUnreadable: bundle.unreadable,
       };
@@ -742,10 +733,6 @@ function createPluginLoader(deps) {
     templates: (stem) => ['templates', `${stem}.json`],
   };
 
-  // Two independent refusals, and neither is redundant. `editable` carries the
-  // ownership ruling, so a core plugin is refused even for a perfectly legal
-  // stem; `insideDir` re-checks the assembled path, so a stem that slipped the
-  // name regex could still not land outside the plugin's own directory.
   function writeBundleFile(id, kind, stem, body) {
     const rel = BUNDLE_FILE_PATHS[String(kind)];
     if (!rel) return { ok: false, error: `unknown bundle kind: ${kind}` };

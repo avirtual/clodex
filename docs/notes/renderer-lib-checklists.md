@@ -22,3 +22,18 @@ Swaps only the `.check-group` / `.bundle-row` nodes. A plugin tick would
 otherwise re-render the whole checklist, dropping scroll position and focus in
 the flat list the operator is mid-way through. The removal must take the headers
 too, or a tick that empties a section strands its header above nothing.
+
+## appendBundleSections
+
+`checkedSet` splits two meanings a bundle row's tick can carry, which are not
+the same fact. A skill or agent from a held plugin is loaded by the CLI whether
+or not anything selects it, so holding the plugin IS the tick. An append prompt
+is composed only when the seat's `appendPromptFiles` names it, so a row ticked
+on reach alone would claim a prompt the seat never reads. The greyed
+non-member hint stays keyed on reach either way.
+
+## collectAppendChecklist
+
+`:not(:disabled)` for the reason the skills and agents collectors carry it: a
+bundle row is drawn checked, and collecting it would write `pluginId:stem` into
+`appendPromptFiles` a second time, composing the same body twice.

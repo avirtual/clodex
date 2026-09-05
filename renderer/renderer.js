@@ -242,10 +242,6 @@ const nameFieldLabel = document.getElementById('name-field-label');
 
 let dialogMode = 'create';
 let editingTemplateId = null;
-// The plugin section a template being edited came from, or null for a library
-// template. Non-null routes the save into the plugin folder and forbids a
-// rename: the file inside the plugin is named for its stem, and the drawer has
-// no verb that deletes the old one.
 let editingTemplateBundle = null;
 let templatesDrawerRefresh = null;
 
@@ -1746,11 +1742,6 @@ async function loadPromptLib() {
   });
 }
 
-// A namespaced option is offered ONLY to a seat that holds the plugin: picking
-// one the seat cannot reach makes create() refuse the spawn outright, so the
-// option would be a trap rather than a hint. `current` survives whatever the
-// offering is, so an already-persisted ref is never silently cleared by a
-// dialog opened while the plugin is disabled.
 function fillSystemPromptSelect(selectEl, current, seat = null) {
   while (selectEl.options.length > 1) selectEl.remove(1);
   const values = [];
@@ -1802,10 +1793,6 @@ async function refreshTemplatesDropdown() {
     opt.textContent = t.name;
     inputTemplate.appendChild(opt);
   }
-  // Listed whether or not the dialog's current plugin ticks hold the plugin:
-  // selecting one applies the template's own `plugins`, which the loader has
-  // already merged its plugin into, so starting it GRANTS the plugin rather
-  // than needing it beforehand.
   for (const [, group] of byPlugin) {
     const og = document.createElement('optgroup');
     og.label = `from the ${group.label} plugin`;
@@ -1892,9 +1879,6 @@ function repaintNewSessionBundleRows() {
   const seat = newSessionSeat();
   repaintBundleSections(inputAgentsList, 'agents', seat);
   repaintBundleSections(inputInjectSkillsList, 'skills', seat);
-  // The append rail keeps the operator's current ticks across the repaint; the
-  // system rail is a <select>, so its whole offering is rebuilt around the value
-  // already chosen.
   repaintBundleSections(inputAppendList, 'prompts/append', seat,
     new Set(collectAppendChecklist(inputAppendList)));
   fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, seat);
@@ -2243,8 +2227,6 @@ inputTemplate.addEventListener('change', async () => {
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
     await refreshNewSessionPlugins(t.plugins);
     await refreshNewSessionIntents(t.intents);
-    // BELOW the plugin refresh, which seeds both the catalog these rails group
-    // by and the ticks newSessionSeat() reads.
     fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || '', newSessionSeat());
     renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
@@ -2263,8 +2245,6 @@ inputTemplate.addEventListener('change', async () => {
 btnTemplateDelete.addEventListener('click', async () => {
   const id = inputTemplate.value;
   if (!id) return;
-  // A plugin template's file lives in the plugin folder, which removeTemplate
-  // does not reach — it would delete nothing and report success.
   if (id.includes(':')) {
     showToast('That template comes from a plugin — remove it from the plugin folder.', { kind: 'warn' });
     return;
@@ -2559,10 +2539,6 @@ async function openTemplateEditor(tpl = null, bundle = null) {
   // saves defaultPluginTicks(), which reads this cache. Below the guard it
   // answers [] and writes a closed list into the template file.
   await refreshNewSessionPlugins(tpl && tpl.plugins);
-  // BELOW the plugin refresh, which is what seeds the catalog the two prompt
-  // rails group their bundle rows by — and what paints the plugin checklist
-  // newSessionSeat() reads. Above it both rails answer to the PREVIOUS
-  // template's plugin set.
   if (agentType) {
     fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '', newSessionSeat());
     renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []), newSessionSeat());
@@ -6322,10 +6298,6 @@ async function openArgsDialog(name, argsSource = null) {
   argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
   argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
   renderPluginChecklist(argsPluginList, res.plugins);
-  // Both prompt rails moved BELOW the catalog fetch and the plugin render, for
-  // the reason plugin-bundle-checklist.test.js pins on the agents render: they
-  // draw bundle rows off pluginCatalogCache, and argsSeat() reads the plugin
-  // checklist this line paints.
   fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || '', argsSeat());
   renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []), argsSeat());
   const argsAuto = new Set(autoEnabledFor(agentLib || [], name));

@@ -92,17 +92,10 @@ function renderAppendChecklist(container, enabledSet, seat = null) {
   }
   appendBundleSections(container, 'prompts/append', seat, enabledSet);
 }
-// `:not(:disabled)` for the same reason the skills and agents collectors carry
-// it: a bundle row is drawn CHECKED, and collecting it would write
-// `pluginId:stem` into appendPromptFiles a second time — the seat already reads
-// it, so the duplicate composes the same body twice.
 function collectAppendChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
 }
 
-// `prompts/system` and `prompts/append` read the SAME catalog field and split on
-// each entry's kind, because the two rails they feed are different UI: one
-// replaces the CLI default, the other composes.
 const BUNDLE_KINDS = {
   skills: { field: 'skills', promptKind: null },
   agents: { field: 'agents', promptKind: null },
@@ -116,8 +109,6 @@ function bundleSectionsOf(kind) {
   const out = [];
   for (const p of pluginCatalogCache) {
     const raw = Array.isArray(p[spec.field]) ? p[spec.field] : [];
-    // A bare string is still accepted so a catalog from an older engine (or a
-    // test fixture written against one) lists its names instead of nothing.
     const entries = raw
       .filter((e) => !spec.promptKind || (e && e.kind === spec.promptKind))
       .map((e) => (e && typeof e === 'object' ? e : { name: e }))
@@ -144,12 +135,6 @@ function hasBundleRows(kind, seat) {
   return seatBundleSections(kind, seat).length > 0;
 }
 
-// `checkedSet` splits the two meanings a bundle row's tick can carry, and they
-// are NOT the same fact. A skill or agent from a held plugin is loaded by the
-// CLI whether or not anything selects it, so holding the plugin IS the tick. An
-// append prompt is composed only when the seat's appendPromptFiles names it, so
-// a row ticked on reach alone would claim a prompt the seat never reads. The
-// greyed hint stays keyed on reach either way — that axis is unchanged.
 function appendBundleSections(container, kind, seat, checkedSet = null) {
   for (const sec of seatBundleSections(kind, seat)) {
     const head = document.createElement('div');

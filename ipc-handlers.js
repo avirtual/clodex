@@ -458,9 +458,6 @@ function registerIpcHandlers(deps) {
     catch { return { ok: false }; }
   });
 
-  // The plugin half is READ-only on this channel: save/saveByName/remove below
-  // still go to the library store, so a picker offering a `p:t` row cannot turn
-  // into a write back into the plugin folder by that row being edited.
   handle('templates:list', () => (listAllTemplates ? listAllTemplates() : templates.list()));
   handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
   handle('templates:saveByName', (_e, template) => {

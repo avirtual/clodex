@@ -7892,10 +7892,6 @@ body {
         // silently clear the other.
         { name: "getSessionPluginGrants", kind: "invoke", channel: "session:pluginGrants" },
         { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" },
-        // An ordinary capability row like fileWrite, NOT part of the frozen five-row
-        // plugin transport: this is the APP editing a plugin's own content files, and
-        // the loader refuses every root but the user's, so a plugin can never reach it
-        // to write into a built-in copy of itself.
         { name: "writePluginBundleFile", kind: "invoke", channel: "plugins:writeBundleFile" }
       ];
       module.exports = { API_CONTRACT };
@@ -25449,6 +25445,18 @@ helper=${d.helperPath}`;
           if (!sec.dir || !window.api.fileReveal) return;
           window.api.fileReveal(sec.dir);
         };
+        const bundleRelPath = (kind, stem) => ({
+          skills: `skills/${stem}/SKILL.md`,
+          agents: `agents/${stem}.md`,
+          "prompts/system": `prompts/system/${stem}.md`,
+          "prompts/append": `prompts/append/${stem}.md`,
+          templates: `templates/${stem}.json`
+        })[kind];
+        const readBundle = async (sec, kind, stem) => {
+          if (!sec.dir) return "";
+          const r = await window.api.filePeek(`${sec.dir}/${bundleRelPath(kind, stem)}`);
+          return r && r.ok && r.content != null ? r.content : "";
+        };
         const writeBundle = async (sec, kind, stem, body) => {
           const res = await window.api.writePluginBundleFile(sec.id, kind, stem, body);
           if (res && res.ok === false) {
@@ -25520,10 +25528,11 @@ helper=${d.helperPath}`;
             promptsList.appendChild(el);
           }
           appendBundleGroups(promptsList, groups, {
-            onEdit: (sec, entry) => openPromptEditor(
-              { kind: sec.kind, name: entry.name, body: entry.body || "" },
-              sec
-            ),
+            onEdit: async (sec, entry) => openPromptEditor({
+              kind: sec.kind,
+              name: entry.name,
+              body: await readBundle(sec, `prompts/${sec.kind}`, entry.name)
+            }, sec),
             onReveal: revealBundle
           });
         }
@@ -25646,7 +25655,10 @@ helper=${d.helperPath}`;
             agentsListEl.appendChild(el);
           }
           appendBundleGroups(agentsListEl, groups, {
-            onEdit: (sec, entry) => openAgentEditor({ name: entry.name, body: entry.body }, sec),
+            onEdit: async (sec, entry) => openAgentEditor(
+              { name: entry.name, body: await readBundle(sec, "agents", entry.name) },
+              sec
+            ),
             onReveal: revealBundle
           });
         }
@@ -25769,7 +25781,10 @@ helper=${d.helperPath}`;
             skillsListEl.appendChild(el);
           }
           appendBundleGroups(skillsListEl, groups, {
-            onEdit: (sec, entry) => openSkillEditor({ name: entry.name, body: entry.body }, sec),
+            onEdit: async (sec, entry) => openSkillEditor(
+              { name: entry.name, body: await readBundle(sec, "skills", entry.name) },
+              sec
+            ),
             onReveal: revealBundle
           });
         }
@@ -25986,7 +26001,9 @@ helper=${d.helperPath}`;
           return parts.join(" \xB7 ") || "(defaults)";
         }
         async function refreshTemplatesList() {
-          const items = (await window.api.listTemplates() || []).filter((t) => !t.plugin);
+          const all = await window.api.listTemplates() || [];
+          const items = all.filter((t) => !t.plugin);
+          const pluginTemplates = new Map(all.filter((t) => t.plugin).map((t) => [t.id, t]));
           if (refreshPluginCatalog) await refreshPluginCatalog();
           const groups = bundleGroups("templates");
           templatesListEl.innerHTML = "";
@@ -26025,8 +26042,11 @@ helper=${d.helperPath}`;
           }
           appendBundleGroups(templatesListEl, groups, {
             onEdit: (sec, entry) => {
+              const id = `${sec.id}:${entry.name}`;
+              const tpl = pluginTemplates.get(id);
+              if (!tpl) return;
               closeTemplatesDrawer();
-              openTemplateEditor({ ...entry.body, name: entry.name, id: `${sec.id}:${entry.name}` }, sec);
+              openTemplateEditor({ ...tpl, name: entry.name, id }, sec);
             },
             onReveal: revealBundle
           });

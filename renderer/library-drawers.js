@@ -56,14 +56,6 @@ function scopeBadgeHtml(meta) {
   return parts.length ? `<div class="prompt-item-scope">${esc(parts.join(' · '))}</div>` : '';
 }
 
-// The ownership ruling, drawn: a row from the user's own plugins folder gets an
-// Edit that saves back into the plugin file; a row from any other root gets a
-// Reveal instead, because a save there would write into the app bundle. Both
-// arms come from `sec.editable`, which the loader resolves from the root — the
-// drawer never compares root ids itself.
-//
-// `onEdit` and `onReveal` are optional. A caller that supplies neither draws a
-// controlless row, which is what every bundle row was before this ticket.
 function appendBundleGroups(listEl, sections, { onEdit = null, onReveal = null } = {}) {
   for (const sec of sections) {
     const head = document.createElement('div');
@@ -97,12 +89,21 @@ function appendBundleGroups(listEl, sections, { onEdit = null, onReveal = null }
 function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, bundleSectionsOf, refreshPluginCatalog }) {
   const bundleGroups = (kind) => (typeof bundleSectionsOf === 'function' ? bundleSectionsOf(kind) : []);
 
-  // The reveal target is the plugin's DIRECTORY, not the file inside it: a
-  // read-only row exists to point the operator at a folder they can open in
-  // their own editor, and a plugin without a resolved dir has nothing to show.
   const revealBundle = (sec) => {
     if (!sec.dir || !window.api.fileReveal) return;
     window.api.fileReveal(sec.dir);
+  };
+  const bundleRelPath = (kind, stem) => ({
+    skills: `skills/${stem}/SKILL.md`,
+    agents: `agents/${stem}.md`,
+    'prompts/system': `prompts/system/${stem}.md`,
+    'prompts/append': `prompts/append/${stem}.md`,
+    templates: `templates/${stem}.json`,
+  }[kind]);
+  const readBundle = async (sec, kind, stem) => {
+    if (!sec.dir) return '';
+    const r = await window.api.filePeek(`${sec.dir}/${bundleRelPath(kind, stem)}`);
+    return (r && r.ok && r.content != null) ? r.content : '';
   };
   const writeBundle = async (sec, kind, stem, body) => {
     const res = await window.api.writePluginBundleFile(sec.id, kind, stem, body);
@@ -131,14 +132,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   // {kind, name} of the prompt being edited (its filename identity is locked while
   // editing — rename = delete + new), or null when authoring a new one.
   let editingPrompt = null;
-  // Twin of editingAgentBundle. Non-null routes the save into the plugin folder.
   let editingPromptBundle = null;
 
   async function refreshPromptsList() {
     const items = await window.api.listPrompts();
     if (refreshPluginCatalog) await refreshPluginCatalog();
-    // One section per kind, so a plugin shipping both a system and an append
-    // prompt of the same stem lists two distinguishable rows.
     const groups = [
       ...bundleGroups('prompts/system').map((g) => ({ ...g, kind: 'system' })),
       ...bundleGroups('prompts/append').map((g) => ({ ...g, kind: 'append' })),
@@ -181,8 +179,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       promptsList.appendChild(el);
     }
     appendBundleGroups(promptsList, groups, {
-      onEdit: (sec, entry) => openPromptEditor(
-        { kind: sec.kind, name: entry.name, body: entry.body || '' }, sec),
+      onEdit: async (sec, entry) => openPromptEditor({
+        kind: sec.kind,
+        name: entry.name,
+        body: await readBundle(sec, `prompts/${sec.kind}`, entry.name),
+      }, sec),
       onReveal: revealBundle,
     });
   }
@@ -284,10 +285,6 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   const agentsClose = document.getElementById('agents-close');
 
   let editingAgentName = null;
-  // Non-null while the editor is open on a PLUGIN's agent file. It routes the
-  // save to the plugin folder and locks the name: a rename inside a plugin would
-  // have to delete the old file, and this drawer has no verb that deletes out of
-  // a plugin.
   let editingAgentBundle = null;
 
   async function refreshAgentsList() {
@@ -322,7 +319,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       agentsListEl.appendChild(el);
     }
     appendBundleGroups(agentsListEl, groups, {
-      onEdit: (sec, entry) => openAgentEditor({ name: entry.name, body: entry.body }, sec),
+      onEdit: async (sec, entry) => openAgentEditor(
+        { name: entry.name, body: await readBundle(sec, 'agents', entry.name) }, sec),
       onReveal: revealBundle,
     });
   }
@@ -349,8 +347,6 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
         ? (agent.body || '')
         : ((await window.api.getAgent(agent.name)) || '');
       agentNameInput.readOnly = !!bundle;
-      // No Delete inside a plugin: removing part of an installed plugin from a
-      // library drawer is not what this control means anywhere else in it.
       agentDelete.style.display = bundle ? 'none' : '';
     } else {
       editingAgentName = null;
@@ -433,7 +429,6 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   const skillsClose = document.getElementById('skills-close');
 
   let editingSkillName = null;
-  // Twin of editingAgentBundle, same routing and the same name lock.
   let editingSkillBundle = null;
 
   async function refreshSkillsLibList() {
@@ -466,7 +461,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       skillsListEl.appendChild(el);
     }
     appendBundleGroups(skillsListEl, groups, {
-      onEdit: (sec, entry) => openSkillEditor({ name: entry.name, body: entry.body }, sec),
+      onEdit: async (sec, entry) => openSkillEditor(
+        { name: entry.name, body: await readBundle(sec, 'skills', entry.name) }, sec),
       onReveal: revealBundle,
     });
   }
@@ -721,10 +717,9 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   }
 
   async function refreshTemplatesList() {
-    // `templates:list` now serves the plugin rows too, so the flat section has
-    // to drop them explicitly: left in, each would carry the Delete that reaches
-    // the library store only, and pressing it would silently delete nothing.
-    const items = ((await window.api.listTemplates()) || []).filter((t) => !t.plugin);
+    const all = (await window.api.listTemplates()) || [];
+    const items = all.filter((t) => !t.plugin);
+    const pluginTemplates = new Map(all.filter((t) => t.plugin).map((t) => [t.id, t]));
     if (refreshPluginCatalog) await refreshPluginCatalog();
     const groups = bundleGroups('templates');
     templatesListEl.innerHTML = '';
@@ -760,8 +755,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     appendBundleGroups(templatesListEl, groups, {
       onEdit: (sec, entry) => {
+        const id = `${sec.id}:${entry.name}`;
+        const tpl = pluginTemplates.get(id);
+        if (!tpl) return;
         closeTemplatesDrawer();
-        openTemplateEditor({ ...entry.body, name: entry.name, id: `${sec.id}:${entry.name}` }, sec);
+        openTemplateEditor({ ...tpl, name: entry.name, id }, sec);
       },
       onReveal: revealBundle,
     });

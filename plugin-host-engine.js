@@ -700,16 +700,10 @@ function createPluginHostEngine(deps) {
         scope: scopeOf(r.manifest),
         shipped: r.shipped === true,
         enabledByDefault: r.manifest.enabledByDefault !== false,
-        // Every entry carries its BODY, not just its name: the library drawers
-        // open an editor on a bundle record, and this is the only read that
-        // reaches them — `bundles()` is engine-side and no IPC serves it.
-        skills: r.skills.map((s) => ({ name: s.name, body: s.content })),
-        agents: r.agents.map((a) => ({ name: a.name, body: a.content })),
-        // A prompt is identified by name AND kind, because the two rails it can
-        // land on — the system <select> and the append checklist — are different
-        // UI, and a system and an append prompt may share a stem.
-        prompts: r.prompts.map((p) => ({ name: p.name, kind: p.kind, body: p.body })),
-        templates: r.templates.map((t) => ({ name: t.name, body: t.body })),
+        skills: r.skills.map((s) => s.name),
+        agents: r.agents.map((a) => a.name),
+        prompts: r.prompts.map((p) => ({ name: p.name, kind: p.kind })),
+        templates: r.templates.map((t) => t.name),
         editable: r.editable === true,
         dir: r.dir || null,
       }));

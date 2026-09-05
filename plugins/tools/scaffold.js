@@ -21,22 +21,19 @@ const positional = [];
 let skillName = null;
 let promptRef = null;
 let templateName = null;
-// A flag with no value is REFUSED, never treated as absent: `--skill` swallowing
-// the plugin id as its value is the mistake the refusal exists to catch, and it
-// would otherwise scaffold a plugin named after nothing.
-const takeValue = (flag, i) => {
+const takeValue = (flag, noun, i) => {
   if (argv[i + 1] === undefined) {
-    console.error(`refused: ${flag} needs a value`);
+    console.error(`refused: ${flag} needs ${noun}`);
     process.exit(2);
   }
   return argv[i + 1];
 };
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--skill') { skillName = takeValue('--skill', i); i++; continue; }
+  if (argv[i] === '--skill') { skillName = takeValue('--skill', 'a name', i); i++; continue; }
   if (argv[i].startsWith('--skill=')) { skillName = argv[i].slice('--skill='.length); continue; }
-  if (argv[i] === '--prompt') { promptRef = takeValue('--prompt', i); i++; continue; }
+  if (argv[i] === '--prompt') { promptRef = takeValue('--prompt', '<kind>/<stem>', i); i++; continue; }
   if (argv[i].startsWith('--prompt=')) { promptRef = argv[i].slice('--prompt='.length); continue; }
-  if (argv[i] === '--template') { templateName = takeValue('--template', i); i++; continue; }
+  if (argv[i] === '--template') { templateName = takeValue('--template', 'a name', i); i++; continue; }
   if (argv[i].startsWith('--template=')) { templateName = argv[i].slice('--template='.length); continue; }
   positional.push(argv[i]);
 }
@@ -155,10 +152,6 @@ if (promptStem) {
 if (templateName) {
   const templateDir = path.join(dir, 'templates');
   fs.mkdirSync(templateDir, { recursive: true });
-  // A bare stem here on purpose: the loader rewrites it to `${id}:${promptStem}`
-  // on read, and writing the namespaced form by hand is what the rewrite exists
-  // to make unnecessary. `plugins` is left out for the same reason — the read
-  // merges this plugin's own id in.
   const template = {
     name: templateName,
     type: 'claude',
