@@ -9,7 +9,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const net = require('net');
-const { execSync, spawn } = require('child_process');
+const { execSync, spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
@@ -2060,6 +2060,7 @@ const toolCache = createToolCache({ whichBin });
         getUiSettings: () => uiSettings,
         log,
         requireModule: (p) => require(p),
+        https, execFile,
       });
       pluginLoader.loadAll(pluginHost);
     } catch (e) {

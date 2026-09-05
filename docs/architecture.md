@@ -533,7 +533,13 @@ worktree, which is why membership is by repo.
 - **plugin-loader.js** — manifest discovery + validation
   (`validateManifest`, `isNewerVersion`). An unrecognized `scope` is REFUSED,
   never defaulted: `scopeOf` resolves anything unknown to `global`, so a typo on
-  a plugin meant to be invisible would silently load it everywhere.
+  a plugin meant to be invisible would silently load it everywhere. Also owns
+  installing a plugin from a source (`resolveSource`/`installFromSource`/
+  `resolveUpdate`/`applyUpdate`/`removeSourcePlugin`, plugins/plugin-sources.md
+  §9), built on the **plugin-source.js** leaf below.
+- **plugin-source.js** — deps-injected leaf (fs/path/https/execFile) parsing a
+  GitHub plugin-source spec and fetching/extracting its tarball; see
+  docs/notes/plugin-source.md for the tarball-naming and byte-cap specifics.
 - **plugin-prompt-refs.js** — the pure leaf resolving a `<plugin-id>:<stem>`
   prompt reference, and listing a plugin's templates. THROWS where the library
   path returns null: a namespaced stem the seat cannot reach means the template

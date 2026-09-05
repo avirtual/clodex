@@ -1227,10 +1227,26 @@ test('listUserRoot lists the user root one level deep, marking directories', () 
   const r = loader.listUserRoot();
   assert.strictEqual(r.dir, userDir);
   assert.deepStrictEqual(r.entries, [
-    { name: 'alpha', isDir: true },
-    { name: 'notes.txt', isDir: false },
-    { name: 'zeta', isDir: true },
-  ], 'sorted by name, directories marked');
+    { name: 'alpha', isDir: true, source: null },
+    { name: 'notes.txt', isDir: false, source: null },
+    { name: 'zeta', isDir: true, source: null },
+  ], 'sorted by name, directories marked, source null for a plain directory');
+});
+
+test('listUserRoot reports a fetched entry\'s sidecar as its source (t683)', () => {
+  const base = mkTmpRoot('clodex-plugins-');
+  const userDir = path.join(base, 'plugins');
+  fs.mkdirSync(path.join(userDir, 'fetched'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'fetched', '.clodex-source.json'), JSON.stringify({
+    source: 'github', repo: 'owner/repo', ref: 'main', subpath: null, commit: 'abc123', commitFull: false,
+  }));
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: base, label: 'Built in' },
+    { id: 'user', dir: userDir, label: 'User' },
+  ]);
+  const entry = loader.listUserRoot().entries.find((e) => e.name === 'fetched');
+  assert.strictEqual(entry.source.repo, 'owner/repo');
+  assert.strictEqual(entry.source.commit, 'abc123');
 });
 
 test('listUserRoot does NOT descend into an entry', () => {

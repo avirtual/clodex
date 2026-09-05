@@ -885,3 +885,84 @@ test('_host plugins.listUserRoot refuses when no user root is configured', async
   const { engine } = makeHost({ loader });
   assert.equal((await engine.dispatch('_host', 'plugins.listUserRoot', [], 'desktop')).ok, false);
 });
+
+// ── _host plugins.installFromSource / applyUpdate / removeSourcePlugin call
+// rescan themselves (t683 rework, MUST-FIX 2) ───────────────────────────────
+
+test('_host plugins.installFromSource rescans and announces the new plugin on success', async () => {
+  const manager = makeManager();
+  const loader = fakeLoader({
+    installFromSource: async () => ({ ok: true, id: 'demo', dir: '/x/demo', commit: 'abc1234' }),
+    rescan: () => ({ added: ['demo'], removed: [], changed: [], failed: [] }),
+  });
+  const { engine } = makeHost({ manager, loader });
+  const r = await engine.dispatch('_host', 'plugins.installFromSource', ['owner/repo'], 'desktop');
+  assert.strictEqual(r.ok, true);
+  const states = manager.sent
+    .filter((s) => s.channel === 'plugin-event' && s.args[1] === 'plugin-state')
+    .map((s) => s.args[2]);
+  assert.deepEqual(states, [{ id: 'demo', enabled: true }],
+    'the install ran a real rescan, not a hand-rolled disabled announce');
+});
+
+test('_host plugins.applyUpdate delegates to loader.rescan and announces nothing for a CHANGED plugin', async () => {
+  // "Leaves a loaded plugin restart-required" is pinned at the LOADER level
+  // (test/plugin-loader-source.test.js) — this test proves only that the host
+  // method delegates to rescan and reuses its announce shape, via a stub that
+  // asserts nothing about restartRequired itself.
+  const manager = makeManager();
+  let rescanCalls = 0;
+  const loader = fakeLoader({
+    applyUpdate: async () => ({ ok: true, id: 'demo', previousCommit: 'a', commit: 'b' }),
+    rescan: () => { rescanCalls++; return { added: [], removed: [], changed: ['demo'], failed: [] }; },
+  });
+  const { engine } = makeHost({ manager, loader });
+  const r = await engine.dispatch('_host', 'plugins.applyUpdate', ['demo', 'b'], 'desktop');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(rescanCalls, 1, 'applyUpdate must call loader.rescan itself, not leave it to the caller');
+  assert.deepEqual(manager.sent.filter((s) => s.channel === 'plugin-event'), [],
+    'no announce for a CHANGED plugin — same shape plugins.rescan uses');
+});
+
+test('_host plugins.removeSourcePlugin rescans and announces the plugin removed', async () => {
+  const manager = makeManager();
+  let rescanCalls = 0;
+  const loader = fakeLoader({
+    removeSourcePlugin: () => ({ ok: true, id: 'demo' }),
+    rescan: () => { rescanCalls++; return { added: [], removed: ['demo'], changed: [], failed: [] }; },
+  });
+  const { engine } = makeHost({ manager, loader });
+  const r = await engine.dispatch('_host', 'plugins.removeSourcePlugin', ['demo'], 'desktop');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(rescanCalls, 1,
+    'removal must run the removed-loop via loader.rescan, not a hand-rolled deactivate');
+  const states = manager.sent
+    .filter((s) => s.channel === 'plugin-event' && s.args[1] === 'plugin-state')
+    .map((s) => s.args[2]);
+  assert.deepEqual(states, [{ id: 'demo', enabled: false }],
+    'removal ran the removed-loop via rescan, not a hand-rolled deactivate');
+});
+
+test('_host plugins.installFromSource reports ok:true with a rescanError when rescan throws AFTER the install committed (t683 r2 nit)', async () => {
+  const manager = makeManager();
+  const loader = fakeLoader({
+    installFromSource: async () => ({ ok: true, id: 'demo', dir: '/x/demo', commit: 'abc1234' }),
+    rescan: () => { throw new Error('rescan blew up'); },
+  });
+  const { engine } = makeHost({ manager, loader });
+  const r = await engine.dispatch('_host', 'plugins.installFromSource', ['owner/repo'], 'desktop');
+  assert.strictEqual(r.ok, true, 'the install itself succeeded and must not be reported as a failure');
+  assert.strictEqual(r.id, 'demo');
+  assert.match(r.rescanError, /rescan blew up/);
+});
+
+test('_host plugins.installFromSource does not rescan when the loader refuses', async () => {
+  const manager = makeManager();
+  const loader = fakeLoader({
+    installFromSource: async () => ({ ok: false, error: 'nope' }),
+    rescan: () => { throw new Error('rescan must not run on a refusal'); },
+  });
+  const { engine } = makeHost({ manager, loader });
+  const r = await engine.dispatch('_host', 'plugins.installFromSource', ['owner/repo'], 'desktop');
+  assert.strictEqual(r.ok, false);
+});

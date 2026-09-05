@@ -173,6 +173,11 @@ const SCANNED_MODULES = [
   'plugin-host-engine.js',
   // Phase 2: discovery + the enabled set. Deps-object factory, fs/path injected.
   'plugin-loader.js',
+  // Phase A sources (t683): tarball fetch + extraction. Deps-object factory
+  // like plugin-loader.js, not a pure leaf like clodex-paths.js — fs/path/
+  // https/execFile all arrive through `createPluginSource`'s deps object, so
+  // it joins the scan the same way plugin-loader.js did.
+  'plugin-source.js',
   // The shared dial (t42/L1), collapsing three copies of spawn-and-kill. Listed
   // because the ticket requires every new extraction to join this list — but be
   // honest about what it proves HERE: this is a cli/ leaf that was never carved

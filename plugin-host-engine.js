@@ -561,6 +561,17 @@ function createPluginHostEngine(deps) {
     return loader.status();
   }
 
+  function rescanAndAnnounce(loader) {
+    const r = loader.rescan(api);
+    for (const id of r.added) announceState(id, true);
+    for (const id of r.removed) announceState(id, false);
+    // A CHANGED plugin gets no announce: nothing about it moved in this
+    // process, and telling windows to re-activate would re-run the OLD cached
+    // module's renderer half for a version the user thinks they just installed.
+    if (r.added.length || r.removed.length) notifyStateChanged();
+    return r;
+  }
+
   const hostMethods = {
     'settings.get': (pluginId) => {
       if (!registered.has(String(pluginId))) return errorEnvelope('no such plugin');
@@ -618,24 +629,65 @@ function createPluginHostEngine(deps) {
     'plugins.rescan': () => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
-      const r = loader.rescan(api);
-      for (const id of r.added) announceState(id, true);
-      for (const id of r.removed) announceState(id, false);
-      // A CHANGED plugin gets no announce: nothing about it moved in this
-      // process, and telling windows to re-activate would re-run the OLD cached
-      // module's renderer half for a version the user thinks they just installed.
-      if (r.added.length || r.removed.length) notifyStateChanged();
-      return { ok: true, ...r };
+      return { ok: true, ...rescanAndAnnounce(loader) };
     },
     'renderer.report': (pluginId, ok, error) => {
       const loader = getLoader && getLoader();
       if (!loader) return { ok: true, counted: false };
       return { ok: true, ...loader.noteRendererActivation(String(pluginId), !!ok, error) };
     },
+    'plugins.resolveSource': async (spec) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      try {
+        const r = await loader.resolveSource(String(spec || ''));
+        return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
+    'plugins.installFromSource': async (spec) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      let r;
+      try {
+        r = await loader.installFromSource(String(spec || ''));
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+      if (!r.ok) return errorEnvelope(r.error);
+      try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
+      catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
+    },
+    'plugins.resolveUpdate': async (pluginId) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      try {
+        const r = await loader.resolveUpdate(String(pluginId || ''));
+        return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
+    'plugins.applyUpdate': async (pluginId, commit) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      let r;
+      try {
+        r = await loader.applyUpdate(String(pluginId || ''), String(commit || ''));
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+      if (!r.ok) return errorEnvelope(r.error);
+      try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
+      catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
+    },
+    'plugins.removeSourcePlugin': (pluginId) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const r = loader.removeSourcePlugin(String(pluginId || ''));
+      if (!r.ok) return errorEnvelope(r.error);
+      try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
+      catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
+    },
   };
 
   const HOST_DESKTOP_ONLY = new Set([
     'plugins.validateCandidate', 'plugins.register', 'plugins.unregister',
+    'plugins.resolveSource', 'plugins.installFromSource', 'plugins.resolveUpdate',
+    'plugins.applyUpdate', 'plugins.removeSourcePlugin',
   ]);
 
   const api = {
@@ -655,9 +707,9 @@ function createPluginHostEngine(deps) {
         // loadOne over a separate unconditional channel with identical effect.
         // Both belong to "core's own web surface is privileged", a wider
         // question than plugin dispatch, ticketed separately. HOST_DESKTOP_ONLY
-        // is the exception: those three take a caller-supplied path, so a web
-        // client could otherwise link an arbitrary host directory into the
-        // plugin root and have its code loaded. The list is pinned by
+        // is the exception: every member either takes a caller-supplied host
+        // path or fetches/writes plugin code from a caller-supplied repo spec —
+        // either way a web client could have arbitrary code loaded. Pinned by
         // test/plugin-surface-gate.test.js — a new method argues for itself.
         const hf = hostMethods[String(method)];
         if (typeof hf !== 'function') return errorEnvelope(NO_SUCH_METHOD);
