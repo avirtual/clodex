@@ -30,7 +30,7 @@ function railOf(body) {
 // rule below, but their derived role keys (lead/reviewer) carry defs that differ
 // from a custom session role — addRole would refuse with a raw bounce — so the
 // picker excludes them. The join picker offers SESSION-CLASS deltas only.
-const NON_SESSION_STOCK = new Set(['clodex-team-lead', 'clodex-team-reviewer']);
+const NON_SESSION_STOCK = new Set(['clodex-team-lead', 'clodex-team-reviewer', 'clodex-team-reviewer-shell']);
 
 // Is this prompt offered by the append-rail picker? Stock clodex-team-* deltas
 // qualify (except the non-session-class ones above); any other prompt must

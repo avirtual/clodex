@@ -149,7 +149,7 @@ function looksLikeIntent(rawLine) {
 // `parse` returns an arbitrary object, and one non-deterministic field in it
 // (a timestamp) would make a genuine double-paste look distinct, which is the
 // worse failure — a double `task cancel` executing twice.
-const KEY_FIELDS = ['sub', 'target', 'name', 'id', 'cmd', 'spec', 'who', 'to', 'filter', 'template', 'cwd', 'worktree', 'park', 'ms'];
+const KEY_FIELDS = ['sub', 'target', 'name', 'id', 'cmd', 'spec', 'who', 'to', 'filter', 'template', 'cwd', 'worktree', 'park', 'reviewer', 'ms'];
 
 function shadowIntentKey(agent, intent) {
   // urgent is part of the identity: a held dm RESENT with the flag inside the

@@ -47,7 +47,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, allowRules = []) {
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     const scriptPath = pathFor(REGISTRY_DIR, name, 'hook');
@@ -523,6 +523,13 @@ JSEOF
       ...(Array.isArray(disabledTools) ? disabledTools : []).filter((t) => toolSet.has(t)),
     ])];
     if (denyRules.length) settings.permissions = { deny: denyRules };
+    // Deny outranks allow in the CLI, so the two compose rather than fight: the
+    // denylist here names tools, the allowlist names Bash command prefixes, and
+    // an allow entry can never resurrect a tool the deny list turned off.
+    const allowList = [...new Set((Array.isArray(allowRules) ? allowRules : []).filter(Boolean))];
+    if (allowList.length) {
+      settings.permissions = { ...(settings.permissions || {}), allow: allowList };
+    }
     // skillOverrides:{name:"off"} REMOVES the skill from the injected roster,
     // reclaiming its per-turn tokens; a Skill(name) deny still pays the listing.
     const skillsOff = [...new Set((Array.isArray(disabledSkills) ? disabledSkills : []).filter(Boolean))];

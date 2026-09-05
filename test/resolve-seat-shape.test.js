@@ -78,6 +78,8 @@ test('ticket purpose: the whole shape, with no template', () => {
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
+    shellAllow: null,
+    posture: null,
     modelRefused: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
@@ -115,6 +117,8 @@ test('review purpose: the whole shape, with no template', () => {
     // what distinguishes it from a template that asked for nothing USABLE.
     requestedTools: null,
     toolsMalformed: false,
+    shellAllow: null,
+    posture: null,
     modelRefused: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
@@ -168,6 +172,8 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     effectiveTools: ['Read', 'Grep'],
     requestedTools: ['Read', 'Grep'],
     toolsMalformed: false,
+    shellAllow: null,
+    posture: null,
     modelRefused: null,
     systemPromptFile: 'rv-brief',
     appendPromptFiles: [],
@@ -220,6 +226,8 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
+    shellAllow: null,
+    posture: null,
     modelRefused: null,
     beyondCap: [],
     promptEscaped: null,
@@ -266,13 +274,17 @@ test('a CODEX lead still gets a claude reviewer', () => {
   );
 });
 
-test('a reviewer template requesting Bash has it dropped, and the overreach is reported', () => {
-  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Read', 'Bash'] }]);
+// The exemplar was Bash until t673 admitted it under REVIEWER_SHELL_ALLOW. Edit
+// carries the property this test is about — a tool outside the cap that no code
+// path admits — and it is the stronger exemplar for it: a WRITE tool on a seat
+// sold as read-only is the overreach that matters most.
+test('a reviewer template requesting Edit has it dropped, and the overreach is reported', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Read', 'Edit'] }]);
   const team = teamWith({ reviewer: { template: 'rv' } });
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
-  assert.ok(shape.disabledTools.includes('Bash'), 'Bash must be denied');
+  assert.ok(shape.disabledTools.includes('Edit'), 'Edit must be denied');
   assert.deepStrictEqual(shape.effectiveTools, ['Read'], 'the template may NARROW the cap');
-  assert.deepStrictEqual(shape.beyondCap, ['Bash'], 'the overreach must be reportable');
+  assert.deepStrictEqual(shape.beyondCap, ['Edit'], 'the overreach must be reportable');
 });
 
 // t299: the resolver still RESOLVES this shape — the refusal is the caller's,
@@ -281,11 +293,13 @@ test('a reviewer template requesting Bash has it dropped, and the overreach is r
 // it keys off, and the list the template actually asked for, which the message
 // prints and which is recoverable from nothing else the shape carries.
 test('a reviewer template whose tools miss the cap entirely resolves to NO tools, and says it was asked', () => {
-  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Bash'] }]);
+  // Edit, not Bash: since t673 a lone `tools: ['Bash']` is an ADMITTED request
+  // that resolves to cap+Bash, so it no longer empties the intersection.
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Edit'] }]);
   const team = teamWith({ reviewer: { template: 'rv' } });
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
   assert.deepStrictEqual(shape.effectiveTools, [], 'nothing survives the intersection');
-  assert.deepStrictEqual(shape.requestedTools, ['Bash'], 'and the caller can name what was asked for');
+  assert.deepStrictEqual(shape.requestedTools, ['Edit'], 'and the caller can name what was asked for');
   // The consequence the refusal exists to prevent: an empty allowlist inverts to
   // a denylist of EVERY tool, so the seat could not read the diff it reviews.
   assert.deepStrictEqual(shape.disabledTools, CLAUDE_TOOLS.slice(),
@@ -340,10 +354,21 @@ test('t300: an ABSENT tools — and an explicit null — still take the full cap
 });
 
 test('a reviewer template cannot widen past the cap even naming every tool', () => {
+  // t673 changed what "every tool" yields, and the change is bounded, not a
+  // loosening: Bash is now admitted BY CODE under REVIEWER_SHELL_ALLOW, so a
+  // template naming everything gets the cap plus a shell that can only run the
+  // read-only verbs in that list. Every OTHER tool it named is still refused,
+  // which is the property this test has always been about. Asserting the
+  // ceiling as a literal rather than as "cap plus whatever the code admits":
+  // a computed expectation here would agree with any future admission.
   const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: CLAUDE_TOOLS.slice() }]);
   const team = teamWith({ reviewer: { template: 'rv' } });
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
-  assert.deepStrictEqual(shape.effectiveTools, REVIEWER_CAP, 'nothing widens the cap');
+  assert.deepStrictEqual(shape.effectiveTools, ['Read', 'Grep', 'Glob', 'Bash'], 'nothing widens past the cap plus the code-admitted shell');
+  for (const denied of ['Edit', 'Write', 'WebFetch']) {
+    assert.ok(CLAUDE_TOOLS.includes(denied), `ENTER: ${denied} really is in the catalog the template asked for`);
+    assert.ok(shape.disabledTools.includes(denied), `${denied} was named by the template and must still be denied`);
+  }
 });
 
 test('a non-allowlisted reviewer template env key is dropped and named', () => {
@@ -748,6 +773,8 @@ test('role cwd: the ticket arm boots the seat in the role subdirectory — whole
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
+    shellAllow: null,
+    posture: null,
     modelRefused: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
@@ -783,6 +810,8 @@ test('role cwd: a role WITHOUT one still boots at the team root — whole shape'
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
+    shellAllow: null,
+    posture: null,
     modelRefused: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
@@ -821,6 +850,8 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     effectiveTools: REVIEWER_CAP,
     requestedTools: null,
     toolsMalformed: false,
+    shellAllow: null,
+    posture: null,
     modelRefused: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
@@ -949,4 +980,124 @@ test('role cwd: a nested team resolving to the SAME root is not a re-parent', ()
   const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
   assert.strictEqual(shape.cwdFallback, null, 'the owning team IS this team — nothing to report');
   assert.strictEqual(shape.cwd, path.join(team.root, 'api'));
+});
+
+// --- t673: the read-only shell reviewer -------------------------------------
+//
+// The shell is admitted by CODE, on a template's opt-in. Both halves matter and
+// each is worthless alone: the opt-in without the code-owned allowlist is an
+// agent-writable template granting itself an unrestricted Bash, and the
+// allowlist without the posture swap is decorative, because
+// --dangerously-skip-permissions ignores allow/deny entirely.
+
+const REVIEWER_SHELL_ALLOW = [
+  'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
+  'Bash(git merge-base:*)', 'Bash(git rev-parse:*)', 'Bash(git branch --show-current)',
+  'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(sed -n:*)',
+  'Bash(wc:*)', 'Bash(node --test:*)', 'Bash(npx node --test:*)',
+];
+
+test('t673: a reviewer template listing Bash resolves to cap+Bash with the code-owned allowlist', () => {
+  const m = managerWith(
+    [{ name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv-shell' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.effectiveTools, ['Read', 'Grep', 'Glob', 'Bash']);
+  assert.ok(!shape.disabledTools.includes('Bash'), 'Bash must not be denied back out through the tool denylist');
+  // The LITERAL list, not REVIEWER_SHELL_ALLOW re-exported from the source: a
+  // test that imported the constant it checks would pass for any edit to it,
+  // including one that added `Bash(rm:*)`.
+  assert.deepStrictEqual(shape.shellAllow, REVIEWER_SHELL_ALLOW);
+  assert.strictEqual(shape.posture, 'dontAsk');
+  // Every entry is a read-only verb. A mutating one admitted here reaches a seat
+  // whose whole premise is that it cannot change the tree it reviews.
+  for (const rule of shape.shellAllow) {
+    assert.match(rule, /^Bash\((git (diff|log|show|status|merge-base|rev-parse|branch)|ls|cat|head|tail|sed -n|wc|node --test|npx node --test)/,
+      `${rule} is not one of the read-only verbs this seat is allowed`);
+  }
+});
+
+test('t673: a shell reviewer spawns under dontAsk, NOT the lead bypass posture', () => {
+  // The wall is the permission MODE. Under --dangerously-skip-permissions the
+  // allowlist above is ignored by the CLI and the seat has an unrestricted
+  // shell, so inheriting the lead's posture here silently voids the design.
+  const m = managerWith(
+    [{ name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv-shell' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.extraArgs, ['--permission-mode', 'dontAsk']);
+  assert.ok(!shape.extraArgs.includes('--dangerously-skip-permissions'),
+    'the bypass posture must be DROPPED for this seat, not merged with dontAsk');
+});
+
+test('t673: a shell reviewer still honors the --model carve-out, after the posture', () => {
+  const m = managerWith(
+    [{
+      name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'],
+      extraArgs: ['--model', 'sonnet', '--allowedTools', 'Bash'],
+    }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv-shell' } });
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
+    ['--permission-mode', 'dontAsk', '--model', 'sonnet'],
+    'the template\'s own --allowedTools must still lose; only --model rides',
+  );
+});
+
+test('t673: Bash is admitted, so it is NOT reported beyond the cap — Edit still is', () => {
+  // One template, both tools: an implementation that skipped Bash by skipping
+  // the whole beyondCap computation would pass a Bash-only fixture and hand the
+  // seat Edit here.
+  const m = managerWith([{
+    name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit'],
+  }]);
+  const team = teamWith({ reviewer: { template: 'rv-shell' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.beyondCap, ['Edit'], 'Edit is the overreach; Bash was granted on purpose');
+  assert.deepStrictEqual(shape.effectiveTools, ['Read', 'Grep', 'Glob', 'Bash']);
+  assert.ok(shape.disabledTools.includes('Edit'), 'and Edit is denied, not merely reported');
+});
+
+test('t673: a reviewer that did NOT ask for Bash carries no allowlist and no posture override', () => {
+  // The default reviewer is the fallback this experiment must not disturb.
+  const m = managerWith([], { leadArgs: ['--dangerously-skip-permissions'] });
+  const team = teamWith({ reviewer: {} });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.shellAllow, null, 'null is what create() reads as "write no allow block"');
+  assert.strictEqual(shape.posture, null);
+  assert.deepStrictEqual(shape.extraArgs, ['--dangerously-skip-permissions'],
+    'the untouched default still inherits the lead posture');
+  assert.ok(shape.disabledTools.includes('Bash'), 'and Bash stays denied for it');
+});
+
+test('t673: a per-ticket template override selects the reviewer template', () => {
+  const m = managerWith([
+    { name: 'rv-default', type: 'claude', cwd: '/repo', tools: ['Read'] },
+    { name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] },
+  ]);
+  const team = teamWith({ reviewer: { template: 'rv-default' } });
+  const withoutOverride = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.strictEqual(withoutOverride.tpl.name, 'rv-default', 'ENTER: the role default is what an unoverridden ticket gets');
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD, 'rv-shell');
+  assert.strictEqual(shape.tpl.name, 'rv-shell', 'the ticket\'s choice outranks the role\'s');
+  assert.strictEqual(shape.posture, 'dontAsk');
+});
+
+test('t673: the override does NOT apply on the ticket arm', () => {
+  // A hand's template is the role's. Honoring a reviewer selection here would
+  // let one ticket field silently re-shape the implementer seat too.
+  const m = managerWith([
+    { name: 'ht', type: 'claude', cwd: '/repo', systemPromptFile: 'hand-brief' },
+    { name: 'rv-shell', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] },
+  ]);
+  const team = teamWith({ hand: { worktree: true, template: 'ht' } });
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD, 'rv-shell');
+  assert.strictEqual(shape.tpl.name, 'ht', 'the hand keeps its own template');
+  assert.strictEqual(shape.shellAllow, null);
 });

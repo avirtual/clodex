@@ -71,6 +71,17 @@ const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
 // NARROW below the cap; it can never widen past it.
 const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
 
+// Admitting Bash is a CODE decision, never a template's: a template opts in by
+// listing Bash in `tools`, and this list — not the template — fixes what it may
+// run. Widening it by adding a mutating verb makes every reviewer seat a writer.
+const REVIEWER_SHELL_ALLOW = [
+  'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
+  'Bash(git merge-base:*)', 'Bash(git rev-parse:*)', 'Bash(git branch --show-current)',
+  'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(sed -n:*)',
+  'Bash(wc:*)', 'Bash(node --test:*)', 'Bash(npx node --test:*)',
+];
+const REVIEWER_SHELL_TOOL = 'Bash';
+
 // The reviewer seat's env comes from a template, which — like team.json — is
 // agent-writable, and env is an AUTHORITY surface (ANTHROPIC_BASE_URL, proxy and
 // credential redirects, model overrides). This code-level allowlist is the
@@ -680,14 +691,18 @@ function createTicketMethods(deps, shared) {
       const def = team.roles && team.roles.reviewer;
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 
-      const templateName = def.template || DEFAULT_REVIEWER_TEMPLATE;
+      // The ticket's own choice outranks the team's role: an A/B runs one ticket
+      // at a time, and the role default is what every ticket that did not choose
+      // still gets.
+      const templateOverride = (opts && opts.template) || null;
+      const templateName = templateOverride || def.template || DEFAULT_REVIEWER_TEMPLATE;
       // Caught, because this handler is reached from an unawaited async
       // _handleIntent: an uncaught throw here becomes an unhandled rejection and
       // the lead is told NOTHING. The resolver's purpose guard is deliberately
       // fail-closed, and fail-closed is only useful if it is also fail-visible.
       let shape;
       try {
-        shape = this.resolveSeatShape(team, 'reviewer', 'review', session);
+        shape = this.resolveSeatShape(team, 'reviewer', 'review', session, templateOverride);
       } catch (err) {
         // Not err.message alone: a non-Error throw would report "error: undefined",
         // which tells the lead nothing at all.
@@ -837,6 +852,10 @@ function createTicketMethods(deps, shared) {
         // the fallback destination when the ticket cannot be resolved.
         ...(reviewTicket ? { reviewTicket } : {}),
         ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
+        // The name that ACTUALLY resolved, not the ticket's request: the A/B
+        // groups on what spawned, and a row labelled with an override that fell
+        // back to the default would compare the wrong two populations.
+        reviewerTemplate: templateName,
       });
 
       let promptWarn = '';
@@ -878,6 +897,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
+            false, null, shape.shellAllow,
           );
           // The rule is "reported ONCE", and this is the one caller that can
           // report twice: a reviewer whose prompt rides as system fails the
@@ -1114,6 +1134,14 @@ function createTicketMethods(deps, shared) {
           // spend was tagged with. The two disagree exactly when the seat fell
           // back to the counter name, which is the case worth being able to see.
           wireLabel: (rec && rec.wireLabel) || null,
+          // Both off the SAME captured record as wireLabel, and for its reason: a
+          // re-resolution by name here would find nothing — kill() has already
+          // removed the reviewer's entry by the time this runs.
+          template: (rec && rec.reviewerTemplate) || null,
+          // The seat's own createdAt, so a queued spawn is not billed as review
+          // time. Absent on a record that predates the field, and null then
+          // rather than a zero that would drag every median down.
+          wallMs: (rec && typeof rec.createdAt === 'number') ? (Date.now() - rec.createdAt) : null,
           verdict, mustFix: mustFixCount, ledger, resolved,
         });
         const file = path.join(dest.dir, teamCost.REVIEW_COST_FILE);
@@ -3835,7 +3863,7 @@ function createTicketMethods(deps, shared) {
     // `opener` is the session doing the spawning (the lead). It is not derivable
     // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
     // is the permission posture.
-    resolveSeatShape(team, roleKey, purpose, opener) {
+    resolveSeatShape(team, roleKey, purpose, opener, templateOverride = null) {
       // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
       // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
       // spawn a reviewer with no tool cap, no forced claude and no env fallback,
@@ -3846,8 +3874,13 @@ function createTicketMethods(deps, shared) {
       }
       const def = (team && team.roles && team.roles[roleKey]) || null;
       const review = purpose === 'review';
+      // The override applies on the REVIEW arm only: a ticket seat's template is
+      // the role's, and honoring it here would let a reviewer selection silently
+      // re-shape the hand.
       const shape = this._templateShape(
-        review ? ((def && def.template) || DEFAULT_REVIEWER_TEMPLATE) : (def && def.template),
+        review
+          ? (templateOverride || (def && def.template) || DEFAULT_REVIEWER_TEMPLATE)
+          : (def && def.template),
       );
       const tpl = (shape && shape.tpl) || null;
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
@@ -3891,6 +3924,11 @@ function createTicketMethods(deps, shared) {
           // Reviewer-only concept: no cap applies off the review path, so there is
           // no allowlist to report. Present so both purposes return one key set.
           effectiveTools: null,
+          // Same footing: the shell allowlist is a reviewer-cap concept. A ticket
+          // seat's tools are the template's business and no allow block is built
+          // for it. Present so both purposes return one key set.
+          shellAllow: null,
+          posture: null,
           // null even when the template DOES carry `tools`: this field means "what
           // the reviewer cap was asked to intersect", and off the review path
           // nothing is asked of the cap — reporting a request no arm honored would
@@ -3954,13 +3992,24 @@ function createTicketMethods(deps, shared) {
       // Fail-closed on malformed, so the SHAPE alone cannot spawn a widened seat
       // even if a future caller forgets the refusal. Only the caller can make it
       // visible, and only the caller can bail before the name is minted.
-      const effectiveTools = toolsMalformed
+      // Bash is admitted BESIDE the cap, not into it: REVIEWER_TOOL_CAP stays the
+      // read-only ceiling every other tool is intersected against, and the shell
+      // arrives with an allowlist of its own that the cap cannot express.
+      const wantsShell = !toolsMalformed && !!requestedTools && requestedTools.includes(REVIEWER_SHELL_TOOL);
+      const cappedTools = toolsMalformed
         ? []
         : (requestedTools
           ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
           : REVIEWER_TOOL_CAP.slice());
+      const effectiveTools = wantsShell
+        ? [...REVIEWER_TOOL_CAP, REVIEWER_SHELL_TOOL]
+        : cappedTools;
+      // Admitted, so not an overreach: reporting Bash here would print the
+      // operator-facing "beyond the cap, requires approval" warning about the one
+      // tool this arm just granted on purpose.
       const beyondCap = requestedTools
-        ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
+        ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t)
+          && !(wantsShell && t === REVIEWER_SHELL_TOOL))
         : [];
 
       // Presence test only — _templateShape still owns the FILTERING. The
@@ -4009,7 +4058,20 @@ function createTicketMethods(deps, shared) {
         // Dropping the rest is an ADJUDICATED decision, not an omission: the
         // rationale is owned by the test 'a reviewer template CANNOT contribute
         // extraArgs'. Mirroring the ticket arm here reverts it.
-        extraArgs: [...postureArgs, ...modelArgs.args],
+        //
+        // A shell reviewer REPLACES the lead's posture rather than merging with
+        // it: --dangerously-skip-permissions ignores allow/deny entirely, so
+        // inheriting it would hand the seat an unrestricted Bash and leave
+        // REVIEWER_SHELL_ALLOW decorative. dontAsk denies anything outside the
+        // allowlist without a dialog, which is what no seat can block on.
+        extraArgs: wantsShell
+          ? ['--permission-mode', 'dontAsk', ...modelArgs.args]
+          : [...postureArgs, ...modelArgs.args],
+        // The allowlist travels ON THE SHAPE so the spawn path cannot assemble a
+        // different one: null on every non-shell seat, which is what create()
+        // reads as "write no allow block at all".
+        shellAllow: wantsShell ? REVIEWER_SHELL_ALLOW.slice() : null,
+        posture: wantsShell ? 'dontAsk' : null,
         // A --model that was present and refused. Carried, not re-derived at the
         // call site: re-parsing would put a second copy of the allowlist there.
         modelRefused: modelArgs.refused,
@@ -4424,6 +4486,14 @@ function createTicketMethods(deps, shared) {
       });
     },
 
+    // Every template name the library holds. The refusal prints the whole list
+    // rather than a near-miss: the caller is choosing between a handful of names,
+    // and a suggestion that guesses wrong sends them to a second failed add.
+    _reviewerTemplateNames() {
+      try { return getTemplates().list().map((t) => t && t.name).filter(Boolean); }
+      catch { return []; }
+    },
+
     _taskAdd(session, team, intent, reply) {
       // Read before the permission check, not after: a non-lead's spec is the longest
       // payload any ticket verb carries, and the check below is the one rejection in
@@ -4435,6 +4505,18 @@ function createTicketMethods(deps, shared) {
       if (intent.who) {
         assignee = this._resolveAssignee(team, intent.who);
         if (!assignee) { reply(`error: ${this._assigneeMissText(team, intent.who)}${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
+      }
+      // Refused HERE rather than at review time: a name that resolves to no
+      // template becomes a reviewer that fails to spawn after the work is done,
+      // which surfaces as an escalation on a finished ticket instead of a typo
+      // the lead can fix in the line it just typed.
+      const reviewerTemplate = intent.reviewer || null;
+      if (reviewerTemplate) {
+        const known = this._reviewerTemplateNames();
+        if (!known.includes(reviewerTemplate)) {
+          reply(`error: no template "${reviewerTemplate}" in the library — reviewer templates available: [${known.join(', ')}]${this._spillRejectedPayload(session, 'task add', spec)}`);
+          return;
+        }
       }
       const tickets = ticketsStore.load(team.root);
       const now = Date.now();
@@ -4452,6 +4534,9 @@ function createTicketMethods(deps, shared) {
         // Omitting it here would file every new ticket as already started.
         startedAt: null,
         ...(parked ? { parked: true } : {}),
+        // Absent when not given, for `parked`'s reason: every pre-upgrade record
+        // omits it, and the spawn path reads absent as "the team's own reviewer".
+        ...(reviewerTemplate ? { reviewerTemplate } : {}),
       };
       const taskDir = extractTaskDir(spec);
       if (taskDir) ticket.taskDir = taskDir;
@@ -4465,13 +4550,14 @@ function createTicketMethods(deps, shared) {
       // running" — and every later loop step has to hang off that seam. Dispatch
       // now lives in `_taskStart` alone; two spawn paths for one job is the
       // defect this split exists to avoid, so do not restore a delivery here.
+      const rvNote = reviewerTemplate ? ` — reviewer template: ${reviewerTemplate}` : '';
       if (parked) {
-        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it`);
+        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it${rvNote}`);
         return;
       }
-      reply(assignee
+      reply((assignee
         ? `ticket ${ticket.id} → ${assignee} (not started) — [agent:task start ${ticket.id}] mints its tree and seat and delivers the spec`
-        : `ticket ${ticket.id} (backlog)`);
+        : `ticket ${ticket.id} (backlog)`) + rvNote);
     },
 
     // The dispatch half `add` used to do inline. Split out so there is a seam
@@ -6245,6 +6331,9 @@ function createTicketMethods(deps, shared) {
       // human. Errors become escalations; a success is logged.
       this._handleTeamReview(leadSession, scope, {
         ticketId,
+        // Off the RECORD on every spawn, which is what makes a rework round reuse
+        // the round-1 reviewer without a second place to store the choice.
+        template: ticket.reviewerTemplate || null,
         onReply: (msg) => {
           const m = String(msg == null ? '' : msg);
           // An UNBRIEFED reviewer is a review that will not happen: the seat

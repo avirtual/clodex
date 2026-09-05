@@ -1205,7 +1205,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellAllow = null) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1410,7 +1410,7 @@ function createSessionManager(deps) {
           // the frozen prompt below, not just cosmetic.
           let hookInstalled = false;
           if (!args.includes('--settings')) {
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, Array.isArray(shellAllow) ? shellAllow : []);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }
@@ -5316,7 +5316,7 @@ function createSessionManager(deps) {
             // here, a reloaded ticket seat reads as the operator's standing seat
             // at accept: no teardown, a leaked worktree, and a reply claiming it
             // is not a one-shot ticket seat.
-            this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
+            this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate']);
             await this.create(
               name, entry.type, entry.cwd, entry.extraArgs || [], null, entry.workspaceId,
               entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
