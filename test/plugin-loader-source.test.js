@@ -69,7 +69,7 @@ function buildCollectionTarballBytes(sha, subpathRel, id) {
 // `commits/<ref>` API call) is stubbed to fail (resolve null) unless a script
 // step opts in — most subjects don't need the full-sha path, only that
 // `commitFull` is honestly false when it is unavailable.
-function mkHttpsStub(script) {
+function mkHttpsStub(script, commitsUrls) {
   let i = 0;
   return {
     get(url, opts, cb) {
@@ -77,6 +77,7 @@ function mkHttpsStub(script) {
       req.on = req.on.bind(req);
       req.setTimeout = () => req;
       if (/\/commits\//.test(url)) {
+        if (Array.isArray(commitsUrls)) commitsUrls.push(url);
         // No commits API stub configured — behave like an offline/failed
         // lookup, which fetchCommitSha treats as "keep the abbreviated sha".
         const res = new EventEmitter();
@@ -102,7 +103,7 @@ function mkHttpsStub(script) {
   };
 }
 
-function mkSourceLoader({ script, coreIds = [] }) {
+function mkSourceLoader({ script, coreIds = [], commitsUrls } = {}) {
   const base = mkTmpRoot('clodex-loader-source-');
   const coreDir = path.join(base, 'core');
   const userDir = path.join(base, 'plugins');
@@ -123,7 +124,7 @@ function mkSourceLoader({ script, coreIds = [] }) {
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
     log: { info: () => {} },
     requireModule: (p) => require(p),
-    https: mkHttpsStub(script),
+    https: mkHttpsStub(script, commitsUrls),
     execFile: realExecFile,
   });
   return { loader, userDir, coreDir, getUi: () => ui };
@@ -149,6 +150,17 @@ test('resolveSource refuses a spec parseSourceSpec refuses, before any network c
   const { loader } = mkSourceLoader({ script: [] });
   const r = await loader.resolveSource('not a spec');
   assert.strictEqual(r.ok, false);
+});
+
+test('resolveSource asks the commits API for the EXTRACTED commit, never the caller ref (t683 nit a)', async () => {
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const commitsUrls = [];
+  const { loader } = mkSourceLoader({ script: [{ bytes }], commitsUrls });
+  const r = await loader.resolveSource('owner/repo@main');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(commitsUrls.length, 1);
+  assert.ok(commitsUrls[0].endsWith('/commits/abc1234'),
+    `expected the commits lookup to use the extracted sha abc1234, got ${commitsUrls[0]}`);
 });
 
 test('installFromSource follows a collection-repo subpath to the right plugin folder', async () => {
@@ -178,6 +190,7 @@ test('installFromSource writes the sidecar, registers DISABLED, and rescans', as
   assert.strictEqual(sidecar.repo, 'owner/repo');
   assert.strictEqual(sidecar.ref, 'main');
   assert.strictEqual(sidecar.commit, 'abc1234');
+  assert.strictEqual(sidecar.hostVersion, HOST_API_VERSION, 't683 nit f: the sidecar names the host version');
   // Registered DISABLED regardless of enabledByDefault (the manifest here has
   // no enabledByDefault at all, so it defaults true — installFromSource must
   // override that, not merely leave it unset).
@@ -265,6 +278,65 @@ test('resolveUpdate re-fetches at the SIDECAR ref and reports both shas', async 
   assert.strictEqual(r.previousCommit, 'abc1234');
   assert.strictEqual(r.commit, 'def5678');
   assert.strictEqual(r.changed, true);
+});
+
+test('resolveUpdate treats an abbreviated sha as unchanged against its own full sha (t683 nit a)', async () => {
+  // Install with the commits API failing (sidecar keeps the ABBREVIATED sha),
+  // then resolveUpdate against a commits API that this time succeeds and
+  // reports the FULL sha of the very same commit — a naive `!==` would call
+  // this "changed" on length alone.
+  const FULL = 'abc1234567890123456789012345678901234567';
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  let commitsCall = 0;
+  const httpsStub = {
+    get(url, opts, cb) {
+      const req = new EventEmitter();
+      req.setTimeout = () => req;
+      if (/\/commits\//.test(url)) {
+        commitsCall++;
+        const res = new EventEmitter();
+        res.resume = () => {};
+        if (commitsCall === 1) {
+          res.statusCode = 404;
+          setImmediate(() => cb(res));
+        } else {
+          res.statusCode = 200;
+          setImmediate(() => {
+            cb(res);
+            res.emit('data', Buffer.from(JSON.stringify({ sha: FULL })));
+            res.emit('end');
+          });
+        }
+        return req;
+      }
+      const res = new EventEmitter();
+      res.statusCode = 200;
+      res.headers = {};
+      res.resume = () => {};
+      res.pipe = (dest) => { dest.write(bytes); dest.end(); return dest; };
+      setImmediate(() => cb(res));
+      return req;
+    },
+  };
+  const base = mkTmpRoot('clodex-loader-source-');
+  const userDir = path.join(base, 'plugins');
+  let ui = {};
+  const loader = createPluginLoader({
+    fs, path,
+    roots: [{ id: 'user', dir: userDir, label: 'User' }],
+    getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
+    log: { info: () => {} },
+    requireModule: (p) => require(p),
+    https: httpsStub,
+    execFile: realExecFile,
+  });
+  const installed = await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+  assert.strictEqual(installed.commit, 'abc1234', 'ENTER: install kept the abbreviated sha');
+  const r = await loader.resolveUpdate('demo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.commit, FULL);
+  assert.strictEqual(r.changed, false, 'the full sha is the same commit as the abbreviated one — not changed');
 });
 
 test('applyUpdate refuses a sha mismatch against the commit the caller accepted', async () => {
@@ -384,4 +456,36 @@ test('removeSourcePlugin removes a fetched directory', async () => {
   const r = loader.removeSourcePlugin('demo');
   assert.strictEqual(r.ok, true);
   assert.ok(!fs.existsSync(path.join(userDir, 'demo')));
+});
+
+test('removeSourcePlugin refuses a symlinked id rather than deleting the link target (t683 nit d)', async () => {
+  const { loader, userDir } = mkSourceLoader({ script: [] });
+  const elsewhere = mkTmpRoot('clodex-loader-source-elsewhere-');
+  fs.writeFileSync(path.join(elsewhere, 'canary.txt'), 'do not delete me');
+  fs.mkdirSync(userDir, { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(userDir, 'demo'), 'dir');
+  const r = loader.removeSourcePlugin('demo');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /registered link/);
+  assert.ok(fs.existsSync(path.join(elsewhere, 'canary.txt')), 'the link target survives, untouched');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// isValidPluginId gating (t683 nit d)
+// ════════════════════════════════════════════════════════════════════════════
+
+test('resolveUpdate/applyUpdate/removeSourcePlugin refuse an invalid id before touching the filesystem', async () => {
+  const { loader, userDir } = mkSourceLoader({ script: [] });
+  const bad = '../escape';
+  const ru = await loader.resolveUpdate(bad);
+  assert.strictEqual(ru.ok, false);
+  assert.match(ru.error, /invalid plugin id/);
+  const au = await loader.applyUpdate(bad, 'whatever');
+  assert.strictEqual(au.ok, false);
+  assert.match(au.error, /invalid plugin id/);
+  const rm = loader.removeSourcePlugin(bad);
+  assert.strictEqual(rm.ok, false);
+  assert.match(rm.error, /invalid plugin id/);
+  assert.ok(!fs.existsSync(userDir) || fs.readdirSync(userDir).length === 0,
+    'nothing outside the user root was ever touched');
 });

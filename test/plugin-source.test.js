@@ -47,6 +47,9 @@ const SPEC_ROWS = [
   ['/repo', { ok: false }],
   ['owner/', { ok: false }],
   ['not a spec at all', { ok: false }],
+  ['owner/.', { ok: false }],
+  ['owner/..', { ok: false }],
+  ['owner/repo@release/1.0', { ok: true, repo: 'owner/repo', ref: 'release/1.0', subpath: null }],
 ];
 
 test('parseSourceSpec: a literal table of accepted forms and refusals', () => {
@@ -122,6 +125,50 @@ test('fetchTarball follows exactly one redirect to the final tarball', async () 
   assert.strictEqual(r.ok, true, JSON.stringify(r));
   assert.strictEqual(calls.length, 2, 'exactly one redirect followed');
   assert.strictEqual(fs.readFileSync(dest, 'utf8'), 'tarball-bytes');
+});
+
+test('fetchTarball encodes a ref containing "/" per segment, not as one escaped string (t683 nit e)', async () => {
+  const base = mkTmpRoot('clodex-plugin-source-');
+  const dest = path.join(base, 'out.tar.gz');
+  let calledUrl = null;
+  const httpsStub = {
+    get(url, opts, cb) {
+      calledUrl = url;
+      const req = new EventEmitter();
+      req.setTimeout = () => req;
+      cb(mkResponse({ statusCode: 200, chunks: [Buffer.from('bytes')] }));
+      return req;
+    },
+  };
+  const fsStub = { ...fs, createWriteStream: () => mkWriteStream(dest) };
+  const source = createPluginSource({ fs: fsStub, path, https: httpsStub });
+  await source.fetchTarball({ repo: 'owner/repo', ref: 'release/1.0' }, dest);
+  assert.strictEqual(calledUrl, 'https://api.github.com/repos/owner/repo/tarball/release/1.0',
+    'each ref segment is its own path segment, not release%2F1.0');
+});
+
+test('fetchTarball resolves ok:false rather than throwing on a bad redirect Location (t683 nit c)', async () => {
+  // Mimics what a real `https.get` does for a malformed URL: throws
+  // SYNCHRONOUSLY out of the call itself, before any callback runs — the
+  // exact shape a `.catch`-less `await` cannot see, only a try/catch around
+  // the call site.
+  const BAD_LOCATION = 'http://[not-a-valid-host';
+  let calls = 0;
+  const httpsStub = {
+    get(url, opts, cb) {
+      calls++;
+      if (url === BAD_LOCATION) throw new TypeError('Invalid URL');
+      const req = new EventEmitter();
+      req.setTimeout = () => req;
+      cb(mkResponse({ statusCode: 302, headers: { location: BAD_LOCATION } }));
+      return req;
+    },
+  };
+  const source = createPluginSource({ fs, path, https: httpsStub });
+  const r = await source.fetchTarball({ repo: 'owner/repo', ref: null }, '/dev/null');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /bad redirect location/);
+  assert.strictEqual(calls, 2, 'the redirect target was really attempted, and threw');
 });
 
 test('fetchTarball refuses a non-2xx status, naming it', async () => {
