@@ -980,6 +980,12 @@ which is why the judgement worth testing is pushed down here.
 
 - **constants.js**, **format.js** (string formatters), **render-html.js**
   (DOM-string builders).
+- **render-markdown.js** — `renderMarkdown(text)` → a `DocumentFragment` built
+  node by node, every leaf set through `textContent`. The one leaf here that
+  takes UNTRUSTED input, so its shape is its security property: no raw HTML
+  path, no images, and hrefs allowlisted to http/https/mailto. Frozen into
+  `rhost.lib` beside `renderDiffHtml`, which is why widening it is a published
+  API change rather than a local edit.
 - **checklists.js** — render/collect checklist pairs; owns the library caches
   behind setters.
 - **session-actions.js** — the type→entries mapping for the consolidated
