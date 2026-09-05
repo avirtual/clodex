@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.29.0 — 2026-09-05
+
 - Clodex now ships stock skills (first: clodex-plugin) into `~/.clodex/skills`
   on launch; edited copies are never overwritten, same as team prompts.
 - Custom plugins now reach only the seats that tick them: a plugin loaded from
