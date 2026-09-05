@@ -1456,7 +1456,8 @@ test('seed skills: the shipped clodex-plugin skill lands in a fresh registry (by
     assert.ok(seeded, 'the seeded skill surfaces through skillLibrary.list()');
     assert.match(seeded.description, /Clodex plugin/,
       'and carries the description parsed from its frontmatter');
-    // The walk's two dotfiles sit in the same directory and must stay invisible.
+    assert.ok(fs.existsSync(path.join(registryDir, 'skills', '.seed-state.json')),
+      'ENTER: the manifest is there to be mis-listed');
     assert.deepStrictEqual(stores.skillLibrary.list().map((s) => s.name), ['clodex-plugin'],
       'the .seed-state.json sibling is not listed as a skill');
   } finally {
@@ -1492,7 +1493,7 @@ test('seed skills: an operator-edited skill survives a moved ship, and the repor
     const notes = inboxNotes(stores);
     assert.strictEqual(notes.length, 1, 'ENTER: one inbox note');
     assert.match(notes[0].body, /clodex-plugin\.md/, 'the note names the stranded skill');
-    assert.match(notes[0].body, new RegExp(`under ${path.join(registryDir, 'skills')}`),
+    assert.ok(notes[0].body.includes(`under ${path.join(registryDir, 'skills')}`),
       'the note points at the skills root, or the operator looks under library/ and finds nothing');
   });
 });
