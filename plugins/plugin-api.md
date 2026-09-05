@@ -174,10 +174,16 @@ the seats whose plugin list holds the plugin, namespaced as
 `/<plugin-id>:<skill>` and `<plugin-id>:<agent>`.
 
 Their names are checked against `AGENT_NAME_RE`, the host's shared session-name
-rule: `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`. An entry whose name fails it is skipped
-with a logged reason, as is a `skills/<name>/` directory with no readable
-`SKILL.md` and an `agents/` entry that is not a `.md` file; the rest of the bundle
-still loads.
+rule: `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`. Two cases are **skipped with a logged
+reason**: an entry whose name fails that rule, and a `skills/<name>/` directory
+with no readable `SKILL.md`. Either way the rest of the bundle still loads.
+
+Two more are **ignored silently, with no log line at all** — an `agents/` entry
+that is not a `.md` file, and a `skills/` entry that is not a directory. They are
+not treated as malformed entries but as things that were never bundle entries, so
+an `agents/notes.txt` beside your subagents costs you nothing. The consequence to
+expect is the debugging one: an agent written as `helper.markdown` does not appear
+and produces no log line to explain why.
 
 **A manifest whose `entry` names neither half is valid when the directory carries
 a `skills/` or `agents/` entry the loader accepted.** So `entry: {}` is a refusal

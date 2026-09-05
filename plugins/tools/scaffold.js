@@ -19,7 +19,14 @@ const argv = process.argv.slice(2);
 const positional = [];
 let skillName = null;
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--skill') { skillName = argv[++i]; continue; }
+  if (argv[i] === '--skill') {
+    if (argv[i + 1] === undefined) {
+      console.error('refused: --skill needs a name');
+      process.exit(2);
+    }
+    skillName = argv[++i];
+    continue;
+  }
   if (argv[i].startsWith('--skill=')) { skillName = argv[i].slice('--skill='.length); continue; }
   positional.push(argv[i]);
 }

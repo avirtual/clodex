@@ -72,7 +72,7 @@ workspaces, peers, teams, the library are all off-limits by construction. A
 buggy plugin cannot corrupt your sessions because it cannot find them.
 
 **What a session receives as input.** A plugin can type into a running agent
-(§1.3 below). That is the sharpest thing in the API.
+(§3.3 below). That is the sharpest thing in the API.
 
 **What it cannot alter:** it cannot spawn a session, change a session's command
 line, touch another plugin, register its own IPC channel, add an item to the

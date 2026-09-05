@@ -75,6 +75,18 @@ test('scaffold.js without --skill writes no skills directory', () => {
     'the flag is opt-in — a scaffold without it is byte-for-byte the old one');
 });
 
+test('scaffold.js refuses a bare --skill with no name, rather than dropping the flag', () => {
+  // `--skill` last on the line reads as a request for a skill. Silently writing
+  // no skill and exiting 0 is the one outcome that tells the author nothing:
+  // `--skill=` (empty) was already refused, so this closes the other spelling.
+  const root = mkTmpRoot('clx-t678-bareflag-');
+  const r = run(SCAFFOLD, ['bare-plugin', root, '--skill']);
+  assert.strictEqual(r.code, 2, `a valueless --skill must be refused, got rc=${r.code}`);
+  assert.match(r.err, /--skill needs a name/, 'and must say what is missing');
+  assert.strictEqual(fs.existsSync(path.join(root, 'bare-plugin')), false,
+    'a refused invocation leaves no half-made plugin behind');
+});
+
 test('scaffold.js refuses a skill name the loader would skip', () => {
   // A refusal HERE is the point: a name that fails the rule would otherwise be
   // written to disk and then silently dropped by readBundle, which reads to the
@@ -155,4 +167,44 @@ test('verify.js reports each bundle entry the loader skipped, with its reason', 
   // invented a line here would be reporting something the app does not.
   assert.strictEqual(/notes\.txt/.test(r.out), false,
     'a non-.md file in agents/ is not a skip, it is not an entry');
+});
+
+test('verify.js stages a plugin\'s own subdirectories, so an engine can require its own lib', () => {
+  // The stage used to copy only skills/ and agents/, which staged a plugin that
+  // splits its engine across files into one that cannot resolve its own require
+  // — reported as "Cannot find module" against activate(), blaming the plugin
+  // for the verifier's incomplete copy.
+  const root = mkTmpRoot('clx-t678-libdir-');
+  const dir = path.join(root, 'lib-plugin');
+  fs.mkdirSync(path.join(dir, 'lib'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'node_modules', 'junk'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'lib', 'x.js'), "'use strict';\nmodule.exports = { tag: 'from-lib' };\n");
+  fs.writeFileSync(path.join(dir, 'node_modules', 'junk', 'index.js'), "'use strict';\n");
+  fs.writeFileSync(path.join(dir, 'engine.js'), [
+    "'use strict';",
+    "const x = require('./lib/x');",
+    'module.exports = {',
+    '  activate(host) { host.ipc.handle("tag", () => x.tag); },',
+    '  deactivate() {},',
+    '};',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+    id: 'lib-plugin', name: 'lib-plugin', hostApi: '1', version: '0.1.0',
+    entry: { engine: 'engine.js' },
+  }, null, 2));
+
+  const r = run(VERIFY, [dir]);
+
+  // ENTER: activation must have been REACHED. An unstaged lib/ fails here, and
+  // the rc assertion below would then be measuring a load failure rather than
+  // the staging property this test is about.
+  assert.match(r.out, /PASS {2}activate\(\) succeeds/,
+    'the engine resolved its own require, so lib/ reached the stage');
+
+  assert.strictEqual(r.code, 0, `a multi-file engine conforms; verify exited ${r.code}\n${r.out}`);
+  assert.match(r.out, /PASS {2}ipc tag\(\) answers {2}— -> "from-lib"/,
+    'and the value came through the required module, not a stub');
+  assert.strictEqual(fs.existsSync(path.join(dir, 'node_modules', 'junk', 'index.js')), true,
+    'the source node_modules is untouched by the run');
 });

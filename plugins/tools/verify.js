@@ -65,11 +65,12 @@ for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-verify-'));
 const staged = path.join(stage, path.basename(path.resolve(dir)));
 fs.mkdirSync(staged, { recursive: true });
+const STAGE_SKIP_DIRS = new Set(['node_modules', '.git']);
 for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
   const from = path.join(dir, ent.name);
   const to = path.join(staged, ent.name);
   if (ent.isDirectory()) {
-    if (ent.name === 'skills' || ent.name === 'agents') fs.cpSync(from, to, { recursive: true });
+    if (!STAGE_SKIP_DIRS.has(ent.name)) fs.cpSync(from, to, { recursive: true });
     continue;
   }
   fs.copyFileSync(from, to);
