@@ -907,26 +907,31 @@ test('_host plugins.installFromSource rescans and announces the new plugin on su
 
 test('_host plugins.applyUpdate rescans, leaving a loaded plugin restart-required', async () => {
   const manager = makeManager();
+  let rescanCalls = 0;
   const loader = fakeLoader({
     applyUpdate: async () => ({ ok: true, id: 'demo', previousCommit: 'a', commit: 'b' }),
-    rescan: () => ({ added: [], removed: [], changed: ['demo'], failed: [] }),
+    rescan: () => { rescanCalls++; return { added: [], removed: [], changed: ['demo'], failed: [] }; },
   });
   const { engine } = makeHost({ manager, loader });
   const r = await engine.dispatch('_host', 'plugins.applyUpdate', ['demo', 'b'], 'desktop');
   assert.strictEqual(r.ok, true);
+  assert.strictEqual(rescanCalls, 1, 'applyUpdate must call loader.rescan itself, not leave it to the caller');
   assert.deepEqual(manager.sent.filter((s) => s.channel === 'plugin-event'), [],
     'no announce for a CHANGED plugin — rescan ran and reported it restart-required');
 });
 
 test('_host plugins.removeSourcePlugin rescans and announces the plugin removed', async () => {
   const manager = makeManager();
+  let rescanCalls = 0;
   const loader = fakeLoader({
     removeSourcePlugin: () => ({ ok: true, id: 'demo' }),
-    rescan: () => ({ added: [], removed: ['demo'], changed: [], failed: [] }),
+    rescan: () => { rescanCalls++; return { added: [], removed: ['demo'], changed: [], failed: [] }; },
   });
   const { engine } = makeHost({ manager, loader });
   const r = await engine.dispatch('_host', 'plugins.removeSourcePlugin', ['demo'], 'desktop');
   assert.strictEqual(r.ok, true);
+  assert.strictEqual(rescanCalls, 1,
+    'removal must run the removed-loop via loader.rescan, not a hand-rolled deactivate');
   const states = manager.sent
     .filter((s) => s.channel === 'plugin-event' && s.args[1] === 'plugin-state')
     .map((s) => s.args[2]);
