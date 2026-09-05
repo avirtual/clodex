@@ -65,7 +65,11 @@ function readBundle(fs, path, dir, onSkip) {
     if (!AGENT_NAME_RE.test(ent.name)) { skip(`skills/${ent.name}`, 'not a legal skill name'); continue; }
     let content;
     try { content = fs.readFileSync(path.join(dir, 'skills', ent.name, 'SKILL.md'), 'utf8'); }
-    catch (e) { skip(`skills/${ent.name}`, `no readable SKILL.md — ${(e && e.message) || e}`); continue; }
+    catch (e) {
+      if (e && e.code !== 'ENOENT') unreadable = true;
+      skip(`skills/${ent.name}`, `no readable SKILL.md — ${(e && e.message) || e}`);
+      continue;
+    }
     skills.push({ name: ent.name, content });
   }
   const agents = [];
@@ -76,7 +80,11 @@ function readBundle(fs, path, dir, onSkip) {
     if (!AGENT_NAME_RE.test(name)) { skip(`agents/${ent.name}`, 'not a legal agent name'); continue; }
     let content;
     try { content = fs.readFileSync(path.join(dir, 'agents', ent.name), 'utf8'); }
-    catch (e) { skip(`agents/${ent.name}`, `unreadable — ${(e && e.message) || e}`); continue; }
+    catch (e) {
+      if (e && e.code !== 'ENOENT') unreadable = true;
+      skip(`agents/${ent.name}`, `unreadable — ${(e && e.message) || e}`);
+      continue;
+    }
     agents.push({ name, content });
   }
   skills.sort((a, b) => (a.name < b.name ? -1 : 1));

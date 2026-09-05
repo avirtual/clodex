@@ -19,20 +19,25 @@ function el(tag) {
   const e = {
     tagName: tag, className: '', type: '', value: '', checked: false, disabled: false,
     innerHTML: '', children: [],
-    appendChild(c) { e.children.push(c); return c; },
+    appendChild(c) { c.parent = e; e.children.push(c); return c; },
 
     querySelectorAll(sel) {
-      // Spelled out, not pattern-matched: a stub answering every selector with
-      // everything would make the collect assertions below vacuous — and the
-      // `:not(:disabled)` clause IS the fix under test, so a stub that ignored
-      // it would pass against the unfixed collector.
-      assert.strictEqual(sel, 'input[type="checkbox"]:checked:not(:disabled)');
       const flat = [];
       const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
       walk(e);
+      // Both selectors are spelled out rather than pattern-matched: a stub that
+      // answered every selector with everything would make the collect
+      // assertions vacuous, and the `:not(:disabled)` clause IS the fix under
+      // test, so a loose stub would pass against the unfixed collector.
+      if (sel === '.check-group, .bundle-row') {
+        return flat.filter((c) => c.className === 'check-group'
+          || String(c.className).split(' ').includes('bundle-row'));
+      }
+      assert.strictEqual(sel, 'input[type="checkbox"]:checked:not(:disabled)');
       return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox'
         && c.checked && !c.disabled);
     },
+    remove() { const i = e.parent ? e.parent.children.indexOf(e) : -1; if (i >= 0) e.parent.children.splice(i, 1); },
   };
   let text = '';
   // format.js's `esc` round-trips through textContent/innerHTML, so the stub has
@@ -57,6 +62,7 @@ const {
   renderInjectChecklist, collectInjectChecklist,
   renderAgentChecklist, collectAgentChecklist,
   setSkillLibCache, setAgentLibCache, setPluginCatalogCache, bundleSectionsOf,
+  repaintBundleSections,
 } = withDom(() => require('../renderer/lib/checklists'));
 
 const CATALOG = [
@@ -253,3 +259,125 @@ test('openArgsDialog seeds the plugin catalog BEFORE it renders the agents check
   const skillsAt = body.indexOf('renderInjectChecklist(argsInjectSkillsList');
   assert.ok(skillsAt > fetchAt, 'the inject checklist draws off the same fresh catalog');
 });
+
+// ── The PEER refusal (r1 must-fix) ─────────────────────────────────────────
+// The args dialog hides its Plugins section for a peer row, so keying the seat
+// on that visibility handed back the peer's PERSISTED list — usually null, which
+// seatHasPlugin resolves to THIS box's shipped default. Local bundles then drew
+// onto a remote seat, off a catalog that box may not even have. Both refusals
+// therefore key on the SOURCE.
+//
+// Source-shape, for the same reason as the ordering pin: openArgsDialog awaits
+// five IPC reads and paints ~15 sections, so no runtime fixture here reaches its
+// peer arm — which is exactly why the suite was green over the defect.
+test('argsSeat refuses on the SOURCE before it looks at section visibility', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('function argsSeat()');
+  assert.ok(at > 0, 'ENTER: argsSeat was found');
+  const end = src.indexOf('\n}', at);
+  const body = src.slice(at, end);
+
+  const sourceAt = body.indexOf('if (argsEditingSource) return null;');
+  assert.ok(sourceAt > 0,
+    'a peer seat must get NO seat: its plugins are its own box\'s, and the catalog here is this Mac\'s');
+  const visibilityAt = body.indexOf("argsPluginsSection.style.display === 'none'");
+  assert.ok(visibilityAt > 0, 'ENTER: the visibility branch is still there to be above');
+  assert.ok(sourceAt < visibilityAt,
+    'the source check must come FIRST — below it, the hidden-section branch answers for a peer '
+    + 'with its persisted list, and a null list takes the LOCAL shipped default');
+
+  // The bail must be reachable, so the assignment has to precede both renders
+  // INSIDE openArgsDialog. Scoped to that function deliberately: the plugin-tick
+  // change listener also renders, and it sits earlier in the file while running
+  // strictly later — a whole-file index comparison compares the wrong pair and
+  // fails on correct code, which is how this assertion first read.
+  const dialogAt = src.indexOf('async function openArgsDialog');
+  assert.ok(dialogAt > 0, 'ENTER: openArgsDialog was found');
+  const dialog = src.slice(dialogAt, src.indexOf('\nfunction closeArgsDialog', dialogAt));
+  const assignAt = dialog.indexOf('argsEditingSource = argsSource;');
+  const agentsRenderAt = dialog.indexOf('renderAgentChecklist(argsAgentsList');
+  const skillsRenderAt = dialog.indexOf('renderInjectChecklist(argsInjectSkillsList');
+  assert.ok(assignAt > 0, 'ENTER: the dialog slice contains the assignment');
+  assert.ok(agentsRenderAt > 0 && skillsRenderAt > 0, 'ENTER: and both consumers');
+  assert.ok(assignAt < agentsRenderAt && assignAt < skillsRenderAt,
+    'argsEditingSource is set BEFORE both consumers, or the bail reads the PREVIOUS open\'s source');
+});
+
+test('the args skills section keeps its library-only visibility rule for a peer', () => {
+  // The widened gate must not OPEN a section on a peer row purely because this
+  // box has a bundle-carrying plugin: the inject block runs only for a peer
+  // (isSkillsEditable requires argsSource), so an ungated `bundleSectionsOf`
+  // would decide the peer's section visibility off local state.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('const isSkillsEditable');
+  assert.ok(at > 0, 'ENTER: the skills block was found');
+  const body = src.slice(at, at + 1200);
+  assert.match(body, /const seat = argsSeat\(\);/,
+    'the seat is hoisted once, so the gate and the render cannot disagree');
+  assert.match(body, /\(sc\.skillLib \|\| \[\]\)\.length \|\| \(seat && bundleSectionsOf\('skills'\)\.length\)/,
+    'the bundle half of the gate is conditioned on having a seat at all');
+  assert.doesNotMatch(body, /renderInjectChecklist\(argsInjectSkillsList[^)]*argsSeat\(\)\)/,
+    'the render takes the hoisted seat, not a second argsSeat() call that could answer differently');
+});
+
+// ── The injection points (r1 nit) ──────────────────────────────────────────
+// Both islands take their bundle access as INJECTED arguments, and both test
+// files above drive the modules directly with their own stubs. Delete either
+// argument in renderer.js and every test here stays green while the shipped UI
+// draws nothing at all — the wiring is only observable at the call site.
+test('renderer.js wires the bundle seams into both islands', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+
+  const drawersAt = src.indexOf('initLibraryDrawers({');
+  assert.ok(drawersAt > 0, 'ENTER: the drawers are constructed here');
+  const drawers = src.slice(drawersAt, src.indexOf('}));', drawersAt));
+  assert.match(drawers, /\bbundleSectionsOf\b/,
+    'without it the drawers list no bundle records, and plugin-bundle-drawer.test.js stays green on its own stub');
+  assert.match(drawers, /refreshPluginCatalog:/,
+    'without it the drawers read whatever the last dialog left in the catalog cache');
+
+  const popoversAt = src.indexOf('initChecklistPopovers({');
+  assert.ok(popoversAt > 0, 'ENTER: the popovers are constructed here');
+  const popovers = src.slice(popoversAt, src.indexOf('});', popoversAt));
+  assert.match(popovers, /seatPluginsOf:/,
+    'without it seatFor returns null for every seat and the popovers silently draw no bundle rows');
+});
+
+test('repaintBundleSections swaps ONLY the bundle rows, leaving the flat list untouched', () => withDom(() => {
+  // A plugin tick used to re-render the whole checklist, dropping scroll and
+  // focus in a long agents list the operator is mid-way through. The swap has to
+  // be exact in BOTH directions: no flat row disturbed, and no stale bundle row
+  // or header left behind to double up on the next tick.
+  setPluginCatalogCache(CATALOG);
+  setAgentLibCache([{ name: 'explorer', description: 'reads' }]);
+  const c = el('div');
+  renderAgentChecklist(c, new Set(['explorer']), null, { plugins: ['stocks'] });
+
+  const flatBefore = c.children.find((n) => n.className === 'agent-check');
+  assert.ok(flatBefore, 'ENTER: a flat row exists to be preserved');
+  assert.deepStrictEqual(laidOut(c), [
+    ['row', 'explorer'],
+    ['head', 'Stock Assessments'],
+    ['row', 'stocks:screener'],
+  ], 'ENTER: and the bundle section drew, so the swap below has something to replace');
+
+  repaintBundleSections(c, 'agents', { plugins: [] });
+
+  assert.strictEqual(c.children.find((n) => n.className === 'agent-check'), flatBefore,
+    'the flat row is the SAME node — re-creating it is what loses scroll and focus');
+  assert.deepStrictEqual(laidOut(c), [
+    ['row', 'explorer'],
+    ['head', 'Stock Assessments'],
+    ['row', 'stocks:screener'],
+  ], 'exactly one bundle section after the swap, not two');
+  const screener = rowsOf(c).find((r) => r.name === 'stocks:screener');
+  assert.strictEqual(screener.checked, false, 'and it repainted to the NEW membership');
+  assert.ok(screener.cls.includes('skill-readonly'), 'greyed, as a non-member row is');
+
+  // Repainting to a seat with NO bundles must clear the section entirely,
+  // rather than leaving the previous plugin's header stranded above nothing.
+  setPluginCatalogCache([]);
+  repaintBundleSections(c, 'agents', { plugins: [] });
+  assert.deepStrictEqual(laidOut(c), [['row', 'explorer']],
+    'header and rows both gone when the catalog no longer carries a bundle');
+}));

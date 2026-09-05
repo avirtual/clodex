@@ -125,7 +125,7 @@ function appendBundleSections(container, kind, seat) {
     container.appendChild(head);
     for (const n of sec.names) {
       const row = document.createElement('label');
-      row.className = 'agent-check' + (sec.has ? '' : ' skill-readonly');
+      row.className = 'agent-check bundle-row' + (sec.has ? '' : ' skill-readonly');
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = `${sec.id}:${n}`;
@@ -141,6 +141,11 @@ function appendBundleSections(container, kind, seat) {
       container.appendChild(row);
     }
   }
+}
+
+function repaintBundleSections(container, kind, seat) {
+  container.querySelectorAll('.check-group, .bundle-row').forEach((n) => n.remove());
+  appendBundleSections(container, kind, seat);
 }
 
 // `autoSet` (optional) = names auto-INCLUDED for this session by `sessions:`
@@ -465,7 +470,7 @@ function collectSkillChecklist(container) {
 module.exports = {
   renderAppendChecklist, collectAppendChecklist,
   renderAgentChecklist, collectAgentChecklist,
-  bundleSectionsOf,
+  bundleSectionsOf, repaintBundleSections,
   renderExecChecklist, collectExecChecklist,
   renderIntentChecklist, collectIntentChecklist, intentRowChecked,
   renderPluginChecklist, collectPluginChecklist, defaultPluginTicks,

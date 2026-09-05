@@ -2,10 +2,13 @@
 
 ## readBundle
 
-`unreadable` separates a directory that failed to LIST from one that is absent.
-Both yield no entries, and only the second means "this plugin carries none" —
-without the flag a permission error or a half-copied directory is
-indistinguishable from a deletion.
+`unreadable` separates a read that FAILED from content that is absent. Both
+yield fewer entries, and only the second means "this plugin no longer carries
+them" — without the flag a permission error or a half-copied directory is
+indistinguishable from a deletion. Set for the directory listing AND for each
+per-entry read, since one unreadable `SKILL.md` yields a SHORT list rather than
+an empty one, which the rescan gate would otherwise write over a good record.
+`ENOENT` never sets it: that is a real absence.
 
 ## rescan
 

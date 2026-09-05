@@ -4680,8 +4680,6 @@ html, body {
 [data-theme="light"] .intent-mark-fire { background: rgba(193, 95, 60, .12); }
 [data-theme="light"] .intent-mark-inert { background: rgba(154, 107, 30, .14); }
 
-/* Bundle group header in the skills/agents checklists: the records a plugin
-   carries, drawn under its display name after the flat library rows. */
 .check-group {
   margin: 10px 0 4px;
   font-size: 11px;
@@ -4691,6 +4689,4 @@ html, body {
   color: var(--text-dim);
 }
 .agent-checklist > .check-group:first-child { margin-top: 4px; }
-/* A bundle record in a library drawer: listed, not editable — it belongs to the
-   plugin's directory, so it carries no edit/delete actions. */
 .prompt-item.bundle-item { opacity: 0.75; cursor: default; }

@@ -282,6 +282,56 @@ test('t672 r2: a transient listing failure does not blank a good bundle record',
     'CONTROL: a real removal is not mistaken for a listing failure');
 });
 
+test('t675 r1: an unreadable SKILL.md among readable ones does not blank the record either', () => {
+  // One level down from the directory case above, and the same silent loss: a
+  // per-entry EACCES yields a SHORTER list, not an empty one, so the rescan gate
+  // would write two skills over three and nothing would say so.
+  const root = mkTree({
+    stocks: {
+      manifest: {
+        id: 'stocks', name: 'Stocks', version: '1.0.0', hostApi: HOST_API_VERSION,
+        entry: { engine: 'engine.js' },
+      },
+      files: {
+        'skills/foo/SKILL.md': SKILL_MD,
+        'skills/baz/SKILL.md': SKILL_MD,
+        'agents/bar.md': AGENT_MD,
+        'engine.js': 'module.exports = { activate() {} };',
+      },
+    },
+  });
+  const { loader } = mkLoader(root);
+  const engine = mkEngine();
+  loader.loadAll(engine);
+
+  const namesOf = () => {
+    const b = engine.bundles().find((x) => x.id === 'stocks');
+    return b ? b.skills.map((s) => s.name) : [];
+  };
+  assert.deepStrictEqual(namesOf(), ['baz', 'foo'], 'ENTER: both skills are on the record first');
+
+  const victim = path.join(root, 'stocks', 'skills', 'baz', 'SKILL.md');
+  const mode = fs.statSync(victim).mode;
+  fs.chmodSync(victim, 0o000);
+  try {
+    const fresh = loader.discover().find((x) => x.id === 'stocks');
+    assert.deepStrictEqual(fresh.skills.map((s) => s.name), ['foo'],
+      'ENTER: discovery really did come back SHORT — a full list would make the assertion below vacuous');
+    loader.rescan(engine);
+    assert.deepStrictEqual(namesOf(), ['baz', 'foo'],
+      'the good record survives a scan that could not read one entry');
+  } finally {
+    fs.chmodSync(victim, mode);
+  }
+
+  // CONTROL: a genuinely DELETED skill still leaves, so the guard has not
+  // frozen the record against real edits.
+  fs.rmSync(path.join(root, 'stocks', 'skills', 'baz'), { recursive: true });
+  loader.rescan(engine);
+  assert.deepStrictEqual(namesOf(), ['foo'],
+    'CONTROL: a real removal is not mistaken for a read failure');
+});
+
 // ── Catalog ─────────────────────────────────────────────────────────────────
 
 function mkEngine() {

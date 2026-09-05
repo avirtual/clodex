@@ -19,3 +19,9 @@ Returns null for a PEER row, so no bundle rows draw there: the catalog is this
 box's, and the seat's plugins are its own. `seatPluginsOf` reads `sidebarMeta`,
 the same per-row source `pluginReachesSession` uses — neither `session:agentCatalog`
 nor `session:skillCatalog` carries the seat's plugin list.
+
+Both refusals key on the SOURCE, never on whether a Plugins section is visible:
+the args dialog hides that section for a peer, so a visibility test returns the
+peer's persisted list (often null → the LOCAL shipped default) and draws local
+bundles onto a remote seat. `renderer.js`'s `argsSeat` bails on
+`argsEditingSource` for that reason.

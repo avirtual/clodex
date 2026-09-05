@@ -35,7 +35,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -1834,8 +1834,8 @@ async function refreshNewSessionPlugins(pluginsList) {
 function repaintNewSessionBundleRows() {
   if (inputType.value !== 'claude') return;
   const seat = newSessionSeat();
-  renderAgentChecklist(inputAgentsList, new Set(collectAgentChecklist(inputAgentsList)), null, seat);
-  renderInjectChecklist(inputInjectSkillsList, new Set(collectInjectChecklist(inputInjectSkillsList)), null, seat);
+  repaintBundleSections(inputAgentsList, 'agents', seat);
+  repaintBundleSections(inputInjectSkillsList, 'skills', seat);
 }
 
 async function refreshNewSessionIntents(intentsList) {
@@ -6119,6 +6119,7 @@ const argsIntentsSection = document.getElementById('args-intents-section');
 const argsPluginList = document.getElementById('args-plugin-list');
 const argsPluginsSection = document.getElementById('args-plugins-section');
 function argsSeat() {
+  if (argsEditingSource) return null;
   if (argsPluginsSection.style.display === 'none') return { plugins: argsPluginsPersisted };
   const ticked = collectPluginChecklist(argsPluginList);
   const carried = pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered);
@@ -6131,11 +6132,9 @@ if (argsPluginList) {
     setIntentCatalogCache((await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList))) || []);
     renderIntentChecklist(argsIntentsList, checked);
     const seat = argsSeat();
-    renderAgentChecklist(argsAgentsList, new Set(collectAgentChecklist(argsAgentsList)),
-      new Set(argsAgentsAuto), seat);
+    repaintBundleSections(argsAgentsList, 'agents', seat);
     if (argsInjectSkillsSection.style.display !== 'none') {
-      renderInjectChecklist(argsInjectSkillsList, new Set(collectInjectChecklist(argsInjectSkillsList)),
-        new Set(argsSkillsInjectAuto), seat);
+      repaintBundleSections(argsInjectSkillsList, 'skills', seat);
     }
   });
 }
@@ -6248,9 +6247,10 @@ async function openArgsDialog(name, argsSource = null) {
     renderSkillChecklist(argsSkillsList, sc.names || [], new Set(sc.disabledSkills || []),
       sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
     setSkillLibCache(sc.skillLib || []);
-    if ((sc.skillLib || []).length || bundleSectionsOf('skills').length) {
+    const seat = argsSeat();
+    if ((sc.skillLib || []).length || (seat && bundleSectionsOf('skills').length)) {
       const auto = skillAutoSet(sc.skillLib, name);
-      renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto, argsSeat());
+      renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto, seat);
       argsSkillsInjectPersisted = sc.injectSkills || [];
       argsSkillsInjectRendered = (sc.skillLib || []).map((s) => s.name);
       argsSkillsInjectAuto = [...auto];
