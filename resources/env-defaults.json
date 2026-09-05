@@ -1,0 +1,22 @@
+{
+  "CLAUDE_CODE_TOTAL_TOKENS_REMINDER": {
+    "value": "off",
+    "note": "Silences the per-turn token reminder a wrapped seat cannot act on."
+  },
+  "CLAUDE_CODE_BASH_OUTPUT_AUDIENCE_NOTE": {
+    "value": "off",
+    "note": "Drops the note telling the model its Bash output is shown to a human — in Clodex the operator reads the terminal directly."
+  },
+  "CLAUDE_CODE_TURN_UPDATES": {
+    "value": "false",
+    "note": "Stops the mid-turn progress updates, which a seat's transcript watcher flushes as separate turns."
+  },
+  "CLAUDE_CODE_COZY_TEAPOT": {
+    "value": "relaxed",
+    "note": "Relaxes the CLI's tone preamble for a seat that talks mostly to other agents."
+  },
+  "CLAUDE_STREAM_IDLE_TIMEOUT_MS": {
+    "value": "1800000",
+    "note": "Raises the stream stall threshold to the CLI's maximum of 30 minutes; the CLI takes max(env, 300000) and skips its remote-config lookup once this is set."
+  }
+}

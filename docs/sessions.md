@@ -81,6 +81,14 @@ Environment variables section (T46b): the textarea prefills from the entry's
 persisted env, an empty box clears it, and the change rides the existing
 args-edit path (`session:setArgs` → `applySessionArgs` → `resolveSessionArgsPatch`
 sanitizes the map + the deny-list bites server-side → `persistence.setEnv`).
+Clodex SHIPS a set of default vars for wrapped seats in `resources/env-defaults.json`
+(`{ KEY: { value, note } }`), seeded into the GLOBAL scope at `initStores` — once per
+key ever, recorded on a `seeded` list in `env-scopes.json`. They are ordinary global
+entries afterwards, so precedence is unchanged and the operator may edit or delete
+them: a deleted default stays deleted across launches (the key is on the `seeded`
+list, so the seeder does not write it again), and "Restore shipped defaults" in
+Preferences ▸ Env clears the shipped keys off that list so the seeder brings back the
+absent ones while leaving edited values alone.
 Like exec grants, session env is LOCAL-only — never rendered, collected, sent, or
 returned over the peer wire (values may be creds and there's no secret masking for
 session env), so a remote Edit-Session view omits the section and the wire strips

@@ -31,6 +31,7 @@ const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
+const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -4178,6 +4179,7 @@ const prefsEnvKey = document.getElementById('prefs-env-key');
 const prefsEnvValue = document.getElementById('prefs-env-value');
 const prefsEnvSecret = document.getElementById('prefs-env-secret');
 const prefsEnvAdd = document.getElementById('prefs-env-add');
+const prefsEnvRestore = document.getElementById('prefs-env-restore');
 const prefsEnvState = document.getElementById('prefs-env-state');
 
 function prefsEnvScopeArg() {
@@ -4195,6 +4197,16 @@ function setPrefsEnvState(msg, kind) {
 async function refreshPrefsEnv() {
   if (!prefsEnvList) return;
   const scope = prefsEnvScopeArg();
+  // Only the global scope holds the shipped keys, so a workspace row that
+  // happens to share a name is not theirs to mark.
+  let defaults = {};
+  if (scope === 'global') {
+    try {
+      const d = await window.api.envDefaultsGet();
+      defaults = (d && d.ok && d.defaults) || {};
+    } catch { defaults = {}; }
+  }
+  if (prefsEnvRestore) prefsEnvRestore.style.display = scope === 'global' ? '' : 'none';
   const res = await window.api.envScopesGet(scope);
   prefsEnvList.textContent = '';
   if (!res || res.ok === false) {
@@ -4211,19 +4223,10 @@ async function refreshPrefsEnv() {
     return;
   }
   for (const v of vars) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:4px;';
-    const keyEl = document.createElement('code');
-    keyEl.textContent = v.key;
-    keyEl.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
-    const valEl = document.createElement('span');
-    valEl.className = 'hint-text';
-    valEl.style.cssText = 'flex:2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-    valEl.textContent = v.secret ? '•••••••• (secret — set)' : String(v.value == null ? '' : v.value);
+    const { row } = buildEnvRow(document, envRowView(v, defaults));
     const editBtn = document.createElement('button');
     editBtn.className = 'secondary';
     editBtn.type = 'button';
-    editBtn.style.flex = 'none';
     editBtn.textContent = v.secret ? 'Replace' : 'Edit';
     editBtn.addEventListener('click', () => {
       prefsEnvKey.value = v.key;
@@ -4234,7 +4237,6 @@ async function refreshPrefsEnv() {
     const delBtn = document.createElement('button');
     delBtn.className = 'secondary';
     delBtn.type = 'button';
-    delBtn.style.flex = 'none';
     delBtn.textContent = '×';
     delBtn.title = `Delete ${v.key}`;
     delBtn.addEventListener('click', async () => {
@@ -4242,7 +4244,7 @@ async function refreshPrefsEnv() {
       if (!r || r.ok === false) { setPrefsEnvState((r && r.error) || 'Delete failed.', 'error'); return; }
       refreshPrefsEnv();
     });
-    row.append(keyEl, valEl, editBtn, delBtn);
+    row.append(editBtn, delBtn);
     prefsEnvList.appendChild(row);
   }
 }
@@ -4267,6 +4269,12 @@ async function addPrefsEnvVar() {
 }
 
 if (prefsEnvAdd) prefsEnvAdd.addEventListener('click', addPrefsEnvVar);
+if (prefsEnvRestore) prefsEnvRestore.addEventListener('click', async () => {
+  const res = await window.api.envDefaultsRestore();
+  if (!res || res.ok === false) { setPrefsEnvState((res && res.error) || 'Restore failed.', 'error'); return; }
+  setPrefsEnvState('Restored the shipped defaults you had deleted.');
+  refreshPrefsEnv();
+});
 if (prefsEnvScope) prefsEnvScope.addEventListener('change', () => { setPrefsEnvState(''); refreshPrefsEnv(); });
 
 function renderRemoteTokenState(hasToken) {

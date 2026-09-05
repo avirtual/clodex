@@ -85,23 +85,6 @@ const VOICE_MODE_SETTLE_MS = 1500;
 // think for a couple of seconds is ordinary.
 const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
-// Defaults folded into the BASE of the env-scope merge, so every scope
-// (global/workspace/session/override) still beats them. They must NOT move to
-// the app-owned block applied after the merge (env-scopes.js) — those win by
-// design, and a default that overrides the operator's own setting is a worse
-// bug than the one it fixes.
-//
-// CLAUDE_STREAM_IDLE_TIMEOUT_MS is a FLOOR in the CLI, not a default:
-// max(env||0, 300000), clamped to [1, 1800000] — so it can only raise the
-// stall threshold, and 1800000 is the highest expressible value. The cost of
-// setting it at all: the CLI then skips its tengu_byte_stream_idle_timeout_ms
-// remote-config lookup, which makes us immune to a silent server-side
-// tightening and equally locked out of a silent server-side fix. It must be
-// baked here rather than documented as an operator export:
-// claude-env.js's startup scrub deletes every inherited CLAUDE_* key that is
-// not a SCRUB_SURVIVOR, so a shell export of this one never reaches a seat.
-const BASE_ENV_DEFAULTS = { CLAUDE_STREAM_IDLE_TIMEOUT_MS: '1800000' };
-
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { mergeSessionEnv, sanitizeFlat } = require('./env-scopes');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
@@ -1221,7 +1204,7 @@ function createSessionManager(deps) {
         if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
       }
       let mergedEnv;
-      const baseEnv = { ...BASE_ENV_DEFAULTS, ...process.env };
+      const baseEnv = { ...process.env };
       try {
         const store = getEnvScopes && getEnvScopes();
         const all = store ? store.all() : { global: {}, workspaces: {} };

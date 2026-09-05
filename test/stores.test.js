@@ -22,7 +22,12 @@ function freshStores() {
   const registryDir = mkTmpRoot('stores-reg-');
   const stores = initStores(userData, { log: console, registryDir,
     resourcesDir: path.join(registryDir, '__no_seed__'),
-    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__') });
+    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+    // The env-scope cases below assert an EMPTY global scope. Left at the real
+    // resources/env-defaults.json every one of them would read back the shipped
+    // keys instead; test/env-defaults-seed.test.js is where the seeding is
+    // exercised, against its own fixture file.
+    envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json') });
   return { userData, registryDir, stores,
     cleanup() {
       fs.rmSync(userData, { recursive: true, force: true });
