@@ -68,7 +68,7 @@ const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
 // confused lead — but team.json is agent-writable, so a lead could widen its own
 // reviewer to every tool. This code-level constant is the ceiling: the effective
 // allowlist is the INTERSECTION of it and any manifest `tools`. A manifest may
-// NARROW below the cap; it can never widen past it.
+// NARROW below the cap; past it, only the shell below is ever added.
 const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
 
 const REVIEWER_SHELL_ALLOW = [
@@ -3968,10 +3968,10 @@ function createTicketMethods(deps, shared) {
       // `[]` survives as `[]` here, and reaches the same empty intersection a
       // disjoint list does — one refusal covers both.
       const requestedTools = Array.isArray(rawTools) ? rawTools : null;
+      const wantsShell = !toolsMalformed && !!requestedTools && requestedTools.includes(REVIEWER_SHELL_TOOL);
       // Fail-closed on malformed, so the SHAPE alone cannot spawn a widened seat
       // even if a future caller forgets the refusal. Only the caller can make it
       // visible, and only the caller can bail before the name is minted.
-      const wantsShell = !toolsMalformed && !!requestedTools && requestedTools.includes(REVIEWER_SHELL_TOOL);
       const cappedTools = toolsMalformed
         ? []
         : (requestedTools

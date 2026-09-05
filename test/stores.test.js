@@ -2346,7 +2346,7 @@ test('seed (t673): the shell reviewer PROMPT ships, and differs from the default
   const dir = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');
   const dflt = fs.readFileSync(path.join(dir, 'clodex-team-reviewer.md'), 'utf-8').split('\n');
   const shell = fs.readFileSync(path.join(dir, 'clodex-team-reviewer-shell.md'), 'utf-8').split('\n');
-  assert.ok(shell.some((l) => /YOU HAVE A READ-ONLY SHELL/.test(l)), 'the shell seat is told it has one');
+  assert.ok(shell.some((l) => /YOUR SHELL IS READ-ONLY/.test(l)), 'the shell seat is told it has one');
   assert.ok(!shell.some((l) => /YOU HAVE NO SHELL/.test(l)), 'and is NOT also told it has none');
   assert.ok(dflt.some((l) => /YOU HAVE NO SHELL/.test(l)), 'ENTER: the default still says the opposite — the two prompts really do differ here');
 

@@ -2,11 +2,22 @@
 
 ## REVIEWER_SHELL_ALLOW
 
-`--permission-mode dontAsk` is what makes this list a wall: under
-`--dangerously-skip-permissions` the CLI ignores `permissions.allow` and
-`permissions.deny` entirely, so a shell reviewer inheriting the lead's bypass
-posture would hold an unrestricted Bash with the allowlist present and inert.
+THIS LIST IS NOT A WALL, measured against CLI 2.1.261. `permissions.allow` is a
+PRE-APPROVAL list — it names what runs without a prompt, not what may run. A
+command outside it is not denied; under `--permission-mode dontAsk` it simply
+proceeds. Verified by hand: with `allow: ["Bash(git status:*)"]` and dontAsk,
+`touch` and `rm -rf` both ran with no permission message. `manual` behaves the
+same non-interactively.
 
-Deny outranks allow in the CLI, so the tool denylist and this allowlist compose
-rather than conflict: an allow entry cannot restore a tool the deny list turned
-off.
+`permissions.deny` DOES refuse. Deny also outranks allow, so a denylist and this
+allowlist compose rather than conflict — but confining the shell to read-only
+verbs needs the deny side (or a PreToolUse hook), not this list.
+
+## REVIEWER_TOOL_CAP
+
+The cap is an intersection for every tool except `Bash`, which
+`REVIEWER_SHELL_ALLOW` admits beside it on a template's opt-in. A template that
+lists Bash therefore resolves to the full cap plus Bash even when it named fewer
+read tools; `beyondCap` deliberately does not report Bash, because reporting it
+would print the "requires operator approval" warning about a grant this arm just
+made on purpose.
