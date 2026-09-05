@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.30.1 — 2026-09-05
+
 - **Template editor: the tools allowlist is now editable** (it was saved-only). A
   reviewer template's list is still intersected with the read-only cap.
 - A hand seat that receives rework past ~150k context now journals and compacts
