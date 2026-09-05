@@ -45,7 +45,7 @@ anything you added what it now sits BETWEEN, not what it says.
 
 RED-PROOF every pin before you close: for each test you added that guards a production change, put
 the old code back (restore the line, drop the call, empty the cache — whatever the change replaced), run the
-suite, and write in JOURNAL.md WHICH test went red; then restore. COMMIT before you red-proof: putting the
+test file, and write in JOURNAL.md WHICH test went red; then restore. COMMIT before you red-proof: putting the
 old code back is a revert, and a revert that reaches uncommitted work destroys it with nothing to restore
 from (hand-673 lost work exactly this way). A pin that stays green against the code it
 claims to guard is not a pin, and the reviewer will find it: three of the last four tickets on this loop each

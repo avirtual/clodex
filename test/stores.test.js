@@ -2338,8 +2338,7 @@ test('seed: shipped team prompts pair the spec base-commit check', () => {
 
 // t682: the Agent tool is being restored to the hand seat, and the prompts
 // must tell a hand what to delegate (lookups, verify loops) versus what stays
-// on it (every edit and commit) — and must stop telling it the full suite
-// can never run raw, now that the loop links node_modules into ticket trees.
+// on it (every edit and commit).
 test('seed: the hand prompts carry the delegate-lookups-and-verify rule', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   const append = fs.readFileSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md'), 'utf-8');
