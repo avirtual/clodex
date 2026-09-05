@@ -7,9 +7,10 @@ uncommitted worktree is invisible to the reviewer and to the lead, so uncommitte
 work. Do not merge and do not push; the lead merges after the review verdict.
 
 Run the suite with the granted command, `[agent:exec clodex-run-tests] {"tree": "<your worktree path>"}`.
-Pass `tree` or you measure master rather than your branch. Do not run `node --test` yourself: a fresh
-worktree has no `node_modules` and the raw run fails ~44 tests on missing deps, which reads as a broken
-branch. The granted command handles that, holds the suite lock, and returns one line. A refusal from it
+Pass `tree` or you measure master rather than your branch. A single test file runs fine in your worktree
+— `node --test test/<file>.test.js`; the loop links `node_modules` into every ticket tree — and is the
+right shape for a red-proof. The FULL suite goes through the granted command only: it holds the suite
+lock and returns one line, and a bare `node --test` beside it deadlocks both. A refusal from it
 is INFORMATION — another run holds the lock; wait, never route around it.
 
 NEVER background a process with `&`, and never leave one running past your turn. A job spawned from

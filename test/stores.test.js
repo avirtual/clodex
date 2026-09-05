@@ -2336,6 +2336,25 @@ test('seed: shipped team prompts pair the spec base-commit check', () => {
     'lead is told to supply the commit the hand checks against');
 });
 
+// t682: the Agent tool is being restored to the hand seat, and the prompts
+// must tell a hand what to delegate (lookups, verify loops) versus what stays
+// on it (every edit and commit) — and must stop telling it the full suite
+// can never run raw, now that the loop links node_modules into ticket trees.
+test('seed: the hand prompts carry the delegate-lookups-and-verify rule', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  const append = fs.readFileSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md'), 'utf-8');
+  assert.match(hand, /DELEGATE THE LOOKUPS AND THE VERIFY LOOPS/,
+    'the system prompt tells a hand what to hand off to a subagent');
+  assert.match(hand, /Never delegate an edit/,
+    'and what must stay on the hand itself');
+  assert.match(hand, /never the full suite from an agent/,
+    'the full suite still goes through the granted command only, never a delegated agent');
+  assert.doesNotMatch(append, /fails ~44 tests/,
+    'the stale claim that a raw run always fails ~44 tests on missing deps is gone');
+  assert.match(append, /links `node_modules` into every ticket tree/,
+    'the append copy now says why a single test file runs fine raw in a ticket tree');
+});
+
 // T52: the reviewer seat DEFINITION now ships as a template (the DATA
 // _handleTeamReview consumes), seeded like the role prompts into
 // library/templates/. Pin it seeds byte-exact and surfaces through the store.
