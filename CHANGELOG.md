@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- **Editing a session while a plugin is enabled elsewhere no longer drops that
+  plugin from the session on save.** A plugin a session used but that was
+  globally off had no row in the dialog's Plugins list and was carried through
+  the save untouched — unless someone enabled it, in another window, while the
+  dialog sat open, in which case saving quietly removed it from that session.
+  Each dialog now saves against the list it actually drew.
+
 - **The memory viewer no longer hangs when a pipe is planted in an agent's
   memory folder.** An agent writes that folder itself, and opening a named pipe
   there used to stall the overlay until something wrote to it; such an entry is

@@ -35229,10 +35229,12 @@ ${detail}` });
         renderExecChecklist(inputExecList, enabledSet);
       }
       var newSessionPluginsPersisted = null;
+      var newSessionPluginsRendered = [];
       async function refreshNewSessionPlugins(pluginsList2) {
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
         if (inputType.value !== "claude") return;
         newSessionPluginsPersisted = Array.isArray(pluginsList2) ? pluginsList2 : null;
+        newSessionPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
         renderPluginChecklist(inputPluginList, Array.isArray(pluginsList2) ? pluginsList2 : defaultPluginTicks());
       }
       async function refreshNewSessionIntents(intentsList) {
@@ -35610,7 +35612,7 @@ ${detail}` });
         const intents = type === "claude" ? collectIntentChecklist(inputIntentList) : null;
         const plugins = type === "claude" ? mergePlugins(
           collectPluginChecklist(inputPluginList),
-          pluginsForUnlistedPlugins(newSessionPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id)))
+          pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered)
         ) : defaultPluginTicks();
         const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
@@ -39177,6 +39179,7 @@ ${res.stderr}` : "");
       var argsAgentsRendered = [];
       var argsAgentsAuto = [];
       var argsPluginsPersisted = null;
+      var argsPluginsRendered = [];
       var argsSkillsInjectPersisted = [];
       var argsSkillsInjectRendered = [];
       var argsSkillsInjectAuto = [];
@@ -39245,6 +39248,7 @@ ${res.stderr}` : "");
         argsPluginsSection.style.display = isPluginsEditable ? "" : "none";
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
         argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
+        argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
         renderPluginChecklist(argsPluginList, res.plugins);
         argsIntentsSection.style.display = isClaude ? "" : "none";
         setIntentCatalogCache(await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList)) || []);
@@ -39321,9 +39325,9 @@ ${res.stderr}` : "");
         const denyBuiltins = argsAgentsRow.style.display === "none" ? [] : collectBuiltinChecklist(argsBuiltinsList);
         const disabledTools = argsToolsRow.style.display === "none" ? [] : collectToolChecklist(argsToolsList);
         const intents = argsIntentsSection.style.display === "none" ? null : collectIntentChecklist(argsIntentsList);
-        const plugins = argsPluginsSection.style.display === "none" || !getPluginCatalogCache().length ? void 0 : mergePlugins(
+        const plugins = argsPluginsSection.style.display === "none" || !argsPluginsRendered.length ? void 0 : mergePlugins(
           collectPluginChecklist(argsPluginList),
-          pluginsForUnlistedPlugins(argsPluginsPersisted, getPluginCatalogCache().map((pl) => String(pl.id)))
+          pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered)
         );
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : collectExecChecklist(argsExecList);
         const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
