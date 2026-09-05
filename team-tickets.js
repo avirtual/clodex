@@ -253,6 +253,7 @@ const ticketTaskDirLine = (dir, raw) => {
   return `TASK DIR: ${dir}${rule}${rule ? taskDirCreateClause : ''}\n`;
 };
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
+const REVIEWER_PROMPT_PREFIX = 'clodex-team-reviewer';
 
 const REVIEWER_FALLBACK = {
   systemPromptFile: 'clodex-team-reviewer',
@@ -856,7 +857,7 @@ function createTicketMethods(deps, shared) {
         // the fallback destination when the ticket cannot be resolved.
         ...(reviewTicket ? { reviewTicket } : {}),
         ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
-        reviewerTemplate: templateName,
+        reviewerTemplate: shape.tpl ? shape.tpl.name : DEFAULT_REVIEWER_TEMPLATE,
       });
 
       let promptWarn = '';
@@ -4460,8 +4461,12 @@ function createTicketMethods(deps, shared) {
     },
 
     _reviewerTemplateNames() {
-      try { return getTemplates().list().map((t) => t && t.name).filter(Boolean); }
-      catch { return []; }
+      try {
+        return getTemplates().list()
+          .filter((t) => t && typeof t.systemPromptFile === 'string'
+            && t.systemPromptFile.startsWith(REVIEWER_PROMPT_PREFIX))
+          .map((t) => t.name).filter(Boolean);
+      } catch { return []; }
     },
 
     _taskAdd(session, team, intent, reply) {
@@ -4549,6 +4554,14 @@ function createTicketMethods(deps, shared) {
       // net costs nothing — those tickets never reach a dispatch on this path.
       const noTaskDir = this._ticketTaskDirRefusal(team, ticket, 'start', ticketStarted(ticket));
       if (noTaskDir) { log.info('intent', `task start by ${session.name}: ${ticket.id} refused — no task dir`); reply(noTaskDir); return; }
+      const startReviewer = intent.reviewer || null;
+      if (startReviewer) {
+        const known = this._reviewerTemplateNames();
+        if (!known.includes(startReviewer)) {
+          reply(`error: no template "${startReviewer}" in the library — reviewer templates available: [${known.join(', ')}]`);
+          return;
+        }
+      }
       const assignee = ticket.assignee;
       // The role the ticket was FILED under, which is what mints the seat name and
       // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
@@ -4628,6 +4641,8 @@ function createTicketMethods(deps, shared) {
       // dispatch without recording that it did — an unstamped dispatched ticket
       // is startable a second time, which is the tree collision this fixes.
       ticket.startedAt = ticket.lastActivityAt;
+      if (startReviewer) ticket.reviewerTemplate = startReviewer;
+      const rvNote = startReviewer ? ` — reviewer template: ${startReviewer}` : '';
       const unparked = wasParked ? ' (unparked)' : '';
       if (oneShot && minted.ok) {
         // Re-pinned from the role to the seat BEFORE the save, because
@@ -4643,9 +4658,9 @@ function createTicketMethods(deps, shared) {
         log.info('intent', dispatchMode === 'spawn'
           ? `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, shared checkout`
           : `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
-        reply(dispatchMode === 'spawn'
+        reply((dispatchMode === 'spawn'
           ? `ticket ${ticket.id}${unparked} → spawning ${minted.name} in the shared checkout (no branch)`
-          : `ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
+          : `ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`) + rvNote);
         return;
       }
       // A mint failure is NOT fatal: the ticket stays role-assigned and takes the
@@ -4659,7 +4674,7 @@ function createTicketMethods(deps, shared) {
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
       log.info('intent', `task start by ${session.name}: ${ticket.id} → ${ticket.assignee}${wasParked ? ' (unparked)' : ''}`);
-      reply(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}`);
+      reply(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}${rvNote}`);
     },
 
     _taskAssign(session, team, intent, reply) {

@@ -1022,13 +1022,12 @@ test('t673: an empty extraDenyRules leaves the deny block exactly as it was', ()
 test('t673: shell denies survive with no tool denies, and are deduped', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
-  // A duplicate across the two sources: dedup is what makes merging safe, and a
-  // concatenation would pass every other assertion here.
-  h.setupClaudeHook('sh3', null, null, [], ['Bash(rm:*)'], [], null, null, SHELL_DENY);
+  // The duplicate rides INSIDE extraDenyRules, so the Set is what collapses it.
+  // Put in disabledTools instead it never reaches the Set at all — the toolSet
+  // filter drops it first, and the test would assert dedup while exercising none.
+  h.setupClaudeHook('sh3', null, null, [], [], [], null, null, [...SHELL_DENY, 'Bash(rm:*)']);
   const withDeny = fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'hook'), 'utf-8');
   const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'settings'), 'utf-8'));
-  // 'Bash(rm:*)' is not in CLAUDE_TOOLS, so the disabledTools filter drops it and
-  // it arrives only from the shell list — one copy either way.
   assert.deepStrictEqual(settings.permissions.deny, SHELL_DENY);
 
   // The SAME registry dir and the same agent name, so the only difference

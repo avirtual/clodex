@@ -935,8 +935,11 @@ test('t629: a live holder whose ticket carries a REMOVED role key falls through 
 
 const SHELL_TPL = 'clodex-team-reviewer-shell';
 
+// `systemPromptFile` is carried because the reviewer-name filter reads it: a
+// template briefed by a HAND's prompt is not a reviewer arm, and a fixture that
+// omitted the field would exercise a list the real one never produces.
 function withTemplates(names) {
-  return { getTemplates: () => ({ list: () => names.map((name) => ({ name })) }) };
+  return { getTemplates: () => ({ list: () => names.map((name) => ({ name, systemPromptFile: name })) }) };
 }
 
 test('t673: task add reviewer:<name> stores the choice on the record and names it back', () => {
@@ -962,6 +965,58 @@ test('t673: an unknown reviewer template is refused AT ADD, with the list, and n
   assert.deepStrictEqual(f.load(), [], 'nothing is filed — the refusal is not advisory');
   assert.match(f.notes(), /no template "no-such-template"/);
   assert.match(f.notes(), /clodex-team-reviewer-shell/, 'the available names are printed, so the fix needs no second guess');
+});
+
+test('t673: a template that is not a REVIEWER template is refused as a reviewer arm', () => {
+  // The cap still holds, so this was never a hole — but a hand's template
+  // spawned as the reviewer labels an A/B row with an arm that does not exist,
+  // and the refusal text already promised "reviewer templates available".
+  const f = mkStart({
+    getTemplates: () => ({
+      list: () => [
+        { name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer' },
+        { name: SHELL_TPL, systemPromptFile: SHELL_TPL },
+        { name: 'clodex-hand-seat', systemPromptFile: 'clodex-hand-brief' },
+      ],
+    }),
+  });
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'add', who: 'hand', id: null, park: false, reviewer: 'clodex-hand-seat', body: 'the spec' });
+  assert.deepStrictEqual(f.load(), [], 'the hand template is not offerable as a reviewer');
+  const notes = f.notes();
+  assert.match(notes, /no template "clodex-hand-seat"/);
+  assert.match(notes, /clodex-team-reviewer-shell/, 'ENTER: the list really was printed, so its ABSENCE below is meaningful');
+  assert.ok(!/clodex-hand-seat.*available|available.*clodex-hand-seat/s.test(notes.replace(/no template "clodex-hand-seat"/, '')),
+    'and the hand template is not offered in it');
+});
+
+test('t673: task start reviewer:<name> writes the choice onto the record and names it back', () => {
+  // The other half of the spec\'s selection surface. It parsed and was silently
+  // discarded: no error, no note, and the DEFAULT reviewer — a no-op on exactly
+  // the arm the A/B has to be able to pick.
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  f.seat('lead'); f.seat('team-hand');
+  const t0 = opened(f);
+  assert.ok(!t0.reviewerTemplate, 'ENTER: the ticket starts with no template, so the write below is what put it there');
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'start', who: null, id: t0.id, park: false, reviewer: SHELL_TPL, body: '' });
+  assert.strictEqual(f.one(t0.id).reviewerTemplate, SHELL_TPL);
+  assert.match(f.notes(), /reviewer template: clodex-team-reviewer-shell/);
+});
+
+test('t673: an unknown reviewer template is refused AT START, before anything is dispatched', () => {
+  // Above the mint: a refusal below it has already reserved the seat name and
+  // cut the worktree for a ticket it then declines to start.
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  f.seat('lead'); f.seat('team-hand');
+  const t0 = opened(f);
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'start', who: null, id: t0.id, park: false, reviewer: 'no-such-template', body: '' });
+  const after = f.one(t0.id);
+  assert.match(f.notes(), /no template "no-such-template"/);
+  assert.ok(!after.reviewerTemplate, 'nothing was written');
+  assert.ok(!after.startedAt, 'and the ticket was NOT started — the refusal is not advisory');
 });
 
 test('t673: a ticket with no reviewer: token carries no reviewerTemplate at all', () => {

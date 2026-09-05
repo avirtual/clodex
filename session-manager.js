@@ -1815,6 +1815,7 @@ function createSessionManager(deps) {
         noWire: wireOff,
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
+        ...(Array.isArray(shellDeny) ? { shellDeny } : {}),
         disabledSkills: Array.isArray(disabledSkills) ? disabledSkills : [],
         injectSkills: Array.isArray(injectSkills) ? injectSkills : [],
         // Intent-gate allowlist is spawn-time config (it bakes into the append
@@ -5333,6 +5334,7 @@ function createSessionManager(deps) {
               false,           // mint — a reload respawns an existing record
               entry.noWire === true,
               Array.isArray(entry.plugins) ? entry.plugins : null,
+              Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             );
             const lvl = stripLevelOf(entry);
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);

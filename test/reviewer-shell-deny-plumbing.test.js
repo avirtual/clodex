@@ -131,7 +131,11 @@ function mkManager() {
     stop(name);
   };
   const settingsOf = (name) => JSON.parse(fs.readFileSync(pathFor(root, name, 'settings'), 'utf-8'));
-  return { m, spawn, hookCalls, settingsOf, root };
+  const record = (name) => store.get(name) || null;
+  // kill()'s record drop, which every re-create path runs before create(). The
+  // session must go too, or create() refuses the name as already live.
+  const forget = (name) => { m.sessions.delete(name); store.delete(name); };
+  return { m, spawn, hookCalls, settingsOf, record, forget, root };
 }
 
 test('t673: create() carries shellDeny into the settings file deny block', async () => {
@@ -151,6 +155,41 @@ test('t673: create() carries shellDeny into the settings file deny block', async
   // parameter list, and a shift of one is the failure mode a single-argument
   // assertion cannot see.
   assert.deepStrictEqual(f.hookCalls[0].disabledTools, TOOL_DENY);
+});
+
+test('t673: the deny rules are PERSISTED, so a re-created seat rebuilds the same wall', async () => {
+  // The wall survived only the FIRST spawn: `shellDeny` reached create() as an
+  // argument and nothing wrote it to the record, so every kill()+create() path
+  // (reload, restart, retry, restore-on-launch) re-ran setupClaudeHook with an
+  // empty list. The regenerated settings.json then had NO shell rules while the
+  // record still carried Bash in the tools and the lead's bypass in extraArgs —
+  // a reviewer with an unrestricted shell, reached by a GUI button.
+  const f = mkManager();
+  await f.spawn('shell-seat', { disabledTools: TOOL_DENY, shellDeny: SHELL_DENY });
+  const rec = f.record('shell-seat');
+  assert.deepStrictEqual(rec.shellDeny, SHELL_DENY,
+    'ENTER: the record itself carries the rules — every re-create site reads them from here');
+
+  // The re-create, spelled exactly as the five callers spell it. Driving the
+  // record through the same real hook is the point: asserting the argument was
+  // passed would pin the call, not the settings file the CLI actually reads.
+  f.forget('shell-seat');
+  await f.spawn('shell-seat', {
+    disabledTools: rec.disabledTools,
+    shellDeny: Array.isArray(rec.shellDeny) ? rec.shellDeny : null,
+  });
+  assert.deepStrictEqual(f.settingsOf('shell-seat').permissions.deny,
+    ['Edit', 'Write', 'Bash(rm:*)', 'Bash(touch:*)', 'Bash(git commit:*)'],
+    'the rebuilt settings file carries the same wall as the first spawn');
+});
+
+test('t673: a seat with no shellDeny persists no key, so a re-create adds none', async () => {
+  // Absent, not `[]`: every record predating this field omits the key, and an
+  // empty array stored on every ordinary seat would be a second spelling of the
+  // same state for the re-create sites to get wrong.
+  const f = mkManager();
+  await f.spawn('plain-seat', { disabledTools: TOOL_DENY });
+  assert.ok(!Object.prototype.hasOwnProperty.call(f.record('plain-seat'), 'shellDeny'));
 });
 
 test('t673: a seat with no shellDeny hands the hook an empty list, never undefined', async () => {
