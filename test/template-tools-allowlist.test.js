@@ -74,10 +74,16 @@ function extract(re, what) {
   return m[1];
 }
 
+// The FIRST line-initial call, which is openTemplateEditor's. applyTypeDefaults'
+// blanking call is preceded by its guard on the same line, so `\n\s*` skips it —
+// and the ENTER below is what says so out loud, because capturing the blanking
+// call instead would make every draw assertion read an empty control.
 const DRAW_STMT = extract(
   /\n(\s*renderToolAllowChecklist\(inputToolsAllowList,[^\n]*?\);)\n/,
   "openTemplateEditor's allowlist draw",
 );
+assert.match(DRAW_STMT, /tpl/,
+  'ENTER: the captured draw is the one that reads the TEMPLATE, not the empty-set blanking call');
 const COLLECT_STMT = extract(
   /\n(  const toolsAllow = [\s\S]*?;)\n/,
   "collectFormConfig's toolsAllow expression",
