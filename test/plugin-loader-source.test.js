@@ -200,6 +200,31 @@ test('installFromSource writes the sidecar, registers DISABLED, and rescans', as
   assert.strictEqual(loader.isEnabled(discovered), false);
 });
 
+test('installFromSource removes the placed dir and never enables it when writeSidecar fails (t683 MUST-FIX 3)', async () => {
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader, userDir, getUi } = mkSourceLoader({ script: [{ bytes }] });
+  const target = path.join(userDir, 'demo');
+  const sidecarFile = path.join(target, '.clodex-source.json');
+  const realWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function patched(file, ...rest) {
+    if (String(file).startsWith(`${sidecarFile}.tmp-`)) {
+      throw new Error('injected sidecar-write failure');
+    }
+    return realWriteFileSync(file, ...rest);
+  };
+  let r;
+  try {
+    r = await loader.installFromSource('owner/repo@main');
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+  }
+  assert.strictEqual(r.ok, false);
+  assert.ok(!fs.existsSync(target), 'the placed dir was rolled back, not left live with no sidecar');
+  const enabled = (getUi().plugins || {}).enabled;
+  assert.ok(!Array.isArray(enabled) || !enabled.includes('demo'),
+    'the plugin was never added to the enabled list — it cannot come back ENABLED at next restart');
+});
+
 test('installFromSource refuses a core id and leaves the user root untouched', async () => {
   const bytes = buildTarballBytes('abc1234', 'workbench');
   const { loader, userDir } = mkSourceLoader({ script: [{ bytes }], coreIds: ['workbench'] });
