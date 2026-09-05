@@ -14,6 +14,13 @@
 //
 // The property: whatever is on the line when a command arrives, the shell runs
 // EXACTLY that command, under any keymap the operator may be in.
+//
+// A second flake cause, fixed here after four unrelated tickets were reverted by
+// it: a marker's TEXT always reaches the pty BEFORE the shell's end mark reaches
+// the parser, so a wait that stops at the text can resolve in a window where
+// `isBusy()` is still true and the exec under measurement is refused `busy`.
+// Measured on this box: the window is entered on every run and is 4-5ms wide
+// idle, 9-12ms under load — an exec fired at its start is refused 20 times in 20.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -87,6 +94,17 @@ function waitFor(getOut, pred, ms = SETTLE_MS) {
 // the echo of the command line as it is typed.
 const MARK = ['TERMEXEC', 'RAN'].join('_');
 
+// The readiness `exec()` actually gates on, which is NOT the one a marker's text
+// proves. exec refuses `busy` off the parser's `capturing` flag, and the parser
+// only clears it when the shell's end mark reaches feed() — strictly after the
+// command's output, so a wait that stops at the text resolves in the gap and the
+// exec is refused. It does not replace a marker-text wait, it follows one: the
+// text is the guard that the shell RAN the line, a question the busy flag cannot
+// answer (an idle shell that ran nothing is also not busy).
+async function waitNotBusy(ptys) {
+  return waitFor(() => ptys._execState('w', 'seat'), (st) => !!st && !st.busy);
+}
+
 // Split for the same reason as MARK, and it is not decoration. The readiness
 // wait below matches this against everything the pty has emitted, and a
 // terminal ECHOES the line as it is typed — so a marker spelled literally in
@@ -143,6 +161,8 @@ async function runCase({ shellPath, keymapCmd, prefill, armHup, graceMs }) {
     proc.write(`${keymapCmd} && echo KEYMAP''_SET\r`);
     const ready = await waitFor(() => out.s, (s) => s.includes(KEYMAP_MARK));
     assert.ok(ready, `shell reached ${keymapCmd}`);
+    assert.ok(await waitNotBusy(ptys),
+      `the parser saw the keymap command's end mark\n--- output ---\n${out.s}`);
 
     // A shell that IGNORES SIGHUP, for the teardown's own regression test at
     // the foot of this file. Armed by TYPING it rather than through a profile:
@@ -165,6 +185,8 @@ async function runCase({ shellPath, keymapCmd, prefill, armHup, graceMs }) {
       // 'the process is not alive' is trivially true of a shell that never
       // spawned - exactly the shape that passes while measuring nothing.
       assert.ok(pidAlive(proc.pid), 'ENTER: the shell is running before teardown');
+      assert.ok(await waitNotBusy(ptys),
+        `the parser saw the trap listing's end mark\n--- output ---\n${out.s}`);
     }
 
     // A draft the operator walked away from. Left with the cursor moved back
