@@ -375,12 +375,14 @@ function createTicketMethods(deps, shared) {
     getPersistence,
     getRemindScheduler,
     getTemplates,
+    listAllTemplates,
     getUserDataPath,
     gitWorktree,
     isAlive,
     log,
     withoutPrivilegedIntentsFor,
   } = deps;
+  const allTemplates = () => (typeof listAllTemplates === 'function' ? listAllTemplates() : getTemplates().list());
   const {
     // Constructed ONCE, by createSessionManager, and borrowed here. A second
     // instance would work and would still be wrong: core's list() badge and
@@ -3738,7 +3740,7 @@ function createTicketMethods(deps, shared) {
     _templateShape(tplName) {
       if (!tplName) return null;
       let tpl = null;
-      try { tpl = getTemplates().list().find((t) => t && t.name === tplName) || null; }
+      try { tpl = allTemplates().find((t) => t && t.name === tplName) || null; }
       catch { tpl = null; }
       if (!tpl) return null;
       const { sessionEnv, dropped, badType } = filterTemplateEnv(tpl.env);
@@ -4453,7 +4455,7 @@ function createTicketMethods(deps, shared) {
 
     _reviewerTemplateNames() {
       try {
-        return getTemplates().list()
+        return allTemplates()
           .filter((t) => t && typeof t.systemPromptFile === 'string'
             && t.systemPromptFile.startsWith(REVIEWER_PROMPT_PREFIX))
           .map((t) => t.name).filter(Boolean);

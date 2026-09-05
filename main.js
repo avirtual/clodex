@@ -115,7 +115,7 @@ const log = {
 // live reconciliation stops being visible here.
 let engine = null;
 let manager = null;
-let workspaces, uiSettings, agentLibrary, skillLibrary, envScopes;
+let workspaces, uiSettings, agentLibrary, skillLibrary, envScopes, promptLibrary, templates, execLibrary;
 
 
 
@@ -238,7 +238,7 @@ async function confirmRestartClodex() {
 const { createAppMenus } = require('./app-menus');
 const {
   buildTrayMenu, initTray, refreshTrayMenu, scheduleTrayRefresh,
-  buildAgentsSubmenu, buildSkillsSubmenu, setUiTheme, buildAppMenu,
+  buildLibraryMenu, setUiTheme, buildAppMenu,
   refreshAppMenu, scheduleAppMenuRefresh, sendToFocused,
 } = createAppMenus({
   DEFAULT_WORKSPACE_ID, LOG_FILE, THEME_KEYS, path,
@@ -252,6 +252,9 @@ const {
   getWorkspaces: () => workspaces,
   getAgentLibrary: () => agentLibrary,
   getSkillLibrary: () => skillLibrary,
+  getPromptLibrary: () => promptLibrary,
+  getTemplates: () => templates,
+  getExecLibrary: () => execLibrary,
   getEnvScopes: () => envScopes,
   getPluginHost: () => (engine ? engine.getPluginHost() : null),
   getTeams: () => (engine ? { listTeams: engine.listTeams, loadManifest: engine.loadManifest } : null),
@@ -531,7 +534,7 @@ app.whenReady().then(() => {
     },
   });
   manager = engine.manager;
-  ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes } = engine.stores);
+  ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes, promptLibrary, templates, execLibrary } = engine.stores);
 
   // WHETHER CLODEX IS FRONTMOST, which gates the automatic microphone re-arm.
   // Only this process can answer it: `app.isFocused()` is about the

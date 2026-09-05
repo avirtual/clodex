@@ -68,6 +68,7 @@ function createAppMenus(deps) {
     // getter deps (TDZ / whenReady-assigned when this factory runs)
     getManager, getPeerManager, getSandboxManager, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
+    getPromptLibrary, getTemplates, getExecLibrary,
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
@@ -286,95 +287,129 @@ function createAppMenus(deps) {
   // Application menu (File > New Window, etc.)
   // ---------------------------------------------------------------------------
 
-  function buildAgentsSubmenu() {
-    // The custom-subagent library (the reusable agent *types*), not running
-    // sessions — those already live in the sidebar. Each entry opens its editor.
-    const lib = getAgentLibrary().list();
-    const items = [];
+  function buildLibraryMenu() {
+    const truncate = (label) => (label.length > 60 ? label.slice(0, 57) + '…' : label);
+    const listOf = (getter) => {
+      try { return (getter && getter() && getter().list()) || []; } catch { return []; }
+    };
+    let bundles = [];
+    try {
+      const host = getPluginHost ? getPluginHost() : null;
+      if (host && typeof host.bundles === 'function') bundles = host.bundles() || [];
+    } catch { bundles = []; }
 
-    const openDrawer = (name) => {
-      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-      if (win) win.webContents.send('request-open-agents-drawer', name || null);
+    const kindMenu = ({ channel, library, empty, pluginEntries, newLabel, accelerator, manageLabel }) => {
+      const items = library.length ? library : [{ label: empty, enabled: false }];
+      for (const b of bundles) {
+        const entries = pluginEntries(b);
+        if (!entries.length) continue;
+        items.push({ type: 'separator' }, { label: b.name || b.id, enabled: false }, ...entries);
+      }
+      items.push(
+        { type: 'separator' },
+        { label: newLabel, ...(accelerator ? { accelerator } : {}), click: () => sendToFocused(channel, ':new') },
+        { label: manageLabel, click: () => sendToFocused(channel, null) },
+      );
+      return items;
+    };
+    const described = (e) => truncate(e.description ? `${e.name}  —  ${e.description}` : e.name);
+    const bundleItem = (channel, b, name) => ({
+      label: truncate(name),
+      click: () => sendToFocused(channel, { plugin: b.id, name }),
+    });
+
+    const promptItems = (rows, click) => {
+      const out = [];
+      for (const kind of ['system', 'append']) {
+        const ofKind = rows.filter((p) => p && p.kind === kind);
+        if (!ofKind.length) continue;
+        out.push({ label: kind === 'system' ? 'System' : 'Append', enabled: false });
+        for (const p of ofKind) out.push({ label: truncate(p.name), click: () => click(p, kind) });
+      }
+      return out;
     };
 
-    if (lib.length > 0) {
-      for (const a of lib) {
-        const label = a.description ? `${a.name}  —  ${a.description}` : a.name;
-        items.push({
-          // Menu labels don't wrap; keep long descriptions from blowing out width.
-          label: label.length > 60 ? label.slice(0, 57) + '…' : label,
-          click: () => openDrawer(a.name),
-        });
-      }
-    } else {
-      items.push({ label: '(no agents in library)', enabled: false });
-    }
-
-    items.push(
-      { type: 'separator' },
-      {
-        label: 'New Agent…',
-        accelerator: 'CmdOrCtrl+Shift+A',
-        // Sentinel (a colon is invalid in an agent name, so it can't collide)
-        // tells the renderer to open a blank editor rather than load a type.
-        click: () => openDrawer(':new'),
-      },
-      {
-        label: 'Manage Agent Types…',
-        click: () => openDrawer(null),
-      },
-      { type: 'separator' },
-      {
-        label: 'Show IPC Traffic…',
-        accelerator: 'CmdOrCtrl+Shift+B',
-        click: () => {
-          const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-          if (win) win.webContents.send('request-open-ipc-log');
+    return {
+      label: 'Library',
+      submenu: [
+        {
+          label: 'Prompts',
+          submenu: kindMenu({
+            channel: 'request-open-prompts-drawer',
+            library: promptItems(listOf(getPromptLibrary), (p, kind) =>
+              sendToFocused('request-open-prompts-drawer', { kind, name: p.name })),
+            empty: '(no prompts in library)',
+            pluginEntries: (b) => promptItems(b.prompts || [], (p, kind) =>
+              sendToFocused('request-open-prompts-drawer', { plugin: b.id, kind, name: p.name })),
+            newLabel: 'New Prompt…',
+            manageLabel: 'Manage Prompts…',
+          }),
         },
-      }
-    );
-
-    return items;
-  }
-
-  // Parallel to buildAgentsSubmenu, over the skill-injection library. Each entry
-  // opens its editor; the library skills are what a session can selectively
-  // inject via --plugin-dir.
-  function buildSkillsSubmenu() {
-    const lib = getSkillLibrary().list();
-    const items = [];
-
-    const openDrawer = (name) => {
-      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-      if (win) win.webContents.send('request-open-skills-drawer', name || null);
+        {
+          label: 'Templates',
+          submenu: kindMenu({
+            channel: 'request-open-templates-drawer',
+            library: listOf(getTemplates).map((t) => ({
+              label: truncate(t.name),
+              click: () => sendToFocused('request-open-templates-drawer', t.id || t.name),
+            })),
+            empty: '(no templates in library)',
+            pluginEntries: (b) => (b.templates || []).map((t) => bundleItem('request-open-templates-drawer', b, t.name)),
+            newLabel: 'New Template…',
+            manageLabel: 'Manage Templates…',
+          }),
+        },
+        {
+          label: 'Agents',
+          submenu: kindMenu({
+            channel: 'request-open-agents-drawer',
+            library: listOf(getAgentLibrary).map((a) => ({
+              label: described(a),
+              click: () => sendToFocused('request-open-agents-drawer', a.name),
+            })),
+            empty: '(no agents in library)',
+            pluginEntries: (b) => (b.agents || []).map((a) => bundleItem('request-open-agents-drawer', b, a.name)),
+            newLabel: 'New Agent…',
+            accelerator: 'CmdOrCtrl+Shift+A',
+            manageLabel: 'Manage Agent Types…',
+          }),
+        },
+        {
+          label: 'Skills',
+          submenu: kindMenu({
+            channel: 'request-open-skills-drawer',
+            library: listOf(getSkillLibrary).map((sk) => ({
+              label: described(sk),
+              click: () => sendToFocused('request-open-skills-drawer', sk.name),
+            })),
+            empty: '(no skills in library)',
+            pluginEntries: (b) => (b.skills || []).map((sk) => bundleItem('request-open-skills-drawer', b, sk.name)),
+            newLabel: 'New Skill…',
+            accelerator: 'CmdOrCtrl+Shift+S',
+            manageLabel: 'Manage Skills…',
+          }),
+        },
+        {
+          label: 'Exec Commands',
+          submenu: kindMenu({
+            channel: 'request-open-exec-drawer',
+            library: listOf(getExecLibrary).map((c) => ({
+              label: truncate(c.name),
+              click: () => sendToFocused('request-open-exec-drawer', c.name),
+            })),
+            empty: '(no exec commands in library)',
+            pluginEntries: () => [],
+            newLabel: 'New Exec Command…',
+            manageLabel: 'Manage Exec Commands…',
+          }),
+        },
+        { type: 'separator' },
+        {
+          label: 'Inbox…',
+          click: () => sendToFocused('request-open-inbox-drawer'),
+        },
+      ],
     };
-
-    if (lib.length > 0) {
-      for (const s of lib) {
-        const label = s.description ? `${s.name}  —  ${s.description}` : s.name;
-        items.push({
-          label: label.length > 60 ? label.slice(0, 57) + '…' : label,
-          click: () => openDrawer(s.name),
-        });
-      }
-    } else {
-      items.push({ label: '(no skills in library)', enabled: false });
-    }
-
-    items.push(
-      { type: 'separator' },
-      {
-        label: 'New Skill…',
-        accelerator: 'CmdOrCtrl+Shift+S',
-        click: () => openDrawer(':new'),
-      },
-      {
-        label: 'Manage Skills…',
-        click: () => openDrawer(null),
-      }
-    );
-
-    return items;
   }
 
   // The top-level Plugins menu. Returns null when
@@ -574,34 +609,6 @@ function createAppMenus(deps) {
               if (win) win.webContents.send('request-open-discovery');
             },
           },
-          {
-            label: 'Prompts…',
-            click: () => {
-              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) win.webContents.send('request-open-prompts-drawer');
-            },
-          },
-          {
-            label: 'Templates…',
-            click: () => {
-              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) win.webContents.send('request-open-templates-drawer');
-            },
-          },
-          {
-            label: 'Exec Commands…',
-            click: () => {
-              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) win.webContents.send('request-open-exec-drawer');
-            },
-          },
-          {
-            label: 'Inbox…',
-            click: () => {
-              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) win.webContents.send('request-open-inbox-drawer');
-            },
-          },
           { type: 'separator' },
           {
             label: 'Rename Workspace…',
@@ -614,14 +621,7 @@ function createAppMenus(deps) {
           { role: 'close' },
         ],
       },
-      {
-        label: 'Agents',
-        submenu: buildAgentsSubmenu(),
-      },
-      {
-        label: 'Skills',
-        submenu: buildSkillsSubmenu(),
-      },
+      buildLibraryMenu(),
       {
         // macOS wires Cmd+C/V/X/A through these roles via the responder chain —
         // the menu must stay present and visible or clipboard shortcuts break in
@@ -660,6 +660,11 @@ function createAppMenus(deps) {
             // surface; the in-app IPC panel shows agent traffic, not errors.
             label: 'Open Log File',
             click: () => { shell.openPath(LOG_FILE); },
+          },
+          {
+            label: 'Show IPC Traffic…',
+            accelerator: 'CmdOrCtrl+Shift+B',
+            click: () => sendToFocused('request-open-ipc-log'),
           },
           { type: 'separator' },
           {
@@ -873,7 +878,7 @@ function createAppMenus(deps) {
 
   return {
     buildTrayMenu, initTray, refreshTrayMenu, scheduleTrayRefresh,
-    buildAgentsSubmenu, buildSkillsSubmenu, buildPluginsMenu, buildTeamsMenu, setUiTheme, buildAppMenu,
+    buildLibraryMenu, buildPluginsMenu, buildTeamsMenu, setUiTheme, buildAppMenu,
     refreshAppMenu, scheduleAppMenuRefresh, sendToFocused,
   };
 }

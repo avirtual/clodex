@@ -1,8 +1,8 @@
 'use strict';
 // menubar.js — the browser frontend's top menu bar (web-frontend Phase 5). It
 // replaces the earlier floating "☰" corner button with a real horizontal menu
-// bar that mirrors the Electron application menu (app-menus.js): File / Agents /
-// Skills / View / Window. The Edit/View native roles the browser already
+// bar that mirrors the Electron application menu (app-menus.js): File / Library /
+// View / Teams / Window. The Edit/View native roles the browser already
 // supplies (undo/copy/reload/full-screen/…) are deliberately omitted.
 //
 // Layout: the bar lives in its own strip at the top of #main. mount() adds
@@ -84,10 +84,6 @@ function buildMenus(ctx) {
         { label: 'New Workspace', run: () => newWorkspace() },
         { label: 'New Session…', accel: `${ACCEL_ALT}T`, run: () => emit('request-open-new-dialog') },
         { sep: true },
-        { label: 'Prompts…', run: () => emit('request-open-prompts-drawer') },
-        { label: 'Templates…', run: () => emit('request-open-templates-drawer') },
-        { label: 'Exec Commands…', run: () => emit('request-open-exec-drawer') },
-        { label: 'Inbox…', run: () => emit('request-open-inbox-drawer') },
         { label: 'Sandboxes…', run: () => emit('request-open-sandbox-dialog') },
         { sep: true },
         { label: 'Rename Workspace…', run: () => emit('request-rename-workspace') },
@@ -106,49 +102,14 @@ function buildMenus(ctx) {
         { label: 'Restart Clodex…', run: () => confirmRestart(invoke) },
       ],
     },
-    {
-      label: 'Agents',
-      items: async () => {
-        const lib = await Promise.resolve(api.listAgents ? api.listAgents() : []).catch(() => []);
-        const rows = [];
-        if (lib && lib.length) {
-          for (const a of lib) rows.push({ label: trunc(a.description ? `${a.name}  —  ${a.description}` : a.name), run: () => emit('request-open-agents-drawer', a.name) });
-        } else {
-          rows.push({ label: '(no agents in library)', disabled: true });
-        }
-        rows.push(
-          { sep: true },
-          { label: 'New Agent…', run: () => emit('request-open-agents-drawer', ':new') },
-          { label: 'Manage Agent Types…', run: () => emit('request-open-agents-drawer', null) },
-          { sep: true },
-          { label: 'Show IPC Traffic…', run: () => emit('request-open-ipc-log') },
-        );
-        return rows;
-      },
-    },
-    {
-      label: 'Skills',
-      items: async () => {
-        const lib = await Promise.resolve(api.listSkillLib ? api.listSkillLib() : []).catch(() => []);
-        const rows = [];
-        if (lib && lib.length) {
-          for (const s of lib) rows.push({ label: trunc(s.description ? `${s.name}  —  ${s.description}` : s.name), run: () => emit('request-open-skills-drawer', s.name) });
-        } else {
-          rows.push({ label: '(no skills in library)', disabled: true });
-        }
-        rows.push(
-          { sep: true },
-          { label: 'New Skill…', run: () => emit('request-open-skills-drawer', ':new') },
-          { label: 'Manage Skills…', run: () => emit('request-open-skills-drawer', null) },
-        );
-        return rows;
-      },
-    },
+    buildLibraryMenu(ctx),
     {
       label: 'View',
       items: () => {
         const cur = getTheme ? getTheme() : null;
         return [
+          { label: 'Show IPC Traffic…', run: () => emit('request-open-ipc-log') },
+          { sep: true },
           {
             label: 'Theme',
             submenu: () => THEMES.map((t) => ({
@@ -209,6 +170,103 @@ function buildMenus(ctx) {
       },
     },
   ];
+}
+
+function buildLibraryMenu(ctx) {
+  const { emit, api } = ctx;
+  const read = async (fn) => {
+    try { return (await Promise.resolve(fn ? fn() : [])) || []; } catch { return []; }
+  };
+  const bundles = () => read(api.pluginCatalog);
+  const kindRows = async ({ channel, library, empty, pluginEntries, newLabel, manageLabel }) => {
+    const rows = library.length ? library : [{ label: empty, disabled: true }];
+    for (const b of await bundles()) {
+      const entries = pluginEntries(b);
+      if (!entries.length) continue;
+      rows.push({ sep: true }, { head: b.name || b.id }, ...entries);
+    }
+    rows.push(
+      { sep: true },
+      { label: newLabel, run: () => emit(channel, ':new') },
+      { label: manageLabel, run: () => emit(channel, null) },
+    );
+    return rows;
+  };
+  const described = (e) => trunc(e.description ? `${e.name}  —  ${e.description}` : e.name);
+  const bundleRow = (channel, b, name) => ({ label: trunc(name), run: () => emit(channel, { plugin: b.id, name }) });
+  const promptRows = (rows, click) => {
+    const out = [];
+    for (const kind of ['system', 'append']) {
+      const ofKind = rows.filter((p) => p && p.kind === kind);
+      if (!ofKind.length) continue;
+      out.push({ head: kind === 'system' ? 'System' : 'Append' });
+      for (const p of ofKind) out.push({ label: trunc(p.name), run: () => click(p, kind) });
+    }
+    return out;
+  };
+  return {
+    label: 'Library',
+    items: () => [
+      {
+        label: 'Prompts',
+        submenu: async () => kindRows({
+          channel: 'request-open-prompts-drawer',
+          library: promptRows(await read(api.listPrompts), (p, kind) => emit('request-open-prompts-drawer', { kind, name: p.name })),
+          empty: '(no prompts in library)',
+          pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit('request-open-prompts-drawer', { plugin: b.id, kind, name: p.name })),
+          newLabel: 'New Prompt…',
+          manageLabel: 'Manage Prompts…',
+        }),
+      },
+      {
+        label: 'Templates',
+        submenu: async () => kindRows({
+          channel: 'request-open-templates-drawer',
+          library: (await read(api.listTemplates)).filter((t) => !t.plugin)
+            .map((t) => ({ label: trunc(t.name), run: () => emit('request-open-templates-drawer', t.id || t.name) })),
+          empty: '(no templates in library)',
+          pluginEntries: (b) => (b.templates || []).map((name) => bundleRow('request-open-templates-drawer', b, name)),
+          newLabel: 'New Template…',
+          manageLabel: 'Manage Templates…',
+        }),
+      },
+      {
+        label: 'Agents',
+        submenu: async () => kindRows({
+          channel: 'request-open-agents-drawer',
+          library: (await read(api.listAgents)).map((a) => ({ label: described(a), run: () => emit('request-open-agents-drawer', a.name) })),
+          empty: '(no agents in library)',
+          pluginEntries: (b) => (b.agents || []).map((name) => bundleRow('request-open-agents-drawer', b, name)),
+          newLabel: 'New Agent…',
+          manageLabel: 'Manage Agent Types…',
+        }),
+      },
+      {
+        label: 'Skills',
+        submenu: async () => kindRows({
+          channel: 'request-open-skills-drawer',
+          library: (await read(api.listSkillLib)).map((sk) => ({ label: described(sk), run: () => emit('request-open-skills-drawer', sk.name) })),
+          empty: '(no skills in library)',
+          pluginEntries: (b) => (b.skills || []).map((name) => bundleRow('request-open-skills-drawer', b, name)),
+          newLabel: 'New Skill…',
+          manageLabel: 'Manage Skills…',
+        }),
+      },
+      {
+        label: 'Exec Commands',
+        submenu: async () => kindRows({
+          channel: 'request-open-exec-drawer',
+          library: (await read(api.listExecCommands)).map((c) => ({ label: trunc(c.name), run: () => emit('request-open-exec-drawer', c.name) })),
+          empty: '(no exec commands in library)',
+          pluginEntries: () => [],
+          newLabel: 'New Exec Command…',
+          manageLabel: 'Manage Exec Commands…',
+        }),
+      },
+      { sep: true },
+      { label: 'Inbox…', run: () => emit('request-open-inbox-drawer') },
+    ],
+  };
 }
 
 // ── The top-level Plugins menu (t28) ───────────────────────────────────────
@@ -496,4 +554,4 @@ function mount(shim) {
   }
 }
 
-module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, navQuery, BAR_H, THEMES };
+module.exports = { mount, buildMenus, buildLibraryMenu, buildPluginsMenu, buildTeamsMenu, navQuery, BAR_H, THEMES };

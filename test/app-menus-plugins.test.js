@@ -55,9 +55,13 @@ function realUiSettings() {
 
 // Write a plugin to disk. A real directory with a real manifest, so `discover()`
 // walks it exactly as it walks plugins/workbench/.
-function writePlugin(root, id, { name, version, enabledByDefault, throws = false, manifest } = {}) {
+function writePlugin(root, id, { name, version, enabledByDefault, throws = false, manifest, bundle } = {}) {
   const dir = path.join(root, id);
   fs.mkdirSync(dir, { recursive: true });
+  for (const [rel, body] of Object.entries(bundle || {})) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), body);
+  }
   fs.writeFileSync(path.join(dir, 'manifest.json'), manifest !== undefined ? manifest : JSON.stringify({
     id,
     name: name || id,
@@ -135,7 +139,7 @@ function loadAppMenus() {
 
 // The deps app-menus needs. Only getPluginHost matters here; the rest are inert
 // stubs so buildPluginsMenu can run without a manager, workspaces or libraries.
-function menusWith(getPluginHost) {
+function menusWith(getPluginHost, stores = {}) {
   const createAppMenus = loadAppMenus();
   const nothing = () => ({ list: () => [], get: () => ({}), sortedByRecent: () => [], statuses: () => [] });
   return createAppMenus({
@@ -144,7 +148,9 @@ function menusWith(getPluginHost) {
     getManager: nothing, getPeerManager: () => null, getSandboxManager: () => null,
     getUpdateInfo: () => null, getUiSettings: nothing, getWorkspaces: nothing,
     getAgentLibrary: nothing, getSkillLibrary: nothing, getEnvScopes: () => null,
+    getPromptLibrary: nothing, getTemplates: nothing, getExecLibrary: nothing,
     getPluginHost,
+    ...stores,
   });
 }
 
@@ -357,16 +363,176 @@ test('with no plugin host the app menu has no Plugins entry at all', () => {
   assert.ok(labels.includes('View') && labels.includes('Window'), 'and the rest of the menu is intact');
 });
 
+// ── The Library menu (t680) ─────────────────────────────────────────────────
+
+// One plugin carrying one entry of every kind, read through the REAL loader so
+// the bundle shape the menu consumes is the shipped one.
+function libraryFixture() {
+  const dir = tmpdir('library');
+  writePlugin(dir, 'rev', {
+    name: 'Reviewer',
+    bundle: {
+      'skills/scan/SKILL.md': '---\ndescription: scan\n---\nScan.\n',
+      'agents/critic.md': '---\ndescription: critic\n---\nCritique.\n',
+      'prompts/system/strict.md': 'Be strict.\n',
+      'prompts/append/rules.md': 'Cite.\n',
+      'templates/audit.json': JSON.stringify({ type: 'claude', systemPromptFile: 'strict' }),
+    },
+  });
+  const { host, loader } = realStack(dir);
+  loader.loadAll(host);
+  assert.strictEqual(host.bundles().length, 1, 'ENTER: the loader registered the bundle');
+  const stores = {
+    getPromptLibrary: () => ({ list: () => [
+      { name: 'lib-append', kind: 'append', body: 'A' },
+      { name: 'lib-sys', kind: 'system', body: 'S' },
+    ] }),
+    getTemplates: () => ({ list: () => [{ id: 'tpl-one', name: 'tpl-one', type: 'claude' }] }),
+    getAgentLibrary: () => ({ list: () => [{ name: 'agent-one', description: 'first' }] }),
+    getSkillLibrary: () => ({ list: () => [{ name: 'skill-one', description: 'a skill' }] }),
+    getExecLibrary: () => ({ list: () => [{ name: 'cmd-one' }] }),
+  };
+  return { host, stores };
+}
+
+const shape = (items) => items.map((i) => (i.type === 'separator' ? '—' : i.enabled === false ? `[${i.label}]` : i.label));
+
+test('t680: Library replaces Agents and Skills at their position, with one submenu per kind and Inbox at the tail', () => {
+  const { host, stores } = libraryFixture();
+  const template = buildTemplateWith(host, { stores });
+  const labels = template.map((m) => m.label);
+  assert.ok(!labels.includes('Agents') && !labels.includes('Skills'), `the two flat menus are gone, got ${labels}`);
+  const iFile = labels.indexOf('File');
+  const iLibrary = labels.indexOf('Library');
+  const iEdit = labels.indexOf('Edit');
+  assert.ok(iFile >= 0 && iLibrary === iFile + 1 && iEdit === iLibrary + 1, `File → Library → Edit, got ${labels}`);
+  assert.deepStrictEqual(shape(template[iLibrary].submenu),
+    ['Prompts', 'Templates', 'Agents', 'Skills', 'Exec Commands', '—', 'Inbox…']);
+
+  const win = template.find((m) => m.label === 'Window').submenu.map((i) => i.label).filter(Boolean);
+  for (const gone of ['Prompts…', 'Templates…', 'Exec Commands…', 'Inbox…']) {
+    assert.ok(!win.includes(gone), `${gone} left Window for Library, got ${win}`);
+  }
+  const view = template.find((m) => m.label === 'View').submenu;
+  const ipc = view.find((i) => i.label === 'Show IPC Traffic…');
+  assert.strictEqual(ipc && ipc.accelerator, 'CmdOrCtrl+Shift+B', 'IPC traffic is reachable from View with its chord');
+});
+
+test('t680: each kind lists the library first, then each contributing plugin under its name, then New/Manage', () => {
+  const { host, stores } = libraryFixture();
+  const lib = buildTemplateWith(host, { stores }).find((m) => m.label === 'Library').submenu;
+  const sub = (label) => shape(lib.find((i) => i.label === label).submenu);
+  assert.deepStrictEqual(sub('Prompts'), [
+    '[System]', 'lib-sys', '[Append]', 'lib-append',
+    '—', '[Reviewer]', '[System]', 'strict', '[Append]', 'rules',
+    '—', 'New Prompt…', 'Manage Prompts…',
+  ]);
+  assert.deepStrictEqual(sub('Templates'),
+    ['tpl-one', '—', '[Reviewer]', 'audit', '—', 'New Template…', 'Manage Templates…'],
+    'a plugin template shows its stem under the plugin header, not rev:audit');
+  assert.deepStrictEqual(sub('Agents'),
+    ['agent-one  —  first', '—', '[Reviewer]', 'critic', '—', 'New Agent…', 'Manage Agent Types…']);
+  assert.deepStrictEqual(sub('Skills'),
+    ['skill-one  —  a skill', '—', '[Reviewer]', 'scan', '—', 'New Skill…', 'Manage Skills…']);
+  assert.deepStrictEqual(sub('Exec Commands'),
+    ['cmd-one', '—', 'New Exec Command…', 'Manage Exec Commands…'],
+    'exec commands have no plugin section');
+
+  const newAgent = lib.find((i) => i.label === 'Agents').submenu.find((i) => i.label === 'New Agent…');
+  const newSkill = lib.find((i) => i.label === 'Skills').submenu.find((i) => i.label === 'New Skill…');
+  assert.deepStrictEqual([newAgent.accelerator, newSkill.accelerator], ['CmdOrCtrl+Shift+A', 'CmdOrCtrl+Shift+S']);
+});
+
+test('t680: an empty library keeps the disabled placeholder; a plugin section still lists', () => {
+  const { host } = libraryFixture();
+  const lib = buildTemplateWith(host).find((m) => m.label === 'Library').submenu;
+  assert.deepStrictEqual(shape(lib.find((i) => i.label === 'Agents').submenu),
+    ['[(no agents in library)]', '—', '[Reviewer]', 'critic', '—', 'New Agent…', 'Manage Agent Types…']);
+  assert.deepStrictEqual(shape(lib.find((i) => i.label === 'Exec Commands').submenu),
+    ['[(no exec commands in library)]', '—', 'New Exec Command…', 'Manage Exec Commands…']);
+});
+
+test('t680: a plugin entry click sends the drawer channel with {plugin, name}; library entries keep their form', () => {
+  const { host, stores } = libraryFixture();
+  const sent = [];
+  const lib = buildTemplateWith(host, { stores, sent }).find((m) => m.label === 'Library').submenu;
+  const item = (kind, label) => lib.find((i) => i.label === kind).submenu.find((i) => i.label === label);
+  item('Prompts', 'rules').click();
+  item('Prompts', 'lib-sys').click();
+  item('Templates', 'audit').click();
+  item('Templates', 'tpl-one').click();
+  item('Agents', 'critic').click();
+  item('Agents', 'agent-one  —  first').click();
+  item('Skills', 'scan').click();
+  item('Exec Commands', 'cmd-one').click();
+  item('Skills', 'New Skill…').click();
+  item('Skills', 'Manage Skills…').click();
+  lib.find((i) => i.label === 'Inbox…').click();
+  assert.deepStrictEqual(sent, [
+    ['request-open-prompts-drawer', { plugin: 'rev', kind: 'append', name: 'rules' }],
+    ['request-open-prompts-drawer', { kind: 'system', name: 'lib-sys' }],
+    ['request-open-templates-drawer', { plugin: 'rev', name: 'audit' }],
+    ['request-open-templates-drawer', 'tpl-one'],
+    ['request-open-agents-drawer', { plugin: 'rev', name: 'critic' }],
+    ['request-open-agents-drawer', 'agent-one'],
+    ['request-open-skills-drawer', { plugin: 'rev', name: 'scan' }],
+    ['request-open-exec-drawer', 'cmd-one'],
+    ['request-open-skills-drawer', ':new'],
+    ['request-open-skills-drawer', null],
+    ['request-open-inbox-drawer'],
+  ]);
+});
+
+test('t680: a bundle change through updateBundle refreshes the menu', () => {
+  const dir = tmpdir('bundle-refresh');
+  writePlugin(dir, 'rev', { name: 'Reviewer', bundle: { 'skills/scan/SKILL.md': 'Scan.\n' } });
+  let refreshes = 0;
+  const { host, loader } = realStack(dir, { onPluginStateChanged: () => { refreshes++; } });
+  loader.loadAll(host);
+  const before = refreshes;
+  assert.ok(host.updateBundle('rev', [{ name: 'scan', content: 'x' }, { name: 'more', content: 'y' }], [], [], []),
+    'ENTER: the plugin is registered, so the bundle was replaced');
+  assert.strictEqual(refreshes, before + 1, 'a rescan that only changed bundle content still rebuilds the menu');
+});
+
+test('t680: saving or removing a prompt, template or exec command through IPC refreshes the menu', () => {
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const handlers = {};
+  const refreshed = [];
+  const stub = () => () => {};
+  const list = () => [];
+  const deps = new Proxy({
+    handle: (ch, fn) => { handlers[ch] = fn; }, on: () => {},
+    refreshAppMenu: () => refreshed.push('refresh'),
+    promptLibrary: { save: list, remove: list, list },
+    templates: { save: list, saveByName: () => ({}), remove: list, list },
+    execLibrary: { save: list, remove: list, list },
+  }, { get(t, k) { return k in t ? t[k] : stub(); } });
+  registerIpcHandlers(deps);
+  const calls = [
+    ['prompts:save', ['append', 'a', 'body']], ['prompts:remove', ['append', 'a']],
+    ['templates:save', [{ name: 't' }]], ['templates:saveByName', [{ name: 't' }]], ['templates:remove', ['t']],
+    ['exec:save', ['c', JSON.stringify({ argv: ['/usr/bin/true'], schema: { type: 'object', additionalProperties: false, required: [], properties: {} } })]],
+    ['exec:remove', ['c']],
+  ];
+  for (const [ch, args] of calls) {
+    assert.strictEqual(typeof handlers[ch], 'function', `ENTER: ${ch} registered`);
+    handlers[ch]({}, ...args);
+  }
+  assert.strictEqual(refreshed.length, calls.length, 'one rebuild per library write');
+});
+
 // Build the FULL app-menu template with electron stubbed, capturing what
 // Menu.buildFromTemplate was handed. Separate from loadAppMenus() because it
 // needs the stub live while buildAppMenu RUNS, not only while app-menus loads.
-function buildTemplateWith(host) {
+function buildTemplateWith(host, { stores = {}, sent = null } = {}) {
   let captured = null;
+  const win = { webContents: { send: (...a) => { if (sent) sent.push(a); } } };
   const stub = {
     // See loadAppMenus: no-op for the same reason — the assertions here read
     // the captured template's labels, not the About panel.
     app: { getName: () => 'Clodex', getVersion: () => '0.0.0', setAboutPanelOptions: () => {} },
-    BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
+    BrowserWindow: { getFocusedWindow: () => win, getAllWindows: () => [win] },
     Menu: { buildFromTemplate: (t) => { captured = t; return t; }, setApplicationMenu: () => {} },
     Tray: function Tray() {},
     dialog: {}, shell: {}, nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
@@ -386,7 +552,9 @@ function buildTemplateWith(host) {
       getManager: nothing, getPeerManager: () => null, getSandboxManager: () => null,
       getUpdateInfo: () => null, getUiSettings: nothing, getWorkspaces: nothing,
       getAgentLibrary: nothing, getSkillLibrary: nothing, getEnvScopes: () => null,
+      getPromptLibrary: nothing, getTemplates: nothing, getExecLibrary: nothing,
       getPluginHost: () => host,
+      ...stores,
     });
     menus.buildAppMenu();
     return captured || [];
