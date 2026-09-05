@@ -7593,6 +7593,7 @@ body {
         // ~/.clodex/plugins, which is a dot-directory Finder hides by default and the
         // single largest obstacle to a packaged user installing a plugin at all.
         { name: "fileReveal", kind: "invoke", channel: "file:reveal" },
+        { name: "writePluginBundleFile", kind: "invoke", channel: "plugins:writeBundleFile" },
         { name: "onSessionFileView", kind: "on", channel: "session-file-view" },
         { name: "openExternal", kind: "invoke", channel: "app:openExternal" },
         { name: "sessionInfo", kind: "invoke", channel: "session:info" },
@@ -7891,8 +7892,7 @@ body {
         // blocks. Folding any two together lets a save that drew only one of them
         // silently clear the other.
         { name: "getSessionPluginGrants", kind: "invoke", channel: "session:pluginGrants" },
-        { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" },
-        { name: "writePluginBundleFile", kind: "invoke", channel: "plugins:writeBundleFile" }
+        { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" }
       ];
       module.exports = { API_CONTRACT };
     }

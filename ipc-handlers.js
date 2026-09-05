@@ -874,6 +874,11 @@ function registerIpcHandlers(deps) {
   handle('file:resolve', (_e, name, raw, baseDir) => resolveFilePath(name, raw, baseDir));
   handle('file:open', (_e, filePath) => openPath(filePath));
   handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
+  handle('plugins:writeBundleFile', (_e, pluginId, kind, stem, body) => {
+    const loader = getPluginLoader && getPluginLoader();
+    if (!loader) return { ok: false, error: 'no plugin loader' };
+    return loader.writeBundleFile(String(pluginId || ''), String(kind || ''), String(stem || ''), body);
+  });
 
   handle('session:setTools', (_e, name, disabledTools) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
@@ -1109,11 +1114,6 @@ function registerIpcHandlers(deps) {
   handle('plugin:catalog', () => {
     const host = getPluginHost && getPluginHost();
     return host ? host.catalog() : [];
-  });
-  handle('plugins:writeBundleFile', (_e, pluginId, kind, stem, body) => {
-    const loader = getPluginLoader && getPluginLoader();
-    if (!loader) return { ok: false, error: 'no plugin loader' };
-    return loader.writeBundleFile(String(pluginId || ''), String(kind || ''), String(stem || ''), body);
   });
   handle('plugin:setEnabled', async (_e, pluginId, enabled) => {
     const host = getPluginHost && getPluginHost();
