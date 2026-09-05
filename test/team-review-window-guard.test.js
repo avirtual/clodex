@@ -262,6 +262,8 @@ test("the loop's own call is NOT refused for a ticket in verify", () => {
   assert.deepStrictEqual(r.spawned[0], {
     name: 'team-reviewer-1-r1', ephemeral: true, reviewFor: 'lead', reviewTicket: 't1',
     wireLabel: 'team.t1.review-r1',
+    // t673: the template that spawned, for the review cost row's A/B grouping.
+    reviewerTemplate: 'clodex-team-reviewer',
   });
   assert.ok(!r.replies.some((m) => /^\[agent:team-review\] error:/.test(m)),
     'and it must not even warn — the loop turns an error reply into an escalation');

@@ -4903,21 +4903,28 @@ test('team-review: a template with no stripLevel leaves the seat unset, not zero
 // can WIDEN the cold reviewer past the code-level cap (Read/Grep/Glob). The
 // template is the primary tools source (T52); it's capped exactly like the role
 // manifest was (T29a). Effective = intersection.
+// The exemplars are Edit and Write since t673: Bash is no longer a beyond-cap
+// tool — a template listing it opts into the code-owned read-only shell, which
+// is a grant this arm makes on purpose and does not warn about. Write tools
+// carry the property this test is about and are the stronger exemplar for it.
 test('team-review (T52): a TEMPLATE WIDER than the cap spawns CAPPED with a loud operator-approval line', async () => {
   const { m, injected, created } = mkReview({
-    reviewTemplate: { tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit'] },
+    reviewTemplate: { tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(created.length, 1, 'a widened template still spawns — a capped review beats no review');
   const disabledTools = created[0][11];
-  // The widening (Bash, Edit) is disabled despite the template asking for it; the cap holds.
-  assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit'),
+  // The widening (Edit, Write) is disabled despite the template asking for it; the cap holds.
+  assert.ok(disabledTools.includes('Edit') && disabledTools.includes('Write'),
     'tools beyond the cap are disabled even though the template requested them');
   assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
     'the capped allowlist (Read/Grep/Glob) is NOT disabled');
-  assert.ok(injected.some((t) => /requested \[Bash, Edit\] beyond the reviewer cap \[Read, Grep, Glob\] — requires operator approval; spawned with \[Read, Grep, Glob\]/.test(t)),
+  // Bash is absent from the request here, so it must be disabled too — the shell
+  // is granted only on an explicit opt-in, never as a side effect of a widening.
+  assert.ok(disabledTools.includes('Bash'), 'a template that did not ask for the shell does not get one');
+  assert.ok(injected.some((t) => /requested \[Edit, Write\] beyond the reviewer cap \[Read, Grep, Glob\] — requires operator approval; spawned with \[Read, Grep, Glob\]/.test(t)),
     'the lead gets a loud line naming the beyond-cap tools and the operator-approval requirement');
 });
 
@@ -5019,7 +5026,10 @@ test('team-review (t299): a template whose tools miss the cap entirely is refuse
   assert.ok(ok.persistence.get('team-reviewer-1'),
     'ENTER: an accepted template DOES mint team-reviewer-1 on this fixture');
 
-  const { m, injected, created, persistence } = mkReview({ reviewTemplate: { tools: ['Bash'] } });
+  // Edit, not Bash: since t673 a lone `tools: ['Bash']` is an ADMITTED request
+  // that resolves to cap+Bash, so it no longer empties the intersection and
+  // would spawn rather than refuse.
+  const { m, injected, created, persistence } = mkReview({ reviewTemplate: { tools: ['Edit'] } });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
@@ -5033,7 +5043,7 @@ test('team-review (t299): a template whose tools miss the cap entirely is refuse
   // side to see that the sets are disjoint, and a looser finder would pass
   // against a message naming only one of them.
   assert.deepStrictEqual(injected, [
-    '[agent:team-review] error: reviewer template "clodex-team-reviewer" requests tools [Bash], '
+    '[agent:team-review] error: reviewer template "clodex-team-reviewer" requests tools [Edit], '
     + 'none of which are within the reviewer cap [Read, Grep, Glob] — the seat would spawn with no '
     + 'tools at all and could not read the diff; no reviewer spawned (fix the template\'s "tools")',
   ], 'the lead is told what was asked, what is allowed, and that nothing spawned');

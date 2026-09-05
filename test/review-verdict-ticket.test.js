@@ -248,6 +248,8 @@ test('team-review with a ticketId seeds reviewTicket ALONGSIDE reviewFor, not in
   assert.deepStrictEqual(rec, {
     name: rec.name, ephemeral: true, reviewFor: 'lead', reviewTicket: 't1',
     wireLabel: rec.wireLabel,
+    // t673: the template that spawned, for the review cost row's A/B grouping.
+    reviewerTemplate: 'clodex-team-reviewer',
   });
   assert.strictEqual(rec.reviewFor, 'lead', 'reviewFor is the seat identity and the fallback route — it must survive');
 });
