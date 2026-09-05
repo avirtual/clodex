@@ -314,6 +314,10 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/args-model.js',
   'renderer/lib/session-actions.js',
   'renderer/lib/name-suggest.js',
+  // The New Session name field's validity (t684). It paints the field and the
+  // hint it is HANDED, so a reach for renderer.js's own `inputName` / `nameHint`
+  // would be the leaf quietly deciding which field it governs.
+  'renderer/lib/name-validity.js',
   'renderer/lib/env-edit.js',
   // The Preferences ▸ Env row builder (t676). It takes `document` as a parameter
   // precisely so the row's classes and titles are assertable without a browser;

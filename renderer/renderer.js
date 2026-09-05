@@ -27,6 +27,7 @@ const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = requir
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
+const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
 const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
@@ -199,7 +200,31 @@ let dialogTeamMode = null;   // 'create' | 'join' | null (not an agent / authori
 let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
 let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix
+let dialogReservedSets = reservedSets(null);
 let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
+const nameHint = document.getElementById('name-hint');
+let dialogNameState = { ok: true, kind: 'free', message: '' };
+let dialogToolGate = { ok: true, disabled: false, notice: null };
+
+function nameFieldEls() {
+  return { input: inputName, hint: nameHint, overlay: dialogOverlay };
+}
+
+function refreshCreateButton() {
+  const state = createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode });
+  btnCreate.disabled = state.disabled;
+  btnCreate.title = state.title;
+  return state;
+}
+
+function refreshNameValidity() {
+  dialogNameState = dialogMode === 'template'
+    ? { ok: true, kind: 'free', message: '' }
+    : nameFieldState(inputName.value, dialogReservedSets);
+  paintNameField(nameFieldEls(), dialogNameState);
+  refreshCreateButton();
+  return dialogNameState;
+}
 const placementRow = document.getElementById('placement-row');
 const inputPlacement = document.getElementById('input-placement');
 const placementHint = document.getElementById('placement-hint');
@@ -1565,26 +1590,25 @@ if (toolOverlayDismiss) {
 }
 
 function applyNewSessionToolGate(gate) {
-  if (!newSessionToolNotice) return;
-  if (gate.disabled) {
-    renderSandboxNotice(newSessionToolNotice, gate.notice);
-    if (gate.install) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'tool-install-btn';
-      btn.textContent = gate.install.label;
-      btn.title = `Run: ${gate.install.command}`;
-      btn.addEventListener('click', () => openInstallSession(gate.install));
-      newSessionToolNotice.appendChild(btn);
+  dialogToolGate = gate;
+  if (newSessionToolNotice) {
+    if (gate.disabled) {
+      renderSandboxNotice(newSessionToolNotice, gate.notice);
+      if (gate.install) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'tool-install-btn';
+        btn.textContent = gate.install.label;
+        btn.title = `Run: ${gate.install.command}`;
+        btn.addEventListener('click', () => openInstallSession(gate.install));
+        newSessionToolNotice.appendChild(btn);
+      }
+      newSessionToolNotice.classList.remove('hidden');
+    } else {
+      newSessionToolNotice.classList.add('hidden');
     }
-    newSessionToolNotice.classList.remove('hidden');
-    btnCreate.disabled = true;
-    btnCreate.title = gate.notice ? gate.notice.text : '';
-  } else {
-    newSessionToolNotice.classList.add('hidden');
-    btnCreate.disabled = false;
-    btnCreate.title = '';
   }
+  refreshCreateButton();
 }
 
 async function openInstallSession(install) {
@@ -2029,6 +2053,7 @@ function updateTeamJoinNameSuggestion() {
   while (sessionNameTaken(name)) name = `${base}-${n++}`;
   inputName.value = name;
   lastTeamAutoName = name;
+  refreshNameValidity();
 }
 
 async function refreshCwdSuggestions() {
@@ -2094,7 +2119,7 @@ async function openDialog(prefill = null) {
   if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
   refreshEnvHint();
   applyTypeDefaults();
-  inputName.style.borderColor = '';
+  paintNameField(nameFieldEls(), { ok: true, kind: 'free', message: '' });
   const [, , settings, agentLib, boxes, reserved] = await Promise.all([
     refreshTemplatesDropdown(),
     refreshSystemPromptDropdown(),
@@ -2103,10 +2128,12 @@ async function openDialog(prefill = null) {
     window.api.sandboxListBoxes(),
     window.api.reservedSessionNames(),
   ]);
-  dialogReservedNames = new Set((reserved && reserved.names) || []);
+  dialogReservedSets = reservedSets(reserved);
+  dialogReservedNames = reservedUnion(dialogReservedSets);
   if (!prefill && inputName.value === defaultName) {
     inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
   }
+  refreshNameValidity();
   dialogHostSettings = settings;
   dialogHostAgentLib = agentLib || [];
   populateHostCatalogs(settings, dialogHostAgentLib);
@@ -2135,6 +2162,7 @@ function populateHostCatalogs(settings, agentLib) {
   labelProxyDefault(inputProxyMode, settings);
 }
 
+inputName.addEventListener('input', () => refreshNameValidity());
 inputType.addEventListener('change', () => applyTypeDefaults());
 inputType.addEventListener('change', () => refreshNewSessionToolGate());
 inputPlacement.addEventListener('change', () => applyPlacement());
@@ -2347,11 +2375,7 @@ async function doCreate() {
   const supportsPrompts = type === 'claude' || type === 'codex';
   const systemPromptBody = null;
 
-  if (!name) return;
-  if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-    inputName.style.borderColor = '#e94560';
-    return;
-  }
+  if (!refreshNameValidity().ok) return;
   // An unexpanded ${TEAM_ROOT} reaching here means the dropdown could not
   // resolve it and left the literal in the field. It would still fail — as a
   // directory named "${TEAM_ROOT}" on the sandbox path, or at spawn on the host
@@ -2374,7 +2398,6 @@ async function doCreate() {
       alert(`The "${boxId}" sandbox isn't running — start it from the Sandboxes panel first.`);
       return;
     }
-    closeDialog();
     const spec = boxHasCreate2(boxId)
       ? {
           name, type, cwd, extraArgs, resumeId, fork, proxy, agents, denyBuiltins,
@@ -2384,10 +2407,10 @@ async function doCreate() {
         }
       : { name, type, cwd };
     const res = await window.api.peerCreateSession(boxId, spec);
-    if (!res || res.ok === false) {
-      alert(`Create sandbox session failed: ${(res && res.error) || 'unknown error'}`);
-      return;
-    }
+    const peerOutcome = (res && res.ok !== false)
+      ? { ok: true }
+      : { ok: false, error: `Create sandbox session failed: ${(res && res.error) || 'unknown error'}` };
+    if (!applyCreateResult(nameFieldEls(), peerOutcome)) return;
     await ensurePeerSessionVisible(boxId, res.name || name);
     openPeerSession(boxId, res.name || name);
     const boxSt = peerStatuses.get(boxId);
@@ -2398,8 +2421,8 @@ async function doCreate() {
   }
 
   // Opt-in git worktree: create it FIRST (off the entered cwd's repo), then spawn
-  // the session in the new worktree instead. Done before closeDialog so a failure
-  // can surface with the dialog still open for correction.
+  // the session in the new worktree instead — so its failure is correctable in
+  // the form that is still on screen, before anything is spawned.
   let spawnCwd = cwd;
   let worktree = null;
   if (inputWorktree && inputWorktree.checked && worktreeRow && worktreeRow.style.display !== 'none') {
@@ -2420,8 +2443,6 @@ async function doCreate() {
 
   window.api.noteCwd(cwd);
 
-  closeDialog();
-
   // Remember the last custom URL as a prefill ONLY — never touch the global
   // proxyUrl (that would rewrite ANTHROPIC_BASE_URL for default-proxy spawns and
   // could abandon the managed wirescope when the port stops matching).
@@ -2439,9 +2460,8 @@ async function doCreate() {
   } else {
     result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
   }
-  if (!result.ok) {
-    console.error('Failed to create session:', result.error);
-    alert(`Create session failed: ${result.error || 'unknown error'}`);
+  if (!applyCreateResult(nameFieldEls(), result)) {
+    console.error('Failed to create session:', result && result.error);
     refreshDiagBanner(); // a posix_spawnp failure usually means a broken install
     return;
   }
@@ -2505,6 +2525,8 @@ function setDialogMode(mode) {
     templateRow.style.display = 'none'; // create-mode: refreshTemplatesDropdown owns it
     placementRow.style.display = 'none';
     greyRichFields(false);
+    dialogNameState = { ok: true, kind: 'free', message: '' };
+    paintNameField(nameFieldEls(), dialogNameState);
     applyNewSessionToolGate({ ok: true, disabled: false, notice: null });
   }
 }
@@ -4103,6 +4125,7 @@ function adoptSession(rec) {
   };
   if (!dialogOverlay.classList.contains('hidden')) {
     inputName.value = prefill.name;
+    refreshNameValidity();
     if (inputType.value !== prefill.type) { inputType.value = prefill.type; applyTypeDefaults(); }
     inputCwd.value = prefill.cwd;
     inputResume.value = prefill.resumeId;
