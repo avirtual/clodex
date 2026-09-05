@@ -189,9 +189,13 @@ error that takes the process down) → `_sendToSession('session-exit')`
 **before** `_cleanup` (cleanup removes the session from the map that window
 resolution needs; the reverse order strands a dead sidebar tab) → remote
 notify → persistence (only a *bash natural exit* removes the entry — an
-`_archived` bash shell keeps it) → `_cleanup`. The `expected` flag on the
-exit event folds in `_archived` alongside `_userKilled`/`_shuttingDown`, so
-an archive exit stays silent (no crash toast).
+`_archived` or `_moving` bash shell keeps it) → `_cleanup`. Both questions are
+answered by one leaf, `exitDisposition`: `expected` folds in `_archived` and
+`_moving` alongside `_userKilled`/`_shuttingDown` (so neither an archive nor a
+move exit raises a crash toast), and the record-drop is its exact complement for
+a bash row — `dropRecord === !agentType && !expected`. They are computed together
+because a flag added to one and not the other makes an expected exit also drop
+the record.
 
 `_cleanup` runs on every exit path; the parked-DM dir is removed **only on
 explicit user-kill** (`_userKilled`) — unconditional removal would eat
