@@ -599,7 +599,7 @@
           <div id="input-tools-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Pre-filled from your default set (Preferences). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
         </label>
-        <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap)
+        <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap) (Bash may be named)
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="input-tools-allow-list" class="agent-checklist"></div>
           <span class="hint-text">Separate from the denylist above: this is the template's <code>tools</code> key. Only a <strong>reviewer</strong> seat reads it, intersected with the reviewer cap (plus <code>Bash</code>, shell-capped, if named). Leave every box unchecked to omit the key and accept the default cap.</span>
@@ -978,7 +978,7 @@
           </label>
           <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
         </div>
-        <div class="prefs-row" style="margin-top: 8px;">
+        <div id="prefs-env-restore-row" class="prefs-row" style="margin-top: 8px;">
           <button id="prefs-env-restore" class="secondary" type="button" style="flex: none;" title="Bring back any of Clodex's shipped defaults you deleted. Values you edited are left alone.">Restore shipped defaults</button>
         </div>
         <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>

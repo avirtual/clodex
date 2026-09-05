@@ -18,10 +18,10 @@ list. Bundle rows are `checked` (the CLI loads them with the plugin), and
 
 ## repaintBundleSections
 
-Swaps only the `.check-group` / `.bundle-row` nodes. A plugin tick would
-otherwise re-render the whole checklist, dropping scroll position and focus in
-the flat list the operator is mid-way through. The removal must take the headers
-too, or a tick that empties a section strands its header above nothing.
+Swaps only `.check-group` / `.bundle-row` (headers included, or an emptied
+section strands its header) plus `.hint-text`, restored via
+`BUNDLE_EMPTY_HINT[kind]` if nothing else is left — a plugin tick would
+otherwise re-render the whole checklist, dropping scroll and focus mid-list.
 
 ## appendBundleSections
 

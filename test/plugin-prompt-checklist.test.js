@@ -37,6 +37,9 @@ function el(tag) {
         return flat.filter((c) => c.className === 'check-group'
           || String(c.className).split(' ').includes('bundle-row'));
       }
+      if (sel === '.hint-text') {
+        return flat.filter((c) => String(c.className).split(' ').includes('hint-text'));
+      }
       assert.strictEqual(sel, 'input[type="checkbox"]:checked',
         'the append collector must NOT filter disabled rows — a bundle row is the only '
         + 'representation of a pluginId:stem in the form');

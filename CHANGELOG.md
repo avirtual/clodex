@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:spawn … template:]` can name a plugin template.
+
 ## 5.31.0 — 2026-09-05
 
 - **The Agents and Skills menus, and the Prompts…/Templates…/Exec Commands…/Inbox…

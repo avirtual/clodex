@@ -71,7 +71,7 @@ test('the CSS class lets the name take what it needs and the value take the rest
     return m[1];
   };
   const name = rule('.prefs-env-row .prefs-env-name');
-  assert.match(name, /flex:\s*0 1 auto/, 'the name is sized to its content, and shrinks last');
+  assert.match(name, /flex:\s*0 1 auto/, 'the name is sized to its content, not a fraction of the row');
   assert.match(name, /min-width:\s*0/);
   assert.match(name, /white-space:\s*nowrap/);
   assert.match(name, /text-overflow:\s*ellipsis/, 'a name longer than the whole row still ellipsises');
@@ -94,6 +94,15 @@ test('renderer.js builds env rows through the shared builder, not inline cssText
     rendererSrc.indexOf('async function addPrefsEnvVar'));
   assert.ok(fn.length > 200, 'ENTER: refreshPrefsEnv was actually located in the source');
   assert.doesNotMatch(fn, /cssText/, 'no inline layout may survive in the row loop');
+});
+
+test('the workspace-scope toggle hides the Restore button\'s ROW, not the button alone', () => {
+  // Hiding just the button leaves its wrapping .prefs-row's margin-top as an
+  // empty gap under the workspace scope — the row is what must go.
+  const fn = rendererSrc.slice(rendererSrc.indexOf('async function refreshPrefsEnv'),
+    rendererSrc.indexOf('async function addPrefsEnvVar'));
+  assert.match(fn, /prefsEnvRestoreRow\.style\.display = scope === 'global' \? '' : 'none';/,
+    'the row wrapper is what toggles, not prefsEnvRestore itself');
 });
 
 // --- titles ------------------------------------------------------------------

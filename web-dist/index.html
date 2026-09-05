@@ -6776,7 +6776,7 @@ body {
           <div id="input-tools-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Pre-filled from your default set (Preferences). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
         </label>
-        <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap)
+        <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap) (Bash may be named)
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="input-tools-allow-list" class="agent-checklist"></div>
           <span class="hint-text">Separate from the denylist above: this is the template's <code>tools</code> key. Only a <strong>reviewer</strong> seat reads it, intersected with the reviewer cap (plus <code>Bash</code>, shell-capped, if named). Leave every box unchecked to omit the key and accept the default cap.</span>
@@ -7155,7 +7155,7 @@ body {
           </label>
           <button id="prefs-env-add" class="secondary" type="button" style="flex: none;">Set</button>
         </div>
-        <div class="prefs-row" style="margin-top: 8px;">
+        <div id="prefs-env-restore-row" class="prefs-row" style="margin-top: 8px;">
           <button id="prefs-env-restore" class="secondary" type="button" style="flex: none;" title="Bring back any of Clodex's shipped defaults you deleted. Values you edited are left alone.">Restore shipped defaults</button>
         </div>
         <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
@@ -8562,8 +8562,7 @@ body {
             return [];
           }
         };
-        const bundles = () => read(api.pluginCatalog);
-        const kindRows = async ({ channel, library, empty, pluginEntries, newLabel, manageLabel }) => {
+        const kindRows = async ({ channel, library, empty, pluginEntries, newLabel, manageLabel, bundles }) => {
           const rows = library.length ? library : [{ label: empty, disabled: true }];
           for (const b of await bundles()) {
             const entries = pluginEntries(b);
@@ -8591,65 +8590,74 @@ body {
         };
         return {
           label: "Library",
-          items: () => [
-            {
-              label: "Prompts",
-              submenu: async () => kindRows({
-                channel: "request-open-prompts-drawer",
-                library: promptRows(await read(api.listPrompts), (p, kind) => emit("request-open-prompts-drawer", { kind, name: p.name })),
-                empty: "(no prompts in library)",
-                pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit("request-open-prompts-drawer", { plugin: b.id, kind, name: p.name })),
-                newLabel: "New Prompt\u2026",
-                manageLabel: "Manage Prompts\u2026"
-              })
-            },
-            {
-              label: "Templates",
-              submenu: async () => kindRows({
-                channel: "request-open-templates-drawer",
-                library: (await read(api.listTemplates)).filter((t) => !t.plugin).map((t) => ({ label: trunc(t.name), run: () => emit("request-open-templates-drawer", t.id || t.name) })),
-                empty: "(no templates in library)",
-                pluginEntries: (b) => (b.templates || []).map((name) => bundleRow("request-open-templates-drawer", b, name)),
-                newLabel: "New Template\u2026",
-                manageLabel: "Manage Templates\u2026"
-              })
-            },
-            {
-              label: "Agents",
-              submenu: async () => kindRows({
-                channel: "request-open-agents-drawer",
-                library: (await read(api.listAgents)).map((a) => ({ label: described(a), run: () => emit("request-open-agents-drawer", a.name) })),
-                empty: "(no agents in library)",
-                pluginEntries: (b) => (b.agents || []).map((name) => bundleRow("request-open-agents-drawer", b, name)),
-                newLabel: "New Agent\u2026",
-                manageLabel: "Manage Agent Types\u2026"
-              })
-            },
-            {
-              label: "Skills",
-              submenu: async () => kindRows({
-                channel: "request-open-skills-drawer",
-                library: (await read(api.listSkillLib)).map((sk) => ({ label: described(sk), run: () => emit("request-open-skills-drawer", sk.name) })),
-                empty: "(no skills in library)",
-                pluginEntries: (b) => (b.skills || []).map((name) => bundleRow("request-open-skills-drawer", b, name)),
-                newLabel: "New Skill\u2026",
-                manageLabel: "Manage Skills\u2026"
-              })
-            },
-            {
-              label: "Exec Commands",
-              submenu: async () => kindRows({
-                channel: "request-open-exec-drawer",
-                library: (await read(api.listExecCommands)).map((c) => ({ label: trunc(c.name), run: () => emit("request-open-exec-drawer", c.name) })),
-                empty: "(no exec commands in library)",
-                pluginEntries: () => [],
-                newLabel: "New Exec Command\u2026",
-                manageLabel: "Manage Exec Commands\u2026"
-              })
-            },
-            { sep: true },
-            { label: "Inbox\u2026", run: () => emit("request-open-inbox-drawer") }
-          ]
+          items: () => {
+            let bundlesOnce = null;
+            const bundles = () => bundlesOnce || (bundlesOnce = read(api.pluginCatalog));
+            return [
+              {
+                label: "Prompts",
+                submenu: async () => kindRows({
+                  channel: "request-open-prompts-drawer",
+                  library: promptRows(await read(api.listPrompts), (p, kind) => emit("request-open-prompts-drawer", { kind, name: p.name })),
+                  empty: "(no prompts in library)",
+                  pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit("request-open-prompts-drawer", { plugin: b.id, kind, name: p.name })),
+                  newLabel: "New Prompt\u2026",
+                  manageLabel: "Manage Prompts\u2026",
+                  bundles
+                })
+              },
+              {
+                label: "Templates",
+                submenu: async () => kindRows({
+                  channel: "request-open-templates-drawer",
+                  library: (await read(api.listTemplates)).filter((t) => !t.plugin).map((t) => ({ label: trunc(t.name), run: () => emit("request-open-templates-drawer", t.id || t.name) })),
+                  empty: "(no templates in library)",
+                  pluginEntries: (b) => (b.templates || []).map((name) => bundleRow("request-open-templates-drawer", b, name)),
+                  newLabel: "New Template\u2026",
+                  manageLabel: "Manage Templates\u2026",
+                  bundles
+                })
+              },
+              {
+                label: "Agents",
+                submenu: async () => kindRows({
+                  channel: "request-open-agents-drawer",
+                  library: (await read(api.listAgents)).map((a) => ({ label: described(a), run: () => emit("request-open-agents-drawer", a.name) })),
+                  empty: "(no agents in library)",
+                  pluginEntries: (b) => (b.agents || []).map((name) => bundleRow("request-open-agents-drawer", b, name)),
+                  newLabel: "New Agent\u2026",
+                  manageLabel: "Manage Agent Types\u2026",
+                  bundles
+                })
+              },
+              {
+                label: "Skills",
+                submenu: async () => kindRows({
+                  channel: "request-open-skills-drawer",
+                  library: (await read(api.listSkillLib)).map((sk) => ({ label: described(sk), run: () => emit("request-open-skills-drawer", sk.name) })),
+                  empty: "(no skills in library)",
+                  pluginEntries: (b) => (b.skills || []).map((name) => bundleRow("request-open-skills-drawer", b, name)),
+                  newLabel: "New Skill\u2026",
+                  manageLabel: "Manage Skills\u2026",
+                  bundles
+                })
+              },
+              {
+                label: "Exec Commands",
+                submenu: async () => kindRows({
+                  channel: "request-open-exec-drawer",
+                  library: (await read(api.listExecCommands)).map((c) => ({ label: trunc(c.name), run: () => emit("request-open-exec-drawer", c.name) })),
+                  empty: "(no exec commands in library)",
+                  pluginEntries: () => [],
+                  newLabel: "New Exec Command\u2026",
+                  manageLabel: "Manage Exec Commands\u2026",
+                  bundles
+                })
+              },
+              { sep: true },
+              { label: "Inbox\u2026", run: () => emit("request-open-inbox-drawer") }
+            ];
+          }
         };
       }
       function buildPluginsMenu(status, ctx) {
@@ -22190,10 +22198,15 @@ ${String(body || "").trim()}
       function getDefaultToolDenyCache() {
         return defaultToolDenyCache;
       }
+      var BUNDLE_EMPTY_HINT = {
+        "prompts/append": '<span class="hint-text">No append prompts in library \u2014 add some via the Prompts drawer.</span>',
+        agents: '<span class="hint-text">No agents in library \u2014 add some via the \u{1F916} Agents drawer.</span>',
+        skills: '<span class="hint-text">No skills in library \u2014 add some via the \u{1F9E9} Skills Library (Skills menu).</span>'
+      };
       function renderAppendChecklist(container, enabledSet, seat = null) {
         container.innerHTML = "";
         if (!promptLibCache.append.length && !hasBundleRows("prompts/append", seat)) {
-          container.innerHTML = '<span class="hint-text">No append prompts in library \u2014 add some via the Prompts drawer.</span>';
+          container.innerHTML = BUNDLE_EMPTY_HINT["prompts/append"];
           return;
         }
         for (const p of promptLibCache.append) {
@@ -22277,12 +22290,16 @@ ${String(body || "").trim()}
       }
       function repaintBundleSections(container, kind, seat, checkedSet = null) {
         container.querySelectorAll(".check-group, .bundle-row").forEach((n) => n.remove());
+        container.querySelectorAll(".hint-text").forEach((n) => n.remove());
         appendBundleSections(container, kind, seat, checkedSet);
+        if (!container.children.length && BUNDLE_EMPTY_HINT[kind]) {
+          container.innerHTML = BUNDLE_EMPTY_HINT[kind];
+        }
       }
       function renderAgentChecklist(container, enabledSet, autoSet = null, seat = null) {
         container.innerHTML = "";
         if (!agentLibCache.length && !hasBundleRows("agents", seat)) {
-          container.innerHTML = '<span class="hint-text">No agents in library \u2014 add some via the \u{1F916} Agents drawer.</span>';
+          container.innerHTML = BUNDLE_EMPTY_HINT.agents;
           return;
         }
         for (const a of agentLibCache) {
@@ -22422,7 +22439,7 @@ ${String(body || "").trim()}
       function renderInjectChecklist(container, enabledSet, autoSet = null, seat = null) {
         container.innerHTML = "";
         if (!skillLibCache.length && !hasBundleRows("skills", seat)) {
-          container.innerHTML = '<span class="hint-text">No skills in library \u2014 add some via the \u{1F9E9} Skills Library (Skills menu).</span>';
+          container.innerHTML = BUNDLE_EMPTY_HINT.skills;
           return;
         }
         for (const s of skillLibCache) {
@@ -37871,6 +37888,7 @@ Click for live activity`;
       var prefsEnvSecret = document.getElementById("prefs-env-secret");
       var prefsEnvAdd = document.getElementById("prefs-env-add");
       var prefsEnvRestore = document.getElementById("prefs-env-restore");
+      var prefsEnvRestoreRow = document.getElementById("prefs-env-restore-row");
       var prefsEnvState = document.getElementById("prefs-env-state");
       function prefsEnvScopeArg() {
         return prefsEnvScope && prefsEnvScope.value === "workspace" ? currentWorkspaceId || "default" : "global";
@@ -37892,7 +37910,7 @@ Click for live activity`;
             defaults = {};
           }
         }
-        if (prefsEnvRestore) prefsEnvRestore.style.display = scope === "global" ? "" : "none";
+        if (prefsEnvRestoreRow) prefsEnvRestoreRow.style.display = scope === "global" ? "" : "none";
         const res = await window.api.envScopesGet(scope);
         prefsEnvList.textContent = "";
         if (!res || res.ok === false) {

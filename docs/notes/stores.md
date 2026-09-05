@@ -18,3 +18,10 @@ env-scopes.json.
 `restore` clears the shipped keys off `seeded` and calls the seeder rather than
 writing values itself, so "absent keys come back, edited ones are left alone"
 has one implementation.
+
+## refuseEnvWriteUnderTest
+
+Shared between `seedEnvDefaults` and `envDefaults.restore` (t681): `restore`
+used to clear `seeded` and save BEFORE this same refusal ran, only inside
+`seedEnvDefaults`, so a refused restore still stripped the shipped keys off
+the list and left the seeder re-armed for the next real launch.

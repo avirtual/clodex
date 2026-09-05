@@ -287,6 +287,45 @@ test('initStores refuses to seed env defaults into the real home under node --te
   }
 });
 
+test('envDefaults.restore() carries the same NODE_TEST_CONTEXT guard as construction', () => {
+  // t681: restore() used to clear `seeded` and _save BEFORE this guard ran
+  // (it only reached seedEnvDefaults()'s copy), so a refused restore still
+  // stripped the shipped keys off the list and left env-scopes.json rewritten
+  // under the real home. Pre-seeding the file (rather than letting
+  // construction write it) isolates restore()'s own guard: construction's
+  // seedEnvDefaults() is refused too, so the file below is untouched by it.
+  const prevHome = process.env.HOME;
+  const fakeHome = mkTmpRoot('envdef-home2-');
+  const userData = mkTmpRoot('envdef-realud2-');
+  const src = mkTmpRoot('envdef-src2-');
+  process.env.HOME = fakeHome;
+  try {
+    assert.ok(process.env.NODE_TEST_CONTEXT,
+      'this test is meaningless unless node --test marks the process');
+    const scopesFile = path.join(userData, 'env-scopes.json');
+    fs.mkdirSync(userData, { recursive: true });
+    const before = { global: { ALPHA: entry('a') }, workspaces: {}, seeded: ['ALPHA', 'BETA'] };
+    fs.writeFileSync(scopesFile, JSON.stringify(before, null, 2));
+
+    const stores = initStores(userData, {
+      log: { info() {}, warn() {}, error() {} },
+      registryDir: path.join(fakeHome, '.clodex'),
+      resourcesDir: path.join(src, '__no_seed__'),
+      skillsResourcesDir: path.join(src, '__no_seed_skills__'),
+      envDefaultsFile: writeDefaults(src, FIXTURE),
+    });
+    stores.envDefaults.restore();
+
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(scopesFile, 'utf-8')), before,
+      '`seeded` and the rest of the file are untouched by a refused restore');
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(src, { recursive: true, force: true });
+  }
+});
+
 // --- Restore shipped defaults ------------------------------------------------
 
 test('restore: deleted keys come back, an edited one is left alone', () => {

@@ -176,10 +176,11 @@ the seats whose plugin list holds the plugin, namespaced as
 `<plugin-id>:<template>`.
 
 Their names are checked against `AGENT_NAME_RE`, the host's shared session-name
-rule: `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`. Three cases are **skipped with a logged
+rule: `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`. Four cases are **skipped with a logged
 reason**: an entry whose name fails that rule, a `skills/<name>/` directory
-with no readable `SKILL.md`, and a `templates/<stem>.json` that is not parseable
-JSON or does not parse to an object. Either way the rest of the bundle still loads.
+with no readable `SKILL.md`, an `agents/<name>.md` that exists but cannot be
+read, and a `templates/<stem>.json` that is not parseable JSON or does not
+parse to an object. Either way the rest of the bundle still loads.
 
 Two more are **ignored silently, with no log line at all** — an `agents/` entry
 that is not a `.md` file, and a `skills/` entry that is not a directory. They are

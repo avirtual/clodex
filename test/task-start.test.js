@@ -1026,3 +1026,16 @@ test('t673: a ticket with no reviewer: token carries no reviewerTemplate at all'
   assert.ok(!Object.prototype.hasOwnProperty.call(t, 'reviewerTemplate'),
     'the key is omitted, matching how `parked` is written');
 });
+
+test('t681: an already-started ticket reports that, not the reviewer name, even when the name is bad', () => {
+  const f = mkStart(withTemplates(['clodex-team-reviewer', SHELL_TPL]));
+  const t0 = opened(f);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: t0.id, park: false, reviewer: null, body: '' });
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the first start dispatched');
+  f.m._handleTask(f.seat('lead'),
+    { type: 'task', sub: 'start', who: null, id: t0.id, park: false, reviewer: 'no-such-template', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'the second start must not dispatch again');
+  assert.match(f.notes(), new RegExp(`ticket ${t0.id} is already started`),
+    'the state refusal wins over the reviewer-name refusal on an already-dispatched ticket');
+  assert.doesNotMatch(f.notes(), /no template "no-such-template"/);
+});

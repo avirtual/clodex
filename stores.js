@@ -1736,12 +1736,17 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
 
   const ENV_DEFAULTS_SRC = envDefaultsFile || path.join(__dirname, 'resources', 'env-defaults.json');
 
-  function seedEnvDefaults() {
+  function refuseEnvWriteUnderTest() {
     if (process.env.NODE_TEST_CONTEXT
         && registryDir === path.join(os.homedir(), '.clodex')) {
       if (log) log.warn?.('stores', 'refusing to seed env defaults into the real userData under node --test; pass seams.registryDir');
-      return;
+      return true;
     }
+    return false;
+  }
+
+  function seedEnvDefaults() {
+    if (refuseEnvWriteUnderTest()) return;
     const defaults = loadEnvDefaults(ENV_DEFAULTS_SRC);
     const data = envScopes._load();
     const { writes, seeded } = planEnvSeed({ defaults, global: data.global || {}, seeded: data.seeded });
@@ -1755,6 +1760,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   const envDefaults = {
     list() { return loadEnvDefaults(ENV_DEFAULTS_SRC); },
     restore() {
+      if (refuseEnvWriteUnderTest()) return;
       const shipped = new Set(Object.keys(loadEnvDefaults(ENV_DEFAULTS_SRC)));
       const data = envScopes._load();
       data.seeded = (data.seeded || []).filter((k) => !shipped.has(k));

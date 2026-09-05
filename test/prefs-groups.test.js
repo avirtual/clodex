@@ -39,7 +39,7 @@ const CONTROLS = [
   'prefs-remote-token', 'prefs-remote-token-save', 'prefs-remote-token-clear',
   'prefs-remote-token-state', 'prefs-peer-shell',
   'prefs-env-scope', 'prefs-env-list', 'prefs-env-key', 'prefs-env-value',
-  'prefs-env-secret', 'prefs-env-add', 'prefs-env-restore', 'prefs-env-state',
+  'prefs-env-secret', 'prefs-env-add', 'prefs-env-restore-row', 'prefs-env-restore', 'prefs-env-state',
   'prefs-discover-on-startup', 'prefs-disable-design-mcp',
   'prefs-tools-row', 'prefs-tools-list',
 ];

@@ -2287,10 +2287,11 @@ test('seed: the hand prompt denies both false beliefs about closing a ticket', (
 // The compact rule is a THRESHOLD with an exception, and both prompt copies must
 // carry the same one: hand-673 spent three rework rounds reaching 300k under an
 // append copy that said "Do not compact" flat, while the system copy said to
-// compact at 100k on a NEW dispatch only. The doesNotMatch arm is the state that
-// produced the incident, and without it a revert of the append copy restores a
-// green suite over the flat ban. `~150k` is pinned as a literal in both files
-// rather than derived, since the whole rule is the number.
+// compact at 100k on a NEW dispatch only. The doesNotMatch arm guards against
+// the flat ban returning ALONGSIDE the new rule, not merely replacing it —
+// the positive assertions above already catch a plain revert. `~150k` is
+// pinned as a literal in both files rather than derived, since the whole rule
+// is the number.
 const REPO_APPEND_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'append');
 test('seed: both hand prompt copies compact on REWORK past 150k, and never at done', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');

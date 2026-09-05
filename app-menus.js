@@ -290,7 +290,7 @@ function createAppMenus(deps) {
   function buildLibraryMenu() {
     const truncate = (label) => (label.length > 60 ? label.slice(0, 57) + '…' : label);
     const listOf = (getter) => {
-      try { return (getter && getter() && getter().list()) || []; } catch { return []; }
+      try { const s = getter && getter(); return (s && s.list()) || []; } catch { return []; }
     };
     let bundles = [];
     try {
