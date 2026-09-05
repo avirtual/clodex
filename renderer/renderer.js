@@ -505,7 +505,6 @@ function addArchivedSessionToSidebar(entry) {
 // and let onSessionExit rebuild it as archived (staying silent; an archive exit
 // is expected). Peer rows never reach here (they detach/hide instead).
 const archivingSessions = new Map(); // name -> { name, type, cwd, label, backend, archivedAt, createdAt }
-const movingFailed = new Map();
 async function archiveSessionRow(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return;
@@ -640,6 +639,7 @@ function restartSessionWithReattach(name) {
   });
 }
 
+const movingFailed = new Map();
 function moveSessionWithPicker(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = item ? item.dataset.type || null : null;
