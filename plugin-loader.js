@@ -677,4 +677,4 @@ function createPluginLoader(deps) {
   };
 }
 
-module.exports = { createPluginLoader, validateManifest, isNewerVersion, readBundle };
+module.exports = { createPluginLoader, validateManifest, isNewerVersion };

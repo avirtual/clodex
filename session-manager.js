@@ -473,8 +473,8 @@ function createSessionManager(deps) {
     writeVoiceMode,
     writeSkillPlugin,
     writeAgentPlugin,
-    writeBundlePlugins = () => [],
-    getPluginBundles = () => [],
+    writeBundlePlugins,
+    getPluginBundles,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
@@ -486,6 +486,8 @@ function createSessionManager(deps) {
   // inside a turn handler. An in-memory-only instance (no logDir, so no recall
   // log) is the cheapest null object and keeps the read API's shape honest.
   const memLoad = memoryLoad || createMemoryLoad();
+  const bundlesFor = (writeBundlePlugins && getPluginBundles) ? getPluginBundles : () => [];
+  const writeBundles = (writeBundlePlugins && getPluginBundles) ? writeBundlePlugins : () => [];
   // Partial deps objects inject composeDigest without its sibling. No tiering
   // means nothing is recorded as loaded, which is the safe direction of the
   // asymmetry — never the reverse.
@@ -1461,9 +1463,9 @@ function createSessionManager(deps) {
             } catch {}
             try {
               const seatPlugins = Array.isArray(plugins) ? plugins : null;
-              const wanted = (getPluginBundles() || [])
+              const wanted = (bundlesFor() || [])
                 .filter((b) => seatHasPlugin(b.id, seatPlugins, b.shipped));
-              for (const b of writeBundlePlugins(name, wanted)) {
+              for (const b of writeBundles(name, wanted)) {
                 args.push('--plugin-dir', b.dir);
                 for (const s of b.skills) injectedSkills.push({ name: `${b.id}:${s.name}`, content: s.content });
                 for (const a of b.agents) injectedAgents.push({ ...a, qualified: `${b.id}:${a.name}` });

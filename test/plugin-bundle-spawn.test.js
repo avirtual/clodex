@@ -39,7 +39,7 @@ const STOCKS = {
   agents: [{ name: 'bar', content: AGENT_MD }],
 };
 
-function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], injectSkills = [] } = {}) {
+function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], injectSkills = [], omitWriter = false } = {}) {
   const root = mkTmpRoot('clx-bundle-');
   const SKILL_PLUGINS_DIR = path.join(root, 'skill-plugins');
   const AGENT_PLUGINS_DIR = path.join(root, 'agent-plugins');
@@ -161,7 +161,7 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
         }
       });
     },
-    writeBundlePlugins,
+    ...(omitWriter ? {} : { writeBundlePlugins }),
     getPluginBundles: () => bundles,
     bakePrompt: () => '',
     nextIncarnation: () => 1,
@@ -377,4 +377,21 @@ test('t672: a plugin id cannot escape bundles/', () => {
   assert.strictEqual(c(bundles, '../..'), null);
   assert.strictEqual(c(bundles, 'a/b'), null, 'and so is a multi-segment id');
   assert.strictEqual(c(bundles, 'stocks'), path.join(bundles, 'stocks'), 'CONTROL: a real id resolves');
+});
+
+test('t672: a deps object with the catalog read but no writer is SILENT, not sorry', async () => {
+  // Both-or-neither. Partial deps objects are the norm here (45 fixtures build
+  // one), and every one of them carries the plugin catalog by way of a
+  // getPersistence fake. Reading the catalog without the writer present sends
+  // the scaffold loop into a TypeError, which the arm's catch turns into an
+  // operator-facing warning on a spawn that was never going to have bundles —
+  // so the guard is what keeps a harness from apologising for its own gaps.
+  const f = mkManager({ seatPlugins: ['stocks'], omitWriter: true });
+  const res = await f.spawn('seat');
+  const args = f.args();
+  assert.ok(Array.isArray(args) && args.length, 'ENTER: create() reached pty.spawn with an argv');
+  assert.deepStrictEqual((res && res.warnings) || [], [],
+    'no warning about a scaffolder this deps object never claimed to have');
+  assert.deepStrictEqual(pluginDirs(args).filter((d) => d.includes('bundles')), [],
+    'and no bundle flag either');
 });

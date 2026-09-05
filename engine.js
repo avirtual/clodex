@@ -527,11 +527,10 @@ const selectionArm = createSelectionArm({
 
 const SKILL_PLUGINS_DIR = path.join(REGISTRY_DIR, 'skill-plugins');
 const SKILL_PLUGIN_NAME = 'clodex-skills';
-// A sibling of skill-plugins/, not a subdir of it: the two scaffolders each
-// rm -rf their own <root>/<session> on every spawn, so sharing a root would
-// make either one's rebuild delete the other's dir.
+// A sibling of skill-plugins/, not a subdir of it: each of these two roots is
+// rm -rf'd at <root>/<session> on every spawn, so sharing one would make either
+// rebuild delete the other's dir. Anything nested under a root dies with it.
 const AGENT_PLUGINS_DIR = path.join(REGISTRY_DIR, 'agent-plugins');
-const BUNDLES_SUBDIR = 'bundles';
 
 
 
@@ -620,6 +619,8 @@ function cleanupAgentPlugin(name) {
   if (dir === null) return;
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
+
+const BUNDLES_SUBDIR = 'bundles';
 
 function writeBundlePlugins(name, bundles) {
   const seatDir = confine(SKILL_PLUGINS_DIR, name);
