@@ -505,6 +505,7 @@ function addArchivedSessionToSidebar(entry) {
 // and let onSessionExit rebuild it as archived (staying silent; an archive exit
 // is expected). Peer rows never reach here (they detach/hide instead).
 const archivingSessions = new Map(); // name -> { name, type, cwd, label, backend, archivedAt, createdAt }
+const movingFailed = new Map();
 async function archiveSessionRow(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return;
@@ -649,11 +650,16 @@ function moveSessionWithPicker(name) {
     return window.api.moveSession(name, dir).then((res) => {
       if (!res || !res.ok) {
         if (res && res.kept) {
-          removeSession(name, { keepPersisted: true });
-          addFailedSessionToSidebar({
+          const row = {
             name, type: res.type || snapType, cwd: res.cwd,
             error: res.error, team: res.team || null, backend: snapBackend,
-          });
+          };
+          if (sessions.has(name)) {
+            movingFailed.set(name, row);
+          } else {
+            removeSession(name, { keepPersisted: true });
+            addFailedSessionToSidebar(row);
+          }
         }
         showToast(`Move failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name });
         return;
@@ -2663,10 +2669,17 @@ window.api.onSessionExit((name, code, meta) => {
     })();
   }
   const archivedEntry = archivingSessions.get(name);
+  const movedFailedEntry = movingFailed.get(name);
   removeSession(name);
   if (archivedEntry) {
     archivingSessions.delete(name);
     addArchivedSessionToSidebar(archivedEntry);
+    refreshSidebarView();
+    return;
+  }
+  if (movedFailedEntry) {
+    movingFailed.delete(name);
+    addFailedSessionToSidebar(movedFailedEntry);
     refreshSidebarView();
     return;
   }

@@ -612,6 +612,7 @@ function createSessionManager(deps) {
       // without this two overlapping sweeps both pass the escalation gate and
       // alarm twice on one stall.
       this._stallProbing = new Set();
+      this._movingNames = new Set();
       this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
@@ -2716,54 +2717,69 @@ function createSessionManager(deps) {
       if (!st.isDirectory()) return { ok: false, error: `Not a directory: ${newCwd}` };
       if (entry.cwd === newCwd) return { ok: false, error: `${name} is already in ${newCwd}` };
 
-      const s = this.sessions.get(name);
-      if (s && s._moving) return { ok: false, error: 'move already in progress' };
-      if (s) {
-        log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${s.pty.pid}`);
-        s._moving = true;
-        try { s.pty.kill(); } catch {}
-        setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
-        if (!await this._waitForExit(name)) {
+      if (this._movingNames.has(name)) return { ok: false, error: 'move already in progress' };
+      this._movingNames.add(name);
+      try {
+        const s = this.sessions.get(name);
+        if (s) {
+          log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${s.pty.pid}`);
+          s._moving = true;
+          try { s.pty.kill(); } catch {}
+          setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          if (!await this._waitForExit(name)) {
+            return {
+              ok: false, kept: true,
+              error: 'old process did not exit in time — session not moved',
+              type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            };
+          }
+        }
+        const teamChanged = this.teamNameFor(entry.cwd) !== this.teamNameFor(newCwd);
+        const departing = s || {
+          name,
+          agentType: (entry.type === 'claude' || entry.type === 'codex') ? entry.type : null,
+          cwd: entry.cwd,
+        };
+        getPersistence().setCwd(name, newCwd);
+        if (entry.archivedAt) getPersistence().setArchived(name, false);
+        const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
+        try {
+          await this.create(
+            name, entry.type, newCwd, entry.extraArgs || [], entry.sessionId || null, workspaceId,
+            entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+            entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+            entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+            Array.isArray(entry.execCommands) ? entry.execCommands : [],
+            Array.isArray(entry.intents) ? entry.intents : null,
+            (entry.env && typeof entry.env === 'object') ? entry.env : null,
+            false,
+            entry.noWire === true,
+            Array.isArray(entry.plugins) ? entry.plugins : null,
+            Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+          );
+        } catch (err) {
+          getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
+          if (entry.archivedAt) getPersistence().setArchived(name, false);
           return {
             ok: false, kept: true,
-            error: 'old process did not exit in time — session not moved',
-            type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
+            type: entry.type, cwd: newCwd, team: this.teamNameFor(newCwd),
           };
         }
-      }
-      getPersistence().setCwd(name, newCwd);
-      if (entry.archivedAt) getPersistence().setArchived(name, false);
-      const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
-      try {
-        await this.create(
-          name, entry.type, newCwd, entry.extraArgs || [], entry.sessionId || null, workspaceId,
-          entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
-          entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
-          entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
-          Array.isArray(entry.execCommands) ? entry.execCommands : [],
-          Array.isArray(entry.intents) ? entry.intents : null,
-          (entry.env && typeof entry.env === 'object') ? entry.env : null,
-          false,
-          entry.noWire === true,
-          Array.isArray(entry.plugins) ? entry.plugins : null,
-          Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
-        );
-      } catch (err) {
-        getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
-        if (entry.archivedAt) getPersistence().setArchived(name, false);
+        if (teamChanged) {
+          this._notifyComposition(departing, 'moved out');
+          this._notifyComposition(this.sessions.get(name), 'moved in');
+        }
         return {
-          ok: false, kept: true,
-          error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
-          type: entry.type, cwd: newCwd, team: this.teamNameFor(newCwd),
+          ok: true,
+          cwd: newCwd,
+          type: entry.type,
+          backend: (this.sessions.get(name) || {}).backend || null,
+          team: this.teamNameFor(newCwd),
         };
+      } finally {
+        this._movingNames.delete(name);
       }
-      return {
-        ok: true,
-        cwd: newCwd,
-        type: entry.type,
-        backend: (this.sessions.get(name) || {}).backend || null,
-        team: this.teamNameFor(newCwd),
-      };
     }
 
     // The exits that DROP a record run without a live session, so they cannot read
