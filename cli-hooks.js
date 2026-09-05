@@ -523,9 +523,6 @@ JSEOF
       ...(Array.isArray(disabledTools) ? disabledTools : []).filter((t) => toolSet.has(t)),
     ])];
     if (denyRules.length) settings.permissions = { deny: denyRules };
-    // Deny outranks allow in the CLI, so the two compose rather than fight: the
-    // denylist here names tools, the allowlist names Bash command prefixes, and
-    // an allow entry can never resurrect a tool the deny list turned off.
     const allowList = [...new Set((Array.isArray(allowRules) ? allowRules : []).filter(Boolean))];
     if (allowList.length) {
       settings.permissions = { ...(settings.permissions || {}), allow: allowList };

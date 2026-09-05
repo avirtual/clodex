@@ -129,9 +129,6 @@ function parseTask(cleaned) {
     // Position-free because both orders read naturally; the cost is that a seat
     // literally named `park` is unaddressable here and needs `assign`.
     const park = argToks.includes('park');
-    // `reviewer:<template>` is a KEYED modifier, filtered out like `park`: a bare
-    // `reviewer` stays an assignee (the role exists), and only the colon form
-    // selects a template. Nothing positional, for park's reason.
     const reviewer = reviewerToken(argToks);
     const rest = argToks.filter((t) => t !== 'park' && !REVIEWER_TOKEN_RE.test(t));
     return { type: 'task', sub, who: rest[0] || null, id: null, park, reviewer, body };

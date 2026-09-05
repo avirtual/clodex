@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **Reviewer seats can carry a read-only shell.** A second reviewer template,
+  `clodex-team-reviewer-shell`, runs git/ls/cat/sed/`node --test` under a fixed
+  allowlist; pick it per ticket with `reviewer:clodex-team-reviewer-shell` on
+  task add. The default reviewer is unchanged.
+
 ## 5.29.1 — 2026-09-05
 
 - **A pipe planted in an agent's memory folder no longer hangs the app itself.**

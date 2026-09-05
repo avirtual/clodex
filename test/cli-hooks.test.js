@@ -982,3 +982,60 @@ test('a malformed hook payload leaves the observer silent and successful', () =>
     assert.strictEqual(r.stdout, '', `silent on ${JSON.stringify(input)}`);
   }
 });
+
+// --- t673: permissions.allow, the wall a shell reviewer runs behind ----------
+//
+// The allowlist is meaningless without the permission MODE that honors it
+// (--permission-mode dontAsk; --dangerously-skip-permissions ignores allow and
+// deny alike), and the mode is argv, pinned in resolve-seat-shape.test.js. This
+// file owns the other half: that the rules reach the settings file at all, and
+// that writing them does not disturb the deny block beside them.
+
+const SHELL_ALLOW = ['Bash(git diff:*)', 'Bash(ls:*)', 'Bash(node --test:*)'];
+
+test('t673: allowRules land in settings.permissions.allow, BESIDE the deny list', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  // A deny AND an allow in one call: deny outranks allow in the CLI, so the two
+  // compose — and an implementation that assigned `permissions` twice would drop
+  // whichever it wrote first. Only a fixture carrying both can see that.
+  h.setupClaudeHook('sh1', null, null, [], ['Edit', 'Write'], [], null, null, SHELL_ALLOW);
+  const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'sh1', 'settings'), 'utf-8'));
+  assert.deepStrictEqual(settings.permissions.allow, SHELL_ALLOW);
+  assert.ok(settings.permissions.deny.includes('Edit'), 'ENTER: the deny list is non-empty, so the survival of BOTH keys is what is being asserted');
+  assert.ok(settings.permissions.deny.includes('Write'));
+});
+
+test('t673: an empty allowRules writes no allow key at all — the unchanged shape', () => {
+  // Every non-shell seat takes this path, which is why it is the default: an
+  // `allow: []` is not the same as no allow key to the CLI, and shipping one on
+  // every seat would be a permissions change nobody asked for.
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('sh2', null, null, [], ['Edit'], [], null, null, []);
+  const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'sh2', 'settings'), 'utf-8'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(settings.permissions, 'allow'),
+    'no allow key when nothing was allowed');
+  assert.deepStrictEqual(settings.permissions.deny, ['Edit'], 'and the deny block is untouched');
+});
+
+test('t673: allow rules survive with no deny list, and the generated hook script is unchanged', () => {
+  // The script bytes are pinned elsewhere; this asserts the allow plumbing did
+  // not reach them. permissions is a settings-object concern only.
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('sh3', null, null, [], [], [], null, null, SHELL_ALLOW);
+  const withAllow = fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'hook'), 'utf-8');
+  const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'settings'), 'utf-8'));
+  assert.deepStrictEqual(settings.permissions.allow, SHELL_ALLOW);
+  assert.ok(!Object.prototype.hasOwnProperty.call(settings.permissions, 'deny'), 'nothing was denied');
+
+  // The SAME registry dir and the same agent name, so the only difference
+  // between the two runs is the allowlist: the script bytes embed the registry
+  // path in several forms, and a two-dir fixture would have to normalize each
+  // one to compare — a normalization that is itself the thing most likely to be
+  // wrong.
+  h.setupClaudeHook('sh3', null, null, [], [], [], null, null, []);
+  const without = fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'hook'), 'utf-8');
+  assert.strictEqual(withAllow, without, 'the allowlist must not reach the generated script bytes');
+});

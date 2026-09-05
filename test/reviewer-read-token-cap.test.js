@@ -72,13 +72,21 @@ test('t407: the digits-only guard rejects every form that parseInt silently trun
   assertPlainDigits(EXPECTED, 'probe');
 });
 
-test('t407: the SHIPPED reviewer template carries the raised cap as plain digits', () => {
-  const tpl = JSON.parse(fs.readFileSync(SHIPPED_TPL, 'utf-8'));
-  assert.ok(tpl.env && Object.prototype.hasOwnProperty.call(tpl.env, KEY),
-    `the shipped template must set ${KEY} — the allowlist admits it, but admitting a key sets nothing`);
-  assert.strictEqual(tpl.env[KEY], EXPECTED);
-  assertPlainDigits(tpl.env[KEY], 'shipped template');
-});
+// t673 added a second shipped reviewer template. Both are pinned, because the
+// trap this file exists for is reached by an edit that looks like a tidy-up, and
+// an edit that tidies one copy tidies the other in the same pass.
+const SHIPPED_SHELL_TPL = path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer-shell.json');
+
+for (const [label, file] of [['clodex-team-reviewer', SHIPPED_TPL], ['clodex-team-reviewer-shell', SHIPPED_SHELL_TPL]]) {
+  test(`t407: the SHIPPED ${label} template carries the raised cap as plain digits`, () => {
+    const tpl = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    assert.strictEqual(tpl.name, label, 'ENTER: this really is the template the case names');
+    assert.ok(tpl.env && Object.prototype.hasOwnProperty.call(tpl.env, KEY),
+      `the shipped template must set ${KEY} — the allowlist admits it, but admitting a key sets nothing`);
+    assert.strictEqual(tpl.env[KEY], EXPECTED);
+    assertPlainDigits(tpl.env[KEY], `shipped template ${label}`);
+  });
+}
 
 // --- through the resolver, both purposes -------------------------------------
 //

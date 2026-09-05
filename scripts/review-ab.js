@@ -32,7 +32,7 @@ function readRows(files) {
     try { text = fs.readFileSync(f, 'utf-8'); } catch { continue; }
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
-      try { rows.push(JSON.parse(line)); } catch { /* a torn append is one row, not the file */ }
+      try { rows.push(JSON.parse(line)); } catch { continue; }
     }
   }
   return rows;

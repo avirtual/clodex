@@ -432,3 +432,46 @@ test('orphanedCheckouts: a fully claimed tree reports zero, main never counts', 
   // Empty inputs are 0, not a throw.
   assert.strictEqual(tc.orphanedCheckouts({ worktrees: null, records: null }).orphaned, 0);
 });
+
+// --- t673: the A/B fields on a review row ------------------------------------
+//
+// `template` and `wallMs` exist to compare two reviewer templates on real
+// tickets. Both follow the file's measured/null discipline: a review whose
+// template or spawn time could not be read reports null, never a default that
+// would group it with the wrong population or a 0 that drags a median down.
+
+test('t673: reviewCostRecord carries template and wallMs as literals', () => {
+  const ledger = tc.sumSessions(
+    { sessions: { 'sess-1': { cost: 2, requests: 30, turns: 5, inputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, refusals: 0 } } },
+    ['sess-1'],
+  );
+  const row = tc.reviewCostRecord({
+    ticket: 't9', team: 'crew', round: 2, seat: 'crew-reviewer-9-r2',
+    verdict: 'ACCEPT', mustFix: 0, ledger, resolved: true, now: 1000,
+    template: 'clodex-team-reviewer-shell', wallMs: 8 * 60 * 1000,
+  });
+  assert.strictEqual(row.template, 'clodex-team-reviewer-shell');
+  assert.strictEqual(row.wallMs, 480000);
+  assert.strictEqual(row.verdict, 'ACCEPT');
+  assert.strictEqual(row.usd, 2, 'ENTER: the ledger really was measured, so the new fields sit beside real spend');
+});
+
+test('t673: an unknown template or spawn time is null, never a default or a zero', () => {
+  const row = tc.reviewCostRecord({
+    ticket: 't9', team: 'crew', round: 1, seat: 's', ledger: null, resolved: false, now: 1000,
+  });
+  assert.strictEqual(row.template, null,
+    'null groups as "unknown", and review-ab folds it into the default — a DEFAULT written here would be a claim the record cannot make');
+  assert.strictEqual(row.wallMs, null, 'a 0 here would drag every median toward zero');
+});
+
+test('t673: a negative or non-finite wallMs is refused rather than recorded', () => {
+  // A clock that moved backwards between spawn and verdict yields a negative
+  // duration, and a negative minute in the A/B reads as a fast review.
+  for (const bad of [-1, NaN, Infinity, '480000', null, undefined]) {
+    const row = tc.reviewCostRecord({ ticket: 't', team: 'c', round: 1, seat: 's', wallMs: bad });
+    assert.strictEqual(row.wallMs, null, `${JSON.stringify(bad)} must not be recorded as a duration`);
+  }
+  // And it accepts a real one, so the rejections above are not universal.
+  assert.strictEqual(tc.reviewCostRecord({ ticket: 't', team: 'c', round: 1, seat: 's', wallMs: 1.6 }).wallMs, 2);
+});

@@ -1101,3 +1101,34 @@ test('t673: the override does NOT apply on the ticket arm', () => {
   assert.strictEqual(shape.tpl.name, 'ht', 'the hand keeps its own template');
   assert.strictEqual(shape.shellAllow, null);
 });
+
+test('t673: NO --dangerously-skip-permissions reaches a resolved shape carrying shellAllow', () => {
+  // The property as a UNIVERSAL over the resolver's output, not as one fixture:
+  // the posture and the allowlist are set in two adjacent expressions, and an
+  // edit that made one conditional on something else would leave the other
+  // green. Every reviewer template shape that admits a shell is enumerated here
+  // — including the ones that reach it through a per-ticket override.
+  const shellTemplates = [
+    { name: 'a', type: 'claude', cwd: '/repo', tools: ['Bash'] },
+    { name: 'b', type: 'claude', cwd: '/repo', tools: ['Read', 'Bash'] },
+    { name: 'c', type: 'claude', cwd: '/repo', tools: ['Read', 'Grep', 'Glob', 'Bash'] },
+    { name: 'd', type: 'claude', cwd: '/repo', tools: CLAUDE_TOOLS.slice() },
+    { name: 'e', type: 'claude', cwd: '/repo', tools: ['Bash', 'Edit'], extraArgs: ['--model', 'sonnet'] },
+  ];
+  const m = managerWith(shellTemplates, { leadArgs: ['--dangerously-skip-permissions'] });
+  let checked = 0;
+  for (const tpl of shellTemplates) {
+    for (const shape of [
+      m.resolveSeatShape(teamWith({ reviewer: { template: tpl.name } }), 'reviewer', 'review', LEAD),
+      m.resolveSeatShape(teamWith({ reviewer: {} }), 'reviewer', 'review', LEAD, tpl.name),
+    ]) {
+      assert.ok(shape.shellAllow, `ENTER: template ${tpl.name} really did resolve to a SHELL shape — a shape with no allowlist would satisfy the assertion below vacuously`);
+      assert.ok(!shape.extraArgs.includes('--dangerously-skip-permissions'),
+        `template ${tpl.name}: the bypass posture voids the allowlist entirely — the CLI ignores allow/deny under it`);
+      assert.deepStrictEqual(shape.extraArgs.slice(0, 2), ['--permission-mode', 'dontAsk'],
+        `template ${tpl.name}: dontAsk must lead the argv`);
+      checked += 1;
+    }
+  }
+  assert.strictEqual(checked, 10, 'ENTER: every template was reached by BOTH routes — a loop that fell through asserts nothing');
+});
