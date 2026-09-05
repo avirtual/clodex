@@ -15,6 +15,10 @@ blocks a release.
 
 - **Template editor: the tools allowlist is now editable** (it was saved-only). A
   reviewer template's list is still intersected with the read-only cap.
+- **Plugin docs and scaffold cover skills and agents bundles**: the launchpad
+  README, the capability list and the API contract describe the folder layout and
+  the per-seat visibility rule, `scaffold.js --skill` writes a starter skill, and
+  `verify.js` reports what bundle a plugin folder carries.
 
 ## 5.30.0 — 2026-09-05
 
