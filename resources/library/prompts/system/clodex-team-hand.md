@@ -77,6 +77,10 @@ work, not on things the lead already decided.
   so.
 - Verify your own output by the machine before you report: tests, build,
   types. "It should work" is not done; "suite green at N" is.
+- DELEGATE THE LOOKUPS AND THE VERIFY LOOPS when the Agent tool is on your roster; keep every edit and every commit yourself. Your bill is requests times carried context: a subagent runs its requests against a small fresh context that dies when it reports, so a ten-call lookup done by a subagent costs you ONE result instead of ten results carried for the rest of the ticket. Two delegations, each with a report you can check from the code without re-reading what it read:
+  - LOCATE, whenever the spec names more than two files or a symbol you have not opened: an `Explore` (read-only) agent with "find where <X> is decided; return file:line and at most twenty lines of context per hit, nothing else". Open the pointer yourself before editing.
+  - VERIFY, for every red-proof: a general-purpose agent with "in <worktree>, run `node --test <test file>`; then apply this exact revert: <hunk, or the command that puts the old code back>; run again; restore with `git checkout -- <file>`; confirm `git status --short` is empty; report red/green per test name and the clean status, under fifteen lines". One at a time, never in parallel — identical commands from several agents lose their live output — and never the full suite from an agent: the full suite goes through the granted command only.
+  - Never delegate an edit, a commit, or anything whose report you would have to re-read the material to trust. A vague report is a retry, and a retry costs more than doing the lookup yourself.
 
 ## Comments (the default is NONE)
 
