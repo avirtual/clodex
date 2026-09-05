@@ -427,10 +427,10 @@ test('host.intents.register carries the MANIFEST\'s scope into the registry row'
   try {
     engine.register('scoped-plug', {
       activate(h) { h.intents.register(mkRow('fromscoped')); },
-    }, { hostApi: HOST_API_VERSION, scope: 'session' });
+    }, { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     engine.register('global-plug', {
       activate(h) { h.intents.register(mkRow('fromglobal')); },
-    }, { hostApi: HOST_API_VERSION });
+    }, { hostApi: HOST_API_VERSION }, { shipped: true });
 
     assert.strictEqual(registry.pluginRowFor('fromscoped').scope, 'session');
     assert.strictEqual(registry.pluginRowFor('fromglobal').scope, 'global',
@@ -443,7 +443,7 @@ test('host.intents.register carries the MANIFEST\'s scope into the registry row'
     assert.ok(absent.includes('fromglobal'),
       'ENTER: the global verb registered — so the absences below are the gate, not an empty registry');
     assert.ok(absent.includes('fromscoped'),
-      'ENTER: and so did the scoped one — the absent list is the all-enabled default for both');
+      'ENTER: and so did the scoped one — both are shipped, so the absent list carries both');
     const only = registry.catalogRows(['global-plug']).map((r) => r.type);
     assert.ok(only.includes('fromglobal'), 'a ticked plugin\'s verb surfaces');
     assert.strictEqual(only.includes('fromscoped'), false,
@@ -711,11 +711,11 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
     entries: { seat: { name: 'seat', pluginGrants: ['scoped-a:turns'] } },
     pluginStatus: {
       plugins: [
-        { id: 'scoped-a', name: 'Scoped A', scope: 'session', enabled: true, quarantined: false },
-        { id: 'scoped-b', name: 'Scoped B', scope: 'session', enabled: true, quarantined: false },
-        { id: 'globalish', name: 'Global One', scope: 'global', enabled: true, quarantined: false },
-        { id: 'scoped-off', name: 'Disabled', scope: 'session', enabled: false, quarantined: false },
-        { id: 'scoped-quar', name: 'Quarantined', scope: 'session', enabled: true, quarantined: true },
+        { id: 'scoped-a', name: 'Scoped A', scope: 'session', enabled: true, quarantined: false, root: 'core' },
+        { id: 'scoped-b', name: 'Scoped B', scope: 'session', enabled: true, quarantined: false, root: 'core' },
+        { id: 'globalish', name: 'Global One', scope: 'global', enabled: true, quarantined: false, root: 'core' },
+        { id: 'scoped-off', name: 'Disabled', scope: 'session', enabled: false, quarantined: false, root: 'core' },
+        { id: 'scoped-quar', name: 'Quarantined', scope: 'session', enabled: true, quarantined: true, root: 'core' },
       ],
     },
   });
