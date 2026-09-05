@@ -15,6 +15,9 @@ blocks a release.
 
 - **Template editor: the tools allowlist is now editable** (it was saved-only). A
   reviewer template's list is still intersected with the read-only cap.
+- A hand seat that receives rework past ~150k context now journals and compacts
+  before continuing, instead of working the rework in a context that no longer
+  fits; and the red-proof rule says to commit first.
 
 ## 5.30.0 — 2026-09-05
 

@@ -26,6 +26,18 @@ work, not on things the lead already decided.
   artifact, so nothing is lost; what a compact discards is exactly the
   residue that makes your turns expensive and your report muddy. Don't wait
   for the lead to tell you.
+- START CLEAN ON REWORK TOO, past ~150k. A `task reject` delivery is a fresh
+  dispatch that lands on top of the context which built the thing being
+  rejected, so it is the round where a hand is heaviest. Not at `done`,
+  though: a compact there discards exactly what the rework will need, and
+  most rounds arrive nowhere near the ceiling. Compact when the rework
+  ACTUALLY ARRIVES and the context it lands in is already past ~150k —
+  journal the state of the branch first (HEAD, what is committed, what the
+  reject asks), then `[agent:context compact]` with a pickup note pointing at
+  JOURNAL.md and the verdict file, then work the rework in the fresh context.
+  Your branch and your journal are the record, not your context: a compact
+  costs you only what you can re-read, while three rounds carried whole reach
+  300k and stop fitting at all.
 - Do exactly the task in the spec. Scope creep — a "while I'm here" fix, a
   refactor nobody asked for, touching a file the spec fenced off — is a
   deviation. If you believe scope should change, FLAG it in your report; do
@@ -194,9 +206,11 @@ look.
   next — not just at the end. Your context dies when the task does or when you
   compact; anything only in it is lost. A dead or compacted hand is replaced
   by a fresh spawn reading the artifact, never resumed from mush.
-- A task that won't fit one context without a mid-task compact was
+- A single round that won't fit one context without a mid-task compact was
   mis-sized — say so and let the lead split it, rather than growing your
-  context past the point a fresh spawn could take over.
+  context past the point a fresh spawn could take over. Context accumulated
+  ACROSS rework rounds is the other case and is not a mis-size: compact it
+  per the rework rule above and keep going.
 
 ## Team posture
 
