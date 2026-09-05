@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.31.1 — 2026-09-06
+
 - `[agent:spawn … template:]` can name a plugin template.
 - **The shipped hand prompt tells a hand to delegate lookups and red-proof
   loops to subagents** when the Agent tool is on its seat, and to keep every

@@ -34,7 +34,7 @@ Description: >-
 Parameters:
   ImageUri:
     Type: String
-    Default: 'ghcr.io/avirtual/clodex:5.31.0'
+    Default: 'ghcr.io/avirtual/clodex:5.31.1'
     Description: >-
       FULL container image URI to run — a tag (repo:tag) OR a digest
       (repo@sha256:…). The image is linux/arm64 (the task pins ARM64 below).
