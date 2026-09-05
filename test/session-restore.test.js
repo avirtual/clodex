@@ -229,18 +229,23 @@ test('t189: noWire reaches every row shape — running, restored, archived and f
   // flag as create()'s 21st positional, or the process comes back wired while the
   // row still claims otherwise — the failure that would look like a UI bug.
   // Indexed, not read off the tail: create() grew a 22nd positional (`plugins`)
-  // and a tail read would then assert about the wrong argument entirely. The spy
-  // captures `...rest`, so `name` is not in this array and every index is one
-  // below create()'s own.
+  // and a 23rd (`shellDeny`), and a tail read would then assert about the wrong
+  // argument entirely. The spy captures `...rest`, so `name` is not in this array
+  // and every index is one below create()'s own.
   const NOWIRE_IDX = 19;
   const okArgs = createArgs.get('ok');
   assert.ok(okArgs, 'ENTER: the restored seat was actually spawned, so there are arguments to inspect');
-  assert.strictEqual(okArgs.length, 21, 'ENTER: every positional past name was passed, so the index below is the flag');
+  assert.strictEqual(okArgs.length, 22, 'ENTER: every positional past name was passed, so the index below is the flag');
   assert.strictEqual(okArgs[NOWIRE_IDX], true,
     'the restore respawn passes noWire through to create()');
   const wiredArgs = createArgs.get('wired');
   assert.strictEqual(wiredArgs[NOWIRE_IDX], false,
     'control: an ordinary seat respawns with the flag explicitly off, not merely absent');
+
+  // The restore respawn's 23rd positional: a shell reviewer restored at launch
+  // must rebuild the same deny block, and this path never filters on `ephemeral`
+  // so a reviewer seat does reach it.
+  assert.strictEqual(okArgs[21], null, 'an ordinary seat restores with no shell deny rules');
 
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']],
     'and the restore path still mutates nothing');
