@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const { createMemoryStore, composeDigest, parseMemoryUnit, DIGEST_BUDGET,
@@ -168,6 +169,91 @@ test('memoryStore: agent pin and operator pin are INDEPENDENT flags', () => {
   assert.strictEqual(unit.operatorPinned, false);
   store.setPinned('alpha', u.id, false);
   assert.strictEqual(store.list('alpha')[0].pinned, false);
+});
+
+// --- the unit open ---------------------------------------------------------
+// An agent writes its own memory folder, and list()/_setFlag run in the MAIN
+// process (the boot digest, liveKeys, the hint retriever). A file there can be
+// a pipe or a hardlink to something outside the store, so the open is judged
+// through the fd rather than by path.
+
+const MEMORY_STORE_SRC = fs.readFileSync(path.join(__dirname, '..', 'memory-store.js'), 'utf-8');
+
+// BOTH tokens, because either one alone still hangs. O_NONBLOCK is what lets
+// the OPEN return on a writerless pipe; isFile() is what stops the READ that
+// follows, which blocks on the same pipe even through a non-blocking fd
+// (measured: dropping only isFile() hung this file with no output).
+const OPEN_SHAPE = [/O_NONBLOCK/, /isFile\(\)/];
+
+// Declared BEFORE the FIFO subjects because it is what keeps their failure
+// readable: a blocking read never returns, so it stops the event loop the test
+// timeout itself lives on and the runner hangs with zero output instead of
+// reddening. This subject turns that regression into one red line, and the
+// subjects below skip when it fails so the run still finishes.
+test('memoryStore: the unit open stays non-blocking — without it a planted FIFO hangs the suite', () => {
+  for (const re of OPEN_SHAPE) {
+    assert.match(MEMORY_STORE_SRC, re,
+      `${re} is gone: a planted FIFO then hangs the main process at agent boot, and hangs this suite with no output`);
+  }
+});
+
+const fifoSkip = process.platform === 'win32'
+  ? 'mkfifo and O_NOFOLLOW are POSIX-only'
+  : (OPEN_SHAPE.every((re) => re.test(MEMORY_STORE_SRC))
+    ? false
+    : 'the non-blocking open shape is gone from memory-store.js — see the source-shape pin above');
+
+test('memoryStore: a FIFO planted beside a real unit is skipped and list() RETURNS', { skip: fifoSkip }, () => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { text: 'the control body' });
+  execFileSync('mkfifo', [path.join(dir, 'alpha', 'planted.md')]);
+
+  // The assertion that matters is that this line is ever reached: a blocking
+  // read of a writerless FIFO never returns, and list() runs at agent boot.
+  const units = store.list('alpha');
+
+  // ENTER: the control unit survives, so the absence below is the pipe being
+  // refused and not the whole folder going dark.
+  assert.deepStrictEqual(units.map(x => x.id), [u.id],
+    'the pipe is absent and the real unit beside it survives');
+  assert.strictEqual(units[0].body, 'the control body');
+  assert.ok(fs.existsSync(path.join(dir, 'alpha', 'planted.md')),
+    'the refusal is a read refusal — it deletes nothing');
+});
+
+test('memoryStore: _setFlag on a planted FIFO throws no unit', { skip: fifoSkip }, () => {
+  const { store, dir } = tmpStore();
+  const control = store.remember('alpha', { text: 'pin me' });
+  const id = 'mem-9-fifo';
+  execFileSync('mkfifo', [path.join(dir, 'alpha', `${id}.md`)]);
+
+  assert.throws(() => store.setPinned('alpha', id, true), /no unit mem-9-fifo/,
+    'a refused open is the same miss as an absent file, and it must not block first');
+  // CONTROL: the refusal is about THIS file, not about pinning being broken.
+  store.setPinned('alpha', control.id, true);
+  assert.strictEqual(store.list('alpha').find(x => x.id === control.id).pinned, true);
+});
+
+test('memoryStore: a hardlinked unit is not listed, so recall and the viewer agree', () => {
+  // The viewer already refuses these; core listing them would serve a unit in
+  // recall that the overlay hides. A hardlink's realpath is in-dir, so only the
+  // fd's nlink can see it.
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { text: 'the control body' });
+  const outside = mkTmpRoot('clodex-mem-outside-');
+  const secret = path.join(outside, 'secret.md');
+  fs.writeFileSync(secret, '---\nid: mem-1-secret\nlearned_at: 2026-07-30T10:00:00.000Z\n---\n\nHARDLINKED BODY\n');
+  fs.linkSync(secret, path.join(dir, 'alpha', 'planted.md'));
+
+  const units = store.list('alpha');
+
+  // ENTER: the control unit survives, so the absence below is the hardlink
+  // being refused and not the whole folder going dark.
+  assert.deepStrictEqual(units.map(x => x.id), [u.id],
+    'the hardlink is absent and the real unit beside it survives');
+  assert.strictEqual(JSON.stringify(units).includes('HARDLINKED BODY'), false,
+    'the outside file\'s text never reaches a caller, under any key');
+  assert.ok(fs.existsSync(secret), 'the refusal is a read refusal — it deletes nothing');
 });
 
 // --- digest ---------------------------------------------------------------
