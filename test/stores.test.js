@@ -1411,7 +1411,7 @@ test('seed report: a MIXED run pluralises each channel by its own count', () => 
   });
 });
 
-// --- t660: the SKILLS root seeds beside the library one ---------------------
+// --- the SKILLS root seeds beside the library one ---------------------------
 // Skills live at registryDir/skills, a SIBLING of library/, so the seeder walks
 // two (src, dest) pairs. Each dest root owns its .seed-state.json /
 // .seed-report.json, and both channels must name the root: an operator told
