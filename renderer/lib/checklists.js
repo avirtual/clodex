@@ -70,8 +70,6 @@ function getPromptLibCache() { return promptLibCache; }
 function getSkillLibCache() { return skillLibCache; }
 function getDefaultToolDenyCache() { return defaultToolDenyCache; }
 
-// Keyed by the same `kind` string repaintBundleSections takes, so a repaint
-// that lands both lists empty can show the exact hint the full render would.
 const BUNDLE_EMPTY_HINT = {
   'prompts/append': '<span class="hint-text">No append prompts in library — add some via the Prompts drawer.</span>',
   agents: '<span class="hint-text">No agents in library — add some via the 🤖 Agents drawer.</span>',
@@ -170,11 +168,6 @@ function appendBundleSections(container, kind, seat, checkedSet = null) {
   }
 }
 
-// A repaint only ever touches bundle rows, so it must also clear a stale
-// empty-library hint (gaining a bundle after an empty initial render would
-// otherwise append rows below the "No … in library" span) and, symmetrically,
-// restore that hint if the repaint leaves the container with nothing at all
-// (losing the plugin that supplied its only rows).
 function repaintBundleSections(container, kind, seat, checkedSet = null) {
   container.querySelectorAll('.check-group, .bundle-row').forEach((n) => n.remove());
   container.querySelectorAll('.hint-text').forEach((n) => n.remove());

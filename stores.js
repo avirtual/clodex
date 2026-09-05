@@ -1736,11 +1736,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
 
   const ENV_DEFAULTS_SRC = envDefaultsFile || path.join(__dirname, 'resources', 'env-defaults.json');
 
-  // Shared by every env-defaults entry point that would otherwise write into
-  // the real userData under `node --test` (t681): `restore()` used to clear
-  // `seeded` and save BEFORE this same refusal ran inside seedEnvDefaults(),
-  // so a refused restore still stripped the shipped keys off the list and
-  // left the seeder re-armed for the next real launch.
   function refuseEnvWriteUnderTest() {
     if (process.env.NODE_TEST_CONTEXT
         && registryDir === path.join(os.homedir(), '.clodex')) {
