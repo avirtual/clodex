@@ -534,6 +534,11 @@ worktree, which is why membership is by repo.
   (`validateManifest`, `isNewerVersion`). An unrecognized `scope` is REFUSED,
   never defaulted: `scopeOf` resolves anything unknown to `global`, so a typo on
   a plugin meant to be invisible would silently load it everywhere.
+- **plugin-prompt-refs.js** — the pure leaf resolving a `<plugin-id>:<stem>`
+  prompt reference, and listing a plugin's templates. THROWS where the library
+  path returns null: a namespaced stem the seat cannot reach means the template
+  naming it was applied to the wrong seat, so a silent fallback would boot a seat
+  missing the whole system prompt it was configured with.
 - **plugin-host-engine.js** — the main-process host. No unqualified `list()`:
   `listAll()` is global, `listWorkspace(id)` is what per-window surfaces want,
   and `fsScope` refuses PEERS rather than foreign workspaces — so nothing

@@ -45,7 +45,7 @@ plugins/<id>/
 ```
 
 At least one half is required, unless the directory carries a content bundle
-(`skills/` or `agents/` — §2). A plugin with only an engine half is a pure data
+(`skills/`, `agents/`, `prompts/` or `templates/` — §2). A plugin with only an engine half is a pure data
 or automation plugin (it can register intent verbs and session hooks, and has no
 UI). A plugin with only a renderer half is pure UI with no privileged access.
 Most useful plugins have both, because the renderer half cannot touch the
@@ -154,7 +154,7 @@ the menu bar has a tick next to it.
 | `name` | no | Human-readable label for the Plugins menu and the Manage Plugins dialog. Defaults to `id`. |
 | `version` | no | Free-form string, displayed to the user. Nothing parses it. |
 | `hostApi` | yes | Must be exactly `"1"`. A string, not a number. |
-| `entry` | yes | An object. `entry.engine` and `entry.renderer` are paths relative to the plugin directory; each is optional individually but at least one must be present *unless the directory carries a content bundle* (below), and each must be a string if present. |
+| `entry` | yes | An object. `entry.engine` and `entry.renderer` are paths relative to the plugin directory; each is optional individually but at least one must be present *unless the directory carries a content bundle* — `skills/`, `agents/`, `prompts/` or `templates/`, below — and each must be a string if present. |
 | `style` | no | Path to a CSS file, relative to the plugin directory. Loaded as **text** and injected per window. |
 | `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. It decides GLOBAL loading only, and says nothing about which seats a loaded plugin reaches — that is the seat list of §2.1, where the origin rule (shipped vs. custom) is the one this field cannot influence. |
 | `announce` | no | One sentence describing what the plugin does. Shown as the description line in the Manage Plugins dialog. |
@@ -167,16 +167,19 @@ your own metadata.
 
 ### A content bundle relaxes the `entry` rule
 
-Beside the halves, the directory may carry skills and subagents as files:
-`skills/<name>/SKILL.md` and `agents/<name>.md`. They are not declared in the
-manifest — the loader reads the two directories directly — and they reach only
+Beside the halves, the directory may carry four kinds of content as files:
+`skills/<name>/SKILL.md`, `agents/<name>.md`, `prompts/system/<stem>.md`,
+`prompts/append/<stem>.md` and `templates/<stem>.json`. They are not declared in
+the manifest — the loader reads the directories directly — and they reach only
 the seats whose plugin list holds the plugin, namespaced as
-`/<plugin-id>:<skill>` and `<plugin-id>:<agent>`.
+`/<plugin-id>:<skill>`, `<plugin-id>:<agent>`, `<plugin-id>:<prompt>` and
+`<plugin-id>:<template>`.
 
 Their names are checked against `AGENT_NAME_RE`, the host's shared session-name
-rule: `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`. Two cases are **skipped with a logged
-reason**: an entry whose name fails that rule, and a `skills/<name>/` directory
-with no readable `SKILL.md`. Either way the rest of the bundle still loads.
+rule: `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`. Three cases are **skipped with a logged
+reason**: an entry whose name fails that rule, a `skills/<name>/` directory
+with no readable `SKILL.md`, and a `templates/<stem>.json` that is not parseable
+JSON or does not parse to an object. Either way the rest of the bundle still loads.
 
 Two more are **ignored silently, with no log line at all** — an `agents/` entry
 that is not a `.md` file, and a `skills/` entry that is not a directory. They are
@@ -185,10 +188,22 @@ an `agents/notes.txt` beside your subagents costs you nothing. The consequence t
 expect is the debugging one: an agent written as `helper.markdown` does not appear
 and produces no log line to explain why.
 
+A prompt ref inside a `templates/*.json` that carries no colon is rewritten to
+`<plugin-id>:<stem>` **when the file is read**, so a template naming its own
+plugin's prompts cannot dangle when the plugin moves roots. The same read merges
+the plugin's own id into the template's `plugins`, so a seat started from it holds
+the plugin whose prompts it names.
+
 **A manifest whose `entry` names neither half is valid when the directory carries
-a `skills/` or `agents/` entry the loader accepted.** So `entry: {}` is a refusal
+any content entry the loader accepted.** So `entry: {}` is a refusal
 for a code plugin and legal for a content-only one, and a pure content pack needs
 no JavaScript. `entry` is still required as an object.
+
+Whether the app may EDIT that content is decided by the root the plugin came from:
+a plugin under `~/.clodex/plugins/` is the user's own and its files are editable in
+the library drawers, which save back into the plugin folder; a plugin under the
+app's own `plugins/` is read-only there and the drawers offer a reveal-folder
+action instead. The refusal is engine-side, not merely a hidden button.
 
 The full authoring picture — layout, per-seat visibility, when a change reaches a
 running seat, and that the checklists list this content rather than toggling it —
@@ -219,8 +234,8 @@ The refusals, and what to do about each:
 - **`entry` is missing or isn't an object.**
 - **`entry.engine` or `entry.renderer` is present but isn't a string.**
 - **`entry` names neither half, and the directory carries no content bundle.**
-  An empty `entry: {}` is refused unless a `skills/` or `agents/` entry was
-  accepted — see the bundle rule above. The refusal names both halves of the
+  An empty `entry: {}` is refused unless a `skills/`, `agents/`, `prompts/` or
+  `templates/` entry was accepted — see the bundle rule above. The refusal names both halves of the
   condition, so a content plugin whose only entry was skipped for a bad name
   reads as this refusal rather than as silence.
 - **An entry path or the `style` path escapes the plugin directory.** Paths are

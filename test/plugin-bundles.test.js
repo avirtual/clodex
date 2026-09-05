@@ -93,8 +93,8 @@ test('t672: a dir with neither half AND no bundle is still refused, by name', ()
   const problems = loader.status().problems;
   assert.strictEqual(problems.length, 1);
   assert.match(problems[0].why, /names neither an engine nor a renderer half/);
-  assert.match(problems[0].why, /no skills\/ or agents\/ entry/,
-    'the message names the new way out, or an author cannot act on it');
+  assert.match(problems[0].why, /no skills\/, agents\/, prompts\/ or templates\/ entry/,
+    'the message names every way out, or an author cannot act on it');
 });
 
 test('t672: validateManifest refuses an entry-less manifest until told a bundle exists', () => {
@@ -362,9 +362,12 @@ test('t672: catalog() carries skill and agent NAMES; bundles() carries the bodie
   assert.deepStrictEqual(rows.get('plain').skills, [], 'a bundle-less plugin reports empty, not undefined');
   assert.deepStrictEqual(rows.get('plain').agents, []);
 
-  assert.deepStrictEqual(engine.bundles(), [
-    { id: 'stocks', shipped: true, skills: [{ name: 'foo', content: SKILL_MD }], agents: [{ name: 'bar', content: AGENT_MD }] },
-  ], 'bundles() is the spawn read: contents, and only the plugins that have any');
+  assert.deepStrictEqual(engine.bundles(), [{
+    id: 'stocks', name: 'Stocks', shipped: true, editable: false, dir: null,
+    skills: [{ name: 'foo', content: SKILL_MD }],
+    agents: [{ name: 'bar', content: AGENT_MD }],
+    prompts: [], templates: [],
+  }], 'bundles() is the spawn read: contents, and only the plugins that have any');
 });
 
 test('t672: a disabled plugin yields no bundle for anyone, and bundles() hands out copies', () => {

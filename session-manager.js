@@ -458,6 +458,7 @@ function createSessionManager(deps) {
     writeAgentPlugin,
     writeBundlePlugins,
     getPluginBundles,
+    readSystemPromptBody,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
@@ -1334,7 +1335,7 @@ function createSessionManager(deps) {
           if (preseedClaudeOnboarding({ fs, path, homeDir: os.homedir() })) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
-          const sysFile = resolveSystemPromptFile(systemPromptFile);
+          const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null);
           promptRecipe = {
             extraArgs,
             intents,
@@ -1550,8 +1551,11 @@ function createSessionManager(deps) {
         }
         case 'codex': {
           cmd = 'codex';
-          const codexSystemBody = systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null;
-          const codexAppendBodies = readAppendBodies(appendPromptFiles);
+          const seatPlugins = Array.isArray(plugins) ? plugins : null;
+          const codexSystemBody = readSystemPromptBody
+            ? readSystemPromptBody(systemPromptFile, seatPlugins)
+            : (systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null);
+          const codexAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins);
           const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
@@ -2784,7 +2788,7 @@ function createSessionManager(deps) {
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands),
           pluginGrammarLines(recipe.intents, recipe.plugins));
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
-        appendBodies: readAppendBodies(recipe.appendPromptFiles),
+        appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins),
         inlineBody: recipe.inlineBody,
         hasSystemFile: recipe.hasSystemFile,
       });

@@ -37,11 +37,12 @@ segments, a sidebar footer button, a session row badge, a session-menu provider,
 a Preferences section, and a full-window overlay — described with their specs in
 §6 of the contract.
 
-## Skills and agents
+## Skills, agents, prompts and templates
 
-A plugin can also carry Claude Code **skills** and **subagents**. They are
-content, not code: two directories beside the halves, read by the loader's
-`readBundle` and handed to the seats that have the plugin.
+A plugin can also carry Claude Code **skills** and **subagents**, plus Clodex's
+own **prompts** and session **templates**. They are content, not code: four
+directories beside the halves, read by the loader's `readBundle` and handed to
+the seats that have the plugin.
 
 ```
 <id>/
@@ -50,17 +51,41 @@ content, not code: two directories beside the halves, read by the loader's
       SKILL.md   required — the skill; a directory with no readable SKILL.md is skipped
   agents/
     <agent-name>.md         the subagent; a non-.md file is ignored
+  prompts/
+    system/<stem>.md        replaces the CLI's own system prompt
+    append/<stem>.md        composed onto it
+  templates/
+    <stem>.json             a session template, same shape the app writes
 ```
 
-Both names are checked against `AGENT_NAME_RE` — `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`,
+Every name is checked against `AGENT_NAME_RE` — `/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/`,
 the same rule session names obey. A name that fails it is skipped with a reason in
 the app's log, and the rest of the bundle still loads: one bad entry does not cost
-you the others.
+you the others. A `templates/*.json` that does not parse, or parses to something
+other than an object, is skipped the same way.
+
+A template inside a plugin may name that plugin's **own** prompts by bare stem —
+`"systemPromptFile": "reviewer"`. The loader rewrites those to the namespaced form
+when it reads the file, so the reference cannot dangle when the plugin moves
+between roots. A ref that already carries a colon is left alone, so a template may
+still name another plugin's prompt deliberately. Every plugin template also
+carries its own plugin in `plugins`, merged into whatever it already lists:
+starting a seat from it **grants the plugin**, so the seat can reach the prompts
+the template names.
 
 They arrive **namespaced by the plugin's id**. A skill `review` in plugin
 `my-plugin` is invoked as `/my-plugin:review`; an agent `auditor` in the same
-plugin is delegated to as `my-plugin:auditor`. The namespace is the plugin id, so
-two plugins may ship a skill of the same name without colliding.
+plugin is delegated to as `my-plugin:auditor`; a prompt `reviewer` is referenced
+as `my-plugin:reviewer` in `systemPromptFile` / `appendPromptFiles`, and a
+template `audit` is `my-plugin:audit` in the template picker. The namespace is the
+plugin id, so two plugins may ship a skill of the same name without colliding.
+
+A namespaced prompt ref is resolved **through the plugin, before the library**, so
+a plugin prompt never shadows and is never shadowed by a same-named file in
+`~/.clodex/library/prompts/`. Naming one for a plugin the seat does not hold is
+**refused at spawn** with a message saying so, rather than quietly falling back to
+the CLI default — a seat silently missing the prompt it was configured with is the
+failure that refusal exists to prevent.
 
 **Visibility is per seat, and it is the plugin's seat list that decides it** —
 the same list of §2.1 that gates everything else a plugin reaches. A seat whose
@@ -68,22 +93,46 @@ plugin list holds the plugin gets its skills and agents; a seat that does not,
 never sees them. Disabling the plugin does not retract them from a running seat:
 they are written at spawn, so they go at that seat's **next start**.
 
-They **show but do not toggle.** The Skills and Agents checklists (New Session,
-Edit Session, the per-session popovers) and the two library drawers group a
-plugin's content under the plugin's name, with the rows disabled: a seat that has
+A prompt REF does not degrade that gently. A seat whose persisted
+`systemPromptFile` or `appendPromptFiles` names a prompt from a plugin that is no
+longer loaded is **refused at its next start** — the spawn fails with "not
+loaded" rather than booting without the prompt — and a clear or compact rebake
+logs `prompt-refresh-error` and leaves the old prompt in place. Clear the ref
+from the session's settings before you disable or remove the plugin that carries
+it.
+
+They **show but do not toggle.** The Skills, Agents and Append-prompts checklists
+(New Session, Edit Session, the per-session popovers) and the library drawers group
+a plugin's content under the plugin's name, with the rows disabled: a seat that has
 the plugin sees them marked as arriving with it, and a seat that does not sees
 what enabling the plugin would add. There is no per-skill switch, because the
 plugin tick is the switch.
 
-**A plugin may be content only.** A manifest whose `entry` names neither half is
-valid when the directory carries a `skills/` or `agents/` entry, so a pure content
-pack needs no JavaScript at all — just `manifest.json` and the two directories.
+The **template picker is the exception**, and deliberately: it lists every plugin's
+templates in a group of their own whatever the dialog's current plugin ticks say,
+because picking one grants the plugin rather than requiring it.
 
-Editing one means editing the **plugin folder**, not anything in the app. These
-are the plugin's files: Manage Plugins ▸ Re-scan re-reads them without a restart,
-and a seat picks the new text up at its next start. They are not records in the
-user's own skill and agent library, so the library's editors cannot change them —
-the drawers list them, read-only, under the plugin they came from.
+**A plugin may be content only.** A manifest whose `entry` names neither half is
+valid when the directory carries any of the four, so a pure content pack needs no
+JavaScript at all — just `manifest.json` and the directories it ships.
+
+### Who may edit it
+
+Whether the app can edit a plugin's content is decided by **which root the plugin
+came from**, and by nothing else:
+
+| Root | In the app |
+|---|---|
+| `~/.clodex/plugins/` — yours | **Editable.** The drawers open the ordinary editor on the row, and the save writes back into the file inside the plugin folder. |
+| the app's own `plugins/` — built in | **Read-only.** The row offers *Reveal plugin folder* instead of an editor. |
+
+The rule is the same for all four kinds. A save is refused engine-side as well as
+hidden in the UI, so nothing that reaches the write channel can put a file into a
+built-in plugin, and no name it is given can land outside the plugin's own
+directory. Neither editable nor read-only content is a record in your own skill,
+agent, prompt or template library — the drawers list it under the plugin it came
+from, and Manage Plugins ▸ Re-scan re-reads the files without a restart. A seat
+picks new text up at its next start.
 
 ## Where your plugin goes
 

@@ -362,20 +362,43 @@ function isDigested(entry, sessionId) {
 
 
 
-function resolveSystemPromptFile(stem) {
+function pluginBundles() {
+  if (!pluginHost || typeof pluginHost.bundles !== 'function') return [];
+  try { return pluginHost.bundles() || []; } catch { return []; }
+}
+
+function resolveSystemPromptFile(stem, seatPlugins) {
   if (!stem) return null;
+  const ref = splitPluginPromptRef(stem);
+  if (ref) {
+    return resolvePluginSystemPromptFile({ fs, path, bundles: pluginBundles() }, ref, seatPlugins);
+  }
   const p = promptLibrary._file('system', stem);
   try { fs.accessSync(p, fs.constants.R_OK); return p; }
   catch { return null; }
 }
 
-function readAppendBodies(stems) {
+function readAppendBodies(stems, seatPlugins) {
   const out = [];
   for (const stem of stems || []) {
-    const body = promptLibrary.raw('append', stem);
+    const ref = splitPluginPromptRef(stem);
+    const body = ref
+      ? resolvePluginPromptBody({ bundles: pluginBundles() }, ref, 'append', seatPlugins)
+      : promptLibrary.raw('append', stem);
     if (body != null && body.trim()) out.push(body);
   }
   return out;
+}
+
+function readSystemPromptBody(stem, seatPlugins) {
+  if (!stem) return null;
+  const ref = splitPluginPromptRef(stem);
+  if (ref) return resolvePluginPromptBody({ bundles: pluginBundles() }, ref, 'system', seatPlugins);
+  return promptLibrary.raw('system', stem);
+}
+
+function listAllTemplates() {
+  return [...templates.list(), ...pluginTemplateRows(pluginBundles())];
 }
 
 
@@ -954,6 +977,9 @@ const { createSessionManager } = require('./session-manager');
 
 const { createPluginHostEngine } = require('./plugin-host-engine');
 const { pluginsEnabled } = require('./plugin-api');
+const {
+  splitPluginPromptRef, resolvePluginSystemPromptFile, resolvePluginPromptBody, pluginTemplateRows,
+} = require('./plugin-prompt-refs');
 const gitWorktree = require('./git-worktree');
 // Phase 2: discovery + the enabled set. Declared beside the host because
 // setEnabled reaches it through a getter — the loader is constructed AFTER the
@@ -1135,6 +1161,8 @@ const SessionManager = createSessionManager({
     writeSkillPlugin,
     writeAgentPlugin,
     writeBundlePlugins,
+    readSystemPromptBody,
+    listAllTemplates,
     getPluginBundles: () => (pluginHost ? pluginHost.bundles() : []),
   getPersistence: () => persistence,
   getTemplates: () => templates,
@@ -2095,6 +2123,8 @@ const toolCache = createToolCache({ whichBin });
     getBashLive: () => bashLive,
     getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,
+    getPluginLoader: () => pluginLoader,
+    listAllTemplates,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,

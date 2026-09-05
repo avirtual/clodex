@@ -168,6 +168,7 @@ const API_CONTRACT = [
   // ~/.clodex/plugins, which is a dot-directory Finder hides by default and the
   // single largest obstacle to a packaged user installing a plugin at all.
   { name: 'fileReveal', kind: 'invoke', channel: 'file:reveal' },
+  { name: 'writePluginBundleFile', kind: 'invoke', channel: 'plugins:writeBundleFile' },
   { name: 'onSessionFileView', kind: 'on', channel: 'session-file-view' },
   { name: 'openExternal', kind: 'invoke', channel: 'app:openExternal' },
   { name: 'sessionInfo', kind: 'invoke', channel: 'session:info' },

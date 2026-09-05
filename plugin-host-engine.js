@@ -520,6 +520,10 @@ function createPluginHostEngine(deps) {
       id: pluginId, manifest, mod, shipped: opts.shipped === true,
       skills: Array.isArray(opts.skills) ? opts.skills : [],
       agents: Array.isArray(opts.agents) ? opts.agents : [],
+      prompts: Array.isArray(opts.prompts) ? opts.prompts : [],
+      templates: Array.isArray(opts.templates) ? opts.templates : [],
+      editable: opts.editable === true,
+      dir: opts.dir || null,
     });
     const host = buildHost(pluginId);
     try {
@@ -698,23 +702,34 @@ function createPluginHostEngine(deps) {
         enabledByDefault: r.manifest.enabledByDefault !== false,
         skills: r.skills.map((s) => s.name),
         agents: r.agents.map((a) => a.name),
+        prompts: r.prompts.map((p) => ({ name: p.name, kind: p.kind })),
+        templates: r.templates.map((t) => t.name),
+        editable: r.editable === true,
+        dir: r.dir || null,
       }));
     },
     bundles() {
       return [...registered.values()]
-        .filter((r) => r.skills.length || r.agents.length)
+        .filter((r) => r.skills.length || r.agents.length || r.prompts.length || r.templates.length)
         .map((r) => ({
           id: r.id,
+          name: r.manifest.name || r.id,
           shipped: r.shipped === true,
+          editable: r.editable === true,
+          dir: r.dir || null,
           skills: r.skills.map((s) => ({ ...s })),
           agents: r.agents.map((a) => ({ ...a })),
+          prompts: r.prompts.map((p) => ({ ...p })),
+          templates: r.templates.map((t) => ({ name: t.name, body: { ...t.body } })),
         }));
     },
-    updateBundle(pluginId, skills, agents) {
+    updateBundle(pluginId, skills, agents, prompts, templates) {
       const rec = registered.get(String(pluginId));
       if (!rec) return false;
       rec.skills = Array.isArray(skills) ? skills : [];
       rec.agents = Array.isArray(agents) ? agents : [];
+      rec.prompts = Array.isArray(prompts) ? prompts : [];
+      rec.templates = Array.isArray(templates) ? templates : [];
       return true;
     },
     setEnabled(pluginId, enabled) {

@@ -1,12 +1,14 @@
 'use strict';
 // plugin-bundle-drawer.test.js — t675 phase B: the Skills and Agents library
-// drawers list a plugin's bundle records under the plugin's name, WITHOUT the
-// edit/delete controls a library row carries.
+// drawers list a plugin's bundle records under the plugin's name, with neither
+// the Delete a library row carries nor an Edit that could fork the file.
 //
-// The absent controls are the point. A bundle file lives in the plugin's own
-// directory, so an Edit that saved would write a copy into ~/.clodex/skills
-// under the same name, and a Delete would remove part of an installed plugin
-// from a drawer that never said it could. Counting controls on the bundle
+// The absent Delete is the durable point: a bundle file lives in the plugin's
+// own directory, so a Delete would remove part of an installed plugin from a
+// drawer that never said it could. t679 split the Edit by OWNERSHIP — a plugin
+// under the user's own root gets one that writes back into the plugin folder, a
+// built-in gets a reveal-folder action instead — so the row's single control is
+// asserted by NAME here rather than merely counted. Counting on the bundle
 // section alone would pass a drawer that drew no bundle rows at all, so every
 // count here is paired with the flat section's in the same test.
 //
@@ -43,9 +45,12 @@ function el(tag = 'div') {
   return e;
 }
 
+// `editable` is what t679 keys the two arms on. These fixtures leave it FALSY,
+// which is the built-in case; the editable direction is asserted in its own test
+// below, off a section that sets it.
 const SECTIONS = {
-  skills: [{ id: 'stocks', name: 'Stock Assessments', names: ['assess', 'compare'] }],
-  agents: [{ id: 'stocks', name: 'Stock Assessments', names: ['screener'] }],
+  skills: [{ id: 'stocks', name: 'Stock Assessments', names: ['assess', 'compare'], dir: '/plugins/stocks' }],
+  agents: [{ id: 'stocks', name: 'Stock Assessments', names: ['screener'], dir: '/plugins/stocks' }],
 };
 
 // One flat list of headers and rows, so a header drawn detached from the rows it
@@ -54,7 +59,7 @@ const laidOut = (listEl) => listEl.children.map((n) => (n.className === 'check-g
   ? { kind: 'head', text: n.textContent }
   : { kind: 'row', cls: n.className, html: n.innerHTML }));
 
-async function openDrawer(kind, { flat = true } = {}) {
+async function openDrawer(kind, { flat = true, sections = SECTIONS } = {}) {
   const nodes = new Map();
   const byId = (id) => {
     if (!nodes.has(id)) nodes.set(id, el());
@@ -85,7 +90,7 @@ async function openDrawer(kind, { flat = true } = {}) {
       getActiveSession: () => null,
       setAgentLibCache() {}, setSkillLibCache() {},
       openTemplateEditor() {},
-      bundleSectionsOf: (k) => SECTIONS[k] || [],
+      bundleSectionsOf: (k) => sections[k] || [],
       refreshPluginCatalog: async () => {},
     });
     assert.strictEqual(typeof opens[kind], 'function',
@@ -105,6 +110,9 @@ async function openDrawer(kind, { flat = true } = {}) {
 
 const CONTROLS = /data-action=/g;
 const countControls = (html) => (html.match(CONTROLS) || []).length;
+// The control NAMES, in order. A count alone cannot tell an edit from a reveal,
+// and t679 makes exactly that distinction the thing under test.
+const actionsOf = (html) => [...html.matchAll(/data-action="([a-z]+)"/g)].map((m) => m[1]);
 
 for (const kind of ['skills', 'agents']) {
   const flatName = kind === 'skills' ? 'my-skill' : 'explorer';
@@ -126,7 +134,7 @@ for (const kind of ['skills', 'agents']) {
       `ENTER: the ${bundleName} bundle row drew under the header`);
   });
 
-  test(`${kind} drawer: bundle rows carry NO controls while flat rows still do`, async () => {
+  test(`${kind} drawer: a READ-ONLY bundle row offers reveal, never edit or delete`, async () => {
     const { list } = await openDrawer(kind);
     const rows = laidOut(list).filter((n) => n.kind === 'row');
 
@@ -134,11 +142,28 @@ for (const kind of ['skills', 'agents']) {
     const bundle = rows.find((n) => n.html.includes(bundleName));
     assert.ok(flat && bundle, 'ENTER: both a flat row and a bundle row are on screen');
 
-    assert.strictEqual(countControls(bundle.html), 0,
-      'a bundle record is the plugin\'s file — an Edit here would fork it into the operator\'s library, a Delete would gut the plugin');
+    assert.deepStrictEqual(actionsOf(bundle.html), ['reveal'],
+      'a built-in plugin\'s file cannot be written from here, so the row points at the folder instead — '
+      + 'and it never offers a Delete, which would gut an installed plugin');
     assert.ok(countControls(flat.html) > 0,
       'CONTROL: the flat library row keeps its Edit, or the assertion above passes for a drawer with no controls anywhere');
     assert.match(bundle.cls, /bundle-item/, 'and it is marked as one, so the styling can say so too');
+  });
+
+  test(`${kind} drawer: an EDITABLE bundle row offers edit instead — and still no delete`, async () => {
+    // t679's ownership rule, the other direction. The row's file is in the
+    // user's own plugins folder, so the app may write it; Delete stays absent
+    // because removing part of a plugin is still not what this drawer means.
+    const editable = {
+      [kind]: SECTIONS[kind].map((s) => ({ ...s, editable: true })),
+    };
+    const { list } = await openDrawer(kind, { sections: editable });
+    const rows = laidOut(list).filter((n) => n.kind === 'row');
+
+    const bundle = rows.find((n) => n.html.includes(bundleName));
+    assert.ok(bundle, 'ENTER: the bundle row drew, so the control below is the row\'s own');
+    assert.deepStrictEqual(actionsOf(bundle.html), ['edit'],
+      'editable: the ordinary editor, whose save goes back into the plugin folder');
   });
 
   test(`${kind} drawer: an empty library still shows the bundle section, not the empty state`, async () => {

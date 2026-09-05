@@ -14,32 +14,59 @@ const path = require('path');
 const REPO = path.resolve(__dirname, '..', '..');
 const { HOST_API_VERSION, isValidPluginId, PLUGIN_ID_RE } = require(path.join(REPO, 'plugin-api.js'));
 const { AGENT_NAME_RE } = require(path.join(REPO, 'catalogs.js'));
+const { BUNDLE_PROMPT_KINDS } = require(path.join(REPO, 'plugin-loader.js'));
 
 const argv = process.argv.slice(2);
 const positional = [];
 let skillName = null;
-for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--skill') {
-    if (argv[i + 1] === undefined) {
-      console.error('refused: --skill needs a name');
-      process.exit(2);
-    }
-    skillName = argv[++i];
-    continue;
+let promptRef = null;
+let templateName = null;
+const takeValue = (flag, noun, i) => {
+  if (argv[i + 1] === undefined) {
+    console.error(`refused: ${flag} needs ${noun}`);
+    process.exit(2);
   }
+  return argv[i + 1];
+};
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--skill') { skillName = takeValue('--skill', 'a name', i); i++; continue; }
   if (argv[i].startsWith('--skill=')) { skillName = argv[i].slice('--skill='.length); continue; }
+  if (argv[i] === '--prompt') { promptRef = takeValue('--prompt', '<kind>/<stem>', i); i++; continue; }
+  if (argv[i].startsWith('--prompt=')) { promptRef = argv[i].slice('--prompt='.length); continue; }
+  if (argv[i] === '--template') { templateName = takeValue('--template', 'a name', i); i++; continue; }
+  if (argv[i].startsWith('--template=')) { templateName = argv[i].slice('--template='.length); continue; }
   positional.push(argv[i]);
 }
 
 const id = positional[0];
 if (!id) {
-  console.error('usage: scaffold.js <plugin-id> [target-dir] [--skill <name>]');
+  console.error('usage: scaffold.js <plugin-id> [target-dir] [--skill <name>] [--prompt <kind>/<stem>] [--template <stem>]');
   console.error(`  id must match ${PLUGIN_ID_RE}`);
-  console.error(`  skill name must match ${AGENT_NAME_RE}`);
+  console.error(`  skill, prompt and template names must match ${AGENT_NAME_RE}`);
+  console.error('  prompt kind must be "system" or "append"');
   process.exit(2);
 }
 if (skillName != null && !AGENT_NAME_RE.test(skillName)) {
   console.error(`refused: "${skillName}" is not a usable skill name (${AGENT_NAME_RE})`);
+  process.exit(2);
+}
+let promptKind = null;
+let promptStem = null;
+if (promptRef != null) {
+  const slash = promptRef.indexOf('/');
+  promptKind = slash < 0 ? '' : promptRef.slice(0, slash);
+  promptStem = slash < 0 ? promptRef : promptRef.slice(slash + 1);
+  if (!BUNDLE_PROMPT_KINDS.includes(promptKind)) {
+    console.error(`refused: --prompt takes <kind>/<stem>, where kind is ${BUNDLE_PROMPT_KINDS.join(' or ')} (got ${JSON.stringify(promptRef)})`);
+    process.exit(2);
+  }
+  if (!AGENT_NAME_RE.test(promptStem)) {
+    console.error(`refused: "${promptStem}" is not a usable prompt name (${AGENT_NAME_RE})`);
+    process.exit(2);
+  }
+}
+if (templateName != null && !AGENT_NAME_RE.test(templateName)) {
+  console.error(`refused: "${templateName}" is not a usable template name (${AGENT_NAME_RE})`);
   process.exit(2);
 }
 // Validated by the host's own predicate, not a copy of its regex: this refuses
@@ -113,7 +140,31 @@ Only a seat that has the ${id} plugin can see it, and it arrives as /${id}:${ski
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill);
 }
 
+if (promptStem) {
+  const promptDir = path.join(dir, 'prompts', promptKind);
+  fs.mkdirSync(promptDir, { recursive: true });
+  const body = promptKind === 'system'
+    ? `TODO: the whole system prompt this seat boots with. It REPLACES the CLI's own,\nso there is nothing to strip and nothing else is prepended.\n`
+    : `TODO: instructions composed onto whatever system prompt the seat already has.\n`;
+  fs.writeFileSync(path.join(promptDir, `${promptStem}.md`), body);
+}
+
+if (templateName) {
+  const templateDir = path.join(dir, 'templates');
+  fs.mkdirSync(templateDir, { recursive: true });
+  const template = {
+    name: templateName,
+    type: 'claude',
+    cwd: '${TEAM_ROOT}',
+    ...(promptStem && promptKind === 'system' ? { systemPromptFile: promptStem } : {}),
+    ...(promptStem && promptKind === 'append' ? { appendPromptFiles: [promptStem] } : {}),
+  };
+  fs.writeFileSync(path.join(templateDir, `${templateName}.json`), `${JSON.stringify(template, null, 2)}\n`);
+}
+
 console.log(`created ${dir}`);
 if (skillName) console.log(`  skill:      skills/${skillName}/SKILL.md  ->  /${id}:${skillName}`);
+if (promptStem) console.log(`  prompt:     prompts/${promptKind}/${promptStem}.md  ->  ${id}:${promptStem}`);
+if (templateName) console.log(`  template:   templates/${templateName}.json  ->  ${id}:${templateName}`);
 const shown = dir.startsWith(REPO + path.sep) ? path.relative(REPO, dir) : dir;
 console.log(`  verify it:  node plugins/tools/verify.js ${shown}`);

@@ -65,7 +65,7 @@ function registerIpcHandlers(deps) {
     getSandbox, getSandboxManager,
     enableDrawerServices, enableLocalTerminal, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
     syncTerminalReports,
-    getPluginHost, surfaceOfSender,
+    getPluginHost, getPluginLoader, listAllTemplates, surfaceOfSender,
   } = deps;
 
   async function spawnFromParams(e, p) {
@@ -458,7 +458,7 @@ function registerIpcHandlers(deps) {
     catch { return { ok: false }; }
   });
 
-  handle('templates:list', () => templates.list());
+  handle('templates:list', () => (listAllTemplates ? listAllTemplates() : templates.list()));
   handle('templates:save', (_e, template) => { templates.save(template); return templates.list(); });
   handle('templates:saveByName', (_e, template) => {
     const t = templates.saveByName(template);
@@ -874,6 +874,11 @@ function registerIpcHandlers(deps) {
   handle('file:resolve', (_e, name, raw, baseDir) => resolveFilePath(name, raw, baseDir));
   handle('file:open', (_e, filePath) => openPath(filePath));
   handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
+  handle('plugins:writeBundleFile', (_e, pluginId, kind, stem, body) => {
+    const loader = getPluginLoader && getPluginLoader();
+    if (!loader) return { ok: false, error: 'no plugin loader' };
+    return loader.writeBundleFile(String(pluginId || ''), String(kind || ''), String(stem || ''), body);
+  });
 
   handle('session:setTools', (_e, name, disabledTools) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };

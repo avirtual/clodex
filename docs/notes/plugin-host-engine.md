@@ -23,3 +23,10 @@ MODULE this way would launder stale require-cached code into looking fresh,
 which is exactly what the restart-required badge exists to prevent. The loader
 decides WHEN to call it — a moved or unreadable plugin is skipped, see
 docs/notes/plugin-loader.md.
+
+## catalog
+
+Carries names and the plugin's `dir`, never a content BODY: this row is read by
+every renderer at startup, and a body here would broadcast every plugin's whole
+bundle to each window. The drawers read a body they are about to edit through
+`file:peek` against `dir` instead. Pinned by test/plugin-prompt-bundles.test.js.

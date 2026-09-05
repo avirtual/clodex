@@ -34,7 +34,8 @@ pack is the only composition a real trial has built a working plugin from.
 ## `scaffold.js` — start from something that already passes
 
 ```
-node plugins/tools/scaffold.js my-plugin [target-dir] [--skill <name>]
+node plugins/tools/scaffold.js my-plugin [target-dir] [--skill <name>] \
+  [--prompt <kind>/<stem>] [--template <stem>]
 ```
 
 Writes `manifest.json`, `engine.js`, `renderer.js` with the id and directory name
@@ -44,9 +45,16 @@ test would accept. The result passes `verify.js` before you write any logic.
 
 `--skill <name>` also writes `skills/<name>/SKILL.md` — a two-line stub with the
 frontmatter the CLI needs — so the plugin ships a skill the seats that have it
-invoke as `/<plugin-id>:<name>`. The name is checked against the host's
+invoke as `/<plugin-id>:<name>`. `--prompt <kind>/<stem>` writes
+`prompts/<kind>/<stem>.md` (kind is `system` or `append`), and `--template <stem>`
+writes `templates/<stem>.json`. Every name is checked against the host's
 `AGENT_NAME_RE`, the same rule the loader applies when it reads the bundle, so a
 name the app would skip is refused here instead of written and silently ignored.
+
+Given both `--prompt` and `--template`, the generated template references the
+generated prompt **by bare stem**, which is what the loader rewrites to
+`<plugin-id>:<stem>` on read — so the stub demonstrates the form authors should
+write rather than the form the app stores.
 
 ## `verify.js` — does this plugin actually run?
 
@@ -67,9 +75,11 @@ crashing, session hooks fire without logging an error, and `deactivate()`
 releases everything.
 
 It also reports the **content bundle** the loader read out of the folder: how many
-skills and agents it accepted, each under its `<plugin-id>:<name>`, and one line
-per entry it skipped with the loader's own reason (a name failing `AGENT_NAME_RE`,
-a `skills/<name>/` with no readable `SKILL.md`). The counts come from the real
+skills, agents, prompts (split by kind) and templates it accepted, each under its
+`<plugin-id>:<name>`, whether a copy under this root is editable in the app, and one
+line per entry it skipped with the loader's own reason (a name failing
+`AGENT_NAME_RE`, a `skills/<name>/` with no readable `SKILL.md`, a template that is
+not parseable JSON). The counts come from the real
 `readBundle` by way of `discover()`, not a second reading, so what you see is what
 a seat would get. A bundle entry counts as a registered surface, which is what
 lets a content-only plugin — a manifest naming neither half — pass.
