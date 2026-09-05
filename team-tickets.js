@@ -4056,7 +4056,7 @@ function createTicketMethods(deps, shared) {
         // precondition, which effectiveTools alone no longer carries: [] arises in
         // three ways — a well-formed request that intersects the cap emptily, `[]`
         // itself, and a malformed `tools` (fail-closed above) — but NEVER for an
-        // absent/null `tools`, which takes the non-empty constant. So the guard
+        // ABSENT `tools`, which takes the non-empty constant. So the guard
         // below needs requestedTools truthy to mean "a real request emptied out";
         // malformed carries requestedTools: null and is refused separately.
         requestedTools,
