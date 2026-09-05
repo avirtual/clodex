@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.29.1 — 2026-09-05
+
 - **A pipe planted in an agent's memory folder no longer hangs the app itself.**
   The 5.29.x fix covered the memory overlay; the same blocking read was still in
   the core store, which runs at agent boot and on every memory recall — a pipe
