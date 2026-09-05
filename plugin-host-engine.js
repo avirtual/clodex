@@ -701,9 +701,9 @@ function createPluginHostEngine(deps) {
         // loadOne over a separate unconditional channel with identical effect.
         // Both belong to "core's own web surface is privileged", a wider
         // question than plugin dispatch, ticketed separately. HOST_DESKTOP_ONLY
-        // is the exception: those three take a caller-supplied path, so a web
-        // client could otherwise link an arbitrary host directory into the
-        // plugin root and have its code loaded. The list is pinned by
+        // is the exception: every member either takes a caller-supplied host
+        // path or fetches/writes plugin code from a caller-supplied repo spec —
+        // either way a web client could have arbitrary code loaded. Pinned by
         // test/plugin-surface-gate.test.js — a new method argues for itself.
         const hf = hostMethods[String(method)];
         if (typeof hf !== 'function') return errorEnvelope(NO_SUCH_METHOD);

@@ -303,9 +303,9 @@ test('_host holds exactly these sixteen methods, and no seventeenth by inheritan
   // hostMethods is web-reachable the moment it is written, with nothing to edit
   // and nothing to notice — unless it is named in HOST_DESKTOP_ONLY. Same
   // argument as the workbench `"any"` literal below: the dangerous direction is
-  // widening, so widening must touch a test. The three registration methods are
-  // in the list because the table is pinned WHOLE; the subject below is what
-  // proves they are refused on the web surface.
+  // widening, so widening must touch a test. The HOST_DESKTOP_ONLY methods are
+  // in the list because the table is pinned WHOLE; the subjects below are what
+  // prove they are refused on the web surface.
   const HOST_METHODS = [
     'plugins.applyUpdate',
     'plugins.installFromSource',
