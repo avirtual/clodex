@@ -3964,20 +3964,11 @@ function createTicketMethods(deps, shared) {
       // used to be a second source here and it was inert on every other role,
       // which is what made a `tools:` on a hand read as a restriction and enforce
       // nothing.
-      // THREE states, not two: only an ABSENT `tools` takes the full cap. An empty
-      // array and a wrong-typed value both used to collapse to the same null as
-      // absent, so a template that asked for nothing — or asked malformedly —
-      // spawned with every capped tool. That is the widening direction, reached by
-      // a typo, on a file agents can write.
-      // `null` counts as absent: it is JSON's conventional "no value", and a
-      // template round-tripped through a writer that emits nulls for missing
-      // fields must not start refusing. Safe only while NO editor writes `tools` —
-      // if it ever joins EDITOR_OWNED, a cleared control emitting null starts
-      // meaning "the operator removed every tool", and reading that as "take the
-      // full cap" is the widening this guard exists to kill. Move null to the
-      // malformed/empty arm at the same time.
-      const rawTools = tpl && tpl.tools;
-      const toolsMalformed = rawTools != null && !Array.isArray(rawTools);
+      // Only an ABSENT `tools` takes the full cap: the editor owns the key now, so
+      // `null` is a value it wrote, not a missing one, and reading it as the full
+      // cap would widen past what the template asked for.
+      const rawTools = tpl ? tpl.tools : undefined;
+      const toolsMalformed = rawTools !== undefined && !Array.isArray(rawTools);
       // `[]` survives as `[]` here, and reaches the same empty intersection a
       // disjoint list does — one refusal covers both.
       const requestedTools = Array.isArray(rawTools) ? rawTools : null;

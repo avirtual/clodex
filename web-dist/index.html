@@ -6776,6 +6776,11 @@ body {
           <div id="input-tools-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Pre-filled from your default set (Preferences). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
         </label>
+        <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap)
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+          <div id="input-tools-allow-list" class="agent-checklist"></div>
+          <span class="hint-text">Separate from the denylist above: this is the template's <code>tools</code> key. Only a <strong>reviewer</strong> seat reads it, and it can only narrow the read-only cap (<code>Read</code>, <code>Grep</code>, <code>Glob</code>) — never widen it. Leave every box unchecked to omit the key, which accepts the full cap; a list that keeps none of the capped tools is refused rather than widened.</span>
+        </label>
       </details>
       <details id="skills-section" class="dialog-section" style="display:none;">
         <summary>Skills</summary>
@@ -22391,6 +22396,30 @@ ${String(body || "").trim()}
       function collectToolChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked):not(:disabled)')).map((cb) => cb.value);
       }
+      function renderToolAllowChecklist(container, allowedSet) {
+        container.innerHTML = "";
+        const names = [...claudeToolsCache];
+        if (!names.length) {
+          container.innerHTML = '<span class="hint-text">No tool catalog available.</span>';
+          return;
+        }
+        for (const name of names) {
+          const row = document.createElement("label");
+          row.className = "agent-check";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = name;
+          cb.checked = !!(allowedSet && allowedSet.has(name));
+          const txt = document.createElement("span");
+          txt.innerHTML = `<strong>${esc(name)}</strong>`;
+          row.appendChild(cb);
+          row.appendChild(txt);
+          container.appendChild(row);
+        }
+      }
+      function collectToolAllowChecklist(container) {
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+      }
       function renderSkillChecklist(container, names, disabledSet, effective, opts) {
         effective = effective || {};
         opts = opts || {};
@@ -22453,6 +22482,8 @@ ${String(body || "").trim()}
         collectInjectChecklist,
         renderToolChecklist,
         collectToolChecklist,
+        renderToolAllowChecklist,
+        collectToolAllowChecklist,
         renderSkillChecklist,
         collectSkillChecklist,
         setChecklistAll,
@@ -33796,7 +33827,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -35090,6 +35121,8 @@ ${detail}` });
         for (const sec of [toolsSection, skillsSection, otherSection]) {
           if (sec) sec.style.display = claudeOnly ? "" : "none";
         }
+        if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
+        if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
         if (claudeOnly && !skipAsyncRefresh) {
           refreshNewSessionSkills();
           refreshNewSessionInjectSkills();
@@ -35403,9 +35436,12 @@ ${detail}` });
       }
       var toolsRow = document.getElementById("tools-row");
       var inputToolsList = document.getElementById("input-tools-list");
+      var toolsAllowRow = document.getElementById("tools-allow-row");
+      var inputToolsAllowList = document.getElementById("input-tools-allow-list");
       var skillsRow = document.getElementById("skills-row");
       var inputSkillsList = document.getElementById("input-skills-list");
       wireBulkToggles(toolsRow, inputToolsList);
+      wireBulkToggles(toolsAllowRow, inputToolsAllowList);
       wireBulkToggles(skillsRow, inputSkillsList);
       var injectSkillsRow = document.getElementById("inject-skills-row");
       var inputInjectSkillsList = document.getElementById("input-inject-skills-list");
@@ -35823,6 +35859,7 @@ ${detail}` });
           collectPluginChecklist(inputPluginList),
           pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered)
         ) : defaultPluginTicks();
+        const toolsAllow = dialogMode === "template" && type === "claude" ? collectToolAllowChecklist(inputToolsAllowList) : [];
         const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
         return {
@@ -35836,6 +35873,7 @@ ${detail}` });
           plugins,
           ...autoCompactOff ? { autoCompact: false } : {},
           ...noWireOn ? { noWire: true } : {},
+          ...toolsAllow.length ? { tools: toolsAllow } : {},
           denyBuiltins: type === "claude" ? collectBuiltinChecklist(inputBuiltinsList) : [],
           disabledTools: type === "claude" ? collectToolChecklist(inputToolsList) : [],
           disabledSkills: type === "claude" ? collectSkillChecklist(inputSkillsList) : [],
@@ -36054,6 +36092,7 @@ ${detail}` });
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
           await refreshNewSessionIntents(tpl && tpl.intents);
           renderBuiltinChecklist(inputBuiltinsList, new Set(tpl && tpl.denyBuiltins || []));
+          renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
           await refreshNewSessionTools(new Set(tpl && tpl.disabledTools || []));
           await refreshNewSessionSkills(new Set(tpl && tpl.disabledSkills || []));
           await refreshNewSessionInjectSkills(new Set(tpl && tpl.injectSkills || []));

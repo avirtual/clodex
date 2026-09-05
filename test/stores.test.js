@@ -563,6 +563,7 @@ test('templates: the full config subset round-trips (schemaless), id/name = file
       agents: ['reviewer'],
       denyBuiltins: ['WebSearch'],
       disabledTools: ['Edit', 'NotebookEdit'],
+      tools: ['Read', 'Grep'], // the reviewer allowlist — a DIFFERENT key from disabledTools
       disabledSkills: ['some-skill'],
       injectSkills: ['trader-notes'],
       systemPromptFile: 'trader-seat',
@@ -697,6 +698,22 @@ test('templates: save() REMOVES intents when all boxes re-checked (EDITOR_OWNED 
     // semantics as autoCompact, proving the owned-set covers every gated key.
     stores.templates.save({ id: 'gate', name: 'gate', type: 'claude', cwd: '/a' });
     assert.strictEqual('intents' in stores.templates.list()[0], false);
+  } finally { cleanup(); }
+});
+
+// t674: `tools` joined EDITOR_OWNED when the editor gained a control for it, and
+// the CLEAR direction is the one the membership buys. An empty control omits the
+// key, and merge-preserve must read that as "the operator unticked everything",
+// not as "keep the stored list" — which would make the control unable to widen a
+// narrowed reviewer template back to the full cap, silently.
+test('templates: save() REMOVES tools when the allowlist control is emptied', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'rv', type: 'claude', cwd: '/a', tools: ['Read'] });
+    assert.deepStrictEqual(stores.templates.list()[0].tools, ['Read'], 'ENTER: the narrowed list really was stored');
+    stores.templates.save({ id: 'rv', name: 'rv', type: 'claude', cwd: '/a' });
+    assert.strictEqual('tools' in stores.templates.list()[0], false,
+      'absent, not [] and not the stored list — absent is what accepts the full cap');
   } finally { cleanup(); }
 });
 

@@ -409,6 +409,32 @@ function collectToolChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked):not(:disabled)')).map(cb => cb.value);
 }
 
+function renderToolAllowChecklist(container, allowedSet) {
+  container.innerHTML = '';
+  const names = [...claudeToolsCache];
+  if (!names.length) {
+    container.innerHTML = '<span class="hint-text">No tool catalog available.</span>';
+    return;
+  }
+  for (const name of names) {
+    const row = document.createElement('label');
+    row.className = 'agent-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = name;
+    cb.checked = !!(allowedSet && allowedSet.has(name));
+    const txt = document.createElement('span');
+    txt.innerHTML = `<strong>${esc(name)}</strong>`;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    container.appendChild(row);
+  }
+}
+
+function collectToolAllowChecklist(container) {
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
 // Skills mirror tools. The catalog combines a static seed (CLAUDE_SKILLS), the
 // live transcript roster, clodex's own off list, and any skill a LOWER settings
 // layer mentions. A skill that's off in a lower layer (global/project/local
@@ -477,6 +503,7 @@ module.exports = {
   renderBuiltinChecklist, collectBuiltinChecklist,
   renderInjectChecklist, collectInjectChecklist,
   renderToolChecklist, collectToolChecklist,
+  renderToolAllowChecklist, collectToolAllowChecklist,
   renderSkillChecklist, collectSkillChecklist,
   setChecklistAll, wireBulkToggles,
   setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache,

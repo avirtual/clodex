@@ -333,20 +333,56 @@ test('t300: a reviewer template whose tools is a STRING is malformed, and grants
 });
 
 // The branch the fix must NOT touch: absent is the documented default and T52
-// pins it. `null` rides here deliberately — JSON's conventional "no value", so a
-// template round-tripped through a writer that emits nulls must not start
-// refusing. That is a judgment call, and this is where it is pinned.
-test('t300: an ABSENT tools — and an explicit null — still take the full cap', () => {
+// pins it.
+test('t300: an ABSENT tools still takes the full cap', () => {
   const absent = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo' }]);
   const team = teamWith({ reviewer: { template: 'rv' } });
   const a = absent.resolveSeatShape(team, 'reviewer', 'review', LEAD);
   assert.deepStrictEqual(a.effectiveTools, REVIEWER_CAP, 'absent is the documented default: the full cap');
   assert.strictEqual(a.toolsMalformed, false, 'and absent is not a malformation');
+});
+
+// t674 INVERTED this arm. `null` used to read as absent — JSON's "no value" —
+// which was safe only while no editor wrote the key. The template editor now owns
+// `tools` (it is in EDITOR_OWNED), so a null in a template file is a value some
+// writer put there, and the full cap is more than it asked for. Refusing costs an
+// operator one message; widening hands a read-only seat the whole cap silently.
+//
+// ABSENT is asserted in the same subject as the CONTROL, not only in the sibling
+// above: a guard that over-caught (`rawTools == null` on the malformed side, or a
+// `tpl && tpl.tools` read that turns a template-less resolve into undefined) would
+// refuse the default path too, and the null assertion alone is true of that bug.
+test('t674: an explicit tools: null is a TYPE fault now that the editor owns the key', () => {
+  const team = teamWith({ reviewer: { template: 'rv' } });
 
   const nul = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: null }]);
   const n = nul.resolveSeatShape(team, 'reviewer', 'review', LEAD);
-  assert.deepStrictEqual(n.effectiveTools, REVIEWER_CAP, 'an explicit null reads as absent, not as a fault');
-  assert.strictEqual(n.toolsMalformed, false, 'null is JSON "no value" — treating it as a type fault would refuse a round-tripped template');
+  assert.strictEqual(n.toolsMalformed, true, 'null joins the malformed arm — the editor writes this key');
+  assert.deepStrictEqual(n.effectiveTools, [], 'and grants nothing: fail-closed in the SHAPE, never the full cap');
+  assert.strictEqual(n.requestedTools, null, 'there is no well-formed request to report');
+  assert.deepStrictEqual(n.disabledTools, CLAUDE_TOOLS.slice(), 'every tool is denied');
+
+  // CONTROL: the neighbouring state the refusal must not swallow.
+  const absent = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo' }]);
+  const a = absent.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.strictEqual(a.toolsMalformed, false, 'CONTROL: absent is still not a fault');
+  assert.deepStrictEqual(a.effectiveTools, REVIEWER_CAP, 'CONTROL: and still takes the full cap');
+});
+
+// The third state the spec names, asserted beside the two above because the value
+// of the trio is that they differ: a one-element list is a real request and must
+// survive the null arm's move intact.
+test('t674: a narrowing tools: [Read] still resolves to exactly [Read]', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Read'] }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.effectiveTools, ['Read'], 'a well-formed narrowing request is honored');
+  assert.strictEqual(shape.toolsMalformed, false, 'and is not a fault');
+  assert.deepStrictEqual(shape.requestedTools, ['Read']);
+  for (const denied of ['Grep', 'Glob']) {
+    assert.ok(CLAUDE_TOOLS.includes(denied), `ENTER: ${denied} is in the catalog, so its denial is meaningful`);
+    assert.ok(shape.disabledTools.includes(denied), `${denied} is in the cap but was not asked for`);
+  }
 });
 
 test('a reviewer template cannot widen past the cap even naming every tool', () => {
