@@ -26,7 +26,9 @@ blocks a release.
   folder.** An agent writes that folder itself, so a link planted there used to
   be read and its contents shown to you as if it were a memory. Entries that
   resolve outside the folder are now skipped: they are not listed, their text is
-  never displayed, and nothing is deleted. Real memories are unaffected.
+  never displayed, and nothing is deleted. An agent folder that is itself a link
+  to another agent's folder is refused too, so one agent's memories can never be
+  shown under another's name. Real memories are unaffected.
 
 ## 5.28.0 — 2026-09-05
 
