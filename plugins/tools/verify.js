@@ -185,9 +185,6 @@ try {
 if (!activated) { report(); process.exit(1); }
 
 // ------------------------------------------------- did it actually DO anything
-// A content bundle counts here: a skills/agents-only plugin registers no ipc
-// method and no hook by construction, so requiring one would fail the very
-// plugin shape the loader was changed to accept.
 const keys = engine._dispatchKeys().filter((k) => k.startsWith(`${manifest.id}:`));
 const hookCounts = engine._hookCounts();
 const bundleCount = bundleSkills.length + bundleAgents.length;
