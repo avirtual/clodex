@@ -975,8 +975,10 @@ answer differently.
 
 ### renderer/lib — pure leaves
 
-DOM-free and unit-tested; peers-ui and the popovers are imperative and are not,
-which is why the judgement worth testing is pushed down here.
+Unit-tested and free of renderer state; peers-ui and the popovers are imperative
+and are not, which is why the judgement worth testing is pushed down here. Most
+are DOM-free; a few reach for `document` to escape, build or measure —
+`render-html.js`, `render-markdown.js`, `popover-place.js`.
 
 - **constants.js**, **format.js** (string formatters), **render-html.js**
   (DOM-string builders).
