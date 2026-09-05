@@ -125,6 +125,7 @@ const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
 const { didGrow } = require('./stall-evidence');
+const { seatHasPlugin } = require('./plugin-api');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -472,6 +473,8 @@ function createSessionManager(deps) {
     writeVoiceMode,
     writeSkillPlugin,
     writeAgentPlugin,
+    writeBundlePlugins,
+    getPluginBundles,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
@@ -483,6 +486,8 @@ function createSessionManager(deps) {
   // inside a turn handler. An in-memory-only instance (no logDir, so no recall
   // log) is the cheapest null object and keeps the read API's shape honest.
   const memLoad = memoryLoad || createMemoryLoad();
+  const bundlesFor = (writeBundlePlugins && getPluginBundles) ? getPluginBundles : () => [];
+  const writeBundles = (writeBundlePlugins && getPluginBundles) ? writeBundlePlugins : () => [];
   // Partial deps objects inject composeDigest without its sibling. No tiering
   // means nothing is recorded as loaded, which is the safe direction of the
   // asymmetry — never the reverse.
@@ -1439,17 +1444,12 @@ function createSessionManager(deps) {
           // reads our push as the user's and drops every injected skill.
           const userPluginDir = args.includes('--plugin-dir');
           const agentRecords = effectiveInjectedAgents(name, agents);
+          const injectedAgents = [];
+          const injectedSkills = [];
           if (!args.includes('--agents')) {
             const agentPluginDir = writeAgentPlugin(name, agents);
             if (agentPluginDir) args.push('--plugin-dir', agentPluginDir);
-            // The CLI's own warning for three of these goes to a log the
-            // operator doesn't read, and initialPrompt gets none at all.
-            for (const rec of agentRecords) {
-              const dropped = DROPPED_AGENT_FIELDS.filter((f) => (rec.meta || {})[f]);
-              if (dropped.length) {
-                warnings.push(`Agent "${rec.name}" sets ${dropped.join(', ')}, which the plugin loader ignores — that field has no effect on this session. Move the agent to .claude/agents/ if you need it.`);
-              }
-            }
+            for (const rec of agentRecords) injectedAgents.push({ ...rec, qualified: qualifiedAgentName(rec.name) });
           } else {
             cleanupAgentPlugin(name);
           }
@@ -1457,27 +1457,52 @@ function createSessionManager(deps) {
             const pluginDir = writeSkillPlugin(name, injectSkills);
             if (pluginDir) args.push('--plugin-dir', pluginDir);
             try {
-              const records = effectiveInjectedSkills(name, injectSkills);
-              if (records.length) {
-                const deny = Array.isArray(denyBuiltins) ? denyBuiltins : [];
-                // Library agents match by QUALIFIED name — a skill saying
-                // `subagent_type: "test-runner"` no longer dispatches even with
-                // test-runner enabled. Built-ins keep bare names.
-                const enabled = new Set([
-                  ...agentRecords.map((a) => qualifiedAgentName(a.name)),
-                  ...BUILTIN_AGENTS.filter((b) => !deny.includes(b)),
-                ]);
-                for (const { skill, ref } of unresolvedSubagentRefs(records, enabled)) {
-                  const hint = agentRecords.some((a) => a.name === ref)
-                    ? ` Use "${qualifiedAgentName(ref)}" — library subagents are namespaced.`
-                    : ' Enable it (or remove the deny) in the session\'s agents.';
-                  warnings.push(`Skill "${skill}" calls subagent "${ref}", which isn't enabled for this session — that delegation will fail.${hint}`);
-                }
+              for (const rec of effectiveInjectedSkills(name, injectSkills)) {
+                injectedSkills.push({ name: rec.name, content: rec.content });
               }
             } catch {}
+            try {
+              const seatPlugins = Array.isArray(plugins) ? plugins : null;
+              const wanted = (bundlesFor() || [])
+                .filter((b) => seatHasPlugin(b.id, seatPlugins, b.shipped));
+              for (const b of writeBundles(name, wanted)) {
+                args.push('--plugin-dir', b.dir);
+                for (const s of b.skills) injectedSkills.push({ name: `${b.id}:${s.name}`, content: s.content });
+                for (const a of b.agents) injectedAgents.push({ ...a, qualified: `${b.id}:${a.name}`, bundle: true });
+              }
+            } catch (e) {
+              warnings.push(`Plugin-owned skills and agents could not be scaffolded for this session: ${(e && e.message) || e}`);
+            }
           } else {
             cleanupSkillPlugin(name);
           }
+          // The CLI's own warning for three of these goes to a log the
+          // operator doesn't read, and initialPrompt gets none at all.
+          for (const rec of injectedAgents) {
+            const dropped = DROPPED_AGENT_FIELDS.filter((f) => (rec.meta || {})[f]);
+            if (dropped.length) {
+              warnings.push(`Agent "${rec.bundle ? rec.qualified : rec.name}" sets ${dropped.join(', ')}, which the plugin loader ignores — that field has no effect on this session. Move the agent to .claude/agents/ if you need it.`);
+            }
+          }
+          try {
+            if (injectedSkills.length) {
+              const deny = Array.isArray(denyBuiltins) ? denyBuiltins : [];
+              // Every injected agent matches by QUALIFIED name — a skill saying
+              // `subagent_type: "test-runner"` does not dispatch even with
+              // test-runner enabled. Built-ins keep bare names.
+              const enabled = new Set([
+                ...injectedAgents.map((a) => a.qualified),
+                ...BUILTIN_AGENTS.filter((b) => !deny.includes(b)),
+              ]);
+              for (const { skill, ref } of unresolvedSubagentRefs(injectedSkills, enabled)) {
+                const owner = injectedAgents.find((a) => a.name === ref);
+                const hint = owner
+                  ? ` Use "${owner.qualified}" — injected subagents are namespaced.`
+                  : ' Enable it (or remove the deny) in the session\'s agents.';
+                warnings.push(`Skill "${skill}" calls subagent "${ref}", which isn't enabled for this session — that delegation will fail.${hint}`);
+              }
+            }
+          } catch {}
           if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
             args.push('--resume', resumeId);
             if (fork && !args.includes('--fork-session')) args.push('--fork-session');

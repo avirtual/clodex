@@ -4,8 +4,9 @@ const {
   isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS, PLUGIN_SCOPES, scopeOf,
   PLUGIN_METHOD_SURFACES,
 } = require('./plugin-api');
+const { AGENT_NAME_RE } = require('./catalogs');
 
-function validateManifest(m, dirName) {
+function validateManifest(m, dirName, hasBundle = false) {
   if (!m || typeof m !== 'object') return 'manifest is not a JSON object';
   if (typeof m.id === 'string' && RESERVED_PLUGIN_IDS.has(m.id)) {
     return `plugin id ${JSON.stringify(m.id)} is reserved — it is a key in uiSettings.plugins, so a plugin of that name would overwrite the enabled list`;
@@ -38,8 +39,41 @@ function validateManifest(m, dirName) {
   if (!m.entry || typeof m.entry !== 'object') return 'manifest.entry is missing';
   if (m.entry.engine && typeof m.entry.engine !== 'string') return 'manifest.entry.engine must be a string';
   if (m.entry.renderer && typeof m.entry.renderer !== 'string') return 'manifest.entry.renderer must be a string';
-  if (!m.entry.engine && !m.entry.renderer) return 'manifest.entry names neither an engine nor a renderer half';
+  if (!m.entry.engine && !m.entry.renderer && !hasBundle) {
+    return 'manifest.entry names neither an engine nor a renderer half, and the directory carries no skills/ or agents/ entry';
+  }
   return null;
+}
+
+function readBundle(fs, path, dir, onSkip) {
+  const skip = typeof onSkip === 'function' ? onSkip : () => {};
+  const listing = (sub) => {
+    try { return fs.readdirSync(path.join(dir, sub), { withFileTypes: true }); }
+    catch { return []; }
+  };
+  const skills = [];
+  for (const ent of listing('skills')) {
+    if (!ent.isDirectory()) continue;
+    if (!AGENT_NAME_RE.test(ent.name)) { skip(`skills/${ent.name}`, 'not a legal skill name'); continue; }
+    let content;
+    try { content = fs.readFileSync(path.join(dir, 'skills', ent.name, 'SKILL.md'), 'utf8'); }
+    catch (e) { skip(`skills/${ent.name}`, `no readable SKILL.md — ${(e && e.message) || e}`); continue; }
+    skills.push({ name: ent.name, content });
+  }
+  const agents = [];
+  for (const ent of listing('agents')) {
+    if (!ent.isFile() && !ent.isSymbolicLink()) continue;
+    if (!ent.name.endsWith('.md')) continue;
+    const name = ent.name.slice(0, -3);
+    if (!AGENT_NAME_RE.test(name)) { skip(`agents/${ent.name}`, 'not a legal agent name'); continue; }
+    let content;
+    try { content = fs.readFileSync(path.join(dir, 'agents', ent.name), 'utf8'); }
+    catch (e) { skip(`agents/${ent.name}`, `unreadable — ${(e && e.message) || e}`); continue; }
+    agents.push({ name, content });
+  }
+  skills.sort((a, b) => (a.name < b.name ? -1 : 1));
+  agents.sort((a, b) => (a.name < b.name ? -1 : 1));
+  return { skills, agents };
 }
 
 // Comparable versions are dot-separated runs of digits, compared NUMERICALLY
@@ -232,9 +266,12 @@ function createPluginLoader(deps) {
         }
         continue;
       }
+      const bundle = readBundle(fs, path, dir, (what, reason) => {
+        logIt(`${ent.name}: skipping ${what} — ${reason}`);
+      });
       // The dirname compared is the one in the ROOT, not the symlink target's:
       // what the user named the directory is what they meant the id to be.
-      const why = validateManifest(manifest, ent.name);
+      const why = validateManifest(manifest, ent.name, !!(bundle.skills.length || bundle.agents.length));
       if (why) { logIt(`skipping ${ent.name}: ${why}`); note(ent.name, why); continue; }
       const entry = manifest.entry || {};
       for (const half of ['engine', 'renderer']) {
@@ -261,6 +298,8 @@ function createPluginLoader(deps) {
         enginePath: entry.engine ? path.join(dir, entry.engine) : null,
         rendererPath: entry.renderer ? path.join(dir, entry.renderer) : null,
         stylePath: manifest.style ? path.join(dir, manifest.style) : null,
+        skills: bundle.skills,
+        agents: bundle.agents,
       };
       const held = claimed.get(manifest.id);
       if (held) {
@@ -331,7 +370,11 @@ function createPluginLoader(deps) {
       }
       const mod = rec.enginePath ? requireModule(rec.enginePath) : {};
       if (rec.enginePath && priorVersion === undefined) requiredPaths.set(rec.enginePath, nowVersion);
-      pluginHost.register(rec.id, mod, rec.manifest, { shipped: rec.root === 'core' });
+      pluginHost.register(rec.id, mod, rec.manifest, {
+        shipped: rec.root === 'core',
+        skills: rec.skills || [],
+        agents: rec.agents || [],
+      });
       logIt(`loaded ${rec.id} v${rec.manifest.version || '?'}`);
       verbConflicts.delete(rec.id);
       loadedFrom.set(rec.id, { dir: rec.dir, version: rec.manifest.version || null });
@@ -400,6 +443,9 @@ function createPluginLoader(deps) {
       seen.add(rec.id);
       const live = running.has(rec.id) ? loadedFrom.get(rec.id) : null;
       if (live) {
+        if (typeof pluginHost.updateBundle === 'function') {
+          try { pluginHost.updateBundle(rec.id, rec.skills, rec.agents); } catch {}
+        }
         const movedDir = live.dir !== rec.dir;
         const movedVersion = (live.version || null) !== (rec.manifest.version || null);
         if (movedDir || movedVersion) {
@@ -485,7 +531,8 @@ function createPluginLoader(deps) {
       return { ok: false, error: `${manifestPath} is not valid JSON — ${(e && e.message) || e}` };
     }
     const dirName = path.basename(abs);
-    const why = validateManifest(manifest, dirName);
+    const bundle = readBundle(fs, path, abs);
+    const why = validateManifest(manifest, dirName, !!(bundle.skills.length || bundle.agents.length));
     if (why) {
       if (manifest && typeof manifest === 'object' && isValidPluginId(manifest.id)
           && !RESERVED_PLUGIN_IDS.has(manifest.id) && manifest.id !== dirName) {

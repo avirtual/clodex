@@ -201,11 +201,15 @@ test('fake plugin: activation reaches every engine extension point exactly once'
     // isEnabled — a row that reported false here would show the operator a
     // default the loader does not apply. `shipped` is FALSE for the opposite
     // reason: it comes from register's opts, which only the loader fills, so a
-    // direct register is custom and cannot widen its own reach.
+    // direct register is custom and cannot widen its own reach. `skills` and
+    // `agents` (t672) are the plugin's OWN bundle, read off disk by the loader
+    // and passed through register's opts — so a direct register, which has no
+    // directory behind it, reports both empty.
     assert.deepStrictEqual(engine.catalog(), [
       {
         id: 'fake', name: 'Fake', version: '0.0.1', enabled: true, announce: null,
         scope: 'global', shipped: false, enabledByDefault: true,
+        skills: [], agents: [],
       },
     ]);
   });

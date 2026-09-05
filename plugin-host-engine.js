@@ -516,7 +516,11 @@ function createPluginHostEngine(deps) {
     if (want !== HOST_API_VERSION) {
       throw new Error(`plugin ${pluginId} wants hostApi "${want}" but this host is "${HOST_API_VERSION}"`);
     }
-    registered.set(pluginId, { id: pluginId, manifest, mod, shipped: opts.shipped === true });
+    registered.set(pluginId, {
+      id: pluginId, manifest, mod, shipped: opts.shipped === true,
+      skills: Array.isArray(opts.skills) ? opts.skills : [],
+      agents: Array.isArray(opts.agents) ? opts.agents : [],
+    });
     const host = buildHost(pluginId);
     try {
       if (mod && typeof mod.activate === 'function') mod.activate(host);
@@ -692,7 +696,26 @@ function createPluginHostEngine(deps) {
         scope: scopeOf(r.manifest),
         shipped: r.shipped === true,
         enabledByDefault: r.manifest.enabledByDefault !== false,
+        skills: r.skills.map((s) => s.name),
+        agents: r.agents.map((a) => a.name),
       }));
+    },
+    bundles() {
+      return [...registered.values()]
+        .filter((r) => r.skills.length || r.agents.length)
+        .map((r) => ({
+          id: r.id,
+          shipped: r.shipped === true,
+          skills: r.skills.map((s) => ({ ...s })),
+          agents: r.agents.map((a) => ({ ...a })),
+        }));
+    },
+    updateBundle(pluginId, skills, agents) {
+      const rec = registered.get(String(pluginId));
+      if (!rec) return false;
+      rec.skills = Array.isArray(skills) ? skills : [];
+      rec.agents = Array.isArray(agents) ? agents : [];
+      return true;
     },
     setEnabled(pluginId, enabled) {
       const id = String(pluginId);
