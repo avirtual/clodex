@@ -4197,8 +4197,6 @@ function setPrefsEnvState(msg, kind) {
 async function refreshPrefsEnv() {
   if (!prefsEnvList) return;
   const scope = prefsEnvScopeArg();
-  // Only the global scope holds the shipped keys, so a workspace row that
-  // happens to share a name is not theirs to mark.
   let defaults = {};
   if (scope === 'global') {
     try {

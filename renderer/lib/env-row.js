@@ -17,8 +17,6 @@ function envRowView(v, defaults) {
   };
 }
 
-// Builds the row through an injected document so the class names and titles are
-// assertable without a browser. `doc` needs only createElement.
 function buildEnvRow(doc, view) {
   const row = doc.createElement('div');
   row.className = 'prefs-env-row';

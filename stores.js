@@ -1676,9 +1676,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   const safeScope = (scope) => scope === 'global' || !UNSAFE_SCOPE.has(String(scope));
 
   const envScopes = {
-    // `seeded` rides the same file and must survive every load/save round trip:
-    // it is the record that a shipped default was already offered once, so
-    // dropping it re-seeds every key an operator deleted on the next launch.
     _load() {
       try {
         const obj = JSON.parse(fs.readFileSync(ENV_SCOPES_FILE, 'utf-8'));
@@ -1739,16 +1736,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
 
   const ENV_DEFAULTS_SRC = envDefaultsFile || path.join(__dirname, 'resources', 'env-defaults.json');
 
-  // Seeds shipped env vars into the GLOBAL scope, once per key ever. The `seeded`
-  // list is the memory that makes a deletion stick: a key absent from global is
-  // re-written only while it is also absent from that list, so an operator who
-  // deletes one never gets it back, and a key added to the shipped file in a
-  // later release is seeded on that release's first launch.
   function seedEnvDefaults() {
-    // Same shape as seedLibraryDefaults' safety net, for the same reason: under
-    // `node --test` a production-shaped call would write the operator's live
-    // env-scopes.json. registryDir is the discriminator because engine.js passes
-    // the real ~/.clodex and the real userData together.
     if (process.env.NODE_TEST_CONTEXT
         && registryDir === path.join(os.homedir(), '.clodex')) {
       if (log) log.warn?.('stores', 'refusing to seed env defaults into the real userData under node --test; pass seams.registryDir');
@@ -1766,8 +1754,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
 
   const envDefaults = {
     list() { return loadEnvDefaults(ENV_DEFAULTS_SRC); },
-    // Restoration runs through the seeder rather than writing values itself, so
-    // "absent keys come back, edited ones are left alone" has one implementation.
     restore() {
       const shipped = new Set(Object.keys(loadEnvDefaults(ENV_DEFAULTS_SRC)));
       const data = envScopes._load();

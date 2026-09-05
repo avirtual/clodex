@@ -443,10 +443,6 @@ const API_CONTRACT = [
   { name: 'envScopesGet', kind: 'invoke', channel: 'envScopes:get' },
   { name: 'envScopesSet', kind: 'invoke', channel: 'envScopes:set' },
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
-  // The shipped env defaults (resources/env-defaults.json): `get` feeds the
-  // Env page's note tooltips and its shipped marker, `restore` re-seeds every
-  // shipped key the operator deleted. Neither carries a secret — the file is
-  // in the repo.
   { name: 'envDefaultsGet', kind: 'invoke', channel: 'envDefaults:get' },
   { name: 'envDefaultsRestore', kind: 'invoke', channel: 'envDefaults:restore' },
   // Plugin transport. EXACTLY these five rows —
