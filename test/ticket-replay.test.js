@@ -3177,19 +3177,19 @@ test('a minted ticket seat is handed its spec ONCE — the boot replay finds the
     const s = app.m.sessions.get(seat);
     app.emit(seat, '\x1b[?2004h');
     await settled(app, seat, /BUILD THE WIDGET/);
-    await stamped(world);
 
-    // The stamp is on the record BEFORE the drain runs — asserted while the
-    // one-shot is still armed, which is the only moment at which "before" is a
-    // fact rather than a guess. A subject that read the stamp afterwards would
-    // pass equally against a drain that stamped it itself.
-    assert.strictEqual(s._replayTicketsPending, true,
-      'ENTER: the drain must still be pending here, or the stamp read below could be the drain`s own');
-    const t = world.tickets().find((x) => x.id === 't1');
-    assert.strictEqual(t.deliveredTo.seat, seat,
-      'the SPAWN path stamps the record — this is the whole fix: the minted seat records its own delivery');
-    assert.strictEqual(t.deliveredTo.incarnation, s.incarnation,
-      'with this incarnation`s key, which is what the boot replay compares against');
+    // SNAPSHOT, not an assertion, and taken while the one-shot is still armed —
+    // which is the only moment at which "the stamp was there BEFORE the drain" is
+    // a fact rather than a guess. Asserted further down, after the counts: a
+    // spawn path that stamps nothing must red on the DELIVERY the hand actually
+    // receives, not on a record read that happens to run first, or the subject
+    // reports a bookkeeping miss for a defect whose whole cost is a second
+    // injection.
+    for (let i = 0; i < 400 && !world.tickets().find((x) => x.id === 't1').deliveredTo; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const drainStillPending = s._replayTicketsPending;
+    const preDrainStamp = world.tickets().find((x) => x.id === 't1').deliveredTo || null;
 
     // And the drain DID run: every absence below is vacuous against a pass that
     // never happened, and with the fix in place the drain is the code path that
@@ -3205,6 +3205,18 @@ test('a minted ticket seat is handed its spec ONCE — the boot replay finds the
       'and carries no REPLAY head: that head tells a brand-new seat an earlier incarnation may have done the '
       + 'work and to check `git log` before building — false for a seat minted seconds ago, and it is what '
       + 'made two hands report the dispatch as a finding rather than doing it');
+
+    // The mechanism behind those counts. Without it the subject would also pass
+    // against a drain suppressed some other way — a skipped boot pass, a filter on
+    // seat age — none of which survives the respawn the next subject demands.
+    assert.strictEqual(drainStillPending, true,
+      'ENTER: the drain was still pending when the stamp was read, so the stamp below is the SPAWN path`s and '
+      + 'not the drain`s own');
+    assert.ok(preDrainStamp, 'the spawn path stamps the record before the boot replay ever looks at it');
+    assert.strictEqual(preDrainStamp.seat, seat,
+      'naming the seat it minted — this is the whole fix: the minted seat records its own delivery');
+    assert.strictEqual(preDrainStamp.incarnation, s.incarnation,
+      'with this incarnation`s key, which is what the boot replay compares against');
   } finally { app.stop(); }
 });
 
