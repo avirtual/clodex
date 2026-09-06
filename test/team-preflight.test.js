@@ -115,7 +115,7 @@ test('a missing template is a warn and STOPS that role — no findings about a f
     role: 'hand',
     ref: 'hand-seat',
     resolvedFrom: null,
-    message: 'role "hand": template "hand-seat" is not in the template library — a seat spawned for this role gets none of its shape',
+    message: 'role "hand": template "hand-seat" is in neither teams/shop/templates nor the template library — a seat spawned for this role gets none of its shape',
   }]);
 });
 
@@ -191,7 +191,7 @@ test('a def with an empty argv is a warn — preflight accepts nothing the runne
     // The def itself IS installed and readable — that is what distinguishes
     // this from the no-def-at-all case, which carries resolvedFrom: null.
     resolvedFrom: 'library',
-    message: 'role "hand": exec command "broken" has a def under library/exec but no argv to run — the runner refuses it as malformed, so every call bounces',
+    message: 'role "hand": exec command "broken" has a def under teams/shop/exec or library/exec but no argv to run — the runner refuses it as malformed, so every call bounces',
   }]);
 });
 
@@ -221,7 +221,7 @@ test('an exec command with no def installed is a warn — an unreadable def is n
     role: 'hand',
     ref: 'ghost',
     resolvedFrom: null,
-    message: 'role "hand": template "hand-seat" grants exec command "ghost", which has no def installed under library/exec',
+    message: 'role "hand": template "hand-seat" grants exec command "ghost", which has no def installed under teams/shop/exec or library/exec',
   }]);
 });
 
@@ -245,7 +245,7 @@ test('a def file that exists but does not decode says REPAIR, not install', () =
     ref: 'garbled',
     // null, not 'library': the file is there but nothing RESOLVED out of it.
     resolvedFrom: null,
-    message: 'role "hand": exec command "garbled" has a def file under library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file',
+    message: 'role "hand": exec command "garbled" has a def file under teams/shop/exec or library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file',
   }]);
 });
 
@@ -266,7 +266,7 @@ test('the unreadable and no-def arms stay distinguishable — same level, differ
   assert.deepStrictEqual(findings.map((f) => f.kind), ['exec', 'exec'], 'no new finding kind');
   // The deliverable: the two messages must not be the same sentence. One says
   // install, the other says repair.
-  assert.match(findings[0].message, /has no def installed under library\/exec/);
+  assert.match(findings[0].message, /has no def installed under teams\/shop\/exec or library\/exec/);
   assert.match(findings[1].message, /could not be read as a def object/);
   assert.ok(!/could not be read as a def object/.test(findings[0].message), 'the absent def must not claim a decode failure');
   assert.ok(!/has no def installed/.test(findings[1].message), 'a file on disk must never be reported as missing');

@@ -452,10 +452,10 @@ test('team:preflight: a def file that exists but does not decode reports REPAIR,
     assert.strictEqual(res.ok, true);
     assert.deepStrictEqual(res.findings, [{
       level: 'warn', kind: 'exec', role: 'hand', ref: 'garbled', resolvedFrom: null,
-      message: 'role "hand": exec command "garbled" has a def file under library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file',
+      message: 'role "hand": exec command "garbled" has a def file under teams/shop/exec or library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file',
     }]);
     // The regression this exists to catch: revert the probe's raw() consult and
-    // this message becomes "has no def installed under library/exec", sending the
+    // this message becomes "has no def installed under teams/shop/exec or library/exec", sending the
     // operator to write a file that is already sitting there.
     assert.ok(!/has no def installed/.test(res.findings[0].message),
       'a def file ON DISK must never be reported as one that was never installed');
@@ -480,7 +480,7 @@ test('team:preflight: a def file holding valid non-object JSON takes the same RE
     });
     assert.deepStrictEqual(handlers['team:preflight']({}, 'shop').findings, [{
       level: 'warn', kind: 'exec', role: 'hand', ref: 'scalar', resolvedFrom: null,
-      message: 'role "hand": exec command "scalar" has a def file under library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file',
+      message: 'role "hand": exec command "scalar" has a def file under teams/shop/exec or library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file',
     }]);
   });
 });
@@ -500,7 +500,7 @@ test('team:preflight: a command with NO def file still reports install, through 
     });
     assert.deepStrictEqual(handlers['team:preflight']({}, 'shop').findings, [{
       level: 'warn', kind: 'exec', role: 'hand', ref: 'ghost', resolvedFrom: null,
-      message: 'role "hand": template "hand-seat" grants exec command "ghost", which has no def installed under library/exec',
+      message: 'role "hand": template "hand-seat" grants exec command "ghost", which has no def installed under teams/shop/exec or library/exec',
     }], 'the no-def message must survive byte for byte — nothing already asserted may move');
   });
 });
