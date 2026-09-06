@@ -7,4 +7,4 @@ description: >-
   is this chart; the access path is the operator's own kubectl credentials.
 type: application
 version: 0.1.0
-appVersion: "5.32.0"
+appVersion: "5.33.0"

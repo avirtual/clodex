@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.33.0 — 2026-09-06
+
 - **The roles popover shows what each role uses, and who owns it.** Every role row lists its system prompt, template, append stems and exec commands with a badge: **team** for a piece under `~/.clodex/teams/<name>/`, **library** for one borrowed from the shared library, **plugin** for a namespaced ref, **missing** for one that resolves nowhere. The list is the Gather plan, so it matches `[agent:team gather dry]` line for line and flips to team when Gather is applied.
 
 - One rule decides a seat's system prompt on every spawn path: the template's system prompt when it names one, the role's prompt otherwise, and a role prompt that did not become the system prompt is appended after the team block, so nothing is dropped. Team preflight notes a role whose prompt and template disagree. The stock team and templates are unaffected.
