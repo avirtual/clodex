@@ -2140,6 +2140,7 @@ const toolCache = createToolCache({ whichBin });
     getPluginHost: () => pluginHost,
     getPluginLoader: () => pluginLoader,
     listAllTemplates,
+    resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
