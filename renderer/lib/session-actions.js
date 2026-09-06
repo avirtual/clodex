@@ -11,13 +11,15 @@
 // (tools/skills/agents/intents/plugins/edit/history/reload) so the menu reuses
 // the exact opener wiring the standalone buttons used.
 
-// Tool/skill/agent/intent gating is Claude-only. Plugins is NOT, and must stay
-// shared: a codex seat's `plugins` list gates its grammar and its verbs, so
-// moving the entry here would leave that seat with no editor for it.
+// Tool/skill/agent gating is Claude-only. Intents and plugins are NOT and must
+// stay out of here: both bite a codex seat, so moving either entry in leaves that
+// seat with no editor for a restriction it still carries.
 const CLAUDE_ONLY_ENTRIES = [
   { act: 'tools', label: '🛠 Tools…' },
   { act: 'skills', label: '🧩 Skills…' },
   { act: 'agents', label: '🤖 Agents…' },
+];
+const AGENT_ENTRIES = [
   { act: 'intents', label: '🔒 Intents…' },
 ];
 const SHARED_ENTRIES = [
@@ -31,8 +33,8 @@ const SHARED_ENTRIES = [
 // managed agent session (e.g. bash, or a null/absent active session) — the caller
 // then renders no consolidated button at all.
 function sessionMenuEntries(type) {
-  if (type === 'claude') return [...CLAUDE_ONLY_ENTRIES, ...SHARED_ENTRIES];
-  if (type === 'codex') return [...SHARED_ENTRIES];
+  if (type === 'claude') return [...CLAUDE_ONLY_ENTRIES, ...AGENT_ENTRIES, ...SHARED_ENTRIES];
+  if (type === 'codex') return [...AGENT_ENTRIES, ...SHARED_ENTRIES];
   return [];
 }
 

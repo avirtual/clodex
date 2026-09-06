@@ -235,3 +235,106 @@ test('t674: `tools` is in EDITOR_OWNED — an emptied control must CLEAR, not pr
   assert.ok(list.includes("'tools'"),
     'without it, merge-preserve resurrects a narrowed reviewer list the operator just cleared');
 });
+
+// ── t717: the Edit dialog's HIDDEN intents section ───────────────────────────
+// `null` and `undefined` are different answers at session-args.js: null is an
+// explicit "clear the allowlist", undefined is "untouched, keep the persisted
+// gate". The Edit dialog sent null whenever its section was hidden, so saving any
+// unrelated setting on a seat with no visible section wiped a gate set through
+// `session:setIntents` or a template. No runtime fixture can see this — the
+// renderer is not loadable — so the shape is asserted on the source, the way the
+// t654 plugins pin above is.
+test('t717: a hidden intents section sends `undefined`, never `null`', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf("document.getElementById('btn-args-save')");
+  assert.ok(at > 0, 'ENTER: the Edit Settings save handler was located');
+  const body = src.slice(at, src.indexOf('\n});', at));
+  assert.ok(body.includes('argsIntentsSection.style.display'),
+    'ENTER: the save handler really does read the intents section visibility');
+
+  assert.match(body, /const intents = argsIntentsSection\.style\.display === 'none' \? undefined : collectIntentChecklist\(/,
+    'a hidden section is an absence of options, not an operator answer that clears the gate');
+  assert.ok(!/argsIntentsSection\.style\.display === 'none' \? null/.test(body),
+    'null is what session-args reads as an explicit clear');
+  // The same shape exec already had, and the reason it never had this bug.
+  assert.match(body, /const execCommandsGrant = argsExecSection\.style\.display === 'none' \? undefined : collectExecChecklist\(/,
+    'exec is the shape being matched — if it changed, this comparison is against nothing');
+});
+
+// ── t717: the Codex exposure, in the three places that hid it ────────────────
+// Intent enforcement (`intentEnabledForSeat`) and exec resolution
+// (`_resolveExecDefs`) are both type-blind, and the Codex spawn arm already
+// consumes both. Only the UI hid them, so a codex seat could hold a gate it had
+// no editor for.
+test('t717: collectFormConfig collects intents and exec grants for both agent types', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const body = src.slice(src.indexOf('function collectFormConfig()'));
+  const end = body.indexOf('\nfunction ');
+  const fn = body.slice(0, end === -1 ? body.length : end);
+  assert.match(fn, /const agentType = type === 'claude' \|\| type === 'codex';/,
+    'ENTER: the agentType predicate the two keys are gated on');
+
+  assert.match(fn, /const intents = agentType \? collectIntentChecklist\(inputIntentList\)/,
+    'a codex seat must be able to save an intent allowlist from the New Session dialog');
+  assert.match(fn, /execCommands: agentType \? collectExecChecklist\(inputExecList\)/,
+    'and its exec grants, which its spawn arm already resolves');
+  assert.ok(!/type === 'claude' \? collectIntentChecklist/.test(fn));
+  assert.ok(!/type === 'claude' \? collectExecChecklist/.test(fn));
+
+  // The CLI-roster settings stay claude-only: codex consumes none of them, and
+  // widening them would pretend to enforce something.
+  for (const claudeOnly of ['collectAgentChecklist', 'collectBuiltinChecklist', 'collectToolChecklist',
+    'collectSkillChecklist', 'collectInjectChecklist']) {
+    assert.ok(new RegExp(`type === 'claude' \\? ${claudeOnly}\\(`).test(fn),
+      `${claudeOnly} must stay gated on claude alone`);
+  }
+  assert.match(fn, /stripLevel: type === 'claude' \?/, 'wire stripping stays claude-only');
+});
+
+test('t717: the Edit dialog draws the intents and exec sections for a codex seat', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('async function openArgsDialog(');
+  assert.ok(at > 0, 'ENTER: openArgsDialog was located');
+  const body = src.slice(at, src.indexOf('\nfunction closeArgsDialog', at));
+  assert.match(body, /const isAgent = res\.type === 'claude' \|\| res\.type === 'codex';/,
+    'ENTER: the isAgent predicate both widenings use');
+
+  assert.match(body, /argsIntentsSection\.style\.display = isAgent \? '' : 'none'/,
+    'the intents section is drawn for codex too');
+  assert.match(body, /const isExecEditable = isAgent && !argsSource/,
+    'exec keeps its peer-row hide (a peer save omits the key) while widening to codex');
+  assert.ok(!/argsIntentsSection\.style\.display = isClaude \?/.test(body));
+  assert.ok(!/const isExecEditable = isClaude &&/.test(body));
+
+  // Unwidened, deliberately: codex reads none of these.
+  assert.match(body, /argsToolsSection\.style\.display = isClaude \? '' : 'none'/);
+  assert.match(body, /argsAgentsRow\.style\.display = isClaude \? '' : 'none'/);
+  assert.match(body, /const isPluginsEditable = isClaude && !argsSource/);
+});
+
+test('t717: the New Session type-change handler paints both checklists for codex', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('function applyTypeDefaults(');
+  assert.ok(at > 0, 'ENTER: applyTypeDefaults was located');
+  const fn = src.slice(at, src.indexOf('\nlet lastToolCheck', at));
+  assert.ok(fn.includes('claudeOnly'), 'ENTER: the function body really was captured');
+
+  // A section widened but never repainted is worse than a hidden one: it shows
+  // whatever a previous claude selection left in the container.
+  assert.match(fn, /if \(agentType && !skipAsyncRefresh\) \{ refreshNewSessionExecCommands\(\); refreshNewSessionPlugins\(\)\.then\(\(\) => refreshNewSessionIntents\(\)\); \}/,
+    'both checklists repaint on a change to EITHER agent type');
+  assert.ok(!/claudeOnly && !skipAsyncRefresh[^\n]*refreshNewSessionIntents/.test(fn),
+    'and no longer only for claude');
+  assert.match(fn, /if \(otherSection\) otherSection\.style\.display = agentType \? '' : 'none'/,
+    'the section holding those two rows opens for codex');
+
+  // The per-refresh guards each function carries, which are what a stale container
+  // would slip past.
+  const guarded = src.slice(src.indexOf('function newSessionIsAgent()'));
+  assert.match(guarded, /async function refreshNewSessionExecCommands[\s\S]{0,120}if \(!newSessionIsAgent\(\)\) return;/);
+  assert.match(guarded, /async function refreshNewSessionIntents[\s\S]{0,120}if \(!newSessionIsAgent\(\)\) return;/);
+  // A codex seat draws no plugin checklist, so the intent catalog must be asked
+  // about what collectFormConfig will SAVE, not about an unpainted container.
+  assert.match(guarded, /getIntentCatalog\(null, newSessionPluginTicks\(\)\)/);
+  assert.match(guarded, /inputType\.value === 'claude' \? collectPluginChecklist\(inputPluginList\) : defaultPluginTicks\(\)/);
+});
