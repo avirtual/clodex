@@ -664,7 +664,12 @@ test('onResize re-pins to the bottom while following and leaves a scrolled-up re
     'a reader who scrolled away keeps their position across a resize');
 });
 
-test('a scroll back to the bottom resumes following, and the next append lands at the end', async (t) => {
+test('a scroll back to the bottom resumes following even after the box grows underneath', async (t) => {
+  // The two directions of the state, with the growth step that separates owned
+  // state from the geometry read it replaced: a block repainting with more
+  // output grows scrollHeight while scrollTop stays, so a read taken at append
+  // time reports a reader who never moved as far from the bottom and strands
+  // them. What the reader last DID is the answer, not where the box now is.
   const p = await mountPane(t);
 
   p.write('A', 8, STAMP);
@@ -679,6 +684,10 @@ test('a scroll back to the bottom resumes following, and the next append lands a
   assert.strictEqual(p.body.scrollTop, 100, 'a scrolled-up reader is not yanked to the bottom');
 
   p.scrollTo(400);
+  p.body.scrollHeight = 5000;
+  assert.ok(p.body.scrollHeight - p.body.scrollTop - p.body.clientHeight >= 60,
+    'ENTER: the box grew, so append-time geometry now reads as far from the bottom');
+
   p.write('C', 10, STAMP);
   await p.tick();
   assert.deepStrictEqual(p.painted, ['A', 'B', 'C'], 'ENTER: a third call landed after the scroll back');
