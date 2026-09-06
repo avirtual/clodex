@@ -425,31 +425,6 @@ async function currentBranch(cwd) {
   return { ok: true, branch: name, head: h.ok ? h.stdout.trim() : null, repo };
 }
 
-// Merge `branch` into whatever the checkout at `cwd` has checked out, always
-// with a merge commit, message read from `messageFile`.
-//
-// `--no-edit` as well as `-F`: without it a git configured with an editor
-// blocks forever inside a spawned process nobody can type into.
-//
-// A FAILED merge leaves the index and the worktree mid-conflict, and this
-// checkout is the one every other seat's branch is cut from — a wedged shared
-// tree costs more than the merge was worth. So a failure aborts back to the
-// pre-merge state and reports whether that abort itself succeeded; the conflict
-// text is already captured in `error`, so nothing diagnostic is lost by
-// restoring the tree.
-//
-// `aborted` and `wedged` are NOT complements, and the caller must report off
-// `wedged`. `git merge --abort` also fails when there was never a merge to
-// abort — an unresolvable ref, an unreadable message file — so `aborted:false`
-// alone would announce "the checkout is left mid-merge and needs a human"
-// about a tree git never touched, a false alarm in the one message whose whole
-// job is to be trusted. `wedged` is evidence: MERGE_HEAD exists only while a
-// merge is actually in progress.
-//
-// `sha` is the NEW HEAD and `moved` says whether HEAD actually changed. Both
-// are needed because `--no-ff` on an already-merged branch prints "Already up
-// to date", exits 0, and creates NO commit — reading `ok` alone would report a
-// merge that never happened.
 async function unionChangelogConflict(repo, messageFile, headBefore) {
   const conflicted = await git(repo, ['diff', '--name-only', '--diff-filter=U']);
   if (!conflicted.ok) return { ok: false, reason: `could not list the conflicted paths: ${(conflicted.stderr || '').trim() || `exit ${conflicted.code}`}` };
@@ -516,6 +491,31 @@ async function unionChangelogConflict(repo, messageFile, headBefore) {
   return { ok: true, sha, moved: true, headBefore, unioned: 'CHANGELOG.md' };
 }
 
+// Merge `branch` into whatever the checkout at `cwd` has checked out, always
+// with a merge commit, message read from `messageFile`.
+//
+// `--no-edit` as well as `-F`: without it a git configured with an editor
+// blocks forever inside a spawned process nobody can type into.
+//
+// A FAILED merge leaves the index and the worktree mid-conflict, and this
+// checkout is the one every other seat's branch is cut from — a wedged shared
+// tree costs more than the merge was worth. So a failure aborts back to the
+// pre-merge state and reports whether that abort itself succeeded; the conflict
+// text is already captured in `error`, so nothing diagnostic is lost by
+// restoring the tree.
+//
+// `aborted` and `wedged` are NOT complements, and the caller must report off
+// `wedged`. `git merge --abort` also fails when there was never a merge to
+// abort — an unresolvable ref, an unreadable message file — so `aborted:false`
+// alone would announce "the checkout is left mid-merge and needs a human"
+// about a tree git never touched, a false alarm in the one message whose whole
+// job is to be trusted. `wedged` is evidence: MERGE_HEAD exists only while a
+// merge is actually in progress.
+//
+// `sha` is the NEW HEAD and `moved` says whether HEAD actually changed. Both
+// are needed because `--no-ff` on an already-merged branch prints "Already up
+// to date", exits 0, and creates NO commit — reading `ok` alone would report a
+// merge that never happened.
 async function mergeNoFf(cwd, branch, messageFile) {
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, sha: null, moved: false, error: 'not a git repository' };

@@ -401,8 +401,8 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   assert.match(notes[0].body, /\bt1\b/, 'naming the ticket');
   assert.match(notes[0].body, /tl-1/, 'and the branch');
   assert.match(notes[0].body, new RegExp(f.masterHead().slice(0, 12)), 'and the merge sha, so it can be undone');
-  // CHANGELOG.md is deliberately not written by the merge — it conflicts across
-  // every live branch — so the debt must be STATED or the release ships without it.
+  // The merge never AUTHORS a CHANGELOG.md entry, so the debt must be STATED or
+  // the release ships without it.
   // MEASURED, not asserted: this fixture's branch carries work.txt and nothing
   // else, so the true answer is that none landed. A bare /CHANGELOG/ match was
   // true of all three arms and stayed green through the nine merges where the
@@ -424,10 +424,12 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   }
 });
 
-test('the merge does NOT touch CHANGELOG.md and does NOT accept the ticket', async () => {
+test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and never accepts the ticket', async () => {
   const repo = mkRepo();
   // A CHANGELOG on master, so "untouched" is a real observation rather than a
-  // statement about a file that never existed.
+  // statement about a file that never existed. Only the branch here touches the
+  // file, so there is nothing to union — the t698 subject above is the case
+  // where the merge DOES write it, and this one is what makes that a difference.
   fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n');
   git(repo.dir, ['add', 'CHANGELOG.md']);
   git(repo.dir, ['commit', '-q', '-m', 'changelog']);

@@ -185,6 +185,13 @@ waits: other tickets merge past a waiting one. Only this one refusal retries; a
 dirty tree, a moved branch and a red suite still stop on the first try, because
 each of those is a state a human has to look at.
 
+The rule that follows, for anyone reading a refusal: **a lock collision is not a
+wedge, and a lock is never cleared by hand.** A refusal names the pid holding
+the lock, but a pid file lags its real holder — the printed pid can be dead
+while a different live run holds the lock. Check `ps` for a live runner before
+concluding anything. Deleting a valid lock deadlocks the two runs it was
+protecting.
+
 **One conflict the loop resolves itself: CHANGELOG.md.** Every ticket adds its
 bullet at the head of `## Unreleased`, so the second of two in-flight tickets
 always conflicts there even when nothing else overlaps. When the ONLY conflicted
@@ -194,13 +201,6 @@ keeps both — master's bullet above the branch's — completes the merge commit
 says so in the `[ticket MERGED]` notice, so you read `## Unreleased` once before
 a release. Any other conflict, in that file or any other, still escalates on the
 first try.
-
-The rule that follows, for anyone reading a refusal: **a lock collision is not a
-wedge, and a lock is never cleared by hand.** A refusal names the pid holding
-the lock, but a pid file lags its real holder — the printed pid can be dead
-while a different live run holds the lock. Check `ps` for a live runner before
-concluding anything. Deleting a valid lock deadlocks the two runs it was
-protecting.
 
 ### 4. Project knowledge — the one file you are expected to write
 

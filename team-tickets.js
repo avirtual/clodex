@@ -1208,9 +1208,8 @@ function createTicketMethods(deps, shared) {
     // What this does NOT do, and must not: `task accept`. That retires the seat
     // and destroys the worktree, which is the lead's call after reading the
     // verdict; a merge is recoverable by a revert, a destroyed worktree is not.
-    // It also never AUTHORS a CHANGELOG.md entry — that stays the lead's, and the
-    // notification says one is owed. It resolves only the adjacent-insert
-    // conflict there as a union; every other conflict escalates.
+    // It also never AUTHORS a CHANGELOG.md entry — it unions only the
+    // adjacent-insert conflict there, and escalates every other one.
     //
     // ONE merge at a time, process-wide, chained rather than fired.
     //
@@ -1852,10 +1851,10 @@ function createTicketMethods(deps, shared) {
 
     // The merge landed. Rides _escalateTicket's channel — one lead DM from the
     // loop, whichever way it went — and reports the CHANGELOG state, because the
-    // merge never AUTHORS a CHANGELOG.md entry (it only unions an adjacent-insert
-    // conflict there) but routinely CARRIES an entry the branch already wrote. An unstated debt is
-    // one the release ships without; a debt stated over an entry that landed is
-    // a duplicate entry and, repeated, a line the lead stops reading.
+    // merge never AUTHORS a CHANGELOG.md entry but routinely CARRIES one the
+    // branch wrote. An unstated debt is one the release ships without; a debt
+    // stated over an entry that landed is a duplicate entry and, repeated, a
+    // line the lead stops reading.
     //
     // `changelog` is _mergeTouchedChangelog's three-valued result. A missing one
     // reads as unknown, and so does a malformed one: `known` alone is not enough,
