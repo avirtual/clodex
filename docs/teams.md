@@ -278,7 +278,7 @@ so you do not have to teach it the vocabulary.
 ## Checklist for a new project
 
 1. `Create Team…`, pointed at your project root.
-2. Write `~/.clodex/library/prompts/append/team-project.md`.
+2. Write `~/.clodex/teams/<name>/prompts/append/team-project.md`.
 3. Decide about tests: add `scripts/run-tests.js` emitting TAP, or accept
    per-ticket escalation.
 4. Optional: add exec defs for the commands your agents will reach for most,
