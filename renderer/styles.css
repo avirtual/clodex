@@ -2615,6 +2615,7 @@ html, body {
 #plugins-source.hidden, #plugins-source-preview.hidden, #plugins-source-warning.hidden,
 #plugins-source-label.hidden, #plugins-source-spec.hidden, #btn-plugins-source-resolve.hidden,
 #btn-plugins-source.hidden { display: none; }
+#plugins-source-spec.hidden + #plugins-source-hint { display: none; }
 
 #dialog {
   background: var(--sidebar-bg);

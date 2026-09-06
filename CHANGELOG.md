@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The plugin verifier (plugins/tools/verify.js) counts an intent verb as a registered surface, so a plugin whose only surface is an `[agent:…]` verb passes the "registered at least one surface" check instead of failing it while the same run lists the verb.
+- Install from GitHub… explains how to install a plugin that lives in a folder of a repo: paste the folder's GitHub URL (`…/tree/<branch>/<folder>`) or write `owner/repo@ref:folder`, and the hint under the field says what @ and : pick.
 
 ## 5.33.0 — 2026-09-06
 
