@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.32.0 — 2026-09-06
+
 - **A seat spawned for a ticket now receives its spec once.** It used to get a second copy a second later, marked as a replay and telling the hand an earlier incarnation might have done the work; that copy now goes only to a seat that was actually respawned.
 - **The `thinking` and `toolInputs` plugin grants now do something**: a session-scoped plugin the seat has granted them receives the turn's thinking blocks and its tool calls (name plus one clamped argument) as extra fields on the turn-text feed, absent when ungranted; a request that carried only tool calls now reaches a plugin granted tool inputs. The Plugin Access label for tool inputs no longer claims file contents.
 - **A plugin can declare which capabilities it reads** (`"reads": ["turns"]` in its manifest), and the seat's Plugin Access block dims the grants it never reads instead of offering all three as equals; a global-scoped plugin that declares reads is refused at load with the fix named.
