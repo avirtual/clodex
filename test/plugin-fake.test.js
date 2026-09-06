@@ -538,6 +538,10 @@ class FakeNode {
   }
   removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; }
   remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+  get nextElementSibling() {
+    if (!this.parentNode) return null;
+    return this.parentNode.children[this.parentNode.children.indexOf(this) + 1] || null;
+  }
   addEventListener(t, fn) { if (!this.listeners.has(t)) this.listeners.set(t, new Set()); this.listeners.get(t).add(fn); }
   removeEventListener(t, fn) { if (this.listeners.has(t)) this.listeners.get(t).delete(fn); }
   fire(t, ev = {}) { for (const fn of this.listeners.get(t) || []) fn(ev); }
@@ -555,10 +559,15 @@ function dataKey(attr) {
   return attr.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 }
 
+// '#id' must be a supported part, not an unmatched one: an unrecognised
+// selector yields ZERO parts here, and a loop over zero parts returns true for
+// every node, so `querySelector('#x')` would answer with the first descendant
+// rather than null. renderFooterButtons passes that answer to insertBefore.
 function matchSel(node, sel) {
-  const parts = String(sel).match(/\[[^\]]+\]|\.[^.[\s]+|^[a-zA-Z][\w-]*/g) || [];
+  const parts = String(sel).match(/\[[^\]]+\]|#[^#.[\s]+|\.[^.[\s]+|^[a-zA-Z][\w-]*/g) || [];
   for (const p of parts) {
-    if (p.startsWith('.')) { if (!node._classSet().has(p.slice(1))) return false; }
+    if (p.startsWith('#')) { if (node.getAttribute('id') !== p.slice(1)) return false; }
+    else if (p.startsWith('.')) { if (!node._classSet().has(p.slice(1))) return false; }
     else if (p.startsWith('[')) {
       const m = p.match(/^\[([^\]=^]+)(\^?=)?"?([^"\]]*)"?\]$/);
       if (!m) return false;
@@ -940,6 +949,59 @@ test('fake plugin (renderer): re-activating after dispose is clean, and double-a
     assert.strictEqual(second.record.activated, 0, 'the second module is never activated (law 1)');
     assert.strictEqual(host._counts().footer, 1, 'and contributes nothing');
   });
+});
+
+// The web frontend's boot.js mounts `#sidebar-version` into the footer as soon
+// as the welcome frame lands, and every plugin's renderer half activates AFTER
+// that (activation waits on plugin:catalog + renderer.info round trips). So on
+// the web the version line is ALWAYS already there when a footer button paints,
+// and it must stay the last row.
+test('fake plugin (renderer): a footer button paints above the web version line', () => {
+  withRendererHost(({ host, dom }) => {
+    const version = el('div', 'sidebar-version');
+    dom.footer.appendChild(version);
+    // ENTER: the version node is the footer's last child before registration —
+    // if it were not, "the button landed above it" would be true of an append.
+    assert.strictEqual(dom.footer.children[dom.footer.children.length - 1], version);
+
+    activateFake(host);
+
+    const btn = dom.footer.querySelector('[data-plugin-footer="fake:foot"]');
+    assert.ok(btn, 'footer button painted');
+    assert.strictEqual(btn.nextElementSibling, version, 'the button is inserted above the version line');
+    assert.strictEqual(dom.footer.children[dom.footer.children.length - 1], version, 'and the version line is still last');
+  });
+});
+
+test('fake plugin (renderer): with no version line a footer button is last, as on the desktop', () => {
+  withRendererHost(({ host, dom }) => {
+    assert.strictEqual(dom.footer.querySelector('#sidebar-version'), null, 'the desktop footer has no version node');
+
+    activateFake(host);
+
+    const btn = dom.footer.querySelector('[data-plugin-footer="fake:foot"]');
+    assert.ok(btn, 'footer button painted');
+    assert.strictEqual(btn.nextElementSibling, null);
+    assert.strictEqual(dom.footer.children[dom.footer.children.length - 1], btn, 'appended, exactly as before');
+  });
+});
+
+test('renderFooterButtons inserts only through insertBefore', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'plugin-host.js'), 'utf8');
+  const at = src.indexOf('function renderFooterButtons(');
+  assert.ok(at > 0, 'found renderFooterButtons');
+  const rest = src.slice(at);
+  const end = rest.indexOf('\n  }\n');
+  assert.ok(end > 0, 'found its closing brace');
+  const fn = rest.slice(0, end);
+  // ENTER: the slice really is the function body, not an empty string that
+  // every "does not contain" assertion below would pass vacuously.
+  assert.ok(fn.includes("footer.querySelector(`[data-plugin-footer="), 'the slice is the body');
+
+  const APPEND_RE = /footer\.appendChild\(/;
+  assert.ok(!APPEND_RE.test(fn), 'renderFooterButtons must not append to the footer: the version line has to stay last');
+  const INSERT_RE = /footer\.insertBefore\(el, footer\.querySelector\('#sidebar-version'\)\)/;
+  assert.ok(INSERT_RE.test(fn), 'the button is placed before #sidebar-version (a null reference appends)');
 });
 
 // ════════════════════════════════════════════════════════════════════════════
