@@ -410,3 +410,215 @@ test('git(): carries the exit code, so "no" is separable from "could not tell"',
   assert.deepStrictEqual([okr.ok, okr.merged], [true, true], 'HEAD is trivially its own ancestor (exit 0)');
   fs.rmSync(repo, { recursive: true, force: true });
 });
+
+// ── t698: a CHANGELOG-only adjacent-insert conflict is unioned, everything else
+// still escalates ───────────────────────────────────────────────────────────
+//
+// Real git throughout, like every subject above, and for a stronger reason: the
+// whole mechanism is a reading of git's conflicted INDEX (three stages, blob
+// numstats, `merge-file --union`). A stubbed git would prove the helper calls
+// the commands it calls and nothing about whether master ends up carrying both
+// bullets in the right order, with a two-parent commit and no MERGE_HEAD.
+//
+// The union is only safe because both sides are pure insertions. A side that
+// deleted or rewrote a line lost information no union can reconstruct, and a
+// side that inserted a `## ` heading moved the boundary the other side's
+// bullets fall under — a union there files them silently under the wrong
+// release. Those are the two refusals subjects 3 and 4 pin.
+
+const CHANGELOG_BASE = '# Changelog\n\nintro\n\n## Unreleased\n\n- old bullet one\n\n## 5.0.0\n';
+
+// Insert `line` directly under the `## Unreleased` heading — the spot every
+// ticket writes, and therefore the spot two tickets always collide on.
+function underUnreleased(body, line) {
+  return body.replace('## Unreleased\n\n', `## Unreleased\n\n${line}\n`);
+}
+
+function makeChangelogRepo() {
+  const dir = makeRepo();
+  const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), CHANGELOG_BASE);
+  run('add', '-A');
+  run('commit', '-qm', 'changelog');
+  run('branch', 'tl-1');
+  return dir;
+}
+
+function commitOn(dir, branch, files, subject) {
+  const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  const cur = execFileSync('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+  if (branch !== cur) run('checkout', '-q', branch);
+  for (const [f, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), body);
+  run('add', '-A');
+  run('commit', '-qm', subject);
+  if (branch !== cur) run('checkout', '-q', cur);
+}
+
+function gitOut(dir, args) {
+  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+}
+
+// The ENTER proof every subject below opens with: git really refuses this merge
+// on its own. Without it a subject could be measuring a merge that never
+// conflicted, and `ok:true` would mean nothing.
+function proveConflict(dir, branch) {
+  let out = '';
+  let code = 0;
+  try {
+    out = execFileSync('git', ['-C', dir, 'merge', '--no-ff', '--no-edit', '-m', 'probe', branch],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    code = typeof e.status === 'number' ? e.status : -1;
+    out = `${e.stdout || ''}${e.stderr || ''}`;
+  }
+  try { execFileSync('git', ['-C', dir, 'merge', '--abort'], { stdio: 'ignore' }); } catch {}
+  return { code, out };
+}
+
+// `rev-parse --verify --quiet` answers "absent" by EXITING 1, which execFileSync
+// raises. An assertion written against its return value alone would throw on the
+// green case instead of reading it.
+function mergeHead(dir) {
+  try {
+    return execFileSync('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch { return ''; }
+}
+
+function msgFile(subject) {
+  const p = path.join(mkTmpRoot('clodex-msg-'), 'merge-msg.txt');
+  fs.writeFileSync(p, `${subject}\n\nbody line\n`);
+  return p;
+}
+
+test('mergeNoFf: a CHANGELOG-only adjacent insert is resolved as a union, master\'s bullet first', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  commitOn(repo, 'tl-1', {
+    'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet'),
+    'work.txt': 'the work\n',
+  }, 'branch bullet');
+  commitOn(repo, 'master', { 'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **A.** the master bullet') }, 'master bullet');
+
+  const probe = proveConflict(repo, 'tl-1');
+  assert.notStrictEqual(probe.code, 0, 'ENTER: git itself refuses this merge');
+  assert.match(probe.out, /CONFLICT/, 'ENTER: and it refuses it as a CONFLICT');
+
+  const before = gitOut(repo, ['rev-parse', 'HEAD']);
+  const r = await wt.mergeNoFf(repo, 'tl-1', msgFile('Merge t698: the union subject'));
+
+  assert.strictEqual(r.ok, true, r.error);
+  assert.deepStrictEqual(
+    { ok: r.ok, moved: r.moved, unioned: r.unioned, headBefore: r.headBefore },
+    { ok: true, moved: true, unioned: 'CHANGELOG.md', headBefore: before },
+    'the whole reported shape, so an unwired field cannot arrive as undefined',
+  );
+  assert.notStrictEqual(r.sha, before, 'HEAD moved');
+  assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), r.sha, 'and the reported sha IS master');
+  assert.ok(gitOut(repo, ['rev-parse', `${r.sha}^2`]), 'it is a merge commit — two parents');
+  assert.strictEqual(gitOut(repo, ['log', '-1', '--format=%s', r.sha]), 'Merge t698: the union subject',
+    'committed with the message file it was given');
+  assert.strictEqual(mergeHead(repo), '', 'no MERGE_HEAD survives');
+  assert.strictEqual(gitOut(repo, ['status', '--porcelain']), '', 'the checkout is clean, not mid-merge');
+  assert.ok(fs.existsSync(path.join(repo, 'work.txt')), 'the branch\'s other file landed too');
+
+  const lines = fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8').split('\n');
+  const a = lines.findIndex((l) => l.includes('**A.**'));
+  const b = lines.findIndex((l) => l.includes('**B.**'));
+  assert.ok(a >= 0 && b >= 0, `both bullets survive the union (A at ${a}, B at ${b})`);
+  assert.ok(a < b, `master's bullet is ABOVE the branch's (A at ${a}, B at ${b})`);
+  assert.ok(lines.some((l) => l.includes('- old bullet one')), 'and the pre-existing bullet is untouched');
+  assert.ok(!lines.some((l) => /^(<{7} |={7}$|>{7} )/.test(l)), 'no conflict marker reached the file');
+});
+
+test('mergeNoFf: CHANGELOG.md conflicting ALONGSIDE another file is refused and aborted', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  commitOn(repo, 'master', { 'shared.txt': 'first version\n' }, 'shared');
+  execFileSync('git', ['-C', repo, 'branch', '-f', 'tl-1', 'HEAD'], { stdio: 'ignore' });
+  commitOn(repo, 'tl-1', {
+    'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet'),
+    'shared.txt': 'the branch version\n',
+  }, 'branch bullet + shared');
+  commitOn(repo, 'master', {
+    'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **A.** the master bullet'),
+    'shared.txt': 'the master version\n',
+  }, 'master bullet + shared');
+
+  const probe = proveConflict(repo, 'tl-1');
+  assert.match(probe.out, /CONFLICT/, 'ENTER: git refuses this merge');
+  const before = gitOut(repo, ['rev-parse', 'HEAD']);
+  const masterChangelog = fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8');
+
+  const r = await wt.mergeNoFf(repo, 'tl-1', msgFile('Merge t698: should not land'));
+
+  assert.deepStrictEqual(
+    { ok: r.ok, aborted: r.aborted, wedged: r.wedged, sha: r.sha, moved: r.moved, hasUnioned: 'unioned' in r },
+    { ok: false, aborted: true, wedged: false, sha: null, moved: false, hasUnioned: false },
+  );
+  assert.match(r.error, /CHANGELOG-only union not applied: /, 'the escalation says why the loop did not handle it');
+  assert.match(r.error, /shared\.txt/, 'and names the second conflicted path');
+  assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
+  assert.strictEqual(fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8'), masterChangelog,
+    'the abort restored CHANGELOG.md byte for byte');
+  assert.strictEqual(gitOut(repo, ['status', '--porcelain']), '', 'and the tree is not wedged');
+});
+
+test('mergeNoFf: a side that REWROTE a CHANGELOG line is refused — a union cannot reconstruct it', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  commitOn(repo, 'tl-1', {
+    'CHANGELOG.md': CHANGELOG_BASE.replace('- old bullet one', '- old bullet ONE, reworded'),
+  }, 'branch rewords');
+  commitOn(repo, 'master', { 'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **A.** the master bullet') }, 'master bullet');
+
+  const probe = proveConflict(repo, 'tl-1');
+  assert.match(probe.out, /CONFLICT/, 'ENTER: git refuses this merge');
+  const before = gitOut(repo, ['rev-parse', 'HEAD']);
+
+  const r = await wt.mergeNoFf(repo, 'tl-1', msgFile('Merge t698: should not land'));
+
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual([r.aborted, r.wedged], [true, false]);
+  assert.ok(!('unioned' in r), 'nothing was unioned');
+  assert.match(r.error, /CHANGELOG-only union not applied: /);
+  assert.match(r.error, /deleted or rewrote/, 'the reason names the deletion');
+  assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
+  assert.strictEqual(gitOut(repo, ['status', '--porcelain']), '', 'and the tree is not wedged');
+});
+
+test('mergeNoFf: a side that inserted a `## ` heading is refused — the union would misfile the bullets', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  commitOn(repo, 'tl-1', {
+    'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet'),
+  }, 'branch bullet');
+  // Master stamps the release: `## Unreleased` becomes `## 5.1.0` and a fresh
+  // empty Unreleased opens above it. The branch's bullet belongs in the NEW
+  // section; a union would leave it under 5.1.0, in a release that shipped.
+  commitOn(repo, 'master', {
+    'CHANGELOG.md': CHANGELOG_BASE.replace('## Unreleased\n', '## Unreleased\n\n## 5.1.0 — 2026-01-01\n'),
+  }, 'master stamps a release');
+
+  const probe = proveConflict(repo, 'tl-1');
+  assert.match(probe.out, /CONFLICT/, 'ENTER: git refuses this merge');
+  const before = gitOut(repo, ['rev-parse', 'HEAD']);
+
+  const r = await wt.mergeNoFf(repo, 'tl-1', msgFile('Merge t698: should not land'));
+
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual([r.aborted, r.wedged], [true, false]);
+  assert.ok(!('unioned' in r), 'nothing was unioned');
+  assert.match(r.error, /CHANGELOG-only union not applied: /);
+  assert.match(r.error, /inserted a `## ` heading/, 'the reason names the heading');
+  assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
+});
+
+test('mergeNoFf: a merge that fails without conflicting reports through the old path, unmentioned by the union', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  const before = gitOut(repo, ['rev-parse', 'HEAD']);
+
+  const r = await wt.mergeNoFf(repo, 'no-such-branch-anywhere', msgFile('Merge t698: never runs'));
+
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.wedged, false, 'nothing was half-applied');
+  assert.ok(!/CHANGELOG-only union/.test(r.error),
+    `no conflict existed, so the union has nothing to explain (error: ${r.error})`);
+  assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
+});

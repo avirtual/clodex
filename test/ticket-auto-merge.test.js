@@ -401,8 +401,8 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   assert.match(notes[0].body, /\bt1\b/, 'naming the ticket');
   assert.match(notes[0].body, /tl-1/, 'and the branch');
   assert.match(notes[0].body, new RegExp(f.masterHead().slice(0, 12)), 'and the merge sha, so it can be undone');
-  // CHANGELOG.md is deliberately not written by the merge — it conflicts across
-  // every live branch — so the debt must be STATED or the release ships without it.
+  // The merge never AUTHORS a CHANGELOG.md entry, so the debt must be STATED or
+  // the release ships without it.
   // MEASURED, not asserted: this fixture's branch carries work.txt and nothing
   // else, so the true answer is that none landed. A bare /CHANGELOG/ match was
   // true of all three arms and stayed green through the nine merges where the
@@ -424,10 +424,12 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   }
 });
 
-test('the merge does NOT touch CHANGELOG.md and does NOT accept the ticket', async () => {
+test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and never accepts the ticket', async () => {
   const repo = mkRepo();
   // A CHANGELOG on master, so "untouched" is a real observation rather than a
-  // statement about a file that never existed.
+  // statement about a file that never existed. Only the branch here touches the
+  // file, so there is nothing to union — the t698 subject above is the case
+  // where the merge DOES write it, and this one is what makes that a difference.
   fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n');
   git(repo.dir, ['add', 'CHANGELOG.md']);
   git(repo.dir, ['commit', '-q', '-m', 'changelog']);
@@ -1103,6 +1105,74 @@ test('a conflicting merge escalates with the conflict and leaves the tree unwedg
   // index satisfies every other check here.
   assert.strictEqual(git(repo.dir, ['status', '--porcelain']), '',
     'the merge was aborted, so the shared checkout is clean and not mid-merge');
+});
+
+test('t698: a CHANGELOG-only adjacent-insert conflict is unioned, landed, and named in the notice', async () => {
+  // The commonest merge-step escalation in the log: every ticket writes its
+  // bullet at the head of `## Unreleased`, so the second of two in-flight
+  // tickets ALWAYS conflicts there even when nothing else overlaps. The loop
+  // now keeps both bullets and carries on to the post-merge suite; the subject
+  // above (`a conflicting merge escalates`) conflicts on base.txt and still
+  // escalates, which is the other half of the pair.
+  const repo = mkRepo();
+  const CL = '# Changelog\n\nintro\n\n## Unreleased\n\n- old bullet one\n\n## 5.0.0\n';
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), CL);
+  git(repo.dir, ['add', 'CHANGELOG.md']);
+  git(repo.dir, ['commit', '-q', '-m', 'changelog']);
+  git(repo.dir, ['branch', '-f', 'tl-1', 'HEAD']);
+  const baseSha = git(repo.dir, ['rev-parse', 'HEAD']);
+  const under = (line) => CL.replace('## Unreleased\n\n', `## Unreleased\n\n${line}\n`);
+
+  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', under('- **B.** the branch bullet'));
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), under('- **A.** the master bullet'));
+  git(repo.dir, ['add', 'CHANGELOG.md']);
+  git(repo.dir, ['commit', '-q', '-m', 'another ticket merged first']);
+
+  // ENTER: git itself refuses this merge, and refuses it on CHANGELOG.md. Without
+  // the probe every assertion below would be equally true of a merge that never
+  // conflicted, which is the state this subject exists to distinguish.
+  let probe = '';
+  try {
+    execFileSync('git', ['-C', repo.dir, 'merge', '--no-ff', '--no-edit', '-m', 'probe', 'tl-1'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.fail('ENTER: git merged cleanly — there was no conflict to union');
+  } catch (e) {
+    probe = `${e.stdout || ''}${e.stderr || ''}`;
+  }
+  assert.match(probe, /CONFLICT[^\n]*CHANGELOG\.md/, 'ENTER: the conflict really is on CHANGELOG.md');
+  git(repo.dir, ['merge', '--abort']);
+  assert.strictEqual(git(repo.dir, ['status', '--porcelain']), '', 'ENTER: the probe left the tree clean');
+
+  const f = mkMerge({ repo: { ...repo, baseSha }, ticketOver: { worktree: { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha } } });
+  const before = f.masterHead();
+  const seen = [];
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket, runIn) => { seen.push(runIn); return real(team, ticket, runIn); };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'nothing escalated — the loop resolved it itself');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification');
+  assert.match(notes[0].body, /kept BOTH/, 'the notice says the loop kept both bullets');
+  assert.match(notes[0].body, /CHANGELOG\.md was CHANGED by this merge/,
+    'and the measured CHANGELOG line still runs — a unioned merge really did touch the file');
+
+  // The post-merge suite is what separates "the union landed" from "the union
+  // landed and nothing verified master afterwards".
+  assert.deepStrictEqual(seen, [repo.dir], 'the post-merge suite ran, in the root checkout');
+
+  const sha = f.masterHead();
+  assert.notStrictEqual(sha, before, 'master moved');
+  assert.ok(git(repo.dir, ['rev-parse', `${sha}^2`]), 'and it is a two-parent merge commit');
+  const lines = fsReal.readFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), 'utf8').split('\n');
+  const a = lines.findIndex((l) => l.includes('**A.**'));
+  const b = lines.findIndex((l) => l.includes('**B.**'));
+  assert.ok(a >= 0 && b >= 0, `both bullets are on master (A at ${a}, B at ${b})`);
+  assert.ok(a < b, `the ticket that merged FIRST is above this one (A at ${a}, B at ${b})`);
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'and the branch\'s work landed');
+  assert.strictEqual(git(repo.dir, ['status', '--porcelain']), '', 'the shared checkout is clean');
 });
 
 test('an already-merged branch is reported, not announced as a merge that happened', async () => {
@@ -2422,7 +2492,19 @@ test('no code path in the merge can push, and none stages with -A', () => {
   // `git worktree add`, which stages nothing. The ban is on argv that BEGINS
   // with add — the staging command — and on the flags that would sweep a
   // sibling seat's uncommitted work into a merge commit.
-  assert.ok(!/\['add'/.test(gw), 'git-worktree.js must never git-add — nothing here stages');
+  //
+  // t698 opened ONE exception, narrowed to the exact argv rather than lifted:
+  // the CHANGELOG union has to stage the file it just resolved before it can
+  // commit the merge. A single literal pathspec is what makes that safe — it
+  // stages that one path and nothing else, so a sibling seat's uncommitted work
+  // is unreachable from it, which is the property the ban was protecting. Any
+  // other add shape, including a second pathspec or a variable, still reds.
+  for (const m of gw.match(/\['add'[^\]]*\]/g) || []) {
+    assert.strictEqual(m, "['add', 'CHANGELOG.md']",
+      `git-worktree.js may stage only the unioned CHANGELOG.md by literal path, not ${m}`);
+  }
+  assert.match(gw, /\['add', 'CHANGELOG\.md'\]/,
+    'ENTER: the one permitted add is really present, or the loop above vacuously passes over a module that stages nothing');
   assert.ok(!/'-A'|'--all'/.test(gw), 'git-worktree.js must never stage with -A');
 });
 

@@ -425,6 +425,72 @@ async function currentBranch(cwd) {
   return { ok: true, branch: name, head: h.ok ? h.stdout.trim() : null, repo };
 }
 
+async function unionChangelogConflict(repo, messageFile, headBefore) {
+  const conflicted = await git(repo, ['diff', '--name-only', '--diff-filter=U']);
+  if (!conflicted.ok) return { ok: false, reason: `could not list the conflicted paths: ${(conflicted.stderr || '').trim() || `exit ${conflicted.code}`}` };
+  const paths = (conflicted.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (paths.length === 0) return { ok: false, reason: 'the merge failed with no conflicted path, so there is no content conflict to resolve' };
+  const no = (reason) => ({ ok: false, conflict: true, reason });
+  if (paths.length !== 1 || paths[0] !== 'CHANGELOG.md') {
+    return no(`the conflict is not CHANGELOG.md alone (conflicted: ${paths.join(', ')})`);
+  }
+  const stages = {};
+  for (const n of [1, 2, 3]) {
+    const s = await git(repo, ['rev-parse', '--verify', '--quiet', `:${n}:CHANGELOG.md`]);
+    const blob = s.ok ? s.stdout.trim() : '';
+    if (!blob) return no(`CHANGELOG.md has no stage-${n} blob, so this is an add/delete conflict rather than an adjacent insert`);
+    stages[n] = blob;
+  }
+  for (const [n, side] of [[2, 'ours'], [3, 'theirs']]) {
+    const ns = await git(repo, ['diff', '--numstat', stages[1], stages[n]]);
+    if (!ns.ok) return no(`could not diff the base against ${side}: ${(ns.stderr || '').trim() || `exit ${ns.code}`}`);
+    const first = (ns.stdout || '').split('\n').find((l) => l.trim());
+    const fields = (first || '').split('\t');
+    const added = Number(fields[0]);
+    const deleted = Number(fields[1]);
+    if (!Number.isFinite(added) || !Number.isFinite(deleted)) {
+      return no(`could not read the ${side} line counts from \`${(first || '').trim()}\``);
+    }
+    if (deleted !== 0) return no(`${side} deleted or rewrote ${deleted} line(s) of CHANGELOG.md, which is not an insertion-only change`);
+    if (added <= 0) return no(`${side} added no line to CHANGELOG.md`);
+    const d = await git(repo, ['diff', stages[1], stages[n]]);
+    if (!d.ok) return no(`could not read the ${side} diff: ${(d.stderr || '').trim() || `exit ${d.code}`}`);
+    if ((d.stdout || '').split('\n').some((l) => /^\+## /.test(l))) {
+      return no(`${side} inserted a \`## \` heading, so a union would file the other side's bullets under the wrong section`);
+    }
+  }
+  const tmp = [];
+  try {
+    for (const [n, label] of [[2, 'ours'], [1, 'base'], [3, 'theirs']]) {
+      const show = await git(repo, ['show', `:${n}:CHANGELOG.md`]);
+      if (!show.ok) return no(`could not read stage ${n} of CHANGELOG.md: ${(show.stderr || '').trim() || `exit ${show.code}`}`);
+      const p = path.join(os.tmpdir(), `clodex-union-${label}-${process.pid}-${Date.now()}-${n}`);
+      fs.writeFileSync(p, show.stdout);
+      tmp.push(p);
+    }
+    const mf = await git(repo, ['merge-file', '-p', '--union', ...tmp]);
+    if (!mf.ok) return no(`git merge-file --union exited ${mf.code}: ${(mf.stderr || '').trim()}`);
+    if ((mf.stdout || '').split('\n').some((l) => /^(<{7} |={7}$|>{7} )/.test(l))) {
+      return no('the union output still carries a conflict marker');
+    }
+    fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), mf.stdout);
+  } finally {
+    for (const p of tmp) { try { fs.unlinkSync(p); } catch {} }
+  }
+  const add = await git(repo, ['add', 'CHANGELOG.md']);
+  if (!add.ok) return no(`\`git add CHANGELOG.md\` failed: ${(add.stderr || add.stdout || '').trim() || `exit ${add.code}`}`);
+  const ci = await git(repo, ['commit', '--no-edit', '-F', String(messageFile)]);
+  if (!ci.ok) return no(`the merge commit failed: ${(ci.stderr || ci.stdout || '').trim() || `exit ${ci.code}`}`);
+  const after = await git(repo, ['rev-parse', 'HEAD']);
+  const sha = after.ok ? after.stdout.trim() : null;
+  if (!sha || sha === headBefore) return no('HEAD did not move after the union commit');
+  const second = await git(repo, ['rev-parse', `${sha}^2`]);
+  if (!second.ok) return no('the union commit has no second parent, so it is not a merge commit');
+  const mh = await git(repo, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
+  if (mh.ok && mh.stdout.trim()) return no('MERGE_HEAD survived the union commit, so the merge is still in progress');
+  return { ok: true, sha, moved: true, headBefore, unioned: 'CHANGELOG.md' };
+}
+
 // Merge `branch` into whatever the checkout at `cwd` has checked out, always
 // with a merge commit, message read from `messageFile`.
 //
@@ -460,17 +526,21 @@ async function mergeNoFf(cwd, branch, messageFile) {
   const r = await git(repo, ['merge', '--no-ff', '--no-edit', '-F', String(messageFile), branch]);
   if (!r.ok) {
     const output = `${r.stdout || ''}${r.stderr || ''}`.trim() || `git merge exited ${r.code}`;
+    const union = await unionChangelogConflict(repo, messageFile, headBefore)
+      .catch((e) => ({ ok: false, reason: e && e.message ? e.message : String(e) }));
+    if (union.ok) return union;
     const ab = await git(repo, ['merge', '--abort']);
     // Asked of git, after the abort: a merge that never STARTED leaves no
     // MERGE_HEAD, and neither does one the abort successfully undid. Only a
     // genuinely half-applied merge does.
     const mh = await git(repo, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
     const wedged = mh.ok && !!mh.stdout.trim();
+    const base = union.conflict ? `${output}\n(CHANGELOG-only union not applied: ${union.reason})` : output;
     return {
       ok: false, sha: null, moved: false, aborted: ab.ok, wedged, headBefore,
       error: wedged
-        ? `${output}\n(and \`git merge --abort\` also failed: ${(ab.stderr || ab.stdout || '').trim() || `exit ${ab.code}`} — the checkout is left mid-merge)`
-        : output,
+        ? `${base}\n(and \`git merge --abort\` also failed: ${(ab.stderr || ab.stdout || '').trim() || `exit ${ab.code}`} — the checkout is left mid-merge)`
+        : base,
     };
   }
   const after = await git(repo, ['rev-parse', 'HEAD']);

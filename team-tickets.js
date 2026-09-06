@@ -1208,8 +1208,8 @@ function createTicketMethods(deps, shared) {
     // What this does NOT do, and must not: `task accept`. That retires the seat
     // and destroys the worktree, which is the lead's call after reading the
     // verdict; a merge is recoverable by a revert, a destroyed worktree is not.
-    // It also does not touch CHANGELOG.md — that file conflicts across every live
-    // branch, so it stays the lead's, and the notification says an entry is owed.
+    // It also never AUTHORS a CHANGELOG.md entry — it unions only the
+    // adjacent-insert conflict there, and escalates every other one.
     //
     // ONE merge at a time, process-wide, chained rather than fired.
     //
@@ -1763,7 +1763,7 @@ function createTicketMethods(deps, shared) {
         // the merge carried, so it must be measured off that.
         const changelog = await this._mergeTouchedChangelog(team, merged.headBefore, merged.sha);
         this._notifyMergeLanded(team, ticketId, {
-          branch, sha: merged.sha, rounds, summary: suite.summary, changelog,
+          branch, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned,
         });
       } catch (e) {
         // A throw AFTER the merge landed is the dangerous shape: master carries
@@ -1851,10 +1851,10 @@ function createTicketMethods(deps, shared) {
 
     // The merge landed. Rides _escalateTicket's channel — one lead DM from the
     // loop, whichever way it went — and reports the CHANGELOG state, because the
-    // merge never WRITES CHANGELOG.md (it conflicts across every live branch) but
-    // routinely CARRIES an entry the branch already wrote. An unstated debt is
-    // one the release ships without; a debt stated over an entry that landed is
-    // a duplicate entry and, repeated, a line the lead stops reading.
+    // merge never AUTHORS a CHANGELOG.md entry but routinely CARRIES one the
+    // branch wrote. An unstated debt is one the release ships without; a debt
+    // stated over an entry that landed is a duplicate entry and, repeated, a
+    // line the lead stops reading.
     //
     // `changelog` is _mergeTouchedChangelog's three-valued result. A missing one
     // reads as unknown, and so does a malformed one: `known` alone is not enough,
@@ -1869,7 +1869,7 @@ function createTicketMethods(deps, shared) {
     // retiring the seat and destroying the worktree, the one thing this whole
     // step promises not to do, and the one action here that no revert undoes.
     // Keep the prefix.
-    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog }) {
+    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned }) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
         // multi-line, and this body's safety property is that no line starts with
@@ -1888,7 +1888,7 @@ function createTicketMethods(deps, shared) {
             // CHANGELOG.md trips the same header, so the claim stops where the
             // evidence does and the lead is told to look rather than told not to.
             ? `CHANGELOG.md was CHANGED by this merge — the branch touched it, so an entry may already be on ${MERGE_TARGET_BRANCH}. Look before adding one, or you will write a duplicate.`
-            : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never writes one itself: it conflicts across every live branch).`)
+            : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never authors one itself).`)
           // `diff --stat <sha>^1 <sha>` rather than `show --stat <sha>`: it NAMES
           // the comparison — first parent against the merge, i.e. what the merge
           // brought to master — instead of relying on how `git show` chooses to
@@ -1905,6 +1905,7 @@ function createTicketMethods(deps, shared) {
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
+          ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured (first run: ${oneLine(stamp.first) || 'unrecorded'}).`] : []),
           changelogLine,
           `Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`,

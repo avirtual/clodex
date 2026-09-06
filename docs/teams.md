@@ -192,6 +192,16 @@ while a different live run holds the lock. Check `ps` for a live runner before
 concluding anything. Deleting a valid lock deadlocks the two runs it was
 protecting.
 
+**One conflict the loop resolves itself: CHANGELOG.md.** Every ticket adds its
+bullet at the head of `## Unreleased`, so the second of two in-flight tickets
+always conflicts there even when nothing else overlaps. When the ONLY conflicted
+path is the root `CHANGELOG.md` and both sides did nothing but insert lines
+(nothing deleted or rewritten, no `## ` heading added on either side), the loop
+keeps both — master's bullet above the branch's — completes the merge commit and
+says so in the `[ticket MERGED]` notice, so you read `## Unreleased` once before
+a release. Any other conflict, in that file or any other, still escalates on the
+first try.
+
 ### 4. Project knowledge — the one file you are expected to write
 
 The role prompts tell a hand how to *be* a hand. They cannot tell it that your
