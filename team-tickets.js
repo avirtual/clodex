@@ -724,19 +724,17 @@ function createTicketMethods(deps, shared) {
         ? ''
         : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
       const reviewerSystemPrompt = shape.systemPromptFile;
-      // Resolved HERE, above the name reservation below, and not down beside the
-      // check that consumes it. An unwired `path` or REGISTRY_DIR throws on this
-      // line, and the only cleanup that frees a reserved name lives in the
-      // deferred spawn's catch — so computing it after the upsert would burn
-      // `team-reviewer-N` on a throw that reaches nobody but the crash log.
-      // The resolver is an OPTIONAL dep defaulted to the pre-team-directory join,
-      // because a required one breaks every fixture that builds this deps object.
+      // Resolved HERE, above the name reservation below, not beside the check that
+      // consumes it: an unwired `path` or REGISTRY_DIR throws on this line, and the
+      // only cleanup freeing a reserved name is in the deferred spawn's catch, so
+      // resolving after the upsert burns `team-reviewer-N` on a throw nobody but the
+      // crash log sees. The dep is OPTIONAL — required, it breaks every fixture.
       const resolvePromptFile = typeof resolveSystemPromptFile === 'function'
         ? (stem) => resolveSystemPromptFile(stem, null, team)
         : (stem) => path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${stem}.md`);
       const promptFile = reviewerSystemPrompt ? resolvePromptFile(reviewerSystemPrompt) : null;
       const promptEscapeWarn = shape.promptEscaped
-        ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
+        ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape the prompt directories it is resolved against; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
         : '';
       const envWarn = (shape.envDropped.length
         ? ` — reviewer template env keys [${shape.envDropped.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
@@ -870,13 +868,13 @@ function createTicketMethods(deps, shared) {
       if (reviewerSystemPrompt) {
         // Only the STAT is guarded, and widening this back over the resolution
         // above is the wrong change: an unwired `path` or REGISTRY_DIR throws
-        // there too, and absorbing that skipped the whole preflight silently —
-        // it never ran under the shared review fixture, so the warning below was
-        // unreachable and unproven for two tickets.
+        // there too, and absorbing that skipped the whole preflight silently, so
+        // the warning below went unreachable and unproven for two tickets. A
+        // null resolution is a MISS, not a skip — the "in neither place" case.
         let missing = !promptFile;
         if (promptFile) {
           try { missing = !fs.existsSync(promptFile); }
-          catch { missing = false; } // preflight is best-effort — a stat error is not a spawn blocker
+          catch { missing = false; } // best-effort — a stat error is not a spawn blocker
         }
         if (missing) {
           promptWarn = ` — WARNING: role prompt "${reviewerSystemPrompt}.md" not found under teams/${team.name}/prompts/system or library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;

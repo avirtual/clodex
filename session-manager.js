@@ -2834,12 +2834,14 @@ function createSessionManager(deps) {
             if (def && def.prompt) {
               // Resolved on BOTH arms. When the prompt rides as
               // --system-prompt-file this method appends nothing and the stem is
-              // resolved instead by resolveSystemPromptFile at prompt-build time
-              // — where a miss returns null and the seat boots with NO system
-              // prompt at all, strictly worse than unbriefed and reported by
-              // nobody. Same resolution rule both arms use — team copy, then
-              // library — so one read answers for both; an empty file is NOT a miss.
-              const rolePrompt = readSystemPromptBody ? readSystemPromptBody(def.prompt, null, team) : null;
+              // resolved instead at prompt-build time — where a miss returns null
+              // and the seat boots with NO system prompt, strictly worse than
+              // unbriefed and reported by nobody. Same rule both arms use (team
+              // copy, then library); an empty file is NOT a miss. Caught HERE, not
+              // by the outer catch, which would drop the whole team block.
+              let rolePrompt = null;
+              try { rolePrompt = readSystemPromptBody(def.prompt, null, team); }
+              catch { rolePrompt = null; }
               const where = `teams/${team.name}/prompts/system or library/prompts/system`;
               if (rolePrompt == null) {
                 missingPrompt = promptRidesAsSystem
@@ -2870,11 +2872,9 @@ function createSessionManager(deps) {
     // re-derived from the persistence entry: `extraArgs` and the resolved
     // `CLODEX_DISABLE_IPC_PROMPT` decision are spawn-time inputs that the entry
     // does not carry in the form used here, and re-deriving them is how the two
-    // halves diverged in the first place. `teamBlock` and the `team` it was built
-    // from are passed separately, because they are the part deliberately
-    // re-resolved per refresh (see _teamBlockFor) — one resolution answers for
-    // the block and for the append stems, which may resolve to the team's own
-    // copies, so a second resolution here could write bytes no spawn produced.
+    // halves diverged in the first place. `teamBlock` and its `team` are passed
+    // separately, being the part deliberately re-resolved per refresh: ONE
+    // resolution answers for the block and for the append stems (see _teamBlockFor).
     _realIpcFor(recipe, teamBlock, team) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''

@@ -12,16 +12,14 @@
 // arrives as an injected probe, which is what makes the whole findings table
 // assertable from a fixture with no library on disk and no team checked out.
 //
-// The level enum is warn|note with no 'ok' member, so a name that resolved from
-// the library carries nothing and the surfaces render the ✓ from the manifest
-// row. The one finding a resolution DOES carry is the team-copy note below: the
-// shadowing is the fact, not the resolving. `verify` is stage 3's kind — the
-// enum has room for it and this file emits none.
+// The level enum is warn|note with no 'ok' member, so a library hit carries
+// nothing and the surfaces render the ✓ from the manifest row. `verify` is stage
+// 3's kind — the enum has room for it and this file emits none.
 //
 // `resolvedFrom` names where the thing that DID resolve came from, and is null
-// when nothing resolved. 'team' is what turns a team-local prompt file silently
-// shadowing a library one into a displayed fact instead of a surprise, so a
-// team hit carries a note where a library hit stays silent.
+// when nothing resolved. A 'team' hit is the one resolution that carries a
+// finding: it turns a team-local prompt silently shadowing a library one into a
+// displayed fact. The shadowing is the fact, not the resolving.
 //
 // NOT A HOT PATH. It stats files and parses template/exec JSON per role — fine
 // for a popover open or a team create, wrong for resolveTeam, which runs on
