@@ -752,6 +752,7 @@ function createSessionManager(deps) {
           this._publishAgentText({
             session: t.agent, text: t.text, source: 'wire', truncated: t.truncated,
             isTurnEnd: !!(t.stop && t.stop.is_turn), files: t.files, reads: t.reads,
+            thinking: t.thinking, thinkingTruncated: t.thinkingTruncated, toolUses: t.toolUses,
           });
           const intents = this._extractIntents(t.text);
           this._shadowLog({
@@ -4069,12 +4070,13 @@ function createSessionManager(deps) {
       try {
         const hooks = getPluginHooks && getPluginHooks();
         if (!hooks || typeof hooks.fireAgentText !== 'function') return;
-        // Nothing to say: 576 of 1359 measured requests carried no text at all
-        // (pure tool calls). An event with neither text nor file touches is a
-        // wake-up with no payload, paid by every subscriber.
+        // Nothing to say to ANY grant set. Deliberately admits more than the
+        // engine's per-plugin rule, which re-judges emptiness against the fields
+        // each subscriber's own grants let it see.
         const hasFiles = Array.isArray(ev.files) && ev.files.length;
         const hasReads = Array.isArray(ev.reads) && ev.reads.length;
-        if (!ev.text && !hasFiles && !hasReads) return;
+        const hasTools = Array.isArray(ev.toolUses) && ev.toolUses.length;
+        if (!ev.text && !hasFiles && !hasReads && !hasTools && !ev.thinking) return;
         hooks.fireAgentText(ev);
       } catch { /* consume-only */ }
     }

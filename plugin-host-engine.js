@@ -148,10 +148,12 @@ function createPluginHostEngine(deps) {
 // subscriber doing real work on a 4MB turn inline would delay every intent
 // behind it. setImmediate is the same escape the intent loop already takes.
 //
-// One frozen event object shared by every subscriber, built ONCE before the
-// grant loop: `files`/`reads` arrive as the wire collector's live arrays, which
-// core also reads these arrays, so a subscriber mutating one would corrupt
-// core's view. Freezing beats copying per subscriber.
+// Frozen event objects, shared per GRANT SET rather than per subscriber:
+// `files`/`reads` arrive as the wire collector's live arrays, which core also
+// reads, so a subscriber mutating one would corrupt core's view. Freezing beats
+// copying per subscriber.
+  const frozenList = (v) => (Array.isArray(v) ? Object.freeze(v.map((x) => Object.freeze({ ...x }))) : null);
+
   function agentTextEvent(ev) {
     // Defaults to the path that CLAIMS LESS. 'wire' would mean isTurnEnd:false
     // and reads:[] — two assertions — for a source nobody recognised; 'jsonl'
@@ -162,7 +164,6 @@ function createPluginHostEngine(deps) {
     // no tool-use blocks to read. `false` and `[]` are CLAIMS a plugin cannot
     // tell apart from an observation; null says "not knowable here". Same
     // discipline as the sidebar-meta merge bugs — absent and false differ.
-    const frozenList = (v) => (Array.isArray(v) ? Object.freeze(v.map((x) => Object.freeze({ ...x }))) : null);
     return Object.freeze({
       session: String((ev && ev.session) || ''),
       text: typeof (ev && ev.text) === 'string' ? ev.text : '',
@@ -172,6 +173,20 @@ function createPluginHostEngine(deps) {
       files: frozenList(ev && ev.files) || Object.freeze([]),
       reads: src === 'wire' ? (frozenList(ev && ev.reads) || Object.freeze([])) : null,
     });
+  }
+
+  function agentTextVariant(base, ev, { thinking, toolInputs }) {
+    if (!thinking && !toolInputs) return base;
+    const wire = base.source === 'wire';
+    const extra = {};
+    if (thinking) {
+      extra.thinking = wire ? (typeof (ev && ev.thinking) === 'string' ? ev.thinking : null) : null;
+      extra.thinkingTruncated = wire ? !!(ev && ev.thinkingTruncated) : null;
+    }
+    if (toolInputs) {
+      extra.toolUses = wire ? (frozenList(ev && ev.toolUses) || Object.freeze([])) : null;
+    }
+    return Object.freeze({ ...base, ...extra });
   }
 
   function fireAgentText(ev) {
@@ -187,6 +202,7 @@ function createPluginHostEngine(deps) {
     setImmediate(() => {
       const entry = readSeatEntry(event.session);
       const grants = (entry && Array.isArray(entry.pluginGrants)) ? entry.pluginGrants : null;
+      const variants = [null, null, null, null];
       for (const [pluginId, set] of textHooks) {
         const rec = registered.get(pluginId);
         // OUTER of the two: a grant token for a plugin the seat no longer has
@@ -201,8 +217,15 @@ function createPluginHostEngine(deps) {
         // manifest session→global, so a stale token would keep delivering to a
         // plugin the grants editor no longer even lists.
         if (!rec || scopeOf(rec.manifest) !== 'session') continue;
+        const t = pluginGranted(pluginId, 'thinking', grants);
+        const u = pluginGranted(pluginId, 'toolInputs', grants);
+        const slot = (t ? 2 : 0) | (u ? 1 : 0);
+        if (!variants[slot]) variants[slot] = agentTextVariant(event, ev, { thinking: t, toolInputs: u });
+        const variant = variants[slot];
+        if (!variant.text && !variant.files.length && !(variant.reads && variant.reads.length)
+          && !(t && variant.thinking) && !(u && variant.toolUses && variant.toolUses.length)) continue;
         for (const fn of set) {
-          try { fn(event); } catch (e) {
+          try { fn(variant); } catch (e) {
             try { log.info('plugin', `sessions.onAgentText subscriber threw (ignored): ${e && e.message}`); } catch {}
           }
         }
