@@ -3968,11 +3968,7 @@ function createTicketMethods(deps, shared) {
           // verbatim, so no --model is ever refused and there is nothing to
           // report. Present so both purposes return one key set.
           modelRefused: null,
-          // The template's systemPromptFile does NOT displace `def.prompt`: for
-          // claude both ride --append-system-prompt-file and create() dedupes them
-          // by name equality, so passing both is how a template-shaped seat still
-          // gets its role delta.
-          systemPromptFile: (def && def.prompt) || (shape && shape.systemPromptFile) || null,
+          systemPromptFile: (shape && shape.systemPromptFile) || (def && def.prompt) || null,
           appendPromptFiles: (shape && shape.appendPromptFiles) || [],
           execCommands: (shape && shape.execCommands) || [],
           // `[]` (everything gated) is a real value that must apply; null means the

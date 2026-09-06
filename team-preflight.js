@@ -102,6 +102,15 @@ function teamPreflight(team, probes) {
   for (const [role, def] of Object.entries(roles)) {
     if (!def || typeof def !== 'object') continue;
 
+    let own = null;
+    let ownIsTeamCopy = false;
+    if (isNonEmptyString(def.template)) {
+      try { own = readTeamTemplate(def.template); } catch { own = null; }
+      ownIsTeamCopy = !!(own && typeof own === 'object' && !Array.isArray(own));
+      if (!ownIsTeamCopy) own = null;
+    }
+    const tpl = isNonEmptyString(def.template) ? (own || byName.get(def.template) || null) : null;
+
     if (isNonEmptyString(def.prompt)) {
       let hit = null;
       try { hit = resolvePrompt('system', def.prompt); } catch { hit = null; }
@@ -116,20 +125,22 @@ function teamPreflight(team, probes) {
           message: `role "${role}": prompt "${def.prompt}" is the team's own copy (teams/${teamName}/prompts/system), shadowing the library`,
         });
       }
+      const tplSystem = tpl && isNonEmptyString(tpl.systemPromptFile) ? tpl.systemPromptFile : null;
+      if (tplSystem && tplSystem !== def.prompt) {
+        findings.push({
+          level: 'note', kind: 'prompt', role, ref: def.prompt, resolvedFrom: null,
+          message: `role "${role}" names prompt "${def.prompt}", and its template "${def.template}" names system prompt "${tplSystem}" — the template's is the system prompt, the role's is appended after the team block`,
+        });
+      }
     }
 
     if (!isNonEmptyString(def.template)) continue;
-    let own = null;
-    try { own = readTeamTemplate(def.template); } catch { own = null; }
-    if (own && typeof own === 'object' && !Array.isArray(own)) {
+    if (ownIsTeamCopy) {
       findings.push({
         level: 'note', kind: 'template', role, ref: def.template, resolvedFrom: 'team',
         message: `role "${role}": template "${def.template}" is the team's own copy (teams/${teamName}/templates), shadowing the library`,
       });
-    } else {
-      own = null;
     }
-    const tpl = own || byName.get(def.template) || null;
     if (!tpl) {
       // The template's own contents are what the exec/append checks read, so a
       // missing template is the end of this role's line, not a warning we then
