@@ -10,7 +10,7 @@ const { nameConflict } = require('./session-manager');
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS } = require('./team-manifest');
 const { teamPreflight } = require('./team-preflight');
-const { teamPromptFile } = require('./team-prompt-dir');
+const { teamPromptFile, readTeamJson } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
@@ -246,6 +246,15 @@ function registerIpcHandlers(deps) {
         // the leaf. Reading the one file again by name would be a second parse
         // of the same bytes that can disagree with the first.
         readExecDef: (id) => {
+          const own = readTeamJson({ fs, path }, team, 'exec', id);
+          if (own) {
+            return {
+              name: id,
+              argv: Array.isArray(own.argv) ? own.argv : [],
+              cwd: typeof own.cwd === 'string' ? own.cwd : '',
+              resolvedFrom: 'team',
+            };
+          }
           if (!execDefs) execDefs = execLibrary.list();
           const hit = execDefs.find((d) => d && d.name === id);
           if (hit) return hit;
@@ -276,6 +285,7 @@ function registerIpcHandlers(deps) {
         resolvePrompt: (kind, stem) => (teamPromptFile({ fs, path }, team, kind, stem)
           ? 'team'
           : (promptLibrary.raw(kind, stem) == null ? null : 'library')),
+        readTeamTemplate: (stem) => readTeamJson({ fs, path }, team, 'templates', stem),
       });
       return { ok: true, findings };
     } catch (err) { return { ok: false, error: err.message, findings: [] }; }

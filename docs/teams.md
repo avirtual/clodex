@@ -35,9 +35,10 @@ From the Teams menu, `Create Team…` writes
 
 That is the whole team. `root` must be absolute — a relative root would resolve
 against whatever directory the app happens to be in. A role carries at most
-`prompt` (which system prompt briefs the seat), `template` (which library
-template shapes the seat: model, tools, grants, cwd), `brief` (one line about
-the role, shown in the roster) and `dispatch` (what a ticket for this role
+`prompt` (which system prompt briefs the seat), `template` (which template
+shapes the seat: model, tools, grants, cwd — resolved against
+`~/.clodex/teams/<name>/templates/` first, then the shared library), `brief`
+(one line about the role, shown in the roster) and `dispatch` (what a ticket for this role
 does: `standing` delivers to the live seat, `spawn` mints a one-shot seat in
 the shared checkout, `worktree` mints a one-shot seat on its own branch in its
 own git worktree).
@@ -48,6 +49,35 @@ worktree, spawns a hand seat in it and delivers the spec; the hand commits and
 closes the ticket; the loop verifies the branch and escalates or reviews.
 
 Everything below is what you add so that loop is *productive* on your code.
+
+## What a team directory holds
+
+`team.json` is one file in a directory the team owns outright:
+
+```
+~/.clodex/teams/<name>/
+  team.json                 lead, root, roles
+  prompts/system/<stem>.md  role prompts the team owns
+  prompts/append/<stem>.md  project knowledge the team owns
+  templates/<stem>.json     seat templates the team owns
+  exec/<name>.json          exec grants the team owns
+  tickets.json, tasks/      the loop's own data
+```
+
+One rule covers all four kinds: a name written without a colon — a role's
+`prompt`, its `template`, an `appendPromptFiles` stem, an `execCommands` name —
+resolves against this directory first and the shared library second. A name
+*with* a colon is a plugin ref (`<plugin>:<stem>`) and never looks here. Nothing
+under `teams/` is written for you: `Create Team…` writes `team.json` and stops,
+so a directory that holds only `team.json` behaves exactly as it did before any
+of this existed. Team preflight (the roles popover) says which names resolved to
+the team's own copies.
+
+A team's own template is reachable by naming it — from a role's `template`, from
+`[agent:spawn … template:<stem>]` by a seat inside the team — and is not listed
+machine-wide in the New Session dialog or the library drawers. The same goes for
+a reviewer template: name it in the reviewer role, since the reviewer's
+prefix-based discovery reads the library only.
 
 ## The four things your project must supply
 
@@ -88,9 +118,11 @@ worked.
 
 ### 2. Exec grants — the shipped ones, and yours
 
-`[agent:exec <name>]` lets a seat run a pre-registered command. Definitions
-live in `~/.clodex/library/exec/<name>.json`, and a template grants a seat a
-subset by name.
+`[agent:exec <name>]` lets a seat run a pre-registered command. Definitions live
+in `~/.clodex/teams/<name>/exec/<name>.json` or `~/.clodex/library/exec/<name>.json`
+— the team's copy wins — and a template grants a seat a subset by name. The grant
+is still the capability: a def under either directory only shapes what an
+already-granted name does.
 
 Clodex ships three definitions and seeds them on first run:
 
@@ -110,7 +142,8 @@ The shipped hand template grants only `clodex-team` for exactly this reason: a
 default that fails on first use teaches an operator to distrust the whole
 grants list.
 
-**To add your own:** drop a JSON def in `~/.clodex/library/exec/`, write the
+**To add your own:** drop a JSON def in `~/.clodex/teams/<name>/exec/` — or in
+`~/.clodex/library/exec/` when you want every team to share it — write the
 script it names under your project root, and add the command's name to your
 hand template's `execCommands`. Use `${TEAM_ROOT}` rather than an absolute
 path, and the def stays portable to your next team:

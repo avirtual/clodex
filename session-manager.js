@@ -109,6 +109,7 @@ const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
 const { didGrow } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
+const { readTeamJson } = require('./team-prompt-dir');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -1563,7 +1564,7 @@ function createSessionManager(deps) {
             ? readSystemPromptBody(systemPromptFile, seatPlugins, resolvedTeam)
             : (systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null);
           const codexAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins, resolvedTeam);
-          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null)), {
+          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           args = [...cleaned];
@@ -2878,7 +2879,7 @@ function createSessionManager(deps) {
     _realIpcFor(recipe, teamBlock, team) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''
-        : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands),
+        : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands, team),
           pluginGrammarLines(recipe.intents, recipe.plugins));
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins, team),
@@ -4856,20 +4857,23 @@ function createSessionManager(deps) {
     // _resolveExecDefs degrades to the bare id STRING on any read/parse failure — a
     // malformed def must never fail a spawn — and drops argv/cwd, which can carry
     // absolute paths that must never reach a prompt.
-    _resolveExecDefs(execCommands) {
+    _resolveExecDefs(execCommands, team) {
       if (!Array.isArray(execCommands)) return [];
       return execCommands.map((c) => {
         const name = String(c);
         if (!isFilenameToken(name)) return name;
+        const shape = (entry) => ({
+          name,
+          description: typeof entry.description === 'string' ? entry.description : '',
+          schema: (entry.schema && typeof entry.schema === 'object') ? entry.schema : null,
+        });
+        const own = readTeamJson({ fs, path }, team, 'exec', name);
+        if (own) return shape(own);
         try {
           const entry = JSON.parse(fs.readFileSync(
             path.join(REGISTRY_DIR, 'library', 'exec', `${name}.json`), 'utf-8'));
           if (!entry || typeof entry !== 'object') return name;
-          return {
-            name,
-            description: typeof entry.description === 'string' ? entry.description : '',
-            schema: (entry.schema && typeof entry.schema === 'object') ? entry.schema : null,
-          };
+          return shape(entry);
         } catch { return name; }
       });
     }
@@ -4892,13 +4896,17 @@ function createSessionManager(deps) {
         fail('not granted to this seat');
         return;
       }
-      const entryPath = path.join(REGISTRY_DIR, 'library', 'exec', `${cmd}.json`);
-      let entry;
-      try {
-        entry = JSON.parse(fs.readFileSync(entryPath, 'utf-8'));
-      } catch (e) {
-        fail(e.code === 'ENOENT' ? 'no such registered command' : `registry read failed (${e.message})`);
-        return;
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      let entry = readTeamJson({ fs, path }, team, 'exec', cmd);
+      if (!entry) {
+        const entryPath = path.join(REGISTRY_DIR, 'library', 'exec', `${cmd}.json`);
+        try {
+          entry = JSON.parse(fs.readFileSync(entryPath, 'utf-8'));
+        } catch (e) {
+          fail(e.code === 'ENOENT' ? 'no such registered command' : `registry read failed (${e.message})`);
+          return;
+        }
       }
       if (!entry || typeof entry !== 'object' || !Array.isArray(entry.argv) || !entry.argv.length) {
         fail('malformed registry entry (needs a non-empty argv)');
@@ -4919,9 +4927,7 @@ function createSessionManager(deps) {
       // def serves every team. Empty when the seat's cwd is in no team's root:
       // substituting a wrong root would reintroduce exactly the bug, so a def
       // using the token fails loudly instead (spawn ENOENT on a relative path).
-      const teamRoot = (() => {
-        try { return resolveTeam(session.cwd)?.root || ''; } catch { return ''; }
-      })();
+      const teamRoot = (team && team.root) || '';
       const expandVars = (s) => String(s)
         .split('${CLODEX_BIN}').join(CLODEX_BIN)
         .split('${CLODEX_HOME}').join(REGISTRY_DIR)

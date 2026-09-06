@@ -192,14 +192,15 @@ test('t699: a `<plugin>:<stem>` ref takes the plugin branch and never consults t
       'the colon branch runs first and refuses — it does not degrade to the team copy of the bare stem');
   }
 
-  // And the leaf itself is never handed a colon ref by those resolvers: the
-  // counting double proves the branch order rather than inferring it from the
-  // null above, which a team file that simply failed to resolve would also give.
+  // And the leaf itself refuses a colon ref outright (t700 made the refusal
+  // part of the shape test, one contract for every kind), so the counting
+  // double proves the branch order rather than inferring it from the null
+  // above, which a team file that simply failed to resolve would also give.
   const dbl = countingFs();
   assert.strictEqual(teamPromptFile({ fs: dbl, path }, team, 'system', 'p:x'), null,
     'a colon ref is not a bare stem this leaf serves');
-  assert.deepStrictEqual(dbl.calls.map((c) => c[0]), ['accessSync'],
-    'and if it ever were handed one it would look for a literal "p:x.md" INSIDE the team dir, never outside it');
+  assert.deepStrictEqual(dbl.calls, [],
+    'and it is refused on shape alone — a namespaced ref never becomes a path inside the team dir');
 });
 
 // ── 6. a read failure after a successful access falls through ───────────────

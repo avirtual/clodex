@@ -28,6 +28,7 @@ const { isDraftOpen } = require('./proxy-util');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { matchSeatRole } = require('./team-manifest');
+const { readTeamJson } = require('./team-prompt-dir');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 
@@ -448,6 +449,9 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
+      let spawnerTeam = null;
+      try { spawnerTeam = resolveTeam(spawner.cwd); } catch { spawnerTeam = null; }
+
       let tpl = null;
       if (intent.template) {
         const v = intent.template;
@@ -469,19 +473,24 @@ function createTicketMethods(deps, shared) {
           }
           tpl = obj;
         } else {
-          const wanted = v.toLowerCase();
-          const all = allTemplates();
-          const matches = all.filter(t => (t.name || '').toLowerCase() === wanted);
-          if (matches.length === 0) {
-            const names = all.map(t => t.name).filter(Boolean);
-            reply(`error: no template named "${v}"${names.length ? ` — available: ${names.join(', ')}` : ' — none saved'}`);
-            return;
+          const own = readTeamJson({ fs, path }, spawnerTeam, 'templates', v);
+          if (own) {
+            tpl = { ...own, name: v, id: v };
+          } else {
+            const wanted = v.toLowerCase();
+            const all = allTemplates();
+            const matches = all.filter(t => (t.name || '').toLowerCase() === wanted);
+            if (matches.length === 0) {
+              const names = all.map(t => t.name).filter(Boolean);
+              reply(`error: no template named "${v}"${names.length ? ` — available: ${names.join(', ')}` : ' — none saved'}`);
+              return;
+            }
+            if (matches.length > 1) {
+              reply(`error: ambiguous — ${matches.length} templates named "${v}", rename to disambiguate`);
+              return;
+            }
+            tpl = matches[0];
           }
-          if (matches.length > 1) {
-            reply(`error: ambiguous — ${matches.length} templates named "${v}", rename to disambiguate`);
-            return;
-          }
-          tpl = matches[0];
         }
       }
       const tplLabel = tpl ? (tpl.name || intent.template) : null;
@@ -497,9 +506,7 @@ function createTicketMethods(deps, shared) {
       // team; a portable template writes "${TEAM_ROOT}" where ours hardcodes an
       // absolute path. Refusing on an unresolved root is the point — see
       // team-root-expand.js.
-      const spawnerRoot = (() => {
-        try { return resolveTeam(spawner.cwd)?.root || ''; } catch { return ''; }
-      })();
+      const spawnerRoot = (spawnerTeam && spawnerTeam.root) || '';
       const expandedCwd = expandTeamRoot(rawCwd, spawnerRoot);
       if (!expandedCwd.ok) {
         reply(`error: ${tpl ? `template "${tplLabel}" cwd: ` : ''}${expandedCwd.reason}`);
@@ -3750,11 +3757,15 @@ function createTicketMethods(deps, shared) {
     // AGENT-INITIATED, both callers: a template is agent-writable, so privileged
     // intents are stripped and env is confined to REVIEWER_ENV_ALLOWLIST. Only an
     // operator's local GUI create/edit may grant those.
-    _templateShape(tplName) {
+    _templateShape(tplName, team) {
       if (!tplName) return null;
       let tpl = null;
-      try { tpl = allTemplates().find((t) => t && t.name === tplName) || null; }
-      catch { tpl = null; }
+      const own = readTeamJson({ fs, path }, team, 'templates', tplName);
+      if (own) tpl = { ...own, name: tplName, id: tplName };
+      else {
+        try { tpl = allTemplates().find((t) => t && t.name === tplName) || null; }
+        catch { tpl = null; }
+      }
       if (!tpl) return null;
       const { sessionEnv, dropped, badType } = filterTemplateEnv(tpl.env);
       return {
@@ -3892,6 +3903,7 @@ function createTicketMethods(deps, shared) {
         review
           ? (templateOverride || (def && def.template) || DEFAULT_REVIEWER_TEMPLATE)
           : (def && def.template),
+        team,
       );
       const tpl = (shape && shape.tpl) || null;
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];

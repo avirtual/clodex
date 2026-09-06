@@ -18,8 +18,8 @@
 //
 // `resolvedFrom` names where the thing that DID resolve came from, and is null
 // when nothing resolved. A 'team' hit is the one resolution that carries a
-// finding: it turns a team-local prompt silently shadowing a library one into a
-// displayed fact. The shadowing is the fact, not the resolving.
+// finding: it turns a team-owned prompt, template or exec def silently shadowing
+// its library namesake into a displayed fact — the shadowing is the fact.
 //
 // NOT A HOT PATH. It stats files and parses template/exec JSON per role — fine
 // for a popover open or a team create, wrong for resolveTeam, which runs on
@@ -83,6 +83,7 @@ function teamPreflight(team, probes) {
   const resolvePrompt = typeof p.resolvePrompt === 'function' ? p.resolvePrompt : () => null;
   const listTemplates = typeof p.listTemplates === 'function' ? p.listTemplates : () => [];
   const readExecDef = typeof p.readExecDef === 'function' ? p.readExecDef : () => null;
+  const readTeamTemplate = typeof p.readTeamTemplate === 'function' ? p.readTeamTemplate : () => null;
   const exists = typeof p.exists === 'function' ? p.exists : () => false;
 
   // Listed ONCE for the whole run, not per role: a team whose roles all name the
@@ -118,7 +119,17 @@ function teamPreflight(team, probes) {
     }
 
     if (!isNonEmptyString(def.template)) continue;
-    const tpl = byName.get(def.template) || null;
+    let own = null;
+    try { own = readTeamTemplate(def.template); } catch { own = null; }
+    if (own && typeof own === 'object' && !Array.isArray(own)) {
+      findings.push({
+        level: 'note', kind: 'template', role, ref: def.template, resolvedFrom: 'team',
+        message: `role "${role}": template "${def.template}" is the team's own copy (teams/${teamName}/templates), shadowing the library`,
+      });
+    } else {
+      own = null;
+    }
+    const tpl = own || byName.get(def.template) || null;
     if (!tpl) {
       // The template's own contents are what the exec/append checks read, so a
       // missing template is the end of this role's line, not a warning we then
@@ -126,7 +137,7 @@ function teamPreflight(team, probes) {
       // file that does not exist.
       findings.push({
         level: 'warn', kind: 'template', role, ref: def.template, resolvedFrom: null,
-        message: `role "${role}": template "${def.template}" is not in the template library — a seat spawned for this role gets none of its shape`,
+        message: `role "${role}": template "${def.template}" is in neither teams/${teamName}/templates nor the template library — a seat spawned for this role gets none of its shape`,
       });
       continue;
     }
@@ -141,7 +152,7 @@ function teamPreflight(team, probes) {
         // checked nothing" is exactly the silent swallow this design kills.
         findings.push({
           level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: null,
-          message: `role "${role}": template "${def.template}" grants exec command "${raw}", which has no def installed under library/exec`,
+          message: `role "${role}": template "${def.template}" grants exec command "${raw}", which has no def installed under teams/${teamName}/exec or library/exec`,
         });
         continue;
       }
@@ -159,9 +170,16 @@ function teamPreflight(team, probes) {
         // its JSON is fine, its shape is not — and the repair is the same.
         findings.push({
           level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: null,
-          message: `role "${role}": exec command "${raw}" has a def file under library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file`,
+          message: `role "${role}": exec command "${raw}" has a def file under teams/${teamName}/exec or library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file`,
         });
         continue;
+      }
+      const from = entry.resolvedFrom === 'team' ? 'team' : 'library';
+      if (from === 'team') {
+        findings.push({
+          level: 'note', kind: 'exec', role, ref: raw, resolvedFrom: 'team',
+          message: `role "${role}": exec command "${raw}" runs the team's own def (teams/${teamName}/exec)`,
+        });
       }
       const argv = Array.isArray(entry.argv) ? entry.argv : [];
       if (!argv.length) {
@@ -172,8 +190,8 @@ function teamPreflight(team, probes) {
         // line: the runner never reaches the cwd expansion below, so checking
         // its paths would report a consequence of a def that cannot run at all.
         findings.push({
-          level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: 'library',
-          message: `role "${role}": exec command "${raw}" has a def under library/exec but no argv to run — the runner refuses it as malformed, so every call bounces`,
+          level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: from,
+          message: `role "${role}": exec command "${raw}" has a def under teams/${teamName}/exec or library/exec but no argv to run — the runner refuses it as malformed, so every call bounces`,
         });
         continue;
       }
@@ -194,11 +212,11 @@ function teamPreflight(team, probes) {
         try { ok = !!exists(abs); } catch { ok = false; }
         if (ok) continue;
         findings.push({
-          // 'library': the def itself resolved, and this is the portable path
+          // Not null: the def itself resolved, and this is the portable path
           // INSIDE it that does not. That distinction is the whole point of the
           // ${TEAM_ROOT} token — a def that hardcodes an absolute project path
           // runs the wrong project's script for every other team, silently.
-          level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: 'library',
+          level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: from,
           message: `role "${role}": exec command "${raw}" ${verb} ${abs}, which does not exist under this team's root`,
         });
       }
