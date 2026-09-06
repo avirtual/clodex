@@ -44,7 +44,10 @@ const RESOLVED = {
   commit: 'abc1234def5678abc1234def5678abc1234def56',
   commitFull: true,
   id: 'notes',
-  manifest: { id: 'notes', name: 'Notes', version: '1.2.0', announce: 'Takes notes.' },
+  manifest: {
+    id: 'notes', name: 'Notes', version: '1.2.0', announce: 'Takes notes.',
+    entry: { engine: 'engine.js', renderer: 'renderer.js' },
+  },
 };
 
 // The other half of the ref branch: a bare `owner/repo` resolves with ref null,
@@ -58,7 +61,10 @@ const RESOLVED_NO_REF = {
   commit: 'def5678',
   commitFull: false,
   id: 'demo',
-  manifest: { id: 'demo', name: 'Demo', version: '0.1.0', announce: null },
+  manifest: {
+    id: 'demo', name: 'Demo', version: '0.1.0', announce: null,
+    entry: { engine: 'engine.js', renderer: null },
+  },
 };
 
 // ── the Install gate ────────────────────────────────────────────────────────
@@ -141,7 +147,10 @@ const UPDATE_RESOLVED = {
   repo: 'avirtual/clodex-plugins',
   ref: 'v2',
   subpath: 'packs/notes',
-  manifest: { id: 'notes', name: 'Notes', version: '1.3.0', announce: 'Takes notes.' },
+  manifest: {
+    id: 'notes', name: 'Notes', version: '1.3.0', announce: 'Takes notes.',
+    entry: { engine: 'engine.js', renderer: 'renderer.js' },
+  },
 };
 
 const UPDATE_CASES = [
@@ -347,14 +356,19 @@ test('warningText on the web surface names the HOST the browser is connected to'
 });
 
 test('webRendererNote fires on a manifest with a renderer half and nothing else', () => {
+  // Against the SHARED fixtures, which carry the projected `entry` the loader
+  // really returns. A hand-built manifest here would have passed t707-r0, where
+  // the projection dropped `entry` entirely and the note could never render on
+  // a real install — test/plugin-loader-source.test.js pins the projection.
   assert.strictEqual(
-    webRendererNote({ ok: true, manifest: { id: 'notes', entry: { engine: 'engine.js', renderer: 'renderer.js' } } }),
+    webRendererNote(RESOLVED),
     ' Its renderer half shows in the desktop app only — this browser\'s bundle is built from the plugins shipped with Clodex.');
-  assert.strictEqual(
-    webRendererNote({ ok: true, manifest: { id: 'notes', entry: { engine: 'engine.js' } } }), '',
+  assert.strictEqual(webRendererNote(UPDATE_RESOLVED), webRendererNote(RESOLVED),
+    'the update note says it too — resolveUpdate projects the same entry shape');
+  assert.strictEqual(webRendererNote(RESOLVED_NO_REF), '',
     'an engine-only plugin is fully live in a browser — the sentence would be a false warning');
-  assert.strictEqual(webRendererNote({ ok: true, manifest: { id: 'notes' } }), '');
-  assert.strictEqual(webRendererNote(RESOLVED), '', 'the shared fixture names no entry at all');
+  assert.strictEqual(webRendererNote({ ok: true, manifest: { id: 'notes' } }), '',
+    'a manifest with no entry at all is not a renderer half');
   assert.strictEqual(webRendererNote(null), '');
 });
 
@@ -590,10 +604,18 @@ test('the source line and the two buttons are driven by the row\'s own `source`'
   const src = pluginRowSrc();
   assert.match(src, /if \(p\.source\) \{[\s\S]{0,200}?sourceLine\(p\.source\)/,
     'the line comes from the leaf, not from a sentence assembled at the row');
-  assert.ok(/if \(p\.source\) \{[\s\S]{0,200}?textContent = 'Update…'/.test(src),
-    'applyUpdate and removeSourcePlugin answer the web surface — the buttons belong on a fetched row there too');
-  assert.ok(!/if \(p\.source && !window\.__CLODEX_WEB__\)/.test(src),
-    'a re-added web gate on the buttons block leaves a browser with a fetched row it cannot update or remove');
+  // Anchored on the Update… button itself and read BACKWARDS to the gate that
+  // guards it: the row has a second `if (p.source)` block above for the source
+  // line, so a window measured forward from the first one proves nothing about
+  // the buttons.
+  const upTitle = src.indexOf('up.title = `Re-resolve github.com/');
+  assert.ok(upTitle > 0, 'ENTER: the Update… button really is in the slice');
+  const gates = [...src.slice(0, upTitle).matchAll(/if \(p\.[^)]*\) \{/g)].map((m) => m[0]);
+  assert.strictEqual(gates[gates.length - 1], 'if (p.source) {',
+    'applyUpdate and removeSourcePlugin answer the web surface — the gate directly above Update… '
+    + 'must be the bare `source` test, not one that also asks for the desktop');
+  assert.ok(src.indexOf('rowActions.appendChild(up)') > upTitle,
+    'and the button is appended, not built and dropped');
   assert.match(src, /if \(p\.linkedFrom && !window\.__CLODEX_WEB__\)/,
     'a symlinked row keeps Unregister; `source` is null for it, so the two blocks never both fire');
 });
