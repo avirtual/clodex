@@ -958,8 +958,8 @@ function createPluginLoader(deps) {
     return { ok: true, id: name };
   }
 
-  // css TEXT, not a path: the renderer injects a per-plugin <style> element, and no
-  // path resolves in the built web bundle.
+  // css, and on request the renderer half, as TEXT rather than a path: no path
+  // resolves in the built web bundle. The flag guards a read the desktop never needs.
   function rendererInfo(id, opts) {
     const rec = discover().find((r) => r.id === String(id));
     if (!rec) return null;

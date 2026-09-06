@@ -2935,8 +2935,7 @@ async function activatePluginRenderer(id) {
 }
 
 // require() of an absolute path works only because contextIsolation is off by design here.
-// The web bundle cannot: a shipped half resolves through the build-generated id→module
-// registry, and any other half arrives as source text and is evaluated in the page.
+// The web bundle cannot: a shipped half comes from the registry, any other from source text.
 function requirePluginRenderer(rendererPath, id, source) {
   const reg = window.__CLODEX_PLUGIN_REGISTRY__;
   if (reg && typeof reg.get === 'function') {
