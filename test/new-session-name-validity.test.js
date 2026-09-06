@@ -229,6 +229,37 @@ test('doCreate closes the dialog NOWHERE except through applyCreateResult', () =
     'the sandbox create arm had the same shape and must route through it too');
 });
 
+test('doCreate refuses a second press while the first create is still in flight', () => {
+  const src = doCreateSource();
+  assert.strictEqual((src.match(/createInFlight = true;/g) || []).length, 1,
+    'the flag must be raised exactly once, on the one path that reaches the server');
+  assert.strictEqual((src.match(/createInFlight = false;/g) || []).length, 1,
+    'more than one clear means one of them runs on a path that did not raise it');
+  const cleared = src.indexOf('createInFlight = false;');
+  const fin = src.lastIndexOf('} finally {', cleared);
+  assert.ok(fin >= 0 && fin < cleared,
+    'the clear must sit inside a finally — an early return on any refusal arm would otherwise wedge the button for the rest of the dialog');
+  const guard = src.indexOf('if (createInFlight) return;');
+  assert.ok(guard >= 0, 'the second press is refused by an early return, not by the button alone: Enter reaches doCreate whatever the button says');
+  const firstAwait = src.indexOf('await ');
+  assert.ok(firstAwait > guard,
+    'the guard must precede every await, or the second press is already past it while the first round-trip is open');
+});
+
+test('Create is disabled while a create is in flight, whatever the name says', () => {
+  const gate = { ok: true, disabled: false, notice: null };
+  assert.deepStrictEqual(
+    createButtonState({ nameState: nameFieldState('bob', SETS), toolGate: gate, mode: 'create', inFlight: true }),
+    { disabled: true, title: '' });
+  assert.deepStrictEqual(
+    createButtonState({ nameState: nameFieldState('bob', SETS), toolGate: gate, mode: 'template', inFlight: true }),
+    { disabled: true, title: '' },
+    'inFlight is checked before the mode short-circuit, which returns enabled unconditionally — a later check would be unreachable');
+  assert.deepStrictEqual(
+    createButtonState({ nameState: nameFieldState('bob', SETS), toolGate: gate, mode: 'create', inFlight: false }),
+    { disabled: false, title: '' });
+});
+
 test('doCreate raises no blocking alert for a create refusal', () => {
   const src = doCreateSource();
   assert.strictEqual((src.match(/\balert\s*\(\s*`Create /g) || []).length, 0,
