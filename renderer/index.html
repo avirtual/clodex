@@ -352,7 +352,7 @@
       </div>
     </div>
     <div id="team-roles-popover" class="hidden">
-      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
+      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="secondary" id="team-roles-gather-btn" title="Copy every library piece this team uses into the team's own directory">Gather</button><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
       <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
       <div class="popover-help hidden" id="team-roles-help" data-help>
         <p><strong>What this is.</strong> A team is a group of AI teammates that work together. Each <em>role</em> below is one kind of teammate — what it's for and how it behaves.</p>
@@ -360,6 +360,7 @@
         <p><strong>Why lead and reviewer are locked.</strong> Every team has a <em>lead</em> that runs it and a <em>reviewer</em> that independently checks the lead's work. Clodex manages these two so a lead can never rewrite the reviewer that checks it — a safety property you don't need to configure.</p>
         <p><strong>Stall Watchdog.</strong> If a teammate sits idle on an assigned task too long, the lead gets a nudge. Blank uses the default (30m).</p>
       </div>
+      <div class="popover-help hidden" id="team-roles-gather-panel"></div>
       <div id="team-roles-list" class="team-roles-list"></div>
       <div id="team-roles-add-section">
       <button type="button" id="team-roles-newrole-toggle" class="team-roles-add-toggle" aria-expanded="false" aria-controls="team-roles-newrole-panel" title="Define a new kind of teammate for this team">+ Add role</button>

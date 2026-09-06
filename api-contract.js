@@ -47,6 +47,7 @@ const API_CONTRACT = [
   { name: 'teamRemoveRole', kind: 'invoke', channel: 'team:removeRole' },
   { name: 'teamRenameRole', kind: 'invoke', channel: 'team:renameRole' },
   { name: 'teamSetWatchdog', kind: 'invoke', channel: 'team:setWatchdog' },
+  { name: 'teamGather', kind: 'invoke', channel: 'team:gather' },
   // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
   // the reserved `lead` ROLE (that stays locked). The only door to a team whose
   // lead names a seat that was never created.

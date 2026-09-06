@@ -59,4 +59,4 @@ function readTeamJson(deps, team, kind, stem) {
   } catch { return null; }
 }
 
-module.exports = { teamPromptFile, teamJsonFile, readTeamJson };
+module.exports = { badStem, teamPromptFile, teamJsonFile, readTeamJson };

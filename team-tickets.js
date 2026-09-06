@@ -29,6 +29,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { matchSeatRole } = require('./team-manifest');
 const { readTeamJson } = require('./team-prompt-dir');
+const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 
@@ -365,6 +366,7 @@ function createTicketMethods(deps, shared) {
     removeRole,
     renameRole,
     setTeamWatchdog,
+    gatherTeam,
     resolveTeam,
     resolveSystemPromptFile,
     childProcess,
@@ -2132,6 +2134,12 @@ function createTicketMethods(deps, shared) {
             reply(`role "${from}" renamed to "${to}" on ${team.name}`);
             return;
           }
+          case 'gather': {
+            const dry = !!intent.dry;
+            const result = gatherTeam(team.name, { dry });
+            reply(formatGatherReport(result, { dry }));
+            return;
+          }
           case 'watchdog': {
             if (intent.ms == null || !Number.isFinite(intent.ms)) {
               reply('error: watchdog needs a millisecond number — [agent:team watchdog <ms>]');
@@ -2143,7 +2151,7 @@ function createTicketMethods(deps, shared) {
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | watchdog`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | watchdog | gather`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);

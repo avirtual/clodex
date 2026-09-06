@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Gather makes a team own what it uses.** `[agent:team gather]` from the lead seat, or the Gather button on the roles popover, copies every library piece the team's manifest references — role prompts, project knowledge, seat templates, exec defs — into `~/.clodex/teams/<name>/` under the same stems, where the team-first rule picks them up on the next spawn. Nothing is rewritten and nothing is overwritten: pieces the team already owns are kept, plugin-namespaced refs are skipped, and `gather dry` shows the plan first. A gathered copy of a stock prompt no longer receives upstream fixes; delete it to fall back to the library.
+
 - **A team directory now holds everything a team owns.** `~/.clodex/teams/<name>/templates/` and `exec/` join `prompts/`: a role's template stem, a seat's `[agent:spawn … template:<stem>]` from inside the team, and every exec grant a team seat runs resolve against the team's directory first and the shared library second, by the same rule as prompts. Plugin-namespaced refs are unchanged, nothing is listed machine-wide, and no new authority is created: what a seat may run is still its operator-set grant. Team preflight says which templates and exec defs are the team's own.
 
 - **A team carries its own prompts.** `~/.clodex/teams/<name>/prompts/system/` and `prompts/append/` now shadow the shared library: a role's prompt stem, or an append stem in a seat template, resolves against the team's directory first and the library second, so two teams on one machine can each keep their own project knowledge under the same stem, and a team's own copy of a prompt is never refreshed under it by an upgrade. Plugin-namespaced refs are unchanged. Team preflight says which prompts are the team's own.

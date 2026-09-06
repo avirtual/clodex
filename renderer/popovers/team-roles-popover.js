@@ -68,6 +68,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const helpBtn = document.getElementById('team-roles-help-btn');
   const settingsBtn = document.getElementById('team-roles-settings-btn');
   const helpPanel = document.getElementById('team-roles-help');
+  const gatherBtn = document.getElementById('team-roles-gather-btn');
+  const gatherPanel = document.getElementById('team-roles-gather-panel');
 
   const setStatus = (msg, warn = false) => {
     statusEl.textContent = msg || '';
@@ -858,6 +860,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // in, not one the operator has to reach by collapsing what a previous open
     // left behind.
     setAddPanel(false);
+    closeGatherPanel();
     watchdogSection.classList.add('hidden');
     settingsBtn.setAttribute('aria-expanded', 'false');
     popover.dataset.name = name;
@@ -1031,6 +1034,61 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   addToggle.addEventListener('click', () => setAddPanel(addPanel.classList.contains('hidden')));
   addCancel.addEventListener('click', () => setAddPanel(false));
   addDispatch.addEventListener('change', paintAddReveal);
+
+  const closeGatherPanel = () => {
+    gatherPanel.classList.add('hidden');
+    gatherPanel.innerHTML = '';
+  };
+
+  function renderGatherPlan(name, res) {
+    const items = (res && res.items) || [];
+    const todo = items.filter((i) => i && i.action === 'copy');
+    gatherPanel.innerHTML = '';
+    const head = document.createElement('p');
+    head.textContent = todo.length
+      ? `${todo.length} library piece${todo.length === 1 ? '' : 's'} would be copied into the team's own directory.`
+      : 'Nothing to copy — this team already owns every piece its roles reference.';
+    gatherPanel.appendChild(head);
+    for (const i of items) {
+      const line = document.createElement('div');
+      line.className = 'team-role-preflight-line note';
+      const why = i.error || i.reason;
+      line.textContent = `${i.action} ${i.kind}/${i.stem} (${i.via} of ${i.role})${why ? `: ${why}` : ''}`;
+      gatherPanel.appendChild(line);
+    }
+    if (todo.length) {
+      const confirm = document.createElement('button');
+      confirm.type = 'button';
+      confirm.textContent = `Copy ${todo.length} piece${todo.length === 1 ? '' : 's'} into the team directory`;
+      confirm.addEventListener('click', async () => {
+        confirm.disabled = true;
+        let applied;
+        try { applied = await window.api.teamGather(name, {}); } catch { applied = null; }
+        if (!applied || !applied.ok) {
+          setStatus((applied && applied.error) || 'gather failed', true);
+          confirm.disabled = false;
+          return;
+        }
+        closeGatherPanel();
+        const failed = (applied.failed || []).length;
+        setStatus(`gathered ${(applied.copied || []).length} piece(s)${failed ? `, ${failed} failed` : ''}`, !!failed);
+        await refresh(name);
+      });
+      gatherPanel.appendChild(confirm);
+    }
+    gatherPanel.classList.remove('hidden');
+  }
+
+  gatherBtn.addEventListener('click', async () => {
+    const name = teamName();
+    if (!name) return;
+    if (!gatherPanel.classList.contains('hidden')) { closeGatherPanel(); return; }
+    setStatus('');
+    let res;
+    try { res = await window.api.teamGather(name, { dry: true }); } catch { res = null; }
+    if (!res || !res.ok) { setStatus((res && res.error) || 'gather plan failed', true); return; }
+    renderGatherPlan(name, res);
+  });
 
   // B2: the stall watchdog is a TEAM-level setting, not part of the role flow —
   // behind the gear, same show/hide shape as the `?` help panel beside it.

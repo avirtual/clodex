@@ -24,6 +24,10 @@ const PINNED_NAMES = [
   'teamSetLead',
   // The manifest preflight the roles popover renders as a per-role checklist (t414).
   'teamPreflight',
+  // t701: Gather — the one action that fills teams/<name>/ from the library. A
+  // WRITE, unlike teamPreflight above it, and `{ dry: true }` is what the roles
+  // popover shows before the operator commits.
+  'teamGather',
   'createSession', 'listSessions', 'reservedSessionNames', 'killSession', 'archiveSession',
   'unarchiveSession', 'flushPending', 'peekPending',
   'retrySpawnSession', 'forgetSession', 'resizeSession', 'setSessionLabel',
@@ -226,8 +230,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 280-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 280, 'pinned list is the full 280-method surface');
+test('contract covers exactly the pinned 281-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 281, 'pinned list is the full 281-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -251,7 +255,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 280, 'window.api has exactly 280 methods');
+    assert.equal(generated.length, 281, 'window.api has exactly 281 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
