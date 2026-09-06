@@ -711,8 +711,8 @@ test('a scrolled-up live lane keeps its position when a row repaints', async (t)
   // per second for every in-flight call, and the rebuild forced scrollTop to the
   // bottom unconditionally. Before that it only happened when output changed, so
   // the cost of reading back through a long in-flight tail went from occasional
-  // to every second. The settled lane already captures nearBottom for the same
-  // reason.
+  // to every second. This lane is a sibling with its own scrollbar and keeps its
+  // own nearBottom read; the settled lane's follow state is `st.following`.
   const p = await mountPane(t);
   const row = (elapsedMs) => ([{
     id: 't-scroll', command: 'npm test', output: 'one\ntwo\nthree', bytes: 13,
