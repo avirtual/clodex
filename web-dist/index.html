@@ -5460,8 +5460,7 @@ body {
   align-items: baseline;
 }
 .console-block-cmd {
-  color: var(--text);
-  font-weight: 600;
+  color: var(--warn);
   word-break: break-word;
   flex: 1;
   min-width: 0;
@@ -27176,7 +27175,8 @@ Opening it here and saving would overwrite the file with what this editor could 
               lastSkipped: 0,
               live: [],
               settled: /* @__PURE__ */ new Set(),
-              sigs: /* @__PURE__ */ new Map()
+              sigs: /* @__PURE__ */ new Map(),
+              following: true
             };
             seats.set(name, st);
           }
@@ -27285,6 +27285,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         function renderAll() {
           if (!bodyEl) return;
           const st = seat ? stateFor(seat) : null;
+          if (st) st.following = true;
           bodyEl.innerHTML = "";
           if (!st || !st.blocks.length) {
             emptyEl.textContent = seat ? `No Bash calls seen yet for ${seat}.` : "Select an agent session to see its Bash calls.";
@@ -27295,7 +27296,6 @@ Opening it here and saving would overwrite the file with what this editor could 
           bodyEl.scrollTop = bodyEl.scrollHeight;
         }
         function appendNew(st, records) {
-          const nearBottom = bodyEl && bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60;
           if (emptyEl && emptyEl.parentNode === bodyEl) emptyEl.remove();
           for (const b of records) {
             pushBlock(st, b);
@@ -27304,7 +27304,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           while (bodyEl && bodyEl.childElementCount > st.blocks.length) {
             bodyEl.firstElementChild.remove();
           }
-          if (bodyEl && nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+          if (bodyEl && st.following) bodyEl.scrollTop = bodyEl.scrollHeight;
         }
         async function pull() {
           const name = seat;
@@ -27393,6 +27393,10 @@ Opening it here and saving would overwrite the file with what this editor could 
           bodyEl = pane.querySelector("#console-body");
           emptyEl = pane.querySelector("#console-empty");
           liveEl = pane.querySelector("#console-live");
+          bodyEl.addEventListener("scroll", () => {
+            if (!seat) return;
+            stateFor(seat).following = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60;
+          });
           const clearBtn = document.createElement("button");
           clearBtn.type = "button";
           clearBtn.id = "console-clear";
@@ -27424,6 +27428,10 @@ Opening it here and saving would overwrite the file with what this editor could 
         function onHide() {
           stopPolling();
         }
+        function onResize() {
+          if (!bodyEl || !seat) return;
+          if (stateFor(seat).following) bodyEl.scrollTop = bodyEl.scrollHeight;
+        }
         notify = host.register({
           id: "console",
           label: "Console",
@@ -27432,6 +27440,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           mount,
           onShow,
           onHide,
+          onResize,
           selection: () => host.domSelection(bodyEl),
           onSeatChanged: () => onShow()
         });

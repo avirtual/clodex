@@ -24,7 +24,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     if (!st) {
       st = {
         cursor: '', blocks: [], lastKeys: new Set(), lastSkipped: 0,
-        live: [], settled: new Set(), sigs: new Map(),
+        live: [], settled: new Set(), sigs: new Map(), following: true,
       };
       seats.set(name, st);
     }
@@ -165,6 +165,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   function renderAll() {
     if (!bodyEl) return;
     const st = seat ? stateFor(seat) : null;
+    if (st) st.following = true;
     bodyEl.innerHTML = '';
     if (!st || !st.blocks.length) {
       emptyEl.textContent = seat
@@ -178,8 +179,6 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   }
 
   function appendNew(st, records) {
-    const nearBottom = bodyEl
-      && bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60;
     if (emptyEl && emptyEl.parentNode === bodyEl) emptyEl.remove();
     for (const b of records) {
       pushBlock(st, b);
@@ -188,7 +187,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     while (bodyEl && bodyEl.childElementCount > st.blocks.length) {
       bodyEl.firstElementChild.remove();
     }
-    if (bodyEl && nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+    if (bodyEl && st.following) bodyEl.scrollTop = bodyEl.scrollHeight;
   }
 
   async function pull() {
@@ -290,6 +289,11 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     emptyEl = pane.querySelector('#console-empty');
     liveEl = pane.querySelector('#console-live');
 
+    bodyEl.addEventListener('scroll', () => {
+      if (!seat) return;
+      stateFor(seat).following = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60;
+    });
+
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
     clearBtn.id = 'console-clear';
@@ -324,6 +328,11 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     stopPolling();
   }
 
+  function onResize() {
+    if (!bodyEl || !seat) return;
+    if (stateFor(seat).following) bodyEl.scrollTop = bodyEl.scrollHeight;
+  }
+
   notify = host.register({
     id: 'console',
     label: 'Console',
@@ -332,6 +341,7 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     mount,
     onShow,
     onHide,
+    onResize,
     selection: () => host.domSelection(bodyEl),
     onSeatChanged: () => onShow(),
   });

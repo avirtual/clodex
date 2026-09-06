@@ -3328,9 +3328,8 @@ html, body {
    settings layer, or policy-locked) — shown checked-state honest but inert. */
 .agent-check.skill-readonly { opacity: 0.6; cursor: default; }
 
-/* A grant row for a capability the plugin's manifest says it does not read —
-   inert, but drawn checked-state honest, so a token already held is visible
-   rather than silently carried. */
+/* Must not become display:none or visibility:hidden — that would hide a token
+   the seat already carries. */
 .agent-check.grant-unread { opacity: 0.6; cursor: default; }
 .agent-check .skill-src {
   font-size: 10px;
@@ -4125,8 +4124,7 @@ html, body {
 }
 
 .console-block-cmd {
-  color: var(--text);
-  font-weight: 600;
+  color: var(--warn);
   word-break: break-word;
   flex: 1;
   min-width: 0;
