@@ -2593,7 +2593,8 @@ html, body {
    #prefs-overlay and #plugins-overlay are siblings with no stacking manager. */
 .plugin-settings-panel { padding: 4px 4px 10px 26px; border-top: 1px dashed var(--border); }
 .plugin-settings-panel.hidden { display: none; }
-.plugin-settings-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.plugin-settings-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+#btn-plugins-source-cancel { margin-right: auto; }
 .plugin-settings-panel [data-plugin-section] h3 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; opacity: 0.7; letter-spacing: 0.5px; }
 /* The browser frontend's plugins-folder panel (t28) — the path on the HOST plus
    a one-level listing, shown where Electron reveals in Finder. Hidden until the
@@ -2765,7 +2766,7 @@ html, body {
   margin-top: 20px;
 }
 
-.dialog-actions button {
+.dialog-actions button, .plugin-settings-actions button, .plugin-row-actions button {
   padding: 6px 16px;
   border: none;
   border-radius: 6px;
@@ -2774,7 +2775,12 @@ html, body {
   font-weight: 500;
 }
 
-#btn-create {
+.plugin-row-actions button {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+#btn-create, #btn-plugins-source-install {
   background: var(--accent);
   color: #fff;
 }

@@ -661,6 +661,24 @@ test('the hint follows the input out of sight in update mode', () => {
     + 'generic .hidden rule in this stylesheet, so dropping this line ships the leak rather than a default');
 });
 
+test('the dialog\'s inline buttons share the dialog button rule, and the source row reads Cancel, Resolve, Install', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'renderer', 'styles.css'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  assert.ok(css.includes('.dialog-actions button'),
+    'ENTER: the shared shape rule is still keyed on .dialog-actions button');
+  assert.ok(/\.dialog-actions button[^{]*\.plugin-settings-actions button[^{]*\.plugin-row-actions button[^{]*\{/.test(css),
+    'the three containers must sit in ONE selector list: split into separate blocks the padding, radius and weight '
+    + 'drift apart and the inline buttons fall back to the browser bevel one container at a time');
+  assert.ok(/#btn-create[^{]*#btn-plugins-source-install[^{]*\{/.test(css)
+    || /#btn-plugins-source-install[^{]*#btn-create[^{]*\{/.test(css),
+    'Install is the primary action of its row and must take the accent from the same rule as #btn-create, '
+    + 'not a second copy of var(--accent) that stops tracking it');
+  assert.ok(/id="btn-plugins-source-cancel"[\s\S]*?id="btn-plugins-source-resolve"[\s\S]*?id="btn-plugins-source-install"/.test(html),
+    'the row is ordered by markup alone: Cancel is pushed left by margin-right:auto, so Resolve and Install pair '
+    + 'at the right with Install last — reorder the markup and the next-step action lands under the operator\'s cursor '
+    + 'for Cancel');
+});
+
 test('Install from GitHub… is offered on the web surface, unlike Register', () => {
   assert.ok(/if \(window\.__CLODEX_WEB__\) pluginsRegisterBtn\.classList\.add\('hidden'\)/.test(rendererSrc),
     'ENTER: the absence below is about a hide that sat beside one that still exists — register-from-path '
