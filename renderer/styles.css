@@ -306,7 +306,7 @@ html, body {
 }
 
 /* Footer content-surface rows — glyph + label, full-width. Core ships one
-   (Inbox); the rest are plugin footer buttons the host appends as
+   (Inbox); the rest are plugin footer buttons the host inserts as
    `button[data-plugin-footer]`. Styling them here, by the host's own
    attribute, is deliberate: the chrome of the sidebar footer is core's, so a
    plugin gets a button that looks native without shipping — or being able to

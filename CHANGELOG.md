@@ -53,6 +53,8 @@ blocks a release.
 
 - Manage Plugins ▸ Install from GitHub… now works from the browser frontend too: Resolve, Install, Update… and Remove are offered on the web surface with the same warning-before-install flow, and the warning says the code will run on the Clodex host the browser is connected to. A plugin's renderer half still shows in the desktop app only; the install note says so. Registering a folder by path stays a desktop action.
 
+- In the browser frontend the "Clodex vX" line stays at the bottom of the sidebar footer; plugin buttons that appear after the page loads are inserted above it instead of below.
+
 ## 5.32.0 — 2026-09-06
 
 - **A seat spawned for a ticket now receives its spec once.** It used to get a second copy a second later, marked as a replay and telling the hand an earlier incarnation might have done the work; that copy now goes only to a seat that was actually respawned.

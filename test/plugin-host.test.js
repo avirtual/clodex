@@ -94,12 +94,16 @@ function dataKey(attr) {
   return attr.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 }
 
-// Selector support: '.cls', 'tag', '[attr="v"]', '[attr^="v"]', '[attr]', and
-// concatenations of those (e.g. '.px-seg.px-plugin[data-act]').
+// Selector support: '#id', '.cls', 'tag', '[attr="v"]', '[attr^="v"]', '[attr]',
+// and concatenations of those (e.g. '.px-seg.px-plugin[data-act]').
+// An unsupported selector yields ZERO parts, and a loop over zero parts returns
+// true for every node — so a missing form here reads as "matches everything",
+// not as "matches nothing".
 function matchSel(node, sel) {
-  const parts = String(sel).match(/\[[^\]]+\]|\.[^.[\s]+|^[a-zA-Z][\w-]*/g) || [];
+  const parts = String(sel).match(/\[[^\]]+\]|#[^#.[\s]+|\.[^.[\s]+|^[a-zA-Z][\w-]*/g) || [];
   for (const p of parts) {
-    if (p.startsWith('.')) { if (!node._classSet().has(p.slice(1))) return false; }
+    if (p.startsWith('#')) { if (node.getAttribute('id') !== p.slice(1)) return false; }
+    else if (p.startsWith('.')) { if (!node._classSet().has(p.slice(1))) return false; }
     else if (p.startsWith('[')) {
       const m = p.match(/^\[([^\]=^]+)(\^?=)?"?([^"\]]*)"?\]$/);
       if (!m) return false;

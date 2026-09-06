@@ -6402,9 +6402,6 @@ body {
       <span id="diag-actions"></span>
     </div>
     <div id="sidebar-footer">
-      <!-- Plugin footer buttons are appended here by the renderer plugin host
-           and removed on disable — the Workbench one used to be hard-coded
-           above this comment. -->
       <button id="inbox-open" data-tip="Operator inbox — notes agents raised for you" type="button">
         <span class="footer-glyph">&#9993;</span>
         <span class="footer-label">Inbox</span>
@@ -34103,7 +34100,7 @@ ${detail}` });
                   warn(b.pluginId, e);
                 }
               });
-              footer.appendChild(el);
+              footer.insertBefore(el, footer.querySelector("#sidebar-version"));
             }
             el.querySelector(".footer-glyph").textContent = b.glyph ? String(b.glyph) : "";
             el.querySelector(".footer-label").textContent = b.label ? String(b.label) : "";

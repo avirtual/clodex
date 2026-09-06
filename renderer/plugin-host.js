@@ -289,7 +289,7 @@ function initPluginHost({
           }
           try { b.onClick(el); } catch (e) { warn(b.pluginId, e); }
         });
-        footer.appendChild(el);
+        footer.insertBefore(el, footer.querySelector('#sidebar-version'));
       }
       el.querySelector('.footer-glyph').textContent = b.glyph ? String(b.glyph) : '';
       el.querySelector('.footer-label').textContent = b.label ? String(b.label) : '';
