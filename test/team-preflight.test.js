@@ -593,6 +593,126 @@ test('t704: a probe that throws on the template stem degrades to the warn, never
   assert.deepStrictEqual(findings, [T704_MISS]);
 });
 
+// --- t705: the runner's plugin-ref rule decides EVERY stem preflight resolves -
+
+// The runner reads append stems through readAppendBodies (engine.js), which
+// sends a `<plugin>:<stem>` ref to the plugin bundle. Preflight's probe sees the
+// team dir and the library only, so probing a plugin ref could only ever produce
+// a miss — and the loop's doctrine is that a finding means something is owed. A
+// template composing a plugin append prompt boots fine, so preflight is silent.
+//
+// The other half is WHICH rule answers "is this a plugin ref". `includes(':')`
+// and splitPluginPromptRef disagree on exactly one shape — a stem beginning with
+// a colon, which the runner does NOT treat as a plugin ref — so the two spellings
+// must be one function or preflight goes quiet over a seat that boots broken.
+
+// The role prompt always resolves here, and the template names no system prompt,
+// so the append findings are the whole array rather than survivors of a filter.
+function t705Appends({ stems, where = {}, spy = null }) {
+  return teamPreflight({ name: 'shop', root: '/repo/shop', roles: { hand: { prompt: 'hand-brief', template: 'hand-seat' } } }, {
+    exists: () => false,
+    listTemplates: () => [{ name: 'hand-seat', appendPromptFiles: stems }],
+    readExecDef: () => null,
+    resolvePrompt: (kind, stem) => {
+      if (spy) spy.push([kind, stem]);
+      if (kind === 'system') return stem === 'hand-brief' ? 'library' : null;
+      return where[stem] || null;
+    },
+  });
+}
+
+const T705_OWED = {
+  level: 'note', kind: 'append', role: 'hand', ref: 'extra', resolvedFrom: null,
+  message: 'role "hand": template "hand-seat" composes append prompt "extra", which is not installed under library/prompts/append — write it, or drop it from the template',
+};
+const T705_APPEND_TEAM_COPY = {
+  level: 'note', kind: 'append', role: 'hand', ref: 'extra', resolvedFrom: 'team',
+  message: 'role "hand": prompt "extra" is the team\'s own copy (teams/shop/prompts/append), shadowing the library',
+};
+
+test('t705: a plugin-namespaced append stem is the plugin\'s to resolve, and the plain-stem arms are unmoved', () => {
+  // Every expectation is a literal array. Re-deriving one from the rule under
+  // test would assert only that the resolver agrees with itself, which is true
+  // of a resolver holding no rule at all.
+  const rows = [
+    {
+      what: 'a plugin ref is neither probed nor noted — the plugin composes it and the seat boots fine',
+      stems: ['rev:extra'], where: {}, expect: [],
+      // The SAME row with the namespace removed: an uninstalled plain stem is
+      // the owed note, so this silence is the plugin rule and not a fixture
+      // that reached no append check at all.
+      enter: { stems: ['extra'], expect: [T705_OWED] },
+    },
+    {
+      what: 'a plain stem the team owns is still the shadowing note',
+      stems: ['extra'], where: { extra: 'team' }, expect: [T705_APPEND_TEAM_COPY],
+    },
+    {
+      what: 'a plain stem the library holds is still silent',
+      stems: ['extra'], where: { extra: 'library' }, expect: [],
+      enter: { where: {}, expect: [T705_OWED] },
+    },
+    {
+      what: 'a plain stem installed nowhere is still the "write it" note',
+      stems: ['extra'], where: {}, expect: [T705_OWED],
+    },
+  ];
+
+  for (const row of rows) {
+    assert.deepStrictEqual(t705Appends(row), row.expect, row.what);
+    if (!row.enter) continue;
+    assert.deepStrictEqual(
+      t705Appends({ ...row, ...row.enter }), row.enter.expect,
+      `ENTER: ${row.what}`,
+    );
+  }
+});
+
+test('t705: the append probe is never asked about a plugin ref, and the loop carries on to the next stem', () => {
+  const spy = [];
+  t705Appends({ stems: ['rev:extra', 'extra'], where: { extra: 'library' }, spy });
+  assert.deepStrictEqual(spy, [['system', 'hand-brief'], ['append', 'extra']],
+    'the skip lands BEFORE the probe: `rev:extra` never reaches it, and `extra` still does');
+});
+
+const T705_COLON_NOTE = {
+  level: 'note', kind: 'prompt', role: 'hand', ref: 'hand-brief', resolvedFrom: null,
+  message: 'role "hand" names prompt "hand-brief", and its template "hand-seat" names system prompt ":foo" — the template\'s is the system prompt, the role\'s is appended after the team block',
+};
+const T705_COLON_MISS = {
+  level: 'warn', kind: 'prompt', role: 'hand', ref: ':foo', resolvedFrom: null,
+  message: 'role "hand": template "hand-seat" names system prompt ":foo", which is not installed under teams/shop/prompts/system or library/prompts/system — a seat spawned for this role boots with NO system prompt',
+};
+
+test('t705: a stem opening with a colon is no plugin ref to the runner, so it is probed and warned about', () => {
+  // splitPluginPromptRef needs indexOf(':') > 0. `:foo` falls through the runner's
+  // bad-stem check and the library and boots the seat with no system prompt —
+  // which is precisely the case the t704 warn exists to name.
+  assert.deepStrictEqual(
+    t704Findings({ systemPromptFile: ':foo', where: { 'hand-brief': 'library' } }),
+    [T705_COLON_NOTE, T705_COLON_MISS],
+    'the empty plugin id is not a namespace, and the seat that boots on it is broken',
+  );
+
+  const spy = [];
+  t704Findings({ systemPromptFile: ':foo', where: { 'hand-brief': 'library' }, spy });
+  assert.deepStrictEqual(spy, [['system', 'hand-brief'], ['system', ':foo']],
+    'and it is probed like any other stem — the gate is the runner\'s rule, not the colon');
+});
+
+test('t705: both call sites go through splitPluginPromptRef, and no second spelling of the rule survives', () => {
+  // Source-shape, because the whole point is that ONE function answers the
+  // question at two sites: a runtime fixture can show both sites agreeing with
+  // the runner today while a second hand-rolled copy sits beside them.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-preflight.js'), 'utf8');
+  assert.ok(/require\('\.\/plugin-prompt-refs'\)/.test(src), 'the rule is imported, not re-derived');
+  assert.ok(/function isPluginRef\(stem\) \{\s*\n\s*return splitPluginPromptRef\(stem\) !== null;/.test(src),
+    'isPluginRef is splitPluginPromptRef and nothing else');
+  assert.ok(/!isPluginRef\(tplSystem\)/.test(src), 'the template system-prompt gate uses it');
+  assert.ok(/if \(isPluginRef\(stem\)\) continue;/.test(src), 'the append loop uses it');
+  assert.ok(!/includes\(':'\)/.test(src), 'the colon-substring spelling is gone from the module');
+});
+
 test('a malformed/absent team, or roles that are not objects, yields [] rather than throwing', () => {
   const p = probes({});
   assert.deepStrictEqual(teamPreflight(null, p), []);

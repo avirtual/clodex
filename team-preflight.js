@@ -8,9 +8,9 @@
 // own channel. Building it warn-first is how the popover and the create flow end
 // up re-deriving the same checks a week later, in prose that disagrees.
 //
-// Pure leaf: no fs, no path, no electron, no requires at all. Every disk touch
-// arrives as an injected probe, which is what makes the whole findings table
-// assertable from a fixture with no library on disk and no team checked out.
+// Pure leaf: no fs, no path, no electron. Its one require is plugin-prompt-refs,
+// so the plugin-ref test here IS the runner's function. Every disk touch arrives
+// as an injected probe: the findings table is assertable with no library on disk.
 //
 // The level enum is warn|note with no 'ok' member, so a library hit carries
 // nothing and the surfaces render the ✓ from the manifest row. `verify` is stage
@@ -46,6 +46,8 @@
 
 'use strict';
 
+const { splitPluginPromptRef } = require('./plugin-prompt-refs');
+
 // Severity is by CONSEQUENCE, not uniform, and the split is load-bearing rather
 // than cosmetic:
 //   warn — the seat's behaviour breaks. An unresolved role prompt boots it
@@ -67,6 +69,10 @@ const TEAM_ROOT_TOKEN = '${TEAM_ROOT}';
 
 function isNonEmptyString(v) {
   return typeof v === 'string' && v.length > 0;
+}
+
+function isPluginRef(stem) {
+  return splitPluginPromptRef(stem) !== null;
 }
 
 // A role's prompt/template/exec/append names, checked against what is installed.
@@ -134,7 +140,7 @@ function teamPreflight(team, probes) {
       }
     }
 
-    if (tplSystem && !tplSystem.includes(':') && tplSystem !== def.prompt) {
+    if (tplSystem && !isPluginRef(tplSystem) && tplSystem !== def.prompt) {
       let hit = null;
       try { hit = resolvePrompt('system', tplSystem); } catch { hit = null; }
       if (!hit) {
@@ -251,6 +257,7 @@ function teamPreflight(team, probes) {
 
     for (const stem of Array.isArray(tpl.appendPromptFiles) ? tpl.appendPromptFiles : []) {
       if (!isNonEmptyString(stem)) continue;
+      if (isPluginRef(stem)) continue;
       let hit = null;
       try { hit = resolvePrompt('append', stem); } catch { hit = null; }
       if (hit === 'team') {
