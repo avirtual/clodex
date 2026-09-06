@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- **A ticket whose suite goes red once is measured again before it is sent
+  back.** A full run on a busy box can starve a timing test that the branch
+  never touched; the loop now re-runs the suite once, proceeds to review if the
+  second run is green and says so on the record, and rejects with both runs'
+  failing names when it is red twice. The post-merge check on master is not
+  re-run: a red master reverts first.
 - **The Console tab opens at the newest call.** Expanding the drawer onto the
   Console used to land at the oldest of the calls it shows, so reaching the
   current one meant scrolling through everything above it. It now opens at the
