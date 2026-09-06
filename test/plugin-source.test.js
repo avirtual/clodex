@@ -298,3 +298,69 @@ test('readSidecar returns null for unreadable or non-JSON content, never throws'
   const source = createPluginSource({ fs, path });
   assert.strictEqual(source.readSidecar(dir), null);
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// sameTree — the byte compare resolveUpdate uses to tell "the repo head moved"
+// from "the plugin's own files moved". Real temp dirs, never a stubbed fs: the
+// walk's whole job is to be right about what is on disk. Each row carries its
+// own literal true/false — see CLAUDE.md ▸ Tests on computed tables.
+// ════════════════════════════════════════════════════════════════════════════
+
+function mkTree(spec) {
+  const root = mkTmpRoot('clodex-plugin-source-tree-');
+  for (const [rel, body] of Object.entries(spec)) {
+    const full = path.join(root, rel);
+    if (body === DIR) { fs.mkdirSync(full, { recursive: true }); continue; }
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    if (body && body.symlinkTo != null) fs.symlinkSync(body.symlinkTo, full);
+    else fs.writeFileSync(full, body);
+  }
+  return root;
+}
+
+const DIR = Symbol('a directory, not a file');
+
+const SAME_TREE_ROWS = [
+  ['identical trees', { 'manifest.json': '{"id":"demo"}', 'engine.js': 'x' },
+    { 'manifest.json': '{"id":"demo"}', 'engine.js': 'x' }, true],
+  ['one differing byte', { 'engine.js': 'aaa' }, { 'engine.js': 'aab' }, false],
+  ['an extra file on side A', { 'engine.js': 'x', 'extra.txt': 'y' }, { 'engine.js': 'x' }, false],
+  ['an extra file on side B', { 'engine.js': 'x' }, { 'engine.js': 'x', 'extra.txt': 'y' }, false],
+  ['a nested subdirectory difference', { 'lib/deep/a.js': 'one' }, { 'lib/deep/a.js': 'two' }, false],
+  ['a nested file present on one side only', { 'lib/deep/a.js': 'one' }, { 'lib/deep/a.js': 'one', 'lib/deep/b.js': 'two' }, false],
+  ['a sidecar on side A only', { 'engine.js': 'x', '.clodex-source.json': '{"commit":"abc1234"}' },
+    { 'engine.js': 'x' }, true],
+  ['a sidecar nested under a subdirectory, one side only',
+    { 'engine.js': 'x', 'lib/a.js': 'y', 'lib/.clodex-source.json': '{"commit":"abc1234"}' },
+    { 'engine.js': 'x', 'lib/a.js': 'y' }, true],
+  ['a directory holding only an ignored sidecar is still a directory one side lacks',
+    { 'engine.js': 'x', 'lib/.clodex-source.json': '{"commit":"abc1234"}' }, { 'engine.js': 'x' }, false],
+  ['a file on one side, a directory of the same name on the other', { 'thing': 'x' }, { 'thing': DIR }, false],
+  ['identical symlink targets', { 'link': { symlinkTo: 'engine.js' }, 'engine.js': 'x' },
+    { 'link': { symlinkTo: 'engine.js' }, 'engine.js': 'x' }, true],
+  ['differing symlink targets', { 'link': { symlinkTo: 'a.js' }, 'a.js': 'x', 'b.js': 'x' },
+    { 'link': { symlinkTo: 'b.js' }, 'a.js': 'x', 'b.js': 'x' }, false],
+  ['a symlink on one side, a real file of the same bytes on the other',
+    { 'link': { symlinkTo: 'engine.js' }, 'engine.js': 'x' }, { 'link': 'x', 'engine.js': 'x' }, false],
+  ['two empty trees', {}, {}, true],
+];
+
+test('sameTree: a literal table over real temp directories', () => {
+  const source = createPluginSource({ fs, path });
+  for (const [label, specA, specB, expected] of SAME_TREE_ROWS) {
+    const a = mkTree(specA);
+    const b = mkTree(specB);
+    assert.strictEqual(source.sameTree(a, b), expected, label);
+  }
+});
+
+test('sameTree returns false when either directory cannot be read', () => {
+  const source = createPluginSource({ fs, path });
+  const real = mkTree({ 'engine.js': 'x' });
+  const missing = path.join(mkTmpRoot('clodex-plugin-source-tree-'), 'never-created');
+  assert.strictEqual(fs.existsSync(real), true, 'ENTER: the real side is on disk, so a false below is about the missing side');
+  assert.strictEqual(fs.existsSync(missing), false, 'ENTER: the missing side really is absent');
+  assert.strictEqual(source.sameTree(real, missing), false, 'a tree you cannot read is not provably the same');
+  assert.strictEqual(source.sameTree(missing, real), false, 'and the same in the other order');
+  assert.strictEqual(source.sameTree(missing, missing), false, 'two absent trees are not "the same tree" either');
+});

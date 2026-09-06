@@ -651,6 +651,9 @@ ref the user types is remembered for *display*; what installs and what runs is
 a resolved *commit*. `resolveSource`/`installFromSource` resolve the ref once
 and store the commit; `resolveUpdate(id)` re-resolves the SAME sidecar ref
 (never a caller-supplied one) and returns both shas with nothing written yet;
+its `changed` is false when the fetched tree is byte-identical to the installed
+one (the sidecar aside), so a collection repo's commits to its *other* plugin
+folders do not offer an empty update;
 `applyUpdate(id, commit)` re-fetches and **refuses if the newly fetched commit
 is not the one the caller passed** — the commit the row's Update… preview
 showed before the operator pressed Update. **No automatic update anywhere**:
@@ -847,6 +850,7 @@ Consequences worth stating:
 | §9 sources: GitHub fetch, engine + host methods | **Implemented** (desktop only) |
 | §9 sources: install UI — Manage Plugins ▸ Install from GitHub… | **Implemented** (desktop only) |
 | §9 sources: update/remove UI on a fetched row | **Implemented** (desktop only) |
+| §9 sources: `changed` is a tree compare, so an unrelated commit is not an update | **Implemented** |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
 | §10 an install affordance — register a folder from anywhere | **Implemented** (desktop only) |
