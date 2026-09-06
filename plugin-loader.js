@@ -987,10 +987,6 @@ function createPluginLoader(deps) {
     return { ok: true, id: rec.id, file };
   }
 
-  // What the settings Plugins section renders: one row per DISCOVERED plugin —
-  // present on disk, whatever its state — plus the directories that failed
-  // validation. A plugin that is quarantined must still appear, otherwise the
-  // only UI that could clear it is the one that hides it.
   function sourceOf(rec) {
     if (rec.root !== 'user' || rec.isLink) return null;
     const sidecar = source.readSidecar(rec.dir);
@@ -1003,6 +999,10 @@ function createPluginLoader(deps) {
     };
   }
 
+  // What the settings Plugins section renders: one row per DISCOVERED plugin —
+  // present on disk, whatever its state — plus the directories that failed
+  // validation. A plugin that is quarantined must still appear, otherwise the
+  // only UI that could clear it is the one that hides it.
   function status() {
     const recs = discover();
     const failures = failureRecord();

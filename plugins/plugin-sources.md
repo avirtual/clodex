@@ -742,11 +742,11 @@ End to end, today, with the user root implemented:
    currently in the field, so the sentence naming a commit is always about the
    code that is about to be placed; editing the spec afterwards disables it
    again. The plugin lands DISABLED whatever its `enabledByDefault` says (§7:
-   downloading and running are two decisions), so step 5 is still yours. Desktop
-   only, for §6's reason.
+   downloading and running are two decisions), so step 5 is still yours.
    A fetched row then says **`From github.com/<repo>@<ref>[:<subpath>] at
    <commit7>`** under its name and offers **Update…** and **Remove** where a
-   symlinked row offers Unregister and a hand-copied one offers neither.
+   symlinked row offers Unregister and a hand-copied one offers neither. All
+   three affordances are desktop only, for §6's reason.
    **Update…** re-resolves the SAME sidecar repo and ref, and says so in the
    register note when nothing moved; when it did, the same inline section reopens
    with the field and Resolve hidden, showing `v<old> → v<new>` and
@@ -757,7 +757,6 @@ End to end, today, with the user root implemented:
    note repeats. **Remove** deletes the fetched directory after one `confirm()`,
    which is safe precisely because it is a cache and can be installed again —
    §9's "a fetched root is a cache; a user root without a sidecar is authority".
-   Both are desktop only, for §6's reason.
 4. **Re-scan** in Manage Plugins, or restart. Discovery no longer runs only at
    startup: `plugins.rescan` re-reads every root and loads what it finds.
 5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`
