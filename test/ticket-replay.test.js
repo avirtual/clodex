@@ -166,8 +166,15 @@ function boot(world, opts = {}) {
   const m = new SessionManager();
   m._sendToSession = () => {};
   m._broadcast = () => {};
+  // The stub PTY learns whose terminal it is from the create() actually IN FLIGHT,
+  // not from what a test remembered to announce beforehand. `_spawnTicketSeat`
+  // calls create() itself, so a `pending` set only by `spawn()` below left the
+  // minted seat's onData handler and every byte written to it filed under whichever
+  // name was spawned last — `seen(seat)` reads empty and a delivery that really
+  // happened looks like one that never did.
+  const realCreate = m.create.bind(m);
+  m.create = (name, ...rest) => { pending = name; return realCreate(name, ...rest); };
   const spawn = async (name, type = 'claude') => {
-    pending = name;
     await m.create(name, type, CWD, [], null, 'ws');
     const s = m.sessions.get(name);
     assert.ok(s, `ENTER: create() must have put ${name} in the map`);
@@ -3078,6 +3085,228 @@ test('t449: a park that DOES clear its own latch still clears it, and releases t
     assert.ok(s._specOwedSpent.has('t1:spec'),
       'and not the spec budget for the same ticket: the key is ticket AND kind, and a spec the seat has still '
       + 'never seen is bounded by its own row');
+  } finally { app.stop(); }
+});
+
+// ── t694: the seat a ticket MINTS is dispatched to once ──────────────────────
+//
+// The spawn path handed `_deliverTicketSpec` a null onWrite, so nothing stamped
+// `deliveredTo` and the seat's own boot-ready drain found the ticket open,
+// assigned to it and unstamped — and delivered the spec a second time, marked
+// REPLAY. The marking is what kept it harmless: the head tells a brand-new hand
+// that an earlier incarnation may have done the work and to check `git log`
+// before building.
+//
+// Driven through the REAL `task start`, not by calling `_spawnTicketSeat`: the
+// defect lives in the argument one caller passes, so a fixture that reaches past
+// the verb would pin the helper and prove nothing about the dispatch.
+
+// mkWorld's `/proj` root over a REAL repo, because the worktree dispatch runs
+// `git worktree add` for real — a stubbed gitWorktree would assert only that the
+// dispatch calls the functions it calls, and the seat would be minted against a
+// tree git never made. Everything else (the board under the world's home, the
+// persistence store, the team) is mkWorld's, unchanged.
+function mkSpawnWorld() {
+  const world = mkWorld();
+  const repo = mkTmpRoot('clx-tr-repo-');
+  const git = (...a) => require('node:child_process').execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't694@example.invalid');
+  git('config', 'user.name', 't694');
+  git('commit', '-q', '--allow-empty', '-m', 'base');
+  world.team.root = repo;
+  world.team.roles.hand = { instantiate: 'session', brief: 'the hand', dispatch: 'worktree' };
+  return world;
+}
+
+// The deps `boot()` omits because no other subject in this file dispatches: the
+// mint's name rule, and git. Un-injected they are not a milder fixture — the mint
+// throws on `AGENT_NAME_RE.test` and `createWorktree` lands in _spawnTicketSeat's
+// catch, so no seat is ever minted and every assertion below would be about a
+// dispatch that did not happen.
+const SPAWN_DEPS = {
+  AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+  DEFAULT_WORKSPACE_ID: require('../catalogs').DEFAULT_WORKSPACE_ID,
+  gitWorktree: require('../git-worktree'),
+  getTemplates: () => ({ list: () => [] }),
+  listAllTemplates: () => [],
+  withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor,
+};
+
+const SPAWN_SPEC = 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one';
+
+// Everything the queue accepted has reached the PTY. `_replayTicketsPending`
+// going false says the PASS ran, which is a different fact: the pass hands its
+// delivery to the queue and returns, so a count taken there misses a second copy
+// that is committed and still in flight. Settles first, so a queue that has not
+// been handed anything yet is not mistaken for one that has drained.
+async function queueDrained(s, tries = 200) {
+  for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 5));
+  for (let i = 0; i < tries; i++) {
+    if (!s._injectPtyQueue || s._injectPtyQueue.length === 0) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.fail('ENTER: the inject queue never drained, so the byte counts below are about a delivery still in flight');
+}
+
+// `task add` then `task start` from a live lead, resolving once the dispatch has
+// actually minted its seat. Returns the seat name, which is derived rather than
+// chosen — asserting it here is what stops a later rename turning every subject
+// below into an assertion about a session that does not exist.
+async function started(app, world) {
+  const lead = await app.spawn('lead');
+  app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: SPAWN_SPEC });
+  const filed = world.tickets().find((t) => t.id === 't1');
+  assert.strictEqual(filed.taskDir, 'tasks/widget/SPEC.md',
+    'ENTER: the spec must name a task dir, or `start` refuses before it mints anything and the dispatch under '
+    + 'test never runs');
+  app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  for (let i = 0; i < 800; i++) {
+    if (app.m.sessions.has('team-hand-1')) break;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.ok(app.m.sessions.has('team-hand-1'),
+    'ENTER: the worktree dispatch must have MINTED its seat — without it there is no spawn-path delivery to '
+    + 'count, and every count below would read zero for a reason that is not the fix');
+  const rec = world.tickets().find((t) => t.id === 't1');
+  assert.strictEqual(rec.assignee, 'team-hand-1',
+    'ENTER: and the ticket must be pinned to it before the spawn — that pin is why the spawn stamp passes '
+    + 'repin:false, and an unpinned ticket would exercise a different branch');
+  assert.ok(rec.worktree && rec.worktree.path && fs.existsSync(rec.worktree.path),
+    'ENTER: git actually made the tree, so this is the worktree dispatch and not a degraded fallback');
+  return 'team-hand-1';
+}
+
+test('a minted ticket seat is handed its spec ONCE — the boot replay finds the spawn stamp', async () => {
+  const world = mkSpawnWorld();
+  // Both gates far out, so the ONLY thing that releases the spawn-path write is
+  // the emit below and the ONLY thing that runs the drain is the settle timer it
+  // arms. Without that the two race, and "the stamp was there first" would be a
+  // property of the machine rather than of the code.
+  const app = boot(world, {
+    deps: { ...SPAWN_DEPS, INJECT_BOOT_MAXWAIT: 60_000, bootDrainSettleMs: 3_000, InjectQueue: FastQueue },
+  });
+  try {
+    const seat = await started(app, world);
+    const s = app.m.sessions.get(seat);
+    app.emit(seat, '\x1b[?2004h');
+    await settled(app, seat, /BUILD THE WIDGET/);
+
+    // SNAPSHOT, not an assertion, and taken while the one-shot is still armed —
+    // which is the only moment at which "the stamp was there BEFORE the drain" is
+    // a fact rather than a guess. Asserted further down, after the counts: a
+    // spawn path that stamps nothing must red on the DELIVERY the hand actually
+    // receives, not on a record read that happens to run first, or the subject
+    // reports a bookkeeping miss for a defect whose whole cost is a second
+    // injection.
+    for (let i = 0; i < 400 && !world.tickets().find((x) => x.id === 't1').deliveredTo; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const drainStillPending = s._replayTicketsPending;
+    const preDrainStamp = world.tickets().find((x) => x.id === 't1').deliveredTo || null;
+
+    // And the drain DID run: every absence below is vacuous against a pass that
+    // never happened, and with the fix in place the drain is the code path that
+    // must now decline. Polled past the 3s settle this fixture set, not past
+    // `replayPassed`'s default 2s — the margin that orders the stamp before the
+    // drain is also what the wait has to clear.
+    await replayPassed(app, seat, 1200);
+    // The pass ENQUEUES; the bytes arrive a few ticks later, so counting at the
+    // flag flip counts a redelivery that is committed but has not reached the PTY
+    // yet — and reads 1 against the very code this subject exists to red. Waited
+    // out on the queue's own length, which is 0 already when the drain correctly
+    // declines and non-zero exactly while a second copy is on its way.
+    await queueDrained(s);
+    const got = app.seen(seat);
+    assert.strictEqual((got.match(/\[ticket t1\]/g) || []).length, 1,
+      'the spec reaches the minted seat EXACTLY once — a second copy costs the hand a turn and ~2.5KB on '
+      + 'every ticket the loop dispatches');
+    assert.strictEqual((got.match(/REPLAY/g) || []).length, 0,
+      'and carries no REPLAY head: that head tells a brand-new seat an earlier incarnation may have done the '
+      + 'work and to check `git log` before building — false for a seat minted seconds ago, and it is what '
+      + 'made two hands report the dispatch as a finding rather than doing it');
+
+    // The mechanism behind those counts. Without it the subject would also pass
+    // against a drain suppressed some other way — a skipped boot pass, a filter on
+    // seat age — none of which survives the respawn the next subject demands.
+    assert.strictEqual(drainStillPending, true,
+      'ENTER: the drain was still pending when the stamp was read, so the stamp below is the SPAWN path`s and '
+      + 'not the drain`s own');
+    assert.ok(preDrainStamp, 'the spawn path stamps the record before the boot replay ever looks at it');
+    assert.strictEqual(preDrainStamp.seat, seat,
+      'naming the seat it minted — this is the whole fix: the minted seat records its own delivery');
+    assert.strictEqual(preDrainStamp.incarnation, s.incarnation,
+      'with this incarnation`s key, which is what the boot replay compares against');
+  } finally { app.stop(); }
+});
+
+// The mutation this exists for: stamping the SEAT and not its incarnation, or
+// suppressing the replay outright. Both look right against the subject above and
+// both strand a hand that genuinely restarted holding a bare id.
+test('a minted seat that RESPAWNS is replayed — the spawn stamp identifies an incarnation, not a seat', async () => {
+  const world = mkSpawnWorld();
+  const app = boot(world, { deps: SPAWN_DEPS });
+  let firstKey = null;
+  try {
+    const seat = await started(app, world);
+    firstKey = app.m.sessions.get(seat).incarnation;
+    await settled(app, seat, /BUILD THE WIDGET/);
+    await stamped(world);
+    await replayPassed(app, seat);
+    assert.strictEqual((app.seen(seat).match(/REPLAY/g) || []).length, 0,
+      'ENTER: the first process delivered no replay, so the one counted below belongs to the respawn');
+  } finally { app.stop(); }
+
+  // Second process over the same board — the seat comes back with nothing but the
+  // record, which is what a GUI restart leaves it.
+  const app2 = boot(world, { deps: SPAWN_DEPS });
+  try {
+    const s = await app2.spawn('team-hand-1');
+    assert.notStrictEqual(s.incarnation, firstKey,
+      'ENTER: a fresh process must mint a FRESH key, or the discrimination under test does not exist');
+    const got = await settled(app2, 'team-hand-1', /BUILD THE WIDGET/);
+    assert.strictEqual((got.match(/REPLAY/g) || []).length, 1,
+      'the respawned seat is replayed to, exactly once: the spawn stamp bounds the process it was written in '
+      + 'and nothing more, so suppressing the boot replay for a minted seat must not suppress it for a seat '
+      + 'that actually restarted holding a bare id');
+    assert.strictEqual(world.tickets().find((x) => x.id === 't1').deliveredTo.incarnation, s.incarnation,
+      'and the stamp moves to the new incarnation');
+  } finally { app2.stop(); }
+});
+
+test('the spawn-path stamp rides the WRITE, not the enqueue', async () => {
+  const world = mkSpawnWorld();
+  // A seat that never announces bracketed paste, with the boot cap out of reach:
+  // the dispatch enqueues and the bytes sit in the ready loop, unwritten.
+  // `_deliverTicketSpec` returns `{queued:true}` throughout — which is exactly why
+  // that return cannot be the stamp.
+  const app = boot(world, {
+    deps: { ...SPAWN_DEPS, INJECT_BOOT_MAXWAIT: 60_000, bootDrainSettleMs: 60_000, InjectQueue: FastQueue },
+  });
+  try {
+    const seat = await started(app, world);           // no emit(): never announces
+    const s = app.m.sessions.get(seat);
+    assert.doesNotMatch(app.seen(seat), /BUILD THE WIDGET/,
+      'ENTER: the queue must still be holding the spec — if the bytes were released the seat really was told, '
+      + 'and the absence below would be demanding a legitimate stamp be missing');
+    assert.ok(s._injectPtyQueue && s._injectPtyQueue.length > 0,
+      'ENTER: and something must be IN that queue, or there is no deferred write for the stamp to ride');
+
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.strictEqual(t.state, 'open', 'ENTER: still open, so this is the record a later replay would read');
+    assert.ok(!t.deliveredTo,
+      'a spec still sitting in the queue must NOT be stamped delivered: a seat that dies in the gates is never '
+      + 'written to at all, and the stamp suppresses every later replay — so recording a delivery the queue '
+      + 'never released turns a recoverable loss into a permanent one');
+
+    // And the stamp is not merely DELAYED past the assertion: releasing the gate
+    // must produce it. Without this the subject would also pass against a spawn
+    // path that stamps nothing at all, which is the defect itself.
+    app.emit(seat, '\x1b[?2004h');
+    await settled(app, seat, /BUILD THE WIDGET/);
+    await stamped(world);
+    assert.strictEqual(world.tickets().find((x) => x.id === 't1').deliveredTo.incarnation, s.incarnation,
+      'once the write is released the stamp lands, with this incarnation key — deferring it must not lose it');
   } finally { app.stop(); }
 });
 

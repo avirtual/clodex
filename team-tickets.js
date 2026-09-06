@@ -3357,8 +3357,8 @@ function createTicketMethods(deps, shared) {
     // rather than by suppression. The narrower "exclude what the seat is already
     // working" fix is not implementable here: nothing on the record says which
     // ticket a seat currently holds. `deliveredTo` is the only such stamp and it is
-    // written ONLY by `_replayOpenTickets`, never by start/assign/advance, so it is
-    // absent on exactly the tickets this would need to test.
+    // never written by assign/advance on a standing seat, so it is absent on exactly
+    // the tickets this would need to test.
     _advanceSeat(team, seatName, closed) {
       if (team && team.solo) return null;
       if (!ticketStarted(closed)) return null;
@@ -3384,6 +3384,69 @@ function createTicketMethods(deps, shared) {
       this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true /* urgent */, true /* replay */);
       log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closed && closed.id}`);
       return next;
+    },
+
+    // The write-time hook both dispatch paths that PERSIST "this seat has been told"
+    // hand to _deliverTicketSpec. It rides the WRITE, never the return, which is what
+    // _deliverMessage's own contract requires: `queued` only means the bytes entered
+    // the inject queue, where they sit behind the boot-readiness gate
+    // (INJECT_BOOT_MAXWAIT) and the quiet gate (INJECT_QUIET_MAXWAIT, 5min) — a seat
+    // that dies in those gates is never written to at all, yet the record said
+    // delivered, and a stamped ticket is never replayed again.
+    //
+    // This does NOT by itself rescue a write the CLI's boot re-render wipes:
+    // those bytes really were written, so the hook fires and the stamp is taken.
+    // The defence there is the confirmation latch, which no longer stands down
+    // for a turn the transcript cannot attribute to this spec — see
+    // _checkSpecConfirm. Two mechanisms, two different losses.
+    //
+    // Deferring the stamp cannot lose one: 'injected' and 'parked' are both
+    // durable, and every non-durable outcome (`held`, `undelivered`) never
+    // fires the hook at all — which is exactly the set that must NOT stamp.
+    //
+    // The board is loaded HERE, never handed in by the caller: this runs later than
+    // the decision to deliver (the queue writes past its gates), so a snapshot taken
+    // there would be stale by now and would clobber a concurrent clodex-team write.
+    _stampSpecDelivered(team, ticketId, session, { repin } = {}) {
+      if (!session) return;
+      const tickets = ticketsStore.load(team.root);
+      const rec = tickets.find((x) => x.id === ticketId);
+      if (!rec) return;
+      // Re-checked HERE, not at the decision to deliver: this hook fires at WRITE
+      // time, which the queue's gates put up to INJECT_QUIET_MAXWAIT (5min)
+      // later, and reassignment is the documented recovery for a silent seat —
+      // so a hand-off landing inside that window is reachable, not theoretical.
+      // Stamping anyway writes `deliveredTo = this seat` against a pin naming
+      // another, and nothing self-heals it: `_repinTicketToSeat` bails on
+      // pinned-and-live. Dropping the stamp is the safe direction — the stamp
+      // only SUPPRESSES redelivery, so losing it costs one REPLAY-marked
+      // re-send, while a wrong one suppresses the replay of a seat that no
+      // longer holds the ticket and hands the cost falsifier a disagreement
+      // that unknowns-out an attribution which was in fact clean. The same
+      // holder check _checkSpecConfirm uses to drop a latch on a reassigned
+      // ticket. Returning before the re-pin too: whatever made the other seat
+      // the holder re-pinned already, and this delivery reached nobody it
+      // should record.
+      if (this._ticketAssigneeSeat(team, rec) !== session.name) {
+        log.info('intent', `replay stamp for ${ticketId} dropped at ${session.name}: the ticket now resolves elsewhere`);
+        return;
+      }
+      rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
+      // Replay is the OTHER hand-off, so it re-pins for the same reason advance
+      // does: handing a queued ticket to a seat IS its dispatch. Without this a
+      // ticket inherited from a dead seat keeps naming that seat, and its cost
+      // lands on a ledger belonging to something that never did the work.
+      // Rides this save. A DEGRADED worktree ticket never reaches here — the
+      // resolver's `!worktree` gate keeps it off this path. One pinned to its own
+      // live seat does reach it (the ordinary ticket-seat respawn), and the re-pin
+      // is a no-op on it: `_repinTicketToSeat` bails on pinned-and-live.
+      // The minted-seat dispatch passes `repin: false` — that ticket was pinned to
+      // its seat before the save that preceded the spawn.
+      if (repin) this._repinTicketToSeat(team, rec);
+      ticketsStore.save(team.root, tickets);
+      log.info('intent', repin
+        ? `replayed ${ticketId} to ${session.name} (respawn)`
+        : `stamped ${ticketId} delivered to ${session.name} (spawn)`);
     },
 
     // A ticket's spec is delivered when it is ASSIGNED and never again, so a seat
@@ -3417,65 +3480,7 @@ function createTicketMethods(deps, shared) {
         // with seat #2, which received nothing.
         if (this._ticketAssigneeSeat(team, t) !== session.name) continue;
         if (!t.spec) continue;   // hand-edited record — delivering it injects literal "undefined"
-        // The stamp rides the WRITE, not this return, which is what
-        // _deliverMessage's own contract requires of any caller that PERSISTS
-        // "this seat has been told". `queued` only means the bytes entered the
-        // inject queue: they sit in the ready loop behind the boot-readiness gate
-        // (INJECT_BOOT_MAXWAIT) and the quiet gate (INJECT_QUIET_MAXWAIT, 5min), and
-        // a seat that dies in those gates is never written to at all — yet the
-        // record said delivered, and a stamped ticket is never replayed again.
-        //
-        // This does NOT by itself rescue a write the CLI's boot re-render wipes:
-        // those bytes really were written, so the hook fires and the stamp is taken.
-        // The defence there is the confirmation latch, which no longer stands down
-        // for a turn the transcript cannot attribute to this spec — see
-        // _checkSpecConfirm. Two mechanisms, two different losses.
-        //
-        // Deferring the stamp cannot lose one: 'injected' and 'parked' are both
-        // durable, and every non-durable outcome (`held`, `undelivered`) never
-        // fires the hook at all — which is exactly the set that must NOT stamp.
-        //
-        // Loaded INSIDE the hook, not out here, and for the reason the old inline
-        // load already gave: the hook runs later than this loop (the queue writes
-        // past its gates), so a snapshot taken now would be stale by the time it
-        // saved and would clobber a concurrent clodex-team write.
-        const stamp = () => {
-          const tickets = ticketsStore.load(team.root);
-          const rec = tickets.find((x) => x.id === t.id);
-          if (!rec) return;
-          // Re-checked HERE, not at the decision above: this hook fires at WRITE
-          // time, which the queue's gates put up to INJECT_QUIET_MAXWAIT (5min)
-          // later, and reassignment is the documented recovery for a silent seat —
-          // so a hand-off landing inside that window is reachable, not theoretical.
-          // Stamping anyway writes `deliveredTo = this seat` against a pin naming
-          // another, and nothing self-heals it: `_repinTicketToSeat` bails on
-          // pinned-and-live. Dropping the stamp is the safe direction — the stamp
-          // only SUPPRESSES redelivery, so losing it costs one REPLAY-marked
-          // re-send, while a wrong one suppresses the replay of a seat that no
-          // longer holds the ticket and hands the cost falsifier a disagreement
-          // that unknowns-out an attribution which was in fact clean. The same
-          // holder check _checkSpecConfirm uses to drop a latch on a reassigned
-          // ticket. Returning before the re-pin too: whatever made the other seat
-          // the holder re-pinned already, and this replay delivered to nobody it
-          // should record.
-          if (this._ticketAssigneeSeat(team, rec) !== session.name) {
-            log.info('intent', `replay stamp for ${t.id} dropped at ${session.name}: the ticket now resolves elsewhere`);
-            return;
-          }
-          rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
-          // Replay is the OTHER hand-off, so it re-pins for the same reason advance
-          // does: handing a queued ticket to a seat IS its dispatch. Without this a
-          // ticket inherited from a dead seat keeps naming that seat, and its cost
-          // lands on a ledger belonging to something that never did the work.
-          // Rides this save, which is already the post-delivery reload. A DEGRADED
-          // worktree ticket never reaches here — the resolver's `!worktree` gate
-          // keeps it off this path. One pinned to its own live seat does reach it
-          // (the ordinary ticket-seat respawn, resolved above that gate), and the
-          // re-pin is a no-op on it: `_repinTicketToSeat` bails on pinned-and-live.
-          this._repinTicketToSeat(team, rec);
-          ticketsStore.save(team.root, tickets);
-          log.info('intent', `replayed ${t.id} to ${session.name} (respawn)`);
-        };
+        const stamp = () => this._stampSpecDelivered(team, t.id, session, { repin: true });
         const r = this._deliverTicketSpec(team, t, t.spec, 'clodex-team', true, true, false, stamp);
         // `held` is the one non-delivery worth retrying: it is a property of the seat
         // at this instant, not of the ticket. `self` and `undelivered` are structural
@@ -4361,7 +4366,8 @@ function createTicketMethods(deps, shared) {
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
             background: true,
           });
-          const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, false, false, null, fromBacklog);
+          const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, false, false,
+            () => this._stampSpecDelivered(team, ticket.id, this.sessions.get(seat.name), { repin: false }), fromBacklog);
           this._broadcast('ipc-message', {
             type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt ? wt.path : shape.cwd}`,
           });
