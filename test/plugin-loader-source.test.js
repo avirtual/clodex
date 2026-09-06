@@ -147,10 +147,10 @@ test('resolveSource fetches and validates without writing to the user root', asy
 });
 
 test('the projected manifest carries entry, so a caller can see a renderer half before installing', async () => {
-  // The projection is a WHITELIST: a field absent from it reaches the renderer
-  // as undefined, and the web install note's "renderer half is desktop-only"
-  // sentence — the only thing that reads it — then silently never renders.
-  // t707-r0 shipped exactly that. Both resolve paths project the same shape.
+  // The projection is a WHITELIST, so a field absent from it reaches the
+  // renderer as undefined and the web install note's renderer-half sentence —
+  // the only thing that reads it — silently never renders, with every leaf test
+  // still green against a hand-built manifest. Both resolve paths project it.
   // extraFiles is written AFTER manifest.json, so the manifest entry here
   // replaces the engine-only default manifestFor() builds.
   const withRenderer = {

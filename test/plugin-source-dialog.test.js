@@ -356,10 +356,11 @@ test('warningText on the web surface names the HOST the browser is connected to'
 });
 
 test('webRendererNote fires on a manifest with a renderer half and nothing else', () => {
-  // Against the SHARED fixtures, which carry the projected `entry` the loader
-  // really returns. A hand-built manifest here would have passed t707-r0, where
-  // the projection dropped `entry` entirely and the note could never render on
-  // a real install — test/plugin-loader-source.test.js pins the projection.
+  // Against the SHARED fixtures, which carry the `entry` the loader's projection
+  // really returns — a hand-built manifest here passes whether or not the
+  // projection carries the field, which is how a note that could never render on
+  // a real install once shipped green. The projection itself is pinned in
+  // test/plugin-loader-source.test.js.
   assert.strictEqual(
     webRendererNote(RESOLVED),
     ' Its renderer half shows in the desktop app only — this browser\'s bundle is built from the plugins shipped with Clodex.');
