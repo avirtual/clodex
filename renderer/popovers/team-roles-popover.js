@@ -761,7 +761,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           const kind = document.createElement('span');
           kind.className = 'team-role-uses-kind';
           const viaTemplate = u.via !== 'role.prompt' && u.via !== 'role.template';
-          kind.textContent = `${viaTemplate ? '↳ ' : ''}${u.kind}`;
+          kind.textContent = `${viaTemplate ? '↳ ' : ''}${u.kind === 'templates' ? 'template' : u.kind}`;
           const stem = document.createElement('span');
           stem.className = 'team-role-uses-stem';
           stem.textContent = u.stem;

@@ -49,13 +49,20 @@ function stemsOf(value) {
 
 function planGather(team, sources) {
   const items = [];
-  const seen = new Set();
+  const seen = new Map();
   const add = (kind, stem, role, via) => {
     if (typeof stem !== 'string' || !stem) return null;
     const key = `${kind}\u0000${stem}`;
-    if (seen.has(key)) return null;
-    seen.add(key);
+    const prior = seen.get(key);
+    if (prior) {
+      if (prior.role !== role && !(prior.also || []).some((a) => a.role === role)) {
+        if (!prior.also) prior.also = [];
+        prior.also.push({ role, via });
+      }
+      return null;
+    }
     const item = classify(team, sources, kind, stem, role, via);
+    seen.set(key, item);
     items.push(item);
     return item;
   };
@@ -91,8 +98,14 @@ function usesByRole(planItems, roleKeys) {
     const where = item.action === 'skipped'
       ? (WHERE_BY_REASON[item.reason] || 'missing')
       : (WHERE_BY_ACTION[item.action] || 'missing');
-    if (!out.has(role)) out.set(role, []);
-    out.get(role).push({ kind: item.kind, stem: item.stem, via: item.via, where });
+    const push = (r, via) => {
+      if (!out.has(r)) out.set(r, []);
+      out.get(r).push({ kind: item.kind, stem: item.stem, via, where });
+    };
+    push(role, item.via);
+    for (const a of Array.isArray(item.also) ? item.also : []) {
+      if (a && typeof a.role === 'string' && a.role) push(a.role, a.via);
+    }
   }
   return out;
 }

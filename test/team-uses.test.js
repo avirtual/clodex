@@ -16,7 +16,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { usesByRole } = require('../team-gather');
+const { usesByRole, planGather } = require('../team-gather');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createEngine } = require('../engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -35,6 +35,22 @@ const ALL_ACTIONS = [
   { kind: 'append', stem: '../esc', role: 'hand', via: 'template.appendPromptFiles', action: 'skipped', reason: 'bad stem' },
   { kind: 'exec', stem: 'nowhere', role: 'hand', via: 'template.execCommands', action: 'missing' },
   { kind: 'system', stem: 'r', role: 'reviewer', via: 'role.prompt', action: 'copy', bytes: 'ANOTHER BODY' },
+];
+
+// The SHARED-STEM case. planGather emits one item per kind+stem across the whole
+// team, so a second role naming a stem an earlier role already named contributes
+// no item of its own — it is recorded as an `also` on the first one. Without the
+// fan-out below, such a role maps to [] and the popover says "uses nothing" about
+// a role that uses a whole template.
+const SHARED_STEM = [
+  {
+    kind: 'templates', stem: 'hs', role: 'designer', via: 'role.template', action: 'copy', bytes: 'TPL',
+    also: [{ role: 'archivist', via: 'role.template' }],
+  },
+  {
+    kind: 'append', stem: 'proj', role: 'designer', via: 'template.appendPromptFiles', action: 'kept',
+    also: [{ role: 'archivist', via: 'template.appendPromptFiles' }],
+  },
 ];
 
 test('t702 usesByRole: the whole map — five verdicts, discovery order, roles kept apart', () => {
@@ -93,6 +109,63 @@ test('t702 usesByRole: a role that references nothing is PRESENT with an empty l
     'and a whole team that references nothing still yields one entry per role');
 });
 
+test('t702 usesByRole: a role SHARING a stem gets its own rows, not an empty list', () => {
+  // ENTER: the plan really does carry no item whose own `role` is the archivist —
+  // its pieces exist only as `also` entries. Without this the subject below would
+  // pass against a plan that simply listed the archivist twice.
+  assert.deepStrictEqual(SHARED_STEM.filter((i) => i.role === 'archivist'), [],
+    'ENTER: the archivist owns no plan item of its own');
+
+  assert.deepStrictEqual(entries(usesByRole(SHARED_STEM, ['designer', 'archivist'])), [
+    ['designer', [
+      { kind: 'templates', stem: 'hs', via: 'role.template', where: 'library' },
+      { kind: 'append', stem: 'proj', via: 'template.appendPromptFiles', where: 'team' },
+    ]],
+    ['archivist', [
+      { kind: 'templates', stem: 'hs', via: 'role.template', where: 'library' },
+      { kind: 'append', stem: 'proj', via: 'template.appendPromptFiles', where: 'team' },
+    ]],
+  ], 'both roles show the shared pieces, each with the via IT used and the one shared verdict');
+});
+
+test('t702 planGather: a role re-mentioning a stem is recorded ONCE, and its own re-mention is silent', () => {
+  // Where the de-duplication actually lives. Two facts in one subject because
+  // they are the same rule: `also` is per-ROLE, so a role that names one stem
+  // twice (prompt and template both pointing at it) must not appear twice in its
+  // own uses list, and the ORIGINATING role is never added to its own `also`.
+  const team = {
+    name: 't',
+    dir: '/teams/t',
+    roles: { designer: { prompt: 'h', template: 'hs' }, archivist: { template: 'hs' } },
+  };
+  const sources = {
+    libraryPath: () => '/lib',
+    readLibrary: () => 'BODY',
+    teamHas: () => false,
+    // The template names the SAME system stem the designer already named, which
+    // is the t701 dedupe case, plus one of its own.
+    readTemplateForWalk: () => ({ systemPromptFile: 'h', appendPromptFiles: ['proj'] }),
+  };
+
+  const { items } = planGather(team, sources);
+  const shared = items.find((i) => i.kind === 'templates' && i.stem === 'hs');
+  assert.ok(shared, 'ENTER: the shared template is in the plan');
+
+  assert.deepStrictEqual(shared.also, [{ role: 'archivist', via: 'role.template' }],
+    'the archivist is recorded once on the designer\'s item — never the designer itself');
+  // The designer names `h` TWICE — as its prompt and again through its template.
+  // The second is silent (no designer entry); the archivist's reach through the
+  // shared template is a different role and IS recorded, which is why this list
+  // has exactly one entry rather than none or two.
+  const own = items.find((i) => i.kind === 'system' && i.stem === 'h');
+  assert.deepStrictEqual(own.also, [{ role: 'archivist', via: 'template.systemPromptFile' }],
+    'a same-role re-mention adds nothing; the other role\'s reach through the template does');
+
+  assert.deepStrictEqual(usesByRole(items, Object.keys(team.roles)).get('designer').map((u) => `${u.kind}/${u.stem}`),
+    ['system/h', 'templates/hs', 'append/proj'],
+    'so the designer lists each piece exactly once');
+});
+
 test('t702 usesByRole GUARD: junk in, empty map out — never a throw', () => {
   // GUARD PIN: the popover calls this with `res.items` from an IPC reply it did
   // not validate. A throw here empties the whole roles list, so every non-array
@@ -118,7 +191,15 @@ const T702_LIBRARY = {
   'exec/lib-run.json': '{"argv":["/bin/true"]}',
 };
 
-const T702_ROLES = { lead: { brief: 'the lead' }, hand: { prompt: 'h', template: 'hs' } };
+// `archivist` SHARES the hand's template and names no prompt: it owns no plan
+// item of its own, so it is the role that rendered "uses nothing" before the
+// `also` fan-out existed. It is in the real fixture, not only the pure one,
+// because the bug was in planGather's walk rather than in the mapping.
+const T702_ROLES = {
+  lead: { brief: 'the lead' },
+  hand: { prompt: 'h', template: 'hs' },
+  archivist: { template: 'hs' },
+};
 
 function mkHome(prefix) {
   const tmp = mkTmpRoot(prefix);
@@ -153,6 +234,14 @@ const BEFORE_GATHER = [
   ['hand', 'exec', 'lib-run', 'library'],
   ['hand', 'exec', 'own-run', 'team'],
   ['hand', 'exec', 'nowhere', 'missing'],
+  // The archivist's rows come entirely from `also` fan-out — same stems, same
+  // verdicts, and every one of them inherited through the template it shares.
+  ['archivist', 'templates', 'hs', 'library'],
+  ['archivist', 'append', 'proj', 'library'],
+  ['archivist', 'append', 'p:knowledge', 'plugin'],
+  ['archivist', 'exec', 'lib-run', 'library'],
+  ['archivist', 'exec', 'own-run', 'team'],
+  ['archivist', 'exec', 'nowhere', 'missing'],
 ];
 
 const flat = (m) => [...m.entries()].flatMap(([role, list]) => list.map((u) => [role, u.kind, u.stem, u.where]));
@@ -183,6 +272,26 @@ test('t702 the flip: applying Gather turns every `library` row into `team`, and 
     'library → team; the plugin ref, the already-owned piece and the missing one are unchanged');
   assert.deepStrictEqual(after.map(([r, k, s]) => [r, k, s]), before.map(([r, k, s]) => [r, k, s]),
     'and the same pieces in the same order — the gather changed ownership, not the walk');
+});
+
+test('t702 real plan: the role that SHARES a template shows it, and does not say "uses nothing"', () => {
+  // The regression this rework fixes, stated over a real gather rather than a
+  // hand-built plan: the archivist names only a template the hand already named,
+  // so before the `also` fan-out it contributed zero items and rendered as a role
+  // that uses nothing while it uses a whole template.
+  const { eng } = mkHome('clx-t702-shared-');
+  const items = eng.gatherTeam('t', { dry: true }).items;
+  assert.deepStrictEqual(items.filter((i) => i.role === 'archivist'), [],
+    'ENTER: the plan still carries no item OWNED by the archivist — the walk is unchanged');
+
+  const rows = usesByRole(items, Object.keys(T702_ROLES)).get('archivist');
+
+  assert.ok(rows.length, 'the archivist is not empty — this is the "uses nothing" falsehood, fixed');
+  assert.deepStrictEqual(rows.map((u) => `${u.kind}/${u.stem}`),
+    ['templates/hs', 'append/proj', 'append/p:knowledge', 'exec/lib-run', 'exec/own-run', 'exec/nowhere'],
+    'it shows the template it names plus every piece that template brings in');
+  assert.deepStrictEqual(rows.filter((u) => u.via === 'role.template').map((u) => u.stem), ['hs'],
+    'exactly one piece is named by the role itself; the rest are ↳ template-inherited');
 });
 
 test('t702 the lead references nothing, and says so rather than vanishing', () => {
@@ -322,6 +431,11 @@ test('t702 wiring: the popover loads the uses map on every refresh and renders a
     'and it loads BEFORE renderRows, or the rows paint the previous team\'s badges');
 
   assert.ok(/team-role-badge team-role-where \$\{u\.where\}/.test(src), 'each piece gets a where-badge');
+  // The plan's kind is `templates` (it names a library DIRECTORY); the label set
+  // the operator reads is singular throughout, so the row would otherwise be the
+  // one plural among system/append/exec.
+  assert.ok(/u\.kind === 'templates' \? 'template' : u\.kind/.test(src),
+    'the templates row is labelled `template`, singular like the other three');
   assert.ok(/textContent = 'uses nothing'/.test(src), 'and an empty list says so in words');
 });
 

@@ -34,6 +34,18 @@ const TEAM = {
     archivist: { prompt: null, brief: 'archivist.', template: 'fable-design', dispatch: 'standing', cwd: 'api' },
   },
 };
+const GATHER_ITEMS = [
+  { kind: 'system', stem: 'clodex-team-lead', role: 'lead', via: 'role.prompt', action: 'kept' },
+  { kind: 'system', stem: 'clodex-team-hand', role: 'hand', via: 'role.prompt', action: 'copy' },
+  { kind: 'templates', stem: 'clodex-team-hand', role: 'hand', via: 'role.template', action: 'copy' },
+  { kind: 'append', stem: 'p:knowledge', role: 'hand', via: 'template.appendPromptFiles', action: 'skipped', reason: 'plugin ref' },
+  { kind: 'system', stem: 'clodex-team-reviewer', role: 'reviewer', via: 'role.prompt', action: 'missing' },
+  {
+    kind: 'templates', stem: 'fable-design', role: 'designer', via: 'role.template', action: 'copy',
+    also: [{ role: 'archivist', via: 'role.template' }],
+  },
+];
+
 const SESSIONS = [
   { name: 'clodex', type: 'claude', team: 'clodex', role: 'lead', activity: 'idle' },
   { name: 'clodex-hand-427', type: 'claude', team: 'clodex', role: 'hand', activity: 'thinking' },
@@ -41,6 +53,7 @@ const SESSIONS = [
 window.api = {
   teamGet: async () => ({ ok: true, team: TEAM }),
   teamPreflight: async () => ({ ok: true, findings: [] }),
+  teamGather: async () => ({ ok: true, items: GATHER_ITEMS }),
   listSessions: async () => SESSIONS,
   reservedSessionNames: async () => ({ ok: true, names: SESSIONS.map((s) => s.name) }),
   teamRolePrompts: async () => ({ ok: true, prompts: ['clodex-team-lead', 'clodex-team-hand'], all: ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer'] }),

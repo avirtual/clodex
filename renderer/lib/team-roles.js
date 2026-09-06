@@ -480,8 +480,14 @@ function usesByRole(planItems, roleKeys) {
     const where = item.action === 'skipped'
       ? (WHERE_BY_REASON[item.reason] || 'missing')
       : (WHERE_BY_ACTION[item.action] || 'missing');
-    if (!out.has(role)) out.set(role, []);
-    out.get(role).push({ kind: item.kind, stem: item.stem, via: item.via, where });
+    const push = (r, via) => {
+      if (!out.has(r)) out.set(r, []);
+      out.get(r).push({ kind: item.kind, stem: item.stem, via, where });
+    };
+    push(role, item.via);
+    for (const a of Array.isArray(item.also) ? item.also : []) {
+      if (a && typeof a.role === 'string' && a.role) push(a.role, a.via);
+    }
   }
   return out;
 }
