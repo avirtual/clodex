@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The built-in Clodex Plugin Builder is at 0.2.1: the create-plugin skill now writes the `surfaces` table a plugin with a renderer half needs so its buttons and panels work from the browser (an undeclared method answers "plugin method not available on this surface"), shows how to install a plugin that lives in a folder of a repo, and no longer tells you a renderer half is desktop-only.
+
 ## 5.33.0 — 2026-09-06
 
 - **The roles popover shows what each role uses, and who owns it.** Every role row lists its system prompt, template, append stems and exec commands with a badge: **team** for a piece under `~/.clodex/teams/<name>/`, **library** for one borrowed from the shared library, **plugin** for a namespaced ref, **missing** for one that resolves nowhere. The list is the Gather plan, so it matches `[agent:team gather dry]` line for line and flips to team when Gather is applied.
