@@ -20,6 +20,11 @@
 // so refusing `wterm:*` refused a tab, not a capability. It has its own seam,
 // `enableLocalTerminal`, so a host can still decline it deliberately.
 //
+// THE `console:*` PAIR LEFT THAT SET THE SAME WAY (t716), on its own
+// `enableConsole` seam, and this file pins its PRESENCE on the web surface too:
+// they are read-only reads of a seat's OWN Bash records, which a client that can
+// already open a shell on the box could gather itself.
+//
 // Every gated prefix has handlers behind it, so the absence assertion is not
 // vacuous — it fails the moment one is registered ungated.
 

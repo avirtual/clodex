@@ -188,11 +188,11 @@ const PINNED_NAMES = [
   // map has neither). So the web build binds `ctlRun` to a channel with no
   // handler behind it, deliberately.
   'ctlRun', 'ctlContext', 'ctlHelp',
-  // t645: the Bash console's pull. Same gated-registration story as `ctl:*` —
-  // bound on both surfaces, registered only where drawer services are granted.
+  // t645 and its in-flight half t650 — the Bash console's pull and the live
+  // preview of a call that has not finished. NOT the gated story above since
+  // t716: their seam is `enableConsole`, which the web host grants, so these two
+  // are reachable on both surfaces like the `wterm:*` four below.
   'consoleRead',
-  // t650: its in-flight half. Same story again — the live preview of a Bash
-  // call that has not finished, registered behind the same drawer-services gate.
   'consoleLive',
   // These four ARE reachable on both hosts (t227) — the exception to the
   // paragraph above, not another instance of it. Their gate is
