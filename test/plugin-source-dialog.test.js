@@ -27,7 +27,7 @@ const path = require('node:path');
 
 const {
   INSTALL_REASONS, shortCommit, refLabel, sourceLabel, sourceLine,
-  previewLines, updatePreviewLines, warningText, installState,
+  previewLines, updatePreviewLines, warningText, webRendererNote, installState,
 } = require('../renderer/lib/plugin-source-dialog');
 
 const ROOT = path.join(__dirname, '..');
@@ -333,6 +333,31 @@ test('there is no warning to show before a successful resolve', () => {
   assert.strictEqual(warningText({ ok: false, error: 'nope' }), '');
 });
 
+test('warningText on the web surface names the HOST the browser is connected to', () => {
+  // A tunnelled tab looks local; the operator reading this sentence in a browser
+  // is deciding whether to give a stranger's code the authority of a machine
+  // that may not be in front of him.
+  assert.strictEqual(
+    warningText(RESOLVED, { remote: true }),
+    'This code will run on the Clodex host this browser is connected to, with the app\'s full authority, the same as Clodex itself. '
+    + 'It comes from github.com/avirtual/clodex-plugins at v2 (commit abc1234). '
+    + 'Clodex cannot check what it does — install it only if you trust its author.');
+  assert.strictEqual(warningText(RESOLVED, { remote: false }), warningText(RESOLVED),
+    'a falsy option is the desktop sentence, so a call site that always passes the flag is safe');
+});
+
+test('webRendererNote fires on a manifest with a renderer half and nothing else', () => {
+  assert.strictEqual(
+    webRendererNote({ ok: true, manifest: { id: 'notes', entry: { engine: 'engine.js', renderer: 'renderer.js' } } }),
+    ' Its renderer half shows in the desktop app only — this browser\'s bundle is built from the plugins shipped with Clodex.');
+  assert.strictEqual(
+    webRendererNote({ ok: true, manifest: { id: 'notes', entry: { engine: 'engine.js' } } }), '',
+    'an engine-only plugin is fully live in a browser — the sentence would be a false warning');
+  assert.strictEqual(webRendererNote({ ok: true, manifest: { id: 'notes' } }), '');
+  assert.strictEqual(webRendererNote(RESOLVED), '', 'the shared fixture names no entry at all');
+  assert.strictEqual(webRendererNote(null), '');
+});
+
 test('refLabel names the default branch rather than saying nothing', () => {
   assert.strictEqual(refLabel(RESOLVED), 'v2');
   assert.strictEqual(refLabel(RESOLVED_NO_REF), 'the default branch');
@@ -471,7 +496,7 @@ test('the update preview is stamped with the ROW\'s repo/ref before the warning 
   const src = sourceSectionSrc();
   const stamp = src.indexOf('repo: p.source.repo, ref: p.source.ref, subpath: p.source.subpath');
   assert.ok(stamp >= 0, 'the resolveUpdate result must be stamped from the row\'s source');
-  const paint = src.indexOf('warningText(pluginsSourceResolved), \'warn\');', stamp);
+  const paint = src.indexOf('warningText(pluginsSourceResolved, { remote: !!window.__CLODEX_WEB__ }), \'warn\');', stamp);
   assert.ok(paint > stamp,
     'the stamp must precede the paint, or the warning names a repo the object does not carry yet');
 });
@@ -485,7 +510,8 @@ test('the warning element is only ever assigned from warningText', () => {
   const writes = [...src.matchAll(/paintPluginsSourceNote\(pluginsSourceWarning, ([^;]*?), 'warn'\)/g)]
     .map((m) => m[1].trim());
   assert.ok(writes.length >= 2, 'ENTER: the slice really found the warning writes');
-  assert.deepStrictEqual([...new Set(writes)].sort(), ["''", 'warningText(pluginsSourceResolved)'],
+  assert.deepStrictEqual([...new Set(writes)].sort(),
+    ["''", 'warningText(pluginsSourceResolved, { remote: !!window.__CLODEX_WEB__ })'],
     'the only things this element may hold are the trust text and the empty clear');
   assert.strictEqual((src.match(/pluginsSourceWarning\.(textContent|innerText|className|innerHTML)/g) || []).length, 0,
     'a direct property write bypasses the regex above entirely — that is the shape the t688-r1 defect had');
@@ -564,15 +590,17 @@ test('the source line and the two buttons are driven by the row\'s own `source`'
   const src = pluginRowSrc();
   assert.match(src, /if \(p\.source\) \{[\s\S]{0,200}?sourceLine\(p\.source\)/,
     'the line comes from the leaf, not from a sentence assembled at the row');
-  assert.match(src, /if \(p\.source && !window\.__CLODEX_WEB__\)/,
-    'applyUpdate and removeSourcePlugin are HOST_DESKTOP_ONLY — the buttons must not be offered in a browser');
+  assert.ok(/if \(p\.source\) \{[\s\S]{0,200}?textContent = 'Update…'/.test(src),
+    'applyUpdate and removeSourcePlugin answer the web surface — the buttons belong on a fetched row there too');
+  assert.ok(!/if \(p\.source && !window\.__CLODEX_WEB__\)/.test(src),
+    'a re-added web gate on the buttons block leaves a browser with a fetched row it cannot update or remove');
   assert.match(src, /if \(p\.linkedFrom && !window\.__CLODEX_WEB__\)/,
     'a symlinked row keeps Unregister; `source` is null for it, so the two blocks never both fire');
 });
 
 test('the warning is on screen BEFORE the install invoke exists in the handler', () => {
   const src = sourceSectionSrc();
-  const wroteWarning = src.indexOf('paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved)');
+  const wroteWarning = src.indexOf('paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved,');
   const installInvoke = src.indexOf("plugins.installFromSource'");
   assert.ok(wroteWarning >= 0, 'the warning element must be written from warningText');
   assert.ok(installInvoke > wroteWarning,
@@ -601,7 +629,29 @@ test('Install is disabled in the markup and the button exists to be enabled', ()
   assert.match(html, /id="btn-plugins-source"/);
 });
 
-test('Install from GitHub… is hidden on the web surface, like Register', () => {
-  assert.match(rendererSrc, /if \(window\.__CLODEX_WEB__\) pluginsSourceBtn\.classList\.add\('hidden'\)/,
-    'installFromSource is desktop-only host-side (HOST_DESKTOP_ONLY); the button must not be offered in a browser');
+test('Install from GitHub… is offered on the web surface, unlike Register', () => {
+  assert.ok(/if \(window\.__CLODEX_WEB__\) pluginsRegisterBtn\.classList\.add\('hidden'\)/.test(rendererSrc),
+    'ENTER: the absence below is about a hide that sat beside one that still exists — register-from-path '
+    + 'names a host directory a browser cannot see, so its button stays desktop-only');
+  assert.ok(!/if \(window\.__CLODEX_WEB__\) pluginsSourceBtn\.classList\.add\('hidden'\)/.test(rendererSrc),
+    'installFromSource answers the web surface — hiding the button leaves a browser cloning the repo from a terminal instead');
+});
+
+test('the trust warning names the host when the surface is a browser', () => {
+  const src = sourceSectionSrc();
+  const paints = [...src.matchAll(/warningText\(pluginsSourceResolved([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.strictEqual(paints.length, 2, 'ENTER: both the resolve and the update-resolve paints were found');
+  assert.deepStrictEqual(paints, [', { remote: !!window.__CLODEX_WEB__ }', ', { remote: !!window.__CLODEX_WEB__ }'],
+    'the renderer owns the surface mark and the leaf owns the sentence — a warning painted without it tells a '
+    + 'browser operator the code runs where the browser is');
+});
+
+test('the web install and update notes carry the renderer-half sentence', () => {
+  const src = sourceSectionSrc();
+  assert.ok(/const rendererNote = window\.__CLODEX_WEB__ \? webRendererNote\(resolved\) : '';/.test(src),
+    'the surface decision is the renderer\'s; webRendererNote decides only whether the manifest has a renderer half');
+  assert.ok(/Installed \$\{name\} at \$\{shortCommit\(r\.commit\)\}[^`]*\$\{rendererNote\}`/.test(src),
+    'the install note must append it, or a browser operator installs a plugin whose UI never appears and is told nothing');
+  assert.ok(/Updated \$\{name\} to \$\{shortCommit\(r\.commit\)\}\$\{restart\}\.\$\{rendererNote\}`/.test(src),
+    'the update note must append it too — an update is the same surprise a second time');
 });

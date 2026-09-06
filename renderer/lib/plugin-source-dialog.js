@@ -36,11 +36,20 @@ function previewLines(resolved) {
   ];
 }
 
-function warningText(resolved) {
+function warningText(resolved, opts) {
   if (!resolved || !resolved.ok) return '';
-  return `This code will run inside Clodex with the app's full authority, the same as Clodex itself. `
+  const where = opts && opts.remote
+    ? 'This code will run on the Clodex host this browser is connected to, with the app\'s full authority, the same as Clodex itself. '
+    : `This code will run inside Clodex with the app's full authority, the same as Clodex itself. `;
+  return where
     + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). `
     + 'Clodex cannot check what it does — install it only if you trust its author.';
+}
+
+function webRendererNote(resolved) {
+  const entry = resolved && resolved.manifest && resolved.manifest.entry;
+  if (!entry || !entry.renderer) return '';
+  return ' Its renderer half shows in the desktop app only — this browser\'s bundle is built from the plugins shipped with Clodex.';
 }
 
 function sourceLine(source) {
@@ -85,5 +94,6 @@ module.exports = {
   previewLines,
   updatePreviewLines,
   warningText,
+  webRendererNote,
   installState,
 };

@@ -734,7 +734,8 @@ End to end, today, with the user root implemented:
    already holds that name in the user root, or when the id is already
    registered — see §4 for why one id can only have one copy. Desktop only: the
    method takes a caller-supplied host path, so a browser client would be
-   choosing a directory on someone else's machine to load code from.
+   choosing a directory on someone else's machine to load code from — from a
+   browser the GitHub flow below is the way in.
    **Manage Plugins ▸ Install from GitHub…** is the other way in, and the only
    one that does not need a terminal: it opens an inline section in the same
    dialog taking `owner/repo`, `owner/repo@ref`, `owner/repo@ref:path/in/repo`
@@ -750,7 +751,12 @@ End to end, today, with the user root implemented:
    A fetched row then says **`From github.com/<repo>@<ref>[:<subpath>] at
    <commit7>`** under its name and offers **Update…** and **Remove** where a
    symlinked row offers Unregister and a hand-copied one offers neither. All
-   three affordances are desktop only, for §6's reason.
+   three affordances are offered on the web surface too, with the trust warning
+   there naming the Clodex host the browser is connected to rather than "inside
+   Clodex". What §6 still means for a browser is narrower: a fetched plugin runs
+   engine-side on every surface, but its RENDERER half shows in the desktop app
+   only, because the browser bundle is built from the plugins shipped with
+   Clodex — the install note says so when the manifest names one.
    **Update…** re-resolves the SAME sidecar repo and ref, and says so in the
    register note when nothing moved; when it did, the same inline section reopens
    with the field and Resolve hidden, showing `v<old> → v<new>` and
@@ -848,9 +854,9 @@ Consequences worth stating:
 | §6 Electron-only, lint & parity unaffected | Verified property; no code |
 | §7 trust posture | Posture; no code |
 | §8 npm dependencies | Sketch, not built |
-| §9 sources: GitHub fetch, engine + host methods | **Implemented** (desktop only) |
-| §9 sources: install UI — Manage Plugins ▸ Install from GitHub… | **Implemented** (desktop only) |
-| §9 sources: update/remove UI on a fetched row | **Implemented** (desktop only) |
+| §9 sources: GitHub fetch, engine + host methods | **Implemented** |
+| §9 sources: install UI — Manage Plugins ▸ Install from GitHub… | **Implemented** |
+| §9 sources: update/remove UI on a fetched row | **Implemented** |
 | §9 sources: `changed` is a tree compare, so an unrelated commit is not an update | **Implemented** |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
