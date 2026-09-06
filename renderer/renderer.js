@@ -29,7 +29,7 @@ const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldR
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
 const {
-  previewLines, updatePreviewLines, warningText, installState, sourceLabel, sourceLine, shortCommit,
+  previewLines, updatePreviewLines, warningText, webRendererNote, installState, sourceLabel, sourceLine, shortCommit,
 } = require('./lib/plugin-source-dialog');
 const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
@@ -5329,7 +5329,7 @@ async function renderPluginsDialog() {
       });
       rowActions.appendChild(un);
     }
-    if (p.source && !window.__CLODEX_WEB__) {
+    if (p.source) {
       const up = document.createElement('button');
       up.type = 'button';
       up.className = 'secondary';
@@ -5593,7 +5593,6 @@ function closePluginsSourceSection() {
   pluginsSourceSection.classList.add('hidden');
 }
 
-if (window.__CLODEX_WEB__) pluginsSourceBtn.classList.add('hidden');
 pluginsSourceBtn.addEventListener('click', () => {
   showPluginsRegisterNote('');
   closePluginsSourceSection();
@@ -5623,7 +5622,7 @@ pluginsSourceResolveBtn.addEventListener('click', async () => {
     }
     pluginsSourceResolved = { ...r, spec };
     paintPluginsSourceNote(pluginsSourcePreview, previewLines(pluginsSourceResolved).join('\n'));
-    paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), 'warn');
+    paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved, { remote: !!window.__CLODEX_WEB__ }), 'warn');
   } finally {
     pluginsSourceResolveBtn.disabled = false;
     pluginsSourceCancelBtn.disabled = false;
@@ -5652,16 +5651,17 @@ pluginsSourceInstallBtn.addEventListener('click', async () => {
       showPluginsRegisterNote(`Could not ${what}: ${(r && r.error) || 'unknown error'}`, 'warn');
       return;
     }
+    const rendererNote = window.__CLODEX_WEB__ ? webRendererNote(resolved) : '';
     if (updating) {
       closePluginsSourceSection();
       const rows = await renderPluginsDialog();
       const redrawn = rows.find((x) => x.id === r.id);
       const restart = redrawn && redrawn.restartRequired ? ' — restart Clodex to run the new code' : '';
-      showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.`);
+      showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.${rendererNote}`);
       return;
     }
     closePluginsSourceSection();
-    showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} — it is off until you turn it on from its row above.`);
+    showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} — it is off until you turn it on from its row above.${rendererNote}`);
     await renderPluginsDialog();
   } finally {
     pluginsSourceResolveBtn.disabled = false;
@@ -5703,7 +5703,7 @@ async function openPluginsSourceUpdate(p) {
     ...r, repo: p.source.repo, ref: p.source.ref, subpath: p.source.subpath, previousVersion: p.version,
   };
   paintPluginsSourceNote(pluginsSourcePreview, updatePreviewLines(pluginsSourceResolved).join('\n'));
-  paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), 'warn');
+  paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved, { remote: !!window.__CLODEX_WEB__ }), 'warn');
   paintPluginsSourceInstall();
 }
 

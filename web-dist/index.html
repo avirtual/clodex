@@ -21974,9 +21974,15 @@ ${i3.join("\n")}
           `${sourceLabel(resolved)} at commit ${shortCommit(resolved.commit) || "unknown"}`
         ];
       }
-      function warningText(resolved) {
+      function warningText(resolved, opts) {
         if (!resolved || !resolved.ok) return "";
-        return `This code will run inside Clodex with the app's full authority, the same as Clodex itself. It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). Clodex cannot check what it does \u2014 install it only if you trust its author.`;
+        const where = opts && opts.remote ? "This code will run on the Clodex host this browser is connected to, with the app's full authority, the same as Clodex itself. " : `This code will run inside Clodex with the app's full authority, the same as Clodex itself. `;
+        return where + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). Clodex cannot check what it does \u2014 install it only if you trust its author.`;
+      }
+      function webRendererNote(resolved) {
+        const entry = resolved && resolved.manifest && resolved.manifest.entry;
+        if (!entry || !entry.renderer) return "";
+        return " Its renderer half shows in the desktop app only \u2014 this browser's bundle is built from the plugins shipped with Clodex.";
       }
       function sourceLine(source) {
         if (!source || !source.repo) return "";
@@ -22015,6 +22021,7 @@ ${i3.join("\n")}
         previewLines,
         updatePreviewLines,
         warningText,
+        webRendererNote,
         installState
       };
     }
@@ -34569,6 +34576,7 @@ ${detail}` });
         previewLines,
         updatePreviewLines,
         warningText,
+        webRendererNote,
         installState,
         sourceLabel,
         sourceLine,
@@ -39413,7 +39421,7 @@ ${res.stderr}` : "");
             });
             rowActions.appendChild(un);
           }
-          if (p.source && !window.__CLODEX_WEB__) {
+          if (p.source) {
             const up = document.createElement("button");
             up.type = "button";
             up.className = "secondary";
@@ -39678,7 +39686,6 @@ ${res.stderr}` : "");
         resetPluginsSourceResolve();
         pluginsSourceSection.classList.add("hidden");
       }
-      if (window.__CLODEX_WEB__) pluginsSourceBtn.classList.add("hidden");
       pluginsSourceBtn.addEventListener("click", () => {
         showPluginsRegisterNote("");
         closePluginsSourceSection();
@@ -39710,7 +39717,7 @@ ${res.stderr}` : "");
           }
           pluginsSourceResolved = { ...r, spec };
           paintPluginsSourceNote(pluginsSourcePreview, previewLines(pluginsSourceResolved).join("\n"));
-          paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), "warn");
+          paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved, { remote: !!window.__CLODEX_WEB__ }), "warn");
         } finally {
           pluginsSourceResolveBtn.disabled = false;
           pluginsSourceCancelBtn.disabled = false;
@@ -39744,16 +39751,17 @@ ${res.stderr}` : "");
             showPluginsRegisterNote(`Could not ${what}: ${r && r.error || "unknown error"}`, "warn");
             return;
           }
+          const rendererNote = window.__CLODEX_WEB__ ? webRendererNote(resolved) : "";
           if (updating) {
             closePluginsSourceSection();
             const rows = await renderPluginsDialog();
             const redrawn = rows.find((x) => x.id === r.id);
             const restart = redrawn && redrawn.restartRequired ? " \u2014 restart Clodex to run the new code" : "";
-            showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.`);
+            showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.${rendererNote}`);
             return;
           }
           closePluginsSourceSection();
-          showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} \u2014 it is off until you turn it on from its row above.`);
+          showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} \u2014 it is off until you turn it on from its row above.${rendererNote}`);
           await renderPluginsDialog();
         } finally {
           pluginsSourceResolveBtn.disabled = false;
@@ -39801,7 +39809,7 @@ ${res.stderr}` : "");
           previousVersion: p.version
         };
         paintPluginsSourceNote(pluginsSourcePreview, updatePreviewLines(pluginsSourceResolved).join("\n"));
-        paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), "warn");
+        paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved, { remote: !!window.__CLODEX_WEB__ }), "warn");
         paintPluginsSourceInstall();
       }
       document.getElementById("btn-plugins-reveal").addEventListener("click", async () => {

@@ -303,9 +303,9 @@ test('_host holds exactly these sixteen methods, and no seventeenth by inheritan
   // hostMethods is web-reachable the moment it is written, with nothing to edit
   // and nothing to notice — unless it is named in HOST_DESKTOP_ONLY. Same
   // argument as the workbench `"any"` literal below: the dangerous direction is
-  // widening, so widening must touch a test. The HOST_DESKTOP_ONLY methods are
-  // in the list because the table is pinned WHOLE; the subjects below are what
-  // prove they are refused on the web surface.
+  // widening, so widening must touch a test. This table is the whole `_host`
+  // set regardless of surface; the subjects below are what say which surface
+  // each one answers.
   const HOST_METHODS = [
     'plugins.applyUpdate',
     'plugins.installFromSource',
@@ -360,31 +360,33 @@ test('the three _host methods taking a caller-supplied path are desktop-only', a
   }
 });
 
-test('the five plugin-source _host methods are desktop-only (t683)', async () => {
-  // No loader is wired in bootBothSurfaces() by source config, so every call
-  // below refuses with "no plugin loader" on the DESKTOP surface — that is
-  // fine, because the subject here is the surface check, which runs before
-  // dispatch ever calls the handler. A web caller must get the SAME surface
-  // refusal it gets from every other desktop-only method, not a different one
-  // that would let it distinguish "gated" from "not implemented here".
+test('the five plugin-source _host methods answer the web surface too (t707)', async () => {
+  // bootBothSurfaces() wires a loader with neither an https dependency nor a
+  // user plugin root, so each call below dies INSIDE the loader — and each row
+  // carries the literal it dies with, because reaching that literal is what
+  // proves the call got past the surface check. Equality between the two
+  // surfaces is the assertion that catches a re-gating: an `ok === false` check
+  // would pass with the gate back on.
   const b = bootBothSurfaces();
   try {
     const calls = [
-      ['plugins.resolveSource', ['owner/repo']],
-      ['plugins.installFromSource', ['owner/repo']],
-      ['plugins.resolveUpdate', ['some-id']],
-      ['plugins.applyUpdate', ['some-id', 'abc123']],
-      ['plugins.removeSourcePlugin', ['some-id']],
+      ['plugins.resolveSource', ['owner/repo'], 'no https dependency injected'],
+      ['plugins.installFromSource', ['owner/repo'], 'no https dependency injected'],
+      ['plugins.resolveUpdate', ['some-id'], 'no user plugin root configured'],
+      ['plugins.applyUpdate', ['some-id', 'abc123'], 'no user plugin root configured'],
+      ['plugins.removeSourcePlugin', ['some-id'], 'no user plugin root configured'],
     ];
-    for (const [method, args] of calls) {
+    for (const [method, args, handlerError] of calls) {
       assert.strictEqual(typeof b.host._hostMethodNames().find((n) => n === method), 'string',
-        `ENTER: ${method} is really in the table, so the refusal below is about a method that exists`);
-      assert.deepStrictEqual(await b.web('_host', method, args),
-        { ok: false, error: NOT_ON_THIS_SURFACE },
-        `${method} must not answer an authenticated browser`);
-      const desktop = await b.desktop('_host', method, args);
-      assert.notDeepStrictEqual(desktop, { ok: false, error: NOT_ON_THIS_SURFACE },
-        `${method} must still be served on the desktop surface`);
+        `ENTER: ${method} is really in the table, so the reply below is about a method that exists`);
+      const web = await b.web('_host', method, args);
+      assert.notDeepStrictEqual(web, { ok: false, error: NOT_ON_THIS_SURFACE },
+        `${method} must answer an authenticated browser — the GitHub install flow is offered there`);
+      assert.deepStrictEqual(web, { ok: false, error: handlerError },
+        `ENTER: the web call reached ${method}'s implementation, so the equality below is about dispatch `
+        + 'and not two identical surface refusals');
+      assert.deepStrictEqual(web, await b.desktop('_host', method, args),
+        `${method} must give the browser the same answer as the desktop`);
     }
   } finally { b.cleanup(); }
 });

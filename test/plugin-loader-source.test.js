@@ -146,6 +146,45 @@ test('resolveSource fetches and validates without writing to the user root', asy
   assert.ok(!fs.existsSync(userDir), 'resolveSource never creates the user root');
 });
 
+test('the projected manifest carries entry, so a caller can see a renderer half before installing', async () => {
+  // The projection is a WHITELIST, so a field absent from it reaches the
+  // renderer as undefined and the web install note's renderer-half sentence —
+  // the only thing that reads it — silently never renders, with every leaf test
+  // still green against a hand-built manifest. Both resolve paths project it.
+  // extraFiles is written AFTER manifest.json, so the manifest entry here
+  // replaces the engine-only default manifestFor() builds.
+  const withRenderer = {
+    'renderer.js': '// half\n',
+    'manifest.json': JSON.stringify(manifestFor('demo', { entry: { engine: 'engine.js', renderer: 'renderer.js' } })),
+  };
+  const bytes = buildTarballBytes('abc1234', 'demo', withRenderer);
+  const updateBytes = buildTarballBytes('def5678', 'demo', { ...withRenderer, 'engine.js': `${engineFile}\n// v2` });
+  const { loader } = mkSourceLoader({ script: [{ bytes }, { bytes }, { bytes: updateBytes }] });
+  const resolved = await loader.resolveSource('owner/repo@main');
+  assert.strictEqual(resolved.ok, true, JSON.stringify(resolved));
+  assert.deepStrictEqual(resolved.manifest.entry, { engine: 'engine.js', renderer: 'renderer.js' },
+    'resolveSource must project the renderer path, not drop it');
+  const installed = await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+  const update = await loader.resolveUpdate('demo');
+  assert.strictEqual(update.ok, true, JSON.stringify(update));
+  assert.strictEqual(update.changed, true, 'ENTER: the update really re-resolved to different bytes');
+  assert.deepStrictEqual(update.entry, undefined, 'ENTER: the field lives under `manifest`, so the assert below is not vacuous');
+  assert.deepStrictEqual(update.manifest.entry, { engine: 'engine.js', renderer: 'renderer.js' },
+    'resolveUpdate must project it too — the update note says the same sentence');
+});
+
+test('an engine-only plugin projects renderer null, never a missing field', async () => {
+  // `undefined` and `null` read the same at `if (!entry.renderer)` and
+  // differently through deepStrictEqual; the leaf's engine-only case is the one
+  // that must NOT print the desktop-only sentence.
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader } = mkSourceLoader({ script: [{ bytes }] });
+  const r = await loader.resolveSource('owner/repo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.deepStrictEqual(r.manifest.entry, { engine: 'engine.js', renderer: null });
+});
+
 test('resolveSource refuses a spec parseSourceSpec refuses, before any network call', async () => {
   const { loader } = mkSourceLoader({ script: [] });
   const r = await loader.resolveSource('not a spec');

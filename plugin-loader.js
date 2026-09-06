@@ -774,6 +774,10 @@ function createPluginLoader(deps) {
         name: r.manifest.name,
         version: r.manifest.version,
         announce: (r.manifest.announce != null ? r.manifest.announce : null),
+        entry: {
+          engine: r.manifest.entry.engine || null,
+          renderer: r.manifest.entry.renderer || null,
+        },
       },
     };
   }
@@ -852,6 +856,10 @@ function createPluginLoader(deps) {
       manifest: {
         id: r.manifest.id, name: r.manifest.name, version: r.manifest.version,
         announce: (r.manifest.announce != null ? r.manifest.announce : null),
+        entry: {
+          engine: r.manifest.entry.engine || null,
+          renderer: r.manifest.entry.renderer || null,
+        },
       },
     };
   }
