@@ -395,16 +395,18 @@ not by size:
   probes — no fs, no requires — which is what makes the whole findings table
   assertable with no library installed. Absence of a finding for a role is
   resolution FROM THE LIBRARY; the one resolution that carries a finding is a
-  prompt served by the team's own directory, noted because the shadowing is the
-  fact. Not a hot path (it stats files and parses template/exec JSON), so it
+  prompt, template or exec def served by the team's own directory, noted because
+  the shadowing is the fact. Not a hot path (it stats files and parses template/exec JSON), so it
   belongs to a popover open or a team create, never to `resolveTeam`.
-- **team-prompt-dir.js** — `teamPromptFile({fs,path}, team, kind, stem)`: the one
-  place that knows a team directory carries `prompts/system` and `prompts/append`
-  beside its `team.json`. Returns the path when the file is readable, else null;
-  never throws, never lists a directory. Confinement is on the INPUT — a stem with
-  a separator or a leading `..` is refused before any join, because `team.dir`
-  comes off an agent-writable manifest and a post-hoc containment check would have
-  to be re-derived correctly at every call site. Pure leaf, deps injected, so like
+- **team-prompt-dir.js** — `teamPromptFile({fs,path}, team, kind, stem)` and
+  `teamJsonFile`/`readTeamJson` for kinds `templates` and `exec`: the one place
+  that knows a team directory carries `prompts/system`, `prompts/append`,
+  `templates/` and `exec/` beside its `team.json`. Returns the path (or the
+  parsed object) when the file is readable, else null; never throws, never lists
+  a directory. Confinement is on the INPUT — a stem with a separator, a leading
+  `..` or a `:` is refused before any join, because `team.dir` comes off an
+  agent-writable manifest and a post-hoc containment check would have to be
+  re-derived correctly at every call site. Pure leaf, deps injected, so like
   `clodex-paths.js` it is not in the leak scanner's lists.
 - **team-root-expand.js** — the `${TEAM_ROOT}` token for a TEMPLATE's `cwd`,
   read by the spawn intent (team-tickets.js) and the New Session dialog's
