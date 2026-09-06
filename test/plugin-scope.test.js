@@ -35,7 +35,7 @@ const {
   HOST_API_VERSION, readsOf,
 } = require('../plugin-api');
 const registry = require('../intent-registry');
-const { validateManifest } = require('../plugin-loader');
+const { validateManifest, readBundle } = require('../plugin-loader');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 
 // The registry's plugin table is MODULE-LEVEL (that is what makes a plugin verb
@@ -231,7 +231,15 @@ test('every SHIPPED plugin is global — the field changes nothing that exists t
     const m = JSON.parse(fs.readFileSync(path.join(dir, id, 'manifest.json'), 'utf8'));
     assert.ok(!('scope' in m), `${id} declares no scope — no shipped plugin may opt in`);
     assert.strictEqual(scopeOf(m), 'global', `${id} therefore resolves to global`);
-    assert.strictEqual(validateManifest(m, id), null, `${id} still validates`);
+    // `hasBundle` is read off the directory rather than passed as a constant:
+    // an entry-less manifest is legal exactly when a content bundle backs it,
+    // so hardcoding either value asserts something other than what the loader
+    // will decide — `false` refuses a content-only plugin the app ships, `true`
+    // stops this loop from catching an empty entry with nothing behind it.
+    const bundle = readBundle(fs, path, path.join(dir, id), () => {}, id);
+    const hasBundle = !!(bundle.skills.length || bundle.agents.length
+      || bundle.prompts.length || bundle.templates.length);
+    assert.strictEqual(validateManifest(m, id, hasBundle), null, `${id} still validates`);
   }
 });
 
