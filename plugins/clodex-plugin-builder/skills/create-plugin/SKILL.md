@@ -360,10 +360,13 @@ owner/repo@<ref>:<subpath>    # both
 
 **A plugin living in a subfolder of a monorepo needs the subpath**, and for a
 one-plugin-per-folder repo the subpath is just the plugin's id. Two things worth
-saying to the user: a registered symlink of an id **blocks** a GitHub install of
-that same id ("not from a source"), so unregister first; and the ref is the
-release channel — a branch re-resolves on update, a tag is pinned forever and
-will never report one.
+saying to the user. A registered symlink of an id **blocks** a GitHub install of
+that same id — unregister it first:
+
+> `"<id>" is a registered link, not a directory from a source — unregister it first.`
+
+And the ref is the release channel: a branch re-resolves on update, a tag is
+pinned forever and will never report one.
 
 ## What a plugin cannot do
 
