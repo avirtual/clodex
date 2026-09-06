@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.34.0 — 2026-09-07
+
 - The plugin verifier (plugins/tools/verify.js) counts an intent verb as a registered surface, so a plugin whose only surface is an `[agent:…]` verb passes the "registered at least one surface" check instead of failing it while the same run lists the verb.
 - Install from GitHub… explains how to install a plugin that lives in a folder of a repo: paste the folder's GitHub URL (`…/tree/<branch>/<folder>`) or write `owner/repo@ref:folder`, and the hint under the field says what @ and : pick.
 - The built-in Clodex Plugin Builder is at 0.2.2: the create-plugin skill now writes the `surfaces` table a plugin with a renderer half needs so its buttons and panels work from the browser (an undeclared method answers "plugin method not available on this surface"), shows how to install a plugin that lives in a folder of a repo, and no longer tells you a renderer half is desktop-only. It also quotes the exact refusal Clodex prints when a registered symlink blocks a GitHub install of the same id, so the message can be searched for.
