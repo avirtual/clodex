@@ -751,7 +751,7 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
     entries: { seat: { name: 'seat', pluginGrants: ['scoped-a:turns'] } },
     pluginStatus: {
       plugins: [
-        { id: 'scoped-a', name: 'Scoped A', scope: 'session', enabled: true, quarantined: false, root: 'core' },
+        { id: 'scoped-a', name: 'Scoped A', scope: 'session', enabled: true, quarantined: false, root: 'core', reads: ['turns'] },
         { id: 'scoped-b', name: 'Scoped B', scope: 'session', enabled: true, quarantined: false, root: 'core' },
         { id: 'globalish', name: 'Global One', scope: 'global', enabled: true, quarantined: false, root: 'core' },
         { id: 'scoped-off', name: 'Disabled', scope: 'session', enabled: false, quarantined: false, root: 'core' },
@@ -776,6 +776,13 @@ test('session:pluginGrants offers SCOPED plugins only, and reports what is grant
     'a GLOBAL plugin is not offered — it has no per-session decision, and offering it '
     + 'would invite withholding something that is not withheld; and the custom plugin '
     + 'is not offered either, because the absent-list seat does not have it');
+  // t692: the WHOLE row, as literals. `reads` reaches the renderer only here, and
+  // a row that dropped it hands the popover `undefined` — which reads as
+  // "undeclared" and silently restores offering all three capabilities as equals.
+  assert.deepStrictEqual(res.plugins, [
+    { id: 'scoped-a', name: 'Scoped A', reads: ['turns'] },
+    { id: 'scoped-b', name: 'Scoped B', reads: null },
+  ], 'the offered row carries the declaration, and null where there is none');
   // CONTROL for that last clause: the same row IS offered to a seat that names
   // it, so its absence above is the origin rule and not a row the fixture never
   // supplied or a filter that drops every non-core plugin outright.
