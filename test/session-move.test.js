@@ -551,6 +551,24 @@ test('the renderer defers the ghost row to session-exit when the live row is sti
     'the ghost is added after the live row is gone — two rows under one data-name otherwise');
 });
 
+// The stash is keyed by name and read by the NEXT session-exit for that name,
+// whichever one it is. A failed move leaves it set with the live row still up; the
+// operator then archives or deletes that row by hand, and without a clear the exit
+// those gestures fire draws the move's ghost over a row the operator just retired.
+test('archiving or deleting a row by hand clears any failed-move stash first', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
+  for (const fname of ['archiveSessionRow', 'deleteSessionRow']) {
+    const fn = src.slice(src.indexOf(`async function ${fname}(name) {`));
+    const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
+    assert.ok(body.length > 0 && body.includes(fname), `ENTER: ${fname} was found and sliced`);
+    const cleared = body.indexOf('movingFailed.delete(name)');
+    assert.ok(cleared >= 0, `${fname} must drop the stash — the exit it triggers reads it`);
+    const firstAwait = body.indexOf('await ');
+    assert.ok(firstAwait < 0 || cleared < firstAwait,
+      `${fname} must clear before its first await: the exit can land while that round-trip is open`);
+  }
+});
+
 // -------------------------------------------- the real onExit wiring
 
 // The leaf table at the top of this file proves exitDisposition ANSWERS

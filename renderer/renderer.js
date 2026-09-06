@@ -510,6 +510,7 @@ function addArchivedSessionToSidebar(entry) {
 // is expected). Peer rows never reach here (they detach/hide instead).
 const archivingSessions = new Map(); // name -> { name, type, cwd, label, backend, archivedAt, createdAt }
 async function archiveSessionRow(name) {
+  movingFailed.delete(name);
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return;
   const nameEl = item.querySelector('.session-name');
@@ -533,6 +534,7 @@ async function archiveSessionRow(name) {
 }
 
 async function deleteSessionRow(name) {
+  movingFailed.delete(name);
   if (!(await window.api.confirmKill(name))) return;
   const res = await window.api.killSession(name);
   if (res && res.error) {
