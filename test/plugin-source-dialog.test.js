@@ -486,6 +486,27 @@ test('the warning element is only ever assigned from warningText', () => {
     'the only things this element may hold are the trust text and the empty clear');
 });
 
+test('a resolveUpdate that lands after the operator moved on paints and stores nothing', () => {
+  // Two rows, Update… on each: the first resolve returns while the second
+  // sitting owns the section. Without the guard the stale reply overwrites
+  // pluginsSourceResolved and the preview, and Update then applies the FIRST
+  // row's commit to a section labelled with the second's.
+  const src = sourceSectionSrc();
+  const fn = src.slice(src.indexOf('async function openPluginsSourceUpdate(p) {'));
+  assert.match(fn, /plugins\.resolveUpdate/, 'ENTER: the slice captured openPluginsSourceUpdate');
+  const captured = fn.indexOf('const target = p.id;');
+  const resolve = fn.indexOf("plugins.resolveUpdate");
+  assert.ok(captured >= 0 && captured < resolve,
+    'the target must be captured before the await — reading pluginsSourceTarget after it compares the new sitting against itself');
+  const guard = fn.indexOf("if (pluginsSourceMode !== 'update' || pluginsSourceTarget !== target) return;");
+  assert.ok(guard > resolve, 'the guard belongs after the await it is guarding');
+  const paint = fn.indexOf('paintPluginsSourceNote(', guard);
+  assert.ok(paint > guard, 'no paint may precede the guard, or the stale reply writes the live section');
+  const reEnable = fn.indexOf('pluginsSourceCancelBtn.disabled = false;', resolve);
+  assert.ok(reEnable > guard,
+    'Cancel is re-enabled only for the sitting that still owns the section: doing it first re-enables a button belonging to another row');
+});
+
 // ── the row's Remove button ─────────────────────────────────────────────────
 
 function pluginRowSrc() {

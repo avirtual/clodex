@@ -5666,6 +5666,7 @@ async function openPluginsSourceUpdate(p) {
   showPluginsRegisterNote('');
   closePluginsSourceSection();
   const name = p.name || p.id;
+  const target = p.id;
   pluginsSourceMode = 'update';
   pluginsSourceTarget = p.id;
   pluginsSourceInstallBtn.textContent = 'Update';
@@ -5678,6 +5679,7 @@ async function openPluginsSourceUpdate(p) {
   pluginsSourceCancelBtn.disabled = true;
   let r = null;
   try { r = await window.api.pluginInvoke('_host', 'plugins.resolveUpdate', [p.id]); } catch {}
+  if (pluginsSourceMode !== 'update' || pluginsSourceTarget !== target) return;
   pluginsSourceCancelBtn.disabled = false;
   if (!r || !r.ok) {
     closePluginsSourceSection();
