@@ -409,7 +409,15 @@ not by size:
   re-derived correctly at every call site. Pure leaf, deps injected, so like
   `clodex-paths.js` it is not in the leak scanner's lists.
 - **team-gather.js** — `planGather(team, sources)` / `applyGather(plan, io)` /
-  `formatGatherReport(result, {dry})`: the walk that finds every LIBRARY piece a
+  `formatGatherReport(result, {dry})` / `usesByRole(items, roleKeys)` (the plan
+  folded per role into `{kind, stem, via, where}` rows, `where` being
+  team/library/plugin/missing — what the roles popover badges each piece with.
+  The walk emits one item per kind+stem for the whole team, so a stem a second
+  role also names is recorded as an `also` entry on the first role's item and
+  fanned back out here — without that, a role sharing a template has no rows at
+  all;
+  duplicated byte-identically into `renderer/lib/team-roles.js`, which cannot
+  require this module across the browser-bundle boundary): the walk that finds every LIBRARY piece a
   manifest references and the copy that makes the team own them, under the same
   stems, so the team-first rule above picks them up with nothing rewritten. Pure
   leaf — no `fs`, no `path` joins onto anything but `team.dir`; the probes

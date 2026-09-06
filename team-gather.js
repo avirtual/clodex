@@ -49,13 +49,20 @@ function stemsOf(value) {
 
 function planGather(team, sources) {
   const items = [];
-  const seen = new Set();
+  const seen = new Map();
   const add = (kind, stem, role, via) => {
     if (typeof stem !== 'string' || !stem) return null;
     const key = `${kind}\u0000${stem}`;
-    if (seen.has(key)) return null;
-    seen.add(key);
+    const prior = seen.get(key);
+    if (prior) {
+      if (prior.role !== role && !(prior.also || []).some((a) => a.role === role)) {
+        if (!prior.also) prior.also = [];
+        prior.also.push({ role, via });
+      }
+      return null;
+    }
     const item = classify(team, sources, kind, stem, role, via);
+    seen.set(key, item);
     items.push(item);
     return item;
   };
@@ -74,6 +81,33 @@ function planGather(team, sources) {
     for (const s of stemsOf(tpl.execCommands)) add('exec', s, role, 'template.execCommands');
   }
   return { items };
+}
+
+const WHERE_BY_ACTION = { kept: 'team', copy: 'library', missing: 'missing' };
+const WHERE_BY_REASON = { 'plugin ref': 'plugin', 'bad stem': 'missing' };
+
+function usesByRole(planItems, roleKeys) {
+  const out = new Map();
+  for (const role of (roleKeys && typeof roleKeys[Symbol.iterator] === 'function') ? roleKeys : []) {
+    if (typeof role === 'string' && role && !out.has(role)) out.set(role, []);
+  }
+  for (const item of Array.isArray(planItems) ? planItems : []) {
+    if (!item || typeof item !== 'object') continue;
+    const role = typeof item.role === 'string' ? item.role : '';
+    if (!role) continue;
+    const where = item.action === 'skipped'
+      ? (WHERE_BY_REASON[item.reason] || 'missing')
+      : (WHERE_BY_ACTION[item.action] || 'missing');
+    const push = (r, via) => {
+      if (!out.has(r)) out.set(r, []);
+      out.get(r).push({ kind: item.kind, stem: item.stem, via, where });
+    };
+    push(role, item.via);
+    for (const a of Array.isArray(item.also) ? item.also : []) {
+      if (a && typeof a.role === 'string' && a.role) push(a.role, a.via);
+    }
+  }
+  return out;
 }
 
 function applyGather(plan, io) {
@@ -124,4 +158,4 @@ function formatGatherReport(result, { dry = false } = {}) {
   return lines.join('\n');
 }
 
-module.exports = { planGather, applyGather, formatGatherReport };
+module.exports = { planGather, applyGather, formatGatherReport, usesByRole };

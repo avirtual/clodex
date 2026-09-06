@@ -110,6 +110,16 @@ Three ways to run it, all the same plan:
   to see the plan without writing;
 - the `team:gather` IPC, for anything driving Clodex.
 
+The same plan is also what the roles popover renders under each role, whether or
+not you press Gather: every role row lists the pieces it uses — its system
+prompt, its template, the template's own prompt, each append stem, each exec
+command — with a badge saying **team** (the team owns it), **library** (borrowed
+from the shared library), **plugin** (a namespaced ref, never gathered) or
+**missing** (it resolves nowhere). A `↳` marks a piece the role did not name
+itself and inherited from its template. Because it is the Gather plan rather
+than a second walk, it matches `[agent:team gather dry]` line for line, and
+applying Gather flips every **library** badge to **team**.
+
 **The trade-off is upstream fixes.** The three stock role prompts ship as
 library files precisely so every team keeps receiving improvements to them; a
 gathered copy is a fork and stops. So gather when you want the team to be
@@ -321,7 +331,8 @@ A role's `prompt` names a stem, and a stem resolves in two places: the team's ow
 at `~/.clodex/library/prompts/system/<stem>.md`. The three stock stems —
 `clodex-team-lead`, `clodex-team-hand`, `clodex-team-reviewer` — ship as library
 files, shared by every team, which is what keeps them receiving fixes rather
-than being forked per project. Their names say "clodex" for historical reasons
+than being forked per project. Which of the two answered is the **team** /
+**library** badge on that role's row in the roles popover. Their names say "clodex" for historical reasons
 only; nothing in their text does.
 
 If you want a divergent prompt for one role on one team, point the role at a new
