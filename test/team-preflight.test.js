@@ -352,9 +352,12 @@ const PRECEDENCE_TEAM = {
   roles: { hand: { prompt: 'hand-brief', template: 'hand-seat' } },
 };
 
+// Every stem these rows name is INSTALLED, so the only thing this fixture can
+// produce is the disagreement note — t704's resolution warn would otherwise
+// ride along on each differing row and the note would stop being what is pinned.
 function precedenceFindings(systemPromptFile) {
   return teamPreflight(PRECEDENCE_TEAM, probes({
-    prompts: ['hand-brief'],
+    prompts: ['hand-brief', 'hand-persona', 'other'],
     templates: [{ name: 'hand-seat', systemPromptFile }],
   }));
 }
@@ -390,6 +393,7 @@ test('t703: a role with no prompt at all owes no note, however the template is s
   // — a note here would accuse the operator of a conflict they never wrote.
   const team = { name: 'shop', root: '/repo/shop', roles: { hand: { template: 'hand-seat' } } };
   assert.deepStrictEqual(teamPreflight(team, probes({
+    prompts: ['hand-persona'],
     templates: [{ name: 'hand-seat', systemPromptFile: 'hand-persona' }],
   })), []);
 });
@@ -399,7 +403,7 @@ test('t703: the note rides ALONGSIDE the existing prompt findings, not instead o
   // the missing file are different facts about different files, and collapsing
   // them would hide whichever came second.
   const findings = teamPreflight(PRECEDENCE_TEAM, probes({
-    prompts: [], // hand-brief is not installed
+    prompts: ['hand-persona'], // hand-brief is not installed; the template's stem is
     templates: [{ name: 'hand-seat', systemPromptFile: 'hand-persona' }],
   }));
   assert.deepStrictEqual(findings.map((f) => [f.level, f.kind]), [['warn', 'prompt'], ['note', 'prompt']]);
@@ -414,11 +418,158 @@ test('t703: the note keeps LEVELS/KINDS and the file\'s own prompt-then-template
   // The template resolution moved ABOVE the prompt block so this note could be
   // emitted without a second resolver. The team-copy template note must still
   // arrive AFTER the prompt findings, per the file's severity-descending order.
+  // `hand-persona` is installed nowhere here, so t704's resolution warn is the
+  // second prompt row — the tuple carries `ref` so the two are distinguishable.
   const ordered = teamPreflight(PRECEDENCE_TEAM, {
     ...probes({ prompts: ['hand-brief'], templates: [] }),
     readTeamTemplate: (stem) => (stem === 'hand-seat' ? { systemPromptFile: 'hand-persona' } : null),
   });
-  assert.deepStrictEqual(ordered.map((f2) => [f2.kind, f2.resolvedFrom]), [['prompt', null], ['template', 'team']]);
+  assert.deepStrictEqual(ordered.map((f2) => [f2.kind, f2.resolvedFrom, f2.ref]), [
+    ['prompt', null, 'hand-brief'], ['prompt', null, 'hand-persona'], ['template', 'team', 'hand-seat'],
+  ]);
+});
+
+// --- t704: the TEMPLATE's system prompt is resolved on disk too ------------
+
+// Since t703 the template's `systemPromptFile` IS the seat's system prompt, and
+// it rides the replace rail. A stem installed nowhere therefore boots the seat
+// with no system prompt at all, which is worse than the unbriefed case the role
+// prompt's warn names — and preflight resolved only the role's stem and the
+// template's append stems, never this one.
+
+// `where` maps a stem to what the probe returns for it ('library' | 'team');
+// a stem absent from it resolves nowhere. Per-stem rather than a pool, because
+// every interesting fixture here has an INSTALLED role prompt sitting beside a
+// template stem that does not resolve.
+function t704Findings({ systemPromptFile, where = {}, role = { prompt: 'hand-brief', template: 'hand-seat' }, spy = null }) {
+  const tpl = { name: 'hand-seat' };
+  if (systemPromptFile !== undefined) tpl.systemPromptFile = systemPromptFile;
+  return teamPreflight({ name: 'shop', root: '/repo/shop', roles: { hand: role } }, {
+    exists: () => false,
+    listTemplates: () => [tpl],
+    readExecDef: () => null,
+    resolvePrompt: (kind, stem) => {
+      if (spy) spy.push([kind, stem]);
+      return (kind === 'system' && where[stem]) || null;
+    },
+  });
+}
+
+const T704_MISS = {
+  level: 'warn', kind: 'prompt', role: 'hand', ref: 'hand-persona', resolvedFrom: null,
+  message: 'role "hand": template "hand-seat" names system prompt "hand-persona", which is not installed under teams/shop/prompts/system or library/prompts/system — a seat spawned for this role boots with NO system prompt',
+};
+const T704_TEAM_COPY = {
+  level: 'note', kind: 'prompt', role: 'hand', ref: 'hand-persona', resolvedFrom: 'team',
+  message: 'role "hand": template "hand-seat" system prompt "hand-persona" is the team\'s own copy (teams/shop/prompts/system), shadowing the library',
+};
+// t703's disagreement note, which rides along on every row whose template stem
+// differs from the role prompt. Named here so the arrays below stay readable.
+const T703_NOTE = {
+  level: 'note', kind: 'prompt', role: 'hand', ref: 'hand-brief', resolvedFrom: null,
+  message: 'role "hand" names prompt "hand-brief", and its template "hand-seat" names system prompt "hand-persona" — the template\'s is the system prompt, the role\'s is appended after the team block',
+};
+
+test('t704: the template system prompt warns when it resolves nowhere and notes the team copy', () => {
+  // Every expectation is a literal array, not re-derived from the rule under
+  // test: a computed one would agree with a resolver that had no rule at all.
+  // Each silence row carries its own `enter` delta, so a fixture that never
+  // reached the check cannot pass as a rule that stayed quiet.
+  const rows = [
+    {
+      what: 'installed nowhere — the seat boots with no system prompt',
+      systemPromptFile: 'hand-persona', where: { 'hand-brief': 'library' },
+      expect: [T703_NOTE, T704_MISS],
+    },
+    {
+      what: 'the team\'s own copy shadows the library',
+      systemPromptFile: 'hand-persona', where: { 'hand-brief': 'library', 'hand-persona': 'team' },
+      expect: [T703_NOTE, T704_TEAM_COPY],
+    },
+    {
+      what: 'a library hit is silent — the shadowing is the fact, not the resolving',
+      systemPromptFile: 'hand-persona', where: { 'hand-brief': 'library', 'hand-persona': 'library' },
+      expect: [T703_NOTE],
+      enter: { where: { 'hand-brief': 'library' }, expect: [T703_NOTE, T704_MISS] },
+    },
+    {
+      what: 'the template names none (the STOCK hand shape) — nothing to resolve',
+      systemPromptFile: undefined, where: { 'hand-brief': 'library' },
+      expect: [],
+      enter: { systemPromptFile: 'hand-persona', expect: [T703_NOTE, T704_MISS] },
+    },
+    {
+      what: 'the template names an empty string',
+      systemPromptFile: '', where: { 'hand-brief': 'library' },
+      expect: [],
+      enter: { systemPromptFile: 'hand-persona', expect: [T703_NOTE, T704_MISS] },
+    },
+    {
+      what: 'the stem EQUALS the role prompt — the block above already resolved it',
+      systemPromptFile: 'hand-brief', where: { 'hand-brief': 'library' },
+      expect: [],
+      // With that one stem uninstalled the role-prompt block's OWN warn is the
+      // whole array: the skip must hold even when the shared stem misses, or
+      // the operator gets the same file accused twice in two different voices.
+      enter: {
+        where: {},
+        expect: [{
+          level: 'warn', kind: 'prompt', role: 'hand', ref: 'hand-brief', resolvedFrom: null,
+          message: 'role "hand": prompt "hand-brief" is not installed under teams/shop/prompts/system or library/prompts/system — a seat spawned for this role boots unbriefed',
+        }],
+      },
+    },
+    {
+      what: 'a role with NO prompt at all still gets its template stem resolved',
+      role: { template: 'hand-seat' },
+      systemPromptFile: 'hand-persona', where: {},
+      expect: [T704_MISS],
+    },
+  ];
+
+  for (const row of rows) {
+    assert.deepStrictEqual(t704Findings(row), row.expect, row.what);
+    if (!row.enter) continue;
+    assert.deepStrictEqual(
+      t704Findings({ ...row, ...row.enter }), row.enter.expect,
+      `ENTER: ${row.what}`,
+    );
+  }
+});
+
+test('t704: the template stem is probed once per role, and not at all when it equals the role prompt', () => {
+  const spy = [];
+  t704Findings({ systemPromptFile: 'hand-persona', where: { 'hand-brief': 'library', 'hand-persona': 'library' }, spy });
+  assert.deepStrictEqual(spy, [['system', 'hand-brief'], ['system', 'hand-persona']],
+    'the role prompt then the template stem, each probed exactly once — no second resolver, no re-probe');
+
+  const same = [];
+  t704Findings({ systemPromptFile: 'hand-brief', where: { 'hand-brief': 'library' }, spy: same });
+  assert.deepStrictEqual(same, [['system', 'hand-brief']],
+    'the equal-stem case costs no extra probe beyond the role-prompt call');
+
+  const noPrompt = [];
+  t704Findings({ role: { template: 'hand-seat' }, systemPromptFile: 'hand-persona', where: {}, spy: noPrompt });
+  assert.deepStrictEqual(noPrompt, [['system', 'hand-persona']],
+    'and a template-only role probes the template stem and nothing else');
+});
+
+test('t704: both findings carry a level and a kind the popover knows', () => {
+  const { LEVELS, KINDS } = require('../team-preflight');
+  for (const f of [T704_MISS, T704_TEAM_COPY]) {
+    assert.ok(LEVELS.includes(f.level), `level ${f.level} is renderable`);
+    assert.ok(KINDS.includes(f.kind), `kind ${f.kind} is taggable`);
+  }
+});
+
+test('t704: a probe that throws on the template stem degrades to the warn, never to a crash', () => {
+  const findings = teamPreflight({ name: 'shop', root: '/repo/shop', roles: { hand: { template: 'hand-seat' } } }, {
+    exists: () => false,
+    listTemplates: () => [{ name: 'hand-seat', systemPromptFile: 'hand-persona' }],
+    readExecDef: () => null,
+    resolvePrompt: () => { throw new Error('EIO'); },
+  });
+  assert.deepStrictEqual(findings, [T704_MISS]);
 });
 
 test('a malformed/absent team, or roles that are not objects, yields [] rather than throwing', () => {

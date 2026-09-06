@@ -393,7 +393,10 @@ not by size:
   every surface (roles popover, Create Team…, the spawn/dispatch replies) is a
   caller relaying the same findings on its own channel. Pure leaf over injected
   probes — no fs, no requires — which is what makes the whole findings table
-  assertable with no library installed. Absence of a finding for a role is
+  assertable with no library installed. What it resolves per role: the role's
+  `prompt`, its template, that template's `systemPromptFile` and
+  `appendPromptFiles` stems, and every exec def the template grants (plus the
+  `${TEAM_ROOT}` paths inside those defs). Absence of a finding for a role is
   resolution FROM THE LIBRARY; the one resolution that carries a finding is a
   prompt, template or exec def served by the team's own directory, noted because
   the shadowing is the fact. Not a hot path (it stats files and parses template/exec JSON), so it
