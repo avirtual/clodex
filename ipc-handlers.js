@@ -64,7 +64,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
-    enableDrawerServices, enableLocalTerminal, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
+    enableDrawerServices, enableLocalTerminal, enableConsole, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, surfaceOfSender,
   } = deps;
@@ -2166,8 +2166,8 @@ function registerIpcHandlers(deps) {
   // flag below. The two are separate because their arguments are separate, and
   // merging them again would re-gate a shell the same host already hands out.
   //
-  // Pinned by test/drawer-services-seam.test.js (asserts `console:`, `ctl:` and
-  // `drawer:` are ABSENT from the web-host map — absent, not present-and-guarded).
+  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:` and `drawer:`
+  // are ABSENT from the web-host map — absent, not present-and-guarded).
   if (enableDrawerServices) {
     handle('ctl:run', async (_e, line) => {
       const svc = getCtlService();
@@ -2185,21 +2185,6 @@ function registerIpcHandlers(deps) {
     handle('ctl:help', () => {
       const svc = getCtlService();
       return svc ? svc.helpIndex() : null;
-    });
-    handle('console:read', (_e, name, cursor) => {
-      const raw = typeof name === 'string' ? name : '';
-      const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
-      if (!seat) return { records: [], cursor: '', reset: false, skipped: 0, live: false };
-      const since = typeof cursor === 'string' && RECORD_NAME_RE.test(cursor) ? cursor : '';
-      return readBashConsole(REGISTRY_DIR, seat, since);
-    });
-    handle('console:live', (_e, name) => {
-      const raw = typeof name === 'string' ? name : '';
-      const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
-      if (!seat) return [];
-      const svc = getBashLive ? getBashLive() : null;
-      if (!svc) return [];
-      try { return svc.read(seat); } catch { return []; }
     });
     // The drawer selection as a tail hint on the named session's route. Inside
     // this gate for the sharpest reason in this block: the others run something
@@ -2232,6 +2217,24 @@ function registerIpcHandlers(deps) {
       await manager.inspectSelection(String(name || ''))
     ));
     handle('drawer:releaseSelection', async (_e, name) => await manager.releaseSelection(String(name || '')));
+  }
+
+  if (enableConsole) {
+    handle('console:read', (_e, name, cursor) => {
+      const raw = typeof name === 'string' ? name : '';
+      const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
+      if (!seat) return { records: [], cursor: '', reset: false, skipped: 0, live: false };
+      const since = typeof cursor === 'string' && RECORD_NAME_RE.test(cursor) ? cursor : '';
+      return readBashConsole(REGISTRY_DIR, seat, since);
+    });
+    handle('console:live', (_e, name) => {
+      const raw = typeof name === 'string' ? name : '';
+      const seat = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(raw) ? raw : null;
+      if (!seat) return [];
+      const svc = getBashLive ? getBashLive() : null;
+      if (!svc) return [];
+      try { return svc.read(seat); } catch { return []; }
+    });
   }
 
   // The LOCAL drawer terminal, on its own flag rather than the drawer-service

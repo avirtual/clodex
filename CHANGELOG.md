@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The drawer's Console tab works from the browser: a seat's Bash command output and live preview are read-only reads of that seat's own records, and a web client that can already open a shell on the box could always see the same thing.
+
 ## 5.34.0 — 2026-09-07
 
 - The plugin verifier (plugins/tools/verify.js) counts an intent verb as a registered surface, so a plugin whose only surface is an `[agent:…]` verb passes the "registered at least one surface" check instead of failing it while the same run lists the verb.

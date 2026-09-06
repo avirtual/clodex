@@ -241,6 +241,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     // than left to the engine default so this host's answer is readable here,
     // beside the refusal it deliberately does not share.
     enableLocalTerminal: true,
+    enableConsole: true,
   };
   (registerHandlers || require('./ipc-handlers').registerIpcHandlers)(deps);
 

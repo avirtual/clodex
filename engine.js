@@ -181,6 +181,8 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // reap.
   const enableLocalTerminal = seams.enableLocalTerminal !== false;
 
+  const enableConsole = seams.enableConsole !== false;
+
   // The browser frontend's host, for peers that want to REACH it (t30). A
   // GETTER, not a value: web-host.js is started by headless-main.js AFTER
   // createEngine returns, so there is nothing to pass at construction time.
@@ -2170,6 +2172,7 @@ const toolCache = createToolCache({ whichBin });
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,
     enableLocalTerminal,
+    enableConsole,
     syncTerminalReports,
     getCtlService: () => ctlService,
     getBashLive: () => bashLive,
