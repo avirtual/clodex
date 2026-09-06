@@ -253,8 +253,17 @@ test('the web-host surface REGISTERS console:read and console:live', () => {
     userDataPath: os.tmpdir(),
     registerHandlers: (deps) => {
       const capture = { ...deps, handle: (ch) => registered.add(ch), on: (ch) => registered.add(ch) };
+      // The seam flags are read RAW, never stubbed. Everywhere else a missing
+      // dep becomes an inert function so registration can run, and a function is
+      // truthy — so a host that stopped setting `enableConsole` would have the
+      // fallback hand the registrar a truthy flag and this subject would stay
+      // green over exactly the omission it exists to catch. Measured: dropping
+      // the flag from web-host.js left it passing until this branch existed.
       require('../ipc-handlers').registerIpcHandlers(new Proxy(capture, {
-        get(target, prop) { return prop in target ? target[prop] : stub(); },
+        get(target, prop) {
+          if (typeof prop === 'string' && prop.startsWith('enable')) return target[prop];
+          return prop in target ? target[prop] : stub();
+        },
         has(target, prop) { return prop in target; },
       }));
     },
