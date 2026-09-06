@@ -206,7 +206,7 @@ test('t692: the loader refuses a malformed `reads`, an unknown member, and a non
     'an EMPTY reads is legal at either scope — it declares consumption, not a grant offer');
 });
 
-// ── The four shipped plugins (clodex: "the assertion I will look for first") ─
+// ── The shipped plugins (clodex: "the assertion I will look for first") ─────
 
 test('every SHIPPED plugin is global — the field changes nothing that exists today', () => {
   const dir = path.join(__dirname, '..', 'plugins');
