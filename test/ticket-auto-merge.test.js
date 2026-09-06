@@ -53,6 +53,18 @@ const SUITE_STUBS = {
     + 'console.log("\\u2716 the merge broke this (1.15ms)");\n'
     + 'console.log("\\u2716 and this one too (0.42ms)");\n'
     + 'console.log("TOTALS: 3 pass, 2 fail, 5 tests");\nprocess.exit(1);\n',
+  // The `red` shape, counting its own invocations in a file the test reads back.
+  // t697 made a RED VERIFY run re-measure itself once; the post-merge run
+  // deliberately did not follow, and the two calls share `_runTicketSuite`, so
+  // nothing but a counter can tell "reverted on the first red" from "reverted on
+  // a second red it should never have spent".
+  redcount: 'const fs = require("fs");\n'
+    + 'const p = require("path").join(process.cwd(), "scripts", ".runs");\n'
+    + 'let n = 0; try { n = Number(fs.readFileSync(p, "utf8")) || 0; } catch {}\n'
+    + 'n += 1;\nfs.writeFileSync(p, String(n));\n'
+    + 'console.log(".XX");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
+    + 'console.log("\\u2716 the merge broke this (1.15ms)");\n'
+    + 'console.log("TOTALS: 4 pass, 1 fail, 5 tests");\nprocess.exit(1);\n',
   // Died before it could summarize: nothing was verified. An unverified merge
   // sitting on master is the state the revert exists to prevent, so this arm
   // undoes the merge too even though it is not a RED suite.
@@ -843,6 +855,41 @@ test('a MALFORMED probe result is unknown too, not the OWED claim', () => {
     assert.ok(!/entry is OWED/.test(notes[0].body), `${JSON.stringify(bad)} does not fall through to OWED`);
     assert.ok(!/was CHANGED by this merge/.test(notes[0].body), `${JSON.stringify(bad)} does not claim a change`);
   }
+});
+
+test('a ticket whose verify suite was re-measured says so in the merge notice', () => {
+  // Read off the RECORD, not passed in: the stamp is written minutes earlier by
+  // the verify step and the merge call site has no reason to carry it. The lead
+  // otherwise learns of the re-measure only by opening tickets.json, which is
+  // exactly the reading this line exists to save.
+  const { repo } = mkRepoWithChangelog();
+  const f = mkMerge({ repo });
+  const t = f.one();
+  t.suiteRemeasured = { first: '8048/8050 passing, 2 failing (exit 1)', firstFailing: 'a timing bound', at: 1 };
+  f.tstore.save(f.team.root, [t]);
+
+  f.m._notifyMergeLanded(f.team, 't1', { branch: 'tl-1', sha: 'deadbee', rounds: 1, summary: '5 pass' });
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the notice was sent');
+  assert.match(notes[0].body, /Verify suite was re-measured \(first run: 8048\/8050 passing, 2 failing \(exit 1\)\)\./);
+  // The knife-edge the method's header states: no line may start with `[agent:`,
+  // and this insertion reflows the body.
+  for (const line of notes[0].body.split('\n')) {
+    assert.ok(!/^\[agent:/.test(line), `no line may start with an intent: ${JSON.stringify(line)}`);
+  }
+});
+
+test('a ticket with no re-measure stamp gets no such line', () => {
+  const { repo } = mkRepoWithChangelog();
+  const f = mkMerge({ repo });
+
+  f.m._notifyMergeLanded(f.team, 't1', { branch: 'tl-1', sha: 'deadbee', rounds: 1, summary: '5 pass' });
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the notice was sent');
+  assert.ok(!/re-measured/.test(notes[0].body),
+    'the ~every merge whose suite went green first time says nothing about a second run');
 });
 
 test('a caller that omits the probe result gets UNKNOWN, never a claim', () => {
@@ -2497,6 +2544,26 @@ test('t373: a RED post-merge suite preserves its full output and names the file 
   // The revert still happened — preservation must not have displaced the undo.
   assert.match(esc[0].body, /REVERTED/, 'the merge was still undone');
   assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'and master is back');
+});
+
+test('t697: a RED post-merge suite reverts on the FIRST run — master is not re-measured', async () => {
+  // The asymmetry with the verify step, and the reason for it: a red verify run
+  // holds up one branch, so a second opinion costs one suite. A red master is
+  // broken for everyone, so a second 4-minute run before the revert is the wrong
+  // trade. Every other signal here — the escalation, the revert, the preserved
+  // file — is identical whether master ran once or twice.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'redcount' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const runs = Number(fsReal.readFileSync(pathReal.join(repo.dir, 'scripts', '.runs'), 'utf8'));
+  assert.strictEqual(runs, 1, 'the post-merge suite ran exactly once');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated, so the run really reached the red arm');
+  assert.match(esc[0].body, /REVERTED/, 'and reverted on that one run');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'master is back');
 });
 
 test('t373: the post-merge dump records the ROOT checkout, not the ticket worktree', async () => {

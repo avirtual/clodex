@@ -71,17 +71,59 @@ function git(cwd, args) {
 // `✖ name (1.23ms)` block. The stub agreed with the parser, both were wrong
 // together, and every real rejection would have named no tests at all.
 // A stub is only evidence when its output came off the real thing.
+// The `red` run's output, factored out because the re-measure stubs below must
+// print the SAME first run: the assertion that the record kept `3/5 passing, 2
+// failing (exit 1)` is only about the re-measure if the number came off the
+// shape the stable-red subject already pins, rather than off a second literal
+// that can drift away from it silently.
+const RED_LINES = 'console.log(".XX");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
+  + 'console.log("\\u2716 the thing that broke (1.15ms)");\n'
+  + 'console.log("\\u2716 the other thing (0.42ms)");\n'
+  + 'console.log("\\u2716 the thing that broke (1.15ms)");\n'
+  + 'console.log("TOTALS: 3 pass, 2 fail, 5 tests");\n';
+
+// A DIFFERENT failing set, for the run-2-is-also-red subject: the whole point of
+// carrying both runs' names into the rejection is that the hand can compare
+// them, so the two runs must be distinguishable by name and not only by count.
+const RED_LINES_OTHER = 'console.log("X.X");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
+  + 'console.log("\\u2716 a timing bound nobody touched (4700.88ms)");\n'
+  + 'console.log("\\u2716 a lock left by a dead process (3718.53ms)");\n'
+  + 'console.log("TOTALS: 3 pass, 2 fail, 5 tests");\n';
+
+// Counts its own invocations in a file the test reads back. The counter is the
+// only way to tell "the loop re-ran the suite" from "the loop reported the first
+// run twice" — every other signal (the summary, the failing names, the arm
+// taken) is identical between those two, and the second is the defect a
+// re-measure that never re-measures would ship.
+const RUN_COUNTER = 'const fs = require("fs");\n'
+  + 'const p = require("path").join(process.cwd(), "scripts", ".runs");\n'
+  + 'let n = 0; try { n = Number(fs.readFileSync(p, "utf8")) || 0; } catch {}\n'
+  + 'n += 1;\nfs.writeFileSync(p, String(n));\n';
+
 const SUITE_STUBS = {
   // Exit 0 AND fail 0 — the only shape that reaches a reviewer.
   green: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\nprocess.exit(0);\n',
   // A real red run: the dot reporter's failure block, then the summary. The
   // repeated name is real too — the reporter lists each failure inline and again
   // in the trailing summary.
-  red: 'console.log(".XX");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
-    + 'console.log("\\u2716 the thing that broke (1.15ms)");\n'
-    + 'console.log("\\u2716 the other thing (0.42ms)");\n'
-    + 'console.log("\\u2716 the thing that broke (1.15ms)");\n'
-    + 'console.log("TOTALS: 3 pass, 2 fail, 5 tests");\nprocess.exit(1);\n',
+  red: `${RED_LINES}process.exit(1);\n`,
+  // The defect this ticket is named for: a run that reds once on a starved box
+  // and is green on the identical commit a moment later.
+  flaky: `${RUN_COUNTER}if (n === 1) {\n${RED_LINES}process.exit(1);\n}\n`
+    + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\nprocess.exit(0);\n',
+  // Red twice, with different names each time — the shape that tells a starved
+  // box from a real regression, and the one the rejection must render whole.
+  flakyred: `${RUN_COUNTER}if (n === 1) {\n${RED_LINES}process.exit(1);\n}\n`
+    + `${RED_LINES_OTHER}process.exit(1);\n`,
+  // Never RAN — no TOTALS, exit 2 — but counts, which `crash` cannot. The claim
+  // it makes falsifiable is the negative one: a first run that could not run is
+  // escalated WITHOUT a second run being spent on it.
+  crashcount: `${RUN_COUNTER}console.error("SyntaxError: Unexpected end of input");\nprocess.exit(2);\n`,
+  // A measured red whose re-measure could not run — a lock the second run could
+  // not take. The first run's red is real evidence and must still reject: a lock
+  // that cannot be taken must not turn a measured red into an escalation.
+  flakyunran: `${RUN_COUNTER}if (n === 1) {\n${RED_LINES}process.exit(1);\n}\n`
+    + 'console.error("SyntaxError: Unexpected end of input");\nprocess.exit(2);\n',
   // Exit 0 with failures counted: the escape shape. Neither signal alone catches
   // it, which is why `green` is a conjunction of both.
   escaped: 'console.log("TOTALS: 4 pass, 1 fail, 5 tests");\nprocess.exit(0);\n',
@@ -162,6 +204,15 @@ const SUITE_STUBS = {
     + 'setTimeout(() => process.exit(0), 60000);\n'
     + 'setInterval(() => {}, 1000);\n',
 };
+
+// How many times the counting stubs above were actually invoked. Absent means
+// zero, which is a real answer here (the runner-less subjects never spawn one)
+// and must not be confused with an unreadable file — a throw would be.
+function runCount(repo) {
+  try {
+    return Number(fsReal.readFileSync(pathReal.join(repo.dir, 'wt', 'scripts', '.runs'), 'utf8')) || 0;
+  } catch { return 0; }
+}
 
 // Plants the worktree the loop runs in: the branch's own scripts/run-tests.js,
 // plus the node_modules the symlink step looks for at the team root.
@@ -1313,6 +1364,14 @@ test('a red suite rejects to the hand and spawns NO reviewer', async () => {
   assert.match(sent[0].body, /the thing that broke/, 'the failing test names ride the rejection');
   assert.match(sent[0].body, /the other thing/);
   assert.match(sent[0].body, /3\/5 passing, 2 failing/, 'and the counts do too');
+  // The static `red` stub is red on BOTH runs, so a stable red now renders both
+  // sets — the same names twice, which is the reading the sentence below them
+  // tells the hand to make.
+  assert.match(sent[0].body, /FAILING \(run 2\): .*the thing that broke/,
+    'a re-measured red names the run that decided');
+  assert.match(sent[0].body, /FAILING \(run 1\): .*the thing that broke/,
+    'and the run that first went red, so the hand can compare the sets');
+  assert.match(sent[0].body, /Same names both times means the failure is real/);
   // t353 r2: rework is a SECOND close, and the verb has to ride it for the same
   // reason it rides a first dispatch — otherwise that close falls back on the
   // seeded role prompt, which is a file that demonstrably drifts.
@@ -1334,6 +1393,137 @@ test('a red suite rejects to the hand and spawns NO reviewer', async () => {
   assert.strictEqual(t.state, 'open', 'the ticket is reopened for rework');
   assert.ok(!('loopStep' in t), 'and the loop stops holding it');
   assert.strictEqual(t.closedAt, null, 'reopening clears the close stamp, exactly as _taskReject does');
+});
+
+// ── a red verify run is measured twice before it costs a rework round ──────
+//
+// Measured on t696: the hand closed 8050/8050 green, the loop's verify run of
+// the SAME commit came back 8048/8050 with two wall-clock-bounded tests in
+// files the branch never touched, and the hand re-ran the identical commit to
+// green and resubmitted it unchanged. One rework round bought no code change.
+// The trade these subjects pin: a red that reproduces costs one extra suite; a
+// red that does not saves the round.
+
+test('a suite that reds once and is green on the re-run reaches the reviewer', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'flaky' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  // ENTER: the second run really happened. Without it every assertion below is
+  // about a loop that reported one run twice, and the green arm would be a
+  // green FIRST run — a fixture measuring nothing this ticket changed.
+  assert.strictEqual(runCount(repo), 2, 'ENTER: the suite ran twice, so the green below is the re-run');
+  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+    'a green re-run costs the hand no rework round');
+  assert.strictEqual(f.created.length, 1, 'and the ticket proceeds to review as if the first run had been green');
+  assert.deepStrictEqual(f.esc(), [], 'a re-measured flake is not the lead`s problem either');
+
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'review', 'the loop advanced');
+  assert.ok(t.suiteRemeasured, 'the record says the suite was re-measured');
+  assert.strictEqual(t.suiteRemeasured.first, '3/5 passing, 2 failing (exit 1)',
+    'and names the FIRST run — the one that did not decide');
+  assert.match(t.suiteRemeasured.firstFailing, /the thing that broke/,
+    'with its failing names, so a reader can tell a flake from a regression');
+});
+
+test('a re-measure that is red too rejects, carrying BOTH runs` failing names', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'flakyred' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 2, 'ENTER: both runs happened, so the two name sets below are two measurements');
+  assert.strictEqual(f.created.length, 0, 'a branch red twice reaches no reviewer');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: exactly one rejection was delivered');
+  // The two sets are what makes the hand`s next move decidable: identical names
+  // are a real failure to fix, different names are a starved box to report. A
+  // rejection carrying only the deciding run cannot express that difference.
+  assert.match(sent[0].body, /FAILING \(run 2\): .*a timing bound nobody touched/);
+  assert.match(sent[0].body, /FAILING \(run 2\): .*a lock left by a dead process/);
+  assert.match(sent[0].body, /FAILING \(run 1\): .*the thing that broke/);
+  assert.match(sent[0].body, /FAILING \(run 1\): .*the other thing/);
+  assert.match(sent[0].body, /different names means the box was starved/);
+  assert.ok(!('suiteRemeasured' in f.one()),
+    'and no green stamp is written — the re-measure did not clear the branch');
+});
+
+test('a re-measure that could not RUN still rejects on the first run`s red', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'flakyunran' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 2, 'ENTER: the re-measure was attempted');
+  // The first run MEASURED the branch and found it red. A second run that could
+  // not start says nothing about that, so escalating here would throw away real
+  // evidence and hand the lead a ticket whose suite genuinely fails.
+  assert.deepStrictEqual(f.esc(), [], 'a re-measure that could not run does not escalate a measured red');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: the first run`s red still rejects');
+  assert.match(sent[0].body, /FAILING: .*the thing that broke/,
+    'with the first run`s names, unchanged — there is no second set to compare against');
+  assert.ok(!/FAILING \(run 2\)/.test(sent[0].body),
+    'and no run-2 line, which would claim a measurement that never happened');
+  assert.match(sent[0].body, /A re-measure was attempted and could not run: .*no TOTALS summary/,
+    'the hand is told the re-measure was tried, so a single set is not read as a loop that skipped it');
+  assert.strictEqual(f.created.length, 0, 'no reviewer');
+});
+
+test('an accept landing during the SECOND run cannot resurrect the ticket', async () => {
+  // The twin of the accept-during-the-suite subject below, on the window this
+  // ticket ADDS: the re-measure is a second multi-minute await, and the freshness
+  // snapshot taken before the first run is by then two suites old. Without a
+  // re-load after run 2 the loop would re-write the hold onto an accepted ticket
+  // whose worktree and branch are already gone.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'flaky' });
+  const wt = pathReal.join(repo.dir, 'wt');
+  const marker = pathReal.join(repo.dir, 'running.marker');
+  const go = pathReal.join(repo.dir, 'go.marker');
+  // Run 1 reds immediately; run 2 blocks until the test has landed the accept,
+  // so the mutation is strictly inside the SECOND await and not the first.
+  fsReal.writeFileSync(pathReal.join(wt, 'scripts', 'run-tests.js'),
+    `${RUN_COUNTER}`
+    + `if (n === 1) {\n${RED_LINES}process.exit(1);\n}\n`
+    + `fs.writeFileSync(${JSON.stringify(marker)}, "1");\n`
+    + `while (!fs.existsSync(${JSON.stringify(go)})) {\n`
+    + '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);\n'
+    + '}\n'
+    + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  const loop = f.m._runTicketLoop(f.team, 't1');
+  for (let i = 0; i < 800 && !fsReal.existsSync(marker); i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.ok(fsReal.existsSync(marker),
+    'ENTER: the SECOND suite child is running, so the mutation below lands inside the re-measure');
+  assert.strictEqual(runCount(repo), 2, 'ENTER: and it is the second run, not the first');
+  const t = f.one();
+  delete t.loopStep;
+  t.state = 'accepted';
+  f.tstore.save(f.team.root, [t]);
+  fsReal.writeFileSync(go, '1');
+  await loop;
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned for a ticket the loop no longer holds');
+  assert.ok(!('loopStep' in f.one()), 'and the hold is NOT re-written onto it');
+  assert.strictEqual(f.one().state, 'accepted', 'the accept stands, untouched by the returning loop');
+  assert.deepStrictEqual(f.esc(), [], 'this is a normal race, not something to wake the lead over');
 });
 
 test('a suite that exits 0 with failures counted is NOT green', async () => {
@@ -1361,7 +1551,7 @@ test('a suite that cannot run at all ESCALATES rather than rejecting', async () 
   // opens a rework round nobody can close, so this must reach the lead instead.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkLoop({ repo, suite: 'crash' });
+  const f = mkLoop({ repo, suite: 'crashcount' });
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
 
   await f.m._runTicketLoop(f.team, 't1');
@@ -1375,6 +1565,11 @@ test('a suite that cannot run at all ESCALATES rather than rejecting', async () 
   assert.strictEqual(esc[0].target, 'lead');
   assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
     'and the hand is NOT sent rework it cannot act on');
+  // The re-measure is for a MEASURED red only. A first run that could not run is
+  // not evidence about the branch, so spending a second 4-minute run on it buys
+  // nothing — and the escalation text is identical either way, so the counter is
+  // the only thing that can tell one from the other.
+  assert.strictEqual(runCount(repo), 1, 'a run that never RAN is escalated, not re-measured');
 });
 
 test('a runner that exits 0 printing NOTHING is not accepted as green', async () => {

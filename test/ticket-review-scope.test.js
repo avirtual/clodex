@@ -137,6 +137,43 @@ test('the scope tells the reviewer the suite ALREADY RAN and was green', () => {
   assert.match(s, /red suite is rejected to the implementer and never reaches a reviewer/);
 });
 
+test('a re-measured suite says so, naming the first run and how to read it', () => {
+  const t = ticket({
+    suiteRemeasured: {
+      first: '8048/8050 passing, 2 failing (exit 1)',
+      firstFailing: 'turning the firehose off bites a LIVE shell, lock: a lock left by a dead process',
+      at: 1700000000000,
+    },
+  });
+  const s = buildReviewScope({ ticket: t, diffPath: '/tmp/d.diff' });
+  // Both halves, because the reviewer acts on the SECOND: told only that the
+  // suite was re-measured, a reviewer reasonably files a must-fix about an
+  // unstable branch — which is the round this whole mechanism exists to save.
+  assert.match(s, /SUITE RE-MEASURED: the first run was 8048\/8050 passing, 2 failing \(exit 1\)/);
+  assert.match(s, /turning the firehose off bites a LIVE shell/,
+    'the first run`s names ride it, or the reviewer cannot check the diff against them');
+  assert.match(s, /the second run, on the same commit, was green/);
+  assert.match(s, /box-contention flake unless the diff touches those tests/);
+  // Placed where the reviewer reads it: a re-measure note detached from the
+  // SUITE claim it qualifies is a fact with nothing to attach to.
+  assert.ok(s.indexOf('SUITE RE-MEASURED:') > s.indexOf('SUITE: the loop RAN'),
+    'the note follows the SUITE line it qualifies');
+});
+
+test('a ticket with no re-measure stamp carries no such line', () => {
+  // The absence is asserted separately from the presence above because the two
+  // fail for different reasons: an unconditional line would tell the reviewer
+  // about a second run on every ticket, including the ~all that had one green
+  // run — a claim about a measurement that never happened.
+  const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
+  assert.ok(!/SUITE RE-MEASURED/.test(s),
+    'no re-measure line for a suite that went green on its first run');
+  assert.ok(!/box-contention flake/.test(s));
+  // ENTER: the scope was really built, so the absences above are about a real
+  // scope rather than about an empty string.
+  assert.match(s, /SUITE: the loop RAN the full test suite/);
+});
+
 test('the scope does NOT ask the reviewer to reconcile a suite digest', () => {
   const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
   // The absence IS the instruction, and it is asserted separately from the
