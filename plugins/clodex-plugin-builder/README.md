@@ -48,10 +48,28 @@ plugin that has not been through `verify.js` is a plugin nobody has run.
 
 ## Installing
 
-Nothing to install — it ships with Clodex and is off by default. Tick it onto
-the seat that should hold it: **Plugins ▸ Manage Plugins…**, then that seat's
-plugin list. Content is bound when a seat starts, so a running seat picks it up
-at its next start.
+**Clodex 5.33.0 and later already ship this plugin as a built-in**, off by
+default — tick it on a seat and you are done. A copy installed from here wins
+over the built-in only when its `version` is strictly greater, so check before
+installing one: a copy at the same version is shadowed and your edits will not
+appear.
+
+Otherwise, **Plugins ▸ Manage Plugins… ▸ Install from GitHub…**:
+
+```
+https://github.com/avirtual/clodex-plugins/tree/master/clodex-plugin-builder
+avirtual/clodex-plugins:clodex-plugin-builder                                # follows the branch
+avirtual/clodex-plugins@clodex-plugin-builder-v0.2.1:clodex-plugin-builder   # frozen
+```
+
+`@` picks the ref and `:` picks the subfolder; the subpath is required, since
+every plugin in that repo is a folder in it. Or clone the repo and use
+**Register Plugin…** on the folder, which is the better loop while editing —
+though note a registered symlink of an id blocks a GitHub install of the same
+id.
+
+Then tick it on the seat that should hold it. Content is bound when a seat
+starts, so a running seat picks it up at its next start.
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "id": "clodex-plugin-builder",
   "name": "Clodex Plugin Builder",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "hostApi": "1",
   "entry": {},
   "enabledByDefault": false,
