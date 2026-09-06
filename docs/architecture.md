@@ -334,7 +334,10 @@ not by size:
 - **tickets-migrate.js** — the one-time migration of each TEAM's board into the
   PROJECT board it is rooted at. Modelled on `legacy-sweep.js`: pure leaf, one
   exported function, called from `engine.js` inside a catch-and-log so a failure
-  degrades to a log line. COPY then mark — the source file is left in place.
+  degrades to a log line. COPY then mark — the source file is left in place. It
+  reruns on every launch (the marker dates the initial copy, it does not gate),
+  so a pass that changes nothing writes nothing: the board is saved only when
+  that pass added or re-synced a record.
 - **ticket-review-scope.js** — the reviewer's scope, built from the ticket
   record, git, and a caller-resolved `taskDir`/`taskDirRule` — no lead prose
   (`buildReviewScope`, `VERDICT_GRAMMAR`). Zero lead prose is the whole point:
