@@ -1040,11 +1040,13 @@ and are not, which is why the judgement worth testing is pushed down here.
   inline notice, and the missing-CLI overlay plan), **placement.js** (the "Run
   in" selector: `'host'` or a sandbox BOX ID), **prefs-gate.js** (which
   Preferences controls are inert given dialog state, plus the reason line),
-  **plugin-source-dialog.js** (Manage Plugins ▸ Install from GitHub…: the
-  preview lines, the trust warning naming repo/ref/commit, and whether Install
-  is enabled — only while the resolved spec still equals the trimmed field, so
-  an edit after a resolve disables it and the warning on screen is always about
-  the code that would land).
+  **plugin-source-dialog.js** (Manage Plugins ▸ Install from GitHub… and a
+  fetched row's Update…: the preview lines for both, the source line under the
+  row's name, the trust warning naming repo/ref/commit, and whether the button
+  is enabled — for an install only while the resolved spec still equals the
+  trimmed field, so an edit after a resolve disables it; for an update only
+  while the source has actually moved off the installed commit. Either way the
+  warning on screen is always about the code that would land).
 - **focus-policy.js** — whether a session that was just CREATED may take the
   keyboard. An open draft in the focused session vetoes it whatever spawned the
   new one; otherwise provenance decides, so agent-spawned seats stay in the
