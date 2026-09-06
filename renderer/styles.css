@@ -3327,6 +3327,11 @@ html, body {
 /* A skill clodex can't toggle from its own settings layer (off in a lower
    settings layer, or policy-locked) — shown checked-state honest but inert. */
 .agent-check.skill-readonly { opacity: 0.6; cursor: default; }
+
+/* A grant row for a capability the plugin's manifest says it does not read —
+   inert, but drawn checked-state honest, so a token already held is visible
+   rather than silently carried. */
+.agent-check.grant-unread { opacity: 0.6; cursor: default; }
 .agent-check .skill-src {
   font-size: 10px;
   color: var(--text-dim);

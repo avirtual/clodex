@@ -429,6 +429,110 @@ test('t671: a tick after a refill does not drop the grants of an undrawn plugin'
   } finally { h.restore(); }
 });
 
+// t692: a plugin declares what it READS, and the rows it does not read are dimmed
+// and disabled — but STILL CHECKED where a token is held. The checked state is
+// the load-bearing half: `collectPluginGrants` reads
+// `input[type="checkbox"]:checked`, a disabled checked input still matches it,
+// and a render that skipped or unchecked the unread rows would make every Apply
+// silently revoke a grant the operator never saw and never touched.
+test('t692: an unread capability row is dimmed and disabled, and a token held for it is CARRIED, not revoked', async () => {
+  const h = popoverHarness({
+    catalog: DRAWN,
+    persisted: ['workbench'],
+    grantPlugins: [{ id: 'workbench', name: 'Workbench', reads: ['turns'] }],
+    grantCaps: ['turns', 'thinking', 'toolInputs'],
+    grantedTokens: ['workbench:toolInputs'],
+  });
+  try {
+    await h.api.openIntentsPopover('seat-r1', null);
+    const rows = h.els.get('intents-popover-grants-list').children;
+    const boxes = rows.flatMap((r) => r.children || []).filter((c) => c.type === 'checkbox');
+    // ENTER: all three capability rows were drawn. Every assertion below is about
+    // a specific row, and each is vacuously true of a list that drew none.
+    assert.deepStrictEqual(boxes.map((c) => c.value),
+      ['workbench:turns', 'workbench:thinking', 'workbench:toolInputs'],
+      'ENTER: the block drew one row per offered capability');
+
+    const rowOf = (token) => rows.find((r) => (r.children || []).some((c) => c.value === token));
+    const boxOf = (token) => boxes.find((c) => c.value === token);
+    const labelOf = (token) => (rowOf(token).children || []).find((c) => c.type !== 'checkbox').textContent;
+
+    // The READ row is untouched: live, undimmed, unlabelled.
+    assert.strictEqual(boxOf('workbench:turns').disabled, false,
+      'the declared capability keeps a live checkbox');
+    assert.strictEqual(rowOf('workbench:turns').classList.contains('grant-unread'), false);
+    assert.doesNotMatch(labelOf('workbench:turns'), /not read by this plugin/);
+
+    // The two UNREAD rows are inert and say why.
+    for (const cap of ['thinking', 'toolInputs']) {
+      const token = `workbench:${cap}`;
+      assert.strictEqual(boxOf(token).disabled, true, `${cap} is not declared, so its box is disabled`);
+      assert.strictEqual(rowOf(token).classList.contains('grant-unread'), true,
+        `${cap} carries the dimming class the stylesheet paints`);
+      assert.match(labelOf(token), / — not read by this plugin$/,
+        `${cap}'s label says why it is inert`);
+    }
+
+    // ENTER, and the carry-forward's whole basis: the held token's box is BOTH
+    // checked and disabled. A render that dropped `checked` would leave the
+    // assertion below passing only if it also stopped collecting — two bugs
+    // cancelling, which is why the state is asserted before the collect.
+    assert.ok(boxOf('workbench:toolInputs').checked && boxOf('workbench:toolInputs').disabled,
+      'ENTER: the held token is drawn checked AND disabled');
+
+    await h.apply('intents-popover-apply');
+    const wrote = h.calls.find((c) => c[0] === 'setSessionPluginGrants');
+    assert.ok(wrote, 'ENTER: the apply reached the grants write at all');
+    assert.deepStrictEqual(wrote[2], ['workbench:toolInputs'],
+      'a save must not silently revoke a token held for a capability the plugin stopped reading');
+  } finally { h.restore(); }
+});
+
+test('t692: a plugin that declares NOTHING draws three live rows, exactly as before', async () => {
+  const h = popoverHarness({
+    catalog: DRAWN,
+    persisted: ['workbench'],
+    grantPlugins: [{ id: 'workbench', name: 'Workbench', reads: null }],
+    grantCaps: ['turns', 'thinking', 'toolInputs'],
+    grantedTokens: [],
+  });
+  try {
+    await h.api.openIntentsPopover('seat-r2', null);
+    const rows = h.els.get('intents-popover-grants-list').children;
+    const boxes = rows.flatMap((r) => r.children || []).filter((c) => c.type === 'checkbox');
+    assert.deepStrictEqual(boxes.map((c) => c.value),
+      ['workbench:turns', 'workbench:thinking', 'workbench:toolInputs'],
+      'ENTER: the block drew one row per offered capability');
+    assert.deepStrictEqual(boxes.map((c) => c.disabled), [false, false, false],
+      'an undeclared plugin is offered every capability live — reads: null is not reads: []');
+    assert.strictEqual(rows.some((r) => r.classList.contains('grant-unread')), false,
+      'and no row anywhere in the list is dimmed');
+    for (const r of rows) {
+      for (const c of r.children || []) {
+        if (c.type !== 'checkbox') {
+          assert.doesNotMatch(String(c.textContent), /not read by this plugin/,
+            'nor does any label claim the plugin does not read it');
+        }
+      }
+    }
+  } finally { h.restore(); }
+});
+
+// The class the render toggles has to exist in the stylesheet, or "dimmed" is a
+// class attribute nobody paints and the row reads as an ordinary live one. The
+// idiom is new-session-name-validity.test.js's.
+test('t692: the grant-unread class exists in the stylesheet, and the hint names the grant delay', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /\.agent-check\.grant-unread\s*\{/,
+    'renderPluginGrants toggles grant-unread; without a rule the dimming is invisible');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const at = html.indexOf('id="intents-popover-grants"');
+  assert.ok(at > 0, 'ENTER: the Plugin Access block is in the document');
+  const block = html.slice(at, html.indexOf('id="intents-popover-grants-list"', at));
+  assert.match(block, /A grant applies from the seat's next turn on; nothing it already wrote is replayed\./,
+    'the sentence lives in the Plugin Access hint, not merely somewhere in the file');
+});
+
 // nit 1 on the t668 review: the subjects above stub or re-run the snapshot, so a
 // fill that moved down into the save handler would satisfy every one of them
 // while reading the very cache the snapshot exists to stop reading.

@@ -4724,6 +4724,10 @@ body {
   opacity: 0.6;
   cursor: default;
 }
+.agent-check.grant-unread {
+  opacity: 0.6;
+  cursor: default;
+}
 .agent-check .skill-src {
   font-size: 10px;
   color: var(--text-dim);
@@ -6544,7 +6548,7 @@ body {
       </div>
       <div id="intents-popover-grants" class="hidden">
         <div class="popover-subhead">Plugin Access</div>
-        <span class="hint-text">Separate from Intents above: an intent is what this seat may EMIT, a grant is what a plugin may READ of it. Each defaults off. Only plugins this seat HAS appear here — untick one under Plugins and its rows go with it.</span>
+        <span class="hint-text">Separate from Intents above: an intent is what this seat may EMIT, a grant is what a plugin may READ of it. Each defaults off. Only plugins this seat HAS appear here — untick one under Plugins and its rows go with it. A grant applies from the seat's next turn on; nothing it already wrote is replayed.</span>
         <div id="intents-popover-grants-list" class="agent-checklist"></div>
       </div>
       <label class="tools-popover-restart">
@@ -20051,6 +20055,12 @@ ${i3.join("\n")}
         return s === "session" ? "session" : DEFAULT_PLUGIN_SCOPE;
       }
       var PLUGIN_CAPABILITIES = Object.freeze(["turns", "thinking", "toolInputs"]);
+      function readsOf(manifest) {
+        const list = manifest && manifest.reads;
+        if (list == null) return null;
+        const want = new Set(Array.isArray(list) ? list : []);
+        return PLUGIN_CAPABILITIES.filter((cap) => want.has(cap));
+      }
       function grantToken(pluginId, capability) {
         return `${pluginId}:${capability}`;
       }
@@ -20134,6 +20144,7 @@ ${i3.join("\n")}
         DEFAULT_PLUGIN_SCOPE,
         scopeOf,
         PLUGIN_CAPABILITIES,
+        readsOf,
         grantToken,
         isValidCapability,
         sanitizeGrants,
@@ -29829,14 +29840,17 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             intentsGrantsList.appendChild(head);
             for (const cap of caps) {
               const token = `${p.id}:${cap}`;
+              const unread = Array.isArray(p.reads) && !p.reads.includes(cap);
               const row = document.createElement("label");
               row.className = "agent-check";
+              row.classList.toggle("grant-unread", unread);
               const cb = document.createElement("input");
               cb.type = "checkbox";
               cb.value = token;
               cb.checked = granted.has(token);
+              cb.disabled = unread;
               const txt = document.createElement("span");
-              txt.textContent = CAPABILITY_LABELS[cap] || cap;
+              txt.textContent = (CAPABILITY_LABELS[cap] || cap) + (unread ? " \u2014 not read by this plugin" : "");
               row.appendChild(cb);
               row.appendChild(txt);
               intentsGrantsList.appendChild(row);

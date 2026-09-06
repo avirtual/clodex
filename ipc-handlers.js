@@ -1210,7 +1210,7 @@ function registerIpcHandlers(deps) {
       plugins: (status.plugins || [])
         .filter((p) => p.scope === 'session' && p.enabled && !p.quarantined)
         .filter((p) => seatHasPlugin(p.id, seatPlugins, p.root === 'core'))
-        .map((p) => ({ id: p.id, name: p.name })),
+        .map((p) => ({ id: p.id, name: p.name, reads: Array.isArray(p.reads) ? [...p.reads] : null })),
       granted: Array.isArray(entry.pluginGrants) ? [...entry.pluginGrants] : [],
     };
   });

@@ -196,32 +196,52 @@ cwd it hands you. Both are the plugin's job (§14).
 
 Git work specifically is lent from core: `host.lib.gitWorktree` gives seven
 functions for repo detection, branch discovery, and creating or removing
-worktrees — the same code Clodex uses itself.
+worktrees — the same code Clodex uses itself. What the agent *said* is not part
+of this — that is the one surface a seat has to grant you individually, and §4
+is about it.
 
 ---
 
-## 4. The one thing plugins cannot reach, and it is the interesting one
+## 4. The one thing a plugin reaches only by grant
 
-**A plugin cannot see what an agent said.** Not the turn text, not the thinking
-blocks, not the transcript. Clodex parses agent output for intents in three
-places, and all three terminate inside core; there is no `onTurn`, no transcript
-reader, and no event carrying turn content.
+**Turn text is readable, and it is the only thing a seat hands you
+individually.** `host.sessions.onAgentText` delivers what the agent actually
+said, as it says it. Everything else in this document is available to any
+enabled plugin; this one is not, and three conditions have to hold at once:
 
-So the class of plugin that is *not* currently writable includes: a thinking-log
-recorder, a turn archiver, a cross-session search over what agents actually
-said, anything that summarises or grades a turn, and anything that reacts to
-agent output other than through an explicit `[agent:…]` verb the agent chose to
-write.
+- your manifest declares `"scope": "session"`,
+- the seat has ticked your plugin under *Plugins*, and
+- the seat has granted your plugin `turns` under *Plugin Access*.
 
-The workaround that exists today is the verb: an agent can *tell* a plugin
-something by emitting an intent. That is cooperative rather than observational —
-useful, and a genuinely different thing.
+Miss any of the three and you receive nothing — silently, by design. A grant is
+per session, defaults off, and is read at delivery, so it takes effect from the
+seat's next turn on in both directions: a revoke bites immediately, and a fresh
+grant replays none of what the seat already wrote.
 
-Whether to open a turn-content surface is an open design question, not an
-oversight. The honest reason it is still open: the source that carries thinking
-blocks in full is the wire proxy, the fallback source (transcript files) is
-lossy, and a surface built on only the first would be silently empty for some
-session types — which is worse than not having one.
+That makes the previously-unwritable class writable — a turn archiver, a
+cross-session search over what agents said, something that summarises or grades
+a turn — for the seats that opt in, and no others.
+
+The other two grants, `thinking` and `toolInputs`, are declared but **nothing
+consumes them yet**. An operator can grant them and no API reads them. They ship
+declared because the host API version is frozen and adding a capability later
+would break it, so the whole vocabulary was spent up front.
+
+A plugin says which of the three it consumes with `"reads": ["turns"]` in its
+manifest; the seat's *Plugin Access* block then dims the rows you never read
+rather than offering all three as equals. That is a courtesy to the operator,
+not a permission — declaring `turns` grants you nothing.
+
+The verb remains the *cooperative* route: an agent can tell a plugin something
+by emitting an intent, which is a different thing from observing it and needs no
+grant.
+
+One honest limit on what you receive. The feed has two sources — the wire proxy
+and the session's transcript file — and the transcript path is lossy: it has no
+protocol turn-end signal and cannot see tool-use blocks, so the event's
+`isTurnEnd` and its `reads` array (the files the turn read — not the manifest
+field above, which shares the name) arrive as `null` there rather than as a
+`false` or an `[]` you could not distinguish from an observation.
 
 ---
 

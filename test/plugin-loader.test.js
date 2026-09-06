@@ -490,6 +490,65 @@ test('status() lists every plugin ON DISK plus the directories that were refused
   assert.match(s.problems.find((p) => p.dir === 'mismatch').why, /does not match its directory/);
 });
 
+// t692: the WHOLE row, as literals. The Plugin Access UI dims a capability off
+// `reads`, and the field reaches it only through this row — so a status() that
+// drops it silently restores today's "offer all three as equals". A field-by-field
+// pin cannot see the drop: `row.reads` on a row that never carried it is
+// `undefined`, which reads as "undeclared" everywhere downstream.
+test('t692: status() carries `reads` on every row — null when undeclared, the declared set when declared', () => {
+  const root = mkTree({
+    alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } },
+    reader: {
+      manifest: {
+        ...OK_MANIFEST, id: 'reader', name: 'Reader', scope: 'session', reads: ['turns'],
+      },
+      files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' },
+    },
+  });
+  const { loader } = mkLoader(root);
+  const s = loader.status();
+  // ENTER: both fixtures survived discovery. Every assertion below is about the
+  // CONTENT of these rows, and all of them are vacuously true of an empty list.
+  assert.deepStrictEqual(s.plugins.map((p) => p.id), ['alpha', 'reader'],
+    'ENTER: both fixture plugins are on disk and discovered');
+  assert.deepStrictEqual(s.plugins[0], {
+    id: 'alpha',
+    name: 'Alpha',
+    version: '1.0.0',
+    description: null,
+    enabled: true,
+    quarantined: false,
+    failCount: 0,
+    lastError: null,
+    verbConflict: null,
+    restartRequired: null,
+    root: 'core',
+    rootLabel: 'Built in',
+    linkedFrom: null,
+    source: null,
+    scope: 'global',
+    reads: null,
+  }, 'an undeclared manifest reports reads: null — every grant row stays live');
+  assert.deepStrictEqual(s.plugins[1], {
+    id: 'reader',
+    name: 'Reader',
+    version: '1.0.0',
+    description: null,
+    enabled: true,
+    quarantined: false,
+    failCount: 0,
+    lastError: null,
+    verbConflict: null,
+    restartRequired: null,
+    root: 'core',
+    rootLabel: 'Built in',
+    linkedFrom: null,
+    source: null,
+    scope: 'session',
+    reads: ['turns'],
+  }, 'a declaring manifest carries its declaration through to the row the UI reads');
+});
+
 // ── Packaging (GAP G8) ──────────────────────────────────────────────────────
 
 test('electron-builder SHIPS plugins/ — otherwise the DMG has no workbench at all', () => {

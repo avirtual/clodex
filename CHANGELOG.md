@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **A plugin can declare which capabilities it reads** (`"reads": ["turns"]` in its manifest), and the seat's Plugin Access block dims the grants it never reads instead of offering all three as equals; a global-scoped plugin that declares reads is refused at load with the fix named.
 - **Install a plugin from a public GitHub repo** from Manage Plugins ▸ Install
   from GitHub…: paste `owner/repo`, `owner/repo@ref` or a github.com URL,
   Resolve shows what would land and a plain warning that the code runs with the

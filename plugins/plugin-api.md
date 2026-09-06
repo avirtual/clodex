@@ -159,6 +159,7 @@ the menu bar has a tick next to it.
 | `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. It decides GLOBAL loading only, and says nothing about which seats a loaded plugin reaches — that is the seat list of §2.1, where the origin rule (shipped vs. custom) is the one this field cannot influence. |
 | `announce` | no | One sentence describing what the plugin does. Shown as the description line in the Manage Plugins dialog. |
 | `scope` | no | `"global"` (the default) or `"session"`. A `session`-scoped plugin **consumes seat data and therefore offers capability grants** — see §2.1. It no longer decides visibility: every plugin is gated by the seat's own plugin list. Absent means `global`. |
+| `reads` | no | An array drawn from `turns`, `thinking`, `toolInputs` — which of the three grants (§2.1) this plugin actually consumes. Declaring it makes the seat's *Plugin Access* block dim the rows you never read, instead of offering all three as equals. A non-empty `reads` requires `"scope": "session"`; `[]` is legal at either scope and says the plugin reads none of them. Absent means undeclared, and every row is offered live — today's behaviour. It is advisory for the UI and **not** the enforcement; see §2.1. |
 | `surfaces` | no | An object mapping a method name to `"any"`. A method listed as `"any"` may be called from the browser surface as well as the desktop app; **anything you do not list is desktop-only**. Absent means the whole plugin is desktop-only. See §2.2 — this is the one manifest field whose default costs you reach rather than granting it. |
 
 Unknown fields are ignored, not refused. That is deliberate: it lets a future
@@ -248,6 +249,15 @@ The refusals, and what to do about each:
   `global` everywhere else in the host, so a typo on a plugin meant to be
   invisible would silently make it visible to every session. `"Session"` with a
   capital S is a refusal, not an opt-in.
+- **`reads` is present but isn't an array, or names a capability that doesn't
+  exist.** The message names the member you actually wrote and the allowed set.
+  A bare `"reads": "turns"` is a refusal rather than a one-element list — the
+  string would otherwise iterate as five unknown members.
+- **`reads` is non-empty and the scope is global.** Grants are offered only to
+  session-scoped plugins, so a global plugin declaring reads would be dimming
+  rows nobody draws. The refusal names both facts and the fix, `"scope":
+  "session"` — worth stating because `scope` defaults to global, so this is what
+  an author who declares `reads` and forgets `scope` sees.
 - **`surfaces` is present but isn't an object, or names a value other than
   `"any"`.** Refused for the mirror-image reason to `scope`: an unrecognized
   value there resolves to *desktop-only*, so a typo would fail closed — your
@@ -345,6 +355,17 @@ a plugin the seat does not have reaches nothing, and unticking the plugin drops
 its grants along with its verbs. The operator edits grants in the Intents
 popover's *Plugin Access* block, which draws rows only for session-scoped
 plugins the seat actually has.
+
+A manifest's `reads` declaration (§2) is **advisory for that block and not the
+enforcement**. Declaring `turns` grants you nothing: the grant is still read at
+delivery, so a seat that never ticked the box delivers you nothing however
+loudly you declared. What the declaration buys is the operator's side of the
+decision — a plugin that reads only `turns` no longer presents `thinking` and
+`toolInputs` as equally reasonable things to hand it. Those rows are drawn
+dimmed and disabled, labelled *not read by this plugin*. A token already held
+for a row you stopped reading is **carried forward**, not revoked, so adding a
+`reads` declaration to a shipped plugin cannot silently drop an operator's
+existing grant.
 
 ### Scope means visibility, not isolation
 
@@ -874,7 +895,8 @@ themselves are read at **delivery** time too, so a revoke takes effect on the
 very next turn rather than at the next restart.
 
 **`isTurnEnd` and `reads` are `null` on the jsonl path, and that is a claim
-about knowledge, not a missing value.** The transcript path has no protocol
+about knowledge, not a missing value.** (This `reads` is the event's — the files
+the turn read. The manifest field of §2 shares the name and is unrelated.) The transcript path has no protocol
 turn-end signal — it inferred boundaries from a second of silence — and cannot
 see tool-use blocks at all. `false` and `[]` would be assertions you could not
 distinguish from observations. `files` is computable on both paths, so it is a

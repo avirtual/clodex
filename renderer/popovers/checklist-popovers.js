@@ -433,14 +433,18 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
       intentsGrantsList.appendChild(head);
       for (const cap of caps) {
         const token = `${p.id}:${cap}`;
+        const unread = Array.isArray(p.reads) && !p.reads.includes(cap);
         const row = document.createElement('label');
         row.className = 'agent-check';
+        row.classList.toggle('grant-unread', unread);
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = token;
         cb.checked = granted.has(token);
+        cb.disabled = unread;
         const txt = document.createElement('span');
-        txt.textContent = CAPABILITY_LABELS[cap] || cap;
+        txt.textContent = (CAPABILITY_LABELS[cap] || cap)
+          + (unread ? ' — not read by this plugin' : '');
         row.appendChild(cb);
         row.appendChild(txt);
         intentsGrantsList.appendChild(row);
