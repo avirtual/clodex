@@ -1429,6 +1429,14 @@ test('a suite that reds once and is green on the re-run reaches the reviewer', a
     'and names the FIRST run — the one that did not decide');
   assert.match(t.suiteRemeasured.firstFailing, /the thing that broke/,
     'with its failing names, so a reader can tell a flake from a regression');
+  // The ORDERING seam, invisible from either side alone: the stamp is written
+  // by the verify step and read back off the record by the review spawn, so a
+  // stamp written after `_setLoopStep('review')` would leave a correct record
+  // and a scope that never mentions it. The reviewer is the one consumer that
+  // acts on the fact — told nothing, it files a must-fix about a branch whose
+  // suite it believes went red, which is the round this ticket saves.
+  assert.match(f.created[0].systemPrompt, /SUITE RE-MEASURED: the first run was 3\/5 passing, 2 failing/,
+    'and the reviewer is told, in the scope it is actually spawned with');
 });
 
 test('a re-measure that is red too rejects, carrying BOTH runs` failing names', async () => {
