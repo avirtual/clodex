@@ -110,6 +110,7 @@ function teamPreflight(team, probes) {
       if (!ownIsTeamCopy) own = null;
     }
     const tpl = isNonEmptyString(def.template) ? (own || byName.get(def.template) || null) : null;
+    const tplSystem = tpl && isNonEmptyString(tpl.systemPromptFile) ? tpl.systemPromptFile : null;
 
     if (isNonEmptyString(def.prompt)) {
       let hit = null;
@@ -125,11 +126,26 @@ function teamPreflight(team, probes) {
           message: `role "${role}": prompt "${def.prompt}" is the team's own copy (teams/${teamName}/prompts/system), shadowing the library`,
         });
       }
-      const tplSystem = tpl && isNonEmptyString(tpl.systemPromptFile) ? tpl.systemPromptFile : null;
       if (tplSystem && tplSystem !== def.prompt) {
         findings.push({
           level: 'note', kind: 'prompt', role, ref: def.prompt, resolvedFrom: null,
           message: `role "${role}" names prompt "${def.prompt}", and its template "${def.template}" names system prompt "${tplSystem}" — the template's is the system prompt, the role's is appended after the team block`,
+        });
+      }
+    }
+
+    if (tplSystem && !tplSystem.includes(':') && tplSystem !== def.prompt) {
+      let hit = null;
+      try { hit = resolvePrompt('system', tplSystem); } catch { hit = null; }
+      if (!hit) {
+        findings.push({
+          level: 'warn', kind: 'prompt', role, ref: tplSystem, resolvedFrom: null,
+          message: `role "${role}": template "${def.template}" names system prompt "${tplSystem}", which is not installed under teams/${teamName}/prompts/system or library/prompts/system — a seat spawned for this role boots with NO system prompt`,
+        });
+      } else if (hit === 'team') {
+        findings.push({
+          level: 'note', kind: 'prompt', role, ref: tplSystem, resolvedFrom: 'team',
+          message: `role "${role}": template "${def.template}" system prompt "${tplSystem}" is the team's own copy (teams/${teamName}/prompts/system), shadowing the library`,
         });
       }
     }
