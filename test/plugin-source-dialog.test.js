@@ -484,6 +484,10 @@ test('the warning element is only ever assigned from warningText', () => {
   assert.ok(writes.length >= 2, 'ENTER: the slice really found the warning writes');
   assert.deepStrictEqual([...new Set(writes)].sort(), ["''", 'warningText(pluginsSourceResolved)'],
     'the only things this element may hold are the trust text and the empty clear');
+  assert.strictEqual((src.match(/pluginsSourceWarning\.(textContent|innerText|className|innerHTML)/g) || []).length, 0,
+    'a direct property write bypasses the regex above entirely — that is the shape the t688-r1 defect had');
+  assert.strictEqual((src.match(/pluginsSourceWarning\b/g) || []).length, 4,
+    'one declaration, one empty clear and two warningText paints; any other mention is a route to this element the two assertions above cannot see');
 });
 
 test('a resolveUpdate that lands after the operator moved on paints and stores nothing', () => {
