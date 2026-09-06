@@ -194,6 +194,7 @@ test('t687: a bundle plugin.json carries the plugin\'s own version and announce'
   const written = writeBundlePlugins('seat', rows);
   assert.deepStrictEqual(written.map((w) => w.id), ['stocks', 'quotes', 'bare'],
     'ENTER: all three were scaffolded — a row that bailed writes no plugin.json to read');
+  assert.ok(written.every((w) => w.dir.startsWith(registryDir)), 'ENTER: every scaffold landed under the temp registryDir — the seam confines the paths this subject then reads');
 
   const manifestOf = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), 'utf-8'));
 
