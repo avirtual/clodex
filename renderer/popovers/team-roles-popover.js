@@ -29,7 +29,7 @@ const {
   leadSeatCandidates, leadResolution,
   teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
-  reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS,
+  reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -93,6 +93,18 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     let res;
     try { res = await window.api.teamPreflight(name); } catch { res = null; }
     preflight = preflightByRole(res && res.ok ? res.findings : []);
+  }
+
+  let uses = new Map();
+  async function loadUses(name, roleKeys) {
+    let res;
+    try { res = await window.api.teamGather(name, { dry: true }); } catch { res = null; }
+    if (!res || !res.ok) {
+      uses = usesByRole([], roleKeys);
+      setStatus((res && res.error) || 'could not read what these roles use', true);
+      return;
+    }
+    uses = usesByRole(res.items, roleKeys);
   }
 
   // Who could be this team's lead, and does the current pointer resolve (t420).
@@ -733,6 +745,36 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         shownReveal = fieldReveal(initialDispatch, stored);
         renderRevealedFields(revealBox, shownReveal, { cwd: stored.cwd, template: stored.template }, onClear);
       }
+      {
+        const box = document.createElement('div');
+        box.className = 'team-role-uses';
+        const list = uses.get(row.key) || [];
+        if (!list.length) {
+          const line = document.createElement('div');
+          line.className = 'team-role-uses-line empty';
+          line.textContent = 'uses nothing';
+          box.appendChild(line);
+        }
+        for (const u of list) {
+          const line = document.createElement('div');
+          line.className = 'team-role-uses-line';
+          const kind = document.createElement('span');
+          kind.className = 'team-role-uses-kind';
+          const viaTemplate = u.via !== 'role.prompt' && u.via !== 'role.template';
+          kind.textContent = `${viaTemplate ? '↳ ' : ''}${u.kind}`;
+          const stem = document.createElement('span');
+          stem.className = 'team-role-uses-stem';
+          stem.textContent = u.stem;
+          const where = document.createElement('span');
+          where.className = `team-role-badge team-role-where ${u.where}`;
+          where.textContent = u.where;
+          line.appendChild(kind);
+          line.appendChild(stem);
+          line.appendChild(where);
+          box.appendChild(line);
+        }
+        body.appendChild(box);
+      }
       // The preflight checklist, on BOTH arms: lead and reviewer are read-only
       // topology but they name prompts and templates like any other role, and a
       // reviewer with no prompt installed is the exact failure the spawn-time
@@ -791,6 +833,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // whose prompt was just re-pointed by a Save must re-badge against the new
     // name, and a stale checklist accusing the previous value is worse than none.
     await loadPreflight(res.team.name);
+    await loadUses(res.team.name, Object.keys((res.team && res.team.roles) || {}));
     // Before renderRows, same reason as the preflight above: the lead row's
     // status line is rendered FROM these listings, so a stale one would state a
     // resolution the manifest no longer has.

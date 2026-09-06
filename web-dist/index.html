@@ -1602,6 +1602,48 @@ body {
   font-size: 11px;
   color: var(--text-dim);
 }
+.team-role-uses {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.team-role-uses-line {
+  font-size: 11px;
+  line-height: 1.35;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.team-role-uses-line.empty {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.team-role-uses-kind {
+  flex: 0 0 auto;
+  font-weight: 600;
+  opacity: 0.85;
+  color: var(--text-dim);
+}
+.team-role-uses-stem {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.team-role-where {
+  flex: 0 0 auto;
+}
+.team-role-where.team {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.team-role-where.missing {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.team-role-where.plugin {
+  border-style: dashed;
+}
 .team-role-preflight {
   margin-top: 6px;
   display: flex;
@@ -30285,12 +30327,30 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         return out;
       }
+      var WHERE_BY_ACTION = { kept: "team", copy: "library", missing: "missing" };
+      var WHERE_BY_REASON = { "plugin ref": "plugin", "bad stem": "missing" };
+      function usesByRole(planItems, roleKeys) {
+        const out = /* @__PURE__ */ new Map();
+        for (const role of roleKeys && typeof roleKeys[Symbol.iterator] === "function" ? roleKeys : []) {
+          if (typeof role === "string" && role && !out.has(role)) out.set(role, []);
+        }
+        for (const item of Array.isArray(planItems) ? planItems : []) {
+          if (!item || typeof item !== "object") continue;
+          const role = typeof item.role === "string" ? item.role : "";
+          if (!role) continue;
+          const where = item.action === "skipped" ? WHERE_BY_REASON[item.reason] || "missing" : WHERE_BY_ACTION[item.action] || "missing";
+          if (!out.has(role)) out.set(role, []);
+          out.get(role).push({ kind: item.kind, stem: item.stem, via: item.via, where });
+        }
+        return out;
+      }
       module.exports = {
         teamRoleRows,
         validateAddRole,
         buildSavePatch,
         reservedRoleNote,
         preflightByRole,
+        usesByRole,
         reservedRemovalWarning,
         parseDuration,
         formatDuration,
@@ -30339,7 +30399,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         reconcileReveal,
         clearableFields,
         reservedRemovalWarning,
-        REMOVABLE_RESERVED_ROLE_KEYS
+        REMOVABLE_RESERVED_ROLE_KEYS,
+        usesByRole
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
@@ -30385,6 +30446,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             res = null;
           }
           preflight = preflightByRole(res && res.ok ? res.findings : []);
+        }
+        let uses = /* @__PURE__ */ new Map();
+        async function loadUses(name, roleKeys) {
+          let res;
+          try {
+            res = await window.api.teamGather(name, { dry: true });
+          } catch {
+            res = null;
+          }
+          if (!res || !res.ok) {
+            uses = usesByRole([], roleKeys);
+            setStatus(res && res.error || "could not read what these roles use", true);
+            return;
+          }
+          uses = usesByRole(res.items, roleKeys);
         }
         let leadSessions = [];
         let leadKnown = [];
@@ -30767,6 +30843,36 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               shownReveal = fieldReveal(initialDispatch, stored);
               renderRevealedFields(revealBox, shownReveal, { cwd: stored.cwd, template: stored.template }, onClear);
             }
+            {
+              const box = document.createElement("div");
+              box.className = "team-role-uses";
+              const list = uses.get(row.key) || [];
+              if (!list.length) {
+                const line = document.createElement("div");
+                line.className = "team-role-uses-line empty";
+                line.textContent = "uses nothing";
+                box.appendChild(line);
+              }
+              for (const u of list) {
+                const line = document.createElement("div");
+                line.className = "team-role-uses-line";
+                const kind = document.createElement("span");
+                kind.className = "team-role-uses-kind";
+                const viaTemplate = u.via !== "role.prompt" && u.via !== "role.template";
+                kind.textContent = `${viaTemplate ? "\u21B3 " : ""}${u.kind}`;
+                const stem = document.createElement("span");
+                stem.className = "team-role-uses-stem";
+                stem.textContent = u.stem;
+                const where = document.createElement("span");
+                where.className = `team-role-badge team-role-where ${u.where}`;
+                where.textContent = u.where;
+                line.appendChild(kind);
+                line.appendChild(stem);
+                line.appendChild(where);
+                box.appendChild(line);
+              }
+              body.appendChild(box);
+            }
             if (owed.length) {
               const box = document.createElement("div");
               box.className = "team-role-preflight";
@@ -30801,6 +30907,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           nameEl.textContent = res.team.name;
           currentRoot = res.team.root || "";
           await loadPreflight(res.team.name);
+          await loadUses(res.team.name, Object.keys(res.team && res.team.roles || {}));
           await loadLeadSeats();
           renderRows(res.team);
           watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : "";

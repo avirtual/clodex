@@ -1297,6 +1297,25 @@ html, body {
   padding: 0 4px;
 }
 .team-role-ro-meta { font-size: 11px; color: var(--text-dim); }
+/* What a role uses, one line per piece, with an ownership badge. `library` is
+   deliberately the bare .team-role-badge look: borrowing is the normal state and
+   must not read as a problem, so only `team` (owned) and `missing` (broken) get
+   a tint away from it. */
+.team-role-uses { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+.team-role-uses-line {
+  font-size: 11px;
+  line-height: 1.35;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.team-role-uses-line.empty { color: var(--text-dim); font-style: italic; }
+.team-role-uses-kind { flex: 0 0 auto; font-weight: 600; opacity: 0.85; color: var(--text-dim); }
+.team-role-uses-stem { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.team-role-where { flex: 0 0 auto; }
+.team-role-where.team { color: var(--accent); border-color: var(--accent); }
+.team-role-where.missing { color: var(--warn); border-color: var(--warn); }
+.team-role-where.plugin { border-style: dashed; }
 /* The preflight checklist under a role: what this role NAMES that isn't installed.
    warn = the seat's behaviour breaks; note = a file the team still owes, which is
    a normal state for a fresh team and must not read as an error. */

@@ -76,6 +76,27 @@ function planGather(team, sources) {
   return { items };
 }
 
+const WHERE_BY_ACTION = { kept: 'team', copy: 'library', missing: 'missing' };
+const WHERE_BY_REASON = { 'plugin ref': 'plugin', 'bad stem': 'missing' };
+
+function usesByRole(planItems, roleKeys) {
+  const out = new Map();
+  for (const role of (roleKeys && typeof roleKeys[Symbol.iterator] === 'function') ? roleKeys : []) {
+    if (typeof role === 'string' && role && !out.has(role)) out.set(role, []);
+  }
+  for (const item of Array.isArray(planItems) ? planItems : []) {
+    if (!item || typeof item !== 'object') continue;
+    const role = typeof item.role === 'string' ? item.role : '';
+    if (!role) continue;
+    const where = item.action === 'skipped'
+      ? (WHERE_BY_REASON[item.reason] || 'missing')
+      : (WHERE_BY_ACTION[item.action] || 'missing');
+    if (!out.has(role)) out.set(role, []);
+    out.get(role).push({ kind: item.kind, stem: item.stem, via: item.via, where });
+  }
+  return out;
+}
+
 function applyGather(plan, io) {
   const items = (plan && Array.isArray(plan.items)) ? plan.items : [];
   for (const item of items) {
@@ -124,4 +145,4 @@ function formatGatherReport(result, { dry = false } = {}) {
   return lines.join('\n');
 }
 
-module.exports = { planGather, applyGather, formatGatherReport };
+module.exports = { planGather, applyGather, formatGatherReport, usesByRole };

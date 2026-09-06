@@ -211,9 +211,22 @@ function registerIpcHandlers(deps) {
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
+  const stripBytes = (list) => (Array.isArray(list)
+    ? list.map((i) => {
+      if (!i || typeof i !== 'object') return i;
+      const { bytes, ...rest } = i;
+      return rest;
+    })
+    : list);
   handle('team:gather', (_e, team, opts) => {
-    try { return { ok: true, ...gatherTeam(team, opts || {}) }; }
-    catch (err) { return { ok: false, error: err.message }; }
+    try {
+      const res = gatherTeam(team, opts || {});
+      const out = { ok: true, ...res };
+      for (const k of ['items', 'copied', 'kept', 'skipped', 'missing', 'failed']) {
+        if (k in out) out[k] = stripBytes(out[k]);
+      }
+      return out;
+    } catch (err) { return { ok: false, error: err.message }; }
   });
 
   handle('team:setWatchdog', (_e, team, ms) => {
