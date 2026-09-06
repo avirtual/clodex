@@ -35,7 +35,9 @@ From the Teams menu, `Create Team…` writes
 
 That is the whole team. `root` must be absolute — a relative root would resolve
 against whatever directory the app happens to be in. A role carries at most
-`prompt` (which system prompt briefs the seat), `template` (which template
+`prompt` (which system prompt briefs the seat — or, when the template names one
+of its own, which prompt is appended after the team block; see *How a role finds
+its prompt*), `template` (which template
 shapes the seat: model, tools, grants, cwd — resolved against
 `~/.clodex/teams/<name>/templates/` first, then the shared library), `brief`
 (one line about the role, shown in the roster) and `dispatch` (what a ticket for this role
@@ -325,6 +327,15 @@ plugin reference and is unaffected. The library seeder never writes under
 `teams/`, so a team's own copy is yours and no upgrade refreshes it under you.
 
 ## How a role finds its prompt
+
+A seat's system prompt is the template's `systemPromptFile` when the template
+names one; otherwise it is the role's `prompt`. A role `prompt` that did not
+become the system prompt is appended after the team block, so a role's briefing
+is never dropped: the template supplies the persona, the role supplies the
+delta. When both name the same stem it is applied once. This holds for ticket
+seats, reviewer seats and `[agent:spawn … template:]` seats alike. Team
+preflight notes a role whose two sources disagree, since only one of them is the
+system prompt.
 
 A role's `prompt` names a stem, and a stem resolves in two places: the team's own
 `~/.clodex/teams/<name>/prompts/system/<stem>.md` first, then the shared library

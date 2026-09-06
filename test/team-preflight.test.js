@@ -339,6 +339,88 @@ test('findings arrive severity-descending within a role and in manifest role ord
   assert.strictEqual(findings.filter((f) => f.role === 'lead').length, 0);
 });
 
+// --- t703: the role prompt and the template system prompt disagree ---------
+
+// One rule decides a seat's system prompt: the template's `systemPromptFile`
+// when it names one, the role's `prompt` otherwise. Nothing before this read
+// `template.systemPromptFile` at all, so a role briefed by one file and shaped
+// by a template naming another was invisible here — the operator saw a team
+// where both were configured and no sign that only one of them is the system
+// prompt.
+const PRECEDENCE_TEAM = {
+  name: 'shop', root: '/repo/shop',
+  roles: { hand: { prompt: 'hand-brief', template: 'hand-seat' } },
+};
+
+function precedenceFindings(systemPromptFile) {
+  return teamPreflight(PRECEDENCE_TEAM, probes({
+    prompts: ['hand-brief'],
+    templates: [{ name: 'hand-seat', systemPromptFile }],
+  }));
+}
+
+test('t703: a role prompt and a template system prompt that DIFFER get a note', () => {
+  assert.deepStrictEqual(precedenceFindings('hand-persona'), [{
+    level: 'note', kind: 'prompt', role: 'hand', ref: 'hand-brief', resolvedFrom: null,
+    message: 'role "hand" names prompt "hand-brief", and its template "hand-seat" names system prompt "hand-persona" — the template\'s is the system prompt, the role\'s is appended after the team block',
+  }], 'the whole finding, with the literal message the popover renders');
+});
+
+test('t703: the note is silent on every shape that is not a disagreement', () => {
+  // Each row is a delta from the differing case above, which is the only case
+  // that speaks. The expected values are literals, not re-derived from the
+  // rule under test: a computed expectation here would agree with a resolver
+  // that had no rule at all.
+  const rows = [
+    { what: 'same stem on both — one prompt, applied once', tplSystem: 'hand-brief', expect: [] },
+    { what: 'the template names none (the STOCK hand shape)', tplSystem: null, expect: [] },
+    { what: 'the template names an empty string', tplSystem: '', expect: [] },
+    { what: 'the key is absent from the template entirely', tplSystem: undefined, expect: [] },
+  ];
+  for (const row of rows) {
+    assert.deepStrictEqual(precedenceFindings(row.tplSystem), row.expect, row.what);
+  }
+  // ENTER: the same fixture with a DIFFERING stem really does produce the note,
+  // so the silences above are the rule and not a fixture that reaches nothing.
+  assert.strictEqual(precedenceFindings('other').length, 1);
+});
+
+test('t703: a role with no prompt at all owes no note, however the template is shaped', () => {
+  // The template is then the only source and there is nothing to disagree with
+  // — a note here would accuse the operator of a conflict they never wrote.
+  const team = { name: 'shop', root: '/repo/shop', roles: { hand: { template: 'hand-seat' } } };
+  assert.deepStrictEqual(teamPreflight(team, probes({
+    templates: [{ name: 'hand-seat', systemPromptFile: 'hand-persona' }],
+  })), []);
+});
+
+test('t703: the note rides ALONGSIDE the existing prompt findings, not instead of them', () => {
+  // An unresolved role prompt is still the warn it was: the disagreement and
+  // the missing file are different facts about different files, and collapsing
+  // them would hide whichever came second.
+  const findings = teamPreflight(PRECEDENCE_TEAM, probes({
+    prompts: [], // hand-brief is not installed
+    templates: [{ name: 'hand-seat', systemPromptFile: 'hand-persona' }],
+  }));
+  assert.deepStrictEqual(findings.map((f) => [f.level, f.kind]), [['warn', 'prompt'], ['note', 'prompt']]);
+});
+
+test('t703: the note keeps LEVELS/KINDS and the file\'s own prompt-then-template order', () => {
+  const { LEVELS, KINDS } = require('../team-preflight');
+  const f = precedenceFindings('hand-persona')[0];
+  assert.ok(LEVELS.includes(f.level), 'the level is one the popover knows how to render');
+  assert.ok(KINDS.includes(f.kind), 'the kind is one the popover knows how to tag');
+
+  // The template resolution moved ABOVE the prompt block so this note could be
+  // emitted without a second resolver. The team-copy template note must still
+  // arrive AFTER the prompt findings, per the file's severity-descending order.
+  const ordered = teamPreflight(PRECEDENCE_TEAM, {
+    ...probes({ prompts: ['hand-brief'], templates: [] }),
+    readTeamTemplate: (stem) => (stem === 'hand-seat' ? { systemPromptFile: 'hand-persona' } : null),
+  });
+  assert.deepStrictEqual(ordered.map((f2) => [f2.kind, f2.resolvedFrom]), [['prompt', null], ['template', 'team']]);
+});
+
 test('a malformed/absent team, or roles that are not objects, yields [] rather than throwing', () => {
   const p = probes({});
   assert.deepStrictEqual(teamPreflight(null, p), []);
@@ -489,6 +571,47 @@ test('_teamBlockFor: no team, no agent type, or a role with no prompt reports no
   const noPrompt = { name: 'shop', root: '/repo/shop', lead: 'shop-lead', roles: { lead: {} } };
   assert.strictEqual(mkManager(root, noPrompt)._teamBlockFor('shop-lead', '/repo/shop', 'claude', null).missingPrompt, null,
     'a role that names no prompt owes nothing');
+});
+
+// --- t703: the ticket arm's flip is LOSSLESS -------------------------------
+
+// The flip in resolveSeatShape's ticket arm only holds if the role prompt it
+// stopped passing as --system-prompt-file still reaches the seat. It does, by
+// the arm of _teamBlockFor that appends a role prompt which did NOT ride as
+// system — which is a claim about a DIFFERENT module, so it is proved here
+// rather than assumed at the flip.
+const T703_TEAM = {
+  name: 'shop', root: '/repo/shop', lead: 'shop-lead',
+  roles: { hand: { prompt: 'role-delta', template: 'hand-seat' } },
+};
+
+test('t703: with the TEMPLATE riding as system prompt, the role prompt is still composed', () => {
+  const root = withPrompts(['role-delta', 'tpl-persona']);
+  const m = mkManager(root, T703_TEAM);
+  // 'tpl-persona' is what the ticket arm now resolves for this role (template
+  // first). The role's own 'role-delta' is the stem that used to ride there.
+  const r = m._teamBlockFor('shop-hand', '/repo/shop', 'claude', 'tpl-persona');
+  assert.ok(r.teamBlock.includes('# role-delta'),
+    'the role prompt the template displaced must still reach the seat, appended after the team block');
+  assert.ok(!r.teamBlock.includes('# tpl-persona'),
+    'and the template\'s own prompt is NOT appended — it rides as --system-prompt-file');
+  assert.strictEqual(r.missingPrompt, null);
+});
+
+test('t703: when both name the SAME stem the body appears exactly once', () => {
+  const root = withPrompts(['role-delta']);
+  const m = mkManager(root, T703_TEAM);
+  // ENTER: this seat name really does match the hand role, so the absence
+  // asserted below is the dedupe and not a seat that reached no role def at
+  // all — with no match nothing is ever appended and the count is 0 either way.
+  const entered = m._teamBlockFor('shop-hand', '/repo/shop', 'claude', null);
+  assert.strictEqual(entered.teamBlock.split('# role-delta').length - 1, 1,
+    'ENTER: with the stem NOT riding as system, this exact seat appends it exactly once');
+
+  const r = m._teamBlockFor('shop-hand', '/repo/shop', 'claude', 'role-delta');
+  assert.strictEqual(r.teamBlock.split('# role-delta').length - 1, 0,
+    'the stem rides as --system-prompt-file, so appending it here would hand the CLI the same body twice');
+  assert.strictEqual(r.missingPrompt, null);
 });
 
 test('_teamBlockFor: a seat matching NO role reports nothing', () => {

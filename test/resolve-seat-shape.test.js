@@ -21,6 +21,7 @@ const fs = require('node:fs');
 
 const { createSessionManager } = require('../session-manager');
 const { CLAUDE_TOOLS } = require('../catalogs');
+const { STOCK_ROLE_DEFS } = require('../team-manifest');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
@@ -228,8 +229,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     modelRefused: null,
     beyondCap: [],
     promptEscaped: null,
-    // The ROLE prompt wins over the template's.
-    systemPromptFile: 'role-brief',
+    systemPromptFile: 'tpl-brief',
     appendPromptFiles: ['ap'],
     execCommands: ['ec'],
     intents: ['dm'],
@@ -500,13 +500,71 @@ test('a reviewer template whose env keys are ALL dropped gets {}, not the fallba
   assert.deepStrictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).env, {});
 });
 
-test('a role template does NOT displace the role prompt on the ticket path', () => {
-  // For claude both ride --append-system-prompt-file and create() dedupes by
-  // name equality, so def.prompt winning here is how a template-shaped seat
-  // still gets its role delta.
+test('a role template DOES displace the role prompt as system prompt on the ticket path', () => {
+  // The template supplies the persona, the role supplies the delta: the role
+  // prompt is not dropped, it is appended after the team block by _teamBlockFor
+  // (pinned in team-preflight.test.js, "the ticket arm's shape composes BOTH").
+  // Same rule the review arm and the spawn intent already used.
   const m = managerWith([{ name: 'ht', type: 'claude', cwd: '/repo', systemPromptFile: 'tpl-brief' }]);
   const team = teamWith({ hand: { worktree: true, template: 'ht', prompt: 'role-brief' } });
+  assert.strictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).systemPromptFile, 'tpl-brief');
+});
+
+test('the role prompt is the system prompt when the template names none', () => {
+  // The other half of the rule, and the shape the STOCK hand template has
+  // (`systemPromptFile: null`): without this the flip above would read as
+  // "template always", and a template-shaped seat naming no prompt would boot
+  // with no system prompt at all.
+  const m = managerWith([{ name: 'ht', type: 'claude', cwd: '/repo', systemPromptFile: null }]);
+  const team = teamWith({ hand: { worktree: true, template: 'ht', prompt: 'role-brief' } });
   assert.strictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).systemPromptFile, 'role-brief');
+});
+
+test('the reviewer arm takes the template system prompt over the role prompt', () => {
+  // The review arm already implemented the rule, and the whole-shape pin above
+  // uses 'rv-brief' on the template with a role that names no prompt at all —
+  // so nothing in this file could see which of the two sources won. The stems
+  // must DIFFER or the subject asserts only that the resolver agrees with
+  // itself.
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', systemPromptFile: 'rv-tpl' }]);
+  const team = teamWith({ reviewer: { template: 'rv', prompt: 'rv-role' } });
+  assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).systemPromptFile, 'rv-tpl');
+});
+
+test('the STOCK team and templates resolve to exactly the stems they did before t703', () => {
+  // The flip is only safe if it is a no-op on the shipped config. Both arms are
+  // driven with the real STOCK_ROLE_DEFS and the real shipped template files,
+  // and the expected stems are LITERALS: computing them from the same manifest
+  // the resolver reads would assert the code agrees with itself.
+  const tplDir = path.join(__dirname, '..', 'resources', 'library', 'templates');
+  const shipped = (name) => JSON.parse(fs.readFileSync(path.join(tplDir, `${name}.json`), 'utf-8'));
+  const handTpl = shipped('clodex-team-hand');
+  const reviewerTpl = shipped('clodex-team-reviewer');
+  assert.strictEqual(handTpl.systemPromptFile, null,
+    'ENTER: the shipped hand template names NO system prompt — that is why the flip is a no-op for it');
+  assert.strictEqual(reviewerTpl.systemPromptFile, 'clodex-team-reviewer',
+    'ENTER: the shipped reviewer template DOES name one');
+
+  const m = managerWith([handTpl, reviewerTpl]);
+  const hand = STOCK_ROLE_DEFS.hand;
+  const reviewer = STOCK_ROLE_DEFS.reviewer;
+  assert.strictEqual(hand.template, 'clodex-team-hand',
+    'ENTER: the stock hand role really points at the template read above');
+
+  const stockTeam = teamWith({
+    hand: { worktree: true, prompt: hand.prompt, template: hand.template },
+    reviewer: { prompt: reviewer.prompt, template: reviewer.template },
+  });
+  assert.strictEqual(m.resolveSeatShape(stockTeam, 'hand', 'ticket', LEAD).systemPromptFile, 'clodex-team-hand');
+  assert.strictEqual(m.resolveSeatShape(stockTeam, 'reviewer', 'review', LEAD).systemPromptFile, 'clodex-team-reviewer');
+
+  // The operator's own shape: the reviewer role ALSO names the template, which
+  // the stock manifest does not. Same stem on both, so it resolves once.
+  const wiredTeam = teamWith({
+    hand: { worktree: true, prompt: hand.prompt, template: hand.template },
+    reviewer: { prompt: reviewer.prompt, template: 'clodex-team-reviewer' },
+  });
+  assert.strictEqual(m.resolveSeatShape(wiredTeam, 'reviewer', 'review', LEAD).systemPromptFile, 'clodex-team-reviewer');
 });
 
 test('the ticket seat type comes from the OPENER, not the role', () => {
