@@ -23,6 +23,7 @@ blocks a release.
   commit with the same warning before anything is replaced, and a running
   plugin's row says a restart is needed; Remove deletes the fetched folder after
   one confirm.
+- **Update… on a plugin fetched from a collection repo says it is up to date when the plugin's own files did not change**, instead of offering to re-download identical files every time the repo gets a commit elsewhere.
 - **A plugin's skills and subagents reach the CLI under the plugin's own version
   and description** instead of a `0.0.0` placeholder, so the CLI's plugin listing
   names what is installed.

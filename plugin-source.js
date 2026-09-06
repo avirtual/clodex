@@ -179,6 +179,41 @@ function createPluginSource(deps) {
     } catch { return null; }
   }
 
+  function walkTree(dir) {
+    const out = new Map();
+    const visit = (rel) => {
+      const full = rel ? path.join(dir, rel) : dir;
+      for (const ent of fs.readdirSync(full, { withFileTypes: true })) {
+        if (ent.name === SIDECAR_NAME) continue;
+        const childRel = rel ? `${rel}/${ent.name}` : ent.name;
+        if (ent.isDirectory()) { out.set(childRel, 'dir'); visit(childRel); } else if (ent.isSymbolicLink()) {
+          out.set(childRel, 'link');
+        } else {
+          out.set(childRel, 'file');
+        }
+      }
+    };
+    visit('');
+    return out;
+  }
+
+  function sameTree(dirA, dirB) {
+    try {
+      const a = walkTree(dirA);
+      const b = walkTree(dirB);
+      if (a.size !== b.size) return false;
+      for (const [rel, kind] of a) {
+        if (b.get(rel) !== kind) return false;
+        if (kind === 'file') {
+          if (!fs.readFileSync(path.join(dirA, rel)).equals(fs.readFileSync(path.join(dirB, rel)))) return false;
+        } else if (kind === 'link') {
+          if (fs.readlinkSync(path.join(dirA, rel)) !== fs.readlinkSync(path.join(dirB, rel))) return false;
+        }
+      }
+      return true;
+    } catch { return false; }
+  }
+
   function writeSidecar(dir, meta) {
     const file = path.join(dir, SIDECAR_NAME);
     const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
@@ -186,7 +221,7 @@ function createPluginSource(deps) {
     fs.renameSync(tmp, file);
   }
 
-  return { parseSourceSpec, fetchTarball, extractPlugin, fetchCommitSha, readSidecar, writeSidecar };
+  return { parseSourceSpec, fetchTarball, extractPlugin, fetchCommitSha, readSidecar, sameTree, writeSidecar };
 }
 
 module.exports = { createPluginSource, parseSourceSpec, SIDECAR_NAME };

@@ -830,13 +830,14 @@ function createPluginLoader(deps) {
     if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
     const r = await fetchAndValidate({ repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath });
     if (!r.ok) return r;
+    const changed = !commitsMatch(sidecar.commit, r.commit) && !source.sameTree(r.dir, dir);
     rmQuiet(r.work);
     return {
       ok: true,
       id: r.manifest.id,
       previousCommit: sidecar.commit,
       commit: r.commit,
-      changed: !commitsMatch(sidecar.commit, r.commit),
+      changed,
       manifest: {
         id: r.manifest.id, name: r.manifest.name, version: r.manifest.version,
         announce: (r.manifest.announce != null ? r.manifest.announce : null),

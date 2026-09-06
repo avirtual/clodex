@@ -385,7 +385,10 @@ test('resolveUpdate refuses without a sidecar', async () => {
 
 test('resolveUpdate re-fetches at the SIDECAR ref and reports both shas', async () => {
   const installBytes = buildTarballBytes('abc1234', 'demo');
-  const updateBytes = buildTarballBytes('def5678', 'demo');
+  // The two tarballs must differ INSIDE the plugin folder, not only in the
+  // top-level dir name that carries the sha: `changed` is a tree compare, so
+  // a fixture whose plugin bytes are identical pins the opposite of the title.
+  const updateBytes = buildTarballBytes('def5678', 'demo', { 'engine.js': `${engineFile}\n// v2` });
   const { loader } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
   const installed = await loader.installFromSource('owner/repo@main');
   assert.strictEqual(installed.ok, true, JSON.stringify(installed));
@@ -394,6 +397,68 @@ test('resolveUpdate re-fetches at the SIDECAR ref and reports both shas', async 
   assert.strictEqual(r.previousCommit, 'abc1234');
   assert.strictEqual(r.commit, 'def5678');
   assert.strictEqual(r.changed, true);
+});
+
+// ── `changed` means the FILES moved, not the repo head ──────────────────────
+// A collection repo (one repo, many plugin folders — the clodex-plugins shape)
+// moves its head on every push to any folder, so the sha compare alone offers
+// an update that lands byte-identical files on every unrelated commit.
+
+test('resolveUpdate reports NO change when a new sha carries identical plugin bytes', async () => {
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo');
+  assert.notDeepStrictEqual(installBytes, updateBytes,
+    'ENTER: the two tarballs really are different files — the shas differ, so a sha compare alone would say "changed"');
+  const { loader } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  const installed = await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+  const r = await loader.resolveUpdate('demo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.previousCommit, 'abc1234',
+    'ENTER: the sidecar was read — this is the installed sha, so the answer below is not a refusal path');
+  assert.strictEqual(r.commit, 'def5678',
+    'ENTER: the fetch really happened and resolved the NEW sha');
+  assert.strictEqual(r.changed, false, 'the head moved elsewhere in the repo; this plugin\'s own files did not');
+});
+
+test('resolveUpdate reports a change when one byte of the plugin differs under a new sha', async () => {
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo', { 'engine.js': `${engineFile};` });
+  const { loader } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  const installed = await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+  const r = await loader.resolveUpdate('demo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.previousCommit, 'abc1234',
+    'ENTER: the sidecar was read — this is the installed sha');
+  assert.strictEqual(r.commit, 'def5678', 'ENTER: the fetch resolved the new sha');
+  assert.strictEqual(r.changed, true, 'one byte of engine.js is enough');
+});
+
+test('resolveUpdate reports a change when the update ADDS a file under the same bytes elsewhere', async () => {
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo', { 'lib/extra.js': 'module.exports = 1;' });
+  const { loader } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  const installed = await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+  const r = await loader.resolveUpdate('demo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.previousCommit, 'abc1234', 'ENTER: the sidecar was read');
+  assert.strictEqual(r.changed, true, 'a new file is a changed tree even though every shared file matches');
+});
+
+test('the sidecar the install wrote does not itself make the tree look changed', async () => {
+  // The installed copy carries `.clodex-source.json`; the freshly fetched one
+  // never does. Counting it would make EVERY resolveUpdate report a change and
+  // hide the whole mechanism behind a green suite.
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }, { bytes: buildTarballBytes('def5678', 'demo') }] });
+  await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(fs.existsSync(path.join(userDir, 'demo', '.clodex-source.json')), true,
+    'ENTER: the installed copy really has the sidecar the fetched one lacks');
+  const r = await loader.resolveUpdate('demo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.changed, false);
 });
 
 test('resolveUpdate treats an abbreviated sha as unchanged against its own full sha (t683 nit a)', async () => {
