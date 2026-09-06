@@ -209,13 +209,22 @@ test('t679: session-manager threads the SEAT\'S plugins into every prompt resolu
   // list and resolves to the SHIPPED default. Every plugin prompt on an
   // unshipped plugin would then be refused for every seat, and every one on a
   // shipped plugin granted to every seat. Neither is visible from this leaf.
+  // Matched up to the END of the plugins argument, not to the closing paren:
+  // t699 added an optional third `team` argument to all three resolvers, and a
+  // pattern anchored on `)` would red on an addition that leaves this property
+  // untouched. What must hold is that the plugins argument is the SECOND one and
+  // carries the seat's own list — so the pattern ends where that argument does.
+  //
+  // assert.ok over a predicate rather than assert.match: a failing match formats
+  // the whole 400KB source into the diff, which node:test spends minutes
+  // rendering before printing one line.
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
 
-  assert.match(src, /resolveSystemPromptFile\(systemPromptFile, Array\.isArray\(plugins\) \? plugins : null\)/,
+  assert.ok(/resolveSystemPromptFile\(systemPromptFile, Array\.isArray\(plugins\) \? plugins : null[,)]/.test(src),
     'the claude arm passes create()\'s own plugins argument');
-  assert.match(src, /readAppendBodies\(appendPromptFiles, seatPlugins\)/,
+  assert.ok(/readAppendBodies\(appendPromptFiles, seatPlugins[,)]/.test(src),
     'and so does the codex arm');
-  assert.match(src, /readAppendBodies\(recipe\.appendPromptFiles, recipe\.plugins\)/,
+  assert.ok(/readAppendBodies\(recipe\.appendPromptFiles, recipe\.plugins[,)]/.test(src),
     'and the prompt REBAKE reads it off the captured recipe — a refresh that omitted it '
     + 'would rewrite a live seat\'s prompt file without the plugin bodies it booted with');
 });

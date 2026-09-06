@@ -324,8 +324,11 @@ test('mkMerge injects every dep team-tickets.js reads', () => {
   // the catch in `_cancelTicketReminders` — no subject could have caught it.
   const f = mkMerge({ repo: mkRepo() });
   assertTicketDepsCovered(assert, f.deps, {
+    // resolveSystemPromptFile is optional in the same sense (t699): absent, the
+    // reviewer preflight uses its built-in library join, which is what every
+    // subject here measures. Wiring it would change what these fixtures test.
     // Deliberately unset: the merge subjects here run under the SHIPPED timeout.
-    optional: ['ticketSuiteTimeoutMs'],
+    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile'],
   });
 });
 

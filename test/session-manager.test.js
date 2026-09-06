@@ -5369,8 +5369,10 @@ test('t8 F1: a reviewer template carrying a PLUGIN verb has it STRIPPED (registr
 });
 
 // --- T52 NIT (defense-in-depth): a template systemPromptFile that could escape
-// library/prompts/system (path separator or "..") is rejected AT THE REVIEWER
-// CONSUME POINT and falls back to the shipped default, with a loud warn. ---
+// the prompt directories it resolves against (path separator or "..") is rejected
+// AT THE REVIEWER CONSUME POINT and falls back to the shipped default, with a
+// loud warn. Since t699 there are TWO such directories — the team's own and the
+// library — which is why the warning no longer names one. ---
 test('team-review (T52): a traversing systemPromptFile is rejected → falls back to the default prompt + loud warn', async () => {
   const { m, injected, created } = mkReview({
     reviewTemplate: { systemPromptFile: '../../../../tmp/evil' },
@@ -5382,7 +5384,9 @@ test('team-review (T52): a traversing systemPromptFile is rejected → falls bac
   const systemPromptFile = created[0][14]; // 0-indexed: systemPromptFile(14)
   assert.strictEqual(systemPromptFile, 'clodex-team-reviewer',
     'the traversing stem is dropped; the built-in default prompt is used instead');
-  assert.ok(injected.some((t) => /contains a path separator or "\.\."/.test(t) && /could escape library\/prompts\/system/.test(t)),
+  assert.ok(injected.some((t) => /contains a path separator or "\.\."/.test(t)
+    && /could escape the prompt directories it is resolved against/.test(t)
+    && /\.\.\/\.\.\/\.\.\/\.\.\/tmp\/evil/.test(t)),
     'the lead gets a loud NOTE naming the rejected stem and the reason');
 });
 

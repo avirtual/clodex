@@ -274,8 +274,11 @@ test('mkFixture injects every dep team-tickets.js reads', (t) => {
   // subject could have caught it.
   const f = mkFixture(t);
   assertTicketDepsCovered(assert, f.deps, {
+    // resolveSystemPromptFile is optional in the same sense (t699): absent, the
+    // reviewer preflight uses its built-in library join, which is what every
+    // subject here measures. Wiring it would change what these fixtures test.
     // Left unset on purpose: every subject here runs under the SHIPPED timeout.
-    optional: ['ticketSuiteTimeoutMs'],
+    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile'],
   });
 });
 
