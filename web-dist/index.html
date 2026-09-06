@@ -3554,11 +3554,15 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
-  width: 520px;
-  min-width: 380px;
+  display: flex;
+  flex-direction: column;
+  width: 720px;
+  min-width: 420px;
   max-width: calc(100vw - 32px);
+  min-height: 240px;
   max-height: calc(100vh - 32px);
-  overflow: auto;
+  overflow: hidden;
+  resize: both;
 }
 #plugins-dialog h3 {
   margin-bottom: 12px;
@@ -3567,6 +3571,22 @@ body {
 #plugins-dialog .hint-text {
   margin-bottom: 8px;
   display: block;
+}
+#plugins-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+#plugins-dialog .hint-text,
+#plugins-dialog h3,
+#plugins-dialog #plugins-source,
+#plugins-dialog #plugins-register-note,
+#plugins-dialog #plugins-folder {
+  flex-shrink: 0;
+}
+#plugins-dialog .dialog-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 .placement-greyed {
   opacity: 0.4;
@@ -3964,8 +3984,30 @@ body {
   color: var(--warn);
   opacity: 1;
 }
-.plugin-row button {
+.plugin-row-note.plugin-row-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.plugin-row-note.plugin-row-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.plugin-row-note.plugin-row-src {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugin-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   align-self: center;
+  flex-shrink: 0;
 }
 .plugin-settings-panel {
   padding: 4px 4px 10px 26px;
@@ -7340,7 +7382,7 @@ body {
   <div id="plugins-overlay" class="hidden">
     <div id="plugins-dialog">
       <h3>Plugins</h3>
-      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin that has its own settings shows a <strong>Settings</strong> button on its row. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely. <strong>Register Plugin…</strong> links a folder from anywhere on disk into the plugins folder without copying it; a plugin registered this way has no browser UI when you reach this Clodex from a phone or another machine, because the browser bundle is built with the app.</p>
+      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately; a plugin with its own settings shows a <strong>Settings</strong> button on its row.</p>
       <div id="plugins-list"></div>
       <div id="plugins-register-note" class="plugin-row-note hidden"></div>
       <!-- The browser frontend's substitute for revealing the folder in Finder:
@@ -39100,8 +39142,9 @@ ${res.stderr}` : "");
           body.appendChild(nameEl);
           if (p.description) {
             const d = document.createElement("div");
-            d.className = "plugin-row-note";
+            d.className = "plugin-row-note plugin-row-desc";
             d.textContent = p.description;
+            d.title = p.description;
             body.appendChild(d);
           }
           if (p.verbConflict) {
@@ -39124,18 +39167,23 @@ ${res.stderr}` : "");
           }
           if (p.linkedFrom) {
             const l = document.createElement("div");
-            l.className = "plugin-row-note";
+            l.className = "plugin-row-note plugin-row-path";
             l.textContent = `Registered from ${p.linkedFrom}`;
+            l.title = p.linkedFrom;
             body.appendChild(l);
           }
           if (p.source) {
             const s = document.createElement("div");
-            s.className = "plugin-row-note";
+            s.className = "plugin-row-note plugin-row-src";
             s.textContent = sourceLine(p.source);
+            s.title = sourceLine(p.source);
             body.appendChild(s);
           }
           row.appendChild(cb);
           row.appendChild(body);
+          const rowActions = document.createElement("div");
+          rowActions.className = "plugin-row-actions";
+          row.appendChild(rowActions);
           if (p.quarantined) {
             const retry = document.createElement("button");
             retry.type = "button";
@@ -39152,7 +39200,7 @@ ${res.stderr}` : "");
               else showToast(`${p.name || p.id} failed again: ${r && r.error || "unknown error"}`, { kind: "error", duration: 9e3 });
               await renderPluginsDialog();
             });
-            row.appendChild(retry);
+            rowActions.appendChild(retry);
           }
           if (p.linkedFrom && !window.__CLODEX_WEB__) {
             const un = document.createElement("button");
@@ -39179,7 +39227,7 @@ ${res.stderr}` : "");
               showPluginsRegisterNote(`Unregistered ${p.name || p.id}. ${p.linkedFrom} was left where it is.`);
               await renderPluginsDialog();
             });
-            row.appendChild(un);
+            rowActions.appendChild(un);
           }
           if (p.source && !window.__CLODEX_WEB__) {
             const up = document.createElement("button");
@@ -39188,7 +39236,7 @@ ${res.stderr}` : "");
             up.textContent = "Update\u2026";
             up.title = `Re-resolve github.com/${p.source.repo} at ${p.source.ref || "the default branch"} and show what would change before anything is replaced`;
             up.addEventListener("click", () => openPluginsSourceUpdate(p));
-            row.appendChild(up);
+            rowActions.appendChild(up);
             const rm = document.createElement("button");
             rm.type = "button";
             rm.className = "secondary";
@@ -39212,11 +39260,11 @@ ${res.stderr}` : "");
               if (pluginsSourceTarget === p.id) closePluginsSourceSection();
               await renderPluginsDialog();
             });
-            row.appendChild(rm);
+            rowActions.appendChild(rm);
           }
           pluginsList.appendChild(row);
           if (pluginBar.settingsSectionOwners().includes(p.id)) {
-            pluginsList.appendChild(makePluginSettingsPanel(p, row));
+            pluginsList.appendChild(makePluginSettingsPanel(p, rowActions));
           }
         }
         for (const pr of problems) {
@@ -39274,7 +39322,7 @@ ${res.stderr}` : "");
         }
         return plugins;
       }
-      function makePluginSettingsPanel(p, row) {
+      function makePluginSettingsPanel(p, rowActions) {
         const panel = document.createElement("div");
         panel.className = "plugin-settings-panel hidden";
         const sections = document.createElement("div");
@@ -39304,7 +39352,7 @@ ${res.stderr}` : "");
           pluginBar.renderSectionsInto(p.id, sections, values);
           panel.classList.remove("hidden");
         });
-        row.appendChild(toggle);
+        rowActions.appendChild(toggle);
         save.addEventListener("click", async () => {
           const patch = pluginBar.collectSectionsFrom(p.id, sections);
           if (patch) {

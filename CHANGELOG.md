@@ -21,6 +21,12 @@ blocks a release.
   amber at normal weight instead of bold, which reads more easily in the
   monospace pane.
 
+- **Manage Plugins fits the screen.** The Register / Install / Open Folder /
+  Re-scan / Close bar stays at the bottom while the plugin list scrolls on its
+  own, the dialog is wider and can be resized, and each row is shorter: the
+  description is clamped to two lines and the registration path to one, with
+  the full text a hover away. Warnings on a row are never clamped.
+
 ## 5.32.0 — 2026-09-06
 
 - **A seat spawned for a ticket now receives its spec once.** It used to get a second copy a second later, marked as a replay and telling the hand an earlier incarnation might have done the work; that copy now goes only to a seat that was actually respawned.
