@@ -76,6 +76,12 @@ resolves against this directory first and the shared library second. A name
 preflight (the roles popover) says which names resolved to the team's own
 copies.
 
+A team's own template is reachable by naming it — from a role's `template`, from
+`[agent:spawn … template:<stem>]` by a seat inside the team — and is not listed
+machine-wide in the New Session dialog or the library drawers. The same goes for
+a reviewer template: name it in the reviewer role, since the reviewer's
+prefix-based discovery reads the library only.
+
 Nothing under `teams/` is seeded for you. `Create Team…` writes `team.json` and
 stops, so a directory holding only that file behaves exactly as it did before
 any of this existed, and every piece its manifest names is served by the shared
@@ -109,12 +115,6 @@ library files precisely so every team keeps receiving improvements to them; a
 gathered copy is a fork and stops. So gather when you want the team to be
 self-contained — copied to another machine, or removed without leaving pieces
 behind — and delete a copy to fall back to the library version.
-
-A team's own template is reachable by naming it — from a role's `template`, from
-`[agent:spawn … template:<stem>]` by a seat inside the team — and is not listed
-machine-wide in the New Session dialog or the library drawers. The same goes for
-a reviewer template: name it in the reviewer role, since the reviewer's
-prefix-based discovery reads the library only.
 
 ## The four things your project must supply
 
