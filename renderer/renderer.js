@@ -5348,6 +5348,7 @@ async function renderPluginsDialog() {
           return;
         }
         showPluginsRegisterNote(`Removed ${name}.`);
+        if (pluginsSourceTarget === p.id) closePluginsSourceSection();
         await renderPluginsDialog();
       });
       row.appendChild(rm);

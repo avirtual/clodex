@@ -538,6 +538,21 @@ test('the row block reaches removeSourcePlugin and nothing else new', () => {
     + 'one is followed by an explicit plugins.rescan');
 });
 
+test('Remove closes the update section when it is the removed row that owns it', () => {
+  // The two buttons sit on the same row. Update… then Remove leaves a section
+  // labelled with the removed plugin, holding its resolved commit, with Update
+  // live — and renderPluginsDialog redraws the list beneath it without touching
+  // the section, so nothing else clears it.
+  const src = pluginRowSrc();
+  const removed = src.indexOf("plugins.removeSourcePlugin'");
+  const closed = src.indexOf('closePluginsSourceSection()', removed);
+  assert.ok(closed > removed, 'the close belongs on the success path of the remove, not before it');
+  const redraw = src.indexOf('renderPluginsDialog()', closed);
+  assert.ok(redraw > closed, 'closing after the redraw leaves the stale section on screen for the length of a rescan');
+  assert.match(src.slice(removed, redraw), /if \(pluginsSourceTarget === p\.id\)/,
+    'only the OWNING row may close it — removing a different plugin must leave an open update alone');
+});
+
 test('the source line and the two buttons are driven by the row\'s own `source`', () => {
   const src = pluginRowSrc();
   assert.match(src, /if \(p\.source\) \{[\s\S]{0,200}?sourceLine\(p\.source\)/,
