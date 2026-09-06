@@ -38,19 +38,3 @@ file. Four notes result, split on `bgExitSeen`: recovered, empty, and each again
 with no exit line. Only the exit-line cases may state what the command printed as
 FACT — without one the file may still be filling, so those say "as of this read".
 Two drawn alike IS the defect; none is shown for an ordinary silent command.
-
-## onResize
-
-Following the tail is owned per-seat state (`st.following`), not a geometry read
-taken when blocks are appended. The read it replaced ran while `#drawer` was
-still transitioning its height, where the body's `clientHeight` is ~0 and the
-placeholder alone exceeds the 60px threshold — so the first open answered "not
-near the bottom" and every later append inherited that verdict. onResize is what
-makes the first open land at the end: the host fires it through the transition
-and once more with settled geometry (drawer-host.js rule 4).
-
-A programmatic `scrollTop = scrollHeight` fires a `scroll` event that lands at
-the bottom and so re-affirms following, as does the browser clamping `scrollTop`
-when the box resizes. Suppressing scroll events around the write would break
-that, not protect it. `#console-live` is a sibling with its own scrollbar and
-keeps its own nearBottom read.
