@@ -201,8 +201,9 @@ const keys = engine._dispatchKeys().filter((k) => k.startsWith(`${manifest.id}:`
 const hookCounts = engine._hookCounts();
 const bundleCount = bundleSkills.length + bundleAgents.length
   + bundlePrompts.length + bundleTemplates.length;
-record('registered at least one surface', keys.length > 0 || hookCounts.create > 0 || hookCounts.exit > 0 || bundleCount > 0,
-  `ipc methods: ${keys.length ? keys.join(', ') : 'none'} | onCreate: ${hookCounts.create} | onExit: ${hookCounts.exit} | bundle entries: ${bundleCount}`);
+const newVerbs = pluginVerbs().filter((t) => !verbsBefore.has(t));
+record('registered at least one surface', keys.length > 0 || hookCounts.create > 0 || hookCounts.exit > 0 || bundleCount > 0 || newVerbs.length > 0,
+  `ipc methods: ${keys.length ? keys.join(', ') : 'none'} | onCreate: ${hookCounts.create} | onExit: ${hookCounts.exit} | bundle entries: ${bundleCount} | verbs: ${newVerbs.length ? newVerbs.join(', ') : 'none'}`);
 
 // Every declared ipc method must answer without CRASHING. It is called with no
 // arguments, so a handler that replies "a session name is required" has passed:
@@ -243,7 +244,6 @@ const CRASH = /is not a function|is not defined|Cannot read propert|Cannot acces
   // requires only hostApi + entry and has no verb field to gate on — so a
   // UI-only plugin is conforming. Asserting presence rejected `workbench` and
   // would teach authors to register a verb they do not want.
-  const newVerbs = pluginVerbs().filter((t) => !verbsBefore.has(t));
   note('intent verbs', newVerbs.join(', ') || 'none (optional)');
 
   // Deactivation must release everything: a verb that outlives its plugin keeps
