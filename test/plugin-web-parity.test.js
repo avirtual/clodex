@@ -7,8 +7,10 @@
 // runtime, legal only because this app runs with `contextIsolation: false` +
 // `nodeIntegration: true`. The browser has no require, and esbuild resolves
 // imports at BUILD time, so the same call is unimplementable there. The bundle
-// therefore carries the modules, keyed by plugin id, in a registry that
-// build/build-web.js generates from `plugins/*/manifest.json`.
+// therefore carries the SHIPPED modules, keyed by plugin id, in a registry that
+// build/build-web.js generates from `plugins/*/manifest.json`. A half that is
+// not in the repo at build time cannot be in that registry, and reaches the page
+// as source text instead (test/plugin-module-eval.test.js).
 //
 // That generated file is COMMITTED (web-dist is tracked for the same reason), so
 // it can go stale exactly the way bin-materialize.js's script list can: add a
@@ -85,6 +87,41 @@ test('the renderer resolves a plugin half through the registry OR window.require
   const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
   assert.match(body, /__CLODEX_PLUGIN_REGISTRY__/, 'the web path consults the build-generated registry');
   assert.match(body, /window\.require\(/, 'the Electron path still requires the runtime path');
+});
+
+// ── the non-shipped half: source text, evaluated in the page ────────────────
+
+function requireFnBody() {
+  const src = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function requirePluginRenderer'));
+  return fn.slice(0, fn.indexOf('\n}\n') + 1);
+}
+
+test('requirePluginRenderer consults the registry BEFORE it evaluates source text', () => {
+  // A shipped half is already IN the bundle. Reversing these two would re-parse
+  // and re-instantiate it from disk on every activation, so the bundled copy and
+  // the evaluated copy would be two different modules with two different
+  // closures — and nothing about the plugin would look wrong.
+  const body = requireFnBody();
+  const reg = body.indexOf('__CLODEX_PLUGIN_REGISTRY__');
+  const evald = body.indexOf('evalRendererModule(');
+  assert.ok(reg > -1, 'ENTER: the registry branch is still in the function');
+  assert.ok(evald > -1, 'the source branch exists at all — without it the browser has no non-shipped half');
+  assert.ok(reg < evald, 'the registry hit must win');
+  assert.ok(body.indexOf('window.require(') > evald,
+    'and the Electron path stays last — on the desktop no source is asked for, so it never gets there');
+});
+
+test('activatePluginRenderer asks for source ONLY on the web, and only on a registry miss', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function activatePluginRenderer'));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
+  assert.match(body, /window\.__CLODEX_WEB__[\s\S]*\{ source: /,
+    'the desktop must pass no options — otherwise every activation reads a file it will never use');
+  assert.match(body, /source: !\(reg && typeof reg\.get === 'function' && reg\.get\(id\)\)/,
+    'a shipped half is already in the bundle; asking for its source is a wasted read of workbench on every window');
+  assert.match(body, /requirePluginRenderer\(info\.rendererPath, id, info\.source\)/,
+    'and whatever came back is what gets evaluated');
 });
 
 test('a plugin stylesheet needs NO build step — it crosses as text over the existing transport', () => {

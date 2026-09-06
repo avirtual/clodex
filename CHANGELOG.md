@@ -51,7 +51,9 @@ blocks a release.
   description is clamped to two lines and the registration path to one, with
   the full text a hover away. Warnings on a row are never clamped.
 
-- Manage Plugins ▸ Install from GitHub… now works from the browser frontend too: Resolve, Install, Update… and Remove are offered on the web surface with the same warning-before-install flow, and the warning says the code will run on the Clodex host the browser is connected to. A plugin's renderer half still shows in the desktop app only; the install note says so. Registering a folder by path stays a desktop action.
+- Manage Plugins ▸ Install from GitHub… now works from the browser frontend too: Resolve, Install, Update… and Remove are offered on the web surface with the same warning-before-install flow, and the warning says the code will run on the Clodex host the browser is connected to. Registering a folder by path stays a desktop action.
+
+- A plugin installed on a box shows its buttons and panels in the browser frontend too: a renderer half that is not part of the shipped bundle is read from the plugins folder and loaded in the page, so a plugin installed from GitHub or registered by path works from a remote browser the same as on the desktop.
 
 - In the browser frontend the "Clodex vX" line stays at the bottom of the sidebar footer; plugin buttons that appear after the page loads are inserted above it instead of below.
 

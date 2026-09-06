@@ -53,10 +53,11 @@ filesystem or the session manager — it asks its engine half to.
 
 The directory name **is** the plugin id. They may not differ.
 
-**A renderer half needs a build step.** Clodex also ships as a browser bundle,
-which cannot resolve a module path at runtime the way Electron can, so renderer
-halves are baked in at build time. After **every** edit to a `renderer.js` — not
-only after adding or removing one — run:
+**A renderer half SHIPPED IN THIS REPO needs a build step.** Clodex also ships as
+a browser bundle, which cannot resolve a module path at runtime the way Electron
+can, so the halves under `plugins/` are baked in at build time. After **every**
+edit to one of those `renderer.js` files — not only after adding or removing one
+— run:
 
 ```
 npm run build:web
@@ -72,6 +73,13 @@ when it is stale). Skip the rebuild after an edit and the committed bundle serve
 the old code while the sources read fixed; the Electron app itself will not
 notice, which is exactly why it is easy to miss. An engine-only plugin needs no
 build step at all.
+
+A plugin of **yours** — installed from GitHub or registered by path — is not in
+that bundle and needs no build step either: the browser reads its renderer half
+from disk and evaluates the source in the page. The one rule that buys is that a
+renderer half must stay `require`-free, which the shipped ones already are; a
+`require` in one throws in the browser naming your plugin, and works only in the
+desktop app. `plugin-sources.md` §6 is the mechanism.
 
 Discovery scans two roots in precedence order — the plugins directory shipped
 with the app, then `~/.clodex/plugins/`, which is where **your** plugin goes if

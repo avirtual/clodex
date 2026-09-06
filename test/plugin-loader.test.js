@@ -360,6 +360,40 @@ test('rendererInfo returns null for an unknown plugin', () => {
   assert.strictEqual(mkLoader(root).loader.rendererInfo('nope'), null);
 });
 
+test('rendererInfo reads the renderer SOURCE only when asked for it', () => {
+  const root = mkTree({
+    alpha: { manifest: OK_MANIFEST, files: { 'renderer.js': "exports.activate = () => 'hi';\n" } },
+  });
+  const { loader } = mkLoader(root);
+  const plain = loader.rendererInfo('alpha');
+  assert.ok(plain.rendererPath, 'ENTER: the fixture has a renderer half, so the flag is what decides');
+  assert.ok(!('source' in plain),
+    'no key at all without the flag — the desktop resolves the path and must not pay to read the file');
+  const withSource = loader.rendererInfo('alpha', { source: true });
+  assert.strictEqual(withSource.source, "exports.activate = () => 'hi';\n");
+});
+
+test('rendererInfo asked for source on a plugin with no renderer half returns neither', () => {
+  const root = mkTree({
+    alpha: { manifest: { ...OK_MANIFEST, entry: { engine: 'engine.js' } } },
+  });
+  const info = mkLoader(root).loader.rendererInfo('alpha', { source: true });
+  assert.strictEqual(info.rendererPath, null);
+  assert.ok(!('source' in info), 'nothing to read, so nothing is claimed');
+});
+
+test('rendererInfo yields source null when the renderer path cannot be read', () => {
+  const root = mkTree({
+    alpha: { manifest: OK_MANIFEST, files: { 'renderer.js': 'exports.activate = () => {};\n' } },
+  });
+  const { loader } = mkLoader(root);
+  assert.ok(loader.rendererInfo('alpha').rendererPath, 'ENTER: discovered with the file present');
+  fs.unlinkSync(path.join(root, 'alpha', 'renderer.js'));
+  const info = loader.rendererInfo('alpha', { source: true });
+  assert.strictEqual(info.source, null, 'an unreadable half is a failed activation, not a crashed window');
+  assert.ok(info.rendererPath, 'the path still answers — the read is what failed');
+});
+
 // ── Fail-safe + quarantine (W7's follow-on) ─────────────────────────────────
 //
 // The posture is BEST EFFORT: a try/catch and a counter, not a rescue system.

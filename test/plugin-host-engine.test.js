@@ -735,6 +735,19 @@ test('_host renderer.report forwards a window\'s outcome to the loader', async (
   ]);
 });
 
+test('_host renderer.info forwards its options to the loader', async () => {
+  const seen = [];
+  const loader = fakeLoader({
+    rendererInfo: (id, opts) => { seen.push([id, opts]); return { rendererPath: '/p/renderer.js', css: null }; },
+  });
+  const { engine } = makeHost({ loader });
+  engine.register('demo', { activate() {} });
+  await engine.dispatch('_host', 'renderer.info', ['demo'], 'desktop');
+  await engine.dispatch('_host', 'renderer.info', ['demo', { source: true }], 'web');
+  assert.deepStrictEqual(seen, [['demo', undefined], ['demo', { source: true }]],
+    'the browser asks for the source text; a host that drops the flag answers with a path no browser can resolve');
+});
+
 test('setEnabled BROADCASTS plugin-state so every window tears its own half down', () => {
   // W7: "disable removes button, overlay, styles and dispatch entries in EVERY
   // window". The engine half's teardown is per-app-run; a renderer half is

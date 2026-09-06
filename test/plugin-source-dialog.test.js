@@ -27,7 +27,7 @@ const path = require('node:path');
 
 const {
   INSTALL_REASONS, shortCommit, refLabel, sourceLabel, sourceLine,
-  previewLines, updatePreviewLines, warningText, webRendererNote, installState,
+  previewLines, updatePreviewLines, warningText, installState,
 } = require('../renderer/lib/plugin-source-dialog');
 
 const ROOT = path.join(__dirname, '..');
@@ -355,24 +355,6 @@ test('warningText on the web surface names the HOST the browser is connected to'
     'a falsy option is the desktop sentence, so a call site that always passes the flag is safe');
 });
 
-test('webRendererNote fires on a manifest with a renderer half and nothing else', () => {
-  // Against the SHARED fixtures, which carry the `entry` the loader's projection
-  // really returns — a hand-built manifest here passes whether or not the
-  // projection carries the field, which is how a note that could never render on
-  // a real install once shipped green. The projection itself is pinned in
-  // test/plugin-loader-source.test.js.
-  assert.strictEqual(
-    webRendererNote(RESOLVED),
-    ' Its renderer half shows in the desktop app only — this browser\'s bundle is built from the plugins shipped with Clodex.');
-  assert.strictEqual(webRendererNote(UPDATE_RESOLVED), webRendererNote(RESOLVED),
-    'the update note says it too — resolveUpdate projects the same entry shape');
-  assert.strictEqual(webRendererNote(RESOLVED_NO_REF), '',
-    'an engine-only plugin is fully live in a browser — the sentence would be a false warning');
-  assert.strictEqual(webRendererNote({ ok: true, manifest: { id: 'notes' } }), '',
-    'a manifest with no entry at all is not a renderer half');
-  assert.strictEqual(webRendererNote(null), '');
-});
-
 test('refLabel names the default branch rather than saying nothing', () => {
   assert.strictEqual(refLabel(RESOLVED), 'v2');
   assert.strictEqual(refLabel(RESOLVED_NO_REF), 'the default branch');
@@ -669,12 +651,3 @@ test('the trust warning names the host when the surface is a browser', () => {
     + 'browser operator the code runs where the browser is');
 });
 
-test('the web install and update notes carry the renderer-half sentence', () => {
-  const src = sourceSectionSrc();
-  assert.ok(/const rendererNote = window\.__CLODEX_WEB__ \? webRendererNote\(resolved\) : '';/.test(src),
-    'the surface decision is the renderer\'s; webRendererNote decides only whether the manifest has a renderer half');
-  assert.ok(/Installed \$\{name\} at \$\{shortCommit\(r\.commit\)\}[^`]*\$\{rendererNote\}`/.test(src),
-    'the install note must append it, or a browser operator installs a plugin whose UI never appears and is told nothing');
-  assert.ok(/Updated \$\{name\} to \$\{shortCommit\(r\.commit\)\}\$\{restart\}\.\$\{rendererNote\}`/.test(src),
-    'the update note must append it too — an update is the same surprise a second time');
-});

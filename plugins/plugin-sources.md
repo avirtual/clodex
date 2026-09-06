@@ -497,27 +497,33 @@ paragraph instead of a mystery.
 
 ---
 
-## 6. External plugins are Electron-only
+## 6. A renderer half in the browser: bundled if shipped, evaluated if not
 
 **Verified property, not a decision.**
 
-`renderer.js:3020` activates a renderer half with `window.require(rendererPath)`
-— an **absolute path resolved at runtime**, legal only because this app runs with
-`contextIsolation: false` and `nodeIntegration: true`. That works for any path on
-disk, so an external plugin's renderer half loads in Electron with **no build
-step**. CSS was never a problem either: it travels as *text* over
-`plugin:invoke` (`plugin-loader.js:330`), so no path has to resolve in the
-renderer at all.
+`renderer.js`'s `requirePluginRenderer` resolves a renderer half three ways, in
+order. In the browser it first consults `renderer/web/plugin-registry.js`, a
+generated id→module table built from `plugins/*/manifest.json` — esbuild resolves
+imports at **build time**, so a plugin that is not in the repo when the bundle is
+built can never be in that table. On a miss, `renderer.info` returns the half's
+**source text** (asked for by `{ source: true }`, exactly as the stylesheet has
+travelled as text since W1) and `renderer/lib/plugin-module-eval.js` evaluates it
+through a CommonJS shim. In Electron neither applies: `window.require(rendererPath)`
+resolves an absolute path at runtime, legal only because this app runs with
+`contextIsolation: false` and `nodeIntegration: true`.
 
-The web bundle cannot do this. esbuild resolves imports at **build time**, which
-is why `renderer/web/plugin-registry.js` exists — a generated id→module table
-built from `plugins/*/manifest.json`. A plugin that is not in the repo at build
-time cannot be in the bundle.
+Evaluating from text works because a renderer half is **self-contained**: it
+touches `module.exports`/`exports` and the `rhost` it is handed, and requires
+nothing. That is what the build-time constraint actually forbids — module
+RESOLUTION, not evaluation. The shim's `require` therefore throws, naming the
+plugin: a renderer half that requires a module works in no browser, and says so
+rather than failing as a blank panel. The page has no Content-Security-Policy, so
+`new Function` is legal there; if one is ever added, `script-src` must keep
+allowing it or this path dies silently.
 
-**So: user plugins work in the Electron app and do not appear in the web
-frontend.** This is stated, not solved. Solving it means either shipping a
-bundler with the app or defining a pre-built plugin artifact format, and both are
-larger than this feature.
+**So: a user plugin's renderer half appears on both surfaces.** Trust is
+unchanged by that — the operator installed the plugin and its engine half
+already runs with the app's full authority (§7).
 
 ### The lint and the parity gate are unaffected — by construction
 
@@ -753,10 +759,7 @@ End to end, today, with the user root implemented:
    symlinked row offers Unregister and a hand-copied one offers neither. All
    three affordances are offered on the web surface too, with the trust warning
    there naming the Clodex host the browser is connected to rather than "inside
-   Clodex". What §6 still means for a browser is narrower: a fetched plugin runs
-   engine-side on every surface, but its RENDERER half shows in the desktop app
-   only, because the browser bundle is built from the plugins shipped with
-   Clodex — the install note says so when the manifest names one.
+   Clodex".
    **Update…** re-resolves the SAME sidecar repo and ref, and says so in the
    register note when nothing moved; when it did, the same inline section reopens
    with the field and Resolve hidden, showing `v<old> → v<new>` and
@@ -826,12 +829,6 @@ Consequences worth stating:
   cloned checkout is registered where it sits — but step 2 is untouched: the
   clone or the unzip is still the user's, in a terminal or a file manager. This
   is where a local-only design stays honest: picking a directory is not a fetch.
-- **A registered plugin's renderer half on the WEB surface.** §6's limit
-  unchanged: `renderer/web/plugin-registry.js` is generated at build time from
-  the repo's own `plugins/` tree, so a plugin registered from elsewhere runs its
-  engine half there and has no browser UI. Stated in the dialog's hint text,
-  because a user who reaches this Clodex from a phone would otherwise read it as
-  a break.
 - **Replacing a running plugin without a restart**, per the table above. Reaching
   it would mean deactivating and re-registering a live plugin against a fresh
   module — a substantially larger change than an install flow, and one that
@@ -851,7 +848,7 @@ Consequences worth stating:
 | §4a verb collisions refused without a strike, holder named | **Implemented** |
 | §4a which plugin wins within a root | Arbitrary — known limit; only fetched plugins carry an install moment (§9 `fetchedAt`) |
 | §5 symlink following; the case-folding assumption | **Implemented** / assumed |
-| §6 Electron-only, lint & parity unaffected | Verified property; no code |
+| §6 shipped halves bundled, others evaluated from source; lint & parity unaffected | **Implemented** |
 | §7 trust posture | Posture; no code |
 | §8 npm dependencies | Sketch, not built |
 | §9 sources: GitHub fetch, engine + host methods | **Implemented** |

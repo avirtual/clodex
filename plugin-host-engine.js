@@ -605,13 +605,13 @@ function createPluginHostEngine(deps) {
       buildHost(String(pluginId)).settings.set(patch);
       return { ok: true };
     },
-// Stylesheet TEXT, not a path: text works identically in the file:// window and
-// in the web bundle, where no path resolves.
-    'renderer.info': (pluginId) => {
+// Stylesheet and (on request) renderer TEXT, not paths: text works identically in
+// the file:// window and in the web bundle, where no path resolves.
+    'renderer.info': (pluginId, opts) => {
       if (!registered.has(String(pluginId))) return errorEnvelope('no such plugin');
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
-      const info = loader.rendererInfo(String(pluginId));
+      const info = loader.rendererInfo(String(pluginId), opts);
       return info ? { ok: true, ...info } : errorEnvelope('no such plugin');
     },
     // ── The fail-safe surface (the settings Plugins section) ──────────────
