@@ -28,7 +28,9 @@ const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatme
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
-const { previewLines, warningText, installState, sourceLabel } = require('./lib/plugin-source-dialog');
+const {
+  previewLines, updatePreviewLines, warningText, installState, sourceLabel, sourceLine, shortCommit,
+} = require('./lib/plugin-source-dialog');
 const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
@@ -5188,7 +5190,7 @@ async function openPluginsDialog() {
 }
 
 async function renderPluginsDialog() {
-  if (!pluginsList) return;
+  if (!pluginsList) return [];
   let status = null;
   try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
   const plugins = (status && status.ok && status.plugins) || [];
@@ -5262,6 +5264,12 @@ async function renderPluginsDialog() {
       l.textContent = `Registered from ${p.linkedFrom}`;
       body.appendChild(l);
     }
+    if (p.source) {
+      const s = document.createElement('div');
+      s.className = 'plugin-row-note';
+      s.textContent = sourceLine(p.source);
+      body.appendChild(s);
+    }
     row.appendChild(cb);
     row.appendChild(body);
     if (p.quarantined) {
@@ -5299,6 +5307,35 @@ async function renderPluginsDialog() {
         await renderPluginsDialog();
       });
       row.appendChild(un);
+    }
+    if (p.source && !window.__CLODEX_WEB__) {
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'secondary';
+      up.textContent = 'Update…';
+      up.title = `Re-resolve github.com/${p.source.repo} at ${p.source.ref || 'the default branch'} and show what would change before anything is replaced`;
+      up.addEventListener('click', () => openPluginsSourceUpdate(p));
+      row.appendChild(up);
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'secondary';
+      rm.textContent = 'Remove';
+      rm.title = `Delete ${p.id} from the plugins folder — it was fetched from github.com/${p.source.repo} and can be installed again`;
+      rm.addEventListener('click', async () => {
+        const name = p.name || p.id;
+        if (!confirm(`Remove ${name}? Its folder in the plugins folder is deleted — it was fetched from github.com/${p.source.repo} and can be installed again.`)) return;
+        rm.disabled = true;
+        let r = null;
+        try { r = await window.api.pluginInvoke('_host', 'plugins.removeSourcePlugin', [p.id]); } catch {}
+        if (!r || !r.ok) {
+          rm.disabled = false;
+          showPluginsRegisterNote(`Could not remove ${name}: ${(r && r.error) || 'unknown error'}`, 'warn');
+          return;
+        }
+        showPluginsRegisterNote(`Removed ${name}.`);
+        await renderPluginsDialog();
+      });
+      row.appendChild(rm);
     }
     pluginsList.appendChild(row);
     if (pluginBar.settingsSectionOwners().includes(p.id)) {
@@ -5363,6 +5400,7 @@ async function renderPluginsDialog() {
     row.appendChild(body);
     pluginsList.appendChild(row);
   }
+  return plugins;
 }
 
 // A plugin's own settings live with the plugin, not in Preferences. The panel is INLINE under
@@ -5485,6 +5523,7 @@ pluginsRegisterBtn.addEventListener('click', async () => {
 });
 
 const pluginsSourceSection = document.getElementById('plugins-source');
+const pluginsSourceLabel = document.getElementById('plugins-source-label');
 const pluginsSourceSpec = document.getElementById('plugins-source-spec');
 const pluginsSourcePreview = document.getElementById('plugins-source-preview');
 const pluginsSourceWarning = document.getElementById('plugins-source-warning');
@@ -5493,6 +5532,8 @@ const pluginsSourceResolveBtn = document.getElementById('btn-plugins-source-reso
 const pluginsSourceInstallBtn = document.getElementById('btn-plugins-source-install');
 const pluginsSourceCancelBtn = document.getElementById('btn-plugins-source-cancel');
 let pluginsSourceResolved = null;
+let pluginsSourceMode = 'install';
+let pluginsSourceTarget = null;
 
 function paintPluginsSourceNote(el, text, extraClass) {
   if (!el) return;
@@ -5502,7 +5543,9 @@ function paintPluginsSourceNote(el, text, extraClass) {
 }
 
 function paintPluginsSourceInstall() {
-  const st = installState({ resolved: pluginsSourceResolved, fieldValue: pluginsSourceSpec.value });
+  const st = installState({
+    resolved: pluginsSourceResolved, fieldValue: pluginsSourceSpec.value, mode: pluginsSourceMode,
+  });
   pluginsSourceInstallBtn.disabled = !st.enabled;
   pluginsSourceInstallBtn.title = st.reason;
   return st;
@@ -5517,6 +5560,12 @@ function resetPluginsSourceResolve() {
 
 function closePluginsSourceSection() {
   pluginsSourceSpec.value = '';
+  pluginsSourceMode = 'install';
+  pluginsSourceTarget = null;
+  pluginsSourceInstallBtn.textContent = 'Install';
+  pluginsSourceLabel.classList.remove('hidden');
+  pluginsSourceSpec.classList.remove('hidden');
+  pluginsSourceResolveBtn.classList.remove('hidden');
   resetPluginsSourceResolve();
   pluginsSourceSection.classList.add('hidden');
 }
@@ -5524,7 +5573,7 @@ function closePluginsSourceSection() {
 if (window.__CLODEX_WEB__) pluginsSourceBtn.classList.add('hidden');
 pluginsSourceBtn.addEventListener('click', () => {
   showPluginsRegisterNote('');
-  resetPluginsSourceResolve();
+  closePluginsSourceSection();
   pluginsSourceSection.classList.remove('hidden');
   pluginsSourceSpec.focus();
 });
@@ -5536,16 +5585,17 @@ pluginsSourceResolveBtn.addEventListener('click', async () => {
   showPluginsRegisterNote('');
   resetPluginsSourceResolve();
   if (!spec) {
-    paintPluginsSourceNote(pluginsSourceWarning, 'Give a repo first — owner/repo, owner/repo@ref, or a github.com URL.', 'warn');
+    showPluginsRegisterNote('Give a repo first — owner/repo, owner/repo@ref, or a github.com URL.', 'warn');
     return;
   }
   pluginsSourceResolveBtn.disabled = true;
   pluginsSourceInstallBtn.disabled = true;
+  pluginsSourceCancelBtn.disabled = true;
   try {
     let r = null;
     try { r = await window.api.pluginInvoke('_host', 'plugins.resolveSource', [spec]); } catch {}
     if (!r || !r.ok) {
-      paintPluginsSourceNote(pluginsSourceWarning, `Could not resolve ${spec}: ${(r && r.error) || 'unknown error'}`, 'warn');
+      showPluginsRegisterNote(`Could not resolve ${spec}: ${(r && r.error) || 'unknown error'}`, 'warn');
       return;
     }
     pluginsSourceResolved = { ...r, spec };
@@ -5553,6 +5603,7 @@ pluginsSourceResolveBtn.addEventListener('click', async () => {
     paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), 'warn');
   } finally {
     pluginsSourceResolveBtn.disabled = false;
+    pluginsSourceCancelBtn.disabled = false;
     paintPluginsSourceInstall();
   }
 });
@@ -5560,25 +5611,76 @@ pluginsSourceResolveBtn.addEventListener('click', async () => {
 pluginsSourceInstallBtn.addEventListener('click', async () => {
   if (!paintPluginsSourceInstall().enabled) return;
   const resolved = pluginsSourceResolved;
+  const updating = pluginsSourceMode === 'update';
+  const name = (resolved.manifest && resolved.manifest.name) || resolved.id || pluginsSourceTarget;
   showPluginsRegisterNote('');
   pluginsSourceResolveBtn.disabled = true;
   pluginsSourceInstallBtn.disabled = true;
+  pluginsSourceCancelBtn.disabled = true;
   try {
     let r = null;
-    try { r = await window.api.pluginInvoke('_host', 'plugins.installFromSource', [resolved.spec]); } catch {}
+    if (updating) {
+      try { r = await window.api.pluginInvoke('_host', 'plugins.applyUpdate', [pluginsSourceTarget, resolved.commit]); } catch {}
+    } else {
+      try { r = await window.api.pluginInvoke('_host', 'plugins.installFromSource', [resolved.spec]); } catch {}
+    }
     if (!r || !r.ok) {
-      paintPluginsSourceNote(pluginsSourceWarning, `Could not install ${sourceLabel(resolved)}: ${(r && r.error) || 'unknown error'}`, 'warn');
+      const what = updating ? `update ${name}` : `install ${sourceLabel(resolved)}`;
+      showPluginsRegisterNote(`Could not ${what}: ${(r && r.error) || 'unknown error'}`, 'warn');
       return;
     }
-    const name = (resolved.manifest && resolved.manifest.name) || r.id;
+    if (updating) {
+      closePluginsSourceSection();
+      const rows = await renderPluginsDialog();
+      const redrawn = rows.find((x) => x.id === r.id);
+      const restart = redrawn && redrawn.restartRequired ? ' — restart Clodex to run the new code' : '';
+      showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.`);
+      return;
+    }
     closePluginsSourceSection();
-    showPluginsRegisterNote(`Installed ${name} at ${r.commit} — it is off until you turn it on from its row above.`);
+    showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} — it is off until you turn it on from its row above.`);
     await renderPluginsDialog();
   } finally {
     pluginsSourceResolveBtn.disabled = false;
+    pluginsSourceCancelBtn.disabled = false;
     paintPluginsSourceInstall();
   }
 });
+
+async function openPluginsSourceUpdate(p) {
+  showPluginsRegisterNote('');
+  closePluginsSourceSection();
+  const name = p.name || p.id;
+  pluginsSourceMode = 'update';
+  pluginsSourceTarget = p.id;
+  pluginsSourceInstallBtn.textContent = 'Update';
+  pluginsSourceLabel.classList.add('hidden');
+  pluginsSourceSpec.classList.add('hidden');
+  pluginsSourceResolveBtn.classList.add('hidden');
+  pluginsSourceSection.classList.remove('hidden');
+  paintPluginsSourceNote(pluginsSourcePreview, `Checking github.com/${p.source.repo} for a newer ${name}…`);
+  pluginsSourceInstallBtn.disabled = true;
+  pluginsSourceCancelBtn.disabled = true;
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.resolveUpdate', [p.id]); } catch {}
+  pluginsSourceCancelBtn.disabled = false;
+  if (!r || !r.ok) {
+    closePluginsSourceSection();
+    showPluginsRegisterNote(`Could not check ${name} for an update: ${(r && r.error) || 'unknown error'}`, 'warn');
+    return;
+  }
+  if (!r.changed) {
+    closePluginsSourceSection();
+    showPluginsRegisterNote(`${name} is up to date at ${shortCommit(r.commit)}.`);
+    return;
+  }
+  pluginsSourceResolved = {
+    ...r, repo: p.source.repo, ref: p.source.ref, subpath: p.source.subpath, previousVersion: p.version,
+  };
+  paintPluginsSourceNote(pluginsSourcePreview, updatePreviewLines(pluginsSourceResolved).join('\n'));
+  paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), 'warn');
+  paintPluginsSourceInstall();
+}
 
 document.getElementById('btn-plugins-reveal').addEventListener('click', async () => {
   if (window.__CLODEX_WEB__) { await showPluginsFolderListing(); return; }

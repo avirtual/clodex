@@ -17,8 +17,12 @@ blocks a release.
   from GitHub…: paste `owner/repo`, `owner/repo@ref` or a github.com URL,
   Resolve shows what would land and a plain warning that the code runs with the
   app's full authority, and Install places it turned off until you enable it
-  from its row. Updating and removing a fetched plugin from the dialog is not
-  there yet.
+  from its row.
+- **A plugin installed from GitHub shows where it came from, and its row offers
+  Update… and Remove**: Update re-resolves the same repo and ref, shows old → new
+  commit with the same warning before anything is replaced, and a running
+  plugin's row says a restart is needed; Remove deletes the fetched folder after
+  one confirm.
 - **A plugin's skills and subagents reach the CLI under the plugin's own version
   and description** instead of a `0.0.0` placeholder, so the CLI's plugin listing
   names what is installed.

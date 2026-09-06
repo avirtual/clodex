@@ -280,6 +280,97 @@ test('installFromSource refuses on a candidate that fails validateCandidate, lea
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// status().source — how the Manage Plugins row knows a row is FETCHED
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The row's Update…/Remove buttons and its "From github.com/…" line are all
+// driven by this one field, and it is the only thing separating a fetched
+// directory from a hand-copied one in the renderer. `removeSourcePlugin`
+// DELETES the directory, so a row that wrongly carries `source` offers a delete
+// button over somebody's own folder — the loader refuses it a second time
+// sidecar-side, but the button should not be there at all.
+
+test('status().source names the repo, ref, subpath and commit an installed plugin came from', async () => {
+  const bytes = buildCollectionTarballBytes('abc1234', 'plugins/foo', 'foo');
+  const { loader } = mkSourceLoader({ script: [{ bytes }] });
+  const installed = await loader.installFromSource('owner/repo@v2:plugins/foo');
+  assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+  const row = loader.status().plugins.find((p) => p.id === 'foo');
+  assert.ok(row, 'ENTER: the installed plugin really has a status row');
+  assert.deepStrictEqual(row.source, {
+    repo: 'owner/repo',
+    ref: 'v2',
+    subpath: 'plugins/foo',
+    commit: 'abc1234',
+  }, 'the four fields the row renders and the two the update path re-fetches with');
+});
+
+test('status().source keeps a bare-repo install honest: ref and subpath are null, not absent', async () => {
+  // sourceLine renders `@the default branch` off a null ref. An undefined one
+  // reads the same at the row and differently through deepStrictEqual, and the
+  // renderer stamps this object onto the resolveUpdate result before the trust
+  // warning is composed from it.
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader } = mkSourceLoader({ script: [{ bytes }] });
+  await loader.installFromSource('owner/repo');
+  const row = loader.status().plugins.find((p) => p.id === 'demo');
+  assert.deepStrictEqual(row.source, { repo: 'owner/repo', ref: null, subpath: null, commit: 'abc1234' });
+});
+
+test('a SYMLINKED user plugin carries source null — it keeps Unregister, never Remove', async () => {
+  const { loader, userDir } = mkSourceLoader({ script: [] });
+  const elsewhere = mkTmpRoot('clodex-loader-source-elsewhere-');
+  fs.mkdirSync(path.join(elsewhere, 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'demo', 'manifest.json'), JSON.stringify(manifestFor('demo')));
+  fs.writeFileSync(path.join(elsewhere, 'demo', 'engine.js'), engineFile);
+  fs.mkdirSync(userDir, { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, 'demo'), path.join(userDir, 'demo'), 'dir');
+  const row = loader.status().plugins.find((p) => p.id === 'demo');
+  assert.ok(row, 'ENTER: the symlinked plugin is discovered');
+  assert.strictEqual(row.source, null);
+  assert.strictEqual(row.linkedFrom, fs.realpathSync(path.join(elsewhere, 'demo')),
+    'it is the LINKED row, so Unregister — naming the target it points at — is what it gets');
+});
+
+test('a symlink pointing at a directory that HAS a sidecar is still source null', async () => {
+  // The sidecar travels with the directory, so registering a previously-fetched
+  // checkout by symlink would otherwise put a Remove button on a link — and
+  // removeSourcePlugin refuses a symlink, so the button could only ever fail.
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
+  await loader.installFromSource('owner/repo');
+  const fetched = path.join(userDir, 'demo');
+  const moved = path.join(mkTmpRoot('clodex-loader-source-moved-'), 'demo');
+  fs.renameSync(fetched, moved);
+  fs.symlinkSync(moved, fetched, 'dir');
+  assert.ok(fs.existsSync(path.join(fetched, '.clodex-source.json')), 'ENTER: the sidecar is reachable through the link');
+  const row = loader.status().plugins.find((p) => p.id === 'demo');
+  assert.strictEqual(row.source, null, 'isLink decides, not the sidecar');
+});
+
+test('a hand-copied user directory and a CORE plugin both carry source null', async () => {
+  const { loader, userDir } = mkSourceLoader({ script: [], coreIds: ['workbench'] });
+  fs.mkdirSync(path.join(userDir, 'mine'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'mine', 'manifest.json'), JSON.stringify(manifestFor('mine')));
+  fs.writeFileSync(path.join(userDir, 'mine', 'engine.js'), engineFile);
+  const rows = loader.status().plugins;
+  assert.deepStrictEqual(rows.map((p) => p.id).sort(), ['mine', 'workbench'],
+    'ENTER: both rows are present, so the assertions below are not vacuous');
+  assert.strictEqual(rows.find((p) => p.id === 'mine').source, null, 'copied in by hand: no sidecar, no buttons');
+  assert.strictEqual(rows.find((p) => p.id === 'workbench').source, null, 'a core plugin is not in the user root at all');
+});
+
+test('a fetched row loses its source the moment it is removed', async () => {
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader } = mkSourceLoader({ script: [{ bytes }] });
+  await loader.installFromSource('owner/repo');
+  assert.ok(loader.status().plugins.find((p) => p.id === 'demo').source, 'ENTER: it was fetched');
+  assert.strictEqual(loader.removeSourcePlugin('demo').ok, true);
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'demo'), undefined,
+    'the row is gone with the directory');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 // resolveUpdate / applyUpdate
 // ════════════════════════════════════════════════════════════════════════════
 

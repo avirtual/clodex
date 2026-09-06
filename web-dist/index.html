@@ -4022,10 +4022,14 @@ body {
 #plugins-source-warning {
   margin-top: 8px;
   word-break: break-word;
+  white-space: pre-line;
 }
 #plugins-source.hidden,
 #plugins-source-preview.hidden,
 #plugins-source-warning.hidden,
+#plugins-source-label.hidden,
+#plugins-source-spec.hidden,
+#btn-plugins-source-resolve.hidden,
 #btn-plugins-source.hidden {
   display: none;
 }
@@ -7342,12 +7346,12 @@ body {
            read-only listing; never created in Electron, which reveals instead. -->
       <div id="plugins-folder" class="hidden"></div>
       <div id="plugins-source" class="hidden">
-        <label for="plugins-source-spec">Public GitHub repo</label>
+        <label id="plugins-source-label" for="plugins-source-spec">Public GitHub repo</label>
         <input id="plugins-source-spec" type="text" spellcheck="false" placeholder="owner/repo, owner/repo@ref, owner/repo@ref:path, or a github.com URL" />
         <div id="plugins-source-preview" class="plugin-row-note hidden"></div>
         <div id="plugins-source-warning" class="plugin-row-note warn hidden"></div>
         <div class="plugin-settings-actions">
-          <button id="btn-plugins-source-resolve" class="secondary" type="button" title="Read the repo's manifest without writing anything to disk">Resolve</button>
+          <button id="btn-plugins-source-resolve" class="secondary" type="button" title="Read the repo's manifest without writing anything into the plugins folder">Resolve</button>
           <button id="btn-plugins-source-install" type="button" disabled title="Resolve the repo first — Clodex reads its manifest before anything is downloaded.">Install</button>
           <button id="btn-plugins-source-cancel" class="secondary" type="button">Cancel</button>
         </div>
@@ -21844,8 +21848,12 @@ ${i3.join("\n")}
       var INSTALL_REASONS = {
         unresolved: "Resolve the repo first \u2014 Clodex reads its manifest before anything is downloaded.",
         failed: "That resolve did not succeed \u2014 fix the spec and resolve again.",
-        stale: "The spec changed since the last resolve \u2014 resolve it again."
+        stale: "The spec changed since the last resolve \u2014 resolve it again.",
+        unchanged: "The source still resolves to the commit already installed \u2014 there is nothing to update to."
       };
+      function shortCommit(commit) {
+        return commit == null ? "" : String(commit).slice(0, 7);
+      }
       function refLabel(resolved) {
         const ref = resolved && resolved.ref;
         return ref ? String(ref) : "the default branch";
@@ -21865,25 +21873,49 @@ ${i3.join("\n")}
         const version = m.version ? `v${m.version}` : "no version";
         return [
           `${name} \u2014 ${id} ${version}`,
-          `${sourceLabel(resolved)} at commit ${resolved.commit || "unknown"}`
+          `${sourceLabel(resolved)} at commit ${shortCommit(resolved.commit) || "unknown"}`
         ];
       }
       function warningText(resolved) {
         if (!resolved || !resolved.ok) return "";
-        return `This code will run inside Clodex with the app's full authority, the same as Clodex itself. It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${resolved.commit}). Clodex cannot check what it does \u2014 install it only if you trust its author.`;
+        return `This code will run inside Clodex with the app's full authority, the same as Clodex itself. It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). Clodex cannot check what it does \u2014 install it only if you trust its author.`;
       }
-      function installState({ resolved, fieldValue } = {}) {
+      function sourceLine(source) {
+        if (!source || !source.repo) return "";
+        const sub = source.subpath ? `:${source.subpath}` : "";
+        const at = shortCommit(source.commit) || "an unknown commit";
+        return `From github.com/${source.repo}@${refLabel(source)}${sub} at ${at}`;
+      }
+      function updatePreviewLines(resolved) {
+        if (!resolved || !resolved.ok) return [];
+        const m = resolved.manifest || {};
+        const id = m.id || resolved.id || "";
+        const name = m.name || id;
+        const was = resolved.previousVersion ? `v${resolved.previousVersion}` : "no version";
+        const now = m.version ? `v${m.version}` : "no version";
+        return [
+          `${name} \u2014 ${id} ${was} \u2192 ${now}`,
+          `${shortCommit(resolved.previousCommit) || "unknown"} \u2192 ${shortCommit(resolved.commit) || "unknown"}`
+        ];
+      }
+      function installState({ resolved, fieldValue, mode } = {}) {
         if (!resolved) return { enabled: false, reason: INSTALL_REASONS.unresolved };
         if (!resolved.ok) return { enabled: false, reason: INSTALL_REASONS.failed };
+        if (mode === "update") {
+          return resolved.changed ? { enabled: true, reason: "" } : { enabled: false, reason: INSTALL_REASONS.unchanged };
+        }
         const typed = String(fieldValue == null ? "" : fieldValue).trim();
         if (resolved.spec !== typed) return { enabled: false, reason: INSTALL_REASONS.stale };
         return { enabled: true, reason: "" };
       }
       module.exports = {
         INSTALL_REASONS,
+        shortCommit,
         refLabel,
         sourceLabel,
+        sourceLine,
         previewLines,
+        updatePreviewLines,
         warningText,
         installState
       };
@@ -34283,7 +34315,15 @@ ${detail}` });
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
-      var { previewLines, warningText, installState, sourceLabel } = require_plugin_source_dialog();
+      var {
+        previewLines,
+        updatePreviewLines,
+        warningText,
+        installState,
+        sourceLabel,
+        sourceLine,
+        shortCommit
+      } = require_plugin_source_dialog();
       var { prefsGate } = require_prefs_gate();
       var { planNewSession } = require_focus_policy();
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
@@ -38976,7 +39016,7 @@ ${res.stderr}` : "");
         pluginsOverlay.classList.remove("hidden");
       }
       async function renderPluginsDialog() {
-        if (!pluginsList) return;
+        if (!pluginsList) return [];
         let status = null;
         try {
           status = await window.api.pluginInvoke("_host", "plugins.status");
@@ -39049,6 +39089,12 @@ ${res.stderr}` : "");
             l.textContent = `Registered from ${p.linkedFrom}`;
             body.appendChild(l);
           }
+          if (p.source) {
+            const s = document.createElement("div");
+            s.className = "plugin-row-note";
+            s.textContent = sourceLine(p.source);
+            body.appendChild(s);
+          }
           row.appendChild(cb);
           row.appendChild(body);
           if (p.quarantined) {
@@ -39095,6 +39141,38 @@ ${res.stderr}` : "");
               await renderPluginsDialog();
             });
             row.appendChild(un);
+          }
+          if (p.source && !window.__CLODEX_WEB__) {
+            const up = document.createElement("button");
+            up.type = "button";
+            up.className = "secondary";
+            up.textContent = "Update\u2026";
+            up.title = `Re-resolve github.com/${p.source.repo} at ${p.source.ref || "the default branch"} and show what would change before anything is replaced`;
+            up.addEventListener("click", () => openPluginsSourceUpdate(p));
+            row.appendChild(up);
+            const rm = document.createElement("button");
+            rm.type = "button";
+            rm.className = "secondary";
+            rm.textContent = "Remove";
+            rm.title = `Delete ${p.id} from the plugins folder \u2014 it was fetched from github.com/${p.source.repo} and can be installed again`;
+            rm.addEventListener("click", async () => {
+              const name = p.name || p.id;
+              if (!confirm(`Remove ${name}? Its folder in the plugins folder is deleted \u2014 it was fetched from github.com/${p.source.repo} and can be installed again.`)) return;
+              rm.disabled = true;
+              let r = null;
+              try {
+                r = await window.api.pluginInvoke("_host", "plugins.removeSourcePlugin", [p.id]);
+              } catch {
+              }
+              if (!r || !r.ok) {
+                rm.disabled = false;
+                showPluginsRegisterNote(`Could not remove ${name}: ${r && r.error || "unknown error"}`, "warn");
+                return;
+              }
+              showPluginsRegisterNote(`Removed ${name}.`);
+              await renderPluginsDialog();
+            });
+            row.appendChild(rm);
           }
           pluginsList.appendChild(row);
           if (pluginBar.settingsSectionOwners().includes(p.id)) {
@@ -39154,6 +39232,7 @@ ${res.stderr}` : "");
           row.appendChild(body);
           pluginsList.appendChild(row);
         }
+        return plugins;
       }
       function makePluginSettingsPanel(p, row) {
         const panel = document.createElement("div");
@@ -39282,6 +39361,7 @@ ${res.stderr}` : "");
         }
       });
       var pluginsSourceSection = document.getElementById("plugins-source");
+      var pluginsSourceLabel = document.getElementById("plugins-source-label");
       var pluginsSourceSpec = document.getElementById("plugins-source-spec");
       var pluginsSourcePreview = document.getElementById("plugins-source-preview");
       var pluginsSourceWarning = document.getElementById("plugins-source-warning");
@@ -39290,6 +39370,8 @@ ${res.stderr}` : "");
       var pluginsSourceInstallBtn = document.getElementById("btn-plugins-source-install");
       var pluginsSourceCancelBtn = document.getElementById("btn-plugins-source-cancel");
       var pluginsSourceResolved = null;
+      var pluginsSourceMode = "install";
+      var pluginsSourceTarget = null;
       function paintPluginsSourceNote(el, text, extraClass) {
         if (!el) return;
         el.className = extraClass ? `plugin-row-note ${extraClass}` : "plugin-row-note";
@@ -39297,7 +39379,11 @@ ${res.stderr}` : "");
         el.classList.toggle("hidden", !text);
       }
       function paintPluginsSourceInstall() {
-        const st = installState({ resolved: pluginsSourceResolved, fieldValue: pluginsSourceSpec.value });
+        const st = installState({
+          resolved: pluginsSourceResolved,
+          fieldValue: pluginsSourceSpec.value,
+          mode: pluginsSourceMode
+        });
         pluginsSourceInstallBtn.disabled = !st.enabled;
         pluginsSourceInstallBtn.title = st.reason;
         return st;
@@ -39310,13 +39396,19 @@ ${res.stderr}` : "");
       }
       function closePluginsSourceSection() {
         pluginsSourceSpec.value = "";
+        pluginsSourceMode = "install";
+        pluginsSourceTarget = null;
+        pluginsSourceInstallBtn.textContent = "Install";
+        pluginsSourceLabel.classList.remove("hidden");
+        pluginsSourceSpec.classList.remove("hidden");
+        pluginsSourceResolveBtn.classList.remove("hidden");
         resetPluginsSourceResolve();
         pluginsSourceSection.classList.add("hidden");
       }
       if (window.__CLODEX_WEB__) pluginsSourceBtn.classList.add("hidden");
       pluginsSourceBtn.addEventListener("click", () => {
         showPluginsRegisterNote("");
-        resetPluginsSourceResolve();
+        closePluginsSourceSection();
         pluginsSourceSection.classList.remove("hidden");
         pluginsSourceSpec.focus();
       });
@@ -39327,11 +39419,12 @@ ${res.stderr}` : "");
         showPluginsRegisterNote("");
         resetPluginsSourceResolve();
         if (!spec) {
-          paintPluginsSourceNote(pluginsSourceWarning, "Give a repo first \u2014 owner/repo, owner/repo@ref, or a github.com URL.", "warn");
+          showPluginsRegisterNote("Give a repo first \u2014 owner/repo, owner/repo@ref, or a github.com URL.", "warn");
           return;
         }
         pluginsSourceResolveBtn.disabled = true;
         pluginsSourceInstallBtn.disabled = true;
+        pluginsSourceCancelBtn.disabled = true;
         try {
           let r = null;
           try {
@@ -39339,7 +39432,7 @@ ${res.stderr}` : "");
           } catch {
           }
           if (!r || !r.ok) {
-            paintPluginsSourceNote(pluginsSourceWarning, `Could not resolve ${spec}: ${r && r.error || "unknown error"}`, "warn");
+            showPluginsRegisterNote(`Could not resolve ${spec}: ${r && r.error || "unknown error"}`, "warn");
             return;
           }
           pluginsSourceResolved = { ...r, spec };
@@ -39347,34 +39440,95 @@ ${res.stderr}` : "");
           paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), "warn");
         } finally {
           pluginsSourceResolveBtn.disabled = false;
+          pluginsSourceCancelBtn.disabled = false;
           paintPluginsSourceInstall();
         }
       });
       pluginsSourceInstallBtn.addEventListener("click", async () => {
         if (!paintPluginsSourceInstall().enabled) return;
         const resolved = pluginsSourceResolved;
+        const updating = pluginsSourceMode === "update";
+        const name = resolved.manifest && resolved.manifest.name || resolved.id || pluginsSourceTarget;
         showPluginsRegisterNote("");
         pluginsSourceResolveBtn.disabled = true;
         pluginsSourceInstallBtn.disabled = true;
+        pluginsSourceCancelBtn.disabled = true;
         try {
           let r = null;
-          try {
-            r = await window.api.pluginInvoke("_host", "plugins.installFromSource", [resolved.spec]);
-          } catch {
+          if (updating) {
+            try {
+              r = await window.api.pluginInvoke("_host", "plugins.applyUpdate", [pluginsSourceTarget, resolved.commit]);
+            } catch {
+            }
+          } else {
+            try {
+              r = await window.api.pluginInvoke("_host", "plugins.installFromSource", [resolved.spec]);
+            } catch {
+            }
           }
           if (!r || !r.ok) {
-            paintPluginsSourceNote(pluginsSourceWarning, `Could not install ${sourceLabel(resolved)}: ${r && r.error || "unknown error"}`, "warn");
+            const what = updating ? `update ${name}` : `install ${sourceLabel(resolved)}`;
+            showPluginsRegisterNote(`Could not ${what}: ${r && r.error || "unknown error"}`, "warn");
             return;
           }
-          const name = resolved.manifest && resolved.manifest.name || r.id;
+          if (updating) {
+            closePluginsSourceSection();
+            const rows = await renderPluginsDialog();
+            const redrawn = rows.find((x) => x.id === r.id);
+            const restart = redrawn && redrawn.restartRequired ? " \u2014 restart Clodex to run the new code" : "";
+            showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.`);
+            return;
+          }
           closePluginsSourceSection();
-          showPluginsRegisterNote(`Installed ${name} at ${r.commit} \u2014 it is off until you turn it on from its row above.`);
+          showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} \u2014 it is off until you turn it on from its row above.`);
           await renderPluginsDialog();
         } finally {
           pluginsSourceResolveBtn.disabled = false;
+          pluginsSourceCancelBtn.disabled = false;
           paintPluginsSourceInstall();
         }
       });
+      async function openPluginsSourceUpdate(p) {
+        showPluginsRegisterNote("");
+        closePluginsSourceSection();
+        const name = p.name || p.id;
+        pluginsSourceMode = "update";
+        pluginsSourceTarget = p.id;
+        pluginsSourceInstallBtn.textContent = "Update";
+        pluginsSourceLabel.classList.add("hidden");
+        pluginsSourceSpec.classList.add("hidden");
+        pluginsSourceResolveBtn.classList.add("hidden");
+        pluginsSourceSection.classList.remove("hidden");
+        paintPluginsSourceNote(pluginsSourcePreview, `Checking github.com/${p.source.repo} for a newer ${name}\u2026`);
+        pluginsSourceInstallBtn.disabled = true;
+        pluginsSourceCancelBtn.disabled = true;
+        let r = null;
+        try {
+          r = await window.api.pluginInvoke("_host", "plugins.resolveUpdate", [p.id]);
+        } catch {
+        }
+        pluginsSourceCancelBtn.disabled = false;
+        if (!r || !r.ok) {
+          closePluginsSourceSection();
+          showPluginsRegisterNote(`Could not check ${name} for an update: ${r && r.error || "unknown error"}`, "warn");
+          return;
+        }
+        if (!r.changed) {
+          closePluginsSourceSection();
+          showPluginsRegisterNote(`${name} is up to date at ${shortCommit(r.commit)}.`);
+          return;
+        }
+        pluginsSourceResolved = {
+          ...r,
+          repo: p.source.repo,
+          ref: p.source.ref,
+          subpath: p.source.subpath,
+          previousVersion: p.version
+        };
+        paintPluginsSourceNote(pluginsSourcePreview, updatePreviewLines(pluginsSourceResolved).join("\n"));
+        paintPluginsSourceNote(pluginsSourceWarning, warningText(pluginsSourceResolved), "warn");
+        paintPluginsSourceInstall();
+      }
       document.getElementById("btn-plugins-reveal").addEventListener("click", async () => {
         if (window.__CLODEX_WEB__) {
           await showPluginsFolderListing();
