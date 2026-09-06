@@ -157,8 +157,16 @@ where plugins come from.
 
 ## Start from a working one
 
-[`tools/`](./tools/README.md) is the short path — three commands, no reading
-required first:
+`clodex-plugin-builder/` is the shortest path, and the only one that needs no
+reading at all: it is a shipped content-only plugin, off by default, so tick it
+onto a seat (**Plugins ▸ Manage Plugins…**, then that seat's plugin list) and
+run `/clodex-plugin-builder:create-plugin <id> [what it should do]`. The skill
+scaffolds the plugin, wires the surfaces you name and runs it through the real
+loader, delegating the contract to a subagent so it never lands in the seat's
+context.
+
+[`tools/`](./tools/README.md) is the short path when you are driving by hand —
+three commands, no reading required first:
 
 ```bash
 node plugins/tools/build-context.js            # the whole contract as one pack, for an agent

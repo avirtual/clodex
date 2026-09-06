@@ -1,0 +1,9 @@
+{
+  "id": "clodex-plugin-builder",
+  "name": "Clodex Plugin Builder",
+  "version": "0.1.0",
+  "hostApi": "1",
+  "entry": {},
+  "enabledByDefault": false,
+  "announce": "Build a Clodex plugin without reading the whole contract first: /clodex-plugin-builder:create-plugin scaffolds one, wires the surfaces you asked for, and verifies it against the real loader. Content only — no code."
+}
