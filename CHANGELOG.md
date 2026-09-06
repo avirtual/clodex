@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Install from GitHub… explains how to install a plugin that lives in a folder of a repo: paste the folder's GitHub URL (…/tree/<branch>/<folder>) or write owner/repo@ref:folder, and the hint under the field says what @ and : pick.
+- Install from GitHub… explains how to install a plugin that lives in a folder of a repo: paste the folder's GitHub URL (`…/tree/<branch>/<folder>`) or write `owner/repo@ref:folder`, and the hint under the field says what @ and : pick.
 
 ## 5.33.0 — 2026-09-06
 

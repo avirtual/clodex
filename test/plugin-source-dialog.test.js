@@ -649,6 +649,18 @@ test('the field and the hint under it show the folder-in-a-repo forms', () => {
     'a placeholder shows the shape but never says what the punctuation picks');
 });
 
+test('the hint follows the input out of sight in update mode', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /<input id="plugins-source-spec"[^>]*\/?>\s*<div id="plugins-source-hint"/,
+    'ENTER: the hint is the input\'s IMMEDIATE next sibling — the rule below is an adjacent-sibling '
+    + 'selector, so an element inserted between them silently unhides the hint again');
+  const css = fs.readFileSync(path.join(ROOT, 'renderer', 'styles.css'), 'utf8');
+  assert.ok(/#plugins-source-spec\.hidden \+ #plugins-source-hint\s*\{\s*display:\s*none/.test(css),
+    'one section serves install and update: openPluginsSourceUpdate hides the label, the input and Resolve, '
+    + 'so a hint that is never toggled tells an operator to paste a URL with no field on screen. There is no '
+    + 'generic .hidden rule in this stylesheet, so dropping this line ships the leak rather than a default');
+});
+
 test('Install from GitHub… is offered on the web surface, unlike Register', () => {
   assert.ok(/if \(window\.__CLODEX_WEB__\) pluginsRegisterBtn\.classList\.add\('hidden'\)/.test(rendererSrc),
     'ENTER: the absence below is about a hide that sat beside one that still exists — register-from-path '
