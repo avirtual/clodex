@@ -209,18 +209,24 @@ migrations live in `db/`, that the integration suite needs a running Postgres,
 or that one directory is generated and must never be hand-edited. That is your
 project's knowledge, and it belongs in an **append prompt**.
 
-The shipped hand template names the stem `team-project`. Append prompts resolve
-against the shared prompt library, so **today that stem means exactly one file**:
+The shipped hand template names the stem `team-project`. Write it in your team's
+own directory:
+
+```
+~/.clodex/teams/<name>/prompts/append/team-project.md
+```
+
+It rides into every seat whose template names the stem, and it belongs to this
+team alone — two teams on one machine can each keep their own `team-project`.
+
+The library path still works and is still the shared one:
 
 ```
 ~/.clodex/library/prompts/append/team-project.md
 ```
 
-Write it there and it rides into every seat whose template names the stem. Note
-the consequence of it being the *library*: the file is shared by every team on
-this machine. If you run teams on two projects, either keep the content generic,
-or give each team's template its own stem (`acme-project`, `beta-project`) and
-write one file per stem.
+Use it for content that is genuinely generic across every team on this machine.
+A team's own copy of a stem wins over the library copy of the same stem.
 
 Clodex ships no `team-project.md` and `Create Team…` writes no skeleton —
 deliberately. An empty placeholder would report as "resolved" while the seat
@@ -231,24 +237,28 @@ convention buried in a document.
 Write it in your own words. What the project is, what the layout means, how to
 run things, what breaks in non-obvious ways.
 
-> **Designed, not built:** per-team prompt directories
-> (`~/.clodex/teams/<name>/prompts/append/<stem>.md`, shadowing the library so
-> each team can carry its own copy of a stem) are designed but **not
-> implemented**. Nothing reads that path today — a file placed there is silently
-> ignored. Use the library path above until this ships.
+A team directory carries its own prompts, beside its `team.json`:
+`~/.clodex/teams/<name>/prompts/system/<stem>.md` and
+`~/.clodex/teams/<name>/prompts/append/<stem>.md`. A stem without a colon
+resolves there first and in the library second; a `<plugin-id>:<stem>` ref is a
+plugin reference and is unaffected. The library seeder never writes under
+`teams/`, so a team's own copy is yours and no upgrade refreshes it under you.
 
 ## How a role finds its prompt
 
-A role's `prompt` names a stem resolved against the shipped prompt library
-(`~/.clodex/library/prompts/system/<stem>.md`). The three stock stems —
-`clodex-team-lead`, `clodex-team-hand`, `clodex-team-reviewer` — are library
+A role's `prompt` names a stem, and a stem resolves in two places: the team's own
+`~/.clodex/teams/<name>/prompts/system/<stem>.md` first, then the shared library
+at `~/.clodex/library/prompts/system/<stem>.md`. The three stock stems —
+`clodex-team-lead`, `clodex-team-hand`, `clodex-team-reviewer` — ship as library
 files, shared by every team, which is what keeps them receiving fixes rather
 than being forked per project. Their names say "clodex" for historical reasons
 only; nothing in their text does.
 
-If you want a divergent prompt for one role on one team, point the role at your
-own stem. The recommended change is smaller than that, though: leave the role
-prompts alone and put project specifics in the append file above. The role
+If you want a divergent prompt for one role on one team, drop your own copy of
+the stem under that team's `prompts/system/`, or point the role at a new stem.
+The recommended change is smaller than either, though: leave the stock role
+prompts in the library, where they keep receiving fixes, and put project
+specifics in the team's own `prompts/append/`. The role
 prompts describe *behaviour*; the append describes *your code*. Keeping that
 seam is what lets a Clodex upgrade improve your team's judgement without
 touching anything you wrote.
@@ -268,7 +278,7 @@ so you do not have to teach it the vocabulary.
 ## Checklist for a new project
 
 1. `Create Team…`, pointed at your project root.
-2. Write `~/.clodex/library/prompts/append/team-project.md`.
+2. Write `~/.clodex/teams/<name>/prompts/append/team-project.md`.
 3. Decide about tests: add `scripts/run-tests.js` emitting TAP, or accept
    per-ticket escalation.
 4. Optional: add exec defs for the commands your agents will reach for most,

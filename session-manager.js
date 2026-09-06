@@ -1342,7 +1342,7 @@ function createSessionManager(deps) {
           if (preseedClaudeOnboarding({ fs, path, homeDir: os.homedir() })) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
-          const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null);
+          const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
           promptRecipe = {
             extraArgs,
             intents,
@@ -1363,7 +1363,7 @@ function createSessionManager(deps) {
           // ONE call, both outputs. Not two calls at their respective use sites:
           // readAppendBodies hits the disk, so a second call could legitimately
           // read different bytes and put `args` and the baked prompt out of sync.
-          const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock);
+          const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock, resolvedTeam);
           args = cleaned;
           const staleSettings = args.findIndex(
             (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
@@ -1560,9 +1560,9 @@ function createSessionManager(deps) {
           cmd = 'codex';
           const seatPlugins = Array.isArray(plugins) ? plugins : null;
           const codexSystemBody = readSystemPromptBody
-            ? readSystemPromptBody(systemPromptFile, seatPlugins)
+            ? readSystemPromptBody(systemPromptFile, seatPlugins, resolvedTeam)
             : (systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null);
-          const codexAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins);
+          const codexAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins, resolvedTeam);
           const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null)), {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
@@ -2834,19 +2834,19 @@ function createSessionManager(deps) {
             if (def && def.prompt) {
               // Resolved on BOTH arms. When the prompt rides as
               // --system-prompt-file this method appends nothing and the stem is
-              // resolved instead by resolveSystemPromptFile at prompt-build time
-              // — where a miss returns null and the seat boots with NO system
-              // prompt at all, strictly worse than unbriefed and reported by
-              // nobody. Same path both resolvers use, so one read answers for
-              // both; a present-but-empty file is NOT a miss.
-              const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
+              // resolved instead at prompt-build time — where a miss returns null
+              // and the seat boots with NO system prompt, strictly worse than
+              // unbriefed and reported by nobody. Same rule both arms use (team
+              // copy, then library); an empty file is NOT a miss. Caught HERE, not
+              // by the outer catch, which would drop the whole team block.
               let rolePrompt = null;
-              try { rolePrompt = fs.readFileSync(promptFile, 'utf-8'); }
+              try { rolePrompt = readSystemPromptBody(def.prompt, null, team); }
               catch { rolePrompt = null; }
+              const where = `teams/${team.name}/prompts/system or library/prompts/system`;
               if (rolePrompt == null) {
                 missingPrompt = promptRidesAsSystem
-                  ? `role "${role}" names system prompt "${def.prompt}", which is not installed under library/prompts/system — ${name} boots with NO system prompt`
-                  : `role "${role}" names prompt "${def.prompt}", which is not installed under library/prompts/system — ${name} boots unbriefed`;
+                  ? `role "${role}" names system prompt "${def.prompt}", which is not installed under ${where} — ${name} boots with NO system prompt`
+                  : `role "${role}" names prompt "${def.prompt}", which is not installed under ${where} — ${name} boots unbriefed`;
               } else if (!promptRidesAsSystem && rolePrompt) {
                 teamBlock = `${teamBlock}\n\n${rolePrompt}`;
               }
@@ -2872,16 +2872,16 @@ function createSessionManager(deps) {
     // re-derived from the persistence entry: `extraArgs` and the resolved
     // `CLODEX_DISABLE_IPC_PROMPT` decision are spawn-time inputs that the entry
     // does not carry in the form used here, and re-deriving them is how the two
-    // halves diverged in the first place. Only `teamBlock` is passed separately,
-    // because it is the ONE part that is deliberately re-resolved per refresh
-    // (see _teamBlockFor) and create() already computed it for other uses.
-    _realIpcFor(recipe, teamBlock) {
+    // halves diverged in the first place. `teamBlock` and its `team` are passed
+    // separately, being the part deliberately re-resolved per refresh: ONE
+    // resolution answers for the block and for the append stems (see _teamBlockFor).
+    _realIpcFor(recipe, teamBlock, team) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands),
           pluginGrammarLines(recipe.intents, recipe.plugins));
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
-        appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins),
+        appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins, team),
         inlineBody: recipe.inlineBody,
         hasSystemFile: recipe.hasSystemFile,
       });
@@ -2937,8 +2937,8 @@ function createSessionManager(deps) {
         // refresh to force a broadcast on the other arm: the `already current`
         // guard is what keeps a clear/compact from re-baking identical bytes
         // under a live CLI.
-        const { teamBlock, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
-        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock);
+        const { teamBlock, resolvedTeam, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
+        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam);
         if (realIpc === readCache(REGISTRY_DIR, name, 'session')) return false; // already current
         const baked = bakePrompt(REGISTRY_DIR, name, realIpc, false);
         // tmp + rename: create() writes this path before the PTY exists, but here

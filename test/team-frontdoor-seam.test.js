@@ -336,7 +336,7 @@ test('team:preflight binds the probes to the real stores and returns the leaf fi
   assert.deepStrictEqual(res.findings, [
     {
       level: 'warn', kind: 'prompt', role: 'hand', ref: 'gone', resolvedFrom: null,
-      message: 'role "hand": prompt "gone" is not installed under library/prompts/system — a seat spawned for this role boots unbriefed',
+      message: 'role "hand": prompt "gone" is not installed under teams/shop/prompts/system or library/prompts/system — a seat spawned for this role boots unbriefed',
     },
     {
       level: 'warn', kind: 'exec', role: 'hand', ref: 'run-tests', resolvedFrom: 'library',

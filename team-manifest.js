@@ -309,7 +309,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
-    return { name, root: path.resolve(root), lead, roles, file, watchdogMs, version, droppedFields };
+    return { name, root: path.resolve(root), lead, roles, file, dir: path.dirname(file), watchdogMs, version, droppedFields };
   }
 
   function containsPath(root, cwd) {

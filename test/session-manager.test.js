@@ -295,6 +295,7 @@ const fsReal = require('fs');
 const osReal = require('os');
 const pathReal = require('path');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
+const { teamPromptFile } = require('../team-prompt-dir');
 
 function mkWithTranscript(sessionId, overrides = {}) {
   const root = mkTmpRoot('clodex-sm-');
@@ -3954,6 +3955,13 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 function mkReview(extra = {}) {
   const roleOverride = extra.reviewerRole;
   delete extra.reviewerRole;
+  // The directory holding this team's team.json, which is where its own prompts/
+  // lives — the field loadManifest now returns, so the fixture team carries what
+  // the real one does. The default matches `file`'s dirname and points at nothing
+  // on disk, which is what every pre-t699 subject wants: no team copy resolves. A
+  // subject that needs a real one passes `teamDir`.
+  const teamDirOverride = extra.teamDir;
+  delete extra.teamDir;
   const acCalls = [];
   // Template seed: `reviewTemplates` (the full list) wins; else `reviewTemplate`
   // (single, overriding the shipped default's fields); else the shipped default.
@@ -3965,6 +3973,7 @@ function mkReview(extra = {}) {
   const reviewerRole = roleOverride || { instantiate: 'subagent', prompt: 'clodex-team-reviewer',
     brief: 'the reviewer', tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false };
   const team = { name: 'team', root: '/proj', lead: 'lead', file: '/proj/team.json',
+    dir: teamDirOverride || '/proj',
     roles: { lead: { instantiate: 'session', brief: 'the lead' }, reviewer: reviewerRole } };
   const store = [];
   const persistence = {
@@ -5369,8 +5378,10 @@ test('t8 F1: a reviewer template carrying a PLUGIN verb has it STRIPPED (registr
 });
 
 // --- T52 NIT (defense-in-depth): a template systemPromptFile that could escape
-// library/prompts/system (path separator or "..") is rejected AT THE REVIEWER
-// CONSUME POINT and falls back to the shipped default, with a loud warn. ---
+// the prompt directories it resolves against (path separator or "..") is rejected
+// AT THE REVIEWER CONSUME POINT and falls back to the shipped default, with a
+// loud warn. Since t699 there are TWO such directories — the team's own and the
+// library — which is why the warning no longer names one. ---
 test('team-review (T52): a traversing systemPromptFile is rejected → falls back to the default prompt + loud warn', async () => {
   const { m, injected, created } = mkReview({
     reviewTemplate: { systemPromptFile: '../../../../tmp/evil' },
@@ -5382,7 +5393,9 @@ test('team-review (T52): a traversing systemPromptFile is rejected → falls bac
   const systemPromptFile = created[0][14]; // 0-indexed: systemPromptFile(14)
   assert.strictEqual(systemPromptFile, 'clodex-team-reviewer',
     'the traversing stem is dropped; the built-in default prompt is used instead');
-  assert.ok(injected.some((t) => /contains a path separator or "\.\."/.test(t) && /could escape library\/prompts\/system/.test(t)),
+  assert.ok(injected.some((t) => /contains a path separator or "\.\."/.test(t)
+    && /could escape the prompt directories it is resolved against/.test(t)
+    && /\.\.\/\.\.\/\.\.\/\.\.\/tmp\/evil/.test(t)),
     'the lead gets a loud NOTE naming the rejected stem and the reason');
 });
 
@@ -5543,6 +5556,54 @@ test('team-review: an installed role-prompt file yields NO unbriefed warning', a
   await new Promise((r) => setImmediate(r));
   assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'confirmed');
   assert.ok(!injected.some((t) => /UNBRIEFED/.test(t)), 'no warning when the prompt is installed');
+});
+
+// --- t699: the reviewer preflight resolves through the injected resolver, so a
+// prompt the TEAM owns counts as installed. Both subjects drive the real
+// _handleTeamReview: the resolver is injected, but what decides the warning is
+// team-tickets.js's own promptFile/existsSync branch, which is what an earlier
+// version of this pin failed to execute at all. ---
+
+test('team-review (t699): a role prompt only under the TEAM dir yields NO unbriefed warning', async () => {
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-t699-');
+  const teamDir = pathReal.join(REGISTRY_DIR, 'teams', 'team');
+  const sysDir = pathReal.join(teamDir, 'prompts', 'system');
+  fsReal.mkdirSync(sysDir, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(sysDir, 'clodex-team-reviewer.md'), 'you are the reviewer');
+  // ENTER: the LIBRARY copy must be absent, or this passes on the old path and
+  // proves nothing about the team directory. mkReview seeds one by default, so
+  // the empty REGISTRY_DIR here is load-bearing.
+  assert.strictEqual(
+    fsReal.existsSync(pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system', 'clodex-team-reviewer.md')),
+    false, 'ENTER: no library copy — the team directory is the only place it exists');
+
+  const { m, injected, created } = mkReview({
+    REGISTRY_DIR, fs: fsReal, path: pathReal, teamDir,
+    resolveSystemPromptFile: (stem, _plugins, t) => teamPromptFile({ fs: fsReal, path: pathReal }, t, 'system', stem),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned — otherwise the preflight never ran');
+  assert.ok(!injected.some((t) => /UNBRIEFED/.test(t)),
+    'the team\'s own copy is installed, so the reviewer is not reported as booting unbriefed');
+});
+
+test('team-review (t699): a stem in NEITHER place warns, naming both — a null resolution is a miss, not a skip', async () => {
+  // The library copy IS installed (mkReview's default seed), so a preflight that
+  // treated a null resolution as "nothing to check" would stay silent here for
+  // the wrong reason. The resolver answers null, and that must read as MISSING.
+  const { m, injected, created } = mkReview({ resolveSystemPromptFile: () => null });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, 'ENTER: still spawns — the warning is advisory, not a block');
+  const warn = injected.find((t) => /boots UNBRIEFED/.test(t));
+  assert.ok(warn, 'a stem that resolves nowhere is reported, not skipped');
+  assert.ok(/teams\/team\/prompts\/system or library\/prompts\/system/.test(warn),
+    'and the text names BOTH places the operator may install it');
 });
 
 // t414 nit 3, a lead ruling: the rule is "reported ONCE". A reviewer whose prompt

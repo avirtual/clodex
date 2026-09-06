@@ -502,9 +502,12 @@ test('mkLoop injects every dep team-tickets.js reads', () => {
   // reach the path.
   const f = mkLoop({ repo: mkRepo() });
   assertTicketDepsCovered(assert, f.deps, {
+    // resolveSystemPromptFile is optional in the same sense (t699): absent, the
+    // reviewer preflight uses its built-in library join, which is what every
+    // subject here measures. Wiring it would change what these fixtures test.
     // Left unset on purpose so every subject exercises the SHIPPED timeout; only
     // the hang subject passes one, through mkLoop's `suiteTimeoutMs`.
-    optional: ['ticketSuiteTimeoutMs'],
+    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile'],
   });
 });
 

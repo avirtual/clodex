@@ -15,6 +15,7 @@ const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { confine } = require('./path-confine');
+const { teamPromptFile } = require('./team-prompt-dir');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
@@ -367,34 +368,43 @@ function pluginBundles() {
   try { return pluginHost.bundles() || []; } catch { return []; }
 }
 
-function resolveSystemPromptFile(stem, seatPlugins) {
+function teamOwnBody(team, kind, stem) {
+  const own = teamPromptFile({ fs, path }, team, kind, stem);
+  if (!own) return null;
+  try { return fs.readFileSync(own, 'utf-8'); }
+  catch { return null; }
+}
+
+function resolveSystemPromptFile(stem, seatPlugins, team) {
   if (!stem) return null;
   const ref = splitPluginPromptRef(stem);
   if (ref) {
     return resolvePluginSystemPromptFile({ fs, path, bundles: pluginBundles() }, ref, seatPlugins);
   }
+  const own = teamPromptFile({ fs, path }, team, 'system', stem);
+  if (own) return own;
   const p = promptLibrary._file('system', stem);
   try { fs.accessSync(p, fs.constants.R_OK); return p; }
   catch { return null; }
 }
 
-function readAppendBodies(stems, seatPlugins) {
+function readAppendBodies(stems, seatPlugins, team) {
   const out = [];
   for (const stem of stems || []) {
     const ref = splitPluginPromptRef(stem);
     const body = ref
       ? resolvePluginPromptBody({ bundles: pluginBundles() }, ref, 'append', seatPlugins)
-      : promptLibrary.raw('append', stem);
+      : (teamOwnBody(team, 'append', stem) ?? promptLibrary.raw('append', stem));
     if (body != null && body.trim()) out.push(body);
   }
   return out;
 }
 
-function readSystemPromptBody(stem, seatPlugins) {
+function readSystemPromptBody(stem, seatPlugins, team) {
   if (!stem) return null;
   const ref = splitPluginPromptRef(stem);
   if (ref) return resolvePluginPromptBody({ bundles: pluginBundles() }, ref, 'system', seatPlugins);
-  return promptLibrary.raw('system', stem);
+  return teamOwnBody(team, 'system', stem) ?? promptLibrary.raw('system', stem);
 }
 
 function listAllTemplates() {
@@ -2130,6 +2140,7 @@ const toolCache = createToolCache({ whichBin });
     getPluginHost: () => pluginHost,
     getPluginLoader: () => pluginLoader,
     listAllTemplates,
+    resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,

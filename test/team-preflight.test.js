@@ -20,6 +20,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { teamPreflight } = require('../team-preflight');
+const { teamPromptFile } = require('../team-prompt-dir');
 const { preflightByRole } = require('../renderer/lib/team-roles');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -76,7 +77,7 @@ test('an unresolved role prompt is a warn naming the role, the ref and the conse
     role: 'hand',
     ref: 'clodex-team-hand',
     resolvedFrom: null,
-    message: 'role "hand": prompt "clodex-team-hand" is not installed under library/prompts/system — a seat spawned for this role boots unbriefed',
+    message: 'role "hand": prompt "clodex-team-hand" is not installed under teams/shop/prompts/system or library/prompts/system — a seat spawned for this role boots unbriefed',
   }]);
 });
 
@@ -392,13 +393,27 @@ test('preflightByRole buckets by role and OMITS roles that owe nothing', () => {
 
 const { createSessionManager } = require('../session-manager');
 
-// Only the four deps _teamBlockFor actually touches are real (fs, path,
-// REGISTRY_DIR, resolveTeam); everything else is an inert stub. The method is
-// called directly — create() is not, so none of the spawn machinery is needed.
+// Only the deps _teamBlockFor actually touches are real (fs, path, REGISTRY_DIR,
+// resolveTeam, readSystemPromptBody); everything else is an inert stub. The
+// method is called directly — create() is not, so none of the spawn machinery is
+// needed.
+//
+// readSystemPromptBody must be REAL rather than the Proxy's inert stub: the
+// method reads its role prompt through that seam, and a stub returning undefined
+// would make every subject below report a missing prompt for the wrong reason —
+// the "INSTALLED prompt reports nothing" arms would fail while the "missing
+// prompt is reported" arms passed vacuously. It resolves the team's own copy
+// before the library through the same leaf the engine's resolver uses, so the
+// precedence under test here is the shipped one, not a second statement of it.
 function mkManager(root, team) {
   const SessionManager = createSessionManager(new Proxy({
     REGISTRY_DIR: root, fs, path, os,
     resolveTeam: () => team,
+    readSystemPromptBody: (stem, _plugins, t) => {
+      const own = teamPromptFile({ fs, path }, t, 'system', stem);
+      const file = own || path.join(root, 'library', 'prompts', 'system', `${stem}.md`);
+      try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
+    },
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
   }, {
     get(t, p) { return p in t ? t[p] : () => {}; },
