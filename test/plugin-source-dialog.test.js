@@ -504,7 +504,7 @@ test('a resolveUpdate that lands after the operator moved on paints and stores n
     'the target must be captured before the await — reading pluginsSourceTarget after it compares the new sitting against itself');
   const guard = fn.indexOf("if (pluginsSourceMode !== 'update' || pluginsSourceTarget !== target) return;");
   assert.ok(guard > resolve, 'the guard belongs after the await it is guarding');
-  const paint = fn.indexOf('paintPluginsSourceNote(', guard);
+  const paint = fn.indexOf('paintPluginsSourceNote(', resolve);
   assert.ok(paint > guard, 'no paint may precede the guard, or the stale reply writes the live section');
   const reEnable = fn.indexOf('pluginsSourceCancelBtn.disabled = false;', resolve);
   assert.ok(reEnable > guard,
