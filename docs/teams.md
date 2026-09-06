@@ -336,8 +336,15 @@ delta. When both name the same stem it is applied once. This holds for ticket
 seats, reviewer seats and `[agent:spawn … template:]` seats alike. Team
 preflight notes a role whose two sources disagree, since only one of them is the
 system prompt. It also warns when the template's system prompt resolves nowhere,
-because that seat boots with no system prompt at all — except for a
-plugin-namespaced one, which the plugin resolves and preflight does not check.
+because that seat boots with no system prompt at all.
+
+Every prompt stem preflight resolves out of a template — the `systemPromptFile`
+and each append stem — is left alone when it is a plugin-namespaced ref, by the
+same rule the runner applies (`<plugin>:<stem>`, an id before the colon): the
+plugin holds that file, teams and the library never do, so checking it could only
+produce a false miss. A role's own `prompt` is the exception and is still
+checked, because a role prompt is read with no plugins at spawn, so a namespaced
+ref there genuinely misses.
 
 A role's `prompt` names a stem, and a stem resolves in two places: the team's own
 `~/.clodex/teams/<name>/prompts/system/<stem>.md` first, then the shared library
