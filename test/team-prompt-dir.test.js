@@ -297,7 +297,14 @@ test('t699: the ipc probe reports team|library|null, and the team dir wins', () 
   writePrompt(libDir(home), 'system', 'own', LIB_BODY);
   writePrompt(libDir(home), 'system', 'shared', LIB_BODY);
 
-  // The probe as ipc-handlers.js builds it, over the real store surface.
+  // The probe below is a COPY of the expression ipc-handlers.js installs, so on
+  // its own it would pass against a handler that never grew the team branch.
+  // This is what ties the copy to the shipped one; without it the subject
+  // measures the leaf twice and the wiring not at all.
+  const ipcSrc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.match(ipcSrc, /resolvePrompt: \(kind, stem\) => \(teamPromptFile\(\{ fs, path \}, team, kind, stem\)\s*\n\s*\? 'team'\s*\n\s*: \(promptLibrary\.raw\(kind, stem\) == null \? null : 'library'\)\),/,
+    'the team:preflight handler builds its probe over the team, team-copy branch first');
+
   const promptLibrary = {
     raw: (kind, stem) => {
       try { return fs.readFileSync(path.join(libDir(home), 'prompts', kind, `${stem}.md`), 'utf-8'); }
@@ -367,7 +374,19 @@ test('t699: a reviewer prompt that exists only under the team dir does not warn 
     'ENTER: the library must NOT carry it — otherwise the old code path passes too');
 
   const team = { name: 't', root: '/repo', dir: teamDir(home) };
-  // The two lines team-tickets.js computes: resolve, then stat.
+  // The reviewer preflight is reached only through a full review spawn, so what
+  // is exercised here is the resolver it now calls, plus a source pin on the CALL
+  // — the two lines team-tickets.js computes: resolve through the dep, then stat
+  // the result. Without the pin this subject would pass against a preflight that
+  // kept its hand-rolled library join and never consulted the team directory.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  assert.match(src, /\(stem\) => resolveSystemPromptFile\(stem, null, team\)/,
+    'the injected resolver is called with the REVIEW\'S team, not with two args');
+  assert.match(src, /promptFile = reviewerSystemPrompt \? resolvePromptFile\(reviewerSystemPrompt\) : null/,
+    'and its result is what the preflight stats');
+  assert.match(src, /not found under teams\/\$\{team\.name\}\/prompts\/system or library\/prompts\/system/,
+    'the UNBRIEFED warning names both places the operator may install it');
+
   const resolveSystemPromptFile = (stem, _plugins, t) =>
     teamPromptFile({ fs, path }, t, 'system', stem)
     || (fs.existsSync(path.join(libDir(home), 'prompts', 'system', `${stem}.md`))
