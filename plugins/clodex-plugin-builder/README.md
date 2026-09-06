@@ -59,14 +59,15 @@ Otherwise, **Plugins ▸ Manage Plugins… ▸ Install from GitHub…**:
 ```
 https://github.com/avirtual/clodex-plugins/tree/master/clodex-plugin-builder
 avirtual/clodex-plugins:clodex-plugin-builder                                # follows the branch
-avirtual/clodex-plugins@clodex-plugin-builder-v0.2.1:clodex-plugin-builder   # frozen
+avirtual/clodex-plugins@clodex-plugin-builder-v0.2.2:clodex-plugin-builder   # frozen
 ```
 
 `@` picks the ref and `:` picks the subfolder; the subpath is required, since
 every plugin in that repo is a folder in it. Or clone the repo and use
 **Register Plugin…** on the folder, which is the better loop while editing —
-though note a registered symlink of an id blocks a GitHub install of the same
-id.
+though note a registered symlink of an id blocks a GitHub install of the same id
+(`"<id>" is a registered link, not a directory from a source — unregister it
+first.`).
 
 Then tick it on the seat that should hold it. Content is bound when a seat
 starts, so a running seat picks it up at its next start.

@@ -84,27 +84,26 @@ test('t709: the shipped plugin directory carries no JavaScript', () => {
   assert.deepStrictEqual(found, []);
 });
 
-test('t713: the shipped copy is upstream 0.2.1, teaching the surfaces table', () => {
+test('t714: the shipped copy is upstream 0.2.2, teaching the surfaces table', () => {
   // The shipped plugin is a verbatim copy of an upstream repo, so nothing in
   // this tree changes when upstream does; a sync that stalls is invisible.
-  // Pinning the version against the one teaching artifact that release added —
-  // the `surfaces` refusal string a browser gets for an undeclared method —
+  // Pinning the version against the teaching artifacts the shipped bytes carry
   // makes a half-applied sync (new bytes, old manifest, or the reverse) fail
   // here rather than shipping a builder that documents the wrong contract.
   const loader = realRootLoader();
   const rec = loader.discover().find((r) => r.id === ID);
   assert.ok(rec, `ENTER: ${ID} was discovered from the real built-in root`);
 
-  assert.strictEqual(rec.manifest.version, '0.2.1',
-    'the shipped manifest is at upstream tag clodex-plugin-builder-v0.2.1');
+  assert.strictEqual(rec.manifest.version, '0.2.2',
+    'the shipped manifest is at upstream tag clodex-plugin-builder-v0.2.2');
 
   const skill = rec.skills[0].content;
-  // ENTER: the body came off disk. Every check below is a substring match, and
-  // an empty string satisfies none of them loudly — it just fails as if the
-  // text were missing from a body that was in fact never read.
   assert.match(skill, /\/clodex-plugin-builder:create-plugin/,
     'ENTER: the skill body was read off disk, not recorded as an empty string');
 
   assert.ok(skill.includes('plugin method not available on this surface'),
     'the skill teaches the refusal a browser gets for a method left out of `surfaces`');
+
+  assert.ok(skill.includes('is a registered link, not a directory from a source'),
+    'the skill quotes the refusal a GitHub install gets when a registered symlink holds the id');
 });
