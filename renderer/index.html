@@ -1126,8 +1126,20 @@
            the WRONG machine's folder. Filled by renderer.js from the engine's
            read-only listing; never created in Electron, which reveals instead. -->
       <div id="plugins-folder" class="hidden"></div>
+      <div id="plugins-source" class="hidden">
+        <label for="plugins-source-spec">Public GitHub repo</label>
+        <input id="plugins-source-spec" type="text" spellcheck="false" placeholder="owner/repo, owner/repo@ref, owner/repo@ref:path, or a github.com URL" />
+        <div id="plugins-source-preview" class="plugin-row-note hidden"></div>
+        <div id="plugins-source-warning" class="plugin-row-note warn hidden"></div>
+        <div class="plugin-settings-actions">
+          <button id="btn-plugins-source-resolve" class="secondary" type="button" title="Read the repo's manifest without writing anything to disk">Resolve</button>
+          <button id="btn-plugins-source-install" type="button" disabled title="Resolve the repo first — Clodex reads its manifest before anything is downloaded.">Install</button>
+          <button id="btn-plugins-source-cancel" class="secondary" type="button">Cancel</button>
+        </div>
+      </div>
       <div class="dialog-actions">
         <button id="btn-plugins-register" class="secondary" type="button" title="Pick a plugin folder anywhere on disk and link it into ~/.clodex/plugins — the folder stays where it is">Register Plugin…</button>
+        <button id="btn-plugins-source" class="secondary" type="button" title="Fetch a plugin from a public GitHub repo into ~/.clodex/plugins — it lands turned off">Install from GitHub…</button>
         <button id="btn-plugins-reveal" class="secondary" type="button" title="Open ~/.clodex/plugins in Finder — created if it does not exist yet">Open Plugins Folder</button>
         <button id="btn-plugins-rescan" class="secondary" type="button" title="Look for plugins added or removed since Clodex started">Re-scan</button>
         <div style="flex: 1;"></div>

@@ -817,6 +817,7 @@ function createPluginLoader(deps) {
   function commitsMatch(a, b) {
     if (a === b) return true;
     if (!a || !b) return false;
+    if (Math.min(a.length, b.length) < 7) return false;
     return a.length < b.length ? b.startsWith(a) : a.startsWith(b);
   }
 
@@ -872,7 +873,9 @@ function createPluginLoader(deps) {
       });
       rmQuiet(aside);
       const live = loadedFrom.get(id);
-      if (live) restartRequired.set(id, { was: live.version, now: r.manifest.version || null, dirChanged: false });
+      if (live && (r.manifest.entry.engine || r.manifest.entry.renderer)) {
+        restartRequired.set(id, { was: live.version, now: r.manifest.version || null, dirChanged: false });
+      }
       logIt(`updated ${id}: ${sidecar.commit} -> ${r.commit}`);
       return { ok: true, id, previousCommit: sidecar.commit, commit: r.commit };
     } catch (e) {

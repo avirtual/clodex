@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- **Install a plugin from a public GitHub repo** from Manage Plugins ▸ Install
+  from GitHub…: paste `owner/repo`, `owner/repo@ref` or a github.com URL,
+  Resolve shows what would land and a plain warning that the code runs with the
+  app's full authority, and Install places it turned off until you enable it
+  from its row. Updating and removing a fetched plugin from the dialog is not
+  there yet.
 - **A plugin's skills and subagents reach the CLI under the plugin's own version
   and description** instead of a `0.0.0` placeholder, so the CLI's plugin listing
   names what is installed.
