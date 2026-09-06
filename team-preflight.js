@@ -134,7 +134,7 @@ function teamPreflight(team, probes) {
       }
     }
 
-    if (tplSystem && tplSystem !== def.prompt) {
+    if (tplSystem && !tplSystem.includes(':') && tplSystem !== def.prompt) {
       let hit = null;
       try { hit = resolvePrompt('system', tplSystem); } catch { hit = null; }
       if (!hit) {

@@ -469,6 +469,12 @@ const T703_NOTE = {
   level: 'note', kind: 'prompt', role: 'hand', ref: 'hand-brief', resolvedFrom: null,
   message: 'role "hand" names prompt "hand-brief", and its template "hand-seat" names system prompt "hand-persona" — the template\'s is the system prompt, the role\'s is appended after the team block',
 };
+// The same note for a PLUGIN persona: a role prompt disagreeing with a plugin's
+// system prompt is still a disagreement, so t703 speaks where t704 must not.
+const T703_NOTE_PLUGIN = {
+  level: 'note', kind: 'prompt', role: 'hand', ref: 'hand-brief', resolvedFrom: null,
+  message: 'role "hand" names prompt "hand-brief", and its template "hand-seat" names system prompt "rev:strict" — the template\'s is the system prompt, the role\'s is appended after the team block',
+};
 
 test('t704: the template system prompt warns when it resolves nowhere and notes the team copy', () => {
   // Every expectation is a literal array, not re-derived from the rule under
@@ -520,6 +526,16 @@ test('t704: the template system prompt warns when it resolves nowhere and notes 
       },
     },
     {
+      // `listAllTemplates()` includes plugin templates, whose systemPromptFile
+      // is already namespaced (`rev:strict`, as the loader wrote it). The
+      // plugin bundle resolves that at spawn time; teams/ and library/ never
+      // hold it, so probing here would warn about a seat that boots fine.
+      what: 'a plugin-namespaced stem is the plugin\'s to resolve, not ours',
+      systemPromptFile: 'rev:strict', where: { 'hand-brief': 'library' },
+      expect: [T703_NOTE_PLUGIN],
+      enter: { systemPromptFile: 'hand-persona', expect: [T703_NOTE, T704_MISS] },
+    },
+    {
       what: 'a role with NO prompt at all still gets its template stem resolved',
       role: { template: 'hand-seat' },
       systemPromptFile: 'hand-persona', where: {},
@@ -552,6 +568,11 @@ test('t704: the template stem is probed once per role, and not at all when it eq
   t704Findings({ role: { template: 'hand-seat' }, systemPromptFile: 'hand-persona', where: {}, spy: noPrompt });
   assert.deepStrictEqual(noPrompt, [['system', 'hand-persona']],
     'and a template-only role probes the template stem and nothing else');
+
+  const plugin = [];
+  t704Findings({ systemPromptFile: 'rev:strict', where: { 'hand-brief': 'library' }, spy: plugin });
+  assert.deepStrictEqual(plugin, [['system', 'hand-brief']],
+    'a plugin ref is never probed: the disk probe rejects the colon, so asking could only produce a false miss');
 });
 
 test('t704: both findings carry a level and a kind the popover knows', () => {

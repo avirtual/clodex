@@ -336,7 +336,8 @@ delta. When both name the same stem it is applied once. This holds for ticket
 seats, reviewer seats and `[agent:spawn … template:]` seats alike. Team
 preflight notes a role whose two sources disagree, since only one of them is the
 system prompt. It also warns when the template's system prompt resolves nowhere,
-because that seat boots with no system prompt at all.
+because that seat boots with no system prompt at all — except for a
+plugin-namespaced one, which the plugin resolves and preflight does not check.
 
 A role's `prompt` names a stem, and a stem resolves in two places: the team's own
 `~/.clodex/teams/<name>/prompts/system/<stem>.md` first, then the shared library
