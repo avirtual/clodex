@@ -365,6 +365,7 @@ function createTicketMethods(deps, shared) {
     renameRole,
     setTeamWatchdog,
     resolveTeam,
+    resolveSystemPromptFile,
     childProcess,
     ensureDir,
     findProjectRoot,
@@ -723,14 +724,17 @@ function createTicketMethods(deps, shared) {
         ? ''
         : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
       const reviewerSystemPrompt = shape.systemPromptFile;
-      // Joined HERE, above the name reservation below, and not down beside the
-      // stat that consumes it. An unwired `path` or REGISTRY_DIR throws on this
+      // Resolved HERE, above the name reservation below, and not down beside the
+      // check that consumes it. An unwired `path` or REGISTRY_DIR throws on this
       // line, and the only cleanup that frees a reserved name lives in the
       // deferred spawn's catch — so computing it after the upsert would burn
       // `team-reviewer-N` on a throw that reaches nobody but the crash log.
-      const promptFile = reviewerSystemPrompt
-        ? path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${reviewerSystemPrompt}.md`)
-        : null;
+      // The resolver is an OPTIONAL dep defaulted to the pre-team-directory join,
+      // because a required one breaks every fixture that builds this deps object.
+      const resolvePromptFile = typeof resolveSystemPromptFile === 'function'
+        ? (stem) => resolveSystemPromptFile(stem, null, team)
+        : (stem) => path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${stem}.md`);
+      const promptFile = reviewerSystemPrompt ? resolvePromptFile(reviewerSystemPrompt) : null;
       const promptEscapeWarn = shape.promptEscaped
         ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
         : '';
@@ -863,17 +867,20 @@ function createTicketMethods(deps, shared) {
       });
 
       let promptWarn = '';
-      if (promptFile) {
-        // Only the STAT is guarded, and widening this back over the join is the
-        // wrong change: an unwired `path` or REGISTRY_DIR throws there too, and
-        // absorbing that skipped the whole preflight silently — it never ran
-        // under the shared review fixture, so the warning below was unreachable
-        // and unproven for two tickets.
-        try {
-          if (!fs.existsSync(promptFile)) {
-            promptWarn = ` — WARNING: role prompt "${reviewerSystemPrompt}.md" not found under library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;
-          }
-        } catch { /* preflight is best-effort — a stat error is not a spawn blocker */ }
+      if (reviewerSystemPrompt) {
+        // Only the STAT is guarded, and widening this back over the resolution
+        // above is the wrong change: an unwired `path` or REGISTRY_DIR throws
+        // there too, and absorbing that skipped the whole preflight silently —
+        // it never ran under the shared review fixture, so the warning below was
+        // unreachable and unproven for two tickets.
+        let missing = !promptFile;
+        if (promptFile) {
+          try { missing = !fs.existsSync(promptFile); }
+          catch { missing = false; } // preflight is best-effort — a stat error is not a spawn blocker
+        }
+        if (missing) {
+          promptWarn = ` — WARNING: role prompt "${reviewerSystemPrompt}.md" not found under teams/${team.name}/prompts/system or library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;
+        }
       }
 
       // The scope rides the seat's CONSTRUCTED PROMPT, not the dm below. A dm is a

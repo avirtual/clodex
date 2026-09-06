@@ -10,6 +10,7 @@ const { nameConflict } = require('./session-manager');
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS } = require('./team-manifest');
 const { teamPreflight } = require('./team-preflight');
+const { teamPromptFile } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
@@ -272,7 +273,9 @@ function registerIpcHandlers(deps) {
           try { bytes = execLibrary.raw(id); } catch { bytes = null; }
           return bytes == null ? null : { name: id, unreadable: true };
         },
-        resolvePrompt: (kind, stem) => (promptLibrary.raw(kind, stem) == null ? null : 'library'),
+        resolvePrompt: (kind, stem) => (teamPromptFile({ fs, path }, team, kind, stem)
+          ? 'team'
+          : (promptLibrary.raw(kind, stem) == null ? null : 'library')),
       });
       return { ok: true, findings };
     } catch (err) { return { ok: false, error: err.message, findings: [] }; }

@@ -12,15 +12,16 @@
 // arrives as an injected probe, which is what makes the whole findings table
 // assertable from a fixture with no library on disk and no team checked out.
 //
-// FINDINGS ARE PROBLEMS ONLY. The level enum is warn|note with no 'ok' member,
-// so a resolved name has nothing to carry; absence of a finding for a role+kind
-// IS resolution, and the surfaces render the ✓ from the manifest row. `verify`
-// is stage 3's kind — the enum has room for it and this file emits none.
+// The level enum is warn|note with no 'ok' member, so a name that resolved from
+// the library carries nothing and the surfaces render the ✓ from the manifest
+// row. The one finding a resolution DOES carry is the team-copy note below: the
+// shadowing is the fact, not the resolving. `verify` is stage 3's kind — the
+// enum has room for it and this file emits none.
 //
 // `resolvedFrom` names where the thing that DID resolve came from, and is null
-// when nothing resolved. Today that is only ever 'library'; stage 4 adds
-// team-local prompt directories, and this field is what turns a team-local file
-// silently shadowing a library one into a displayed fact instead of a surprise.
+// when nothing resolved. 'team' is what turns a team-local prompt file silently
+// shadowing a library one into a displayed fact instead of a surprise, so a
+// team hit carries a note where a library hit stays silent.
 //
 // NOT A HOT PATH. It stats files and parses template/exec JSON per role — fine
 // for a popover open or a team create, wrong for resolveTeam, which runs on
@@ -51,10 +52,10 @@
 // than cosmetic:
 //   warn — the seat's behaviour breaks. An unresolved role prompt boots it
 //          unbriefed; an unresolved template drops its whole shape.
-//   note — the team owes a file nobody has written yet. The portable hand
-//          template deliberately names an append stem the operator is expected
-//          to supply, so this must read as "here is the named thing to write",
-//          not as an error. Promote it and every fresh team looks broken.
+//   note — the team owes a file nobody has written yet, or owns a copy that
+//          shadows the library. The portable hand template deliberately names an
+//          append stem the operator supplies, so this reads as "here is the named
+//          thing to write". Promote it and every fresh team looks broken.
 const LEVELS = ['warn', 'note'];
 const KINDS = ['prompt', 'append', 'template', 'exec', 'verify'];
 
@@ -97,6 +98,7 @@ function teamPreflight(team, probes) {
   }
 
   const root = isNonEmptyString(team.root) ? team.root : null;
+  const teamName = isNonEmptyString(team.name) ? team.name : '<team>';
 
   for (const [role, def] of Object.entries(roles)) {
     if (!def || typeof def !== 'object') continue;
@@ -108,6 +110,11 @@ function teamPreflight(team, probes) {
         findings.push({
           level: 'warn', kind: 'prompt', role, ref: def.prompt, resolvedFrom: null,
           message: `role "${role}": prompt "${def.prompt}" is not installed under library/prompts/system — a seat spawned for this role boots unbriefed`,
+        });
+      } else if (hit === 'team') {
+        findings.push({
+          level: 'note', kind: 'prompt', role, ref: def.prompt, resolvedFrom: 'team',
+          message: `role "${role}": prompt "${def.prompt}" is the team's own copy (teams/${teamName}/prompts/system), shadowing the library`,
         });
       }
     }
@@ -203,6 +210,13 @@ function teamPreflight(team, probes) {
       if (!isNonEmptyString(stem)) continue;
       let hit = null;
       try { hit = resolvePrompt('append', stem); } catch { hit = null; }
+      if (hit === 'team') {
+        findings.push({
+          level: 'note', kind: 'append', role, ref: stem, resolvedFrom: 'team',
+          message: `role "${role}": prompt "${stem}" is the team's own copy (teams/${teamName}/prompts/append), shadowing the library`,
+        });
+        continue;
+      }
       if (hit) continue;
       findings.push({
         level: 'note', kind: 'append', role, ref: stem, resolvedFrom: null,
