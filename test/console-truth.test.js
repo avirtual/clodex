@@ -41,7 +41,12 @@ function el(tag = 'div') {
     title: '', type: '', className: '',
     dataset: {}, scrollTop: 0, scrollHeight: 0, clientHeight: 0,
     classList: { toggle() {}, add() {}, remove() {} },
-    addEventListener() {}, setAttribute() {},
+    listeners: {},
+    // Recorded rather than dropped: the pane's follow state is now driven by
+    // `scroll` events, so a stub that swallowed the registration would leave the
+    // scroll tests dispatching into nothing and asserting the default.
+    addEventListener(type, fn) { (e.listeners[type] || (e.listeners[type] = [])).push(fn); },
+    setAttribute() {},
     get textContent() { return e._text || ''; },
     set textContent(v) {
       e._text = String(v == null ? '' : v);
@@ -221,6 +226,12 @@ async function mountPane(t) {
     },
     async tick() { await poll(); await settle(); await settle(); },
     hide() { tenant.onHide(); },
+    resize() { tenant.onResize(); },
+    scrollListenerCount() { return (body.listeners.scroll || []).length; },
+    scrollTo(top) {
+      body.scrollTop = top;
+      for (const fn of body.listeners.scroll || []) fn();
+    },
   };
 }
 
@@ -605,6 +616,85 @@ test('the live elapsed counter advances — the refusal row is not frozen', asyn
   const second = p.liveBody.children[0].innerHTML;
   assert.match(second, /7\.0s/, 'the counter must advance, or the row is indistinguishable from a hang');
   assert.notStrictEqual(first, second, 'ENTER: the node really was repainted');
+});
+
+// The settled lane's follow state. The geometry below is the drawer's first
+// open: onShow fires one rAF after the collapse class flips while #drawer is
+// still transitioning its height (drawer-host.js rule 4), so the body has
+// clientHeight 0 while the placeholder alone already exceeds the 60px
+// threshold. An append-time `nearBottom` read there answers "not near the
+// bottom" and the first batch lands at the oldest call.
+test('the first open lands at the newest call even with mid-transition geometry', async (t) => {
+  const p = await mountPane(t);
+
+  p.body.scrollHeight = 500;
+  p.body.clientHeight = 0;
+  p.body.scrollTop = 0;
+
+  p.write('A', 8, STAMP);
+  p.write('B', 9, STAMP);
+  await p.tick();
+
+  assert.deepStrictEqual(p.painted, ['A', 'B'], 'ENTER: the first batch really was painted');
+  assert.strictEqual(p.body.scrollTop, p.body.scrollHeight,
+    'the pane opens at the newest call, not at the oldest one it happens to hold');
+});
+
+test('onResize re-pins to the bottom while following and leaves a scrolled-up reader alone', async (t) => {
+  // What makes the first open land at the end even though onShow ran
+  // mid-transition: the host fires onResize through the height transition and
+  // once more with settled geometry.
+  const p = await mountPane(t);
+  assert.strictEqual(p.scrollListenerCount(), 1,
+    'ENTER: the pane registered a scroll listener, so follow state is driven by scrolling');
+
+  p.write('A', 8, STAMP);
+  await p.tick();
+  p.body.scrollHeight = 500;
+  p.body.clientHeight = 100;
+
+  p.body.scrollTop = 0;
+  p.resize();
+  assert.strictEqual(p.body.scrollTop, 500, 'while following, a resize re-pins to the bottom');
+
+  p.scrollTo(200);
+  p.body.scrollTop = 0;
+  p.resize();
+  assert.strictEqual(p.body.scrollTop, 0,
+    'a reader who scrolled away keeps their position across a resize');
+});
+
+test('a scroll back to the bottom resumes following, and the next append lands at the end', async (t) => {
+  const p = await mountPane(t);
+
+  p.write('A', 8, STAMP);
+  await p.tick();
+  p.body.scrollHeight = 500;
+  p.body.clientHeight = 100;
+
+  p.scrollTo(100);
+  p.write('B', 9, STAMP);
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['A', 'B'], 'ENTER: the append really happened while scrolled up');
+  assert.strictEqual(p.body.scrollTop, 100, 'a scrolled-up reader is not yanked to the bottom');
+
+  p.scrollTo(400);
+  p.write('C', 10, STAMP);
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['A', 'B', 'C'], 'ENTER: a third call landed after the scroll back');
+  assert.strictEqual(p.body.scrollTop, p.body.scrollHeight,
+    'scrolling back to the bottom resumes following');
+});
+
+test('.console-block-cmd is coloured rather than bold', () => {
+  // Amber is the one theme accent that is not already a status colour in this
+  // pane, so a command does not read as a verdict.
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf-8');
+  const m = /\.console-block-cmd\s*\{([^}]*)\}/.exec(css);
+  assert.ok(m, 'ENTER: the rule exists to be read');
+  assert.match(m[1], /color:\s*var\(--warn\)/, 'the command line is drawn in amber');
+  assert.doesNotMatch(m[1], /font-weight/,
+    'and at normal weight — bold monospace is what reads badly in this pane');
 });
 
 test('a scrolled-up live lane keeps its position when a row repaints', async (t) => {

@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **The Console tab opens at the newest call.** Expanding the drawer onto the
+  Console used to land at the oldest of the calls it shows, so reaching the
+  current one meant scrolling through everything above it. It now opens at the
+  bottom and keeps following as calls land; scroll up and it stays put, scroll
+  back down and it follows again. The command line of each block is drawn in
+  amber at normal weight instead of bold, which reads more easily in the
+  monospace pane.
+
 ## 5.32.0 — 2026-09-06
 
 - **A seat spawned for a ticket now receives its spec once.** It used to get a second copy a second later, marked as a replay and telling the hand an earlier incarnation might have done the work; that copy now goes only to a seat that was actually respawned.
