@@ -1118,7 +1118,7 @@
   <div id="plugins-overlay" class="hidden">
     <div id="plugins-dialog">
       <h3>Plugins</h3>
-      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately. A plugin whose <code>activate()</code> throws is skipped and the app boots regardless; after two consecutive failed launches it is held back until you retry — your on/off choice is never overwritten. A plugin that has its own settings shows a <strong>Settings</strong> button on its row. Set <code>CLODEX_PLUGINS=0</code> to skip the plugin system entirely. <strong>Register Plugin…</strong> links a folder from anywhere on disk into the plugins folder without copying it; a plugin registered this way has no browser UI when you reach this Clodex from a phone or another machine, because the browser bundle is built with the app.</p>
+      <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately; a plugin with its own settings shows a <strong>Settings</strong> button on its row.</p>
       <div id="plugins-list"></div>
       <div id="plugins-register-note" class="plugin-row-note hidden"></div>
       <!-- The browser frontend's substitute for revealing the folder in Finder:

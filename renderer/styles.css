@@ -2356,21 +2356,35 @@ html, body {
 }
 #peers-dialog h3 { margin-bottom: 12px; font-size: 16px; }
 #peers-dialog .hint-text { margin-bottom: 8px; display: block; }
-/* Manage Plugins dialog (T5) — the same frame as the peers dialog, narrower:
-   its rows are a checkbox, a name and a note, not three URL-width fields. */
+/* The frame scrolls NOTHING: only #plugins-list does, so the action bar stays
+   put. An `overflow: auto` here (the peers-dialog shape) scrolls the footer away
+   with the rows, which is the defect. */
 #plugins-dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
-  width: 520px;
-  min-width: 380px;
+  display: flex;
+  flex-direction: column;
+  width: 720px;
+  min-width: 420px;
   max-width: calc(100vw - 32px);
+  min-height: 240px;
   max-height: calc(100vh - 32px);
-  overflow: auto;
+  overflow: hidden;
+  resize: both;
 }
 #plugins-dialog h3 { margin-bottom: 12px; font-size: 16px; }
 #plugins-dialog .hint-text { margin-bottom: 8px; display: block; }
+#plugins-list { flex: 1; min-height: 0; overflow-y: auto; }
+#plugins-dialog .hint-text,
+#plugins-dialog h3,
+#plugins-dialog #plugins-source,
+#plugins-dialog #plugins-register-note,
+#plugins-dialog #plugins-folder { flex-shrink: 0; }
+/* Five buttons at the 420px min-width must wrap, not overflow the frame the
+   list is sized against. */
+#plugins-dialog .dialog-actions { flex-shrink: 0; flex-wrap: wrap; }
 /* New Session placement (Run in Host/Sandbox): rich fields greyed for sandbox
    placement until the create-on-peer wire carries them (M3/M5). */
 .placement-greyed { opacity: 0.4; pointer-events: none; }
@@ -2536,7 +2550,26 @@ html, body {
 /* The quarantine / discovery-failure line. Uses the same warn accent the rest of
    the dialog does, so a held-back plugin reads as a state, not as decoration. */
 .plugin-row-note.warn { color: var(--warn); opacity: 1; }
-.plugin-row button { align-self: center; }
+/* Clamped only on the description, the registration path and the source line.
+   A warn note is never clamped: a truncated error is worse than a tall row. */
+.plugin-row-note.plugin-row-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* rtl keeps the plugin folder name (the end of the path) visible and moves the
+   ellipsis to the left; text-align restores reading order. Same shape as
+   .sandbox-mount-path. */
+.plugin-row-note.plugin-row-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.plugin-row-note.plugin-row-src { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plugin-row-actions { display: flex; flex-direction: column; gap: 4px; align-self: center; flex-shrink: 0; }
 /* A plugin's own settings, inline under its row (t109). Not a second overlay:
    #prefs-overlay and #plugins-overlay are siblings with no stacking manager. */
 .plugin-settings-panel { padding: 4px 4px 10px 26px; border-top: 1px dashed var(--border); }

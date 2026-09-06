@@ -5244,8 +5244,9 @@ async function renderPluginsDialog() {
     body.appendChild(nameEl);
     if (p.description) {
       const d = document.createElement('div');
-      d.className = 'plugin-row-note';
+      d.className = 'plugin-row-note plugin-row-desc';
       d.textContent = p.description;
+      d.title = p.description;
       body.appendChild(d);
     }
     if (p.verbConflict) {
@@ -5275,18 +5276,23 @@ async function renderPluginsDialog() {
     }
     if (p.linkedFrom) {
       const l = document.createElement('div');
-      l.className = 'plugin-row-note';
+      l.className = 'plugin-row-note plugin-row-path';
       l.textContent = `Registered from ${p.linkedFrom}`;
+      l.title = p.linkedFrom;
       body.appendChild(l);
     }
     if (p.source) {
       const s = document.createElement('div');
-      s.className = 'plugin-row-note';
+      s.className = 'plugin-row-note plugin-row-src';
       s.textContent = sourceLine(p.source);
+      s.title = sourceLine(p.source);
       body.appendChild(s);
     }
     row.appendChild(cb);
     row.appendChild(body);
+    const rowActions = document.createElement('div');
+    rowActions.className = 'plugin-row-actions';
+    row.appendChild(rowActions);
     if (p.quarantined) {
       const retry = document.createElement('button');
       retry.type = 'button';
@@ -5300,7 +5306,7 @@ async function renderPluginsDialog() {
         else showToast(`${p.name || p.id} failed again: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 9000 });
         await renderPluginsDialog();
       });
-      row.appendChild(retry);
+      rowActions.appendChild(retry);
     }
     if (p.linkedFrom && !window.__CLODEX_WEB__) {
       const un = document.createElement('button');
@@ -5321,7 +5327,7 @@ async function renderPluginsDialog() {
         showPluginsRegisterNote(`Unregistered ${p.name || p.id}. ${p.linkedFrom} was left where it is.`);
         await renderPluginsDialog();
       });
-      row.appendChild(un);
+      rowActions.appendChild(un);
     }
     if (p.source && !window.__CLODEX_WEB__) {
       const up = document.createElement('button');
@@ -5330,7 +5336,7 @@ async function renderPluginsDialog() {
       up.textContent = 'Update…';
       up.title = `Re-resolve github.com/${p.source.repo} at ${p.source.ref || 'the default branch'} and show what would change before anything is replaced`;
       up.addEventListener('click', () => openPluginsSourceUpdate(p));
-      row.appendChild(up);
+      rowActions.appendChild(up);
       const rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'secondary';
@@ -5351,11 +5357,11 @@ async function renderPluginsDialog() {
         if (pluginsSourceTarget === p.id) closePluginsSourceSection();
         await renderPluginsDialog();
       });
-      row.appendChild(rm);
+      rowActions.appendChild(rm);
     }
     pluginsList.appendChild(row);
     if (pluginBar.settingsSectionOwners().includes(p.id)) {
-      pluginsList.appendChild(makePluginSettingsPanel(p, row));
+      pluginsList.appendChild(makePluginSettingsPanel(p, rowActions));
     }
   }
   for (const pr of problems) {
@@ -5422,7 +5428,7 @@ async function renderPluginsDialog() {
 // A plugin's own settings live with the plugin, not in Preferences. The panel is INLINE under
 // the row rather than a second overlay: #prefs-overlay and #plugins-overlay are siblings with no
 // stacking manager, so a dialog opened over a dialog is a layering bug.
-function makePluginSettingsPanel(p, row) {
+function makePluginSettingsPanel(p, rowActions) {
   const panel = document.createElement('div');
   panel.className = 'plugin-settings-panel hidden';
   const sections = document.createElement('div');
@@ -5452,7 +5458,7 @@ function makePluginSettingsPanel(p, row) {
     pluginBar.renderSectionsInto(p.id, sections, values);
     panel.classList.remove('hidden');
   });
-  row.appendChild(toggle);
+  rowActions.appendChild(toggle);
 
   save.addEventListener('click', async () => {
     const patch = pluginBar.collectSectionsFrom(p.id, sections);
