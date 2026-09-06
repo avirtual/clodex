@@ -214,9 +214,9 @@ enabled plugin; this one is not, and three conditions have to hold at once:
 - the seat has granted your plugin `turns` under *Plugin Access*.
 
 Miss any of the three and you receive nothing — silently, by design. A grant is
-per session, defaults off, and is read at delivery, so a revoke bites on the
-very next turn. It also applies from the next turn on: nothing the seat already
-wrote is replayed to you.
+per session, defaults off, and is read at delivery, so it takes effect from the
+seat's next turn on in both directions: a revoke bites immediately, and a fresh
+grant replays none of what the seat already wrote.
 
 That makes the previously-unwritable class writable — a turn archiver, a
 cross-session search over what agents said, something that summarises or grades
@@ -238,9 +238,10 @@ grant.
 
 One honest limit on what you receive. The feed has two sources — the wire proxy
 and the session's transcript file — and the transcript path is lossy: it has no
-protocol turn-end signal and cannot see tool-use blocks, so `isTurnEnd` and
-`reads` arrive as `null` there rather than as a `false` or an `[]` you could not
-distinguish from an observation.
+protocol turn-end signal and cannot see tool-use blocks, so the event's
+`isTurnEnd` and its `reads` array (the files the turn read — not the manifest
+field above, which shares the name) arrive as `null` there rather than as a
+`false` or an `[]` you could not distinguish from an observation.
 
 ---
 

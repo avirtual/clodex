@@ -895,7 +895,8 @@ themselves are read at **delivery** time too, so a revoke takes effect on the
 very next turn rather than at the next restart.
 
 **`isTurnEnd` and `reads` are `null` on the jsonl path, and that is a claim
-about knowledge, not a missing value.** The transcript path has no protocol
+about knowledge, not a missing value.** (This `reads` is the event's — the files
+the turn read. The manifest field of §2 shares the name and is unrelated.) The transcript path has no protocol
 turn-end signal — it inferred boundaries from a second of silence — and cannot
 see tool-use blocks at all. `false` and `[]` would be assertions you could not
 distinguish from observations. `files` is computable on both paths, so it is a
