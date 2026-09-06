@@ -260,17 +260,7 @@ passed it, and the loser's catch arm then upserts ITS destination over a seat
 running in the winner's.
 
 Team membership is re-derived from the new cwd by `create()`'s own `resolveTeam`.
-Because that is a membership change nothing else announces — `kill()` and
-`archive()` are the departure notifiers and neither is on this path, and the
-arrival notifier `_maybeInjectComposition` returns early on `rosterSentAt`, which
-every seat that has run carries — `move()` calls `_notifyComposition` twice after
-a successful respawn: `'moved out'` against the OLD cwd (from the pre-kill session
-object, or a `{name, agentType, cwd}` shape built from the entry when the seat was
-not live) and `'moved in'` against the new one, both skipped when the team name is
-the same on both sides. Deliberately AFTER `create()`, so neither failure arm
-sends one: the retry row carries the new cwd, and a later successful retry goes
-through `create()` → `_maybeInjectComposition`, which stays silent — so a move
-that fails and is then retried never tells either lead.
+After a successful respawn `move()` calls `_notifyComposition` twice — `'moved out'` against the old cwd, `'moved in'` against the new — skipped when the team name is the same on both sides; neither failure arm sends one, so a move that fails and is later retried never tells either lead.
 
 Both failure arms — the exit that outlasts `_waitForExit`, and a `create()` that
 throws — return `{ ok:false, kept:true, error, type, cwd, team }`, and the renderer
