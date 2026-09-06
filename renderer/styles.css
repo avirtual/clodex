@@ -2556,16 +2556,12 @@ html, body {
    always-visible. */
 #plugins-register-note { margin-top: 8px; word-break: break-all; }
 #plugins-register-note.hidden, #btn-plugins-register.hidden { display: none; }
-/* Install from GitHub… is an inline section rather than a second overlay, for
-   the reason the settings panel above gives: the dialogs are siblings with no
-   stacking manager. Its ids are toggled by class, and #btn-plugins-source is
-   hidden via JS on the web frontend — all four need the per-id rule because
-   there is no generic .hidden. */
 #plugins-source { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 #plugins-source label { display: block; font-size: 12px; opacity: 0.75; margin-bottom: 4px; }
 #plugins-source-spec { width: 100%; box-sizing: border-box; }
-#plugins-source-preview, #plugins-source-warning { margin-top: 8px; word-break: break-word; }
+#plugins-source-preview, #plugins-source-warning { margin-top: 8px; word-break: break-word; white-space: pre-line; }
 #plugins-source.hidden, #plugins-source-preview.hidden, #plugins-source-warning.hidden,
+#plugins-source-label.hidden, #plugins-source-spec.hidden, #btn-plugins-source-resolve.hidden,
 #btn-plugins-source.hidden { display: none; }
 
 #dialog {

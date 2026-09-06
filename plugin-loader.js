@@ -987,6 +987,18 @@ function createPluginLoader(deps) {
     return { ok: true, id: rec.id, file };
   }
 
+  function sourceOf(rec) {
+    if (rec.root !== 'user' || rec.isLink) return null;
+    const sidecar = source.readSidecar(rec.dir);
+    if (!sidecar || !sidecar.repo) return null;
+    return {
+      repo: sidecar.repo,
+      ref: sidecar.ref == null ? null : sidecar.ref,
+      subpath: sidecar.subpath == null ? null : sidecar.subpath,
+      commit: sidecar.commit == null ? null : sidecar.commit,
+    };
+  }
+
   // What the settings Plugins section renders: one row per DISCOVERED plugin —
   // present on disk, whatever its state — plus the directories that failed
   // validation. A plugin that is quarantined must still appear, otherwise the
@@ -1011,6 +1023,7 @@ function createPluginLoader(deps) {
           root: rec.root || null,
           rootLabel: rec.rootLabel || null,
           linkedFrom: rec.root === 'user' && rec.isLink ? rec.dir : null,
+          source: sourceOf(rec),
           scope: scopeOf(rec.manifest),
         };
       }),

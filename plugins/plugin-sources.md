@@ -592,10 +592,14 @@ scripts disabled. **Recommend, do not build.**
 ## 9. Sources — a GitHub fetch
 
 **Phase A implemented** (t683): `plugin-source.js` + five loader methods +
-five `_host` methods. **Install from GitHub… reaches two of them** (t688):
-Manage Plugins resolves and installs, described in §10 step 3. `resolveUpdate`,
-`applyUpdate` and `removeSourcePlugin` are still reachable only from another
-main-process caller or a test.
+five `_host` methods. **All five are reached from Manage Plugins**: Install from
+GitHub… resolves and installs (t688), and a fetched row's Update… and Remove
+reach `resolveUpdate`/`applyUpdate` and `removeSourcePlugin` (t689) — both
+described in §10 step 3. A row knows it is fetched because `status()` carries a
+`source` field (`{ repo, ref, subpath, commit }`, from the sidecar) for a user-root
+directory that is not a symlink, and `null` for everything else; that one field
+decides whether the row shows the "From github.com/…" line and the two buttons or
+keeps Unregister.
 
 The framing that keeps remote additive rather than structural, unchanged from
 the sketch:
@@ -648,8 +652,8 @@ a resolved *commit*. `resolveSource`/`installFromSource` resolve the ref once
 and store the commit; `resolveUpdate(id)` re-resolves the SAME sidecar ref
 (never a caller-supplied one) and returns both shas with nothing written yet;
 `applyUpdate(id, commit)` re-fetches and **refuses if the newly fetched commit
-is not the one the caller passed** — the commit a phase-B dialog would have
-shown the user before they clicked update. **No automatic update anywhere**:
+is not the one the caller passed** — the commit the row's Update… preview
+showed before the operator pressed Update. **No automatic update anywhere**:
 nothing schedules a re-fetch, and every path that changes what runs takes an
 explicit id and (for apply) an explicit accepted commit.
 
@@ -738,9 +742,21 @@ End to end, today, with the user root implemented:
    currently in the field, so the sentence naming a commit is always about the
    code that is about to be placed; editing the spec afterwards disables it
    again. The plugin lands DISABLED whatever its `enabledByDefault` says (§7:
-   downloading and running are two decisions), so step 5 is still yours. Desktop
-   only, for §6's reason. Updating and removing a fetched plugin from the dialog
-   is not built yet — the `_host` methods exist, no UI reaches them.
+   downloading and running are two decisions), so step 5 is still yours.
+   A fetched row then says **`From github.com/<repo>@<ref>[:<subpath>] at
+   <commit7>`** under its name and offers **Update…** and **Remove** where a
+   symlinked row offers Unregister and a hand-copied one offers neither. All
+   three affordances are desktop only, for §6's reason.
+   **Update…** re-resolves the SAME sidecar repo and ref, and says so in the
+   register note when nothing moved; when it did, the same inline section reopens
+   with the field and Resolve hidden, showing `v<old> → v<new>` and
+   `<old7> → <new7>` above the same trust warning naming the NEW commit, and the
+   button reads Update and applies the commit that was just shown. A running
+   plugin with an engine or renderer half comes back restart-required (the
+   require-cache limit in the table below), which the row's badge says and the
+   note repeats. **Remove** deletes the fetched directory after one `confirm()`,
+   which is safe precisely because it is a cache and can be installed again —
+   §9's "a fetched root is a cache; a user root without a sidecar is authority".
 4. **Re-scan** in Manage Plugins, or restart. Discovery no longer runs only at
    startup: `plugins.rescan` re-reads every root and loads what it finds.
 5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`
@@ -830,7 +846,7 @@ Consequences worth stating:
 | §8 npm dependencies | Sketch, not built |
 | §9 sources: GitHub fetch, engine + host methods | **Implemented** (desktop only) |
 | §9 sources: install UI — Manage Plugins ▸ Install from GitHub… | **Implemented** (desktop only) |
-| §9 sources: update/remove UI on a fetched row | Not built — phase B2 |
+| §9 sources: update/remove UI on a fetched row | **Implemented** (desktop only) |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
 | §10 an install affordance — register a folder from anywhere | **Implemented** (desktop only) |
