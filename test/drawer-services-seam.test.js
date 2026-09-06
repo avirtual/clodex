@@ -20,6 +20,11 @@
 // so refusing `wterm:*` refused a tab, not a capability. It has its own seam,
 // `enableLocalTerminal`, so a host can still decline it deliberately.
 //
+// THE `console:*` PAIR LEFT THAT SET THE SAME WAY (t716), on its own
+// `enableConsole` seam, and this file pins its PRESENCE on the web surface too:
+// they are read-only reads of a seat's OWN Bash records, which a client that can
+// already open a shell on the box could gather itself.
+//
 // Every gated prefix has handlers behind it, so the absence assertion is not
 // vacuous — it fails the moment one is registered ungated.
 
@@ -47,11 +52,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // is still covered, and WEB_REGISTERED below asserts the local family is
 // present rather than leaving it unmentioned. A prefix dropped from a gate list
 // with nothing asserted on the other side is how a gate disappears silently.
-// `console:` (t645) reports a SEAT'S OWN command output — the same class as
-// drawer:inspectSelection, which is gated for reporting the operator's screen
-// text back. A web connection must not be able to ask a desktop box what its
-// agents have been running.
-const GATED_PREFIXES = ['console:', 'ctl:', 'drawer:', 'peer:wterm'];
+const GATED_PREFIXES = ['ctl:', 'drawer:', 'peer:wterm'];
 // The other half of that removal. Named here beside the gate list because the
 // two are one decision: these channels MUST reach the web surface, and a future
 // edit that re-gates them has to delete this constant to do it.
@@ -99,9 +100,9 @@ test('engine: enableLocalTerminal defaults ON and is INDEPENDENT of the drawer f
   // would both pass against a single flag aliased under two names.
   const declined = mkEngine({ enableDrawerServices: false });
   assert.deepStrictEqual(
-    { drawer: declined.enableDrawerServices, localTerminal: declined.enableLocalTerminal },
-    { drawer: false, localTerminal: true },
-    'declining drawer services must not drag the local terminal down with it',
+    { drawer: declined.enableDrawerServices, localTerminal: declined.enableLocalTerminal, console: declined.enableConsole },
+    { drawer: false, localTerminal: true, console: true },
+    'declining drawer services must not drag the local terminal or the console down with it',
   );
 });
 
@@ -130,9 +131,9 @@ test('engine: enableLocalTerminal:false → no pty service at all', () => {
 test('web-host hands registerIpcHandlers enableDrawerServices:false', () => {
   let seen = null;
   const host = createWebHost({
-    // Both flags carry the value web-host must OVERRIDE, so a spread-ordering
+    // Every flag carries the value web-host must OVERRIDE, so a spread-ordering
     // mistake shows up as the engine's value surviving rather than as a match.
-    engine: { stores: {}, enableDrawerServices: true, enableLocalTerminal: false },
+    engine: { stores: {}, enableDrawerServices: true, enableLocalTerminal: false, enableConsole: false },
     log: silentLog,
     port: 0,
     host: '127.0.0.1',
@@ -150,10 +151,11 @@ test('web-host hands registerIpcHandlers enableDrawerServices:false', () => {
     // terminal, because a `type: 'bash'` session already grants that shell.
     // A single flag that happened to be true would satisfy neither half.
     assert.ok('enableLocalTerminal' in seen, 'the local-terminal flag must be present, not absent');
+    assert.ok('enableConsole' in seen, 'the console flag must be present, not absent');
     assert.deepStrictEqual(
-      { drawer: seen.enableDrawerServices, localTerminal: seen.enableLocalTerminal },
-      { drawer: false, localTerminal: true },
-      'web surface: drawer services declined, local drawer terminal granted',
+      { drawer: seen.enableDrawerServices, localTerminal: seen.enableLocalTerminal, console: seen.enableConsole },
+      { drawer: false, localTerminal: true, console: true },
+      'web surface: drawer services declined, local drawer terminal and console granted',
     );
   } finally {
     host.close();
@@ -240,6 +242,52 @@ test('the web-host surface gates ctl:/drawer:/peer:wterm and REGISTERS wterm:*',
   );
 });
 
+// t716, and driven through the REAL createWebHost rather than a hand-written
+// flag literal: the claim is that THIS host grants the console pair, so a test
+// that spells `enableConsole: true` into its own capture would assert only that
+// the registrar honours a flag nobody set. The registrar runs against web-host's
+// own deps, with handle/on swapped for a recorder.
+test('the web-host surface REGISTERS console:read and console:live', () => {
+  const registered = new Set();
+  const stub = () => () => {};
+  const host = createWebHost({
+    engine: { stores: {} },
+    log: silentLog,
+    port: 0,
+    host: '127.0.0.1',
+    userDataPath: os.tmpdir(),
+    registerHandlers: (deps) => {
+      const capture = { ...deps, handle: (ch) => registered.add(ch), on: (ch) => registered.add(ch) };
+      // The seam flags are read RAW, never stubbed. Everywhere else a missing
+      // dep becomes an inert function so registration can run, and a function is
+      // truthy — so a host that stopped setting `enableConsole` would have the
+      // fallback hand the registrar a truthy flag and this subject would stay
+      // green over exactly the omission it exists to catch. Measured: dropping
+      // the flag from web-host.js left it passing until this branch existed.
+      require('../ipc-handlers').registerIpcHandlers(new Proxy(capture, {
+        get(target, prop) {
+          if (typeof prop === 'string' && prop.startsWith('enable')) return target[prop];
+          return prop in target ? target[prop] : stub();
+        },
+        has(target, prop) { return prop in target; },
+      }));
+    },
+  });
+  try {
+    assert.ok(registered.size > 100, `registration produced only ${registered.size} channels — capture is broken`);
+    assert.ok(registered.has('session:list'), "ENTER: the registrar ran against the web host's own deps");
+    assert.ok(registered.has('console:read'), 'the web surface must register the Bash console pull');
+    assert.ok(registered.has('console:live'), 'and its live preview');
+    // The console pair moved to its own seam; the drawer family did not move
+    // with it. Without these two the subject above would also be green on a
+    // host that simply granted everything.
+    assert.ok(!registered.has('ctl:run'), 'the verb runner stays off the web surface');
+    assert.ok(!registered.has('drawer:armSelection'), 'and the selection hint');
+  } finally {
+    host.close();
+  }
+});
+
 // The RENDERER half, and without it this whole file can be green over a feature
 // no web operator can see. Registering `wterm:*` on the web surface does
 // nothing on its own: drawer-host only calls a tenant's `available()` if it has
@@ -265,14 +313,12 @@ test('the term tab has no web-surface available() — and the committed bundle a
   assert.ok(!src.includes(GATE),
     'term-tab must not gate itself off the web surface — the handlers are registered there now');
 
-  // The controls: two tenants KEEP the gate, so a mutation that stripped the
-  // string everywhere (or a grep that matches nothing) fails here instead of
-  // passing quietly above. Both are gated for the same reason and term-tab is
-  // not: their handlers are absent from the web host's map.
+  // The control: ctl-tab KEEPS the gate, so a mutation that stripped the string
+  // everywhere (or a grep that matches nothing) fails here instead of passing
+  // quietly above. It is gated because its handlers are absent from the web
+  // host's map; term-tab's and console-tab's are not.
   const ctl = fs.readFileSync(path.join(ROOT, 'renderer', 'ctl-tab.js'), 'utf8');
   assert.ok(ctl.includes(GATE), 'ENTER: ctl-tab still HAS the gate — ctl:* stays desktop-only');
-  const con = fs.readFileSync(path.join(ROOT, 'renderer', 'console-tab.js'), 'utf8');
-  assert.ok(con.includes(GATE), 'ENTER: console-tab too — console:read is gated out of the web host');
 
   // The count is exactly the gated tenants above, and it is a COUNT rather than
   // a presence check so the term tab's gate coming back fails here. Zero would
@@ -280,8 +326,8 @@ test('the term tab has no web-surface available() — and the committed bundle a
   // this pin green over anything at all.
   const web = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
   const hits = web.split(GATE).length - 1;
-  assert.strictEqual(hits, 2,
-    `expected the ctl and console gates in web-dist/index.html, found ${hits} — either the term tab's gate is back, or web-dist is stale (run \`npm run build:web\` and commit it)`);
+  assert.strictEqual(hits, 1,
+    `expected the ctl gate in web-dist/index.html, found ${hits} — either the term tab's gate is back, or web-dist is stale (run \`npm run build:web\` and commit it)`);
 });
 
 // The local-terminal flag is a real seam and not decoration: a host that means to
@@ -307,6 +353,30 @@ test('enableLocalTerminal:false withholds wterm:* even with drawer services on',
   assert.ok(registered.has('ctl:run'), 'ENTER: drawer services DID register, so the absence below is about the local-terminal flag alone');
   assert.deepStrictEqual([...registered].filter((ch) => ch.startsWith('wterm:')), [],
     'the local-terminal flag must actually withhold the family, not merely exist');
+});
+
+// The same claim for t716's seam. Without it `enableConsole` could be ignored by
+// the registrar entirely and the presence test above would simply be reporting
+// an unconditional registration.
+test('enableConsole:false withholds console:* even with drawer services on', () => {
+  const registered = new Set();
+  const capture = {
+    handle: (ch) => registered.add(ch),
+    on: (ch) => registered.add(ch),
+    enableDrawerServices: true,     // the OTHER flags granted, to isolate this one
+    enableLocalTerminal: true,
+    enableConsole: false,
+  };
+  const stub = () => () => {};
+  const deps = new Proxy(capture, {
+    get(target, prop) { return prop in target ? target[prop] : stub(); },
+    has(target, prop) { return prop in target; },
+  });
+  require('../ipc-handlers').registerIpcHandlers(deps);
+
+  assert.ok(registered.has('ctl:run'), 'ENTER: drawer services DID register, so the absence below is about the console flag alone');
+  assert.deepStrictEqual([...registered].filter((ch) => ch.startsWith('console:')), [],
+    'the console flag must actually withhold the pair, not merely exist');
 });
 
 // The other half, and it is not optional: the absence above is ALSO true of a
@@ -339,12 +409,6 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   assert.ok(registered.has('wterm:spawn'), 'the desktop path must register the workbench shell');
   assert.ok(registered.has('wterm:write'), 'and its input');
   assert.ok(registered.has('wterm:resize'), 'and its SIGWINCH');
-  assert.ok(registered.has('console:read'), 'and the Bash console pull');
-  // Its in-flight half, which reads a seat's Bash output BEFORE the call
-  // ends. The `console:` prefix in GATED_PREFIXES already keeps it off the web
-  // host; this is the other side of that absence — a channel gated everywhere is
-  // indistinguishable from one that was never registered at all.
-  assert.ok(registered.has('console:live'), 'and its live preview');
   // The one channel here that writes into an agent's request rather than
   // running something on the host.
   assert.ok(registered.has('drawer:armSelection'), 'and the drawer selection hint');
@@ -597,14 +661,14 @@ test('peer:wtermOpen and peer:wtermClose both refuse when the sender resolves to
 // those rather than leaving an inert empty pane, which is the defect the peer
 // terminal shipped with.
 //
-// Property two is the SURFACE axis, and it is NOT the t227 case. t227 removed a
-// surface test from the term tab because the web host DOES register `wterm:*`,
-// so the test hid a tab the host could serve. `console:read` is in
-// GATED_PREFIXES (asserted above), so the web host never registers it and the
-// tab could only ever read "No Bash calls seen yet" forever. An inert visible
-// pane is the defect the peer terminal shipped with; hidden is correct here, and
-// the two axes stay separate because only the seat one re-runs on a switch.
-test('the console tab gates on BOTH the seat type and the surface', () => {
+// Property two is the SURFACE axis, and t716 settled it the way t227 settled the
+// term tab's: the web host now registers `console:read` and `console:live` on
+// their own `enableConsole` seam (asserted above), so a surface gate would hide
+// a tab the host can serve. The assertion runs in that direction now — the gate
+// line must be ABSENT — and it is a source grep because console-tab.js is
+// DOM-bound (the R1 rule). The two axes stay separate because only the seat one
+// re-runs on a switch.
+test('the console tab gates on the seat type and NOT on the surface', () => {
   const fs = require('node:fs');
   const ROOT = path.join(__dirname, '..');
   const src = fs.readFileSync(path.join(ROOT, 'renderer', 'console-tab.js'), 'utf8');
@@ -614,8 +678,8 @@ test('the console tab gates on BOTH the seat type and the surface', () => {
     'the tab must carry a seat axis — without it the tab shows on seats with no console');
   assert.match(src, /availableFor: \(\) => typeNow\(\) === 'claude'/,
     'only a claude seat runs the Bash hook that writes a console');
-  assert.ok(src.includes('available: () => !window.__CLODEX_WEB__'),
-    'console:read is gated out of the web host, so the tab must be HIDDEN there rather than inert');
+  assert.ok(!src.includes('available: () => !window.__CLODEX_WEB__'),
+    'console-tab must not gate itself off the web surface — console:read/live are registered there now');
 
   // The frozen id list is what puts the tab in the strip at all: register()
   // THROWS on an unknown id, so a tenant whose id is missing from it is a boot

@@ -817,9 +817,11 @@ Own state + DOM, `init*(deps)`:
   the in-flight preview (`bash-live.js`). `PostToolUse` fires at completion and
   stays the system of record — a live row is REPLACED by its settled block, and
   because the CLI unlinks the file it tails, the preview may miss the final
-  chunk. That is only safe because it is not what gets kept. It carries an
-  `available()` surface test as well: both channels are gated out of the web
-  host, so the tab is HIDDEN there rather than left inert.
+  chunk. That is only safe because it is not what gets kept. The pair sits on its
+  own `enableConsole` seam rather than the drawer-services gate, and the web host
+  grants it, so the tab works from the browser too — a read of a seat's own
+  records, which a client that can already open a shell on the box could see
+  anyway.
 - **term-tab.js** — the `term` tenant: a REAL PTY in the workbench, not a
   command runner. `vim`, `less` and interactive prompts must work, which is why
   it is an xterm bound to a shell rather than a block list like the ctl tab. It

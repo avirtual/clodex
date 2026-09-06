@@ -336,7 +336,6 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
   notify = host.register({
     id: 'console',
     label: 'Console',
-    available: () => !window.__CLODEX_WEB__,
     availableFor: () => typeNow() === 'claude',
     mount,
     onShow,
