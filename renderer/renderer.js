@@ -534,8 +534,8 @@ async function archiveSessionRow(name) {
 }
 
 async function deleteSessionRow(name) {
-  movingFailed.delete(name);
   if (!(await window.api.confirmKill(name))) return;
+  movingFailed.delete(name);
   const res = await window.api.killSession(name);
   if (res && res.error) {
     showToast(`Worktree removal failed: ${res.error}`, { kind: 'warn', duration: 12000, name });

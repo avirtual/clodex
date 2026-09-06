@@ -555,18 +555,38 @@ test('the renderer defers the ghost row to session-exit when the live row is sti
 // whichever one it is. A failed move leaves it set with the live row still up; the
 // operator then archives or deletes that row by hand, and without a clear the exit
 // those gestures fire draws the move's ghost over a row the operator just retired.
+// The two functions clear at DIFFERENT points, and the difference is the subject:
+// a delete asks first, and a cancelled confirm must leave the stash intact.
 test('archiving or deleting a row by hand clears any failed-move stash first', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
-  for (const fname of ['archiveSessionRow', 'deleteSessionRow']) {
+  const bodyOfFn = (fname) => {
     const fn = src.slice(src.indexOf(`async function ${fname}(name) {`));
     const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
     assert.ok(body.length > 0 && body.includes(fname), `ENTER: ${fname} was found and sliced`);
-    const cleared = body.indexOf('movingFailed.delete(name)');
-    assert.ok(cleared >= 0, `${fname} must drop the stash — the exit it triggers reads it`);
-    const firstAwait = body.indexOf('await ');
-    assert.ok(firstAwait < 0 || cleared < firstAwait,
-      `${fname} must clear before its first await: the exit can land while that round-trip is open`);
-  }
+    return body;
+  };
+
+  // No confirm on this path: the gesture IS the decision, so the clear happens
+  // before the archive round-trip the exit can land inside.
+  const archive = bodyOfFn('archiveSessionRow');
+  const archiveCleared = archive.indexOf('movingFailed.delete(name)');
+  assert.ok(archiveCleared >= 0, 'archiveSessionRow must drop the stash — the exit it triggers reads it');
+  const archiveAwait = archive.indexOf('await ');
+  assert.ok(archiveAwait < 0 || archiveCleared < archiveAwait,
+    'archiveSessionRow must clear before its first await: the exit can land while that round-trip is open');
+
+  // Delete asks first. Clearing above the confirm throws the stash away for an
+  // operator who answers No, and a later natural exit of that seat is then
+  // painted as a plain exit rather than the failed move it belongs to.
+  const del = bodyOfFn('deleteSessionRow');
+  const confirmed = del.indexOf('confirmKill(name)');
+  const killed = del.indexOf('killSession(name)');
+  const delCleared = del.indexOf('movingFailed.delete(name)');
+  assert.ok(confirmed >= 0 && killed > confirmed, 'ENTER: deleteSessionRow still confirms before it kills');
+  assert.ok(delCleared > confirmed,
+    'a cancelled confirm must keep the stash: clearing above the confirm discards it for an operator who said No');
+  assert.ok(delCleared < killed,
+    'and it must clear before killSession, whose exit is what reads the stash');
 });
 
 // -------------------------------------------- the real onExit wiring
