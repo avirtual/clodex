@@ -61,23 +61,60 @@ Everything below is what you add so that loop is *productive* on your code.
   prompts/append/<stem>.md  project knowledge the team owns
   templates/<stem>.json     seat templates the team owns
   exec/<name>.json          exec grants the team owns
-  tickets.json, tasks/      the loop's own data
 ```
+
+The loop's own data is *not* here: `tickets.json` and the per-ticket `tasks/`
+directories are keyed to the PROJECT, not the team, and live under
+`~/.clodex/projects/<leaf>-<hash>/` (`clodex-paths.js`, `projectDirFor` /
+`taskDirFor`). One project can be worked by several teams, and a board that
+moved with the team would split its own history.
 
 One rule covers all four kinds: a name written without a colon — a role's
 `prompt`, its `template`, an `appendPromptFiles` stem, an `execCommands` name —
 resolves against this directory first and the shared library second. A name
-*with* a colon is a plugin ref (`<plugin>:<stem>`) and never looks here. Nothing
-under `teams/` is written for you: `Create Team…` writes `team.json` and stops,
-so a directory that holds only `team.json` behaves exactly as it did before any
-of this existed. Team preflight (the roles popover) says which names resolved to
-the team's own copies.
+*with* a colon is a plugin ref (`<plugin>:<stem>`) and never looks here. Team
+preflight (the roles popover) says which names resolved to the team's own
+copies.
 
 A team's own template is reachable by naming it — from a role's `template`, from
 `[agent:spawn … template:<stem>]` by a seat inside the team — and is not listed
 machine-wide in the New Session dialog or the library drawers. The same goes for
 a reviewer template: name it in the reviewer role, since the reviewer's
 prefix-based discovery reads the library only.
+
+Nothing under `teams/` is seeded for you. `Create Team…` writes `team.json` and
+stops, so a directory holding only that file behaves exactly as it did before
+any of this existed, and every piece its manifest names is served by the shared
+library. The one thing that fills the rest of the directory is **Gather**, and
+only when you ask for it.
+
+### Gather — make the team own what it uses
+
+Gather walks the manifest, finds every library piece the team references — role
+prompts, project knowledge on the append rail, seat templates, exec defs — and
+copies each into the team's own directory under the same stem. Nothing is
+rewritten: `team.json` is untouched, the templates keep their refs, and the
+team-first rule above means the next spawn simply resolves against the copies.
+
+It never overwrites. A piece the team already owns is reported **kept**, a
+plugin-namespaced ref (`<plugin>:<stem>`) is **skipped**, and a ref the library
+does not have is reported **missing** (preflight is what tells you about those;
+Gather cannot copy what is not there). Running it twice is a no-op reporting
+everything kept.
+
+Three ways to run it, all the same plan:
+
+- the Gather button on the roles popover — it shows the plan and asks before
+  writing;
+- `[agent:team gather]` from the team's lead seat, or `[agent:team gather dry]`
+  to see the plan without writing;
+- the `team:gather` IPC, for anything driving Clodex.
+
+**The trade-off is upstream fixes.** The three stock role prompts ship as
+library files precisely so every team keeps receiving improvements to them; a
+gathered copy is a fork and stops. So gather when you want the team to be
+self-contained — copied to another machine, or removed without leaving pieces
+behind — and delete a copy to fall back to the library version.
 
 ## The four things your project must supply
 
@@ -119,7 +156,7 @@ worked.
 ### 2. Exec grants — the shipped ones, and yours
 
 `[agent:exec <name>]` lets a seat run a pre-registered command. Definitions live
-in `~/.clodex/teams/<name>/exec/<name>.json` or `~/.clodex/library/exec/<name>.json`
+in `~/.clodex/teams/<team>/exec/<name>.json` or `~/.clodex/library/exec/<name>.json`
 — the team's copy wins — and a template grants a seat a subset by name. The grant
 is still the capability: a def under either directory only shapes what an
 already-granted name does.
@@ -287,11 +324,12 @@ files, shared by every team, which is what keeps them receiving fixes rather
 than being forked per project. Their names say "clodex" for historical reasons
 only; nothing in their text does.
 
-If you want a divergent prompt for one role on one team, drop your own copy of
-the stem under that team's `prompts/system/`, or point the role at a new stem.
-The recommended change is smaller than either, though: leave the stock role
-prompts in the library, where they keep receiving fixes, and put project
-specifics in the team's own `prompts/append/`. The role
+If you want a divergent prompt for one role on one team, point the role at a new
+stem, or run **Gather** (above) and edit the copy it puts under that team's
+`prompts/system/` — a copy is a fork, and stops receiving upstream fixes until
+you delete it. The recommended change is smaller than either, though: leave the
+stock role prompts in the library, where they keep receiving fixes, and put
+project specifics in the team's own `prompts/append/`. The role
 prompts describe *behaviour*; the append describes *your code*. Keeping that
 seam is what lets a Clodex upgrade improve your team's judgement without
 touching anything you wrote.

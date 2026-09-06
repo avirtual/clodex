@@ -118,7 +118,7 @@ function parseIntentLegacy(rawLine) {
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -131,6 +131,10 @@ function parseIntentLegacy(rawLine) {
     }
     if (sub === 'role-rm') return { type: 'team', sub, name: positional[0] || null, body: '' };
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
+    // t701's gather, landed here in the same commit as parseTeam's — the same
+    // lockstep rule the task copy above states, and the reason it is stated:
+    // a sub-verb in only one copy is a sub-verb the differential stops covering.
+    if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };
     const ms = positional[0] != null ? Number(positional[0]) : null;
     return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
   }
@@ -321,6 +325,8 @@ const ADVERSARIAL = [
   '[agent:team role-add lead] brief', '[agent:team role-add lead prompt:p.md] brief',
   '[agent:team role-set lead template:t] brief', '[agent:team role-rm lead]',
   '[agent:team role-rename a b]', '[agent:team watchdog 5000]',
+  '[agent:team gather]', '[agent:team gather dry]', '[agent:team gather junk]',
+  '[agent:team gatherx]',
   '[agent:team watchdog abc]', '[agent:team watchdog]', '[agent:team foo]',
   '[agent:team]', '[agent:team-reviewer]',
   '[agent:spawn name:x cwd:/a]', '[agent:spawn name:x cwd:/a template:t]',

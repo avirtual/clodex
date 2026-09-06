@@ -50,7 +50,7 @@ function registerIpcHandlers(deps) {
     pty, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog, setLead,
+    setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
@@ -209,6 +209,11 @@ function registerIpcHandlers(deps) {
       }
       return { ok: true, team: renameRole(team, from, to) };
     } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:gather', (_e, team, opts) => {
+    try { return { ok: true, ...gatherTeam(team, opts || {}) }; }
+    catch (err) { return { ok: false, error: err.message }; }
   });
 
   handle('team:setWatchdog', (_e, team, ms) => {

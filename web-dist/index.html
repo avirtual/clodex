@@ -1796,7 +1796,8 @@ body {
 .popover-help p:last-child {
   margin-bottom: 0;
 }
-#team-roles-help.hidden {
+#team-roles-help.hidden,
+#team-roles-gather-panel.hidden {
   display: none;
 }
 .team-roles-hint {
@@ -6616,7 +6617,7 @@ body {
       </div>
     </div>
     <div id="team-roles-popover" class="hidden">
-      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
+      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="secondary" id="team-roles-gather-btn" title="Copy every library piece this team uses into the team's own directory">Gather</button><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
       <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
       <div class="popover-help hidden" id="team-roles-help" data-help>
         <p><strong>What this is.</strong> A team is a group of AI teammates that work together. Each <em>role</em> below is one kind of teammate — what it's for and how it behaves.</p>
@@ -6624,6 +6625,7 @@ body {
         <p><strong>Why lead and reviewer are locked.</strong> Every team has a <em>lead</em> that runs it and a <em>reviewer</em> that independently checks the lead's work. Clodex manages these two so a lead can never rewrite the reviewer that checks it — a safety property you don't need to configure.</p>
         <p><strong>Stall Watchdog.</strong> If a teammate sits idle on an assigned task too long, the lead gets a nudge. Blank uses the default (30m).</p>
       </div>
+      <div class="popover-help hidden" id="team-roles-gather-panel"></div>
       <div id="team-roles-list" class="team-roles-list"></div>
       <div id="team-roles-add-section">
       <button type="button" id="team-roles-newrole-toggle" class="team-roles-add-toggle" aria-expanded="false" aria-controls="team-roles-newrole-panel" title="Define a new kind of teammate for this team">+ Add role</button>
@@ -7572,6 +7574,7 @@ body {
         { name: "teamRemoveRole", kind: "invoke", channel: "team:removeRole" },
         { name: "teamRenameRole", kind: "invoke", channel: "team:renameRole" },
         { name: "teamSetWatchdog", kind: "invoke", channel: "team:setWatchdog" },
+        { name: "teamGather", kind: "invoke", channel: "team:gather" },
         // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
         // the reserved `lead` ROLE (that stays locked). The only door to a team whose
         // lead names a seat that was never created.
@@ -24096,7 +24099,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return { type: "task", sub, id: argToks[0] || null, who: null, body };
       }
       function parseTeam(cleaned) {
-        const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog)\b([^\]]*)\]\s*(.*)/s);
+        const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather)\b([^\]]*)\]\s*(.*)/s);
         if (!m) return null;
         const sub = m[1];
         const argStr = m[2];
@@ -24109,6 +24112,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         if (sub === "role-rm") return { type: "team", sub, name: positional[0] || null, body: "" };
         if (sub === "role-rename") return { type: "team", sub, name: positional[0] || null, to: positional[1] || null, body: "" };
+        if (sub === "gather") return { type: "team", sub, dry: positional[0] === "dry", body: "" };
         const ms = positional[0] != null ? Number(positional[0]) : null;
         return { type: "team", sub, ms: Number.isFinite(ms) ? ms : null, body: "" };
       }
@@ -30362,6 +30366,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const helpBtn = document.getElementById("team-roles-help-btn");
         const settingsBtn = document.getElementById("team-roles-settings-btn");
         const helpPanel = document.getElementById("team-roles-help");
+        const gatherBtn = document.getElementById("team-roles-gather-btn");
+        const gatherPanel = document.getElementById("team-roles-gather-panel");
         const setStatus = (msg, warn = false) => {
           statusEl.textContent = msg || "";
           statusEl.classList.toggle("warn", !!(warn && msg));
@@ -30839,6 +30845,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           await populatePromptOptions();
           expandedRole = null;
           setAddPanel(false);
+          closeGatherPanel();
           watchdogSection.classList.add("hidden");
           settingsBtn.setAttribute("aria-expanded", "false");
           popover.dataset.name = name;
@@ -30966,6 +30973,70 @@ You can add it back from this popover.` : "";
         addToggle.addEventListener("click", () => setAddPanel(addPanel.classList.contains("hidden")));
         addCancel.addEventListener("click", () => setAddPanel(false));
         addDispatch.addEventListener("change", paintAddReveal);
+        const closeGatherPanel = () => {
+          gatherPanel.classList.add("hidden");
+          gatherPanel.innerHTML = "";
+        };
+        function renderGatherPlan(name, res) {
+          const items = res && res.items || [];
+          const todo = items.filter((i) => i && i.action === "copy");
+          gatherPanel.innerHTML = "";
+          const head = document.createElement("p");
+          head.textContent = todo.length ? `${todo.length} library piece${todo.length === 1 ? "" : "s"} would be copied into the team's own directory.` : "Nothing to copy \u2014 this team already owns every piece its roles reference.";
+          gatherPanel.appendChild(head);
+          for (const i of items) {
+            const line = document.createElement("div");
+            line.className = "team-role-preflight-line note";
+            const why = i.error || i.reason;
+            line.textContent = `${i.action} ${i.kind}/${i.stem} (${i.via} of ${i.role})${why ? `: ${why}` : ""}`;
+            gatherPanel.appendChild(line);
+          }
+          if (todo.length) {
+            const confirm2 = document.createElement("button");
+            confirm2.type = "button";
+            confirm2.textContent = `Copy ${todo.length} piece${todo.length === 1 ? "" : "s"} into the team directory`;
+            confirm2.addEventListener("click", async () => {
+              confirm2.disabled = true;
+              let applied;
+              try {
+                applied = await window.api.teamGather(name, {});
+              } catch {
+                applied = null;
+              }
+              if (!applied || !applied.ok) {
+                setStatus(applied && applied.error || "gather failed", true);
+                confirm2.disabled = false;
+                return;
+              }
+              closeGatherPanel();
+              const failed = (applied.failed || []).length;
+              setStatus(`gathered ${(applied.copied || []).length} piece(s)${failed ? `, ${failed} failed` : ""}`, !!failed);
+              await refresh(name);
+            });
+            gatherPanel.appendChild(confirm2);
+          }
+          gatherPanel.classList.remove("hidden");
+        }
+        gatherBtn.addEventListener("click", async () => {
+          const name = teamName();
+          if (!name) return;
+          if (!gatherPanel.classList.contains("hidden")) {
+            closeGatherPanel();
+            return;
+          }
+          setStatus("");
+          let res;
+          try {
+            res = await window.api.teamGather(name, { dry: true });
+          } catch {
+            res = null;
+          }
+          if (!res || !res.ok) {
+            setStatus(res && res.error || "gather plan failed", true);
+            return;
+          }
+          renderGatherPlan(name, res);
+        });
         settingsBtn.addEventListener("click", () => {
           const nowHidden = watchdogSection.classList.toggle("hidden");
           settingsBtn.setAttribute("aria-expanded", nowHidden ? "false" : "true");

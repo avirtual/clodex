@@ -306,7 +306,10 @@ test('mkFixture injects every dep team-tickets.js reads', () => {
       // reviewer preflight uses its built-in library join, which is what every
       // subject here measures. Wiring it would change what these fixtures test.
       // Left unset on purpose: every subject here runs under the SHIPPED timeout.
-      optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile'],
+      // gatherTeam is optional in that same sense: it is reached only from
+      // _handleTeam's gather case, which no subject in this file drives — every
+      // one here is about reminder binding.
+      optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam'],
     });
   } finally { f.cleanup(); }
 });

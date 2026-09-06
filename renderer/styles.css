@@ -1404,7 +1404,7 @@ html, body {
 }
 .popover-help p { margin: 0 0 6px; }
 .popover-help p:last-child { margin-bottom: 0; }
-#team-roles-help.hidden { display: none; }
+#team-roles-help.hidden, #team-roles-gather-panel.hidden { display: none; }
 .team-roles-hint { margin: 0 0 6px; display: block; }
 /* Read-only reserved rows explain themselves rather than reading as half-built. */
 .team-role-lock-note { font-size: 11px; color: var(--text); margin-bottom: 6px; }

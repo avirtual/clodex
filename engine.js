@@ -15,7 +15,8 @@ const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { confine } = require('./path-confine');
-const { teamPromptFile } = require('./team-prompt-dir');
+const { teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
+const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
@@ -409,6 +410,41 @@ function readSystemPromptBody(stem, seatPlugins, team) {
 
 function listAllTemplates() {
   return [...templates.list(), ...pluginTemplateRows(pluginBundles())];
+}
+
+function gatherSources(team) {
+  return {
+    libraryPath: (kind, stem) => {
+      try {
+        if (kind === 'system' || kind === 'append') return promptLibrary._file(kind, stem);
+        if (kind === 'templates') return templates._file(stem);
+        return execLibrary._file(stem);
+      } catch { return null; }
+    },
+    readLibrary: (kind, stem) => {
+      try {
+        if (kind === 'system' || kind === 'append') return promptLibrary.raw(kind, stem);
+        if (kind === 'templates') return fs.readFileSync(templates._file(stem), 'utf-8');
+        return execLibrary.raw(stem);
+      } catch { return null; }
+    },
+    teamHas: (kind, stem) => (
+      (kind === 'system' || kind === 'append')
+        ? !!teamPromptFile({ fs, path }, team, kind, stem)
+        : !!teamJsonFile({ fs, path }, team, kind, stem)
+    ),
+    readTemplateForWalk: (stem) => readTeamJson({ fs, path }, team, 'templates', stem) ?? templates._read(stem),
+  };
+}
+
+function gatherTeam(name, { dry = false } = {}) {
+  const team = loadManifest(name);
+  const plan = planGather(team, gatherSources(team));
+  if (dry) return { team: team.name, dry: true, items: plan.items, copied: [], kept: [], skipped: [], missing: [], failed: [] };
+  const result = applyGather(plan, {
+    write: (to, bytes) => { ensureDir(path.dirname(to)); atomicWriteFileSync(to, bytes); },
+  });
+  return { team: team.name, dry: false, items: plan.items, ...result };
 }
 
 
@@ -1102,6 +1138,7 @@ const SessionManager = createSessionManager({
     removeRole,
     renameRole,
     setTeamWatchdog,
+    gatherTeam,
     fs,
     hasActivePending,
     bodyModeFor,
@@ -2142,7 +2179,7 @@ const toolCache = createToolCache({ whichBin });
     listAllTemplates,
     resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog, setLead,
+    setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,
     collectSystemDiagnostics, diagSummary, diagWarning,

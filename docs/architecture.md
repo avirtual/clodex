@@ -408,6 +408,19 @@ not by size:
   agent-writable manifest and a post-hoc containment check would have to be
   re-derived correctly at every call site. Pure leaf, deps injected, so like
   `clodex-paths.js` it is not in the leak scanner's lists.
+- **team-gather.js** — `planGather(team, sources)` / `applyGather(plan, io)` /
+  `formatGatherReport(result, {dry})`: the walk that finds every LIBRARY piece a
+  manifest references and the copy that makes the team own them, under the same
+  stems, so the team-first rule above picks them up with nothing rewritten. Pure
+  leaf — no `fs`, no `path` joins onto anything but `team.dir`; the probes
+  (`readLibrary`/`teamHas`/`readTemplateForWalk`/`libraryPath`) and the writer
+  (`io.write`, the `ensureDir` + `atomicWriteFileSync` pair team-manifest.js
+  uses) are bound in engine.js's `gatherTeam`. Copy-only by construction: a stem
+  the team already has is `kept`, never overwritten, and confinement is the same
+  `badStem` team-prompt-dir.js refuses on, imported rather than restated so a
+  ref the resolver would not read cannot be a ref this writes. Three entry
+  points, one plan: `[agent:team gather [dry]]`, `team:gather`, the roles
+  popover's Gather button.
 - **team-root-expand.js** — the `${TEAM_ROOT}` token for a TEMPLATE's `cwd`,
   read by the spawn intent (team-tickets.js) and the New Session dialog's
   template dropdown (renderer.js). Pure leaf. An unresolved root REFUSES rather
