@@ -245,6 +245,18 @@ test('the warning is on screen BEFORE the install invoke exists in the handler',
     + 'a warning written after the fetch is a warning about code already on disk');
 });
 
+test('opening the dialog clears any resolve left from last time', () => {
+  // Escape, Close and a backdrop press all reach closePluginsDialog, which only
+  // hides the overlay — the section and `pluginsSourceResolved` outlive it. So
+  // the open has to do the clearing, or reopening the dialog shows a preview and
+  // a warning from a previous sitting with Install already enabled, and the
+  // spec-vs-field check cannot catch it: the field still holds that same spec.
+  const m = rendererSrc.match(/async function openPluginsDialog\(\) \{[\s\S]*?\n\}/);
+  assert.ok(m, 'openPluginsDialog not found');
+  assert.match(m[0], /closePluginsSourceSection\(\)/,
+    'a stale resolve must not survive a close: Install would act on a commit shown minutes ago');
+});
+
 test('Install is disabled in the markup and the button exists to be enabled', () => {
   const html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
   assert.match(html, /id="btn-plugins-source-install"[^>]*\bdisabled\b/,

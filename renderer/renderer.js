@@ -5182,6 +5182,7 @@ function closePluginsDialog() { pluginsOverlay.classList.add('hidden'); }
 
 async function openPluginsDialog() {
   showPluginsRegisterNote('');
+  closePluginsSourceSection();
   await renderPluginsDialog();
   pluginsOverlay.classList.remove('hidden');
 }

@@ -38971,6 +38971,7 @@ ${res.stderr}` : "");
       }
       async function openPluginsDialog() {
         showPluginsRegisterNote("");
+        closePluginsSourceSection();
         await renderPluginsDialog();
         pluginsOverlay.classList.remove("hidden");
       }
