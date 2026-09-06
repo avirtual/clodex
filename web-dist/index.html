@@ -22209,7 +22209,7 @@ ${lines.join("\n")}
 ${String(body || "").trim()}
 `;
       }
-      function buildAgentPlugin(names, library, pluginName = AGENT_PLUGIN_NAME) {
+      function buildAgentPlugin(names, library, pluginName = AGENT_PLUGIN_NAME, opts = {}) {
         if (!Array.isArray(names) || names.length === 0) return null;
         const byName = new Map((library || []).map((a) => [a.name, a]));
         const agents = [];
@@ -22221,8 +22221,8 @@ ${String(body || "").trim()}
         if (!agents.length) return null;
         const manifest = {
           name: pluginName,
-          version: "0.0.0",
-          description: "clodex session-injected subagents",
+          version: opts && opts.version || "0.0.0",
+          description: opts && opts.description || "clodex session-injected subagents",
           author: { name: "clodex" }
         };
         return { manifest, agents };
@@ -22777,7 +22777,7 @@ ${fm}
 ---
 ${m[2].replace(/^\r?\n/, "")}`;
       }
-      function buildSkillPlugin(names, library, pluginName = "clodex-skills") {
+      function buildSkillPlugin(names, library, pluginName = "clodex-skills", opts = {}) {
         if (!Array.isArray(names) || names.length === 0) return null;
         const byName = new Map((library || []).map((s) => [s.name, s]));
         const skills = [];
@@ -22789,8 +22789,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!skills.length) return null;
         const manifest = {
           name: pluginName,
-          version: "0.0.0",
-          description: "clodex session-injected skills",
+          version: opts && opts.version || "0.0.0",
+          description: opts && opts.description || "clodex session-injected skills",
           author: { name: "clodex" }
         };
         return { manifest, skills };

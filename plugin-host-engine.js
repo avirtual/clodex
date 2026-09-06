@@ -766,6 +766,8 @@ function createPluginHostEngine(deps) {
         .map((r) => ({
           id: r.id,
           name: r.manifest.name || r.id,
+          version: r.manifest.version || null,
+          announce: r.manifest.announce || null,
           shipped: r.shipped === true,
           editable: r.editable === true,
           dir: r.dir || null,

@@ -655,8 +655,12 @@ function writeBundlePlugins(name, bundles) {
       const { meta, body } = parseAgentFrontmatter(a.content);
       return { name: a.name, meta, body };
     });
-    const skillPlugin = buildSkillPlugin(skillRecords.map((s) => s.name), skillRecords, b.id);
-    const agentPlugin = buildAgentPlugin(agentRecords.map((a) => a.name), agentRecords, b.id);
+    const manifestOpts = {
+      version: b.version || '0.0.0',
+      description: b.announce || `Clodex plugin ${b.name || b.id}`,
+    };
+    const skillPlugin = buildSkillPlugin(skillRecords.map((s) => s.name), skillRecords, b.id, manifestOpts);
+    const agentPlugin = buildAgentPlugin(agentRecords.map((a) => a.name), agentRecords, b.id, manifestOpts);
     if (!skillPlugin && !agentPlugin) continue;
     const dir = confine(path.join(seatDir, BUNDLES_SUBDIR), b.id);
     if (dir === null) throw new Error(`invalid plugin id: ${b.id}`);

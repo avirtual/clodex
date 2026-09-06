@@ -7,25 +7,41 @@
 // sits ABOVE the no-skills bail, so it fires on every claude spawn regardless
 // of whether any skill is injected.
 //
-// WHY THIS FILE IS SOURCE-LEVEL AND NOT BEHAVIOURAL.
+// WHY THE TRAVERSAL CASES ARE SOURCE-LEVEL AND NOT BEHAVIOURAL.
 //
 // Both functions are module-private in engine.js and reachable only through
-// createSessionManager's deps object — there is no exported seam to call. More
-// importantly SKILL_PLUGINS_DIR is module-scoped over the REAL ~/.clodex, with
-// no injection point, so a behavioural test of the traversal cases would be
-// safe ONLY while the guard works. The first time someone reverted the product
-// to check the test fails, it would delete their actual home directory. That is
-// not a test worth having at any strength.
+// createSessionManager's deps object — there is no exported seam to call. A
+// behavioural test of the traversal cases would be safe ONLY while the guard
+// works: the first time someone reverted the product to check the test fails,
+// the rmSync would land on whatever `..` resolves to. That is not a test worth
+// having at any strength, and no seam changes it.
 //
 // So: confine() itself is proven behaviourally against a temp root in
-// test/path-confine.test.js, and THIS file pins the two properties that can
-// only be established here — that each destructive call site is guarded, and
-// that the guard precedes the delete.
+// test/path-confine.test.js, and the subjects below pin the two properties that
+// can only be established here — that each destructive call site is guarded,
+// and that the guard precedes the delete.
+//
+// The manifest subject at the bottom of this file IS behavioural, and safely so:
+// it drives writeBundlePlugins on a WELL-FORMED name and id, so no arm of it
+// depends on the guard holding. It reaches the real function through the deps
+// object, over a registryDir seam (t359) that keeps every path under a temp root.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+
+// Wrap, don't replace: the engine gets the real manager back, and we keep the
+// deps object it was built with — the only route to a module-private scaffolder.
+const sessionManagerModule = require('../session-manager');
+const capturedDeps = [];
+const realSessionManagerFactory = sessionManagerModule.createSessionManager;
+sessionManagerModule.createSessionManager = (deps) => {
+  capturedDeps.push(deps);
+  return realSessionManagerFactory(deps);
+};
+const { createEngine } = require('../engine');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf-8');
 
@@ -148,3 +164,56 @@ test('the spill join documents why it does NOT need confine()', () => {
   assert.match(spill, /dot-only|t115/,
     'the comment must name what actually makes this join safe');
 });
+
+// t687 — the scaffold's IDENTITY, which the source-level subjects above cannot
+// see. Behavioural because every row here uses a well-formed seat name and
+// plugin id: nothing in it depends on the confinement holding.
+test('t687: a bundle plugin.json carries the plugin\'s own version and announce', () => {
+  const tmp = mkTmpRoot('clx-t687-manifest-');
+  const registryDir = path.join(tmp, 'clodex-home');
+  const before = capturedDeps.length;
+  createEngine({
+    userDataPath: tmp,
+    seams: { registryDir },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  assert.strictEqual(capturedDeps.length, before + 1,
+    'ENTER: the wrapped factory ran — zero calls means writeBundlePlugins below is undefined, not merely untested');
+  const writeBundlePlugins = capturedDeps[capturedDeps.length - 1].writeBundlePlugins;
+  assert.strictEqual(typeof writeBundlePlugins, 'function', 'ENTER: the real scaffolder, not a stub');
+
+  const SKILL_MD = '---\ndescription: Research a ticker.\n---\nGo look it up.\n';
+  const AGENT_MD = '---\ndescription: Assesses.\nmodel: haiku\n---\nYou assess.\n';
+  const rows = [
+    { id: 'stocks', name: 'Stocks', version: '1.4.0', announce: 'Live stock quotes',
+      skills: [{ name: 'foo', content: SKILL_MD }] },
+    { id: 'quotes', name: 'Quotes', version: '2.1.0', announce: 'Streams quotes',
+      agents: [{ name: 'bar', content: AGENT_MD }] },
+    { id: 'bare', name: 'Bare Pack', skills: [{ name: 'foo', content: SKILL_MD }] },
+  ];
+  const written = writeBundlePlugins('seat', rows);
+  assert.deepStrictEqual(written.map((w) => w.id), ['stocks', 'quotes', 'bare'],
+    'ENTER: all three were scaffolded — a row that bailed writes no plugin.json to read');
+
+  const manifestOf = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), 'utf-8'));
+
+  // The WHOLE object per row, and each expectation is a literal: `name` must
+  // stay the plugin id (<plugin>:<agent> dispatch reads it), and asserting only
+  // version+description would pass a scaffold that had lost it.
+  assert.deepStrictEqual(manifestOf(written[0].dir), {
+    name: 'stocks', version: '1.4.0', description: 'Live stock quotes', author: { name: 'clodex' },
+  }, 'a skills bundle stamps the plugin manifest\'s own version and announce');
+
+  // The agents-only row goes through buildAgentPlugin instead, which carries a
+  // SEPARATE copy of the default pair — one builder taking the opts is not both.
+  assert.deepStrictEqual(manifestOf(written[1].dir), {
+    name: 'quotes', version: '2.1.0', description: 'Streams quotes', author: { name: 'clodex' },
+  }, 'and so does an agents-only bundle');
+
+  assert.deepStrictEqual(manifestOf(written[2].dir), {
+    name: 'bare', version: '0.0.0', description: 'Clodex plugin Bare Pack', author: { name: 'clodex' },
+  }, 'a manifest with neither field falls back to the placeholder version and a named description');
+});
+
+// createEngine's background timers keep the loop alive; exit once results flush.
+test.after(() => { setImmediate(() => process.exit(0)); });

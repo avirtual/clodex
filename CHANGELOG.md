@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- **A plugin's skills and subagents reach the CLI under the plugin's own version
+  and description** instead of a `0.0.0` placeholder, so the CLI's plugin listing
+  names what is installed.
 - **Move Session… on a seat's context menu restarts it in another folder,
   keeping its configuration and conversation.** If the restart in the new folder
   fails, the seat stays in the sidebar as a retry/forget row rather than

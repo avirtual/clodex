@@ -61,7 +61,7 @@ function skillMd(name, rawContent) {
 // or null when nothing valid is enabled (so the caller can skip --plugin-dir).
 // `manifest` is the .claude-plugin/plugin.json object; each skill becomes
 // skills/<name>/SKILL.md. Names no longer on disk are skipped silently.
-function buildSkillPlugin(names, library, pluginName = 'clodex-skills') {
+function buildSkillPlugin(names, library, pluginName = 'clodex-skills', opts = {}) {
   if (!Array.isArray(names) || names.length === 0) return null;
   const byName = new Map((library || []).map((s) => [s.name, s]));
   const skills = [];
@@ -73,8 +73,8 @@ function buildSkillPlugin(names, library, pluginName = 'clodex-skills') {
   if (!skills.length) return null;
   const manifest = {
     name: pluginName,
-    version: '0.0.0',
-    description: 'clodex session-injected skills',
+    version: (opts && opts.version) || '0.0.0',
+    description: (opts && opts.description) || 'clodex session-injected skills',
     author: { name: 'clodex' },
   };
   return { manifest, skills };
