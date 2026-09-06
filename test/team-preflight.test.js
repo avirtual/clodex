@@ -572,7 +572,7 @@ test('t704: the template stem is probed once per role, and not at all when it eq
   const plugin = [];
   t704Findings({ systemPromptFile: 'rev:strict', where: { 'hand-brief': 'library' }, spy: plugin });
   assert.deepStrictEqual(plugin, [['system', 'hand-brief']],
-    'a plugin ref is never probed: the disk probe rejects the colon, so asking could only produce a false miss');
+    'a plugin ref is never probed: the plugin holds it and the disk does not, so asking could only produce a false miss');
 });
 
 test('t704: both findings carry a level and a kind the popover knows', () => {
