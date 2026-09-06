@@ -21976,11 +21976,6 @@ ${i3.join("\n")}
         const where = opts && opts.remote ? "This code will run on the Clodex host this browser is connected to, with the app's full authority, the same as Clodex itself. " : `This code will run inside Clodex with the app's full authority, the same as Clodex itself. `;
         return where + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). Clodex cannot check what it does \u2014 install it only if you trust its author.`;
       }
-      function webRendererNote(resolved) {
-        const entry = resolved && resolved.manifest && resolved.manifest.entry;
-        if (!entry || !entry.renderer) return "";
-        return " Its renderer half shows in the desktop app only \u2014 this browser's bundle is built from the plugins shipped with Clodex.";
-      }
       function sourceLine(source) {
         if (!source || !source.repo) return "";
         const sub = source.subpath ? `:${source.subpath}` : "";
@@ -22018,9 +22013,31 @@ ${i3.join("\n")}
         previewLines,
         updatePreviewLines,
         warningText,
-        webRendererNote,
         installState
       };
+    }
+  });
+
+  // renderer/lib/plugin-module-eval.js
+  var require_plugin_module_eval = __commonJS({
+    "renderer/lib/plugin-module-eval.js"(exports, module) {
+      "use strict";
+      function evalRendererModule(source, id) {
+        const module2 = { exports: {} };
+        const requireShim = () => {
+          throw new Error(`${id}: a renderer half cannot require() in the browser \u2014 it is evaluated from source text`);
+        };
+        const fn = new Function(
+          "module",
+          "exports",
+          "require",
+          `${source}
+//# sourceURL=clodex-plugin:${id}/renderer.js`
+        );
+        fn(module2, module2.exports, requireShim);
+        return module2.exports;
+      }
+      module.exports = { evalRendererModule };
     }
   });
 
@@ -34573,12 +34590,12 @@ ${detail}` });
         previewLines,
         updatePreviewLines,
         warningText,
-        webRendererNote,
         installState,
         sourceLabel,
         sourceLine,
         shortCommit
       } = require_plugin_source_dialog();
+      var { evalRendererModule } = require_plugin_module_eval();
       var { prefsGate } = require_prefs_gate();
       var { planNewSession } = require_focus_policy();
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
@@ -37233,12 +37250,14 @@ ${detail}` });
       async function activatePluginRenderer(id) {
         let reported = false;
         try {
-          const info = await window.api.pluginInvoke("_host", "renderer.info", [id]);
+          const reg = window.__CLODEX_PLUGIN_REGISTRY__;
+          const args = window.__CLODEX_WEB__ ? [id, { source: !(reg && typeof reg.get === "function" && reg.get(id)) }] : [id];
+          const info = await window.api.pluginInvoke("_host", "renderer.info", args);
           if (!info || !info.ok || !info.rendererPath) return false;
-          const mod = requirePluginRenderer(info.rendererPath, id);
+          const mod = requirePluginRenderer(info.rendererPath, id, info.source);
           if (!mod) return false;
           pluginBar.activate(id, mod, {
-            invoke: (pid, method, args) => window.api.pluginInvoke(pid, method, args),
+            invoke: (pid, method, args2) => window.api.pluginInvoke(pid, method, args2),
             css: info.css
           });
           reported = true;
@@ -37258,9 +37277,13 @@ ${detail}` });
           return false;
         }
       }
-      function requirePluginRenderer(rendererPath, id) {
+      function requirePluginRenderer(rendererPath, id, source) {
         const reg = window.__CLODEX_PLUGIN_REGISTRY__;
-        if (reg && typeof reg.get === "function") return reg.get(id) || null;
+        if (reg && typeof reg.get === "function") {
+          const mod = reg.get(id);
+          if (mod) return mod;
+        }
+        if (typeof source === "string") return evalRendererModule(source, id);
         if (window.__CLODEX_WEB__ || !window.require) return null;
         return window.require(rendererPath);
       }
@@ -39748,17 +39771,16 @@ ${res.stderr}` : "");
             showPluginsRegisterNote(`Could not ${what}: ${r && r.error || "unknown error"}`, "warn");
             return;
           }
-          const rendererNote = window.__CLODEX_WEB__ ? webRendererNote(resolved) : "";
           if (updating) {
             closePluginsSourceSection();
             const rows = await renderPluginsDialog();
             const redrawn = rows.find((x) => x.id === r.id);
             const restart = redrawn && redrawn.restartRequired ? " \u2014 restart Clodex to run the new code" : "";
-            showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.${rendererNote}`);
+            showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.`);
             return;
           }
           closePluginsSourceSection();
-          showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} \u2014 it is off until you turn it on from its row above.${rendererNote}`);
+          showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} \u2014 it is off until you turn it on from its row above.`);
           await renderPluginsDialog();
         } finally {
           pluginsSourceResolveBtn.disabled = false;
