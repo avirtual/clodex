@@ -185,12 +185,6 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
     + 'yours: whether each new test measures what it claims, whether it would still pass against the '
     + 'unfixed code, and whether the change is the right one. A test that passes while asserting '
     + 'nothing is green and worthless, and the run cannot tell you which it was.');
-  const remeasured = t.suiteRemeasured;
-  if (remeasured) {
-    out.push(`SUITE RE-MEASURED: the first run was ${text(remeasured.first) || '(unrecorded)'} `
-      + `(${text(remeasured.firstFailing) || 'no names recorded'}); the second run, on the same commit, `
-      + 'was green. Treat that as a box-contention flake unless the diff touches those tests.');
-  }
   out.push('');
 
   // Round 2+: the settled ground is stated so the reviewer does not re-open it.

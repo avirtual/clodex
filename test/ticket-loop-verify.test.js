@@ -71,11 +71,13 @@ function git(cwd, args) {
 // `✖ name (1.23ms)` block. The stub agreed with the parser, both were wrong
 // together, and every real rejection would have named no tests at all.
 // A stub is only evidence when its output came off the real thing.
-// The `red` run's output, factored out because the re-measure stubs below must
-// print the SAME first run: the assertion that the record kept `3/5 passing, 2
-// failing (exit 1)` is only about the re-measure if the number came off the
-// shape the stable-red subject already pins, rather than off a second literal
-// that can drift away from it silently.
+//
+// The three constants below are the PARTS several stubs share, hoisted so the
+// table stays readable. `red`'s output is one of them because the re-measure
+// stubs must print the SAME first run: the assertion that the record kept
+// `3/5 passing, 2 failing (exit 1)` is only about the re-measure if that number
+// came off the shape the stable-red subject already pins, rather than off a
+// second literal that can drift away from it silently.
 const RED_LINES = 'console.log(".XX");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
   + 'console.log("\\u2716 the thing that broke (1.15ms)");\n'
   + 'console.log("\\u2716 the other thing (0.42ms)");\n'
