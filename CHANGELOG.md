@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Install from GitHub… explains how to install a plugin that lives in a folder of a repo: paste the folder's GitHub URL (…/tree/<branch>/<folder>) or write owner/repo@ref:folder, and the hint under the field says what @ and : pick.
+
 ## 5.33.0 — 2026-09-06
 
 - **The roles popover shows what each role uses, and who owns it.** Every role row lists its system prompt, template, append stems and exec commands with a badge: **team** for a piece under `~/.clodex/teams/<name>/`, **library** for one borrowed from the shared library, **plugin** for a namespaced ref, **missing** for one that resolves nowhere. The list is the Gather plan, so it matches `[agent:team gather dry]` line for line and flips to team when Gather is applied.

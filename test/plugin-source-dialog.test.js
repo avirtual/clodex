@@ -634,6 +634,21 @@ test('Install is disabled in the markup and the button exists to be enabled', ()
   assert.match(html, /id="btn-plugins-source"/);
 });
 
+test('the field and the hint under it show the folder-in-a-repo forms', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  const input = html.match(/<input id="plugins-source-spec"[^>]*>/);
+  assert.ok(input, 'ENTER: the input id still matches as today');
+  assert.ok(input[0].includes('/tree/main/folder'),
+    'the placeholder must lead with the URL a user copies from the browser — a folder of a repo is the case '
+    + 'that sent the operator to the source to find out whether it parsed');
+  assert.ok(input[0].includes('owner/repo@ref:folder'),
+    'and keep the short form, which is what the hint below explains');
+  const hint = html.match(/<div id="plugins-source-hint"[^>]*>([\s\S]*?)<\/div>/);
+  assert.ok(hint, 'the hint element must exist');
+  assert.ok(hint[1].includes('@ picks the branch or tag'),
+    'a placeholder shows the shape but never says what the punctuation picks');
+});
+
 test('Install from GitHub… is offered on the web surface, unlike Register', () => {
   assert.ok(/if \(window\.__CLODEX_WEB__\) pluginsRegisterBtn\.classList\.add\('hidden'\)/.test(rendererSrc),
     'ENTER: the absence below is about a hide that sat beside one that still exists — register-from-path '

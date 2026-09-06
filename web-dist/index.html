@@ -7433,7 +7433,8 @@ body {
       <div id="plugins-folder" class="hidden"></div>
       <div id="plugins-source" class="hidden">
         <label id="plugins-source-label" for="plugins-source-spec">Public GitHub repo</label>
-        <input id="plugins-source-spec" type="text" spellcheck="false" placeholder="owner/repo, owner/repo@ref, owner/repo@ref:path, or a github.com URL" />
+        <input id="plugins-source-spec" type="text" spellcheck="false" placeholder="https://github.com/owner/repo/tree/main/folder — or owner/repo@ref:folder" />
+        <div id="plugins-source-hint" class="plugin-row-note">Paste the repo URL, or the URL of a folder inside it (…/tree/&lt;branch&gt;/&lt;folder&gt;). Short form: owner/repo@ref:folder — @ picks the branch or tag, : picks the folder; leave @ off for the default branch.</div>
         <div id="plugins-source-preview" class="plugin-row-note hidden"></div>
         <div id="plugins-source-warning" class="plugin-row-note warn hidden"></div>
         <div class="plugin-settings-actions">
