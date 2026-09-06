@@ -3,7 +3,7 @@
 const os = require('os');
 const {
   isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS, PLUGIN_SCOPES, scopeOf,
-  PLUGIN_METHOD_SURFACES,
+  PLUGIN_METHOD_SURFACES, PLUGIN_CAPABILITIES, readsOf,
 } = require('./plugin-api');
 const { AGENT_NAME_RE } = require('./catalogs');
 const { createPluginSource } = require('./plugin-source');
@@ -23,6 +23,17 @@ function validateManifest(m, dirName, hasBundle = false) {
   // silent. An absent scope is legal and means global.
   if (m.scope != null && !PLUGIN_SCOPES.includes(m.scope)) {
     return `invalid scope: ${JSON.stringify(m.scope)} — must be ${PLUGIN_SCOPES.map((s) => JSON.stringify(s)).join(' or ')}`;
+  }
+  if (m.reads != null) {
+    if (!Array.isArray(m.reads)) return 'manifest.reads must be an array of capability names';
+    for (const cap of m.reads) {
+      if (!PLUGIN_CAPABILITIES.includes(cap)) {
+        return `invalid read capability: ${JSON.stringify(cap)} — must be ${PLUGIN_CAPABILITIES.map((c) => JSON.stringify(c)).join(' or ')}`;
+      }
+    }
+    if (m.reads.length && scopeOf(m) !== 'session') {
+      return `declares reads [${m.reads.map((c) => JSON.stringify(c)).join(', ')}] but its scope is global — grants are offered only to a session-scoped plugin; add "scope": "session"`;
+    }
   }
   // Same refusal logic as `scope`, and for a sharper reason: `methodSurfaceOf`
   // resolves anything unrecognized to `desktop`, so a typo here fails CLOSED —
@@ -1026,6 +1037,7 @@ function createPluginLoader(deps) {
           linkedFrom: rec.root === 'user' && rec.isLink ? rec.dir : null,
           source: sourceOf(rec),
           scope: scopeOf(rec.manifest),
+          reads: readsOf(rec.manifest),
         };
       }),
       problems: discoveryProblems.slice(),

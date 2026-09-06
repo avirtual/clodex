@@ -32,7 +32,7 @@ const path = require('node:path');
 const {
   PLUGIN_SCOPES, DEFAULT_PLUGIN_SCOPE, scopeOf,
   PLUGIN_CAPABILITIES, grantToken, isValidCapability, pluginGranted, seatHasPlugin,
-  HOST_API_VERSION,
+  HOST_API_VERSION, readsOf,
 } = require('../plugin-api');
 const registry = require('../intent-registry');
 const { validateManifest } = require('../plugin-loader');
@@ -164,6 +164,46 @@ test('the loader accepts both scopes and REFUSES anything else', () => {
   }
   assert.strictEqual(validateManifest({ ...OK_MANIFEST, scope: null }, 'demo'), null,
     'an explicitly null scope is the absent case, not an error');
+});
+
+// ── t692: the `reads` declaration ───────────────────────────────────────────
+
+test('t692: readsOf is null when undeclared, and otherwise the declared set in CAPABILITY order', () => {
+  assert.strictEqual(readsOf({}), null, 'an absent field is UNDECLARED, and every grant row stays live');
+  assert.strictEqual(readsOf({ reads: null }), null, 'an explicit null is the absent case too');
+  assert.strictEqual(readsOf(null), null);
+  // `[]` is NOT null: it says "reads nothing", which dims all three rows. A
+  // reader that collapsed the two would offer three live rows to a plugin that
+  // declared it consumes none of them.
+  assert.deepStrictEqual(readsOf({ reads: [] }), []);
+  assert.deepStrictEqual(readsOf({ reads: ['toolInputs', 'turns', 'turns'] }), ['turns', 'toolInputs'],
+    'deduplicated, and ordered as PLUGIN_CAPABILITIES orders them — not as the manifest wrote them');
+});
+
+test('t692: the loader refuses a malformed `reads`, an unknown member, and a non-empty one on a GLOBAL manifest', () => {
+  const SESSION = { ...OK_MANIFEST, scope: 'session' };
+  assert.strictEqual(validateManifest(SESSION, 'demo'), null,
+    'CONTROL: the session-scoped base manifest is valid before any reads field');
+  assert.strictEqual(validateManifest({ ...SESSION, reads: ['turns'] }, 'demo'), null,
+    'a session-scoped plugin declaring a real capability loads');
+
+  assert.match(String(validateManifest({ ...SESSION, reads: 'turns' }, 'demo')),
+    /manifest\.reads must be an array of capability names/,
+    'a bare string is refused — it is not a list, and `[...\'turns\']` would read as four unknown members');
+
+  const unknown = String(validateManifest({ ...SESSION, reads: ['everything'] }, 'demo'));
+  assert.match(unknown, /invalid read capability/);
+  assert.match(unknown, /everything/, 'the refusal names the member the author actually wrote');
+  assert.match(unknown, /"turns"/, 'and the allowed set, the way the scope refusal does');
+
+  // The refusal that carries the fix. `scopeOf` resolves an absent scope to
+  // global, so a plugin that declares reads and forgets the scope would load and
+  // then be offered no grants at all, with nothing on screen saying why.
+  const globalReads = String(validateManifest({ ...OK_MANIFEST, reads: ['turns'] }, 'demo'));
+  assert.match(globalReads, /its scope is global/);
+  assert.match(globalReads, /"scope": "session"/, 'the message names the fix, not just the fault');
+  assert.strictEqual(validateManifest({ ...OK_MANIFEST, reads: [] }, 'demo'), null,
+    'an EMPTY reads is legal at either scope — it declares consumption, not a grant offer');
 });
 
 // ── The four shipped plugins (clodex: "the assertion I will look for first") ─

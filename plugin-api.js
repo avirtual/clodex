@@ -73,6 +73,13 @@ function scopeOf(manifest) {
 // and each defaults OFF.
 const PLUGIN_CAPABILITIES = Object.freeze(['turns', 'thinking', 'toolInputs']);
 
+function readsOf(manifest) {
+  const list = manifest && manifest.reads;
+  if (list == null) return null;
+  const want = new Set(Array.isArray(list) ? list : []);
+  return PLUGIN_CAPABILITIES.filter((cap) => want.has(cap));
+}
+
 // `:` is what makes a grant token unforgeable as an intent verb and vice versa:
 // PLUGIN_VERB_RE admits no colon, so a grant list and an intents list can never
 // be confused for one another even though they ride the same entry.
@@ -238,6 +245,7 @@ module.exports = {
   DEFAULT_PLUGIN_SCOPE,
   scopeOf,
   PLUGIN_CAPABILITIES,
+  readsOf,
   grantToken,
   isValidCapability,
   sanitizeGrants,
