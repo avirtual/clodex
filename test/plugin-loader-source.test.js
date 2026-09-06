@@ -389,6 +389,30 @@ test('applyUpdate accepts an abbreviated-vs-full commit match, not just an exact
   assert.strictEqual(r.ok, true, JSON.stringify(r));
 });
 
+test('applyUpdate refuses a commit too short to identify anything (t683 r3 nit)', async () => {
+  // The prefix match above is what makes an abbreviated sha usable, and it is
+  // also what makes a ONE-CHARACTER "commit" match any sha starting with that
+  // character. The caller's accepted commit is the whole safety of the swap —
+  // it is how "I looked at this code" is expressed — so a prefix too short to
+  // name one commit must be refused rather than silently accepted.
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  await loader.installFromSource('owner/repo@main');
+  const before = fs.readFileSync(path.join(userDir, 'demo', 'manifest.json'), 'utf8');
+  const r = await loader.applyUpdate('demo', 'd');
+  assert.strictEqual(r.ok, false, JSON.stringify(r));
+  assert.match(r.error, /not the.*you accepted/);
+  assert.strictEqual(fs.readFileSync(path.join(userDir, 'demo', 'manifest.json'), 'utf8'), before,
+    'the installed copy is untouched by the refused update');
+  // 7 is the boundary: the abbreviated sha the tarball name carries is exactly
+  // that long, so refusing at 7 would refuse every ordinary resolve-then-apply.
+  const { loader: l2 } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  await l2.installFromSource('owner/repo@main');
+  const ok = await l2.applyUpdate('demo', 'def5678');
+  assert.strictEqual(ok.ok, true, JSON.stringify(ok));
+});
+
 test('applyUpdate replaces the copy in place, keeps enable state, and updates the sidecar', async () => {
   const installBytes = buildTarballBytes('abc1234', 'demo');
   const updateBytes = buildTarballBytes('def5678', 'demo', { 'NEWFILE.txt': 'v2' });
@@ -514,6 +538,53 @@ test('applyUpdate on a loaded plugin leaves it restart-required even at the SAME
     'updateBundle must NOT run for a plugin flagged restart-required — that would pair fresh content with the stale engine');
   const row = loader.status().plugins.find((p) => p.id === 'demo');
   assert.ok(row && row.restartRequired, 'the settings row carries restartRequired');
+});
+
+// A tarball whose plugin has NO engine and NO renderer half — legal since the
+// directory carries a skills/ entry, and the case the row below is about.
+function buildBundleOnlyTarballBytes(sha, id, skillBody) {
+  const stage = mkTmpRoot('clodex-loader-source-stage-');
+  const topDirName = `owner-repo-${sha}`;
+  const topDir = path.join(stage, topDirName);
+  fs.mkdirSync(path.join(topDir, 'skills', 'note'), { recursive: true });
+  fs.writeFileSync(path.join(topDir, 'manifest.json'), JSON.stringify({
+    id, name: `${id} plugin`, version: '1.0.0', hostApi: HOST_API_VERSION, entry: {},
+  }));
+  fs.writeFileSync(path.join(topDir, 'skills', 'note', 'SKILL.md'), skillBody);
+  require('node:child_process').execFileSync('tar', ['-czf', path.join(stage, 'out.tar.gz'), '-C', stage, topDirName]);
+  return fs.readFileSync(path.join(stage, 'out.tar.gz'));
+}
+
+test('applyUpdate on a BUNDLE-ONLY plugin does NOT set restartRequired (t683 r3 nit)', async () => {
+  // restartRequired exists for one reason: the require cache still holds the OLD
+  // engine, so fresh content must not be paired with it. A plugin with neither
+  // half was never required, so there is nothing stale to protect — and the flag
+  // is not free, because rescan withholds updateBundle from a restart-required
+  // plugin. Setting it here means an updated skill silently never reaches the
+  // seats until the app restarts, which is the whole point of updating a bundle.
+  const installBytes = buildBundleOnlyTarballBytes('abc1234', 'demo', 'v1 skill');
+  const updateBytes = buildBundleOnlyTarballBytes('def5678', 'demo', 'v2 skill');
+  const { loader, getUi } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  const installed = await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+  loader.setEnabledInSettings('demo', true);
+  assert.ok((getUi().plugins.enabled || []).includes('demo'), 'ENTER: demo is explicitly enabled');
+  const pluginHost = fakePluginHost();
+  const activated = loader.activateById('demo', pluginHost);
+  assert.strictEqual(activated.ok, true, JSON.stringify(activated));
+
+  const resolved = await loader.resolveUpdate('demo');
+  const applied = await loader.applyUpdate('demo', resolved.commit);
+  assert.strictEqual(applied.ok, true, JSON.stringify(applied));
+
+  const row = loader.status().plugins.find((p) => p.id === 'demo');
+  assert.ok(row, 'ENTER: the bundle-only plugin has a settings row at all');
+  assert.ok(!row.restartRequired, 'a plugin with no engine and no renderer half has no stale code to guard');
+
+  const r = loader.rescan(pluginHost);
+  assert.deepStrictEqual(r.changed, [], 'nothing to restart for, so nothing to report as changed');
+  assert.deepStrictEqual(pluginHost.updateBundleCalls.map((c) => c[0]), ['demo'],
+    'the refreshed skills must reach the host — the flag would have withheld exactly this');
 });
 
 // ════════════════════════════════════════════════════════════════════════════

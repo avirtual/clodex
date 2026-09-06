@@ -589,12 +589,13 @@ scripts disabled. **Recommend, do not build.**
 
 ---
 
-## 9. Sources — a GitHub fetch (phase A: engine only, no dialog)
+## 9. Sources — a GitHub fetch
 
 **Phase A implemented** (t683): `plugin-source.js` + five loader methods +
-five `_host` methods. **No UI yet** — Manage Plugins gains no button until
-phase B wires a dialog to `resolveSource`/`installFromSource`. Until then this
-surface is reachable only from another main-process caller or a test.
+five `_host` methods. **Install from GitHub… reaches two of them** (t688):
+Manage Plugins resolves and installs, described in §10 step 3. `resolveUpdate`,
+`applyUpdate` and `removeSourcePlugin` are still reachable only from another
+main-process caller or a test.
 
 The framing that keeps remote additive rather than structural, unchanged from
 the sketch:
@@ -656,14 +657,17 @@ explicit id and (for apply) an explicit accepted commit.
 `plugins.installFromSource`, `plugins.applyUpdate` and
 `plugins.removeSourcePlugin` each call `loader.rescan(api)` themselves on
 success, sharing the same `rescanAndAnnounce()` helper `plugins.rescan` uses —
-an update of a running plugin sets `restartRequired` and refreshes its bundle,
-and a removal runs the removed-loop's `deactivate`/`loadedFrom` cleanup and
-`removed` announce. A caller of these three methods does not additionally
-call `plugins.rescan` itself; that would be a redundant no-op rescan, not a
-second effect. This differs from `plugins.register`, whose caller is expected
-to follow up with an explicit rescan/enable — a source install is not a
-symlink into an unmanaged path, so there is no reason to make phase B redo by
-hand what phase A can already do for it.
+an update of a running plugin with an engine or renderer half sets
+`restartRequired` (the require cache still holds the old code), and one with
+neither refreshes its bundle instead — the two are exclusive, since rescan
+withholds `updateBundle` from a plugin flagged restart-required. A removal runs
+the removed-loop's `deactivate`/`loadedFrom` cleanup and `removed` announce. A
+caller of these three methods does not additionally call `plugins.rescan`
+itself; that would be a redundant no-op rescan, not a second effect. This
+differs from `plugins.register`, whose caller is expected to follow up with an
+explicit rescan/enable — a source install is not a symlink into an unmanaged
+path, so there is no reason to make the dialog redo by hand what the engine
+already does for it.
 
 **Install always registers DISABLED**, regardless of `enabledByDefault` — the
 decision to fetch code and the decision to run it are two separate clicks
@@ -690,8 +694,9 @@ ever reads. The move-in from there is `renameSync`, falling back to
 guaranteed to be the same mount).
 
 Still deliberately unanswered: whether a source is EVER per-collection beyond
-picking one subpath per install call (no picker, no index read), and whether
-phase B's dialog shows anything beyond the warning text §7 already specifies.
+picking one subpath per install call (no picker, no index read). The dialog
+answered the other half by showing what would land — name, id, version, source,
+commit — above the warning text §7 specifies, and nothing more.
 
 ---
 
@@ -704,8 +709,9 @@ End to end, today, with the user root implemented:
 1. Find a plugin. **There is no discovery mechanism.** No directory, no index, no
    search, no listing inside the app. The user learns a plugin exists from a
    README, a link, or a person.
-2. Obtain it. **No install path in the app.** `git clone` or download and unzip,
-   in a terminal or a file manager.
+2. Obtain it. From a public GitHub repo, **Install from GitHub…** in step 3 does
+   this and step 3 together. From anywhere else, `git clone` or download and
+   unzip, in a terminal or a file manager.
 3. Place it at `~/.clodex/plugins/<id>/`, where `<id>` must equal the plugin's
    manifest id. **`~/.clodex` is a dot-directory**, so a Finder user needs
    ⌘⇧. to see it, or ⌘⇧G to navigate to it — but **Manage Plugins ▸ Open Plugins
@@ -721,14 +727,30 @@ End to end, today, with the user root implemented:
    registered — see §4 for why one id can only have one copy. Desktop only: the
    method takes a caller-supplied host path, so a browser client would be
    choosing a directory on someone else's machine to load code from.
+   **Manage Plugins ▸ Install from GitHub…** is the other way in, and the only
+   one that does not need a terminal: it opens an inline section in the same
+   dialog taking `owner/repo`, `owner/repo@ref`, `owner/repo@ref:path/in/repo`
+   or a github.com URL. **Resolve** fetches and validates the manifest without
+   writing anything into the plugins folder, then shows what would land — name,
+   id, version, `repo@ref[:subpath]`, resolved commit — above a warning that the
+   code will run with the app's full authority and that Clodex cannot check what
+   it does. **Install** is disabled until a resolve succeeds for the text
+   currently in the field, so the sentence naming a commit is always about the
+   code that is about to be placed; editing the spec afterwards disables it
+   again. The plugin lands DISABLED whatever its `enabledByDefault` says (§7:
+   downloading and running are two decisions), so step 5 is still yours. Desktop
+   only, for §6's reason. Updating and removing a fetched plugin from the dialog
+   is not built yet — the `_host` methods exist, no UI reaches them.
 4. **Re-scan** in Manage Plugins, or restart. Discovery no longer runs only at
    startup: `plugins.rescan` re-reads every root and loads what it finds.
-5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`.
+5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`
+   — and always, for a plugin fetched from a source, which is registered
+   disabled whatever its manifest asks for.
 
 **Revised scope statement: this feature makes user plugins reachable, not
-discoverable.** Steps 3 and 4 no longer need a terminal or a restart. Steps 1
-and 2 are untouched — nobody discovers a plugin, and nobody installs one without
-`git clone` or an unzip.
+discoverable.** Steps 3 and 4 no longer need a terminal or a restart. Step 1 is
+untouched — nobody discovers a plugin. Step 2 is now covered for a public GitHub
+repo, and only there.
 
 ### What a re-scan can and cannot do
 
@@ -806,8 +828,9 @@ Consequences worth stating:
 | §6 Electron-only, lint & parity unaffected | Verified property; no code |
 | §7 trust posture | Posture; no code |
 | §8 npm dependencies | Sketch, not built |
-| §9 sources: GitHub fetch, engine + host methods | **Implemented** (desktop only), no dialog — phase B |
-| §9 sources: install/update/remove UI | Not built — phase B |
+| §9 sources: GitHub fetch, engine + host methods | **Implemented** (desktop only) |
+| §9 sources: install UI — Manage Plugins ▸ Install from GitHub… | **Implemented** (desktop only) |
+| §9 sources: update/remove UI on a fetched row | Not built — phase B2 |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
 | §10 an install affordance — register a folder from anywhere | **Implemented** (desktop only) |
