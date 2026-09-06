@@ -1546,20 +1546,24 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (!skipAsyncRefresh) inputArgs.value = DEFAULT_ARGS[type] || '';
   argsHint.textContent = ARGS_HINTS[type] || '';
   const authoring = dialogMode === 'template';
-  const supportsSystemPrompt = type === 'claude' || type === 'codex';
-  if (modelRow) modelRow.style.display = supportsSystemPrompt ? '' : 'none';
+  const agentType = type === 'claude' || type === 'codex';
+  if (modelRow) modelRow.style.display = agentType ? '' : 'none';
   if (!skipAsyncRefresh) inputModel.value = '';
-  systemPromptRow.style.display = supportsSystemPrompt ? '' : 'none';
-  if (appendPromptsRow) appendPromptsRow.style.display = supportsSystemPrompt ? '' : 'none';
-  if (!supportsSystemPrompt) inputSystemPrompt.value = '';
+  systemPromptRow.style.display = agentType ? '' : 'none';
+  if (appendPromptsRow) appendPromptsRow.style.display = agentType ? '' : 'none';
+  if (!agentType) inputSystemPrompt.value = '';
   const claudeOnly = type === 'claude';
-  for (const sec of [toolsSection, skillsSection, otherSection]) {
+  for (const sec of [toolsSection, skillsSection]) {
     if (sec) sec.style.display = claudeOnly ? '' : 'none';
+  }
+  if (otherSection) otherSection.style.display = agentType ? '' : 'none';
+  for (const row of [agentsRow, pluginsRow, stripRow, autoCompactRow, noWireRow]) {
+    if (row) row.style.display = claudeOnly ? '' : 'none';
   }
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
-  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); refreshNewSessionTools(); }
-  const agentType = type === 'claude' || type === 'codex';
+  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(); }
+  if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
     inputResume.value = '';
@@ -1903,6 +1907,9 @@ wireBulkToggles(skillsRow, inputSkillsList);
 const injectSkillsRow = document.getElementById('inject-skills-row');
 const inputInjectSkillsList = document.getElementById('input-inject-skills-list');
 const stripRow = document.getElementById('strip-row');
+const pluginsRow = document.getElementById('plugins-row');
+const autoCompactRow = document.getElementById('auto-compact-row');
+const noWireRow = document.getElementById('no-wire-row');
 const inputStripLevel = document.getElementById('input-strip-level');
 const inputAutoCompact = document.getElementById('input-auto-compact');
 const inputNoWire = document.getElementById('input-no-wire');
@@ -1921,8 +1928,16 @@ async function refreshNewSessionInjectSkills(enabledSet = new Set()) {
   renderInjectChecklist(inputInjectSkillsList, enabledSet, null, newSessionSeat());
 }
 
+function newSessionIsAgent() {
+  return inputType.value === 'claude' || inputType.value === 'codex';
+}
+
+function newSessionPluginTicks() {
+  return inputType.value === 'claude' ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
+}
+
 async function refreshNewSessionExecCommands(enabledSet = new Set()) {
-  if (inputType.value !== 'claude') return;
+  if (!newSessionIsAgent()) return;
   setExecLibCache((await window.api.listExecCommands()) || []);
   renderExecChecklist(inputExecList, enabledSet);
 }
@@ -1954,8 +1969,8 @@ function repaintNewSessionBundleRows() {
 }
 
 async function refreshNewSessionIntents(intentsList) {
-  if (inputType.value !== 'claude') return;
-  setIntentCatalogCache((await window.api.getIntentCatalog(null, collectPluginChecklist(inputPluginList))) || []);
+  if (!newSessionIsAgent()) return;
+  setIntentCatalogCache((await window.api.getIntentCatalog(null, newSessionPluginTicks())) || []);
   renderIntentChecklist(inputIntentList, intentsList);
 }
 
@@ -2309,6 +2324,10 @@ inputTemplate.addEventListener('change', async () => {
     if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
     if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
     if (inputNoWire) inputNoWire.checked = t.noWire === true;
+  } else if (t.type === 'codex') {
+    await refreshNewSessionExecCommands(new Set(t.execCommands || []));
+    await refreshNewSessionPlugins(t.plugins);
+    await refreshNewSessionIntents(t.intents);
   }
   if (t.type === 'claude' || t.type === 'codex') {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
@@ -2365,7 +2384,7 @@ function expandPath(p) {
 function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
-  const intents = type === 'claude' ? collectIntentChecklist(inputIntentList) : null;
+  const intents = agentType ? collectIntentChecklist(inputIntentList) : null;
   // Written for EVERY type (see the EDITOR_OWNED note below), and a type with no
   // Plugins section gets the globally-enabled set — `[]` would close it for good.
   const plugins = type === 'claude'
@@ -2388,7 +2407,7 @@ function collectFormConfig() {
     extraArgs: withModelArg(parseArgs(inputArgs.value || ''), inputModel.value),
     proxy: agentType ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null,
     agents: type === 'claude' ? collectAgentChecklist(inputAgentsList) : [],
-    execCommands: type === 'claude' ? collectExecChecklist(inputExecList) : [],
+    execCommands: agentType ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
     plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
@@ -2621,6 +2640,10 @@ async function openTemplateEditor(tpl = null, bundle = null) {
   if (agentType) {
     fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '', newSessionSeat());
     renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []), newSessionSeat());
+  }
+  if (inputType.value === 'codex') {
+    await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
+    await refreshNewSessionIntents(tpl && tpl.intents);
   }
   if (inputType.value === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []), null, newSessionSeat());
@@ -6613,12 +6636,12 @@ async function openArgsDialog(name, argsSource = null) {
   argsToolsSection.style.display = isClaude ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
-  argsIntentsSection.style.display = isClaude ? '' : 'none';
+  argsIntentsSection.style.display = isAgent ? '' : 'none';
   // Keyed on the list this dialog just painted: the override is what makes a
   // live untick repaint the verbs.
   setIntentCatalogCache((await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList))) || []);
   renderIntentChecklist(argsIntentsList, res.intents);
-  const isExecEditable = isClaude && !argsSource;
+  const isExecEditable = isAgent && !argsSource;
   argsExecSection.style.display = isExecEditable ? '' : 'none';
   if (isExecEditable) {
     setExecLibCache((await window.api.listExecCommands()) || []);
@@ -6681,10 +6704,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const denyBuiltins = argsAgentsRow.style.display === 'none'
     ? [] : collectBuiltinChecklist(argsBuiltinsList);
   const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
-  // This dialog OWNS the gate: collect returns null (every box checked → clear) or the enabled
-  // subset ([] = everything gated, a real value). Both OVERWRITE; undefined-preserve is
-  // reserved for a patch that omits intents entirely.
-  const intents = argsIntentsSection.style.display === 'none' ? null : collectIntentChecklist(argsIntentsList);
+  // undefined = "untouched", exactly as `plugins` below: a hidden section is an
+  // absence of options, not the operator's answer. `null` here would reach
+  // session-args as an explicit clear of the allowlist.
+  const intents = argsIntentsSection.style.display === 'none' ? undefined : collectIntentChecklist(argsIntentsList);
   // undefined = "untouched", never []: a hidden section or a checklist that drew
   // no rows is an absence of options, not the operator's answer.
   const plugins = (argsPluginsSection.style.display === 'none' || !argsPluginsRendered.length)

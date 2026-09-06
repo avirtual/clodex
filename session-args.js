@@ -38,10 +38,10 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     injectSkills: injectSkills !== undefined ? (injectSkills || []) : (prev?.injectSkills || []),
     // Exec-command GRANT allowlist — array-shaped like agents/disabledTools above
     // (undefined = untouched keeps the persisted grants; an explicit value, incl []
-    // = revoke all, overwrites). The Edit dialog OWNS it as a Claude-only section
-    // and sends the checked grants; a peer patch NEVER carries it (exec is local-
-    // only — stripped at the wire in both directions, see withoutExecGrants), so
-    // over-the-wire this always resolves to undefined = the box's grants preserved.
+    // = revoke all, overwrites). The Edit dialog OWNS it and sends the checked
+    // grants; a peer patch NEVER carries it (exec is local-only — stripped at the
+    // wire in both directions, see withoutExecGrants), so over-the-wire this
+    // always resolves to undefined = the box's grants preserved.
     execCommands: execCommands !== undefined
       ? (Array.isArray(execCommands) ? execCommands.map(String) : [])
       : (Array.isArray(prev?.execCommands) ? prev.execCommands : []),
@@ -53,9 +53,9 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     appendPromptFiles: appendPromptFiles !== undefined ? (appendPromptFiles || []) : (prev?.appendPromptFiles || []),
     // Intents gate allowlist. Unlike the fields above (empty = a real clear), the
     // gate's shapes are: an array (incl [] = everything gated, a real value) or null
-    // (all-enabled — the absent/default state). The Edit dialog OWNS it and sends
-    // the CHECKED set (an array; null when the section is hidden); undefined =
-    // untouched keeps the persisted gate for any patch that omits intents.
+    // (all-enabled — the absent/default state). null OVERWRITES, so a dialog that
+    // drew no intents section must send undefined, not null: undefined = untouched
+    // keeps the persisted gate for any patch that omits intents.
     // `allowlistFromChecked` collapses every non-privileged core box checked → null
     // (the living default, stored as ABSENCE) and is idempotent on an
     // already-collapsed value, so a peer patch echoing a persisted array is a no-op.

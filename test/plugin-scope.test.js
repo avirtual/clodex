@@ -1292,10 +1292,13 @@ test('ROUND-3 NIT5: the Plugins section is hidden on a PEER row, exactly as exec
   assert.ok(at > 0, 'ENTER: openArgsDialog was located');
   const body = src.slice(at, src.indexOf('\nasync function ', at + 10));
 
-  assert.match(body, /isExecEditable = isClaude && !argsSource/,
-    'ENTER: exec\'s hide is the shape being mirrored — if it changed, this test is comparing against nothing');
+  // The mirrored half is `!argsSource`, not the type test: t717 widened exec to
+  // codex (which consumes the grants) while plugins stays claude-only, so the two
+  // agree on the PEER hide and are free to differ on type.
+  assert.match(body, /isExecEditable = isAgent && !argsSource/,
+    'ENTER: exec\'s peer hide is the shape being mirrored — if it changed, this test is comparing against nothing');
   assert.match(body, /isPluginsEditable = isClaude && !argsSource/,
-    'the Plugins section takes the same editability test as exec');
+    'the Plugins section takes the same peer-row hide as exec');
   assert.match(body, /argsPluginsSection\.style\.display = isPluginsEditable \? '' : 'none'/,
     'and the section is actually hidden by it');
   assert.strictEqual(/argsPluginsSection\.style\.display = isClaude \?/.test(body), false,
