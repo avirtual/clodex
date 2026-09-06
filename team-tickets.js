@@ -1900,10 +1900,12 @@ function createTicketMethods(deps, shared) {
           // 5-gram as a copied arm. Different subject, so the wording stays
           // apart rather than the scan being widened.
           : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} diff --stat ${sha}^1 ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
+        const stamp = (this._loadTicket(team, ticketId) || {}).suiteRemeasured;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
+          ...(stamp ? [`Verify suite was re-measured (first run: ${oneLine(stamp.first) || 'unrecorded'}).`] : []),
           changelogLine,
           `Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`,
         ].join('\n');
@@ -5251,7 +5253,7 @@ function createTicketMethods(deps, shared) {
         // could not have known to run it and the reviewer had no shell, so
         // nothing before this check could have caught it.
         atStep = 'verify: suite';
-        const suite = await this._runTicketSuite(team, ticket);
+        let suite = await this._runTicketSuite(team, ticket);
         // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
         // entry guard above is now a snapshot that old. A lead `task accept`
         // landing inside that window deletes loopStep, retires the seat, removes
@@ -5261,8 +5263,26 @@ function createTicketMethods(deps, shared) {
         // onto merged, deleted work. A mid-run `task reject` is the twin: a
         // reviewer spawned for a ticket that is already open again. Re-load and
         // bail, the same don't-trust-the-snapshot rule _setLoopStep states.
-        const still = this._loadTicket(team, ticketId);
+        let still = this._loadTicket(team, ticketId);
         if (!still || still.loopStep !== 'verify') return;
+        let firstRed = null;
+        let remeasureError = null;
+        if (suite.ran && !suite.green) {
+          log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once, because a full run on a busy box starves timing tests the branch never touched and a rework round costs more than a suite`);
+          const again = await this._runTicketSuite(team, ticket);
+          still = this._loadTicket(team, ticketId);
+          if (!still || still.loopStep !== 'verify') return;
+          if (again.ran && again.green) {
+            firstRed = suite;
+            suite = again;
+            this._stampSuiteRemeasured(team, ticketId, firstRed);
+          } else if (again.ran) {
+            firstRed = suite;
+            suite = again;
+          } else {
+            remeasureError = again.error;
+          }
+        }
         if (!suite.ran) {
           // Could not RUN is not the same as failed, and must not reject: the
           // hand cannot fix a lock it does not hold or a runner that would not
@@ -5315,9 +5335,19 @@ function createTicketMethods(deps, shared) {
             ? `FULL OUTPUT (assertion text, diff and stack): ${kept.path}\n`
               + 'Read it instead of re-running the suite.'
             : `The failing output could not be preserved (${kept.error}), so the names above are all there is.`;
+          const names = (s) => s.failing || '(the runner reported no test names)';
+          const failingLines = firstRed
+            ? `FAILING (run 2): ${names(suite)}\n`
+              + `FAILING (run 1): ${names(firstRed)}\n\n`
+              + 'Both runs were red. Same names both times means the failure is real; different names '
+              + 'means the box was starved and you should say so in your report rather than hunt.'
+            : `FAILING: ${names(suite)}`;
+          const remeasureLine = remeasureError
+            ? `\n\nA re-measure was attempted and could not run: ${remeasureError}`
+            : '';
           const rejected = this._rejectTicketFromLoop(team, ticketId,
             `the test suite FAILS on your branch — ${suite.summary}\n\n`
-            + `FAILING: ${suite.failing || '(the runner reported no test names)'}\n\n`
+            + `${failingLines}${remeasureLine}\n\n`
             + `${evidence}\n\n`
             + 'Fix these and close the ticket again. No reviewer was spawned: a review of a '
             + 'red branch is wasted, and the suite is the gate.');
@@ -6004,6 +6034,23 @@ function createTicketMethods(deps, shared) {
         ticketsStore.save(team.root, tickets);
       } catch (e) {
         log.error('ticket', `verify hold stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
+    _stampSuiteRemeasured(team, ticketId, first) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        const names = String((first && first.failing) || '');
+        rec.suiteRemeasured = {
+          first: String((first && first.summary) || ''),
+          firstFailing: names.length > 400 ? `${names.slice(0, 400)}…` : names,
+          at: Date.now(),
+        };
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `suite re-measure stamp for ${ticketId} failed: ${e.message}`);
       }
     },
 
