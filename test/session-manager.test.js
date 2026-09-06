@@ -3955,10 +3955,11 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 function mkReview(extra = {}) {
   const roleOverride = extra.reviewerRole;
   delete extra.reviewerRole;
-  // The directory holding this team's team.json, which is where its own
-  // prompts/ lives. Defaulted from `file` exactly as loadManifest derives it, so
-  // the fixture team carries the field the real one does; a subject that needs a
-  // real directory on disk to write a team-owned prompt into passes `teamDir`.
+  // The directory holding this team's team.json, which is where its own prompts/
+  // lives — the field loadManifest now returns, so the fixture team carries what
+  // the real one does. The default matches `file`'s dirname and points at nothing
+  // on disk, which is what every pre-t699 subject wants: no team copy resolves. A
+  // subject that needs a real one passes `teamDir`.
   const teamDirOverride = extra.teamDir;
   delete extra.teamDir;
   const acCalls = [];

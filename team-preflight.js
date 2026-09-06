@@ -107,7 +107,7 @@ function teamPreflight(team, probes) {
       if (!hit) {
         findings.push({
           level: 'warn', kind: 'prompt', role, ref: def.prompt, resolvedFrom: null,
-          message: `role "${role}": prompt "${def.prompt}" is not installed under library/prompts/system — a seat spawned for this role boots unbriefed`,
+          message: `role "${role}": prompt "${def.prompt}" is not installed under teams/${teamName}/prompts/system or library/prompts/system — a seat spawned for this role boots unbriefed`,
         });
       } else if (hit === 'team') {
         findings.push({

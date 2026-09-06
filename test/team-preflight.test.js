@@ -77,7 +77,7 @@ test('an unresolved role prompt is a warn naming the role, the ref and the conse
     role: 'hand',
     ref: 'clodex-team-hand',
     resolvedFrom: null,
-    message: 'role "hand": prompt "clodex-team-hand" is not installed under library/prompts/system — a seat spawned for this role boots unbriefed',
+    message: 'role "hand": prompt "clodex-team-hand" is not installed under teams/shop/prompts/system or library/prompts/system — a seat spawned for this role boots unbriefed',
   }]);
 });
 

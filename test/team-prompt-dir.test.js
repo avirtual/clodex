@@ -22,7 +22,8 @@
 // Rejecting `../x` before any join means a traversal never becomes a path at
 // all; a post-hoc containment check on the joined result would still have
 // touched the filesystem to decide, and would have to be re-derived correctly at
-// every future call site. Subject 4 asserts the fs is not reached.
+// every future call site. The "refused WITHOUT touching the fs" subject below
+// asserts exactly that, by counting the calls a double records.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -203,29 +204,10 @@ test('t699: a `<plugin>:<stem>` ref takes the plugin branch and never consults t
 
 // ── 6. a read failure after a successful access falls through ───────────────
 
-test('t699: an unreadable team copy degrades to the library instead of throwing', () => {
-  const { home, team } = mkHome();
-  const teamFile = writePrompt(teamDir(home), 'system', 'w', TEAM_BODY);
-  writePrompt(libDir(home), 'system', 'w', LIB_BODY);
-  assert.ok(fs.existsSync(teamFile), 'ENTER: the team copy exists and accessSync will succeed on it');
-
-  // The window the engine's readers guard: accessSync says yes, the read then
-  // fails (the file was removed or its mode changed between the two calls).
-  // Modelled here at the leaf's own seam, which is the only place the two calls
-  // are separable.
-  const flaky = {
-    constants: fs.constants,
-    accessSync: (p) => fs.accessSync(p, fs.constants.R_OK),
-    readFileSync: (p) => { if (p === teamFile) throw new Error('EACCES'); return fs.readFileSync(p, 'utf-8'); },
-  };
-  const hit = teamPromptFile({ fs: flaky, path }, team, 'system', 'w');
-  assert.strictEqual(hit, teamFile, 'access succeeded, so the team path is what the caller is handed');
-  let body = null;
-  assert.doesNotThrow(() => {
-    try { body = flaky.readFileSync(hit); } catch { body = null; }
-  });
-  assert.strictEqual(body, null, 'and the read failure yields null, which the engine reads as "fall through to the library"');
-});
+// The window the engine's readers guard: accessSync says yes, the read then
+// fails. Pinned ONLY through the engine, on a real filesystem — an earlier
+// version of this section also stubbed the two calls apart and asserted the stub
+// threw inside the test's own try/catch, which measured the stub and nothing else.
 
 test('t699: the engine resolvers fall through on an unreadable team copy, and never throw', () => {
   const { eng, home, team } = mkHome();
@@ -347,7 +329,7 @@ test('t699: session-manager threads the seat\'s resolved team into every prompt 
   assert.ok(/readSystemPromptBody\(def\.prompt, null, team\)/.test(src),
     'the team-block builder goes through the resolver too — a hand-rolled library join here '
     + 'is the third place the rule would have to be restated');
-  assert.doesNotMatch(src, /path\.join\(REGISTRY_DIR, 'library', 'prompts', 'system'/,
+  assert.ok(!/path\.join\(REGISTRY_DIR, 'library', 'prompts', 'system'/.test(src),
     'and no hand-rolled library prompt path survives in session-manager.js');
 });
 
@@ -371,38 +353,17 @@ test('t699: a seat in a team boots with the TEAM copy of its role prompt', () =>
 
 // ── 10. the reviewer preflight ──────────────────────────────────────────────
 
-test('t699: a reviewer prompt that exists only under the team dir does not warn UNBRIEFED', () => {
-  const { home } = mkHome();
-  const teamFile = writePrompt(teamDir(home), 'system', 'revp', TEAM_BODY);
-  assert.strictEqual(fs.existsSync(path.join(libDir(home), 'prompts', 'system', 'revp.md')), false,
-    'ENTER: the library must NOT carry it — otherwise the old code path passes too');
-
-  const team = { name: 't', root: '/repo', dir: teamDir(home) };
-  // The reviewer preflight is reached only through a full review spawn, so what
-  // is exercised here is the resolver it now calls, plus a source pin on the CALL
-  // — the two lines team-tickets.js computes: resolve through the dep, then stat
-  // the result. Without the pin this subject would pass against a preflight that
-  // kept its hand-rolled library join and never consulted the team directory.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
-  assert.ok(/\(stem\) => resolveSystemPromptFile\(stem, null, team\)/.test(src),
-    'the injected resolver is called with the REVIEW\'S team, not with two args');
-  assert.ok(/promptFile = reviewerSystemPrompt \? resolvePromptFile\(reviewerSystemPrompt\) : null/.test(src),
-    'and its result is what the preflight stats');
-  assert.ok(/not found under teams\/\$\{team\.name\}\/prompts\/system or library\/prompts\/system/.test(src),
-    'the UNBRIEFED warning names both places the operator may install it');
-
-  const resolveSystemPromptFile = (stem, _plugins, t) =>
-    teamPromptFile({ fs, path }, t, 'system', stem)
-    || (fs.existsSync(path.join(libDir(home), 'prompts', 'system', `${stem}.md`))
-      ? path.join(libDir(home), 'prompts', 'system', `${stem}.md`) : null);
-
-  const promptFile = resolveSystemPromptFile('revp', null, team);
-  assert.strictEqual(promptFile, teamFile);
-  assert.strictEqual(fs.existsSync(promptFile), true, 'so the UNBRIEFED warning does not fire');
-
-  assert.strictEqual(resolveSystemPromptFile('nowhere', null, team), null,
-    'a stem in neither place still resolves to null — the case the warning covers');
-});
+// The reviewer preflight is DRIVEN, not restated, and it is driven where the
+// review fixture lives: test/session-manager.test.js, subjects "a role prompt
+// only under the TEAM dir yields NO unbriefed warning" and "a stem in NEITHER
+// place warns, naming both". Both run _handleTeamReview, so the branch that
+// decides the warning actually executes.
+//
+// A version of this section used to live here instead, defining its own resolver,
+// calling it, and stating the result — a leaf measured twice with the wiring not
+// measured at all. `missing = false` in team-tickets.js left every subject in this
+// file green. It is deleted rather than repaired: the fixture that can reach the
+// preflight is over there, and a second one here could only ever restate it.
 
 test('t699: the reviewer resolver is an OPTIONAL dep, and its absent branch is the old library join', () => {
   // The behavioural half of this is a GUARD: a fixture that builds team-tickets'
