@@ -6,7 +6,10 @@
 // but the four things that make the export honest:
 //
 //   1. the GATE — the per-session `turns` capability, and specifically not
-//      "holds any capability", or a Bash-reading grant would also yield prose;
+//      "holds any capability", or a Bash-reading grant would also yield prose.
+//      `thinking` and `toolInputs` (t693) ride the same event as extra fields
+//      and are gated per FIELD, never as a second entry gate: absent when
+//      ungranted, so a plugin can tell "not mine" from "none this turn";
 //   2. the NULLS — `isTurnEnd`/`reads` are wire-only, and on the jsonl path they
 //      are null rather than false/[]. A plugin must be able to tell "no" from
 //      "unknowable"; false and [] are claims the jsonl path cannot support;
@@ -99,10 +102,10 @@ test('the feed is gated on the `turns` grant — not on holding ANY capability',
     assert.strictEqual(seen.length, 0, 'an ungranted session delivers nothing');
 
     // The load-bearing case, and the reason this gate is pluginGranted per
-    // capability: toolInputs is the SHARPEST grant (Bash commands, Write
-    // contents) and turn prose is a different exposure. Holding one must not
-    // yield the other, in either direction — that is the whole reason the
-    // capabilities are split by risk rather than bundled.
+    // capability: toolInputs is the SHARPEST grant (the commands the agent ran)
+    // and turn prose is a different exposure. Holding one must not yield the
+    // other, in either direction — that is the whole reason the capabilities are
+    // split by risk rather than bundled.
     entries.seat = { name: 'seat', pluginGrants: ['archiver:toolInputs'] };
     engine.hooks.fireAgentText(wireEv());
     await settle();
@@ -112,6 +115,14 @@ test('the feed is gated on the `turns` grant — not on holding ANY capability',
     engine.hooks.fireAgentText(wireEv());
     await settle();
     assert.strictEqual(seen.length, 0, 'nor does a thinking-only grant');
+
+    // Both riders, still no `turns`: making the riders live must not have turned
+    // them into an entry gate of their own. The event they would ride does not
+    // exist for this plugin.
+    entries.seat = { name: 'seat', pluginGrants: ['archiver:thinking', 'archiver:toolInputs'] };
+    engine.hooks.fireAgentText(wireEv({ thinking: 'hmm', toolUses: [{ name: 'Bash', arg: 'ls' }] }));
+    await settle();
+    assert.strictEqual(seen.length, 0, 'nor do both riders together, without turns');
 
     // CONTROL: the same plugin, the same fixture, the same event — with the
     // grant that matches this payload. Without this arm every assertion above
@@ -319,23 +330,155 @@ test('the event is frozen, and its arrays are copies — a subscriber cannot rea
   } finally { cleanup(); }
 });
 
-test('every subscriber gets the SAME frozen event object', async () => {
-  // Sharing one object is only safe because it is frozen; if the freeze is ever
-  // dropped, this test is the one that says the sharing became a leak between
-  // plugins rather than a mere mutation of a private copy.
+test('subscribers with the SAME grant set share one frozen object; a different set gets a different one', async () => {
+  // Sharing is per grant SET, not global: the riders are extra fields, so one
+  // shared object for everyone would hand a turns-only plugin the thinking it
+  // was never granted. Sharing within a set is only safe because it is frozen;
+  // if the freeze is ever dropped, this test is the one that says the sharing
+  // became a leak between plugins rather than a mere mutation of a private copy.
   const { engine, entries, cleanup } = mkEngine();
   try {
     const a = [];
     const b = [];
+    const c = [];
     engine.register('plug-a', recorder(a), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
     engine.register('plug-b', recorder(b), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
-    entries.seat = { name: 'seat', pluginGrants: ['plug-a:turns', 'plug-b:turns'] };
+    engine.register('plug-c', recorder(c), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    entries.seat = {
+      name: 'seat',
+      pluginGrants: ['plug-a:turns', 'plug-b:turns', 'plug-c:turns', 'plug-c:thinking'],
+    };
 
-    engine.hooks.fireAgentText(wireEv());
+    engine.hooks.fireAgentText(wireEv({ thinking: 'hmm' }));
     await settle();
     assert.strictEqual(a.length, 1);
     assert.strictEqual(b.length, 1);
-    assert.strictEqual(a[0], b[0], 'one event, shared — safe only because it is frozen');
+    assert.strictEqual(c.length, 1, 'ENTER: the differently-granted plugin was delivered to at all');
+    assert.strictEqual(a[0], b[0], 'one event for one grant set — safe only because it is frozen');
+    assert.notStrictEqual(c[0], a[0], 'a different grant set is a different object, or the riders would leak');
+    assert.ok(Object.isFrozen(c[0]), 'and the variant is frozen too');
+    assert.strictEqual(c[0].text, a[0].text, 'the variant carries the same base payload');
+    assert.strictEqual(c[0].thinking, 'hmm');
+    assert.strictEqual('thinking' in a[0], false, 'while the turns-only object never grew the field');
+  } finally { cleanup(); }
+});
+
+// ── The riders: thinking and toolInputs ─────────────────────────────────────
+
+test('thinking and toolUses are grant-gated FIELDS, absent when ungranted', async () => {
+  // Absent, not null: null is already spoken for — "the source could not know"
+  // (jsonl). A plugin has to be able to tell "not mine" from "none this turn"
+  // without a second API, so the ungranted case must not use either value.
+  const { engine, entries, cleanup } = mkEngine();
+  try {
+    const only = [];
+    const think = [];
+    const tools = [];
+    engine.register('plug-turns', recorder(only), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    engine.register('plug-think', recorder(think), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    engine.register('plug-tools', recorder(tools), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    entries.seat = {
+      name: 'seat',
+      pluginGrants: [
+        'plug-turns:turns',
+        'plug-think:turns', 'plug-think:thinking',
+        'plug-tools:turns', 'plug-tools:toolInputs',
+      ],
+    };
+
+    const fixture = wireEv({
+      thinking: 'hmm', thinkingTruncated: false, toolUses: [{ name: 'Bash', arg: 'ls' }],
+    });
+    engine.hooks.fireAgentText(fixture);
+    await settle();
+
+    // ENTER: all three were delivered to. Every absence below is true of a
+    // recorder that received nothing at all.
+    assert.strictEqual(only.length, 1, 'ENTER: the turns-only plugin received its event');
+    assert.strictEqual(think.length, 1, 'ENTER: so did the thinking plugin');
+    assert.strictEqual(tools.length, 1, 'ENTER: and the toolInputs plugin');
+
+    assert.strictEqual('thinking' in only[0], false, 'turns alone does not carry thinking');
+    assert.strictEqual('thinkingTruncated' in only[0], false);
+    assert.strictEqual('toolUses' in only[0], false, 'nor tool calls');
+
+    assert.strictEqual(think[0].thinking, 'hmm');
+    assert.strictEqual(think[0].thinkingTruncated, false);
+    assert.strictEqual('toolUses' in think[0], false, 'the thinking grant does not smuggle tool calls in');
+
+    assert.deepStrictEqual(tools[0].toolUses, [{ name: 'Bash', arg: 'ls' }]);
+    assert.strictEqual('thinking' in tools[0], false, 'nor the other way round');
+    assert.ok(Object.isFrozen(tools[0].toolUses[0]), 'each call is frozen');
+    assert.notStrictEqual(tools[0].toolUses, fixture.toolUses,
+      'and the array is a copy — the wire collector\'s live one stays core\'s');
+  } finally { cleanup(); }
+});
+
+test('on jsonl the riders are null, not absent and not false', async () => {
+  const { engine, entries, cleanup } = mkEngine();
+  try {
+    const seen = [];
+    engine.register('archiver', recorder(seen), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    entries.seat = {
+      name: 'seat',
+      pluginGrants: ['archiver:turns', 'archiver:thinking', 'archiver:toolInputs'],
+    };
+
+    engine.hooks.fireAgentText({
+      session: 'seat', text: 'from the transcript', source: 'jsonl',
+      files: [{ tool: 'Write', path: '/repo/a.js' }],
+    });
+    await settle();
+    assert.strictEqual(seen.length, 1, 'ENTER: the jsonl event was delivered');
+
+    const ev = seen[0];
+    assert.ok('thinking' in ev, 'the granted field is present as an explicit null, not absent');
+    assert.strictEqual(ev.thinking, null, 'the transcript path cannot see thinking blocks');
+    assert.strictEqual(ev.thinkingTruncated, null, 'so it cannot claim a false here either');
+    assert.strictEqual(ev.toolUses, null, 'nor an empty-array claim about tool calls');
+  } finally { cleanup(); }
+});
+
+test('a text-less request with tool calls reaches toolInputs and NOT turns-only', async () => {
+  // About 40% of requests carry no text at all. Under the old rule they were
+  // dropped for everyone; the payload a toolInputs plugin exists to read lives
+  // precisely there. "Empty for you" has to mean "not delivered to you", judged
+  // per grant set rather than once for the event.
+  const { engine, entries, cleanup } = mkEngine();
+  try {
+    const only = [];
+    const tools = [];
+    const think = [];
+    engine.register('plug-turns', recorder(only), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    engine.register('plug-tools', recorder(tools), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    engine.register('plug-think', recorder(think), { hostApi: HOST_API_VERSION, scope: 'session' }, { shipped: true });
+    entries.seat = {
+      name: 'seat',
+      pluginGrants: [
+        'plug-turns:turns',
+        'plug-tools:turns', 'plug-tools:toolInputs',
+        'plug-think:turns', 'plug-think:thinking',
+      ],
+    };
+
+    engine.hooks.fireAgentText(wireEv({
+      text: '', files: [], reads: [], toolUses: [{ name: 'Bash', arg: 'git status' }],
+    }));
+    await settle();
+    assert.strictEqual(tools.length, 1, 'ENTER: the toolInputs plugin was woken by a text-less request');
+    assert.strictEqual(tools[0].text, '', 'with no text at all');
+    assert.strictEqual(tools[0].toolUses[0].arg, 'git status');
+    assert.strictEqual(only.length, 0, 'and the turns-only plugin was NOT woken — nothing it may read');
+    assert.strictEqual(think.length, 0, 'nor the thinking plugin: this turn carried none');
+
+    // The same shape for the other rider, so the rule is per-variant and not a
+    // toolUses special case.
+    engine.hooks.fireAgentText(wireEv({ text: '', files: [], reads: [], thinking: 'x' }));
+    await settle();
+    assert.strictEqual(think.length, 1, 'ENTER: a text-less turn carrying only thinking reaches the thinking plugin');
+    assert.strictEqual(think[0].thinking, 'x');
+    assert.strictEqual(only.length, 0, 'still nothing for turns-only');
+    assert.strictEqual(tools.length, 1, 'and nothing new for toolInputs: this turn carried no calls');
   } finally { cleanup(); }
 });
 
@@ -609,6 +752,26 @@ test('_publishAgentText drops an event carrying neither text nor file info', () 
 
   m._publishAgentText({ session: 'seat', text: '', source: 'wire', files: [], reads: [{ tool: 'Read', path: '/b' }] });
   assert.strictEqual(fired.length, 3, 'CONTROL: a read-only turn is news as well');
+
+  // The riders widen what counts as a payload: a text-less request carrying only
+  // tool calls is exactly what a toolInputs plugin subscribes for, and dropping
+  // it here would blank that grant before the engine ever sees the event.
+  m._publishAgentText({
+    session: 'seat', text: '', source: 'wire', files: [], reads: [],
+    toolUses: [{ name: 'Bash', arg: 'x' }],
+  });
+  assert.strictEqual(fired.length, 4, 'a turn carrying only tool calls is news');
+
+  m._publishAgentText({ session: 'seat', text: '', source: 'wire', files: [], reads: [], thinking: 'y' });
+  assert.strictEqual(fired.length, 5, 'and so is one carrying only thinking');
+
+  // Still narrower than the engine's per-variant rule: an event with none of the
+  // five payloads can only be dropped again downstream.
+  m._publishAgentText({
+    session: 'seat', text: '', source: 'wire', files: [], reads: [],
+    toolUses: [], thinking: null,
+  });
+  assert.strictEqual(fired.length, 5, 'an empty toolUses and a null thinking are still nothing to say');
 });
 
 test('_publishAgentText is consume-only — a throwing hook cannot escape into the junction', () => {
@@ -645,6 +808,9 @@ test('_scanJsonlText publishes for a jsonl-only session, and NOT for a wire-rout
   assert.strictEqual(fired.length, 1, 'ENTER: the jsonl-only session published — so the absence below is the guard');
   assert.strictEqual(fired[0].source, 'jsonl');
   assert.strictEqual(fired[0].session, 'plain');
+  assert.strictEqual('thinking' in fired[0], false,
+    'and carries no rider: the engine turns the jsonl path\'s silence into an explicit null');
+  assert.strictEqual('toolUses' in fired[0], false);
   assert.deepStrictEqual(fired[0].files.map((f) => f.path), ['/repo/a.js'],
     'and the touches were carried alongside the text they accompanied');
 
@@ -669,12 +835,18 @@ test('the wire junction hands the feed truncated + isTurnEnd + reads, ungated on
   // readable — a change to either reddens this.
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
 
-  const call = src.match(/this\._publishAgentText\(\{\s*\n\s*session: t\.agent,[\s\S]{0,260}?\}\);/);
+  const call = src.match(/this\._publishAgentText\(\{\s*\n\s*session: t\.agent,[\s\S]{0,400}?\}\);/);
   assert.ok(call, 'the wire junction calls _publishAgentText with the turn.completed payload');
   assert.match(call[0], /text: t\.text/, 'passes the wire\'s already-reassembled text — no re-parsing');
   assert.match(call[0], /truncated: t\.truncated/, 'and the cap flag');
   assert.match(call[0], /isTurnEnd: !!\(t\.stop && t\.stop\.is_turn\)/, 'and a real boolean turn-end');
   assert.match(call[0], /files: t\.files, reads: t\.reads/, 'and both tool arrays');
+  // The riders. The wire already carries all three per turn; before t693 this
+  // junction dropped them on the floor and the two grants gating them read
+  // nothing anywhere.
+  assert.match(call[0], /thinking: t\.thinking/, 'and the turn\'s thinking');
+  assert.match(call[0], /thinkingTruncated: t\.thinkingTruncated/, 'with its own cap flag');
+  assert.match(call[0], /toolUses: t\.toolUses/, 'and the turn\'s tool calls');
 
   // Position: AFTER the main-line early return (so subagent + side-call traffic
   // never reaches a subscriber) and BEFORE the intent extraction it must not be
@@ -691,6 +863,16 @@ test('the wire junction hands the feed truncated + isTurnEnd + reads, ungated on
     /if\s*\([^)]*is_turn[^)]*\)\s*(\{\s*)?this\._publishAgentText/.test(src), false,
     'and it is NOT gated on stop.is_turn',
   );
+
+  // The wire is the only path that HAS the riders. A jsonl call site passing
+  // them would be passing undefined, which the engine would then have to tell
+  // apart from the null it means to publish there.
+  const jsonlCalls = src.match(/this\._publishAgentText\(\{\s*\n\s*session: (?:ev\.agent|senderName),[\s\S]{0,300}?\}\);/g);
+  assert.strictEqual(jsonlCalls && jsonlCalls.length, 2,
+    'ENTER: both jsonl-sourced call sites — the recovery replay and the watcher — were found');
+  for (const c of jsonlCalls) {
+    assert.doesNotMatch(c, /thinking|toolUses/, 'a jsonl call site passes none of the three riders');
+  }
 });
 
 test('the tee-failure recovery replay publishes too — this is what makes the feed at-least-once', () => {

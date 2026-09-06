@@ -45,7 +45,7 @@ const { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergeP
 const CAPABILITY_LABELS = {
   turns: 'Turn text — what the agent writes',
   thinking: 'Thinking blocks — its reasoning, not just its answers',
-  toolInputs: 'Tool inputs — Bash commands it runs and file contents it writes',
+  toolInputs: 'Tool inputs — the commands it runs and the files it touches',
 };
 
 const agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [], session));
