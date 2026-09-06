@@ -855,7 +855,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // state, so it must be the state an open lands in, not one the operator has
     // to reach by collapsing what a previous open left behind.
     expandedRole = null;
-    // Both progressive disclosures start closed on every open — the acceptance
+    // Every progressive disclosure starts closed on every open — the acceptance
     // measurement is taken in this state, so it must be the state an open LANDS
     // in, not one the operator has to reach by collapsing what a previous open
     // left behind.
