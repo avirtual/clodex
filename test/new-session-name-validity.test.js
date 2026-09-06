@@ -266,6 +266,20 @@ test('doCreate raises no blocking alert for a create refusal', () => {
     'a modal alert is what dismissed the dialog behind it; the reason goes inline now');
 });
 
+test('a server refusal re-fetches the reserved sets before the operator can retype', () => {
+  const src = doCreateSource();
+  const applied = src.indexOf('applyCreateResult(nameFieldEls(), result)');
+  const refetch = src.indexOf('window.api.reservedSessionNames()');
+  assert.ok(refetch > applied,
+    'the re-fetch answers a refusal, so it must follow the reply rather than racing it');
+  assert.ok(src.indexOf('dialogReservedSets = reservedSets(', refetch) > refetch,
+    'the fresh reply must be stored the way openDialog stores it, or the as-you-type gate keeps the sets that were already wrong');
+  assert.ok(src.indexOf('refreshNameValidity()', refetch) > refetch,
+    're-running the gate is what turns the fresh sets into a verdict on the name still in the field');
+  assert.ok(src.lastIndexOf('applyCreateResult(nameFieldEls(), result)') > refetch,
+    'refreshNameValidity repaints the hint, so the server reason must be painted back when the fresh sets have nothing of their own to say');
+});
+
 test('the name field is re-checked on every keystroke and again at submit', () => {
   assert.match(rendererSrc, /inputName\.addEventListener\('input', \(\) => refreshNameValidity\(\)\)/,
     'without the input listener the reason only ever appears after a failed submit');

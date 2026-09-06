@@ -2509,6 +2509,10 @@ async function doCreate() {
     if (!applyCreateResult(nameFieldEls(), result)) {
       console.error('Failed to create session:', result && result.error);
       refreshDiagBanner(); // a posix_spawnp failure usually means a broken install
+      const refused = await window.api.reservedSessionNames();
+      dialogReservedSets = reservedSets(refused);
+      dialogReservedNames = reservedUnion(dialogReservedSets);
+      if (refreshNameValidity().ok) applyCreateResult(nameFieldEls(), result);
       return;
     }
 
