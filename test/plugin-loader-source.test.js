@@ -467,8 +467,14 @@ test('resolveUpdate treats an abbreviated sha as unchanged against its own full 
   // reports the FULL sha of the very same commit — a naive `!==` would call
   // this "changed" on length alone.
   const FULL = 'abc1234567890123456789012345678901234567';
-  const bytes = buildTarballBytes('abc1234', 'demo');
+  // Two DIFFERENT trees under the SAME top-dir sha. With byte-identical trees
+  // `sameTree` alone makes `changed` false and the prefix rule is never
+  // consulted — the subject would stay green with commitsMatch deleted, which
+  // is exactly what it exists to guard.
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('abc1234', 'demo', { 'engine.js': 'module.exports = { verbs: {} };\n' });
   let commitsCall = 0;
+  let tarballCall = 0;
   const httpsStub = {
     get(url, opts, cb) {
       const req = new EventEmitter();
@@ -494,7 +500,7 @@ test('resolveUpdate treats an abbreviated sha as unchanged against its own full 
       res.statusCode = 200;
       res.headers = {};
       res.resume = () => {};
-      res.pipe = (dest) => { dest.write(bytes); dest.end(); return dest; };
+      res.pipe = (dest) => { dest.write(tarballCall++ === 0 ? installBytes : updateBytes); dest.end(); return dest; };
       setImmediate(() => cb(res));
       return req;
     },
@@ -517,6 +523,7 @@ test('resolveUpdate treats an abbreviated sha as unchanged against its own full 
   const r = await loader.resolveUpdate('demo');
   assert.strictEqual(r.ok, true, JSON.stringify(r));
   assert.strictEqual(r.commit, FULL);
+  assert.strictEqual(tarballCall, 2, 'ENTER: the update fetched its own tarball, so the two trees really differ on disk');
   assert.strictEqual(r.changed, false, 'the full sha is the same commit as the abbreviated one — not changed');
 });
 

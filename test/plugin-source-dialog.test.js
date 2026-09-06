@@ -449,6 +449,9 @@ test('closing the section puts every one of those back', () => {
   ]) {
     assert.ok(m[0].includes(line), `closePluginsSourceSection must undo: ${line}`);
   }
+  assert.ok(m[0].includes('pluginsSourceCancelBtn.disabled = false;'),
+    'an update round-trip disables Cancel and the late-reply guard returns before re-enabling it, so the '
+    + 'close every opener routes through is the only place that un-wedges Cancel for the next sitting');
 });
 
 test('Install from GitHub… opens through the full reset, not the partial one', () => {
@@ -484,6 +487,31 @@ test('the warning element is only ever assigned from warningText', () => {
   assert.ok(writes.length >= 2, 'ENTER: the slice really found the warning writes');
   assert.deepStrictEqual([...new Set(writes)].sort(), ["''", 'warningText(pluginsSourceResolved)'],
     'the only things this element may hold are the trust text and the empty clear');
+  assert.strictEqual((src.match(/pluginsSourceWarning\.(textContent|innerText|className|innerHTML)/g) || []).length, 0,
+    'a direct property write bypasses the regex above entirely — that is the shape the t688-r1 defect had');
+  assert.strictEqual((src.match(/pluginsSourceWarning\b/g) || []).length, 4,
+    'one declaration, one empty clear and two warningText paints; any other mention is a route to this element the two assertions above cannot see');
+});
+
+test('a resolveUpdate that lands after the operator moved on paints and stores nothing', () => {
+  // Two rows, Update… on each: the first resolve returns while the second
+  // sitting owns the section. Without the guard the stale reply overwrites
+  // pluginsSourceResolved and the preview, and Update then applies the FIRST
+  // row's commit to a section labelled with the second's.
+  const src = sourceSectionSrc();
+  const fn = src.slice(src.indexOf('async function openPluginsSourceUpdate(p) {'));
+  assert.match(fn, /plugins\.resolveUpdate/, 'ENTER: the slice captured openPluginsSourceUpdate');
+  const captured = fn.indexOf('const target = p.id;');
+  const resolve = fn.indexOf("plugins.resolveUpdate");
+  assert.ok(captured >= 0 && captured < resolve,
+    'the target must be captured before the await — reading pluginsSourceTarget after it compares the new sitting against itself');
+  const guard = fn.indexOf("if (pluginsSourceMode !== 'update' || pluginsSourceTarget !== target) return;");
+  assert.ok(guard > resolve, 'the guard belongs after the await it is guarding');
+  const paint = fn.indexOf('paintPluginsSourceNote(', resolve);
+  assert.ok(paint > guard, 'no paint may precede the guard, or the stale reply writes the live section');
+  const reEnable = fn.indexOf('pluginsSourceCancelBtn.disabled = false;', resolve);
+  assert.ok(reEnable > guard,
+    'Cancel is re-enabled only for the sitting that still owns the section: doing it first re-enables a button belonging to another row');
 });
 
 // ── the row's Remove button ─────────────────────────────────────────────────
@@ -515,6 +543,21 @@ test('the row block reaches removeSourcePlugin and nothing else new', () => {
   assert.deepStrictEqual(calls, ['plugins.status', 'plugins.unregister', 'plugins.rescan', 'plugins.removeSourcePlugin'],
     'removeSourcePlugin rescans host-side; the unregister above it does not, which is why only that '
     + 'one is followed by an explicit plugins.rescan');
+});
+
+test('Remove closes the update section when it is the removed row that owns it', () => {
+  // The two buttons sit on the same row. Update… then Remove leaves a section
+  // labelled with the removed plugin, holding its resolved commit, with Update
+  // live — and renderPluginsDialog redraws the list beneath it without touching
+  // the section, so nothing else clears it.
+  const src = pluginRowSrc();
+  const removed = src.indexOf("plugins.removeSourcePlugin'");
+  const closed = src.indexOf('closePluginsSourceSection()', removed);
+  assert.ok(closed > removed, 'the close belongs on the success path of the remove, not before it');
+  const redraw = src.indexOf('renderPluginsDialog()', closed);
+  assert.ok(redraw > closed, 'closing after the redraw leaves the stale section on screen for the length of a rescan');
+  assert.match(src.slice(removed, redraw), /if \(pluginsSourceTarget === p\.id\)/,
+    'only the OWNING row may close it — removing a different plugin must leave an open update alone');
 });
 
 test('the source line and the two buttons are driven by the row\'s own `source`', () => {

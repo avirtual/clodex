@@ -199,10 +199,10 @@ this clause exists to serve.
 **Automatic, with no persisted pin.** The obvious alternative is recording a
 chosen copy in settings. A pin is state that goes stale — the pinned directory is
 deleted, or a newly bundled version outranks the pinned one — and every
-stale-state answer would be a decision better made once an install *affordance*
-(§10, still not built) exists to record real user intent — reveal and re-scan
-move a plugin onto disk and into the app, but neither captures a choice worth
-pinning. Automatic needs no new state. The cost is
+stale-state answer would be a decision better made by the install *affordance*
+(§10, Manage Plugins ▸ Install from GitHub…), which records real user intent —
+reveal and re-scan move a plugin onto disk and into the app, but neither
+captures a choice worth pinning. Automatic needs no new state. The cost is
 expressiveness: there is no way to deliberately run an *older* copy, and the
 recourse for someone who wants that is the same as it always was — give the fork
 its own id.
@@ -402,10 +402,11 @@ Two candidates were considered and rejected:
 
 Dressing an arbitrary rule in temporal clothing is the exact failure this section
 exists to prevent. If this ever needs solving properly, the answer is **recording
-install time at the moment of install** — which requires an install *affordance*,
-the part of §10 that is still not built. Reveal and re-scan (t22) do not help
-here: neither is an install, so neither has an install moment to stamp. The limit
-is therefore tied to the real gap rather than left dangling.
+install time at the moment of install** — and for a plugin fetched from a source
+the sidecar's `fetchedAt` (§9) already is that stamp. It does not close the limit:
+reveal and re-scan are not installs, so a hand-copied or symlinked plugin still
+has no install moment to stamp and no ordering to take part in. The limit is
+therefore tied to the real gap rather than left dangling.
 
 ### The mirror case: a core plugin can displace yours
 
@@ -842,7 +843,7 @@ Consequences worth stating:
 | §4 a `version` 99 in the user root wins permanently | Visible, not preventable — needs §10 |
 | §4 pre-release versions (`1.0.0-beta`) order correctly | Not implemented; uncomparable, loses visibly |
 | §4a verb collisions refused without a strike, holder named | **Implemented** |
-| §4a which plugin wins within a root | Arbitrary — known limit, needs §10 |
+| §4a which plugin wins within a root | Arbitrary — known limit; only fetched plugins carry an install moment (§9 `fetchedAt`) |
 | §5 symlink following; the case-folding assumption | **Implemented** / assumed |
 | §6 Electron-only, lint & parity unaffected | Verified property; no code |
 | §7 trust posture | Posture; no code |

@@ -208,13 +208,14 @@ let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to in
 const nameHint = document.getElementById('name-hint');
 let dialogNameState = { ok: true, kind: 'free', message: '' };
 let dialogToolGate = { ok: true, disabled: false, notice: null };
+let createInFlight = false;
 
 function nameFieldEls() {
   return { input: inputName, hint: nameHint, overlay: dialogOverlay };
 }
 
 function refreshCreateButton() {
-  const state = createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode });
+  const state = createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode, inFlight: createInFlight });
   btnCreate.disabled = state.disabled;
   btnCreate.title = state.title;
   return state;
@@ -509,6 +510,7 @@ function addArchivedSessionToSidebar(entry) {
 // is expected). Peer rows never reach here (they detach/hide instead).
 const archivingSessions = new Map(); // name -> { name, type, cwd, label, backend, archivedAt, createdAt }
 async function archiveSessionRow(name) {
+  movingFailed.delete(name);
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return;
   const nameEl = item.querySelector('.session-name');
@@ -533,6 +535,7 @@ async function archiveSessionRow(name) {
 
 async function deleteSessionRow(name) {
   if (!(await window.api.confirmKill(name))) return;
+  movingFailed.delete(name);
   const res = await window.api.killSession(name);
   if (res && res.error) {
     showToast(`Worktree removal failed: ${res.error}`, { kind: 'warn', duration: 12000, name });
@@ -2417,106 +2420,118 @@ async function doCreate() {
   const systemPromptBody = null;
 
   if (!refreshNameValidity().ok) return;
-  // An unexpanded ${TEAM_ROOT} reaching here means the dropdown could not
-  // resolve it and left the literal in the field. It would still fail — as a
-  // directory named "${TEAM_ROOT}" on the sandbox path, or at spawn on the host
-  // — but refusing at the dialog keeps the correction where the operator can
-  // make it, with the field still populated.
-  if (usesTeamRoot(cwd)) {
-    inputCwd.style.borderColor = '#e94560';
-    showToast('This template\'s ${TEAM_ROOT} could not be resolved — type the project directory, '
-      + 'or open the dialog from a session inside the team.', { kind: 'warn', duration: 12000 });
-    return;
-  }
-
-  const resumeId = supportsPrompts ? inputResume.value.trim() || null : null;
-  const fork = supportsPrompts ? inputFork.checked : false;
-
-  const placement = currentPlacement();
-  if (placement !== 'host') {
-    const boxId = placement;
-    if (!boxPeerOnline(boxId)) {
-      alert(`The "${boxId}" sandbox isn't running — start it from the Sandboxes panel first.`);
+  if (createInFlight) return;
+  createInFlight = true;
+  refreshCreateButton();
+  try {
+    // An unexpanded ${TEAM_ROOT} reaching here means the dropdown could not
+    // resolve it and left the literal in the field. It would still fail — as a
+    // directory named "${TEAM_ROOT}" on the sandbox path, or at spawn on the host
+    // — but refusing at the dialog keeps the correction where the operator can
+    // make it, with the field still populated.
+    if (usesTeamRoot(cwd)) {
+      inputCwd.style.borderColor = '#e94560';
+      showToast('This template\'s ${TEAM_ROOT} could not be resolved — type the project directory, '
+        + 'or open the dialog from a session inside the team.', { kind: 'warn', duration: 12000 });
       return;
     }
-    const spec = boxHasCreate2(boxId)
-      ? {
-          name, type, cwd, extraArgs, resumeId, fork, proxy, agents, denyBuiltins,
-          disabledTools, disabledSkills, injectSkills, stripLevel,
-          systemPromptFile, appendPromptFiles,
-          ...(Array.isArray(intents) ? { intents } : {}),
-        }
-      : { name, type, cwd };
-    const res = await window.api.peerCreateSession(boxId, spec);
-    const peerOutcome = (res && res.ok !== false)
-      ? { ok: true }
-      : { ok: false, error: `Create sandbox session failed: ${(res && res.error) || 'unknown error'}` };
-    if (!applyCreateResult(nameFieldEls(), peerOutcome)) return;
-    await ensurePeerSessionVisible(boxId, res.name || name);
-    openPeerSession(boxId, res.name || name);
-    const boxSt = peerStatuses.get(boxId);
-    const boxLabel = (boxSt && boxSt.label) || boxId;
-    showToast(`Created "${res.name || name}" (${res.type || type}) in ${boxLabel}.`, { kind: 'peer-ui' });
-    for (const w of (res.warnings || [])) showToast(w, { kind: 'warn', duration: 15000 });
-    return;
-  }
 
-  // Opt-in git worktree: create it FIRST (off the entered cwd's repo), then spawn
-  // the session in the new worktree instead — so its failure is correctable in
-  // the form that is still on screen, before anything is spawned.
-  let spawnCwd = cwd;
-  let worktree = null;
-  if (inputWorktree && inputWorktree.checked && worktreeRow && worktreeRow.style.display !== 'none') {
-    const branch = inputWorktreeBranch.value.trim();
-    if (!branch) {
-      inputWorktreeBranch.style.borderColor = '#e94560';
+    const resumeId = supportsPrompts ? inputResume.value.trim() || null : null;
+    const fork = supportsPrompts ? inputFork.checked : false;
+
+    const placement = currentPlacement();
+    if (placement !== 'host') {
+      const boxId = placement;
+      if (!boxPeerOnline(boxId)) {
+        alert(`The "${boxId}" sandbox isn't running — start it from the Sandboxes panel first.`);
+        return;
+      }
+      const spec = boxHasCreate2(boxId)
+        ? {
+            name, type, cwd, extraArgs, resumeId, fork, proxy, agents, denyBuiltins,
+            disabledTools, disabledSkills, injectSkills, stripLevel,
+            systemPromptFile, appendPromptFiles,
+            ...(Array.isArray(intents) ? { intents } : {}),
+          }
+        : { name, type, cwd };
+      const res = await window.api.peerCreateSession(boxId, spec);
+      const peerOutcome = (res && res.ok !== false)
+        ? { ok: true }
+        : { ok: false, error: `Create sandbox session failed: ${(res && res.error) || 'unknown error'}` };
+      if (!applyCreateResult(nameFieldEls(), peerOutcome)) return;
+      await ensurePeerSessionVisible(boxId, res.name || name);
+      openPeerSession(boxId, res.name || name);
+      const boxSt = peerStatuses.get(boxId);
+      const boxLabel = (boxSt && boxSt.label) || boxId;
+      showToast(`Created "${res.name || name}" (${res.type || type}) in ${boxLabel}.`, { kind: 'peer-ui' });
+      for (const w of (res.warnings || [])) showToast(w, { kind: 'warn', duration: 15000 });
       return;
     }
-    const base = inputWorktreeBase.value.trim() || null; // null → repo default branch
-    const wt = await window.api.createWorktree(cwd, branch, { base });
-    if (!wt || !wt.ok) {
-      showToast(`Worktree creation failed: ${(wt && wt.error) || 'unknown error'}`, { kind: 'error', duration: 10000 });
+
+    // Opt-in git worktree: create it FIRST (off the entered cwd's repo), then spawn
+    // the session in the new worktree instead — so its failure is correctable in
+    // the form that is still on screen, before anything is spawned.
+    let spawnCwd = cwd;
+    let worktree = null;
+    if (inputWorktree && inputWorktree.checked && worktreeRow && worktreeRow.style.display !== 'none') {
+      const branch = inputWorktreeBranch.value.trim();
+      if (!branch) {
+        inputWorktreeBranch.style.borderColor = '#e94560';
+        return;
+      }
+      const base = inputWorktreeBase.value.trim() || null; // null → repo default branch
+      const wt = await window.api.createWorktree(cwd, branch, { base });
+      if (!wt || !wt.ok) {
+        showToast(`Worktree creation failed: ${(wt && wt.error) || 'unknown error'}`, { kind: 'error', duration: 10000 });
+        return;
+      }
+      spawnCwd = wt.path;
+      worktree = { path: wt.path, branch: wt.branch, base: wt.base || null, repo: wt.repo };
+    }
+
+    window.api.noteCwd(cwd);
+
+    // Remember the last custom URL as a prefill ONLY — never touch the global
+    // proxyUrl (that would rewrite ANTHROPIC_BASE_URL for default-proxy spawns and
+    // could abandon the managed wirescope when the port stops matching).
+    if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
+    const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
+    const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
+    let result;
+    if (teamOn && dialogTeamMode === 'create') {
+      const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
+      result = await window.api.teamCreate({ teamName, ...seatParams });
+    } else if (teamOn && dialogTeamMode === 'join') {
+      const role = roleKeyForJoin();
+      const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
+      result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
+    } else {
+      result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
+    }
+    if (!applyCreateResult(nameFieldEls(), result)) {
+      console.error('Failed to create session:', result && result.error);
+      refreshDiagBanner(); // a posix_spawnp failure usually means a broken install
+      const refused = await window.api.reservedSessionNames();
+      dialogReservedSets = reservedSets(refused);
+      dialogReservedNames = reservedUnion(dialogReservedSets);
+      if (refreshNameValidity().ok) applyCreateResult(nameFieldEls(), result);
       return;
     }
-    spawnCwd = wt.path;
-    worktree = { path: wt.path, branch: wt.branch, base: wt.base || null, repo: wt.repo };
+
+    if (worktree) window.api.markSessionWorktree(name, worktree);
+
+    createTerminal(name);
+    addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null, (result.session && result.session.noWire) === true);
+    // Manual, so it focuses as it always has — unless the operator has a line
+    // open in the session they were on, which vetoes regardless of provenance.
+    await switchToNewSession(name, { agentInitiated: false });
+
+    const warnings = (result.session && result.session.warnings) || [];
+    for (const w of warnings) showToast(w, { kind: 'warn', duration: 15000, name });
+  } finally {
+    createInFlight = false;
+    refreshCreateButton();
   }
-
-  window.api.noteCwd(cwd);
-
-  // Remember the last custom URL as a prefill ONLY — never touch the global
-  // proxyUrl (that would rewrite ANTHROPIC_BASE_URL for default-proxy spawns and
-  // could abandon the managed wirescope when the port stops matching).
-  if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
-  const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-  const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
-  let result;
-  if (teamOn && dialogTeamMode === 'create') {
-    const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
-    result = await window.api.teamCreate({ teamName, ...seatParams });
-  } else if (teamOn && dialogTeamMode === 'join') {
-    const role = roleKeyForJoin();
-    const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
-    result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
-  } else {
-    result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
-  }
-  if (!applyCreateResult(nameFieldEls(), result)) {
-    console.error('Failed to create session:', result && result.error);
-    refreshDiagBanner(); // a posix_spawnp failure usually means a broken install
-    return;
-  }
-
-  if (worktree) window.api.markSessionWorktree(name, worktree);
-
-  createTerminal(name);
-  addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null, (result.session && result.session.noWire) === true);
-  // Manual, so it focuses as it always has — unless the operator has a line
-  // open in the session they were on, which vetoes regardless of provenance.
-  await switchToNewSession(name, { agentInitiated: false });
-
-  const warnings = (result.session && result.session.warnings) || [];
-  for (const w of warnings) showToast(w, { kind: 'warn', duration: 15000, name });
 }
 
 function submitDialog() {
@@ -5333,6 +5348,7 @@ async function renderPluginsDialog() {
           return;
         }
         showPluginsRegisterNote(`Removed ${name}.`);
+        if (pluginsSourceTarget === p.id) closePluginsSourceSection();
         await renderPluginsDialog();
       });
       row.appendChild(rm);
@@ -5566,6 +5582,7 @@ function closePluginsSourceSection() {
   pluginsSourceLabel.classList.remove('hidden');
   pluginsSourceSpec.classList.remove('hidden');
   pluginsSourceResolveBtn.classList.remove('hidden');
+  pluginsSourceCancelBtn.disabled = false;
   resetPluginsSourceResolve();
   pluginsSourceSection.classList.add('hidden');
 }
@@ -5651,6 +5668,7 @@ async function openPluginsSourceUpdate(p) {
   showPluginsRegisterNote('');
   closePluginsSourceSection();
   const name = p.name || p.id;
+  const target = p.id;
   pluginsSourceMode = 'update';
   pluginsSourceTarget = p.id;
   pluginsSourceInstallBtn.textContent = 'Update';
@@ -5663,6 +5681,7 @@ async function openPluginsSourceUpdate(p) {
   pluginsSourceCancelBtn.disabled = true;
   let r = null;
   try { r = await window.api.pluginInvoke('_host', 'plugins.resolveUpdate', [p.id]); } catch {}
+  if (pluginsSourceMode !== 'update' || pluginsSourceTarget !== target) return;
   pluginsSourceCancelBtn.disabled = false;
   if (!r || !r.ok) {
     closePluginsSourceSection();

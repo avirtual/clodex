@@ -42,7 +42,8 @@ function nameFieldState(raw, sets) {
   return { ok: true, kind: 'free', message: '' };
 }
 
-function createButtonState({ nameState, toolGate, mode } = {}) {
+function createButtonState({ nameState, toolGate, mode, inFlight } = {}) {
+  if (inFlight) return { disabled: true, title: '' };
   if (toolGate && toolGate.disabled) {
     return { disabled: true, title: (toolGate.notice && toolGate.notice.text) || '' };
   }
