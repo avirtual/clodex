@@ -507,7 +507,10 @@ test('mkLoop injects every dep team-tickets.js reads', () => {
     // subject here measures. Wiring it would change what these fixtures test.
     // Left unset on purpose so every subject exercises the SHIPPED timeout; only
     // the hang subject passes one, through mkLoop's `suiteTimeoutMs`.
-    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile'],
+    // gatherTeam is optional in that same sense: it is reached only from
+    // _handleTeam's gather case, which no subject in this file drives — every
+    // one here is about the ticket loop.
+    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam'],
   });
 });
 
