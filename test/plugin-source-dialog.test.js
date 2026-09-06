@@ -449,6 +449,9 @@ test('closing the section puts every one of those back', () => {
   ]) {
     assert.ok(m[0].includes(line), `closePluginsSourceSection must undo: ${line}`);
   }
+  assert.ok(m[0].includes('pluginsSourceCancelBtn.disabled = false;'),
+    'an update round-trip disables Cancel and the late-reply guard returns before re-enabling it, so the '
+    + 'close every opener routes through is the only place that un-wedges Cancel for the next sitting');
 });
 
 test('Install from GitHub… opens through the full reset, not the partial one', () => {

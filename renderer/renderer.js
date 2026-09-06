@@ -5582,6 +5582,7 @@ function closePluginsSourceSection() {
   pluginsSourceLabel.classList.remove('hidden');
   pluginsSourceSpec.classList.remove('hidden');
   pluginsSourceResolveBtn.classList.remove('hidden');
+  pluginsSourceCancelBtn.disabled = false;
   resetPluginsSourceResolve();
   pluginsSourceSection.classList.add('hidden');
 }
