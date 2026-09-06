@@ -140,7 +140,7 @@ function mkMove({ entries = [], teamHome = null, createThrows = null } = {}) {
     // ONLY the 5s backstop is held back. _waitForExit polls on a 100ms timer in
     // the same window, and swallowing that one hangs the move it is inside.
     // A source change to the delay would empty `armed` — the ENTER assertion
-    // below fails loudly on that rather than letting the real kill through.
+    // below fails loudly on that.
     global.setTimeout = (cb, ms) => {
       if (ms === 5000) { armed.push(cb); return { unref() {}, close() {} }; }
       return realSetTimeout(cb, ms);
