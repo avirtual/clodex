@@ -5446,6 +5446,7 @@ function makePluginSettingsPanel(p, rowActions) {
   actions.className = 'plugin-settings-actions';
   const save = document.createElement('button');
   save.type = 'button';
+  save.className = 'secondary';
   save.textContent = 'Save';
   actions.appendChild(save);
   panel.appendChild(actions);
