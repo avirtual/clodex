@@ -327,3 +327,18 @@ test('t702 wiring: the popover loads the uses map on every refresh and renders a
 
 // createEngine starts background timers that keep the loop alive.
 after(() => { setImmediate(() => process.exit(0)); });
+
+test('t702 wiring GUARD: a FAILED plan renders no uses block, rather than "uses nothing" everywhere', () => {
+  // GUARD PIN, and the one place the wire can state a falsehood. An empty Map
+  // reads exactly like a team whose roles reference nothing, so a failed gather
+  // would put "uses nothing" under every role — a positive claim about a team
+  // whose pieces were never looked at. Null is what distinguishes the two, and
+  // the render must branch on it.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function loadUses'));
+  const body = fn.slice(0, fn.indexOf('\n  }\n'));
+
+  assert.ok(/uses = null;/.test(body), 'a failed plan stores null, not an empty Map');
+  assert.ok(/setStatus\(/.test(body), 'and says so ONCE through setStatus');
+  assert.ok(/if \(uses\) \{/.test(src), 'renderRows skips the whole block when the plan did not load');
+});

@@ -30447,7 +30447,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           preflight = preflightByRole(res && res.ok ? res.findings : []);
         }
-        let uses = /* @__PURE__ */ new Map();
+        let uses = null;
         async function loadUses(name, roleKeys) {
           let res;
           try {
@@ -30456,7 +30456,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             res = null;
           }
           if (!res || !res.ok) {
-            uses = usesByRole([], roleKeys);
+            uses = null;
             setStatus(res && res.error || "could not read what these roles use", true);
             return;
           }
@@ -30843,7 +30843,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               shownReveal = fieldReveal(initialDispatch, stored);
               renderRevealedFields(revealBox, shownReveal, { cwd: stored.cwd, template: stored.template }, onClear);
             }
-            {
+            if (uses) {
               const box = document.createElement("div");
               box.className = "team-role-uses";
               const list = uses.get(row.key) || [];

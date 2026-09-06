@@ -95,12 +95,12 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     preflight = preflightByRole(res && res.ok ? res.findings : []);
   }
 
-  let uses = new Map();
+  let uses = null;
   async function loadUses(name, roleKeys) {
     let res;
     try { res = await window.api.teamGather(name, { dry: true }); } catch { res = null; }
     if (!res || !res.ok) {
-      uses = usesByRole([], roleKeys);
+      uses = null;
       setStatus((res && res.error) || 'could not read what these roles use', true);
       return;
     }
@@ -745,7 +745,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         shownReveal = fieldReveal(initialDispatch, stored);
         renderRevealedFields(revealBox, shownReveal, { cwd: stored.cwd, template: stored.template }, onClear);
       }
-      {
+      if (uses) {
         const box = document.createElement('div');
         box.className = 'team-role-uses';
         const list = uses.get(row.key) || [];
