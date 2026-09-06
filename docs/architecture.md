@@ -508,6 +508,11 @@ the checkout, so the claim runs straight after `create()` and again in the catch
 and splitting them is worse than either half — writing this seat's pointer alone
 on the reuse path leaves two records naming one tree, which is the collision the
 scan exists to close.
+`resolveSeatShape` decides a seat's system prompt by one rule on every arm: the
+template's `systemPromptFile` when the template names one, the role's `prompt`
+otherwise — and a role prompt that did not ride as the system prompt is appended
+after the team block by `_teamBlockFor` (session-manager.js), so nothing is
+dropped.
 The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
 `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
 in the tree would bind its transcript, project root and team block to a checkout
