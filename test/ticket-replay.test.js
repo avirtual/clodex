@@ -3135,6 +3135,20 @@ const SPAWN_DEPS = {
 
 const SPAWN_SPEC = 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one';
 
+// Everything the queue accepted has reached the PTY. `_replayTicketsPending`
+// going false says the PASS ran, which is a different fact: the pass hands its
+// delivery to the queue and returns, so a count taken there misses a second copy
+// that is committed and still in flight. Settles first, so a queue that has not
+// been handed anything yet is not mistaken for one that has drained.
+async function queueDrained(s, tries = 200) {
+  for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 5));
+  for (let i = 0; i < tries; i++) {
+    if (!s._injectPtyQueue || s._injectPtyQueue.length === 0) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.fail('ENTER: the inject queue never drained, so the byte counts below are about a delivery still in flight');
+}
+
 // `task add` then `task start` from a live lead, resolving once the dispatch has
 // actually minted its seat. Returns the seat name, which is derived rather than
 // chosen — asserting it here is what stops a later rename turning every subject
@@ -3197,6 +3211,12 @@ test('a minted ticket seat is handed its spec ONCE — the boot replay finds the
     // `replayPassed`'s default 2s — the margin that orders the stamp before the
     // drain is also what the wait has to clear.
     await replayPassed(app, seat, 1200);
+    // The pass ENQUEUES; the bytes arrive a few ticks later, so counting at the
+    // flag flip counts a redelivery that is committed but has not reached the PTY
+    // yet — and reads 1 against the very code this subject exists to red. Waited
+    // out on the queue's own length, which is 0 already when the drain correctly
+    // declines and non-zero exactly while a second copy is on its way.
+    await queueDrained(s);
     const got = app.seen(seat);
     assert.strictEqual((got.match(/\[ticket t1\]/g) || []).length, 1,
       'the spec reaches the minted seat EXACTLY once — a second copy costs the hand a turn and ~2.5KB on '
