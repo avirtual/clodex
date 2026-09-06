@@ -222,10 +222,11 @@ That makes the previously-unwritable class writable — a turn archiver, a
 cross-session search over what agents said, something that summarises or grades
 a turn — for the seats that opt in, and no others.
 
-The other two grants, `thinking` and `toolInputs`, are declared but **nothing
-consumes them yet**. An operator can grant them and no API reads them. They ship
-declared because the host API version is frozen and adding a capability later
-would break it, so the whole vocabulary was spent up front.
+The other two grants, `thinking` and `toolInputs`, ride that same event when the
+seat grants them: the turn's thinking blocks arrive as `thinking`, its tool calls
+as `toolUses` (each a name plus one clamped argument). Each field is simply
+absent when its grant is not held, so they are riders on `turns` rather than
+feeds of their own — neither delivers anything without it.
 
 A plugin says which of the three it consumes with `"reads": ["turns"]` in its
 manifest; the seat's *Plugin Access* block then dims the rows you never read
@@ -241,7 +242,8 @@ and the session's transcript file — and the transcript path is lossy: it has n
 protocol turn-end signal and cannot see tool-use blocks, so the event's
 `isTurnEnd` and its `reads` array (the files the turn read — not the manifest
 field above, which shares the name) arrive as `null` there rather than as a
-`false` or an `[]` you could not distinguish from an observation.
+`false` or an `[]` you could not distinguish from an observation. The two riders
+are `null` there for the same reason, whenever you hold their grants.
 
 ---
 

@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **The `thinking` and `toolInputs` plugin grants now do something**: a session-scoped plugin the seat has granted them receives the turn's thinking blocks and its tool calls (name plus one clamped argument) as extra fields on the turn-text feed, absent when ungranted; a request that carried only tool calls now reaches a plugin granted tool inputs. The Plugin Access label for tool inputs no longer claims file contents.
 - **A plugin can declare which capabilities it reads** (`"reads": ["turns"]` in its manifest), and the seat's Plugin Access block dims the grants it never reads instead of offering all three as equals; a global-scoped plugin that declares reads is refused at load with the fix named.
 - **Install a plugin from a public GitHub repo** from Manage Plugins ▸ Install
   from GitHub…: paste `owner/repo`, `owner/repo@ref` or a github.com URL,

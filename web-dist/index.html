@@ -29504,7 +29504,7 @@ Opening it here and saving would overwrite the file with what this editor could 
       var CAPABILITY_LABELS = {
         turns: "Turn text \u2014 what the agent writes",
         thinking: "Thinking blocks \u2014 its reasoning, not just its answers",
-        toolInputs: "Tool inputs \u2014 Bash commands it runs and file contents it writes"
+        toolInputs: "Tool inputs \u2014 the commands it runs and the files it touches"
       };
       var agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [], session));
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(

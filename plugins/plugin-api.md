@@ -337,18 +337,16 @@ separate because they carry different risk:
 | Capability | What it covers | Consumed by |
 |---|---|---|
 | `turns` | Turn text — what the agent writes | `sessions.onAgentText` (§4) |
-| `thinking` | Thinking blocks — its reasoning, not just its answers | nothing yet |
-| `toolInputs` | Tool inputs — Bash commands it runs and file contents it writes | nothing yet |
+| `thinking` | Thinking blocks — its reasoning, not just its answers | `sessions.onAgentText` (§4), as the `thinking` field |
+| `toolInputs` | Tool inputs — the commands it runs and the files it touches (one clamped argument per call) | `sessions.onAgentText` (§4), as the `toolUses` field |
 
 They are independent: holding `toolInputs` does not imply `turns`. If they shared
 one grant, everyone who wanted a turn archiver would also get every command the
 agent ran.
 
-The two unconsumed rows are declared but inert — an operator can grant them and
-nothing reads them. That is deliberate rather than unfinished: `hostApi` is
-frozen at `"1"` and only a change that breaks a conforming plugin bumps it, so a
-capability added *after* the API it gates would be exactly such a change.
-Declaring the whole vocabulary up front spends no version bump.
+All three are consumed by the turn-text feed. `thinking` and `toolInputs` are
+additive fields on the `turns` event rather than feeds of their own, so neither
+delivers anything to a plugin that does not also hold `turns`.
 
 A grant is a **child** of the seat's tick, never a substitute for it: a grant on
 a plugin the seat does not have reaches nothing, and unticking the plugin drops
@@ -879,11 +877,14 @@ the work rather than the container, and it is the reason session scope exists.
   truncated: false,           // wire: the turn exceeded the 4MB text cap
   isTurnEnd: true | null,     // wire only; null on jsonl — see below
   files:     [ { tool, path } ],   // files this turn wrote
-  reads:     [ { tool, path } ] }  // wire only; null on jsonl
+  reads:     [ { tool, path } ],   // wire only; null on jsonl
+  thinking:  '…' | null,        // only with the thinking grant; null on jsonl or a turn without thinking
+  thinkingTruncated: false | null,
+  toolUses:  [ { name, arg } ] | null }  // only with the toolInputs grant; arg is one clamped argument (ARG_CAP) or null
 ```
 
-The event and its arrays are frozen, and every subscriber is handed the same
-object. Copy anything you intend to keep.
+The event and its arrays are frozen, and every subscriber holding the same
+grants is handed the same object. Copy anything you intend to keep.
 
 **You need the `turns` grant, per session** (§2.1). Not "any grant" — a session
 that granted you `toolInputs` and not `turns` delivers you nothing here, because
@@ -893,6 +894,17 @@ valid token — the feed re-checks your manifest scope on every delivery, becaus
 grants are stored per session and outlive the manifest that earned them. Grants
 themselves are read at **delivery** time too, so a revoke takes effect on the
 very next turn rather than at the next restart.
+
+**`thinking` and `toolUses` are ABSENT unless you hold the matching grant**, and
+that is a different statement from `null`. Absent means "not yours"; `null` keeps
+its meaning of "the source could not know" — the jsonl path for either, or a wire
+turn that carried no thinking. So you can tell the two apart without a second
+API: test `'thinking' in ev` for the grant, then the value for the turn.
+
+**"Empty for you" means "not delivered to you".** The event is dropped per
+subscriber against the fields YOUR grants can see, so a request that carried no
+text but did call tools — about 40% of them — wakes a `toolInputs` subscriber and
+does not wake a `turns`-only one.
 
 **`isTurnEnd` and `reads` are `null` on the jsonl path, and that is a claim
 about knowledge, not a missing value.** (This `reads` is the event's — the files
@@ -904,7 +916,8 @@ real array either way.
 
 **This fires per REQUEST, not per turn.** A single user turn is roughly 4.4
 requests, most of them tool-loop hops, and about 40% of requests carry no text
-at all (those are dropped rather than delivered as empty events). If you want
+at all (dropped rather than delivered as empty events, unless a grant of yours
+finds something in them — see the rule above). If you want
 turn boundaries, watch for `isTurnEnd === true` — but do not assume one event
 per turn, and note that jsonl-sourced sessions cannot tell you.
 
@@ -925,9 +938,9 @@ You only ever hear the **main line**: subagent turns and side-calls (title
 generation, probes) never reach you. A Task-heavy session would otherwise flood
 you with subagent chatter you have no context for.
 
-Thinking blocks and tool inputs are **not** in this event. They are separate
-grants (`thinking`, `toolInputs`) that no API consumes yet; declaring them
-early was the point of shipping the vocabulary before the feed.
+All three grants are consumed by this feed. `thinking` and `toolInputs` are
+additive fields on the `turns` event rather than feeds of their own, so neither
+delivers anything to a plugin that does not also hold `turns`.
 
 <a name="callback-conventions"></a>
 ### Callback conventions

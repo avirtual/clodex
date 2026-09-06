@@ -515,6 +515,19 @@ test('t692: a plugin that declares NOTHING draws three live rows, exactly as bef
         }
       }
     }
+
+    // t693: the operator-facing wording of what a grant hands over. This is the
+    // only place an operator learns what `toolInputs` means, and the old label
+    // promised more than the wire carries — no file CONTENTS cross it, only a
+    // tool name and one clamped argument. A label that overclaims is a consent
+    // dialog asking about something that does not happen.
+    const labelOf = (token) => {
+      const row = rows.find((r) => (r.children || []).some((c) => c.value === token));
+      return String((row.children || []).find((c) => c.type !== 'checkbox').textContent);
+    };
+    assert.strictEqual(labelOf('workbench:toolInputs'),
+      'Tool inputs — the commands it runs and the files it touches',
+      'the toolInputs label describes what actually crosses the wire');
   } finally { h.restore(); }
 });
 
