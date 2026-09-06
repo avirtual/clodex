@@ -960,14 +960,18 @@ function createPluginLoader(deps) {
 
   // css TEXT, not a path: the renderer injects a per-plugin <style> element, and no
   // path resolves in the built web bundle.
-  function rendererInfo(id) {
+  function rendererInfo(id, opts) {
     const rec = discover().find((r) => r.id === String(id));
     if (!rec) return null;
     let css = null;
     if (rec.stylePath) {
       try { css = fs.readFileSync(rec.stylePath, 'utf8'); } catch { css = null; }
     }
-    return { rendererPath: rec.rendererPath, css };
+    const out = { rendererPath: rec.rendererPath, css };
+    if (opts && opts.source && rec.rendererPath) {
+      try { out.source = fs.readFileSync(rec.rendererPath, 'utf8'); } catch { out.source = null; }
+    }
+    return out;
   }
 
   const BUNDLE_FILE_PATHS = {

@@ -46,12 +46,6 @@ function warningText(resolved, opts) {
     + 'Clodex cannot check what it does — install it only if you trust its author.';
 }
 
-function webRendererNote(resolved) {
-  const entry = resolved && resolved.manifest && resolved.manifest.entry;
-  if (!entry || !entry.renderer) return '';
-  return ' Its renderer half shows in the desktop app only — this browser\'s bundle is built from the plugins shipped with Clodex.';
-}
-
 function sourceLine(source) {
   if (!source || !source.repo) return '';
   const sub = source.subpath ? `:${source.subpath}` : '';
@@ -94,6 +88,5 @@ module.exports = {
   previewLines,
   updatePreviewLines,
   warningText,
-  webRendererNote,
   installState,
 };

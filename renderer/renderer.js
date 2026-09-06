@@ -29,8 +29,9 @@ const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldR
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
 const {
-  previewLines, updatePreviewLines, warningText, webRendererNote, installState, sourceLabel, sourceLine, shortCommit,
+  previewLines, updatePreviewLines, warningText, installState, sourceLabel, sourceLine, shortCommit,
 } = require('./lib/plugin-source-dialog');
+const { evalRendererModule } = require('./lib/plugin-module-eval');
 const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
@@ -2907,9 +2908,13 @@ const pluginBar = initPluginHost({
 async function activatePluginRenderer(id) {
   let reported = false;
   try {
-    const info = await window.api.pluginInvoke('_host', 'renderer.info', [id]);
+    const reg = window.__CLODEX_PLUGIN_REGISTRY__;
+    const args = window.__CLODEX_WEB__
+      ? [id, { source: !(reg && typeof reg.get === 'function' && reg.get(id)) }]
+      : [id];
+    const info = await window.api.pluginInvoke('_host', 'renderer.info', args);
     if (!info || !info.ok || !info.rendererPath) return false;
-    const mod = requirePluginRenderer(info.rendererPath, id);
+    const mod = requirePluginRenderer(info.rendererPath, id, info.source);
     if (!mod) return false;
     pluginBar.activate(id, mod, {
       invoke: (pid, method, args) => window.api.pluginInvoke(pid, method, args),
@@ -2930,10 +2935,15 @@ async function activatePluginRenderer(id) {
 }
 
 // require() of an absolute path works only because contextIsolation is off by design here.
-// The web bundle cannot, so it resolves through the build-generated id→module registry.
-function requirePluginRenderer(rendererPath, id) {
+// The web bundle cannot: a shipped half resolves through the build-generated id→module
+// registry, and any other half arrives as source text and is evaluated in the page.
+function requirePluginRenderer(rendererPath, id, source) {
   const reg = window.__CLODEX_PLUGIN_REGISTRY__;
-  if (reg && typeof reg.get === 'function') return reg.get(id) || null;
+  if (reg && typeof reg.get === 'function') {
+    const mod = reg.get(id);
+    if (mod) return mod;
+  }
+  if (typeof source === 'string') return evalRendererModule(source, id);
   if (window.__CLODEX_WEB__ || !window.require) return null;
   return window.require(rendererPath);
 }
@@ -5651,17 +5661,16 @@ pluginsSourceInstallBtn.addEventListener('click', async () => {
       showPluginsRegisterNote(`Could not ${what}: ${(r && r.error) || 'unknown error'}`, 'warn');
       return;
     }
-    const rendererNote = window.__CLODEX_WEB__ ? webRendererNote(resolved) : '';
     if (updating) {
       closePluginsSourceSection();
       const rows = await renderPluginsDialog();
       const redrawn = rows.find((x) => x.id === r.id);
       const restart = redrawn && redrawn.restartRequired ? ' — restart Clodex to run the new code' : '';
-      showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.${rendererNote}`);
+      showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.`);
       return;
     }
     closePluginsSourceSection();
-    showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} — it is off until you turn it on from its row above.${rendererNote}`);
+    showPluginsRegisterNote(`Installed ${name} at ${shortCommit(r.commit)} — it is off until you turn it on from its row above.`);
     await renderPluginsDialog();
   } finally {
     pluginsSourceResolveBtn.disabled = false;
