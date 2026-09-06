@@ -107,6 +107,7 @@ has nothing to draw *from*.
   "scope": "session",
   "entry": { "engine": "engine.js", "renderer": "renderer.js" },
   "style": "style.css",
+  "surfaces": { "index": "any", "doc": "any" },
   "enabledByDefault": false,
   "announce": "One sentence. Shown in Manage Plugins AND as the skill's description in Claude Code."
 }
@@ -125,6 +126,10 @@ Rules that refuse a manifest outright, so get them right first:
   grant (today: the turn-text feed). It no longer controls visibility — a seat's
   plugin list does that.
 - Entry and `style` paths must stay inside the plugin folder.
+- **If the plugin has a renderer half, it needs a `surfaces` table.** See Step 3a
+  — this is the one field whose default costs you reach rather than granting it,
+  and forgetting it is the commonest way a working plugin is broken in the
+  browser.
 - **`announce` and `version` are read twice.** If the plugin ships a `skills/` or
   `agents/` bundle, Clodex generates a `.claude-plugin/plugin.json` for it and
   stamps `announce` in as the `description` and `version` as the version — that
@@ -189,12 +194,63 @@ security rule, not an ergonomic one:
 8. **Node's module cache survives a disable.** Re-enabling calls `activate()`
    again on the same module object, so initialise state inside `activate()`,
    never at module scope.
-9. **A renderer half is desktop-only for a plugin outside the Clodex repo.** The
-   browser bundle is built with the app and inlines only the repo's own plugins,
-   so a registered external plugin gets its engine half on the web surface and
-   no UI there. Design around it; do not try to fix it.
+9. **A renderer half must be `require`-free.** In the desktop app it is loaded by
+   path; in the browser it is read as source text and evaluated, and the shim's
+   `require` throws naming your plugin. One `require` therefore means a half that
+   works in no browser. It has nothing to require anyway: a renderer half touches
+   `module.exports` and the `rhost` it is handed, and nothing else.
 
-## Step 4 — surfaces
+## Step 3a — `surfaces`, or your UI works only on the desktop
+
+Clodex also runs as a browser client against a running desktop app. Both
+surfaces share **one** engine half and one invoke channel, so a method cannot be
+withheld from the browser by not serving it — the distinction rides the call,
+and `surfaces` in your manifest is where you declare it.
+
+```json
+"surfaces": { "index": "any", "doc": "any", "quote": "any" }
+```
+
+**Everything you do not list is desktop-only.** A browser client calling an
+unlisted method gets, before your handler runs:
+
+```js
+{ ok: false, error: 'plugin method not available on this surface' }
+```
+
+A plugin with no `surfaces` field at all is entirely desktop-only, so a renderer
+half plus no table is a UI whose every button fails in the browser. **So: if you
+wrote a renderer half, write the table.** List every method the renderer
+invokes — then take back out the ones below.
+
+**What to leave off.** Anything a remote caller should not reach: a method that
+writes a file, commits, discards, pushes, changes a setting another method acts
+on, or — the category people miss — **takes a caller-supplied host path**. A
+folder picker's `setRoot` is the canonical one: the path means nothing on the
+browser's machine and everything on the desktop's. Choose the root on the
+desktop, let the browser read it.
+
+Three traps:
+
+- **Nothing correlates the table with your `host.ipc.handle` calls.** Rename a
+  method, forget the manifest, and it silently becomes desktop-only. It fails
+  closed, which is the right direction, but it fails quietly.
+- **A renderer half cannot ask which surface it is on.** There is no
+  `rhost.surface`, so a desktop-only button looks identical in the browser until
+  the call comes back refused. Handle the refusal string; do not assume a method
+  you registered is callable.
+- **`surfaces` gates `invoke` and nothing else.** Your intent verbs (§7) and
+  session hooks (§4) are not covered and cannot be — anything that writes a
+  session's PTY reaches both regardless of transport. If a verb does what a
+  desktop-only method does, gating the method is theatre.
+
+Manifests are read at registration, so a browser box needs a plugin re-scan or a
+restart after you add the table.
+
+## Step 4 — the UI slots
+
+(Not to be confused with the manifest's `surfaces` table above: that says which
+*transports* may call a method; these are the *places* a plugin may draw.)
 
 Seven slots: status-bar action, status-bar segment, sidebar footer button,
 session row badge, session menu provider, settings panel, full overlay. You
@@ -281,13 +337,33 @@ real loader, including that `deactivate` releases what `activate` took.
 
 Then write the plugin's `README.md` — required sections: what it does, the seat
 it expects, what it writes and where. Plus, when they apply: that a verb is off
-until ticked, and that a capability grant is off until granted.
+until ticked, that a capability grant is off until granted, and which methods
+are desktop-only (so the browser's refusal reads as a decision, not a bug).
 
 Finally tell the user how to install it:
 
 > **Plugins ▸ Manage Plugins… ▸ Register Plugin…**, pick the folder, then tick
 > the plugin on the seat that should hold it. A renderer change needs an app
 > restart (`require` caches by path); an engine change needs only a Re-scan.
+
+Registering is the right loop **while editing** — the folder is symlinked, so a
+`git pull` or a save is the whole update. To install one from GitHub instead,
+**Manage Plugins… ▸ Install from GitHub…** takes:
+
+```
+https://github.com/owner/repo/tree/<ref>/<subpath>   # the URL, verbatim from the address bar
+owner/repo                    # repo root, default branch
+owner/repo@<ref>              # @ picks the ref
+owner/repo:<subpath>          # : picks a subfolder
+owner/repo@<ref>:<subpath>    # both
+```
+
+**A plugin living in a subfolder of a monorepo needs the subpath**, and for a
+one-plugin-per-folder repo the subpath is just the plugin's id. Two things worth
+saying to the user: a registered symlink of an id **blocks** a GitHub install of
+that same id ("not from a source"), so unregister first; and the ref is the
+release channel — a branch re-resolves on update, a tag is pinned forever and
+will never report one.
 
 ## What a plugin cannot do
 
