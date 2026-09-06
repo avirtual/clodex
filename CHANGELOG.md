@@ -27,6 +27,8 @@ blocks a release.
 
 - **A team carries its own prompts.** `~/.clodex/teams/<name>/prompts/system/` and `prompts/append/` now shadow the shared library: a role's prompt stem, or an append stem in a seat template, resolves against the team's directory first and the library second, so two teams on one machine can each keep their own project knowledge under the same stem, and a team's own copy of a prompt is never refreshed under it by an upgrade. Plugin-namespaced refs are unchanged. Team preflight says which prompts are the team's own.
 
+- A launch no longer rewrites a project's ticket board when the legacy team-board migration has nothing to copy or re-sync; the board is written only when a pass changed it.
+
 - **Two tickets in flight no longer stall the second one's merge on CHANGELOG.md.** Every ticket adds its bullet at the top of Unreleased, so the second merge always conflicted there and the loop escalated to the lead. The loop now recognises that shape — the only conflicted file is CHANGELOG.md and both sides only inserted lines — keeps both bullets with the earlier ticket's first, finishes the merge and says so in the merge notice. Any other conflict still escalates.
 
 - **A ticket whose suite goes red once is measured again before it is sent

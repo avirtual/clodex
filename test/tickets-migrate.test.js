@@ -34,13 +34,33 @@ function mkTeam(home, name, { root, tickets, manifest } = {}) {
   return dir;
 }
 
+// Destination writes, counted where they actually happen. `save` routes through
+// fs-util's atomicWriteFileSync, which closes over its OWN `require('fs')`: the
+// fs injected into runTicketsMigration reaches the reads and nothing else, so a
+// spy wrapped around the injected object counts zero destination writes whether
+// the save ran or not — green against the unconditional save these subjects
+// exist to forbid. The atomic rename ONTO the destination path is the write, and
+// fs-util reaches renameSync by property lookup at call time, so patching the
+// module object is seen. Restored in a finally: leaving it patched would follow
+// the spy into every later subject in the file.
+function countDestWrites(destPath, fn) {
+  const real = fs.renameSync;
+  let writes = 0;
+  fs.renameSync = (from, to) => { if (to === destPath) writes += 1; return real(from, to); };
+  let value;
+  try { value = fn(); } finally { fs.renameSync = real; }
+  return { writes, value };
+}
+
 test('tickets-migrate: a team board is COPIED onto its project board, source left in place', () => {
   const home = mkHome();
   const root = '/proj/alpha';
   const src = [{ id: 't1', state: 'open', assignee: 'hand' }, { id: 't2', state: 'done', assignee: null }];
   const teamDir = mkTeam(home, 'alpha', { root, tickets: src });
 
-  const res = runTicketsMigration({ root: home, fs });
+  const dest = createTicketsStore({ clodexHome: home }).ticketsPath(root);
+  const { writes, value: res } = countDestWrites(dest, () => runTicketsMigration({ root: home, fs }));
+  assert.ok(writes >= 1, 'a pass that copies records reaches the disk');
 
   const board = createTicketsStore({ clodexHome: home }).load(root);
   assert.strictEqual(board.length, 2, 'ENTER: both records must reach the project board');
@@ -78,6 +98,74 @@ test('tickets-migrate: a SECOND run changes nothing when the source has not move
   assert.deepStrictEqual(res.teams, [{ team: 'alpha', added: 0, reconciled: 0, projectRoot: root }]);
   assert.strictEqual(fs.readFileSync(path.join(teamDir, MARKER), 'utf-8'), stamp,
     'the marker still dates the INITIAL copy, not the latest pass');
+});
+
+// The pass RUNS on every launch by design, so on a box whose legacy source has
+// been frozen for months every boot re-serialised a multi-megabyte live board to
+// no effect, racing whatever the ticket loop was writing at startup. Equal bytes
+// are not the property to assert — the unconditional save produced those too;
+// the property is that the file was not written at all.
+test('tickets-migrate: a pass that copies nothing and re-syncs nothing does not rewrite the board', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
+  const dest = createTicketsStore({ clodexHome: home }).ticketsPath(root);
+
+  const first = countDestWrites(dest, () => runTicketsMigration({ root: home, fs }));
+  assert.ok(first.writes >= 1,
+    'ENTER: the first pass must really have written the destination, or a zero count below proves nothing');
+  const before = fs.statSync(dest);
+  const bytes = fs.readFileSync(dest, 'utf-8');
+
+  const second = countDestWrites(dest, () => runTicketsMigration({ root: home, fs }));
+
+  assert.strictEqual(second.writes, 0, 'nothing copied and nothing re-synced: the live board is not rewritten');
+  const after = fs.statSync(dest);
+  assert.strictEqual(after.ino, before.ino, 'no atomic rename landed on it');
+  assert.strictEqual(after.mtimeMs, before.mtimeMs, 'and it was not touched in place either');
+  assert.strictEqual(fs.readFileSync(dest, 'utf-8'), bytes);
+  assert.deepStrictEqual(second.value.teams, [{ team: 'alpha', added: 0, reconciled: 0, projectRoot: root }],
+    'the pass still RAN and still reported — it merged and reconciled, it just had nothing to save');
+});
+
+test('tickets-migrate: a pass that copies nothing but RE-SYNCS one record still saves', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  const teamDir = mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
+  const store = createTicketsStore({ clodexHome: home });
+  const dest = store.ticketsPath(root);
+
+  runTicketsMigration({ root: home, fs });
+  fs.writeFileSync(path.join(teamDir, 'tickets.json'), JSON.stringify([
+    { id: 't1', state: 'done', lastActivityAt: 2000 },
+  ]));
+  assert.strictEqual(store.load(root)[0].state, 'open',
+    'ENTER: the destination is stale going in, so the pass has something to re-sync');
+
+  const { writes, value } = countDestWrites(dest, () => runTicketsMigration({ root: home, fs }));
+
+  assert.strictEqual(value.migrated, 0, 'ENTER: nothing was COPIED — the save is earned by the re-sync alone');
+  assert.strictEqual(value.reconciled, 1);
+  assert.ok(writes >= 1, 'a re-sync with no arrival still reaches the disk');
+  assert.strictEqual(store.load(root)[0].state, 'done', 'and the correction is what landed');
+});
+
+test('tickets-migrate: a no-op pass restores a marker deleted by hand without rewriting the board', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  const teamDir = mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
+  const dest = createTicketsStore({ clodexHome: home }).ticketsPath(root);
+
+  runTicketsMigration({ root: home, fs });
+  fs.rmSync(path.join(teamDir, MARKER));
+  assert.ok(!fs.existsSync(path.join(teamDir, MARKER)), 'ENTER: the marker must really be gone going in');
+  const before = fs.statSync(dest);
+
+  const { writes } = countDestWrites(dest, () => runTicketsMigration({ root: home, fs }));
+
+  assert.ok(fs.existsSync(path.join(teamDir, MARKER)), 'the marker is written back — the save guard does not gate it');
+  assert.strictEqual(writes, 0, 'and the board is still not rewritten');
+  assert.strictEqual(fs.statSync(dest).ino, before.ino);
 });
 
 test('tickets-migrate: with the marker DELETED by hand, a re-run still adds nothing (provenance, not the marker)', () => {

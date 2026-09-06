@@ -198,9 +198,7 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
       const merged = mergeBoards(before, source, name);
       const added = merged.length - before.length;
       const { board, reconciled } = reconcileBoard(merged, source, name);
-      // Saved even when nothing was added, so the marker can never be written
-      // over a board the save would have failed to create.
-      store.save(projectRoot, board);
+      if (added > 0 || reconciled > 0) store.save(projectRoot, board);
       const markerPath = path.join(teamDir, MARKER);
       // Stamped only the first time: it dates the INITIAL copy, and rewriting it
       // on every launch would erase the one timestamp that says when that was.
