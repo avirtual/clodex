@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Two tickets in flight no longer stall the second one's merge on CHANGELOG.md.** Every ticket adds its bullet at the top of Unreleased, so the second merge always conflicted there and the loop escalated to the lead. The loop now recognises that shape — the only conflicted file is CHANGELOG.md and both sides only inserted lines — keeps both bullets with the earlier ticket's first, finishes the merge and says so in the merge notice. Any other conflict still escalates.
+
 - **A ticket whose suite goes red once is measured again before it is sent
   back.** A full run on a busy box can starve a timing test that the branch
   never touched; the loop now re-runs the suite once, proceeds to review if the
