@@ -252,7 +252,12 @@ const reject = (f, id, reason = 'the guard is inverted') =>
 
 test('mkFixture injects every dep team-tickets.js reads', () => {
   const f = mkFixture();
-  assertTicketDepsCovered(assert, f.deps, { optional: ['ticketSuiteTimeoutMs'] });
+  // resolveSystemPromptFile is optional in the same sense (t699): absent, the
+  // reviewer preflight uses its built-in library join, which is what every
+  // subject here measures. Wiring it would change what these fixtures test.
+  assertTicketDepsCovered(assert, f.deps, {
+    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile'],
+  });
 });
 
 // ── the pair documented as never diverging ─────────────────────────────────
