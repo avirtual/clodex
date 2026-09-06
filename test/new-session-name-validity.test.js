@@ -119,7 +119,7 @@ for (const c of CASES) {
   });
 }
 
-test('the three refusal kinds say three DIFFERENT things', () => {
+test('the four refusal kinds say four DIFFERENT things', () => {
   const said = CASES.filter((c) => !c.ok && c.message).map((c) => c.message);
   assert.strictEqual(new Set(said).size, 4,
     'live, archived, taken and invalid must not collapse onto one sentence');
