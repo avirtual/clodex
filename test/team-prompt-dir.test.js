@@ -11,6 +11,10 @@
 // created with the real createTeamManifest, and the files are real bytes on
 // disk, so what runs is what a spawn runs.
 //
+// Every `assert.ok(RE.test(src))` below is deliberately not `assert.match`: a
+// failing match formats the whole source file into the diff, and node:test then
+// spends minutes rendering a 400KB string it will print as one line of noise.
+//
 // WHY THE CONFINEMENT IS ON THE INPUT rather than a startsWith check on the
 // joined path: `team.dir` is derived from a manifest inside an AGENT-WRITABLE
 // directory — team.json itself is written by [agent:team role-set] — so the
@@ -302,7 +306,7 @@ test('t699: the ipc probe reports team|library|null, and the team dir wins', () 
   // This is what ties the copy to the shipped one; without it the subject
   // measures the leaf twice and the wiring not at all.
   const ipcSrc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
-  assert.match(ipcSrc, /resolvePrompt: \(kind, stem\) => \(teamPromptFile\(\{ fs, path \}, team, kind, stem\)\s*\n\s*\? 'team'\s*\n\s*: \(promptLibrary\.raw\(kind, stem\) == null \? null : 'library'\)\),/,
+  assert.ok(/resolvePrompt: \(kind, stem\) => \(teamPromptFile\(\{ fs, path \}, team, kind, stem\)\s*\n\s*\? 'team'\s*\n\s*: \(promptLibrary\.raw\(kind, stem\) == null \? null : 'library'\)\),/.test(ipcSrc),
     'the team:preflight handler builds its probe over the team, team-copy branch first');
 
   const promptLibrary = {
@@ -329,18 +333,18 @@ test('t699: the ipc probe reports team|library|null, and the team dir wins', () 
 test('t699: session-manager threads the seat\'s resolved team into every prompt resolution', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
 
-  assert.match(src, /resolveSystemPromptFile\(systemPromptFile, Array\.isArray\(plugins\) \? plugins : null, resolvedTeam\)/,
+  assert.ok(/resolveSystemPromptFile\(systemPromptFile, Array\.isArray\(plugins\) \? plugins : null, resolvedTeam\)/.test(src),
     'the claude arm passes the team _teamBlockFor already resolved');
-  assert.match(src, /readSystemPromptBody\(systemPromptFile, seatPlugins, resolvedTeam\)/,
+  assert.ok(/readSystemPromptBody\(systemPromptFile, seatPlugins, resolvedTeam\)/.test(src),
     'and so does the codex system arm');
-  assert.match(src, /readAppendBodies\(appendPromptFiles, seatPlugins, resolvedTeam\)/,
+  assert.ok(/readAppendBodies\(appendPromptFiles, seatPlugins, resolvedTeam\)/.test(src),
     'and the codex append arm');
-  assert.match(src, /readAppendBodies\(recipe\.appendPromptFiles, recipe\.plugins, team\)/,
+  assert.ok(/readAppendBodies\(recipe\.appendPromptFiles, recipe\.plugins, team\)/.test(src),
     'the REBAKE reads it off the refresh\'s own resolution — a refresh that dropped it '
     + 'would rewrite a live seat\'s prompt file without the team bodies it booted with');
-  assert.match(src, /_realIpcFor\(session\.promptRecipe, teamBlock, resolvedTeam\)/,
+  assert.ok(/_realIpcFor\(session\.promptRecipe, teamBlock, resolvedTeam\)/.test(src),
     'and refreshPrompt threads the team the refresh resolved rather than resolving a second time');
-  assert.match(src, /readSystemPromptBody\(def\.prompt, null, team\)/,
+  assert.ok(/readSystemPromptBody\(def\.prompt, null, team\)/.test(src),
     'the team-block builder goes through the resolver too — a hand-rolled library join here '
     + 'is the third place the rule would have to be restated');
   assert.doesNotMatch(src, /path\.join\(REGISTRY_DIR, 'library', 'prompts', 'system'/,
@@ -380,11 +384,11 @@ test('t699: a reviewer prompt that exists only under the team dir does not warn 
   // the result. Without the pin this subject would pass against a preflight that
   // kept its hand-rolled library join and never consulted the team directory.
   const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
-  assert.match(src, /\(stem\) => resolveSystemPromptFile\(stem, null, team\)/,
+  assert.ok(/\(stem\) => resolveSystemPromptFile\(stem, null, team\)/.test(src),
     'the injected resolver is called with the REVIEW\'S team, not with two args');
-  assert.match(src, /promptFile = reviewerSystemPrompt \? resolvePromptFile\(reviewerSystemPrompt\) : null/,
+  assert.ok(/promptFile = reviewerSystemPrompt \? resolvePromptFile\(reviewerSystemPrompt\) : null/.test(src),
     'and its result is what the preflight stats');
-  assert.match(src, /not found under teams\/\$\{team\.name\}\/prompts\/system or library\/prompts\/system/,
+  assert.ok(/not found under teams\/\$\{team\.name\}\/prompts\/system or library\/prompts\/system/.test(src),
     'the UNBRIEFED warning names both places the operator may install it');
 
   const resolveSystemPromptFile = (stem, _plugins, t) =>
@@ -400,17 +404,19 @@ test('t699: a reviewer prompt that exists only under the team dir does not warn 
     'a stem in neither place still resolves to null — the case the warning covers');
 });
 
-test('t699: GUARD — with the dep ABSENT the reviewer preflight keeps the old library-only path', () => {
-  // Passes against the unfixed module by construction: the default branch IS the
-  // old code. It exists so a change that makes the dep required — which would
-  // break every fixture building team-tickets' deps object — is caught here.
+test('t699: the reviewer resolver is an OPTIONAL dep, and its absent branch is the old library join', () => {
+  // The behavioural half of this is a GUARD: a fixture that builds team-tickets'
+  // deps without the new key must keep working exactly as before, and dozens of
+  // them do — every review fixture in the suite is that assertion, which is why
+  // there is no new one here. What IS pinned is the shape those fixtures rely
+  // on: the dep is PROBED rather than assumed, and the absent branch is the
+  // library join, byte for byte, that the code computed before this ticket. Make
+  // the dep required and this reds here instead of in thirty review fixtures.
   const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
-  assert.match(src, /typeof resolveSystemPromptFile === 'function'/,
+  assert.ok(/typeof resolveSystemPromptFile === 'function'/.test(src),
     'the dep is probed, not assumed');
-  assert.match(src, /path\.join\(REGISTRY_DIR, 'library', 'prompts', 'system', `\$\{stem\}\.md`\)/,
+  assert.ok(/path\.join\(REGISTRY_DIR, 'library', 'prompts', 'system', `\$\{stem\}\.md`\)/.test(src),
     'and the absent-dep branch is the library join the code used before this ticket');
-
-  const REGISTRY_DIR = '/home';
-  const fallback = (stem) => path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${stem}.md`);
-  assert.strictEqual(fallback('revp'), path.join('/home', 'library', 'prompts', 'system', 'revp.md'));
+  assert.ok(/resolveSystemPromptFile,\n/.test(src),
+    'destructured off deps, where an absent key is undefined rather than a throw');
 });
