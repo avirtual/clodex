@@ -1441,6 +1441,38 @@ test('a suite that reds once and is green on the re-run reaches the reviewer', a
     'and the reviewer is told, in the scope it is actually spawned with');
 });
 
+test('a round-1 re-measure stamp does not ride into round 2', async () => {
+  // The stamp is a claim about THE RUN THAT JUST HAPPENED, so it must be cleared
+  // at the top of every verify rather than only written. Nothing else clears it:
+  // `_taskReject` deletes `loopStep` and `verifyHold` and not this, and the
+  // `task done` re-entry and the verifyHold recovery both re-enter CHECK 5 on a
+  // record that still carries it. Left in place, a round-2 verify that goes
+  // green on its FIRST run tells its reviewer the suite was re-measured and
+  // names failures from a commit that no longer exists — and the merge notice
+  // repeats it. A stale claim about a measurement is worse than no claim,
+  // because the reviewer is told to discount tests it can no longer check.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  f.tstore.save(f.team.root, [{
+    ...f.one(),
+    state: 'done',
+    loopStep: 'verify',
+    report: 'r',
+    reportedBy: 'team-hand',
+    suiteRemeasured: { first: '3/5 passing, 2 failing (exit 1)', firstFailing: 'the thing that broke', at: 1 },
+  }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 1, 'ENTER: the green round-2 run reached a reviewer, so there is a scope to check');
+  assert.ok(!('suiteRemeasured' in f.one()),
+    'the stale stamp is gone — this run measured once and went green');
+  assert.ok(!/SUITE RE-MEASURED/.test(f.created[0].systemPrompt),
+    'and the round-2 reviewer is told nothing about a re-measure that did not happen this round');
+});
+
 test('a re-measure that is red too rejects, carrying BOTH runs` failing names', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');

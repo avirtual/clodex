@@ -5253,6 +5253,7 @@ function createTicketMethods(deps, shared) {
         // could not have known to run it and the reviewer had no shell, so
         // nothing before this check could have caught it.
         atStep = 'verify: suite';
+        this._stampSuiteRemeasured(team, ticketId, null);
         let suite = await this._runTicketSuite(team, ticket);
         // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
         // entry guard above is now a snapshot that old. A lead `task accept`
@@ -5268,7 +5269,7 @@ function createTicketMethods(deps, shared) {
         let firstRed = null;
         let remeasureError = null;
         if (suite.ran && !suite.green) {
-          log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once, because a full run on a busy box starves timing tests the branch never touched and a rework round costs more than a suite`);
+          log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
           const again = await this._runTicketSuite(team, ticket);
           still = this._loadTicket(team, ticketId);
           if (!still || still.loopStep !== 'verify') return;
@@ -6042,12 +6043,15 @@ function createTicketMethods(deps, shared) {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
-        const names = String((first && first.failing) || '');
-        rec.suiteRemeasured = {
-          first: String((first && first.summary) || ''),
-          firstFailing: names.length > 400 ? `${names.slice(0, 400)}…` : names,
-          at: Date.now(),
-        };
+        if (!first) { if (!('suiteRemeasured' in rec)) return; delete rec.suiteRemeasured; }
+        else {
+          const names = String(first.failing || '');
+          rec.suiteRemeasured = {
+            first: String(first.summary || ''),
+            firstFailing: names.length > 400 ? `${names.slice(0, 400)}…` : names,
+            at: Date.now(),
+          };
+        }
         ticketsStore.save(team.root, tickets);
       } catch (e) {
         log.error('ticket', `suite re-measure stamp for ${ticketId} failed: ${e.message}`);
