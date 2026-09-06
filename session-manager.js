@@ -2874,8 +2874,8 @@ function createSessionManager(deps) {
     // `CLODEX_DISABLE_IPC_PROMPT` decision are spawn-time inputs that the entry
     // does not carry in the form used here, and re-deriving them is how the two
     // halves diverged in the first place. `teamBlock` and its `team` are passed
-    // separately, being the part deliberately re-resolved per refresh: ONE
-    // resolution answers for the block and for the append stems (see _teamBlockFor).
+    // separately, being the part deliberately re-resolved per refresh: ONE resolution
+    // answers for the block, the append stems and the exec defs (see _teamBlockFor).
     _realIpcFor(recipe, teamBlock, team) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''

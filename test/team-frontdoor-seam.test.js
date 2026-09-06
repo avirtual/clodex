@@ -313,7 +313,7 @@ test('team:addRole / team:removeRole pass the operator opt-in; team:join does NO
 });
 
 // t414: the preflight handler is the popover's only source of findings, and it
-// is where the pure leaf's four probes get bound to real stores. Driven through
+// is where the pure leaf's probes get bound to real stores. Driven through
 // the REGISTERED handler with stubbed stores, for the same reason as everything
 // above it: a handler that reaches an undefined store returns {ok:false} with a
 // swallowed message, which is indistinguishable from a team that owes nothing.
@@ -330,7 +330,7 @@ test('team:preflight binds the probes to the real stores and returns the leaf fi
   });
   const res = handlers['team:preflight']({}, 'shop');
   assert.strictEqual(res.ok, true);
-  // The WHOLE findings array. Each of the four probes must have been reached for
+  // The WHOLE findings array. Each bound probe must have been reached for
   // this to be the answer: a probe left unbound returns undefined, the leaf takes
   // its unresolved arm anyway, and a partial assertion would read right past it.
   assert.deepStrictEqual(res.findings, [

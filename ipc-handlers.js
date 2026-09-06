@@ -226,7 +226,7 @@ function registerIpcHandlers(deps) {
   });
 
   // The probes are bound HERE rather than inside team-preflight.js so the module
-  // stays a pure leaf: every disk touch it makes is one of these four, which is
+  // stays a pure leaf: every disk touch it makes is one of these probes, which is
   // what lets the whole findings table be asserted from a fixture with no library
   // installed. `exists` is deliberately not confined — it checks absolute paths
   // built from the team's own root, not caller-supplied name segments.
