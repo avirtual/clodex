@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Manage Plugins library rows: Update names the installed ref in its trust warning, a registered plugin says "unregister it first", and installing one row no longer refetches the whole catalog.
+- **Codex sessions' replies reach Clodex again.** Intents (`[agent:dm]`, `[agent:task done]`, …) and the activity/spoken signals were silently dropped, because the current Codex CLI writes replies in a shape the transcript reader did not recognise.
 
 ## 5.35.1 — 2026-09-07
 

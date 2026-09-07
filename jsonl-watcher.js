@@ -1,16 +1,16 @@
 // jsonl-watcher.js — the JsonlWatcher class. Polls the run/<name>/transcript.jsonl
 // transcript symlink (created by the SessionStart hook) every 250ms, follows it
 // through /clear + /compact, extracts assistant text (Claude type:"assistant";
-// Codex event_msg/agent_message), buffers it, and flushes on a new requestId
-// (or ANY Codex text entry, which carries no id and so cannot be grouped by
-// one) / a non-telemetry textless entry / 1s silence — emitting onText (intent
-// scan, with a per-flush { turnEnd } that is true only when the pending text is
-// the agent's own REPLY and its turn ended), onSessionId (persistence),
-// onActivity (UI), onCompactSummary, onFileTouches.
+// Codex event_msg/agent_message and response_item message), buffers it, and
+// flushes on a new requestId (or ANY text entry carrying no id, which cannot be
+// grouped by one) / a non-telemetry textless entry / 1s silence — emitting
+// onText (intent scan, with a per-flush { turnEnd } that is true only when the
+// pending text is the agent's own REPLY and its turn ended), onSessionId
+// (persistence), onActivity (UI), onCompactSummary, onFileTouches.
 //
 // The flush rule is stated precisely because a header that mis-states it is
-// what made a silent text-loss bug hard to see: grouping by an id that Codex
-// never sets reads two unrelated replies as one turn and drops the first.
+// what made a silent text-loss bug hard to see: grouping by an id that a text
+// entry never sets reads two unrelated replies as one turn and drops the first.
 //
 // FACTORY (M3 DI): the class reads one main.js global, REGISTRY_DIR (to resolve
 // the run/<name>/transcript.jsonl symlink via clodex-paths.pathFor), injected as
@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { extractText, isTurnEndEntry } = require('./transcript');
+const { extractText, isTurnEndEntry, isCodexReply } = require('./transcript');
 const { extractFileTouches } = require('./file-touch');
 const { pathFor } = require('./clodex-paths');
 
@@ -34,13 +34,15 @@ const TURN_COMPLETE_TIMEOUT = 1000; // ms
 // coming.
 const NON_FLUSHING_TYPES = ['assistant', 'response_item'];
 
-// Codex emits `token_count` between the reply and `task_complete`. It is
-// telemetry, not a turn boundary — but it is textless and its type is
-// `event_msg`, so it used to trigger the flush and carry away the pending text
-// BEFORE `task_complete` could mark it as ending the turn. Exempting it is what
-// lets the real terminator do that job.
+// Codex emits two usage records between the reply and `task_complete`: a
+// top-level `token_usage_record`, then an `event_msg` `token_count`. Both are
+// textless, so either one flushes the pending text BEFORE `task_complete` can
+// mark it as ending the turn — exempting BOTH is what lets the real terminator
+// do that job. Either one alone leaves every reply unspoken.
 function isTelemetryOnly(obj) {
-  return (obj.type || '') === 'event_msg' && (obj.payload || {}).type === 'token_count';
+  const type = obj.type || '';
+  return type === 'token_usage_record'
+    || (type === 'event_msg' && (obj.payload || {}).type === 'token_count');
 }
 
 function createJsonlWatcher({ REGISTRY_DIR }) {
@@ -191,15 +193,15 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         const text = extractText(obj);
         if (text) {
           const rid = obj.requestId || (obj.payload || {}).id || '';
-          // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. Codex entries
-          // carry no requestId and no payload.id, so `rid` is '' for every one
-          // and an equality test reads two unrelated text entries as the same
-          // turn — the second then OVERWRITES the first. What that silently
-          // discards is the intent scan's input: an [agent:dm ...] emitted in a
-          // commentary message followed by a quick tool call would never be
-          // seen. `token_count` used to be the accidental separator; exempting
-          // it from the textless flush removed the only thing standing between
-          // them, so the separation has to be stated here instead.
+          // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. A Codex
+          // function_call_output (the tool-output shape extractText reads)
+          // carries neither requestId nor payload.id, so its `rid` is '' and an
+          // equality test reads two unrelated text entries as the same turn —
+          // the second OVERWRITES the first. What that silently discards is the
+          // intent scan's input: an [agent:dm ...] emitted in a commentary
+          // message followed by a quick tool call would never be seen. The usage
+          // records used to be the accidental separator; exempting them removed
+          // the only thing between them, so state the separation here instead.
           if ((rid !== this._pendingRid || !rid) && this._pendingText) {
             this._flushPending();
           }
@@ -212,15 +214,16 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           // would mark a command dump as the reply — which is the one scope rule
           // the operator stated twice: never tool output.
           this._pendingIsReply = (obj.type || '') === 'assistant'
-            || ((obj.payload || {}).type === 'agent_message');
+            || ((obj.payload || {}).type === 'agent_message')
+            || isCodexReply(obj);
           this._pendingTurnEnd = isTurnEndEntry(obj);
           this._setActivity('thinking');
         } else if (!NON_FLUSHING_TYPES.includes(obj.type || '') && !isTelemetryOnly(obj)) {
           // A textless entry ends the pending turn. Codex closes with
           // `task_complete`, which carries no text and so never reaches the
           // branch above — read the flag off THIS entry before flushing, or the
-          // flag that ships is the one computed from `agent_message`, which is
-          // false by construction and leaves a Codex reply permanently unspoken.
+          // flag that ships is the one computed at the reply, which is false by
+          // construction and leaves a Codex reply permanently unspoken.
           if (this._pendingIsReply && isTurnEndEntry(obj)) this._pendingTurnEnd = true;
           if (this._pendingText) this._flushPending();
         }

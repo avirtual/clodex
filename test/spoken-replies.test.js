@@ -129,10 +129,10 @@ test('a Codex turn reaches onText with turnEnd true at task_complete', () => {
 
 // THE SHAPE THAT MADE THE LOSS GREEN. The round-2 Codex fixture had no
 // `function_call_output` after the reply, so the one interleaving that drops
-// text was never exercised. Codex entries carry no requestId and no payload.id,
-// so every rid is '' — an equality test reads a reply and a later tool output as
-// the same turn and OVERWRITES the reply. What is discarded is the intent scan's
-// input, which this repo keeps at-least-once on purpose.
+// text was never exercised. A `function_call_output` carries no requestId and no
+// payload.id, so its rid is '' — an equality test reads a reply and a later tool
+// output as the same turn and OVERWRITES the reply. What is discarded is the
+// intent scan's input, which this repo keeps at-least-once on purpose.
 //
 // This shape occurs ~7859 times across the corpus; it is the common turn, not
 // an edge case.
@@ -168,6 +168,61 @@ test('a turn ending on a tool output is not spoken', () => {
   assert.strictEqual(seen.length, 1, 'the tool output still reaches the intent scan');
   assert.strictEqual(seen[0].meta.turnEnd, false,
     'but it must never be flagged as the reply that ends the turn');
+});
+
+// The shape the current Codex build writes instead of `agent_message`: the
+// reply is a `response_item` `message`, and an `item_completed` `AgentMessage`
+// repeats it. A seat's `[agent:dm]` has to reach the scanner from the first and
+// not a second time from the twin.
+//
+// turnEnd is the half that a text-only assertion cannot see: `_pendingIsReply`
+// is what `task_complete` consults, and a predicate that does not recognise
+// this shape leaves the reply permanently unspoken while the text still
+// arrives.
+//
+// The reply survives to `task_complete` only because `item_completed` precedes
+// `response_item`, as it does in the rollout: the twin is textless, so it
+// flushes nothing, and the reply is still pending at the terminator. Reversed,
+// the twin would flush the reply early carrying turnEnd:false.
+//
+// EVERY entry below is one the rollout really has at that position — ordinals
+// 183-187 of the cited transcript, prose redacted. `token_usage_record` is the
+// one this fixture used to omit, and omitting it is what made the round-2 pin
+// green over a reply that still could not be spoken: it is textless and its
+// top-level type is neither non-flushing nor telemetry-exempt by default, so it
+// flushed the reply one entry before the terminator could flag it.
+test('a Codex response_item reply reaches onText once, flagged as ending the turn', () => {
+  const seen = runWatcher([
+    {
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed', thread_id: 't1', turn_id: 'u1',
+        item: { type: 'AgentMessage', id: 'msg_r', content: [{ type: 'Text', text: '[agent:dm clodex] the audit' }], phase: 'commentary' },
+      },
+    },
+    {
+      type: 'response_item',
+      payload: {
+        type: 'message', id: 'msg_r', role: 'assistant',
+        content: [{ type: 'output_text', text: '[agent:dm clodex] the audit' }],
+        phase: 'commentary',
+      },
+    },
+    {
+      type: 'token_usage_record',
+      payload: {
+        thread_id: 't1', turn_id: 'u1', session_id: 't1', response_id: 'resp_1',
+        usage: { input_tokens: 105431, output_tokens: 352, total_tokens: 105783 },
+      },
+    },
+    { type: 'event_msg', payload: { type: 'token_count' } },
+    { type: 'event_msg', payload: { type: 'task_complete' } },
+  ]);
+  assert.deepStrictEqual(
+    seen.map((s) => [s.text, s.meta.turnEnd]),
+    [['[agent:dm clodex] the audit', true]],
+    'the intent must reach the scan once, flagged so the reply can be spoken',
+  );
 });
 
 test('a Codex turn still mid-flight does not report a turn end', () => {

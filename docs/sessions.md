@@ -173,6 +173,12 @@ Codex gets the shared SessionStart script plus a per-cwd `.codex/hooks.json`
   requestId / non-assistant entry / `TURN_COMPLETE_TIMEOUT` (1s) silence.
   `/clear` = new transcript + new sessionId; `/compact` = same transcript,
   same id, plus an `isCompactSummary` entry (→ compact-continuation firing).
+  Codex has written its replies in two shapes across builds and `transcript.js`
+  reads both: the older `event_msg` `agent_message`/`user_message`, and the
+  current `response_item` `{type:'message', role:'assistant'|'user'}` whose
+  `content` blocks carry the text. Current builds write only the second, and
+  repeat each reply as an `event_msg` `item_completed` `AgentMessage` — read
+  deliberately as nothing, since the twin would deliver every intent twice.
 
 Callbacks: `onText` → intent scan · `onSessionId` →
 `persistence.setSessionId` (+ sessionIds history) · `onActivity` → UI dot ·
