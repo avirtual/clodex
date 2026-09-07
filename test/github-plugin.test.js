@@ -79,10 +79,11 @@ const ISSUE_VIEW = {
 // cannot exercise the comment path at all and a comment renderer that never ran
 // would look pinned.
 //
-// Three long older comments, then a short newest one. The bulk is deliberate:
-// each is under the per-comment cap, so it is the REPLY cap they collectively
-// exceed. That is the only shape in which selecting oldest-first differs from
-// selecting newest-first, and it is the shape a busy issue actually has.
+// Three older comments, each UNDER the per-comment cap, then a newest one OVER
+// it. Both bounds are therefore live at once and on different comments, and the
+// sizes are chosen so that more than one but not all of them fit — the only
+// shape in which oldest-first and newest-first selection differ, and in which
+// the render order is observable at all.
 const ISSUE_VIEW_SHORT = {
   number: 11,
   title: 'short body, long comments',
@@ -92,9 +93,9 @@ const ISSUE_VIEW_SHORT = {
   url: 'https://github.com/avirtual/clodex/issues/11',
   body: 'short.',
   comments: [
-    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'e'.repeat(1500) },
-    { author: { login: 'gus' }, createdAt: AGO_MIN(40), body: 'g'.repeat(1500) },
-    { author: { login: 'hal' }, createdAt: AGO_MIN(35), body: 'h'.repeat(1500) },
+    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'e'.repeat(600) },
+    { author: { login: 'gus' }, createdAt: AGO_MIN(40), body: 'g'.repeat(600) },
+    { author: { login: 'hal' }, createdAt: AGO_MIN(35), body: 'h'.repeat(600) },
     { author: { login: 'fay' }, createdAt: AGO_MIN(10), body: `the last word${'f'.repeat(2500)}` },
   ],
   labels: [],
@@ -650,10 +651,10 @@ test('github: a closed issue still reads, and older bulk cannot starve the newes
     const older = ISSUE_VIEW_SHORT.comments.slice(0, 3);
     assert.ok(older.every((c) => c.body.length < 2000),
       'ENTER: no OLDER comment exceeds the per-comment cap, so that cap is not what drops them');
-    assert.ok(older.reduce((n, c) => n + c.body.length, 0) > 3000,
-      'ENTER: together they exceed the whole reply cap, so something must be dropped');
     assert.ok(ISSUE_VIEW_SHORT.comments[3].body.length > 2000,
       'ENTER: the newest comment DOES exceed the per-comment cap, so that cap is what clips it');
+    assert.ok(ISSUE_VIEW_SHORT.comments.reduce((n, c) => n + c.body.length, 0) > 3000,
+      'ENTER: together they exceed the whole reply cap, so something must be dropped');
 
     const replies = await fireFor('[agent:gh issue 11]');
     assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
@@ -676,11 +677,15 @@ test('github: a closed issue still reads, and older bulk cannot starve the newes
     assert.match(out, /truncated, \d+ more chars/, 'and it says it was cut');
 
     // Its counterpart: the drop landed on the OLDEST, and was declared.
-    assert.ok(!out.includes('@eve'), 'the oldest comment is the one dropped');
+    assert.ok(!out.includes('@eve'), 'and the OLDEST is the one dropped');
     assert.match(out, /\d+ earlier comment\(s\) omitted/, 'and the agent is told some were');
 
+    // Presence FIRST: indexOf returns -1 for a name that is absent, and -1 is
+    // less than any real index, so the ordering assertion alone passes
+    // vacuously on a reply that dropped @hal entirely.
+    assert.ok(out.includes('-- comment by @hal, 35m ago --'), 'more than one comment survived');
     assert.ok(out.indexOf('@hal') < out.indexOf('@fay'),
-      'what survives renders oldest-first, though it was selected newest-first');
+      'and what survives renders oldest-first, though it was selected newest-first');
     assert.ok(out.includes('---- END UNTRUSTED ----'), 'the fence still closes around all of it');
     assert.ok(out.length <= 3000, 'and the whole reply stays inside the cap');
   } finally { cleanup(); }
