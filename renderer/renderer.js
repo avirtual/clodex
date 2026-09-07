@@ -796,7 +796,16 @@ function startRename(item, nameEl, sessionName) {
     const snapBackend = item ? item.dataset.backend || null : null;
     window.api.renameSession(sessionName, wanted).then((res) => {
       if (!res || !res.ok) {
-        if (!(res && res.kept)) newNameEl.textContent = current;
+        if (res && res.kept) {
+          removeSession(sessionName, { keepPersisted: true });
+          addFailedSessionToSidebar({
+            name: res.name, type: res.type || snapType, cwd: res.cwd,
+            error: res.error, team: res.team || null, backend: snapBackend,
+          });
+          refreshSidebarView();
+        } else {
+          newNameEl.textContent = current;
+        }
         showToast(`Rename failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name: sessionName });
         return;
       }

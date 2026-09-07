@@ -2763,7 +2763,11 @@ function createSessionManager(deps) {
       const team = (() => { try { return resolveTeam(entry.cwd); } catch { return null; } })();
       if (team) {
         let ids;
-        try { ids = this._openTicketsFor(team, name).map((t) => t.id); } catch { ids = ['<ticket check unavailable>']; }
+        try {
+          const board = ticketsStore.load(team.root);
+          const byName = board.filter((t) => t && t.state === 'open' && t.assignee === name).map((t) => t.id);
+          ids = [...new Set([...byName, ...this._openTicketsFor(team, name).map((t) => t.id)])];
+        } catch { ids = ['<ticket check unavailable>']; }
         if (ids.length) {
           return { ok: false, error: `${name} is the assignee of open ticket${ids.length > 1 ? 's' : ''} ${ids.join(', ')} — close or reassign before renaming.` };
         }
@@ -2793,8 +2797,8 @@ function createSessionManager(deps) {
         }
         getPersistence().rename(name, newName);
         const sched = getRemindScheduler && getRemindScheduler();
-        if (sched && sched.store && typeof sched.store.renameAgent === 'function') {
-          try { sched.store.renameAgent(name, newName); } catch {}
+        if (sched && typeof sched.renameAgent === 'function') {
+          try { sched.renameAgent(name, newName); } catch {}
         }
         for (const [src, dest] of this._renameDirs(name, newName)) {
           try { if (fs.existsSync(src)) fs.renameSync(src, dest); } catch (e) {

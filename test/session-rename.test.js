@@ -30,6 +30,8 @@ const fsReal = require('node:fs');
 const pathReal = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
+const { createRemindScheduler } = require('../remind-scheduler');
+const { initStores } = require('../stores');
 const { createTeamManifest, matchSeatRole } = require('../team-manifest');
 const { projectDirFor } = require('../clodex-paths');
 const { enqueueNotice, parseNotices } = require('../notice-queue');
@@ -132,22 +134,29 @@ function mkRename({ entries = [], reminderRows = [], teamHome = null, createThro
       return true;
     },
   };
-  const reminders = reminderRows.map((r) => ({ ...r }));
-  const remindStore = {
-    listForAgent: (a) => reminders.filter((r) => r.agent === a),
-    renameAgent: (a, newA) => {
-      const mine = reminders.filter((r) => r.agent === a);
-      for (const r of mine) r.agent = newA;
-      return mine.length;
-    },
-  };
+  // The REAL scheduler over the REAL reminders store in a tmp userData dir, not
+  // a stub shaped like one: r1 shipped a rename that called `sched.store`, which
+  // createRemindScheduler does not expose, so the re-point was dead in the app
+  // while a stub carrying a `store` key kept it green.
+  const remindStore = initStores(mkTmpRoot('clodex-rename-ud-'),
+    { log: { info() {}, warn() {}, error() {} }, registryDir: mkTmpRoot('clodex-rename-seed-') }).reminders;
+  for (const r of reminderRows) {
+    remindStore.add({ agent: r.agent, kind: r.kind || 'in', spec: r.spec || 'in 1h', body: r.body || '', nextFireAt: r.nextFireAt ?? null });
+  }
+  const scheduler = createRemindScheduler({
+    now: () => Date.now(),
+    setTimer: () => null,
+    clearTimer: () => {},
+    store: remindStore,
+    deliver: () => {},
+  });
   const tm = teamHome ? createTeamManifest({ fs: fsReal, clodexHome: teamHome }) : null;
   const SessionManager = createSessionManager({
     REGISTRY_DIR,
     getPersistence: () => persistence,
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
-    getRemindScheduler: () => ({ store: remindStore }),
+    getRemindScheduler: () => scheduler,
     fs: fsReal,
     path: pathReal,
     DEFAULT_WORKSPACE_ID: 'default',
@@ -198,7 +207,7 @@ function mkRename({ entries = [], reminderRows = [], teamHome = null, createThro
     }
   };
 
-  return { m, store, persistence, reminders, created, root: REGISTRY_DIR };
+  return { m, store, persistence, remindStore, created, root: REGISTRY_DIR };
 }
 
 function seedLive(m, name, extra = {}) {
@@ -225,12 +234,12 @@ const BASE = {
 test('rename moves the record, all six shared dirs, the reminders and the conversation', async () => {
   const root = mkTmpRoot('clodex-rename-');
   seedDirs(root, 'seat');
-  const { m, store, reminders, created } = mkRename({
+  const { m, store, remindStore, created } = mkRename({
     root,
     entries: [BASE],
     reminderRows: [
-      { id: 'r1', agent: 'seat', spec: 'in 5m', body: 'mine' },
-      { id: 'r2', agent: 'other', spec: 'in 5m', body: 'not mine' },
+      { agent: 'seat', spec: 'in 5m', body: 'mine', nextFireAt: 4242 },
+      { agent: 'other', spec: 'in 5m', body: 'not mine' },
     ],
   });
   seedLive(m, 'seat');
@@ -251,10 +260,14 @@ test('rename moves the record, all six shared dirs, the reminders and the conver
 
   assertMoved(root, 'seat', 'newseat');
 
-  assert.deepStrictEqual(
-    reminders.map((x) => [x.id, x.agent]), [['r1', 'newseat'], ['r2', 'other']],
-    'only this seat\'s reminder rows were re-pointed',
-  );
+  assert.deepStrictEqual(remindStore.listForAgent('seat'), [],
+    'nothing is still scheduled under the old name');
+  const moved = remindStore.listForAgent('newseat');
+  assert.strictEqual(moved.length, 1, 'ENTER: the row is under the new name — the rest of this asserts on it');
+  assert.strictEqual(moved[0].body, 'mine');
+  assert.strictEqual(moved[0].nextFireAt, 4242, 'and it still fires when it was going to');
+  assert.deepStrictEqual(remindStore.listForAgent('other').map((x) => x.body), ['not mine'],
+    'another seat\'s rows are untouched');
 
   assert.strictEqual(created.length, 1, 'exactly one respawn');
   const [name, type, cwd, extraArgs, resumeId, wsId] = created[0];
@@ -486,7 +499,30 @@ test('rename leaves the lead pointer alone when the renamed seat is NOT the lead
   assert.strictEqual(manifest.lead, 'boss', 'someone else\'s lead pointer is not this rename\'s business');
 });
 
-test('rename refuses a seat holding an OPEN ticket — the board names it', async () => {
+// The QUEUED case is the one that shipped broken in r1: `_openTicketsFor`
+// filters on ticketStarted, so a ticket assigned to the seat by name but never
+// started passed the check and was stranded by the rename, left naming an
+// assignee nothing answers to. `startedAt: null` with no role and no worktree is
+// exactly what ticketStarted() reads as not-started.
+test('rename refuses a seat holding a QUEUED (assigned, never started) ticket', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  const { projectRoot } = mkTeam(root, {
+    lead: 'boss',
+    tickets: [{ id: 't9', state: 'open', assignee: 'seat', startedAt: null, parked: true, body: 'not started yet' }],
+  });
+  seedDirs(root, 'seat');
+  const { m, store, created } = mkRename({
+    root, teamHome: root, entries: [{ ...BASE, cwd: projectRoot }],
+  });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /open ticket t9/);
+  assert.strictEqual(store[0].name, 'seat');
+  assert.deepStrictEqual(created, []);
+  assertUntouched(root, 'seat', 'newseat');
+});
+
+test('rename refuses a seat holding a STARTED open ticket — the board names it', async () => {
   const root = mkTmpRoot('clodex-rename-');
   const { projectRoot } = mkTeam(root, {
     lead: 'boss',
@@ -544,6 +580,27 @@ test('create() throwing keeps the record under the NEW name, with kept:true', as
 // A source pin, because the renderer half has no runtime fixture here: the
 // failure it guards is startRename still writing a LABEL, which leaves the
 // whole main-process mechanism above dead code reachable from nothing.
+// The kept arm has no runtime fixture here either, and its failure is invisible:
+// the kill's session-exit has already removed the row, so a kept arm that does
+// not rebuild one leaves a record on disk with nothing on screen naming it until
+// the next launch. The row must be rebuilt under res.name — the record moved
+// before create() threw, so the OLD name names nothing.
+test('renderer startRename rebuilds a failed row under the NEW name when the respawn is kept', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const start = src.indexOf('function startRename(');
+  assert.ok(start > 0, 'ENTER: startRename is still in renderer.js under that name');
+  const end = src.indexOf('\nfunction ', start + 1);
+  assert.ok(end > start, 'ENTER: and the next top-level function bounds it');
+  const body = src.slice(start, end);
+  const kept = body.indexOf('res.kept');
+  assert.ok(kept > 0, 'ENTER: the kept arm is still branched on res.kept');
+  const arm = body.slice(kept, body.indexOf('showToast(`Rename failed', kept));
+  assert.match(arm, /addFailedSessionToSidebar\(/, 'the kept arm rebuilds a failed row');
+  assert.match(arm, /name:\s*res\.name/,
+    'under res.name — the record moved before create() threw, so the old name names nothing');
+  assert.match(arm, /error:\s*res\.error/, 'carrying the error, so the row can say why');
+});
+
 test('renderer startRename calls renameSession, and no longer sets a label', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const start = src.indexOf('function startRename(');

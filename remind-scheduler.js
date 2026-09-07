@@ -12,7 +12,7 @@
 //   - setTimer(fn, ms)    — arm a one-shot timer, returns a handle (setTimeout)
 //   - clearTimer(handle)  — cancel one (clearTimeout)
 //   - store               — the reminders store (add/list/listForAgent/remove/
-//                           markFired/get); the durable source of truth
+//                           markFired/get/renameAgent); the durable source of truth
 //   - deliver(agent, id, spec, body) — hand ONE fire to the DM pipeline. The
 //                           engine passes raw fields; the caller (main.js) owns
 //                           the `reminder`-sender tagging + `[<id> <spec>]` body
@@ -193,6 +193,11 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     // the handler renders id + spec.
     listForAgent(agent) {
       return store.listForAgent(agent);
+    },
+
+    renameAgent(oldAgent, newAgent) {
+      if (!oldAgent || !newAgent || oldAgent === newAgent) return 0;
+      return store.renameAgent(oldAgent, newAgent);
     },
 
     // Event trigger: fire this agent's `on compact` reminders. Called by the

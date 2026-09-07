@@ -26,3 +26,11 @@ on every exit path, including the kill `rename` performs, and `create()` rebuild
 it under the new name — so moving it would race a delete that is already running.
 The six dirs listed are exactly those that live at the `~/.clodex` ROOT precisely
 because they must outlive the run dir.
+
+## rename
+
+The open-ticket refusal reads the board directly instead of relying on
+`_openTicketsFor` alone. That helper filters on `ticketStarted`, so a QUEUED
+ticket — assigned to the seat by name, never started — passes it, and the rename
+strands the ticket naming an assignee nothing answers to. The direct read is
+unioned with the helper so the role-resolved and started cases it covers are kept.

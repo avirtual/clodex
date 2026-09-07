@@ -238,6 +238,42 @@ test('start() coalesces missed + arms live, across a mix of schedule kinds', () 
   } finally { cleanup(); }
 });
 
+test('renameAgent re-points one agent\'s schedules and leaves the timer alone', () => {
+  const { scheduler, clock, store, cleanup } = freshEngine(1_000_000);
+  try {
+    scheduler.add('seat', 'in 1h', 'mine');
+    scheduler.add('other', 'in 2h', 'not mine');
+    scheduler.start();
+    const armedBefore = clock.pending();
+
+    assert.strictEqual(scheduler.renameAgent('seat', 'newseat'), 1, 'one schedule moved');
+    assert.deepStrictEqual(scheduler.listForAgent('seat'), [], 'nothing answers to the old name');
+    const moved = scheduler.listForAgent('newseat');
+    assert.strictEqual(moved.length, 1, 'ENTER: the schedule is under the new name');
+    assert.strictEqual(moved[0].body, 'mine');
+    assert.strictEqual(moved[0].nextFireAt, 1_000_000 + 3600_000,
+      'its fire time is untouched — only the agent changed');
+    assert.deepStrictEqual(scheduler.listForAgent('other').map((r) => r.body), ['not mine']);
+    assert.strictEqual(clock.pending(), armedBefore,
+      'and no timer was re-armed: the nearest fire did not move');
+    assert.deepStrictEqual(store.listForAgent('newseat').map((r) => r.body), ['mine'],
+      'the DURABLE store carries it, not just the engine\'s view');
+  } finally { cleanup(); }
+});
+
+test('renameAgent is a no-op for a missing agent, an empty name, or the same name', () => {
+  const { scheduler, cleanup } = freshEngine(1_000_000);
+  try {
+    scheduler.add('seat', 'in 1h', 'mine');
+    assert.strictEqual(scheduler.renameAgent('nobody', 'x'), 0);
+    assert.strictEqual(scheduler.renameAgent('seat', 'seat'), 0, 'renaming to itself moves nothing');
+    assert.strictEqual(scheduler.renameAgent('', 'x'), 0);
+    assert.strictEqual(scheduler.renameAgent('seat', ''), 0);
+    assert.deepStrictEqual(scheduler.listForAgent('seat').map((r) => r.body), ['mine'],
+      'and the schedule is still where it was');
+  } finally { cleanup(); }
+});
+
 test('MAX_TIMER_MS is the 32-bit signed setTimeout clamp', () => {
   assert.strictEqual(MAX_TIMER_MS, 2147483647);
 });
