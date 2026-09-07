@@ -7,5 +7,5 @@
     "engine": "engine.js"
   },
   "enabledByDefault": false,
-  "announce": "Adds the read-only [agent:gh] verb: repo/PR/CI state, failing-CI logs, unresolved review threads, and a PR dry run, through the operator's own authenticated gh CLI. Never pushes or opens a PR. Holds no credentials."
+  "announce": "Adds the read-only [agent:gh] verb: repo/PR/CI state, failing-CI logs, unresolved review threads, open issues, and a PR dry run, through the operator's own authenticated gh CLI. Issue text arrives fenced as untrusted. Never pushes, opens a PR or writes to an issue. Holds no credentials."
 }

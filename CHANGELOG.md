@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Plugin skills now carry their companion files (scripts, references, assets) into the seat's plugin directory, so a skill that calls a bundled script works instead of pointing at nothing.
+- The GitHub plugin gains [agent:gh issues] and [agent:gh issue <n>]: read-only, with the issue body and comments fenced as untrusted text so a reporter cannot smuggle an intent into an agent's turn.
 
 ## 5.35.8 — 2026-09-07
 

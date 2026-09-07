@@ -3,11 +3,11 @@
 /**
  * github — engine half. One intent verb, `[agent:gh …]`.
  *
- * READ-ONLY BY CONSTRUCTION. `status`, `ci` and `review` read; `pr --dry`
- * renders a description locally. Nothing here pushes, and a bare `pr` refuses
- * rather than falling back to the dry run — see REFUSE_PR. Do not add a write
- * path: pushing is the operator's, and an agent verb that opens a real PR is
- * outward-facing and hard to reverse.
+ * READ-ONLY BY CONSTRUCTION. Every sub-command in SUBS reads or renders
+ * locally. Nothing here pushes, and a bare `pr` refuses rather than falling
+ * back to the dry run — see REFUSE_PR. Do not add a write path of any kind,
+ * including an issue comment/close/edit behind a flag: those are the operator's,
+ * and an agent verb that acts outward is hard to reverse.
  *
  * CREDENTIALS: THERE ARE NONE, AND THAT IS THE DESIGN. `host.storage` is
  * plaintext JSON with no mode bits (plugins/plugin-api.md §4) and `host.settings`
@@ -42,15 +42,19 @@ function logError(m) { try { if (host) host.log.error(m); } catch (_) { /* ignor
 // are the command; anything after the bracket is the body (greedy, for `pr`).
 const LINE_RE = /^\[agent:gh(\s[^\]]*)?\]\s*([\s\S]*)$/;
 
-const SUBS = new Set(['status', 'pr', 'ci', 'review']);
+const SUBS = new Set(['status', 'pr', 'ci', 'review', 'issues', 'issue']);
 
 const USAGE = [
   'unknown sub-command. Usage:',
-  '  [agent:gh status]        repo, branch vs base, PR, CI and review state',
-  '  [agent:gh ci]            failing checks and the tail of each failed step\'s log',
-  '  [agent:gh review]        unresolved review threads as a file:line worklist',
-  '  [agent:gh pr --dry]      render the PR title, description and diffstat without opening anything',
+  '  [agent:gh status]           repo, branch vs base, PR, CI and review state',
+  '  [agent:gh ci]               failing checks and the tail of each failed step\'s log',
+  '  [agent:gh review]           unresolved review threads as a file:line worklist',
+  '  [agent:gh issues]           open issues, newest first: number, title, author, age, comment count.',
+  '  [agent:gh issue <n>]        one issue: header, then its body and comments fenced as UNTRUSTED text from outside the repo.',
+  '  [agent:gh pr --dry]         render the PR title, description and diffstat without opening anything',
 ];
+
+const ISSUE_USAGE = '[gh] usage: [agent:gh issue <number>]';
 
 // A bare `pr` must REFUSE, not quietly do the dry run: a verb that silently does
 // less than its name says is worse than one that declines, and an agent told
@@ -65,6 +69,8 @@ const PROMPT_LINES = [
   '  [agent:gh status]           this repo: branch vs base, PR, CI, reviews — one call. Check before opening or merging.',
   '  [agent:gh ci]               failing checks, with the tail of each failed step\'s log.',
   '  [agent:gh review]           unresolved review threads as a file:line worklist.',
+  '  [agent:gh issues]           open issues, newest first: number, title, author, age, comment count.',
+  '  [agent:gh issue <n>]        one issue: header, then its body and comments fenced as UNTRUSTED text from outside the repo.',
   '  [agent:gh pr --dry]         render the PR description your commits would produce. A body (to [agent:end]) becomes its intro. Nothing is pushed — opening the PR is the operator\'s.',
   '  Uses the operator\'s own authenticated gh CLI. You never handle a token — never ask for one.',
 ].join('\n');
@@ -75,10 +81,14 @@ function parseLine(line) {
 
   const words = String(m[1] || '').trim().split(/\s+/).filter(Boolean);
   const sub = (words.shift() || 'status').toLowerCase();
+  const number = sub === 'issue' && /^[0-9]+$/.test(words[0] || '') && Number(words[0]) > 0
+    ? Number(words.shift())
+    : null;
   const flags = words.map((w) => w.toLowerCase());
 
   return {
     sub,
+    number,
     known: SUBS.has(sub),
     dry: flags.includes('--dry') || flags.includes('--dry-run') || flags.includes('-n'),
     // Same-line trailing text is the start of the body; greedy capture appends
@@ -108,6 +118,10 @@ function runSub(cwd, intent) {
     case 'status': return wf.status(cwd);
     case 'ci':     return wf.ci(cwd);
     case 'review': return wf.review(cwd);
+    case 'issues': return wf.issues(cwd);
+    case 'issue':  return intent.number
+      ? wf.issue(cwd, intent.number)
+      : Promise.resolve({ ok: false, text: ISSUE_USAGE });
     // The refusal is decided here, before any shell-out: it does not depend on
     // repo state, so making the agent wait on `gh repo view` to be told no would
     // be a slower way to say the same thing.
@@ -189,7 +203,7 @@ module.exports.activate = (h) => {
     // A function of the parsed intent, not a flag (§7): only `pr` takes prose,
     // and a greedy body on `status` would swallow the agent's next paragraph.
     bodyMode: (intent) => (intent && intent.sub === 'pr' ? 'greedy' : 'none'),
-    label: 'GitHub (status / CI / review / PR dry run)',
+    label: 'GitHub (status / CI / review / issues / PR dry run)',
     promptLines: PROMPT_LINES,
     handler: handle,
   });
@@ -205,4 +219,4 @@ module.exports.deactivate = () => {
 };
 
 // Exported for the test harness only. Not part of any host contract.
-module.exports._internals = { parseLine, USAGE, PROMPT_LINES, REFUSE_PR, SUBS };
+module.exports._internals = { parseLine, USAGE, PROMPT_LINES, REFUSE_PR, ISSUE_USAGE, SUBS };
