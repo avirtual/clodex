@@ -1,0 +1,14 @@
+{
+  "id": "ntfy",
+  "name": "ntfy",
+  "version": "1.0.0",
+  "hostApi": "1",
+  "entry": { "engine": "engine.js", "renderer": "renderer.js" },
+  "enabledByDefault": false,
+  "announce": "Subscribes to an ntfy topic (e.g. GitHub webhooks rendered by ntfy) and raises each message as an operator inbox note and, optionally, a DM to one seat. Message text arrives fenced as untrusted.",
+  "surfaces": {
+    "settings.get": "any",
+    "settings.set": "any",
+    "status.get": "any"
+  }
+}
