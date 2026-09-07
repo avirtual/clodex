@@ -672,7 +672,7 @@ function labelNames(labels) {
   return (Array.isArray(labels) ? labels : [])
     .map((l) => (l && typeof l === 'object' ? l.name : l))
     .filter((n) => typeof n === 'string' && n.trim())
-    .map((n) => n.trim());
+    .map((n) => n.trim().replace(/\[agent:/g, '\\[agent:'));
 }
 
 function labelSuffix(labels) {
@@ -782,7 +782,8 @@ async function issue(cwd, number) {
     let shown = '';
     if (text.length <= room) shown = text;
     else if (room >= MIN_CLIP_CHARS) shown = clip(text, room);
-    const piece = shown ? `${headLine}\n${shown}` : `${headLine}${WITHHELD_NOTE}`;
+    const withheld = Boolean(text) && text.length > room && room < MIN_CLIP_CHARS;
+    const piece = shown ? `${headLine}\n${shown}` : `${headLine}${withheld ? WITHHELD_NOTE : ''}`;
     kept.unshift(piece);
     left -= Math.max(cost, piece.length + 1);
   }
