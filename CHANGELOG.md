@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.36.1 — 2026-09-08
+
 - The ntfy plugin is no longer built in; it lives in the clodex-plugins library (Manage plugins ▸ Browse the Clodex library) for anyone who wants it.
 
 ## 5.36.0 — 2026-09-08
