@@ -667,6 +667,14 @@ function createPluginHostEngine(deps) {
         return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
     },
+    'plugins.libraryCatalog': async () => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      try {
+        const r = await loader.libraryCatalog();
+        return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
     'plugins.installFromSource': async (spec) => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');

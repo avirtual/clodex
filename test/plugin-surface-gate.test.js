@@ -298,7 +298,7 @@ test('the _host pseudo-plugin stays reachable from the web surface', async () =>
   } finally { b.cleanup(); }
 });
 
-test('_host holds exactly these sixteen methods, and no seventeenth by inheritance', () => {
+test('_host holds exactly these seventeen methods, and no eighteenth by inheritance', () => {
   // The exemption is a WHOLE-TABLE early return, so a method added to
   // hostMethods is web-reachable the moment it is written, with nothing to edit
   // and nothing to notice — unless it is named in HOST_DESKTOP_ONLY. Same
@@ -309,6 +309,7 @@ test('_host holds exactly these sixteen methods, and no seventeenth by inheritan
   const HOST_METHODS = [
     'plugins.applyUpdate',
     'plugins.installFromSource',
+    'plugins.libraryCatalog',
     'plugins.listUserRoot', 'plugins.register', 'plugins.removeSourcePlugin',
     'plugins.rescan', 'plugins.resolveSource', 'plugins.resolveUpdate',
     'plugins.status',
@@ -360,7 +361,7 @@ test('the three _host methods taking a caller-supplied path are desktop-only', a
   }
 });
 
-test('the five plugin-source _host methods answer the web surface too (t707)', async () => {
+test('the six plugin-source _host methods answer the web surface too (t707)', async () => {
   // bootBothSurfaces() wires a loader with neither an https dependency nor a
   // user plugin root, so each call below dies INSIDE the loader — and each row
   // carries the literal it dies with, because reaching that literal is what
@@ -375,6 +376,7 @@ test('the five plugin-source _host methods answer the web surface too (t707)', a
       ['plugins.resolveUpdate', ['some-id'], 'no user plugin root configured'],
       ['plugins.applyUpdate', ['some-id', 'abc123'], 'no user plugin root configured'],
       ['plugins.removeSourcePlugin', ['some-id'], 'no user plugin root configured'],
+      ['plugins.libraryCatalog', [], 'no https dependency injected'],
     ];
     for (const [method, args, handlerError] of calls) {
       assert.strictEqual(typeof b.host._hostMethodNames().find((n) => n === method), 'string',

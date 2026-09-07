@@ -844,3 +844,121 @@ test('resolveUpdate/applyUpdate/removeSourcePlugin refuse an invalid id before t
   assert.ok(!fs.existsSync(userDir) || fs.readdirSync(userDir).length === 0,
     'nothing outside the user root was ever touched');
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// libraryCatalog — the same tarball fetch, decorated with what the plugins
+// folder already holds. The decoration is the whole value of the method: the
+// catalog itself says nothing about THIS machine, and a row that offered
+// Install for a core id or for the operator's own folder would offer a click
+// installFromSource refuses by name.
+// ════════════════════════════════════════════════════════════════════════════
+
+function buildLibraryBytes(sha, dirs) {
+  const stage = mkTmpRoot('clodex-loader-library-stage-');
+  const topDirName = `avirtual-clodex-plugins-${sha}`;
+  for (const [dirName, id] of Object.entries(dirs)) {
+    const d = path.join(stage, topDirName, dirName);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify(manifestFor(id)));
+    fs.writeFileSync(path.join(d, 'engine.js'), engineFile);
+  }
+  const tarFile = path.join(stage, 'out.tar.gz');
+  require('node:child_process').execFileSync('tar', ['-czf', tarFile, '-C', stage, topDirName]);
+  return fs.readFileSync(tarFile);
+}
+
+test('libraryCatalog decorates each row with what the plugins folder holds', async () => {
+  const bytes = buildLibraryBytes('abc1234', {
+    workbench: 'workbench', notes: 'notes', mine: 'mine', fresh: 'fresh',
+  });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }], coreIds: ['workbench'] });
+  // `notes` fetched from the library at an OLDER commit; `mine` is the
+  // operator's own folder with no sidecar; `fresh` is absent entirely.
+  fs.mkdirSync(path.join(userDir, 'notes'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'notes', 'manifest.json'), JSON.stringify(manifestFor('notes')));
+  fs.writeFileSync(path.join(userDir, 'notes', 'engine.js'), engineFile);
+  fs.writeFileSync(path.join(userDir, 'notes', '.clodex-source.json'), JSON.stringify({
+    source: 'github', repo: 'avirtual/clodex-plugins', ref: null, subpath: 'notes',
+    commit: '9999999', commitFull: false, fetchedAt: 1,
+  }));
+  fs.mkdirSync(path.join(userDir, 'mine'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'mine', 'manifest.json'), JSON.stringify(manifestFor('mine')));
+  fs.writeFileSync(path.join(userDir, 'mine', 'engine.js'), engineFile);
+
+  const r = await loader.libraryCatalog();
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.commit, 'abc1234');
+  assert.deepStrictEqual(r.plugins.map((p) => p.id).sort(), ['fresh', 'mine', 'notes', 'workbench'],
+    'ENTER: all four rows survived the catalog read, so the per-row verdicts below are not about a missing row');
+  const by = new Map(r.plugins.map((p) => [p.id, p]));
+  assert.strictEqual(by.get('workbench').installed, 'core');
+  assert.strictEqual(by.get('mine').installed, 'user-authored');
+  assert.strictEqual(by.get('fresh').installed, 'none');
+  assert.strictEqual(by.get('notes').installed, 'fetched');
+  assert.strictEqual(by.get('notes').installedCommit, '9999999', 'the sidecar\'s commit, not the library\'s');
+  assert.strictEqual(by.get('notes').installedRepo, 'avirtual/clodex-plugins');
+  assert.strictEqual(by.get('notes').upToDate, false, 'the sidecar is at 9999999, the library at abc1234');
+});
+
+test('libraryCatalog calls a fetched row up to date only when its sidecar names the SAME repo', async () => {
+  // A plugin of that id fetched from somewhere else is at whatever commit that
+  // other repo minted. Comparing shas alone could call it up to date by
+  // coincidence, and the row's Update rides resolveUpdate BY ID, which
+  // re-resolves the sidecar's repo — so "up to date with the library" would be
+  // a claim about a repo nobody consulted.
+  const bytes = buildLibraryBytes('abc1234', { notes: 'notes', tasks: 'tasks' });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
+  for (const [id, repo] of [['notes', 'avirtual/clodex-plugins'], ['tasks', 'someone/else']]) {
+    fs.mkdirSync(path.join(userDir, id), { recursive: true });
+    fs.writeFileSync(path.join(userDir, id, 'manifest.json'), JSON.stringify(manifestFor(id)));
+    fs.writeFileSync(path.join(userDir, id, 'engine.js'), engineFile);
+    fs.writeFileSync(path.join(userDir, id, '.clodex-source.json'), JSON.stringify({
+      source: 'github', repo, ref: null, subpath: id, commit: 'abc1234', commitFull: false, fetchedAt: 1,
+    }));
+  }
+  const r = await loader.libraryCatalog();
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  const by = new Map(r.plugins.map((p) => [p.id, p]));
+  assert.strictEqual(by.get('notes').installed, 'fetched', 'ENTER: both rows read as fetched, so the split below is about the repo');
+  assert.strictEqual(by.get('tasks').installed, 'fetched');
+  assert.strictEqual(by.get('notes').upToDate, true, 'same repo, same commit');
+  assert.strictEqual(by.get('tasks').upToDate, false, 'same commit string, a different repo minted it');
+});
+
+test('libraryCatalog matches an abbreviated sidecar sha against the full library commit', async () => {
+  // The sidecar keeps whatever sha the fetch could determine — abbreviated when
+  // the commits API was unreachable. A strict equality here would show Update
+  // on every row of a library installed offline, and every press would refetch
+  // the identical bytes.
+  const bytes = buildLibraryBytes('abc1234def5678abc1234def5678abc1234def56', { notes: 'notes' });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
+  fs.mkdirSync(path.join(userDir, 'notes'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'notes', 'manifest.json'), JSON.stringify(manifestFor('notes')));
+  fs.writeFileSync(path.join(userDir, 'notes', 'engine.js'), engineFile);
+  fs.writeFileSync(path.join(userDir, 'notes', '.clodex-source.json'), JSON.stringify({
+    source: 'github', repo: 'avirtual/clodex-plugins', ref: null, subpath: 'notes',
+    commit: 'abc1234', commitFull: false, fetchedAt: 1,
+  }));
+  const r = await loader.libraryCatalog();
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.plugins.length, 1, 'ENTER: the one row is present');
+  assert.strictEqual(r.plugins[0].installedCommit, 'abc1234', 'ENTER: the sidecar really is the abbreviated one');
+  assert.strictEqual(r.plugins[0].upToDate, true, 'commitsMatch treats a 7-char prefix as the same commit');
+});
+
+test('a library row installs through the ordinary source path, spec and all', async () => {
+  const bytes = buildLibraryBytes('abc1234', { 'notes-pack': 'notes' });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }, { bytes }, { bytes }] });
+  const cat = await loader.libraryCatalog();
+  assert.strictEqual(cat.ok, true, JSON.stringify(cat));
+  assert.strictEqual(cat.plugins[0].subpath, 'notes-pack', 'ENTER: the row names the FOLDER, which is what the spec carries');
+  const r = await loader.installFromSource(`${cat.repo}:${cat.plugins[0].subpath}`);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.id, 'notes');
+  const sidecar = JSON.parse(fs.readFileSync(path.join(userDir, 'notes', '.clodex-source.json'), 'utf8'));
+  assert.strictEqual(sidecar.repo, 'avirtual/clodex-plugins');
+  assert.strictEqual(sidecar.subpath, 'notes-pack', 'the install is an ordinary source install with a fixed repo');
+  const after = await loader.libraryCatalog();
+  assert.strictEqual(after.plugins[0].installed, 'fetched', 'and the next catalog read sees it');
+  assert.strictEqual(after.plugins[0].upToDate, true);
+});

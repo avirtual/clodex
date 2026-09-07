@@ -30,6 +30,7 @@ const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
 const {
   previewLines, updatePreviewLines, warningText, installState, sourceLabel, sourceLine, shortCommit,
+  libraryRowAction, libraryRowLines, librarySpec,
 } = require('./lib/plugin-source-dialog');
 const { evalRendererModule } = require('./lib/plugin-module-eval');
 const { prefsGate } = require('./lib/prefs-gate');
@@ -5231,6 +5232,7 @@ function closePluginsDialog() { pluginsOverlay.classList.add('hidden'); }
 
 async function openPluginsDialog() {
   showPluginsRegisterNote('');
+  closePluginsLibrarySection();
   closePluginsSourceSection();
   await renderPluginsDialog();
   pluginsOverlay.classList.remove('hidden');
@@ -5577,6 +5579,131 @@ pluginsRegisterBtn.addEventListener('click', async () => {
   }
 });
 
+const pluginsLibrarySection = document.getElementById('plugins-library');
+const pluginsLibraryList = document.getElementById('plugins-library-list');
+const pluginsLibraryBtn = document.getElementById('btn-plugins-library');
+const pluginsLibraryCancelBtn = document.getElementById('btn-plugins-library-cancel');
+let pluginsLibraryCatalog = null;
+
+function closePluginsLibrarySection() {
+  pluginsLibraryCatalog = null;
+  if (pluginsLibraryList) pluginsLibraryList.innerHTML = '';
+  if (pluginsLibrarySection) pluginsLibrarySection.classList.add('hidden');
+}
+
+function paintPluginsLibrary() {
+  if (!pluginsLibraryList) return;
+  pluginsLibraryList.innerHTML = '';
+  const cat = pluginsLibraryCatalog;
+  if (!cat) return;
+  if (!cat.plugins.length) {
+    const empty = document.createElement('div');
+    empty.className = 'plugin-row-note';
+    empty.textContent = `github.com/${cat.repo} holds no plugins at ${shortCommit(cat.commit) || 'this commit'}.`;
+    pluginsLibraryList.appendChild(empty);
+    return;
+  }
+  for (const p of cat.plugins) {
+    const row = document.createElement('div');
+    row.className = 'plugin-row';
+    const body = document.createElement('div');
+    body.className = 'plugin-row-body';
+    const lines = libraryRowLines(p);
+    const nameEl = document.createElement('div');
+    nameEl.className = 'plugin-row-name';
+    nameEl.textContent = lines[0];
+    body.appendChild(nameEl);
+    for (const line of lines.slice(1)) {
+      const d = document.createElement('div');
+      d.className = 'plugin-row-note';
+      d.textContent = line;
+      d.title = line;
+      body.appendChild(d);
+    }
+    if (p.installed === 'fetched') {
+      const s = document.createElement('div');
+      s.className = 'plugin-row-note plugin-row-src';
+      s.textContent = `Installed from github.com/${p.installedRepo} at ${shortCommit(p.installedCommit) || 'an unknown commit'}`;
+      s.title = s.textContent;
+      body.appendChild(s);
+    }
+    row.appendChild(body);
+    const rowActions = document.createElement('div');
+    rowActions.className = 'plugin-row-actions';
+    row.appendChild(rowActions);
+    const verdict = libraryRowAction(p, { repo: cat.repo });
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'secondary';
+    btn.textContent = verdict.label;
+    btn.disabled = !verdict.enabled;
+    btn.title = verdict.reason || `Fetch ${p.id} from github.com/${cat.repo} — it lands turned off`;
+    btn.addEventListener('click', () => {
+      if (verdict.action === 'update') {
+        openPluginsSourceUpdate({
+          id: p.id,
+          name: p.name,
+          version: p.installedVersion,
+          source: { repo: p.installedRepo, ref: cat.ref, subpath: p.subpath, commit: p.installedCommit },
+        });
+        return;
+      }
+      installFromLibrary(p, btn);
+    });
+    rowActions.appendChild(btn);
+    pluginsLibraryList.appendChild(row);
+  }
+}
+
+async function installFromLibrary(p, btn) {
+  const cat = pluginsLibraryCatalog;
+  if (!cat) return;
+  const spec = librarySpec(cat.repo, p.subpath);
+  showPluginsRegisterNote('');
+  btn.disabled = true;
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.installFromSource', [spec]); } catch {}
+  if (!r || !r.ok) {
+    btn.disabled = false;
+    showPluginsRegisterNote(`Could not install ${p.name || p.id}: ${(r && r.error) || 'unknown error'}`, 'warn');
+    return;
+  }
+  showPluginsRegisterNote(`Installed ${p.name || p.id} at ${shortCommit(r.commit)} — it is off until you turn it on from its row above.`);
+  await renderPluginsDialog();
+  await loadPluginsLibrary();
+}
+
+async function loadPluginsLibrary() {
+  if (!pluginsLibraryList) return;
+  pluginsLibraryList.innerHTML = '';
+  const loading = document.createElement('div');
+  loading.className = 'plugin-row-note';
+  loading.textContent = 'Reading the library…';
+  pluginsLibraryList.appendChild(loading);
+  let r = null;
+  try { r = await window.api.pluginInvoke('_host', 'plugins.libraryCatalog', []); } catch {}
+  if (!r || !r.ok) {
+    closePluginsLibrarySection();
+    showPluginsRegisterNote(`Could not read the Clodex library: ${(r && r.error) || 'unknown error'}`, 'warn');
+    return;
+  }
+  pluginsLibraryCatalog = r;
+  paintPluginsLibrary();
+}
+
+if (pluginsLibraryBtn) {
+  pluginsLibraryBtn.addEventListener('click', async () => {
+    showPluginsRegisterNote('');
+    closePluginsSourceSection();
+    closePluginsLibrarySection();
+    pluginsLibrarySection.classList.remove('hidden');
+    await loadPluginsLibrary();
+  });
+}
+if (pluginsLibraryCancelBtn) {
+  pluginsLibraryCancelBtn.addEventListener('click', () => closePluginsLibrarySection());
+}
+
 const pluginsSourceSection = document.getElementById('plugins-source');
 const pluginsSourceLabel = document.getElementById('plugins-source-label');
 const pluginsSourceSpec = document.getElementById('plugins-source-spec');
@@ -5628,6 +5755,7 @@ function closePluginsSourceSection() {
 
 pluginsSourceBtn.addEventListener('click', () => {
   showPluginsRegisterNote('');
+  closePluginsLibrarySection();
   closePluginsSourceSection();
   pluginsSourceSection.classList.remove('hidden');
   pluginsSourceSpec.focus();
@@ -5704,6 +5832,7 @@ pluginsSourceInstallBtn.addEventListener('click', async () => {
 
 async function openPluginsSourceUpdate(p) {
   showPluginsRegisterNote('');
+  closePluginsLibrarySection();
   closePluginsSourceSection();
   const name = p.name || p.id;
   const target = p.id;

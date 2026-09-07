@@ -364,3 +364,103 @@ test('sameTree returns false when either directory cannot be read', () => {
   assert.strictEqual(source.sameTree(missing, real), false, 'and the same in the other order');
   assert.strictEqual(source.sameTree(missing, missing), false, 'two absent trees are not "the same tree" either');
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// fetchLibraryCatalog — the catalog over ONE tarball of the library repo. The
+// https stub serves a REAL tar.gz built here, so the enumeration runs against a
+// genuinely extracted tree rather than a stubbed readdir. What it must get
+// right is the SKIP set: `_template` is a scaffold, a directory with no
+// manifest is anything else the repo carries (docs/, .github/), and both would
+// otherwise become rows offering an install that cannot succeed.
+// ════════════════════════════════════════════════════════════════════════════
+
+function mkLibraryHttps(tarBytes) {
+  return {
+    get(url, opts, cb) {
+      const req = new EventEmitter();
+      req.setTimeout = () => req;
+      const res = new EventEmitter();
+      res.statusCode = 200;
+      res.headers = {};
+      res.resume = () => {};
+      res.pipe = (dest) => { res.emit('data', tarBytes); dest.write(tarBytes); dest.end(); return dest; };
+      setImmediate(() => cb(res));
+      return req;
+    },
+  };
+}
+
+async function buildLibraryTarball(sha, dirs) {
+  const stage = mkTmpRoot('clodex-library-stage-');
+  const topDirName = `avirtual-clodex-plugins-${sha}`;
+  for (const [dirName, files] of Object.entries(dirs)) {
+    const d = path.join(stage, topDirName, dirName);
+    fs.mkdirSync(d, { recursive: true });
+    for (const [rel, body] of Object.entries(files)) fs.writeFileSync(path.join(d, rel), body);
+  }
+  const tarFile = path.join(stage, 'out.tar.gz');
+  const { err, stderr } = await execFileReal('tar', ['-czf', tarFile, '-C', stage, topDirName]);
+  assert.ok(!err, `ENTER: the library fixture tar built cleanly — ${stderr}`);
+  return fs.readFileSync(tarFile);
+}
+
+test('fetchLibraryCatalog lists only the top-level dirs holding a valid manifest', async () => {
+  const bytes = await buildLibraryTarball('abc1234', {
+    _template: { 'manifest.json': '{"id":"_template","name":"Template","version":"0.0.0"}' },
+    notes: { 'manifest.json': '{"id":"notes","name":"Notes","version":"1.2.0","announce":"Takes notes."}' },
+    docs: { 'README.md': 'not a plugin' },
+  });
+  const source = createPluginSource({ fs, path, os, execFile: realExecFile, https: mkLibraryHttps(bytes) });
+  const r = await source.fetchLibraryCatalog({ repo: 'avirtual/clodex-plugins' });
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.ok(r.plugins.some((p) => p.id === 'notes'),
+    'ENTER: the one valid plugin survived the enumeration, so the absences below are about the skips');
+  assert.deepStrictEqual(r.plugins, [{
+    id: 'notes', name: 'Notes', version: '1.2.0', subpath: 'notes', announce: 'Takes notes.',
+  }], '_template is a scaffold whose id is not a valid plugin id, and docs/ carries no manifest');
+  assert.strictEqual(r.commit, 'abc1234');
+  assert.strictEqual(r.repo, 'avirtual/clodex-plugins');
+});
+
+test('fetchLibraryCatalog names the folder as the subpath, not the manifest id', async () => {
+  // installFromSource fetches `repo:<subpath>` — the PATH in the repo. A row
+  // that carried the id instead would install fine only while every folder
+  // happens to be named after its plugin, and 404 the day one is not.
+  const bytes = await buildLibraryTarball('deadbee', {
+    'notes-pack': { 'manifest.json': '{"id":"notes","name":"Notes","version":"2.0.0"}' },
+  });
+  const source = createPluginSource({ fs, path, os, execFile: realExecFile, https: mkLibraryHttps(bytes) });
+  const r = await source.fetchLibraryCatalog({});
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.deepStrictEqual(r.plugins, [{
+    id: 'notes', name: 'Notes', version: '2.0.0', subpath: 'notes-pack', announce: null,
+  }]);
+});
+
+test('fetchLibraryCatalog fetches ONE tarball and leaves no fetch directory behind', async () => {
+  const bytes = await buildLibraryTarball('abc1234', {
+    notes: { 'manifest.json': '{"id":"notes","name":"Notes","version":"1.0.0"}' },
+    tasks: { 'manifest.json': '{"id":"tasks","name":"Tasks","version":"1.0.0"}' },
+  });
+  const urls = [];
+  const https = mkLibraryHttps(bytes);
+  const counting = { get(url, opts, cb) { urls.push(url); return https.get(url, opts, cb); } };
+  const before = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('clodex-plugin-library-'));
+  const source = createPluginSource({ fs, path, os, execFile: realExecFile, https: counting });
+  const r = await source.fetchLibraryCatalog({});
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.plugins.length, 2, 'ENTER: two plugins were enumerated off the ONE fetch below');
+  assert.deepStrictEqual(urls, ['https://api.github.com/repos/avirtual/clodex-plugins/tarball'],
+    'one tarball for the whole catalog — a per-plugin request would be N calls against an unauthenticated rate limit');
+  assert.deepStrictEqual(
+    fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('clodex-plugin-library-')), before,
+    'the fetch dir holds a copy of every plugin in the library and must not outlive the call');
+});
+
+test('fetchLibraryCatalog refuses a repo that is not on github.com, exactly as parseSourceSpec does', async () => {
+  const source = createPluginSource({ fs, path, os, execFile: realExecFile, https: mkLibraryHttps(Buffer.alloc(0)) });
+  const r = await source.fetchLibraryCatalog({ repo: 'https://gitlab.com/owner/repo' });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r, parseSourceSpec('https://gitlab.com/owner/repo'),
+    'the refusal is the parser\'s own — a second host check here would drift from the one the install path uses');
+});
