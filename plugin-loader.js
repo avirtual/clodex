@@ -940,7 +940,15 @@ function createPluginLoader(deps) {
     const recs = discover();
     const core = new Set(recs.filter((rec) => rec.root === 'core').map((rec) => rec.id));
     const versions = new Map(recs.map((rec) => [rec.id, rec.manifest.version || null]));
-    const bare = { installed: 'none', installedCommit: null, installedRepo: null, installedVersion: null, upToDate: false };
+    const bare = {
+      installed: 'none',
+      installedCommit: null,
+      installedRepo: null,
+      installedRef: null,
+      installedSubpath: null,
+      installedVersion: null,
+      upToDate: false,
+    };
     const plugins = cat.plugins.map((p) => {
       if (core.has(p.id)) return { ...p, ...bare, installed: 'core' };
       if (!root) return { ...p, ...bare };
@@ -948,13 +956,16 @@ function createPluginLoader(deps) {
       let lst = null;
       try { lst = fs.lstatSync(target); } catch { lst = null; }
       if (!lst) return { ...p, ...bare };
-      const sidecar = lst.isSymbolicLink() ? null : source.readSidecar(target);
+      if (lst.isSymbolicLink()) return { ...p, ...bare, installed: 'registered' };
+      const sidecar = source.readSidecar(target);
       if (!sidecar || !sidecar.repo) return { ...p, ...bare, installed: 'user-authored' };
       return {
         ...p,
         installed: 'fetched',
         installedCommit: sidecar.commit == null ? null : sidecar.commit,
         installedRepo: sidecar.repo,
+        installedRef: sidecar.ref == null ? null : sidecar.ref,
+        installedSubpath: sidecar.subpath == null ? null : sidecar.subpath,
         installedVersion: versions.get(p.id) || null,
         upToDate: sidecar.repo === cat.repo && commitsMatch(sidecar.commit, cat.commit),
       };

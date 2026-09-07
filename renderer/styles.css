@@ -2875,7 +2875,7 @@ html, body {
   color: var(--text);
 }
 
-#btn-create:hover {
+#btn-create:hover, #btn-plugins-source-install:hover {
   opacity: 0.85;
 }
 

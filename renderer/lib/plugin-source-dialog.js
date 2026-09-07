@@ -69,6 +69,7 @@ function updatePreviewLines(resolved) {
 const LIBRARY_REASONS = {
   core: 'This plugin is built into Clodex — the copy in the library cannot replace it.',
   userAuthored: 'A folder of that name in your plugins folder is yours, not from a source — move it aside first.',
+  registered: 'A plugin of that id is registered from a folder elsewhere — unregister it first.',
   upToDate: 'Already installed at the commit the library holds.',
   otherRepo: 'Installed from a different repo — remove it before installing the library copy.',
 };
@@ -79,6 +80,9 @@ function libraryRowAction(row, opts) {
   if (r.installed === 'core') return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.core, action: null };
   if (r.installed === 'user-authored') {
     return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.userAuthored, action: null };
+  }
+  if (r.installed === 'registered') {
+    return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.registered, action: null };
   }
   if (r.installed === 'fetched') {
     if (repo && r.installedRepo && r.installedRepo !== repo) {
