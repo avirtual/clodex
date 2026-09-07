@@ -781,23 +781,33 @@ function startRename(item, nameEl, sessionName) {
   const finish = (commit) => {
     if (done) return;
     done = true;
-    const newLabel = input.value.trim();
+    const typed = input.value.trim();
     const newNameEl = document.createElement('div');
     newNameEl.className = 'session-name';
-    if (commit && newLabel && newLabel !== sessionName) {
-      newNameEl.textContent = newLabel;
-      window.api.setSessionLabel(sessionName, newLabel);
-    } else if (commit && (!newLabel || newLabel === sessionName)) {
-      newNameEl.textContent = sessionName;
-      window.api.setSessionLabel(sessionName, null);
-    } else {
-      newNameEl.textContent = current;
-    }
+    const wanted = commit && typed && typed !== sessionName ? typed : null;
+    newNameEl.textContent = wanted || current;
     newNameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       startRename(item, newNameEl, sessionName);
     });
     input.replaceWith(newNameEl);
+    if (!wanted) return;
+    const snapType = item ? item.dataset.type || null : null;
+    const snapBackend = item ? item.dataset.backend || null : null;
+    window.api.renameSession(sessionName, wanted).then((res) => {
+      if (!res || !res.ok) {
+        // `kept` means the record already carries the new name, so the row must
+        // not be relabelled back — only the respawn failed.
+        if (!(res && res.kept)) newNameEl.textContent = current;
+        showToast(`Rename failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name: sessionName });
+        return;
+      }
+      removeSession(sessionName, { keepPersisted: true });
+      createTerminal(res.name);
+      addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true);
+      switchSession(res.name);
+      showToast(`${sessionName} renamed to ${res.name}, restarting`, { name: res.name });
+    });
   };
 
   input.addEventListener('blur', () => finish(true));

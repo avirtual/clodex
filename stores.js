@@ -499,6 +499,20 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         this._save(all);
       }
     },
+    // In place, keeping the entry's position and every other field: the record
+    // IS the seat, so a remove+add would drop whatever a caller had not thought
+    // to copy across. `label` goes because it only ever existed to show a name
+    // other than this one.
+    rename(name, newName) {
+      const all = this._load();
+      if (all.some(s => s.name === newName)) return false;
+      const entry = all.find(s => s.name === name);
+      if (!entry) return false;
+      entry.name = newName;
+      delete entry.label;
+      this._save(all);
+      return true;
+    },
     setWorktree(name, worktree) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -1233,6 +1247,14 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       return true;
     },
     get(id) { return this._load().find((r) => r.id === id) || null; },
+    renameAgent(agent, newAgent) {
+      const all = this._load();
+      const mine = all.filter((r) => r.agent === agent);
+      if (!mine.length) return 0;
+      for (const r of mine) r.agent = newAgent;
+      this._save(all);
+      return mine.length;
+    },
   };
 
   const notifications = {
