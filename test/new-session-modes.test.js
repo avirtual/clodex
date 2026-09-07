@@ -248,3 +248,52 @@ test('a prefill or a non-create open shows Custom / opens Advanced instead', () 
   assert.strictEqual(runOpen(null, 'template').open, true,
     'editing a template must show what is set');
 });
+
+// --- the two order-bound call sites --------------------------------------
+//
+// Position pins, in the idiom of test/plugin-dialog-snapshot.test.js: both
+// orderings are invisible at the call site and produce a stale or raced tool
+// checklist rather than an exception, so nothing else would catch a move.
+
+function slice(fromNeedle, toNeedle, what) {
+  const a = rendererSrc.indexOf(fromNeedle);
+  assert.ok(a > 0, `ENTER: ${what} starts at ${fromNeedle} — a rename makes every assertion below vacuous`);
+  const b = rendererSrc.indexOf(toNeedle, a + fromNeedle.length);
+  assert.ok(b > a, `ENTER: ${what} ends at ${toNeedle}`);
+  return rendererSrc.slice(a, b);
+}
+
+test("openDialog applies the mode AFTER populateHostCatalogs lands the deny cache", () => {
+  const body = slice('async function openDialog(', '\nfunction populateHostCatalogs(', 'openDialog');
+  const cat = body.indexOf('populateHostCatalogs(settings, dialogHostAgentLib)');
+  const apply = body.indexOf('applyModeFields(inputMode.value)');
+  assert.ok(cat > 0 && apply > 0, 'ENTER: both calls are in openDialog');
+  assert.ok(cat < apply,
+    'setDefaultToolDenyCache runs inside populateHostCatalogs — applying earlier trims against the PREVIOUS open\'s cache');
+});
+
+test("the type-change mode re-apply passes skipTools, and is registered after applyTypeDefaults'", () => {
+  const block = slice("inputName.addEventListener('input'", "inputPlacement.addEventListener('change'",
+    'the dialog field listeners');
+  const defaults = block.indexOf('applyTypeDefaults()');
+  const reapply = block.indexOf('applyModeFields(inputMode.value, { skipTools: true })');
+  assert.ok(defaults > 0 && reapply > 0, 'ENTER: both change listeners are registered here');
+  assert.ok(defaults < reapply,
+    'listeners fire in registration order, and applyTypeDefaults already redrew the tool checklist from this mode');
+});
+
+// --- programmatic populates ----------------------------------------------
+
+test('every path that fills the form by script marks it Custom itself', () => {
+  // A scripted `.value =` fires no input/change event, so the drift listener on
+  // #advanced-section is blind to all three of these.
+  const sites = [
+    ["inputTemplate.addEventListener('change'", '\nbtnTemplateDelete.addEventListener', 'the template picker'],
+    ['async function openTemplateEditor(', '\nasync function saveTemplateFromForm(', 'the template editor'],
+    ['function adoptSession(', '\nfunction renderDiscovery(', 'adoptSession'],
+  ];
+  for (const [from, to, what] of sites) {
+    assert.match(slice(from, to, what), /setModeSelect\('custom'\)/,
+      `${what} populates the form by script, so it must set Custom itself`);
+  }
+});

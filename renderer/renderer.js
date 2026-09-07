@@ -2252,8 +2252,6 @@ async function openDialog(prefill = null) {
   dialogHostSettings = settings;
   dialogHostAgentLib = agentLib || [];
   populateHostCatalogs(settings, dialogHostAgentLib);
-  // AFTER populateHostCatalogs, which is where the default-deny cache lands: run
-  // earlier and `optimized` would trim against the previous open's cache.
   if (inputMode) applyModeFields(inputMode.value);
   populatePlacementOptions(boxes);
   inputPlacement.value = 'host';
@@ -2282,8 +2280,6 @@ function populateHostCatalogs(settings, agentLib) {
 
 inputName.addEventListener('input', () => refreshNameValidity());
 inputType.addEventListener('change', () => applyTypeDefaults());
-// Registered after applyTypeDefaults', which has already re-derived the tool
-// checklist from the same mode — re-running it here would race itself.
 inputType.addEventListener('change', () => {
   if (inputMode) applyModeFields(inputMode.value, { skipTools: true });
 });
@@ -2364,8 +2360,6 @@ inputTemplate.addEventListener('change', async () => {
   const resolved = await cwdFromTemplate(t);
   if (inputTemplate.value !== id) return; // a newer template won the race
   if (resolved.warn) showToast(resolved.warn, { kind: 'warn', duration: 12000 });
-  // Before the fields land: a programmatic write fires no input event, so the
-  // drift listener cannot see a template populate the form.
   setModeSelect('custom');
   inputType.value = t.type;
   inputCwd.value = resolved.cwd;
@@ -2689,7 +2683,7 @@ async function openTemplateEditor(tpl = null, bundle = null) {
   if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
   if (inputNoWire) inputNoWire.checked = (tpl && tpl.noWire) === true;
   for (const sec of [toolsSection, skillsSection, otherSection]) { if (sec) sec.open = false; }
-  setModeSelect('custom'); // the template's own fields follow; nothing to derive
+  setModeSelect('custom');
   setDialogMode('template');
   applyTypeDefaults({ skipAsyncRefresh: true });
   const settings = await window.api.getSettings();
@@ -4282,7 +4276,7 @@ function adoptSession(rec) {
     resumeId: rec.sessionId,
   };
   if (!dialogOverlay.classList.contains('hidden')) {
-    setModeSelect('custom'); // a prefill is a populated form, same as openDialog's
+    setModeSelect('custom');
     inputName.value = prefill.name;
     refreshNameValidity();
     if (inputType.value !== prefill.type) { inputType.value = prefill.type; applyTypeDefaults(); }
