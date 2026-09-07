@@ -504,3 +504,235 @@ test('the viewer dispatch renders the same TASK DIR line core does, under the sa
       'a pointer that escapes confinement drops the line — a dispatch must not die over a display line');
   } finally { viewer.setClodexHomeForTest(null); }
 });
+
+// ── the durable write (t557) ────────────────────────────────────────────────
+//
+// The copy whose drift CORRUPTS rather than misreports: the board is one JSON
+// array rewritten whole, so a write that lost the same-dir temp, the rename, or
+// either fsync truncates the entire registry on a torn write — and only on a
+// crash, which no fixture reaches by writing and reading back.
+//
+// So the comparison is over the fs CALL SEQUENCE, not the returned bytes: two
+// copies that both writeFileSync in place agree perfectly on every readback.
+//
+// The one sanctioned difference is the parent-directory mode (`0o700` here,
+// default in core) — the viewer creates directories under the operator's
+// `~/.clodex`, which is 0700 by construction. It is asserted outright below so
+// it cannot widen unnoticed, and dropped from the sequence comparison.
+const coreFsUtil = require('../fs-util');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+
+// Records the fs calls a write makes, with paths and fds resolved to labels: an
+// fsync is only meaningful once you can see WHICH open file it targets, and a
+// bare fd number is exactly what hides a missing directory fsync.
+function traceWrite(write, { dir, file, data, failRename = false }) {
+  const OPS = ['mkdirSync', 'openSync', 'writeSync', 'fsyncSync', 'closeSync', 'renameSync', 'unlinkSync'];
+  const tmpPrefix = path.join(dir, `.${path.basename(file)}.tmp.`);
+  const label = (v) => {
+    if (v === file) return '<file>';
+    if (v === dir) return '<dir>';
+    if (typeof v === 'string' && v.startsWith(tmpPrefix)) return '<tmp>';
+    return v;
+  };
+  const fds = new Map();
+  const trace = [];
+  const orig = {};
+  for (const op of OPS) orig[op] = fs[op];
+  let threw = null;
+  try {
+    fs.mkdirSync = (p, opts) => {
+      trace.push({ op: 'mkdirSync', path: label(p), recursive: !!(opts && opts.recursive), mode: opts && opts.mode });
+      return orig.mkdirSync(p, opts);
+    };
+    fs.openSync = (p, flags, mode) => {
+      const fd = orig.openSync(p, flags, mode);
+      fds.set(fd, label(p));
+      trace.push({ op: 'openSync', path: label(p), flags, mode });
+      return fd;
+    };
+    fs.writeSync = (fd, d) => {
+      trace.push({ op: 'writeSync', target: fds.get(fd), data: d === data ? '<data>' : d });
+      return orig.writeSync(fd, d);
+    };
+    fs.fsyncSync = (fd) => {
+      trace.push({ op: 'fsyncSync', target: fds.get(fd) });
+      return orig.fsyncSync(fd);
+    };
+    fs.closeSync = (fd) => {
+      trace.push({ op: 'closeSync', target: fds.get(fd) });
+      return orig.closeSync(fd);
+    };
+    fs.renameSync = (a, b) => {
+      trace.push({ op: 'renameSync', from: label(a), to: label(b) });
+      if (failRename) throw new Error('simulated rename failure');
+      return orig.renameSync(a, b);
+    };
+    fs.unlinkSync = (p) => {
+      trace.push({ op: 'unlinkSync', path: label(p) });
+      return orig.unlinkSync(p);
+    };
+    try { write(); } catch (e) { threw = e.message; }
+  } finally { for (const op of OPS) fs[op] = orig[op]; }
+  return { trace, threw };
+}
+
+// The directory mode is the sanctioned difference, so it is dropped here and
+// asserted on its own below; everything left is the durability sequence.
+const withoutDirMode = (trace) => trace.map((c) => (
+  c.op === 'mkdirSync' ? { op: c.op, path: c.path, recursive: c.recursive } : c));
+
+function runBothWrites(prefix, opts = {}) {
+  const root = mkTmpRoot(prefix);
+  const out = {};
+  for (const [side, fn] of [['viewer', viewer.atomicWriteFileSync], ['core', coreFsUtil.atomicWriteFileSync]]) {
+    const dir = path.join(root, side, 'nested');
+    const file = path.join(dir, 'tickets.json');
+    const data = JSON.stringify([{ id: 't1' }], null, 2);
+    if (opts.pre !== undefined) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, opts.pre); }
+    const rec = traceWrite(() => fn(file, data), { dir, file, data, failRename: !!opts.failRename });
+    out[side] = { ...rec, dir, file, data };
+  }
+  return out;
+}
+
+test('viewer atomicWriteFileSync makes the same durable sequence core fs-util does', () => {
+  const { viewer: v, core: c } = runBothWrites('parity-atomic-');
+
+  // ENTER: the trace is the reduction. A recorder that captured nothing — or a
+  // copy that writes in place — would make every ordering assertion below
+  // vacuous, and `deepStrictEqual([], [])` is the greenest false green there is.
+  assert.ok(v.trace.some((call) => call.op === 'fsyncSync'), 'the trace must reach an fsync at all');
+  assert.strictEqual(v.threw, null, 'the ordinary write must not throw');
+  assert.strictEqual(c.threw, null);
+
+  assert.deepStrictEqual(withoutDirMode(v.trace), withoutDirMode(c.trace),
+    'the copy makes a different sequence of fs calls than core');
+
+  // The anchors, so two copies that drifted TOGETHER still fail: equality above
+  // is satisfied by any pair that lost the same step, and losing a step is the
+  // whole failure this copy has.
+  const ops = v.trace.map((call) => call.op);
+  const idx = (pred) => v.trace.findIndex(pred);
+  assert.ok(!v.trace.some((call) => call.op === 'openSync' && call.path === '<file>'),
+    'the destination is never opened for writing — an in-place write is the torn write this exists to prevent');
+  const tmpOpen = idx((call) => call.op === 'openSync' && call.path === '<tmp>');
+  assert.strictEqual(v.trace[tmpOpen].flags, 'w');
+  assert.strictEqual(v.trace[tmpOpen].mode, 0o600, 'the temp file carries the board through, so it is never group- or world-readable');
+  const wrote = idx((call) => call.op === 'writeSync' && call.target === '<tmp>' && call.data === '<data>');
+  const tmpSync = idx((call) => call.op === 'fsyncSync' && call.target === '<tmp>');
+  const renamed = idx((call) => call.op === 'renameSync');
+  const dirSync = idx((call) => call.op === 'fsyncSync' && call.target === '<dir>');
+  assert.ok(tmpOpen >= 0 && wrote > tmpOpen, 'the bytes go to a temp in the SAME directory — rename is atomic only within a volume');
+  assert.ok(tmpSync > wrote && tmpSync < renamed,
+    'the CONTENTS are fsynced before the rename, or the rename publishes a file whose bytes are not yet on disk');
+  assert.deepStrictEqual({ from: v.trace[renamed].from, to: v.trace[renamed].to }, { from: '<tmp>', to: '<file>' });
+  assert.ok(dirSync > renamed,
+    'the DIRECTORY is fsynced after the rename — without it the bytes are durable and the name swap is not, which is the whole registry gone');
+  assert.strictEqual(ops.filter((op) => op === 'renameSync').length, 1, 'exactly one publish');
+
+  // And the write actually happened, on both sides: a trace that looks right
+  // over a function that wrote nothing would satisfy everything above.
+  assert.strictEqual(fs.readFileSync(v.file, 'utf8'), v.data);
+  assert.strictEqual(fs.readFileSync(c.file, 'utf8'), c.data);
+  assert.deepStrictEqual(fs.readdirSync(v.dir), ['tickets.json'], 'no temp file survives the write');
+  assert.deepStrictEqual(fs.readdirSync(c.dir), ['tickets.json']);
+});
+
+test('viewer atomicWriteFileSync creates the board directory 0o700, where core leaves it default', () => {
+  const { viewer: v, core: c } = runBothWrites('parity-atomic-mode-');
+  const mk = (rec) => rec.trace.find((call) => call.op === 'mkdirSync' && call.path === '<dir>');
+  // ENTER: both sides must reach the mkdir this case is about — over a trace
+  // that never recorded one, `undefined` would carry no mode and the assertions
+  // below would be about nothing.
+  assert.ok(mk(v) && mk(c), 'both sides make the board directory');
+
+  // Whole-object compares: the modes are the ONE place these copies are meant to
+  // disagree, so the sanctioned difference is written out on both sides rather
+  // than compared, and a third field arriving on either is not read around.
+  assert.deepStrictEqual(mk(v), { op: 'mkdirSync', path: '<dir>', recursive: true, mode: 0o700 });
+  assert.deepStrictEqual(mk(c), { op: 'mkdirSync', path: '<dir>', recursive: true, mode: undefined });
+  assert.strictEqual(fs.statSync(v.dir).mode & 0o777, 0o700,
+    'the viewer writes under the operator\'s ~/.clodex, which is 0700 by construction — a wider board directory is readable by anything on the box');
+});
+
+test('viewer atomicWriteFileSync cleans up and rethrows exactly as core does when the rename fails', () => {
+  const { viewer: v, core: c } = runBothWrites('parity-atomic-fail-', { failRename: true, pre: 'PREVIOUS' });
+
+  // ENTER: the rename must actually have been reached and refused, or this case
+  // is about nothing — every assertion below is true of a write that never ran.
+  assert.ok(v.trace.some((call) => call.op === 'renameSync'), 'the failure must be injected at the rename');
+  assert.strictEqual(v.threw, 'simulated rename failure', 'the failure is RETHROWN — a swallowed one reports a save that did not happen');
+  assert.strictEqual(v.threw, c.threw, 'the copy swallows or rewrites an error core rethrows');
+
+  assert.deepStrictEqual(withoutDirMode(v.trace), withoutDirMode(c.trace),
+    'the copy cleans up differently than core when the publish fails');
+
+  // Said outright, so a pair that drifted together into leaving the temp behind
+  // still fails: the temps are named per pid and per ms, so a leak accumulates
+  // one file per failed save in the board directory forever.
+  assert.ok(v.trace.some((call) => call.op === 'unlinkSync' && call.path === '<tmp>'), 'the temp is removed');
+  assert.deepStrictEqual(fs.readdirSync(v.dir), ['tickets.json'], 'nothing but the untouched board remains');
+  assert.deepStrictEqual(fs.readdirSync(c.dir), ['tickets.json']);
+  assert.strictEqual(fs.readFileSync(v.file, 'utf8'), 'PREVIOUS',
+    'the previous board survives intact — the point of publishing by rename');
+  assert.strictEqual(fs.readFileSync(c.file, 'utf8'), 'PREVIOUS');
+});
+
+// ── the watchdog bounds (t557) ──────────────────────────────────────────────
+//
+// team-manifest does not export WATCHDOG_MIN_MS/WATCHDOG_MAX_MS, so core's
+// values are read the only way another program can: by pushing a too-small and
+// a too-large `watchdogMs` through `loadManifest`, which is where core clamps.
+// That is the point — a fixture holding the literals `5 * 60 * 1000` and
+// `7 * 24 * 60 * 60 * 1000` catches THIS file changing and never catches core
+// changing underneath it, and the board's threshold silently disagreeing with
+// the watchdog's is the defect: a ticket the board calls calm while core nudges.
+const { createTeamManifest } = require('../team-manifest');
+
+function coreWatchdogReader() {
+  const home = mkTmpRoot('parity-watchdog-');
+  const dir = path.join(home, 'teams', 'shop');
+  fs.mkdirSync(dir, { recursive: true });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  return (raw) => {
+    fs.writeFileSync(path.join(dir, 'team.json'),
+      JSON.stringify({ root: '/r', lead: 'boss', roles: { lead: {} }, watchdogMs: raw }));
+    return tm.loadManifest('shop').watchdogMs;
+  };
+}
+
+test('viewer watchdog bounds agree with the window core clamps into', () => {
+  const coreWatchdog = coreWatchdogReader();
+
+  // Core's bounds, observed rather than copied. `1e300` and not Infinity: core
+  // requires a FINITE number, so Infinity is rejected outright and would read
+  // back as null instead of as the ceiling.
+  const floor = coreWatchdog(1);
+  const ceiling = coreWatchdog(1e300);
+
+  // ENTER: both probes must have been CLAMPED, not rejected — core answers null
+  // for a value it refuses, and `null === null` would make the equalities below
+  // agree over two bounds neither side ever produced.
+  assert.ok(Number.isFinite(floor) && floor > 0, 'the low probe must clamp to a real floor');
+  assert.ok(Number.isFinite(ceiling) && ceiling > floor, 'the high probe must clamp to a real ceiling');
+
+  assert.strictEqual(viewer.WATCHDOG_MIN_MS, floor, 'the copy floors on a different number than core');
+  assert.strictEqual(viewer.WATCHDOG_MAX_MS, ceiling, 'the copy caps on a different number than core');
+
+  // The bounds agreeing is not the clamp agreeing: the viewer applies them in
+  // its own `stallMsFor`, so a copy that inverted Math.min/Math.max, or dropped
+  // one arm, holds both constants and still answers differently.
+  const raws = [1, floor - 1, floor, floor + 1, 4 * 60 * 60 * 1000, ceiling - 1, ceiling, ceiling + 1, 1e300];
+  assert.ok(raws.some((r) => r < floor) && raws.some((r) => r > ceiling) && raws.some((r) => r > floor && r < ceiling),
+    'ENTER: the table must straddle BOTH bounds and pass through the middle');
+  for (const raw of raws) {
+    assert.strictEqual(viewer.stallMsFor({ watchdogMs: raw }), coreWatchdog(raw),
+      `clamp diverged on ${raw}`);
+  }
+
+  // Said outright, so two copies that drifted together into an unclamped
+  // pass-through still fail: `1e400` parses to Infinity and an unclamped board
+  // would never call anything stalled while core kept nudging.
+  assert.strictEqual(viewer.stallMsFor({ watchdogMs: 1 }), floor, 'below the floor reads as the floor');
+  assert.strictEqual(viewer.stallMsFor({ watchdogMs: 1e300 }), ceiling, 'above the ceiling reads as the ceiling');
+});
