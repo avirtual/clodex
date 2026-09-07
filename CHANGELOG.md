@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- First launch shows a short Welcome dialog to pick the default session mode (Clodex optimized or Standard) or skip; Settings ▸ Sessions can run it again.
+
 ## 5.35.4 — 2026-09-07
 
 - Settings ▸ Sessions: a **Default session mode** (Clodex optimized / Standard) that the New Session dialog opens on.
