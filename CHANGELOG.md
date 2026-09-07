@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.35.0 — 2026-09-07
+
 - The drawer's Console tab works from the browser: a seat's Bash command output and live preview are read-only reads of that seat's own records, and a web client that can already open a shell on the box could always see the same thing.
 - Manage Plugins can browse the Clodex plugin library (github.com/avirtual/clodex-plugins) and install or update any of its plugins with one click; custom plugins still install from any public GitHub repo.
 - Codex sessions get the Intents and Exec-command selectors — in New Session, in Edit Settings and in the session ⚙ menu. Both were already enforced for Codex at runtime; only the UI hid them. Edit Settings also no longer clears a Codex seat's intent allowlist when you save an unrelated setting.
