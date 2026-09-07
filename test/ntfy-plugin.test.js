@@ -72,14 +72,18 @@ function ntfyServer() {
   };
 }
 
-function makeHost({ settings = {}, seatAlive = true } = {}) {
+// `seatDead` is the case an ABSENT seat cannot cover: the session is still in
+// the manager's map, so host.sessions.get() mints a real handle and only
+// isAlive() distinguishes it. Without it, dropping the liveness check from
+// route() stays green — the absent-seat test never reaches that branch.
+function makeHost({ settings = {}, seatAlive = true, seatDead = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ntfy-'));
   const notes = [];
   const injected = [];
   const logged = [];
   let ui = { plugins: { ntfy: settings } };
 
-  const session = { name: 'seat', type: 'claude', cwd: '/repo', workspaceId: 'w1' };
+  const session = { name: 'seat', type: 'claude', cwd: '/repo', workspaceId: 'w1', _dead: seatDead };
   const sessions = new Map(seatAlive ? [['seat', session]] : []);
 
   const engine = createPluginHostEngine({
@@ -180,7 +184,29 @@ test('a live seat is injected with the same fenced text, parkable', async () => 
   }
 });
 
-test('a dead or unknown seat is logged and skipped, and does not throw', async () => {
+test('a seat that is present but DEAD is skipped — isAlive is the deciding branch', async () => {
+  const srv = ntfyServer();
+  const url = await srv.listen();
+  const h = makeHost({ settings: { url, routes: { inbox: true, seat: 'seat' } }, seatDead: true });
+  try {
+    h.engine.register('ntfy', loadEngine(), MANIFEST);
+    assert.ok(await until(() => srv.state.streams.length === 1));
+
+    // ENTER: the seat really is in the map, so host.sessions.get() returns a
+    // handle. A skip here can only come from isAlive(), not from a null handle.
+    assert.ok(h.sessions.has('seat'), 'the dead seat is still a known session');
+
+    srv.push(MESSAGE);
+    assert.ok(await until(() => h.notes.length === 1), 'the inbox route still ran');
+    assert.equal(h.injected.length, 0, 'a dead seat is not injected');
+    assert.ok(h.logged.some((l) => /seat is not live/.test(l)), 'the skip was logged');
+  } finally {
+    h.cleanup();
+    await srv.close();
+  }
+});
+
+test('an unknown seat is logged and skipped, and does not throw', async () => {
   const srv = ntfyServer();
   const url = await srv.listen();
   const h = makeHost({ settings: { url, routes: { inbox: true, seat: 'ghost' } }, seatAlive: false });
