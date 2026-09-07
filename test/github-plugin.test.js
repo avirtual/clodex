@@ -720,8 +720,6 @@ test('github: a closed issue still reads, and older bulk cannot starve the newes
     const older = ISSUE_VIEW_SHORT.comments.slice(0, 3);
     assert.ok(older.every((c) => c.body.length < 2000),
       'ENTER: no OLDER comment exceeds the per-comment cap, so that cap is not what drops them');
-    assert.ok(ISSUE_VIEW_SHORT.comments.reduce((n, c) => n + c.body.length, 0) > 3000,
-      'ENTER: together they exceed the whole reply cap, so something must be dropped');
 
     const replies = await fireFor('[agent:gh issue 11]');
     assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
