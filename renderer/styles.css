@@ -3384,6 +3384,7 @@ html, body {
 
 #dialog label.agent-check { display: flex; margin-bottom: 4px; }
 #dialog label.agent-check:last-child { margin-bottom: 0; }
+
 /* Don't stretch the checkbox to the row height; align it to the first text line
    (rows can wrap when a tool/skill carries a provenance note). flex:none keeps
    it from squashing; the small top offset centers it against the first line. */
