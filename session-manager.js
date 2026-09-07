@@ -2743,7 +2743,6 @@ function createSessionManager(deps) {
         [path.join(REGISTRY_DIR, 'promptcache', oldName), path.join(REGISTRY_DIR, 'promptcache', newName)],
         [path.join(REGISTRY_DIR, 'notices', oldName), path.join(REGISTRY_DIR, 'notices', newName)],
         [path.join(REGISTRY_DIR, 'library', 'memory', oldName), path.join(REGISTRY_DIR, 'library', 'memory', newName)],
-        [path.join(REGISTRY_DIR, 'library', 'exec', `${oldName}.json`), path.join(REGISTRY_DIR, 'library', 'exec', `${newName}.json`)],
       ];
     }
 

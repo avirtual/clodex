@@ -24,8 +24,11 @@ move cannot detect a bad resume id and report it.
 `run/<name>/` is absent from the list on purpose. `cleanupClaudeHook` rm -rf's it
 on every exit path, including the kill `rename` performs, and `create()` rebuilds
 it under the new name — so moving it would race a delete that is already running.
-The six dirs listed are exactly those that live at the `~/.clodex` ROOT precisely
-because they must outlive the run dir.
+
+`library/exec/<name>.json` is absent for the opposite reason, and it is the one a
+reader is likeliest to add back: that directory is the exec COMMAND registry,
+keyed by command id and shared by every seat, not per-seat state. Moving it on a
+rename breaks the command for every seat granted it.
 
 ## rename
 

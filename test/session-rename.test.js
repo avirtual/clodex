@@ -9,9 +9,9 @@
 //
 // What rename can silently get wrong that move cannot:
 //
-//   the six shared dirs   messages/, pending/, promptcache/, notices/,
-//                         library/memory/, library/exec/<name>.json are keyed
-//                         by name at the ~/.clodex ROOT and outlive run/<name>/.
+//   the five shared dirs  messages/, pending/, promptcache/, notices/ and
+//                         library/memory/ are keyed by SEAT NAME at the
+//                         ~/.clodex ROOT and outlive run/<name>/.
 //                         A rename that forgets one leaves the seat's DMs,
 //                         parked messages, frozen prompt or memory behind under
 //                         a name nothing answers to — silent, because the seat
@@ -39,10 +39,14 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ------------------------------------------------------------- the fixture
 
-// The six per-name paths, as absolute src/dest pairs under `root`. Written out
+// The five per-SEAT paths, as absolute src/dest pairs under `root`. Written out
 // here as literals rather than by calling the manager's own `_renameDirs`: a
 // test that asked the subject where its dirs are would agree with itself about
 // a dir the subject forgot.
+//
+// library/exec/ is deliberately NOT here. It is the exec COMMAND registry keyed
+// by command id (clodex-monitor.json, clodex-check-syntax.json, …), shared by
+// every seat — the r3 pin below is what holds it out.
 function dirsUnder(root, name) {
   return {
     messages: pathReal.join(root, 'messages', name),
@@ -50,7 +54,6 @@ function dirsUnder(root, name) {
     promptcache: pathReal.join(root, 'promptcache', name),
     notices: pathReal.join(root, 'notices', name),
     memory: pathReal.join(root, 'library', 'memory', name),
-    exec: pathReal.join(root, 'library', 'exec', `${name}.json`),
   };
 }
 
@@ -62,8 +65,6 @@ function seedDirs(root, name) {
     fsReal.mkdirSync(d[key], { recursive: true });
     fsReal.writeFileSync(pathReal.join(d[key], 'marker.txt'), `${key} of ${name}`);
   }
-  fsReal.mkdirSync(pathReal.dirname(d.exec), { recursive: true });
-  fsReal.writeFileSync(d.exec, JSON.stringify({ name: `exec of ${name}` }));
   return d;
 }
 
@@ -83,11 +84,6 @@ function assertMoved(root, oldName, newName) {
   assert.strictEqual(
     fsReal.readFileSync(pathReal.join(to.notices, 'marker.txt'), 'utf8'), `notices of ${oldName}`,
     `notices/${newName} carries the old queue`,
-  );
-  assert.ok(!fsReal.existsSync(from.exec), `library/exec/${oldName}.json is gone`);
-  assert.strictEqual(
-    JSON.parse(fsReal.readFileSync(to.exec, 'utf8')).name, `exec of ${oldName}`,
-    `library/exec/${newName}.json is the old file`,
   );
 }
 
@@ -231,7 +227,7 @@ const BASE = {
 
 // ------------------------------------------------------------ happy path
 
-test('rename moves the record, all six shared dirs, the reminders and the conversation', async () => {
+test('rename moves the record, all five shared dirs, the reminders and the conversation', async () => {
   const root = mkTmpRoot('clodex-rename-');
   seedDirs(root, 'seat');
   const { m, store, remindStore, created } = mkRename({
@@ -291,6 +287,58 @@ test('rename tells the seat its new name, in a notice under the NEW name', async
   assert.strictEqual(mine.length, 1, `ENTER: exactly one rename notice (queue: ${JSON.stringify(texts)})`);
   assert.match(mine[0], /'seat'/, 'it names the old name');
   assert.match(mine[0], /'newseat'/, 'and the new one');
+});
+
+// r3, and it was a SPEC defect rather than an implementation slip: the spec
+// listed library/exec/<name>.json among the per-seat dirs. It is not one — it is
+// the exec COMMAND registry, keyed by command id and shared by every seat
+// (stores.js execLibrary, session-manager's _resolveExecDefs and
+// _handleExecIntent, renderer/library-drawers.js all read it that way). Moving it
+// on a rename breaks the command for EVERY seat granted it, and the seat whose
+// name happens to equal a command id is the whole hazard.
+//
+// A byte comparison, not an existence check: a rename that deleted and rewrote
+// the def would leave a file at the same path and pass a weaker assertion.
+test('renaming a seat whose name equals a COMMAND id leaves that command untouched', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const execDir = pathReal.join(root, 'library', 'exec');
+  fsReal.mkdirSync(execDir, { recursive: true });
+  // Named for the seat under rename: this is the collision, not a bystander.
+  const def = pathReal.join(execDir, 'seat.json');
+  const defBytes = JSON.stringify({ name: 'seat', argv: ['echo', 'hi'], description: 'a shared command' }, null, 2);
+  fsReal.writeFileSync(def, defBytes);
+
+  const { m, store } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(store[0].name, 'newseat', 'ENTER: the rename really happened');
+
+  assert.strictEqual(fsReal.readFileSync(def, 'utf8'), defBytes,
+    'the command def is byte-identical — a rename must never touch the shared registry');
+  assert.ok(!fsReal.existsSync(pathReal.join(execDir, 'newseat.json')),
+    'and no def was created under the new name');
+  assert.deepStrictEqual(fsReal.readdirSync(execDir).sort(), ['seat.json'],
+    'the registry holds exactly what it held before');
+});
+
+// The mirror of the test above on the REFUSAL side: an installed command id must
+// not make a name unrenameable-to. Before r3 this was refused with "newseat
+// already owns …", which is both wrong and misleading — the file belongs to no seat.
+test('a name matching a COMMAND id is still available as a rename target', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const execDir = pathReal.join(root, 'library', 'exec');
+  fsReal.mkdirSync(execDir, { recursive: true });
+  const def = pathReal.join(execDir, 'newseat.json');
+  const defBytes = JSON.stringify({ name: 'newseat', argv: ['echo', 'hi'] }, null, 2);
+  fsReal.writeFileSync(def, defBytes);
+
+  const { m, store } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `a command id must not block the name (got: ${r.error})`);
+  assert.strictEqual(store[0].name, 'newseat');
+  assert.strictEqual(fsReal.readFileSync(def, 'utf8'), defBytes, 'and the command is untouched');
 });
 
 test('rename works on a NOT-LIVE seat — no process to kill', async () => {
@@ -424,20 +472,15 @@ test('rename refuses when the new name is PERSISTED but not live', async () => {
   assertUntouched(root, 'seat', 'newseat');
 });
 
-// One case per dir: the collision check must cover ALL six, and a check that
+// One case per dir: the collision check must cover ALL five, and a check that
 // looked at only messages/ would pass every other row here while renaming a
 // seat straight on top of a stranger's memory.
-for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory', 'exec']) {
+for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory']) {
   test(`rename refuses when ${key} already exists under the new name`, async () => {
     const root = mkTmpRoot('clodex-rename-');
     seedDirs(root, 'seat');
     const dest = dirsUnder(root, 'newseat')[key];
-    if (key === 'exec') {
-      fsReal.mkdirSync(pathReal.dirname(dest), { recursive: true });
-      fsReal.writeFileSync(dest, '{}');
-    } else {
-      fsReal.mkdirSync(dest, { recursive: true });
-    }
+    fsReal.mkdirSync(dest, { recursive: true });
     const { m, store, created } = mkRename({ root, entries: [BASE] });
     const r = await m.rename('seat', 'newseat');
     assert.strictEqual(r.ok, false, `expected a refusal on a colliding ${key}`);
