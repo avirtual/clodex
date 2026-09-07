@@ -157,7 +157,9 @@ test('every renderer pluginInvoke passes its method arguments as an array', () =
   for (const rel of files) {
     const src = fs.readFileSync(path.join(ROOT, rel), 'utf-8');
     const found = callArgs(src, NEEDLE);
-    // A listed file contributing nothing is dead weight that reads as coverage.
+    // The file reached this loop because a substring scan found the needle, so
+    // the bracket walker finding nothing means the two disagree — the walker has
+    // stopped seeing a call the audit is supposed to cover.
     assert.ok(found.length >= 1, `ENTER: ${rel} is scanned for pluginInvoke call sites, found ${found.length}`);
     for (const c of found) calls.push({ ...c, rel });
     if (argsBindingsAreArrays(src)) exemptFiles.add(rel);
