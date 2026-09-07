@@ -12430,8 +12430,11 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
 //
 // Every assertion that carries the invariant is therefore an ABSENCE, and an
 // absence asserted before the trigger reached the queue is trivially true: with
-// its own trigger deleted each of the three below passed 1/1. So each opens on
-// the same positive observable boot-g uses — `_injectQueueFor(s).length === 1`,
+// its own trigger neutralised each of the three below passed 1/1 (for the flush,
+// neutralised means substituting the return value it reports, since deleting the
+// call outright only reds on the now-undefined `r` — a ReferenceError is not a
+// guard). So each gains the positive observable boot-g uses, ahead of its first
+// absence — `_injectQueueFor(s).length === 1`,
 // which InjectQueue.enqueue increments and only _drain's finally decrements, so
 // it stays 1 while the producer is parked on the ready gate.
 // Checked SYNCHRONOUSLY here, unlike boot-g: both triggers call _injectText
