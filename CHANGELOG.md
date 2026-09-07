@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The ntfy plugin is no longer built in; it lives in the clodex-plugins library (Manage plugins ▸ Browse the Clodex library) for anyone who wants it.
+
 ## 5.36.0 — 2026-09-08
 
 - New built-in plugin: ntfy. Point it at an ntfy topic and every message (a GitHub webhook rendered by ntfy, for instance) becomes an operator inbox note and, if you name one, a DM to a seat, with the text fenced as untrusted. No polling; it resumes from the last seen message after a restart.

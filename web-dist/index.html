@@ -9785,123 +9785,8 @@ body {
     }
   });
 
-  // plugins/ntfy/renderer.js
-  var require_renderer3 = __commonJS({
-    "plugins/ntfy/renderer.js"(exports, module) {
-      "use strict";
-      module.exports.activate = (rhost) => {
-        let disposed = false;
-        let statusEl = null;
-        const alive = () => !disposed;
-        function field(bodyEl, key, label, hint, type) {
-          const row = document.createElement("div");
-          row.className = "ntfy-settings-row";
-          const lab = document.createElement("label");
-          lab.className = "ntfy-settings-label";
-          lab.textContent = label;
-          const input = document.createElement("input");
-          input.type = type;
-          input.className = "ntfy-settings-input";
-          input.setAttribute("data-ntfy-key", key);
-          lab.appendChild(input);
-          row.appendChild(lab);
-          if (hint) {
-            const h = document.createElement("div");
-            h.className = "ntfy-settings-hint";
-            h.textContent = hint;
-            row.appendChild(h);
-          }
-          bodyEl.appendChild(row);
-          return input;
-        }
-        function renderStatus(res) {
-          if (!statusEl) return;
-          if (!res || !res.ok) {
-            statusEl.textContent = "Status unavailable.";
-            return;
-          }
-          const bits = [res.connected ? "connected" : "not connected"];
-          if (res.lastEventAt) bits.push(`last message ${new Date(res.lastEventAt).toLocaleString()}`);
-          if (res.lastId) bits.push(`resuming after id ${res.lastId}`);
-          if (res.error) bits.push(`error: ${res.error}`);
-          statusEl.textContent = bits.join(" \xB7 ");
-        }
-        function refreshStatus() {
-          rhost.invoke("status.get").then((res) => {
-            if (alive()) renderStatus(res);
-          }).catch((e) => rhost.log.error("status.get failed", e));
-        }
-        const disposeSection = rhost.ui.settings.section({
-          id: "prefs",
-          title: "ntfy",
-          render(bodyEl, values) {
-            const v = values || {};
-            const routes = v.routes && typeof v.routes === "object" ? v.routes : {};
-            bodyEl.innerHTML = "";
-            const url = field(
-              bodyEl,
-              "url",
-              "Topic URL",
-              "The full ntfy topic URL, e.g. https://ntfy.example.com/clodex. Empty means the plugin stays idle.",
-              "text"
-            );
-            url.value = typeof v.url === "string" ? v.url : "";
-            const inbox = field(
-              bodyEl,
-              "inbox",
-              "Inbox note",
-              "Raise every message as an operator inbox note.",
-              "checkbox"
-            );
-            inbox.checked = routes.inbox === void 0 ? true : !!routes.inbox;
-            const seat = field(
-              bodyEl,
-              "seat",
-              "Also DM seat",
-              "A session name to DM each message to, or empty for none.",
-              "text"
-            );
-            seat.value = typeof routes.seat === "string" ? routes.seat : "";
-            statusEl = document.createElement("div");
-            statusEl.className = "ntfy-settings-status";
-            statusEl.textContent = "Checking\u2026";
-            bodyEl.appendChild(statusEl);
-            refreshStatus();
-          },
-          collect(bodyEl) {
-            const get = (key) => bodyEl.querySelector(`[data-ntfy-key="${key}"]`);
-            const urlEl = get("url");
-            const inboxEl = get("inbox");
-            const seatEl = get("seat");
-            const patch = {
-              url: urlEl ? String(urlEl.value).trim() : "",
-              routes: {
-                inbox: inboxEl ? !!inboxEl.checked : true,
-                seat: seatEl ? String(seatEl.value).trim() : ""
-              }
-            };
-            rhost.invoke("settings.set", patch).then((res) => {
-              if (!alive()) return;
-              if (res && res.ok === false && statusEl) statusEl.textContent = `Not saved: ${res.error}`;
-              else refreshStatus();
-            }).catch((e) => rhost.log.error("settings.set failed", e));
-            return null;
-          }
-        });
-        return () => {
-          disposed = true;
-          statusEl = null;
-          try {
-            if (typeof disposeSection === "function") disposeSection();
-          } catch (_) {
-          }
-        };
-      };
-    }
-  });
-
   // plugins/tickets-viewer/renderer.js
-  var require_renderer4 = __commonJS({
+  var require_renderer3 = __commonJS({
     "plugins/tickets-viewer/renderer.js"(exports, module) {
       "use strict";
       function humanizeAge(ms) {
@@ -10349,7 +10234,7 @@ ${p.root}` : p.key;
   });
 
   // plugins/workbench/renderer.js
-  var require_renderer5 = __commonJS({
+  var require_renderer4 = __commonJS({
     "plugins/workbench/renderer.js"(exports, module) {
       "use strict";
       var WORKBENCH_HTML = `
@@ -11182,9 +11067,8 @@ Modified ${when}` : ent.name;
         // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
         "git-branches": require_renderer(),
         "memory-viewer": require_renderer2(),
-        "ntfy": require_renderer3(),
-        "tickets-viewer": require_renderer4(),
-        "workbench": require_renderer5()
+        "tickets-viewer": require_renderer3(),
+        "workbench": require_renderer4()
         // >>> END BUILD-GENERATED PLUGIN MODULES
       };
       var registry = {
@@ -34991,7 +34875,7 @@ ${detail}` });
   });
 
   // renderer/renderer.js
-  var require_renderer6 = __commonJS({
+  var require_renderer5 = __commonJS({
     "renderer/renderer.js"() {
       var { Terminal } = require_xterm();
       var { FitAddon } = require_addon_fit();
@@ -41708,7 +41592,7 @@ ${res.stderr}` : "");
   shim.start().then((welcome) => {
     osShim.__setHome(welcome && welcome.home);
     window.__CLODEX_PLUGIN_REGISTRY__ = pluginRegistry;
-    require_renderer6();
+    require_renderer5();
     menubar.mount(shim);
     mountVersion();
   }).catch((err) => {
