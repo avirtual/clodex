@@ -85,7 +85,9 @@ function registerIpcHandlers(deps) {
       throw new Error(`A session named "${p.name}" is archived or saved — unarchive it or pick another name.`);
     }
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], p.denyBuiltins || [], seedTools || [], p.disabledSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null);
+    const seedSkills = (p.disabledSkills === undefined) ? agentDefaults.getDefaultSkillDeny() : p.disabledSkills;
+    const seedBuiltins = (p.denyBuiltins === undefined) ? agentDefaults.getDefaultBuiltinDeny() : p.denyBuiltins;
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], seedBuiltins || [], seedTools || [], seedSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null);
     const seedStrip = (p.stripLevel === 1 || p.stripLevel === 2) ? p.stripLevel : agentDefaults.getStrip(p.name);
     if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
     return { ok: true, session };
@@ -1006,6 +1008,8 @@ function registerIpcHandlers(deps) {
       codexComponents: CODEX_SL_COMPONENTS,
       claudeTools: CLAUDE_TOOLS,
       defaultToolDeny: agentDefaults.getDefaultDeny(),
+      defaultSkillDeny: agentDefaults.getDefaultSkillDeny(),
+      defaultBuiltinDeny: agentDefaults.getDefaultBuiltinDeny(),
       proxyEnabled: s.proxyEnabled,
       proxyUrl: s.proxyUrl,
       lastCustomProxyUrl: s.lastCustomProxyUrl,
@@ -1631,6 +1635,16 @@ function registerIpcHandlers(deps) {
   handle('defaults:setToolDeny', (_e, list) => {
     agentDefaults.setDefaultDeny(Array.isArray(list) ? list : []);
     return agentDefaults.getDefaultDeny();
+  });
+
+  handle('defaults:setSkillDeny', (_e, list) => {
+    agentDefaults.setDefaultSkillDeny(Array.isArray(list) ? list : []);
+    return agentDefaults.getDefaultSkillDeny();
+  });
+
+  handle('defaults:setBuiltinDeny', (_e, list) => {
+    agentDefaults.setDefaultBuiltinDeny(Array.isArray(list) ? list : []);
+    return agentDefaults.getDefaultBuiltinDeny();
   });
 
   handle('theme:set', (e, name) => { setUiTheme(name, e.sender); });

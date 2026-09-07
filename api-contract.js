@@ -219,6 +219,8 @@ const API_CONTRACT = [
   { name: 'onSpeakerBusy', kind: 'on', channel: 'speaker-busy' },
   { name: 'onZoomNudge', kind: 'on', channel: 'zoom-nudge' },
   { name: 'setDefaultToolDeny', kind: 'invoke', channel: 'defaults:setToolDeny' },
+  { name: 'setDefaultSkillDeny', kind: 'invoke', channel: 'defaults:setSkillDeny' },
+  { name: 'setDefaultBuiltinDeny', kind: 'invoke', channel: 'defaults:setBuiltinDeny' },
   { name: 'openWirescope', kind: 'invoke', channel: 'app:openWirescope' },
   { name: 'wirescopeStatus', kind: 'invoke', channel: 'wirescope:status' },
   { name: 'wirescopeStart', kind: 'invoke', channel: 'wirescope:start' },
