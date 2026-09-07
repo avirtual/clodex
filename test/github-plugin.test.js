@@ -144,7 +144,7 @@ function answer(cmd, args, state) {
   if (line.startsWith('gh api graphql')) {
     return Object.assign(ok('{}'), { data: { data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } } });
   }
-  if (line.startsWith('gh issue list')) return Object.assign(ok('[]'), { data: ISSUE_LIST });
+  if (line.startsWith('gh issue list')) return Object.assign(ok('[]'), { data: state.noIssues ? [] : ISSUE_LIST });
   if (line.startsWith('gh issue view 11')) return Object.assign(ok('{}'), { data: ISSUE_VIEW_SHORT });
   if (line.startsWith('gh issue view')) return Object.assign(ok('{}'), { data: ISSUE_VIEW });
   return no(`unstubbed command: ${line}`);
@@ -171,10 +171,10 @@ function seedProc(spawns, state) {
   require.cache[PROC_PATH] = { id: PROC_PATH, filename: PROC_PATH, loaded: true, exports, children: [], paths: [] };
 }
 
-function boot({ pr = true, dirty = false } = {}) {
+function boot({ pr = true, dirty = false, noIssues = false } = {}) {
   const spawns = [];
   const injected = [];
-  const state = { pr, dirty };
+  const state = { pr, dirty, noIssues };
   for (const p of [ENGINE_PATH, WORKFLOWS_PATH, PROC_PATH]) delete require.cache[p];
   seedProc(spawns, state);
   const engine = require(ENGINE_PATH);
@@ -631,6 +631,14 @@ test('github: `issue 10` fences the body as untrusted, escapes it, and truncates
     const fenced = out.slice(out.indexOf('---- UNTRUSTED:'), out.indexOf('---- END UNTRUSTED ----'));
     assert.match(fenced, /truncated, \d+ more chars/, 'the truncation happened to the quoted text, inside the fence');
 
+    // The body is held to a SHARE of the reply, not to its own 6000 cap: this
+    // fixture's body would otherwise spend everything and the comment below —
+    // the one an agent needs to know the issue was answered — would silently
+    // not be there at all.
+    assert.ok(out.includes('-- comment by @eve, 1h ago --'),
+      'a comment survives a body long enough to have eaten the whole reply');
+    assert.ok(out.includes('a comment'), 'with its text');
+
     assert.match(out, /#10 a real issue — @dan, opened 2h ago, OPEN, labels: bug/, 'the header line');
     assert.ok(out.includes('https://github.com/avirtual/clodex/issues/10'), 'and the url');
 
@@ -638,6 +646,21 @@ test('github: `issue 10` fences the body as untrusted, escapes it, and truncates
     assert.deepStrictEqual(argv, [['gh', 'issue', 'view', '10',
       '--json', 'number,title,author,createdAt,state,url,body,comments,labels']],
       'exactly one read, and the number reached gh as an argument');
+  } finally { cleanup(); }
+});
+
+test('github: an empty tracker answers `no open issues`, not an empty reply', async () => {
+  const { spawns, cleanup } = boot({ noIssues: true });
+  try {
+    const replies = await fireFor('[agent:gh issues]');
+    assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
+    // ENTER: the read really happened — this is the case where "nothing came
+    // back" and "the call failed" look identical from the reply alone, so the
+    // distinguishing evidence is that gh was asked at all.
+    assert.ok(spawns.some((a) => a[0] === 'gh' && a[1] === 'issue' && a[2] === 'list'),
+      'ENTER: the list read ran and returned an empty set');
+    assert.strictEqual(replies[0], '[gh] no open issues',
+      'an empty tracker is stated, not rendered as a bare prefix an agent must interpret');
   } finally { cleanup(); }
 });
 
