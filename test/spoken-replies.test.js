@@ -170,6 +170,37 @@ test('a turn ending on a tool output is not spoken', () => {
     'but it must never be flagged as the reply that ends the turn');
 });
 
+// The shape the current Codex build writes instead of `agent_message`: the
+// reply is a `response_item` `message`, and an `item_completed` `AgentMessage`
+// repeats it. A seat's `[agent:dm]` has to reach the scanner from the first and
+// not a second time from the twin.
+test('a Codex response_item reply reaches onText exactly once', () => {
+  const seen = runWatcher([
+    {
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed', thread_id: 't1', turn_id: 'u1',
+        item: { type: 'AgentMessage', id: 'msg_r', content: [{ type: 'Text', text: '[agent:dm clodex] the audit' }], phase: 'commentary' },
+      },
+    },
+    {
+      type: 'response_item',
+      payload: {
+        type: 'message', id: 'msg_r', role: 'assistant',
+        content: [{ type: 'output_text', text: '[agent:dm clodex] the audit' }],
+        phase: 'commentary',
+      },
+    },
+    { type: 'event_msg', payload: { type: 'token_count' } },
+    { type: 'event_msg', payload: { type: 'task_complete' } },
+  ]);
+  assert.deepStrictEqual(
+    seen.map((s) => s.text),
+    ['[agent:dm clodex] the audit'],
+    'the intent must reach the scan, and the AgentMessage twin must not repeat it',
+  );
+});
+
 test('a Codex turn still mid-flight does not report a turn end', () => {
   const seen = runWatcher([
     { type: 'event_msg', payload: { type: 'agent_message', message: 'thinking aloud' } },

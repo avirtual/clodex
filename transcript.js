@@ -13,6 +13,22 @@
 
 const fs = require('fs');
 
+const CODEX_TEXT_BLOCK_TYPES = ['output_text', 'input_text'];
+
+function codexResponseMessage(obj) {
+  if ((obj.type || '') !== 'response_item') return null;
+  const payload = obj.payload || {};
+  if (payload.type !== 'message') return null;
+  const role = payload.role;
+  if (role !== 'assistant' && role !== 'user') return null;
+  if (!Array.isArray(payload.content)) return null;
+  const text = payload.content
+    .filter(b => b && CODEX_TEXT_BLOCK_TYPES.includes(b.type) && b.text)
+    .map(b => String(b.text))
+    .join('\n');
+  return text ? { role, text } : null;
+}
+
 function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
   const raw = fs.readFileSync(jsonlPath, 'utf-8');
   const lines = raw.split('\n').filter(l => l.trim());
@@ -59,6 +75,13 @@ function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
         if (lastRole !== 'user') parts.push('\n## 👤 User\n');
         parts.push(String(payload.message).trim());
         lastRole = 'user';
+      }
+    } else {
+      const msg = codexResponseMessage(obj);
+      if (msg && msg.text.trim()) {
+        if (lastRole !== msg.role) parts.push(msg.role === 'assistant' ? '\n## 🤖 Assistant\n' : '\n## 👤 User\n');
+        parts.push(msg.text.trim());
+        lastRole = msg.role;
       }
     }
   }
@@ -133,6 +156,9 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       const payload = obj.payload || {};
       if (payload.type === 'agent_message' && payload.message) { role = 'assistant'; text = String(payload.message); }
       else if (payload.type === 'user_message' && payload.message) { role = 'user'; text = String(payload.message); }
+    } else {
+      const msg = codexResponseMessage(obj);
+      if (msg) { role = msg.role; text = msg.text; }
     }
 
     if (!role || !text.trim()) continue;
@@ -188,7 +214,8 @@ function extractText(obj) {
   if (type === 'response_item' && payload.type === 'function_call_output') {
     return String(payload.output || '');
   }
-  return '';
+  const msg = codexResponseMessage(obj);
+  return msg && msg.role === 'assistant' ? msg.text : '';
 }
 
 module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText, isTurnEndEntry };

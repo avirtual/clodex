@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Codex sessions' replies reach Clodex again.** Intents (`[agent:dm]`, `[agent:task done]`, …) and the activity signals were silently dropped, because the current Codex CLI writes replies in a shape the transcript reader did not recognise.
+
 ## 5.35.1 — 2026-09-07
 
 - **Bundled wirescope updated to v0.6.59: keep-warm holds survive an OAuth token lapse.** The proxy now spends a cheap one-shot turn after the access token expires so idle seats refresh their credential; before this, every hold on an idle box died at the first lapse (04:26 this morning) and the next turn paid a full cold re-cache.
