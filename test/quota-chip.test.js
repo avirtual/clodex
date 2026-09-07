@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { shapeQuota, quotaChip, fmtQuotaReset, QUOTA_429_RECENT_S } = require('../proxy-util');
+const { shapeQuota, quotaChip, fmtQuotaReset, QUOTA_429_RECENT_S, QUOTA_WINDOW_LABEL } = require('../proxy-util');
 const { CLAIM_WINDOW } = require('../wire/quota');
 
 // Measured verbatim off this box's wirescope v0.6.53 /_status at 95% weekly.
@@ -56,6 +56,14 @@ test('shapeQuota: the live payload maps to the whole shaped object', () => {
   assert.deepStrictEqual(shapeQuota(LIVE, CAPS), {
     status: 'allowed_warning',
     window: '7d',
+    // Every window the API published, shaped with the same guards. The chip
+    // renders one segment per window off this; the top-level fields above stay
+    // because the primary still drives the fallback and pickQuota's void-on-roll.
+    windows: {
+      '5h': { usedPct: 32.0, remainingPct: 68.0, status: 'allowed', reset: 1786794600, resetsInS: 3486 },
+      '7d': { usedPct: 95.0, remainingPct: 5.0, status: 'allowed_warning', reset: 1787043600, resetsInS: 252486 },
+      overage: { usedPct: null, remainingPct: null, status: 'rejected', reset: null, resetsInS: null },
+    },
     usedPct: 95.0,
     remainingPct: 5.0,
     resetsInS: 252486,
@@ -90,6 +98,7 @@ test('shapeQuota: a missing primary falls back to the top-level window/reset', (
   assert.deepStrictEqual(q, {
     status: 'allowed_warning',
     window: '7d',
+    windows: {},
     usedPct: null,
     remainingPct: null,
     resetsInS: 900,
@@ -110,31 +119,167 @@ test('shapeQuota: non-finite numbers do not survive as numbers', () => {
   assert.strictEqual(q.resetsInS, null);
 });
 
-// ---- the render decision ----
-
-test('quotaChip: allowed → nothing rendered at all', () => {
-  const q = shapeQuota({ ...LIVE, status: 'allowed', primary: { ...LIVE.primary, status: 'allowed', used_pct: 32 } }, CAPS);
-  assert.notStrictEqual(q, null, 'ENTER: the shaping must succeed, or this pins the gate rather than the allowed branch');
-  assert.strictEqual(quotaChip(q), null);
+test('shapeQuota: a non-object `windows` shapes to {}, not to a hollow map', () => {
+  // The empty map is what makes quotaChip fall back to the single-window
+  // statement. A string surviving as `windows` would reach Object.entries and
+  // shape one entry per CHARACTER; a null would reach it and throw.
+  const base = { status: 'allowed_warning', representative_window: '7d', resets_in_s: 900, age_s: 1 };
+  for (const junk of ['x', null, 7, undefined]) {
+    assert.strictEqual(Boolean(junk && typeof junk === 'object'), false,
+      `ENTER: the input's windows must really be a non-object, got ${String(junk)}`);
+    // Whole-object where the fixture allows it: a partial match would read
+    // around a field that stopped being mapped while `windows` was being added.
+    assert.deepStrictEqual(shapeQuota({ ...base, windows: junk }, CAPS), {
+      status: 'allowed_warning',
+      window: '7d',
+      windows: {},
+      usedPct: null,
+      remainingPct: null,
+      resetsInS: 900,
+      reset: null,
+      ageS: 1,
+      last429AgeS: null,
+      last429At: null,
+    });
+  }
 });
 
-test('quotaChip: allowed_warning → visible, carrying percent, window and reset', () => {
-  // Literal, not a regex: /95%/ is true of the old "95% of 7d" shape and the
-  // new one both, so only the whole string pins which one ships.
-  const chip = quotaChip(shapeQuota(LIVE, CAPS));
+test('shapeQuota: a non-object ENTRY inside `windows` is skipped, not shaped', () => {
+  // Same guard one level down. A number here would shape to an all-null window,
+  // which quotaChip drops for having no percentage — silently, so the map would
+  // read as "the API published nothing for this window" rather than as junk.
+  const raw = {
+    status: 'allowed_warning', age_s: 1,
+    primary: { window: '7d', used_pct: 95, resets_in_s: 900 },
+    windows: { five_hour: 7, '7d': { used_pct: 95, status: 'allowed_warning', resets_in_s: 900 } },
+  };
+  assert.notStrictEqual(typeof raw.windows.five_hour, 'object',
+    'ENTER: the entry under test must really be a non-object, or nothing is being skipped');
+  const q = shapeQuota(raw, CAPS);
+  assert.deepStrictEqual(q.windows, {
+    '7d': { usedPct: 95, remainingPct: null, status: 'allowed_warning', reset: null, resetsInS: 900 },
+  });
+  assert.strictEqual('five_hour' in q.windows, false, 'the junk key must not survive as an all-null window');
+});
+
+// ---- the render decision ----
+
+// The three windows the operator's own account reports, at the percentages
+// that motivated the feature. The resets are chosen so fmtQuotaReset renders
+// exactly the tooltip literals below: 17520s = 4h 52m, 66720s = 18h 32m.
+const THREE = (over = {}) => shapeQuota({
+  status: 'allowed_warning', age_s: 1,
+  primary: { window: '7d_oi', used_pct: 86, remaining_pct: 14, status: 'allowed_warning', resets_in_s: 66720 },
+  windows: {
+    '5h': { used_pct: 0, status: 'allowed', resets_in_s: 17520 },
+    '7d': { used_pct: 76, status: 'allowed', resets_in_s: 66720 },
+    '7d_oi': { used_pct: 86, status: 'allowed_warning', resets_in_s: 66720 },
+  },
+  ...over,
+}, CAPS);
+
+test('quotaChip: all three windows read compactly, labelled the way the CLI names them', () => {
+  const chip = quotaChip(THREE());
   assert.strictEqual(chip.level, 'warn');
-  assert.strictEqual(chip.text, '7d quota 95% used · resets in 2d 22h');
+  assert.strictEqual(chip.text, '5h:0% | W:76% | F:86%');
+  // The resets moved here, one line per window in the same order. Whole-prefix
+  // literal: the point of the change is which window each number belongs to,
+  // and a regex on a percentage cannot tell those apart.
+  assert.ok(chip.tip.startsWith(
+    '5h: 0% used, resets in 4h 52m\nweek (all models): 76% used, resets in 18h 32m\nweek (Fable): 86% used, resets in 18h 32m'),
+  `tooltip did not lead with the three window lines: ${JSON.stringify(chip.tip)}`);
+  assert.match(chip.tip, /not this session/i);
   assert.strictEqual(chip.stale, false);
 });
 
-test('quotaChip: the quota statement leads even when the window is at 100% and rejected', () => {
-  const q = shapeQuota({ ...LIVE, status: 'rejected', primary: { ...LIVE.primary, used_pct: 100 } }, CAPS);
-  const chip = quotaChip(q);
+test('quotaChip: a recent refusal stays last after the window bar', () => {
+  const chip = quotaChip(THREE({ last_429_age_s: 120 }));
   assert.strictEqual(chip.level, 'loud');
-  assert.strictEqual(chip.text, '7d quota 100% used · resets in 2d 22h');
+  assert.strictEqual(chip.text, '5h:0% | W:76% | F:86% · rate-limited 2m ago');
 });
 
-test('quotaChip: a 5h window reads as its own quota statement', () => {
+test('quotaChip: every window allowed and no refusal → nothing rendered at all', () => {
+  const q = THREE({
+    status: 'allowed',
+    primary: { window: '7d_oi', used_pct: 86, status: 'allowed', resets_in_s: 66720 },
+    windows: {
+      '5h': { used_pct: 0, status: 'allowed', resets_in_s: 17520 },
+      '7d': { used_pct: 76, status: 'allowed', resets_in_s: 66720 },
+      '7d_oi': { used_pct: 86, status: 'allowed', resets_in_s: 66720 },
+    },
+  });
+  assert.strictEqual(Object.keys(q.windows).length, 3,
+    'ENTER: the fixture must really carry three windows, or this asserts the empty-map branch');
+  assert.strictEqual(quotaChip(q), null);
+});
+
+test('quotaChip: one window at rejected takes the whole chip loud', () => {
+  const q = THREE({
+    windows: {
+      '5h': { used_pct: 0, status: 'allowed', resets_in_s: 17520 },
+      '7d': { used_pct: 76, status: 'allowed', resets_in_s: 66720 },
+      '7d_oi': { used_pct: 100, status: 'rejected', resets_in_s: 66720 },
+    },
+  });
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.level, 'loud');
+  assert.strictEqual(chip.text, '5h:0% | W:76% | F:100%');
+});
+
+test('quotaChip: a window with no percentage neither renders nor votes on the level', () => {
+  // The live shape, not a hypothetical: an org with overage disabled publishes
+  // `overage` at status 'rejected' with a null percentage on every payload. A
+  // level scan over the raw map would hold the chip permanently loud over a
+  // window it does not show.
+  const q = THREE({
+    windows: {
+      '5h': { used_pct: 0, status: 'allowed', resets_in_s: 17520 },
+      '7d': { used_pct: 76, status: 'allowed', resets_in_s: 66720 },
+      '7d_oi': { used_pct: 86, status: 'allowed_warning', resets_in_s: 66720 },
+      overage: { used_pct: null, status: 'rejected', resets_in_s: null, disabled_reason: 'org_level_disabled' },
+    },
+  });
+  assert.strictEqual(q.windows.overage.status, 'rejected',
+    'ENTER: the shaped map must really carry a rejected overage, or nothing is being suppressed');
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.level, 'warn');
+  assert.strictEqual(chip.text, '5h:0% | W:76% | F:86%');
+  assert.doesNotMatch(chip.tip, /overage/);
+});
+
+test('quotaChip: an unknown window key falls back to the key itself, chip and tooltip alike', () => {
+  const q = THREE({
+    windows: {
+      '5h': { used_pct: 0, status: 'allowed', resets_in_s: 17520 },
+      x1: { used_pct: 12, status: 'allowed_warning', resets_in_s: 2400 },
+    },
+  });
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.text, '5h:0% | x1:12%');
+  assert.match(chip.tip, /^5h: 0% used, resets in 4h 52m\nx1: 12% used, resets in 40m\n/);
+});
+
+test('quotaChip: the live payload renders the windows it carries, overage dropped', () => {
+  // LIVE is a verbatim /_status: three windows, `overage` percentage-less.
+  const chip = quotaChip(shapeQuota(LIVE, CAPS));
+  assert.strictEqual(chip.level, 'warn');
+  assert.strictEqual(chip.text, '5h:32% | W:95%');
+  assert.strictEqual(chip.stale, false);
+});
+
+test('quotaChip: no windows map at all → the single-window statement, reset still inline', () => {
+  // A wirescope payload from a proxy that publishes only the representative
+  // window. Its reset stays in the TEXT because there is no tooltip line to
+  // move it to, which is the whole reason this branch is kept.
+  const q = shapeQuota({ status: 'allowed_warning', age_s: 1, primary: { window: '7d', used_pct: 80, remaining_pct: 20, resets_in_s: 2400 } }, CAPS);
+  assert.deepStrictEqual(q.windows, {}, 'ENTER: the fixture must carry no window map, or this pins the multi-window branch');
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.text, 'week (all models) quota 80% used · resets in 40m');
+  assert.strictEqual(chip.level, 'warn');
+  assert.match(chip.tip, /20% of the week \(all models\) left\./);
+});
+
+test('quotaChip: the fallback names a 5h window the same way the bar abbreviates it', () => {
   const q = shapeQuota({ status: 'allowed_warning', primary: { window: '5h', used_pct: 80, resets_in_s: 2400 }, age_s: 1 }, CAPS);
   assert.strictEqual(quotaChip(q).text, '5h quota 80% used · resets in 40m');
 });
@@ -147,8 +292,9 @@ test('quotaChip: a percentage with no window still says "quota", not a bare numb
   assert.strictEqual(quotaChip(q).text, 'quota 80% used · resets in 40m');
 });
 
-test('quotaChip: rejected → loud', () => {
-  const q = shapeQuota({ ...LIVE, status: 'rejected' }, CAPS);
+test('quotaChip: a top-level rejected with no window map is still loud', () => {
+  const q = shapeQuota({ status: 'rejected', age_s: 1, primary: { window: '7d', used_pct: 100, resets_in_s: 2400 } }, CAPS);
+  assert.deepStrictEqual(q.windows, {}, 'ENTER: no map, so the top-level status is what decides');
   assert.strictEqual(quotaChip(q).level, 'loud');
 });
 
@@ -180,8 +326,22 @@ test('quotaChip: a fractional refusal age floors, so the seconds form never read
   assert.strictEqual(quotaChip(q).text, '5h quota · rate-limited 59s ago');
 });
 
+// LIVE with every shown window comfortable. The top-level status alone cannot
+// silence the chip once a window map is present — the per-window statuses are
+// what decide — so a test about the OTHER reasons to hide it has to calm both.
+const CALM = {
+  ...LIVE, status: 'allowed',
+  primary: { ...LIVE.primary, status: 'allowed' },
+  windows: {
+    ...LIVE.windows,
+    '7d': { ...LIVE.windows['7d'], status: 'allowed' },
+  },
+};
+
 test('quotaChip: an OLD last_429 does not keep the chip up on its own', () => {
-  const q = shapeQuota({ ...LIVE, status: 'allowed', last_429_age_s: QUOTA_429_RECENT_S + 1 }, CAPS);
+  const q = shapeQuota({ ...CALM, last_429_age_s: QUOTA_429_RECENT_S + 1 }, CAPS);
+  assert.strictEqual(quotaChip({ ...q, last429AgeS: QUOTA_429_RECENT_S - 1 }).level, 'loud',
+    'ENTER: a RECENT refusal on this fixture must be loud, or the null below proves nothing about the age');
   assert.strictEqual(quotaChip(q), null);
 });
 
@@ -191,7 +351,12 @@ test('quotaChip: no quota (gate closed, or nothing shaped) → nothing', () => {
 });
 
 test('quotaChip: an unknown status degrades to silence, never to a permanent chip', () => {
-  const q = shapeQuota({ ...LIVE, status: 'some_future_value' }, CAPS);
+  const q = shapeQuota({
+    ...CALM, status: 'some_future_value',
+    windows: { ...CALM.windows, '7d': { ...CALM.windows['7d'], status: 'some_future_value' } },
+  }, CAPS);
+  assert.strictEqual(q.windows['7d'].status, 'some_future_value',
+    'ENTER: the unknown value must reach the per-window status, which is what the level scan reads');
   assert.strictEqual(quotaChip(q), null);
 });
 
@@ -207,7 +372,7 @@ test('quotaChip: a dead POLLER dims the chip even while the server age stays you
   // The failure the age_s rule exists to prevent, reached by the other route:
   // if delivery stops (proxy down, machine asleep, every base idle) age_s
   // freezes at whatever it last said, and a chip trusting it alone would render
-  // "resets in 2d 22h" at full confidence forever.
+  // week-old percentages at full confidence forever.
   const q = shapeQuota({ ...LIVE, age_s: 0.5 }, CAPS);
   assert.strictEqual(quotaChip(q, 0).stale, false, 'ENTER: fresh on both clocks must be non-stale, or the assertion below proves nothing');
   const dead = quotaChip(q, 3600);
@@ -249,21 +414,34 @@ test('#drawer-quota max-width fits the longest string quotaChip can emit', () =>
   assert.match(rule[1], /text-overflow:\s*ellipsis/, 'ENTER: it ellipsises, which is what makes overflow silent');
 
   // Worst case built through the real function rather than hardcoded, so a new
-  // window label or a longer part is measured rather than assumed. 'overage' is
-  // the longest CLAIM_WINDOW label; `23h 59m` is the longest reset rendering —
-  // fmtQuotaReset's `${h}h ${m}m` branch runs up to 23h, one digit wider than
-  // the `4h 59m` this was first sized to and than any `Nd Nh` — and 100%/59s
+  // window label or a longer part is measured rather than assumed. Both shapes
+  // the chip can emit are generated: the single-window fallback over every
+  // CLAIM_WINDOW value, and the multi-window bar over every label the table
+  // knows. `23h 59m` is the longest reset rendering — fmtQuotaReset's
+  // `${h}h ${m}m` branch runs up to 23h, wider than any `Nd Nh` — and 100%/59s
   // the longest pct and age.
-  const longest = Object.values(CLAIM_WINDOW)
-    .map((w) => quotaChip({ status: 'rejected', window: w, usedPct: 100, resetsInS: 23 * 3600 + 59 * 60, last429AgeS: 59, ageS: 1 }, 0).text)
-    .reduce((a, b) => (b.length > a.length ? b : a));
-  assert.strictEqual(longest, 'overage quota 100% used · resets in 23h 59m · rate-limited 59s ago');
+  const RESET = 23 * 3600 + 59 * 60;
+  const everyWindow = {};
+  for (const k of Object.keys(QUOTA_WINDOW_LABEL)) {
+    everyWindow[k] = { usedPct: 100, status: 'rejected', resetsInS: RESET };
+  }
+  const candidates = Object.values(CLAIM_WINDOW)
+    .map((w) => quotaChip({ status: 'rejected', window: w, usedPct: 100, resetsInS: RESET, last429AgeS: 59, ageS: 1 }, 0).text)
+    .concat(quotaChip({ status: 'rejected', windows: everyWindow, last429AgeS: 59, ageS: 1 }, 0).text);
+  const longest = candidates.reduce((a, b) => (b.length > a.length ? b : a));
+  // The FALLBACK wins, not the bar the chip normally shows: spelling the window
+  // out beats four abbreviated segments. Sizing to the common shape would
+  // ellipsise the refusal off a wirescope reading that carries no window map.
+  assert.strictEqual(longest, 'week (all models) quota 100% used · resets in 23h 59m · rate-limited 59s ago');
+  assert.strictEqual(
+    candidates.find((t) => t.startsWith('5h:')), '5h:100% | W:100% | F:100% | O:100% · rate-limited 59s ago',
+    'ENTER: the multi-window bar must be among the candidates, or only the fallback was measured');
 
-  // 343px measured in Electron for this string at 10px in the app's font stack,
-  // border-box (padding included); 66 × 5.2 = 344 keeps the pin at or above
+  // 389px measured in Electron for this string at 10px in the app's font stack,
+  // border-box (padding included); 76 × 5.2 = 396 keeps the pin at or above
   // that. Re-measure rather than rescaling the constant if the wording changes.
   assert.ok(cap >= Math.ceil(longest.length * 5.2),
-    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 343px) — the trailing refusal is what gets cut`);
+    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 389px) — the trailing refusal is what gets cut`);
 });
 
 test('fmtQuotaReset: minutes, hours and days; nothing for absent or elapsed', () => {

@@ -288,6 +288,25 @@ test('pickQuota: an entry with NOTHING to display ranks below a complete one, wh
   assert.ok(quotaChip(picked.quota, 0), 'and the chip renders — the point of the rule');
 });
 
+test('pickQuota: a reading that renders only off its window map still counts as complete', () => {
+  // Reachable: snapshotFrom leaves `primary` null when the representative claim
+  // does not resolve to a window it holds, while the per-window headers still
+  // parse. The chip renders such a reading off `windows` alone, so ranking it
+  // as having nothing to display would blank a chip it could have filled.
+  const nowMs = NOW * 1000;
+  const q = shapeQuota({
+    status: 'allowed_warning', age_s: 1,
+    windows: { '7d': { used_pct: 95, status: 'allowed_warning', reset: NOW + 1000 } },
+  }, { quota: true });
+  assert.strictEqual(q.usedPct, null, 'ENTER: no primary percentage');
+  assert.strictEqual(q.window, null, 'ENTER: and no representative window — the map is all there is');
+  const picked = pickQuota([
+    { quota: q, at: nowMs - 5000, source: 'wirescope' },
+    { quota: shapeQuota({ status: 'allowed_warning', age_s: 1 }, { quota: true }), at: nowMs, source: 'wire' },
+  ], nowMs);
+  assert.strictEqual(quotaChip(picked.quota, 0).text, 'W:95%');
+});
+
 test('pickQuota: the wire source outranks wirescope even when wirescope polled later', () => {
   // The wire reading comes off our own forwarded turn; the poll is of a cache
   // that the same turn updated, so the wire cannot be the staler of the two.
@@ -389,7 +408,8 @@ test('pickQuota: the picked reading renders through quotaChip unchanged below th
   const picked = pickQuota([{ quota: wireQ(), at: nowMs, source: 'wire' }], nowMs);
   const chip = quotaChip(picked.quota, picked.clientAgeS);
   assert.strictEqual(chip.level, 'warn');
-  assert.strictEqual(chip.text, '7d quota 95% used · resets in 16m');
+  // The single-window fallback: this fixture carries a primary and no `windows`.
+  assert.strictEqual(chip.text, 'week (all models) quota 95% used · resets in 16m');
 });
 
 // ---- end to end: headers in, chip out ----
@@ -401,7 +421,11 @@ test('the whole path: live headers → store → shapeQuota → pickQuota → ch
   const picked = pickQuota([{ quota: shaped, at: NOW * 1000, source: 'wire' }], NOW * 1000);
   const chip = quotaChip(picked.quota, picked.clientAgeS);
   assert.strictEqual(chip.level, 'warn');
-  assert.strictEqual(chip.text, '7d quota 95% used · resets in 2d 22h');
+  // Both windows the live headers carry, each countdown derived by pickQuota
+  // from that window's own absolute reset — 3490s and 252490s off NOW.
+  assert.strictEqual(chip.text, '5h:32% | W:95%');
+  assert.ok(chip.tip.startsWith('5h: 32% used, resets in 58m\nweek (all models): 95% used, resets in 2d 22h\n'),
+    `tooltip did not lead with the per-window lines: ${JSON.stringify(chip.tip)}`);
   assert.match(chip.tip, /not this session/i);
 });
 

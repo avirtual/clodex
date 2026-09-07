@@ -24,6 +24,9 @@ const QUOTA = {
 const SHAPED = {
   status: 'allowed_warning',
   window: '7d',
+  // Empty, and that is the case under test: this fixture publishes no
+  // `windows`, so the chip renders its single-window fallback off the primary.
+  windows: {},
   usedPct: 95.0,
   remainingPct: 5.0,
   resetsInS: 252486,

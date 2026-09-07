@@ -344,10 +344,24 @@ function shapeQuota(q, capabilities) {
   if (!q || typeof q !== 'object') return null;
   const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const p = (q.primary && typeof q.primary === 'object') ? q.primary : {};
+  const windows = {};
+  if (q.windows && typeof q.windows === 'object') {
+    for (const [k, w] of Object.entries(q.windows)) {
+      if (!w || typeof w !== 'object') continue;
+      windows[k] = {
+        usedPct: num(w.used_pct),
+        remainingPct: num(w.remaining_pct),
+        status: typeof w.status === 'string' ? w.status : null,
+        reset: num(w.reset),
+        resetsInS: num(w.resets_in_s),
+      };
+    }
+  }
   return {
     status: typeof q.status === 'string' ? q.status : null,
     window: typeof p.window === 'string' ? p.window
       : (typeof q.representative_window === 'string' ? q.representative_window : null),
+    windows,
     usedPct: num(p.used_pct),
     remainingPct: num(p.remaining_pct),
     resetsInS: num(p.resets_in_s) ?? num(q.resets_in_s),
@@ -383,16 +397,16 @@ function shapeQuota(q, capabilities) {
 // `entries` are `{ quota, at, source }` — `quota` already through shapeQuota,
 // `at` the ms epoch WE received it, `source` 'wire' or 'wirescope'.
 // Returns `{ quota, clientAgeS }` (quota carrying a freshly derived
-// resetsInS), or null for "render nothing".
+// resetsInS, top-level and per window), or null for "render nothing".
 //
 // Four rules, in order:
 //  1. A reading whose window has ALREADY ROLLED is void, not stale — its
 //     percentage describes a window that no longer exists, and showing it is
 //     worse than showing nothing. Only an absolute `reset` can detect this.
-//  2. A reading with NOTHING to display (no percentage and no window) ranks
-//     below one that has both, whatever its source. quotaChip renders null for
-//     such an entry, so letting it win by source rank blanks a chip a complete
-//     reading could have filled — a milder cousin of the bug that shipped.
+//  2. A reading with NOTHING to display (no percentage, no window, no window
+//     map entry carrying one) ranks below one that has something, whatever its
+//     source. quotaChip renders null for such an entry, so letting it win by
+//     source rank blanks a chip a complete reading could have filled.
 //  3. 'wire' outranks 'wirescope' regardless of age: the wire reading comes off
 //     our own forwarded turn, so it cannot be older than the poll of a cache
 //     that the same turn updated.
@@ -414,7 +428,8 @@ function pickQuota(entries, nowMs = Date.now()) {
     if (typeof q.reset === 'number' && Number.isFinite(q.reset) && nowS > q.reset) continue;
     // Rule 2 dominates rule 3: completeness is worth more than provenance,
     // because an incomplete winner renders nothing at all.
-    const complete = q.usedPct != null || q.window != null;
+    const complete = q.usedPct != null || q.window != null
+      || Object.values(q.windows || {}).some((w) => w && w.usedPct != null);
     const rank = (complete ? 2 : 0) + (e.source === 'wire' ? 1 : 0);
     const at = typeof e.at === 'number' ? e.at : 0;
     if (rank > bestRank || (rank === bestRank && at > bestAt)) {
@@ -435,9 +450,18 @@ function pickQuota(entries, nowMs = Date.now()) {
   const last429AgeS = (typeof q.last429At === 'number' && Number.isFinite(q.last429At))
     ? Math.max(0, Math.round(nowS - q.last429At))
     : q.last429AgeS;
+  const windows = {};
+  for (const [k, w] of Object.entries(q.windows || {})) {
+    windows[k] = {
+      ...w,
+      resetsInS: (typeof w.reset === 'number' && Number.isFinite(w.reset))
+        ? Math.max(0, Math.round(w.reset - nowS))
+        : w.resetsInS,
+    };
+  }
   const at = typeof best.at === 'number' ? best.at : 0;
   return {
-    quota: { ...q, resetsInS, last429AgeS },
+    quota: { ...q, windows, resetsInS, last429AgeS },
     clientAgeS: at > 0 ? (nowMs - at) / 1000 : 0,
   };
 }
@@ -466,6 +490,28 @@ function fmtQuotaAge(s) {
   return fmtQuotaReset(s);
 }
 
+const QUOTA_WINDOW_LABEL = {
+  '5h': { short: '5h', long: '5h' },
+  '7d': { short: 'W', long: 'week (all models)' },
+  '7d_oi': { short: 'F', long: 'week (Fable)' },
+  overage: { short: 'O', long: 'overage' },
+};
+const QUOTA_WINDOW_ORDER = ['5h', '7d', '7d_oi', 'overage'];
+
+function quotaWindowLabel(key) {
+  return QUOTA_WINDOW_LABEL[key] || { short: key, long: key };
+}
+
+function quotaWindows(q) {
+  const map = (q && q.windows && typeof q.windows === 'object') ? q.windows : {};
+  const keys = Object.keys(map);
+  const ordered = QUOTA_WINDOW_ORDER.filter((k) => keys.includes(k))
+    .concat(keys.filter((k) => !QUOTA_WINDOW_ORDER.includes(k)));
+  return ordered
+    .map((k) => ({ key: k, ...map[k] }))
+    .filter((w) => w.usedPct != null);
+}
+
 // The whole render decision, DOM-free. Returns null for "render nothing at
 // all" — the element appearing IS the signal, so a comfortable reading must
 // produce no element rather than a quiet one. A permanent readout showing a
@@ -479,35 +525,49 @@ function fmtQuotaAge(s) {
 function quotaChip(q, clientAgeS = 0) {
   if (!q) return null;
   const hot429 = q.last429AgeS != null && q.last429AgeS <= QUOTA_429_RECENT_S;
+  const shown = quotaWindows(q);
+  const statuses = shown.length ? shown.map((w) => w.status) : [q.status];
   let level = null;
-  if (q.status === 'rejected' || hot429) level = 'loud';
-  else if (q.status === 'allowed_warning') level = 'warn';
+  if (statuses.includes('rejected') || hot429) level = 'loud';
+  else if (statuses.includes('allowed_warning')) level = 'warn';
   // 'allowed', an unknown status, or no status at all → nothing. Degrading an
   // unrecognized value to silence keeps a vocabulary change from inventing a
   // permanent chip nobody can dismiss.
   if (!level) return null;
 
-  const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
-  const reset = fmtQuotaReset(q.resetsInS);
   const age = hot429 ? fmtQuotaAge(q.last429AgeS) : null;
   const parts = [];
-  if (pct) parts.push(q.window ? `${q.window} quota ${pct} used` : `quota ${pct} used`);
-  else if (q.window) parts.push(`${q.window} quota`);
-  if (reset) parts.push(`resets in ${reset}`);
+  let tipLines = [];
+  if (shown.length) {
+    parts.push(shown.map((w) => `${quotaWindowLabel(w.key).short}:${Math.round(w.usedPct)}%`).join(' | '));
+    tipLines = shown.map((w) => {
+      const r = fmtQuotaReset(w.resetsInS);
+      return `${quotaWindowLabel(w.key).long}: ${Math.round(w.usedPct)}% used${r ? `, resets in ${r}` : ''}`;
+    });
+  } else {
+    const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
+    const reset = fmtQuotaReset(q.resetsInS);
+    const label = q.window ? quotaWindowLabel(q.window).long : null;
+    if (pct) parts.push(label ? `${label} quota ${pct} used` : `quota ${pct} used`);
+    else if (label) parts.push(`${label} quota`);
+    if (reset) parts.push(`resets in ${reset}`);
+  }
   if (age) parts.push(`rate-limited ${age} ago`);
   if (!parts.length) return null;
 
   const serverAge = q.ageS != null ? q.ageS : 0;
   const stale = Math.max(serverAge, clientAgeS || 0) > QUOTA_STALE_S;
-  const tip = [
+  const sentences = [
     'Account plan quota, not this session.',
-    q.remainingPct != null ? `${Math.round(q.remainingPct)}% of the ${q.window || 'window'} left.` : null,
+    (!shown.length && q.remainingPct != null)
+      ? `${Math.round(q.remainingPct)}% of the ${q.window ? quotaWindowLabel(q.window).long : 'window'} left.` : null,
     age ? `A request was rate-limited ${age} ago; a 429 carries no quota headers, so the usage figure is from the last successful reading.` : null,
     stale ? 'Stale — nothing polls this, it updates only on a forwarded turn.' : null,
     // Distinct from the line above: that one is "the API has not spoken", this
     // one is "we are not receiving". The remedy differs, so the wording must.
     (clientAgeS || 0) > QUOTA_STALE_S ? 'The proxy has not reported in — this figure may be far older than it looks.' : null,
   ].filter(Boolean).join(' ');
+  const tip = tipLines.concat(sentences).join('\n');
 
   return { level, text: parts.join(' · '), tip, stale };
 }
@@ -565,6 +625,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
   shapeQuota, quotaChip, pickQuota, fmtQuotaReset, QUOTA_STALE_S, QUOTA_429_RECENT_S,
+  QUOTA_WINDOW_LABEL,
   boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,

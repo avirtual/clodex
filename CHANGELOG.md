@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- The quota chip now shows every window at a glance — `5h:0% | W:76% | F:86%` (5-hour, week all models, week Fable) — with per-window resets in its tooltip.
 - **Bundled wirescope updated to v0.6.60: the status-bar quota chip no longer says "rate-limited Nm ago" for a refused startup probe.** Claude Code fires a 1-token quota probe at startup and after clear/resume, and Anthropic refuses about half of them; the proxy now records those separately (`last_429_probe`) and stamps `last_429` only when a real turn is refused, so the chip's rate-limit note means what it says.
 
 ## 5.35.5 — 2026-09-07
