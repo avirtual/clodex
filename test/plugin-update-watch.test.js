@@ -18,7 +18,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { createPluginUpdateWatch } = require('../plugin-update-watch.js');
+const { createPluginUpdateWatch, DEFAULT_FIRST_RUN_DELAY_MS } = require('../plugin-update-watch.js');
 
 // rows: { id, installed, upToDate }[] ; verdicts: id -> resolveUpdate reply.
 // An id absent from `verdicts` answers a refusal, which is the offline shape.
@@ -236,6 +236,27 @@ test('list() hands out a copy — a caller mutating it cannot empty the cache', 
   await w.run();
   w.list().length = 0;
   assert.strictEqual(w.list().length, 1);
+});
+
+// ── start() fetches nothing synchronously ───────────────────────────────────
+
+test('start() does not fetch on the spot — the first sweep waits out a delay', async () => {
+  // engine.js calls start() at the bootstrap tail, and a run() there would put a
+  // GitHub tarball fetch on every launch's critical path — and on every test that
+  // constructs the real engine, which would then hit the network.
+  const asked = [];
+  const loader = {
+    libraryCatalog: async () => { asked.push('catalog'); return { ok: true, plugins: [] }; },
+    resolveUpdate: async () => ({ ok: true, changed: false }),
+  };
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent, firstRunDelayMs: 5 });
+  w.start();
+  assert.deepStrictEqual(asked, [], 'nothing was fetched by the call itself');
+  w.stop();
+  await new Promise((r) => setTimeout(r, 25));
+  assert.deepStrictEqual(asked, [], 'and stop() before the delay elapsed cancels the pending first sweep');
+  assert.ok(DEFAULT_FIRST_RUN_DELAY_MS >= 30000,
+    'the shipped delay must be long enough to be off the launch path, not a token setTimeout(0)');
 });
 
 test('onChange fires when the confirmed set changes and stays quiet when it does not', async () => {

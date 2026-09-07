@@ -9,6 +9,13 @@ filter only; `resolveUpdate(id)` fetches the plugin's own subpath and is the
 confirmation. Badging on the flag alone puts a permanent false badge on every
 installed row, which is worse than no feature.
 
+## start
+
+The first sweep is DEFERRED, not immediate: engine.js calls this at the
+bootstrap tail, and a fetch there would sit on every launch's critical path —
+and on every test that builds the real engine, which would then hit the
+network.
+
 ## run
 
 `resolveUpdate` is a tarball fetch and extract per plugin, so it cannot run on

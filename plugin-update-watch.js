@@ -2,6 +2,7 @@
 
 const DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_MAX_PER_RUN = 8;
+const DEFAULT_FIRST_RUN_DELAY_MS = 90 * 1000;
 
 function createPluginUpdateWatch(deps) {
   const {
@@ -9,12 +10,14 @@ function createPluginUpdateWatch(deps) {
     log,
     intervalMs = DEFAULT_INTERVAL_MS,
     maxPerRun = DEFAULT_MAX_PER_RUN,
+    firstRunDelayMs = DEFAULT_FIRST_RUN_DELAY_MS,
     onChange,
   } = deps || {};
 
   let cached = [];
   let running = false;
   let timer = null;
+  let firstTimer = null;
   let cursor = 0;
   let lastNote = null;
 
@@ -98,13 +101,18 @@ function createPluginUpdateWatch(deps) {
   }
 
   function start() {
-    if (timer) return;
-    timer = setInterval(() => { run().catch(() => {}); }, intervalMs);
-    if (timer.unref) timer.unref();
-    run().catch(() => {});
+    if (timer || firstTimer) return;
+    firstTimer = setTimeout(() => {
+      firstTimer = null;
+      timer = setInterval(() => { run().catch(() => {}); }, intervalMs);
+      if (timer.unref) timer.unref();
+      run().catch(() => {});
+    }, firstRunDelayMs);
+    if (firstTimer.unref) firstTimer.unref();
   }
 
   function stop() {
+    if (firstTimer) { clearTimeout(firstTimer); firstTimer = null; }
     if (!timer) return;
     clearInterval(timer);
     timer = null;
@@ -113,4 +121,6 @@ function createPluginUpdateWatch(deps) {
   return { run, start, stop, list: () => cached.slice() };
 }
 
-module.exports = { createPluginUpdateWatch, DEFAULT_INTERVAL_MS, DEFAULT_MAX_PER_RUN };
+module.exports = {
+  createPluginUpdateWatch, DEFAULT_INTERVAL_MS, DEFAULT_MAX_PER_RUN, DEFAULT_FIRST_RUN_DELAY_MS,
+};
