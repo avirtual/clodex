@@ -804,6 +804,43 @@ test('github: a single huge comment is held to the per-comment cap', async () =>
   } finally { cleanup(); }
 });
 
+test('github: the budget reserves the omitted line at its WORST-CASE width', () => {
+  const { cleanup } = boot();
+  try {
+    const { omittedLine } = require(WORKFLOWS_PATH)._internals;
+    // The reserve is subtracted BEFORE the count is known, so it must cover the
+    // widest count that can occur (MAX_ISSUE_COMMENTS is 10 today, but an issue
+    // carries up to `all.length`). Reserving a 1-digit width and then printing
+    // a 2- or 3-digit one overruns by exactly the difference — the r1 defect in
+    // miniature, and invisible to any fixture with fewer than ten comments.
+    assert.ok(omittedLine(100).length > omittedLine(1).length,
+      'a wider count really is a longer line — otherwise this test proves nothing');
+    assert.strictEqual(omittedLine(100).length - omittedLine(1).length, 2,
+      'and the difference is the digit count, so reserving for 1 under-reserves');
+  } finally { cleanup(); }
+});
+
+test('github: clip() returns MORE than asked below its marker width — the guard is required', () => {
+  const { cleanup } = boot();
+  try {
+    const { clip } = require(WORKFLOWS_PATH)._internals;
+    const text = 'z'.repeat(500);
+    // This is why the comment loop refuses to hand clip() a small `room`.
+    // clip() slices to (max - 40) to leave space for its truncation marker, so
+    // below 40 that index is NEGATIVE and String.slice counts from the END —
+    // the result is longer than the budget it was given, and at max=39 it is
+    // longer than the INPUT. Its marker also over-reports what it removed.
+    assert.ok(clip(text, 0).length > 400,
+      'clip(_, 0) returns almost everything — a negative slice index, not an empty string');
+    assert.ok(clip(text, 39).length > text.length,
+      'and just under the marker width it returns MORE than it was given');
+    assert.ok(clip(text, 10).length > 10,
+      'so a small max is never a bound — hence MIN_CLIP_CHARS in the comment loop');
+    // Sanity: at a sane width it does what its name says.
+    assert.ok(clip(text, 200).length < 250, 'at a normal width it clips');
+  } finally { cleanup(); }
+});
+
 test('github: `issue` without a usable number answers usage and shells out to NOTHING', async () => {
   const { spawns, cleanup } = boot();
   try {
