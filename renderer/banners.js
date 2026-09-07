@@ -5,12 +5,12 @@
 // and auth (the proxy can no longer refresh the Claude login).
 //
 // Mostly self-contained: window.api / navigator + an injected openInstallSession
-// (so the both-CLIs-missing banner can offer Install buttons, Task 18). Returns
-// refreshDiagBanner, which createSession re-runs after a spawn failure.
+// (so the both-CLIs-missing banner can offer Install buttons). Returns the
+// setters its callers drive: refreshDiagBanner (createSession re-runs it after a
+// spawn failure) and refreshAuthBanner (renderer.js, off the proxy sweep).
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the
-// guarantee. The Install-button DECISION (which CLIs, cliMissingIsCause) is the
-// tested tool-gate leaf + the diagnostics payload; this only plumbs it.
+// The DECISIONS live in tested leaves — tool-gate for the Install buttons,
+// lib/login-owed for the auth notice; this only plumbs them.
 
 const { agentInstallButtons } = require('./lib/tool-gate');
 const { loginOwedView } = require('./lib/login-owed');
@@ -112,7 +112,7 @@ function initBanners({ openInstallSession } = {}) {
       return;
     }
     if (authText) authText.textContent = v.text;
-    authBanner.title = v.tip;
+    authBanner.dataset.tip = v.tip;
     authBanner.classList.remove('hidden');
   }
 

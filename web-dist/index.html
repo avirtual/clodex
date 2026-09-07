@@ -25746,7 +25746,7 @@ helper=${d.helperPath}`;
             return;
           }
           if (authText) authText.textContent = v.text;
-          authBanner.title = v.tip;
+          authBanner.dataset.tip = v.tip;
           authBanner.classList.remove("hidden");
         }
         refreshDiagBanner();

@@ -60,7 +60,7 @@ test('it accepts a Map values() iterator, which is what proxyState hands it', ()
 
 function el(id) {
   const e = {
-    id, textContent: '', title: '', classes: new Set(['hidden']),
+    id, textContent: '', dataset: {}, classes: new Set(['hidden']),
     classList: {
       add: (c) => e.classes.add(c),
       remove: (c) => e.classes.delete(c),
@@ -109,7 +109,7 @@ test('refreshAuthBanner shows #auth-banner on a stalled payload and hides it the
     refreshAuthBanner([stalled(true)]);
     assert.ok(!banner.classes.has('hidden'), 'stalled: shown');
     assert.match(text.textContent, /claude login/i, 'and the element carries the remedy text');
-    assert.ok(banner.title.length > 0, 'and a tip explaining it');
+    assert.ok(banner.dataset.tip.length > 0, 'and a tip explaining it');
 
     refreshAuthBanner([stalled(false)]);
     assert.ok(banner.classes.has('hidden'), 'cleared: hidden again, on the very next call');
