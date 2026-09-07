@@ -23,5 +23,16 @@ a dialog paint and cannot run over an unbounded candidate set. Hence the cap
 and the rotating cursor: a fixed first-N window would starve the tail forever.
 A candidate not answered this run keeps its PRIOR verdict rather than
 disappearing — an offline tick must not clear a real badge — while a row that
-stops being a candidate is dropped without a fetch, which is how a badge
-clears immediately after the operator updates.
+stops being a candidate is dropped without a fetch.
+
+## drop
+
+What makes a badge clear the moment the operator acts, rather than up to one
+poll interval later: `run()` alone would leave the row reading
+`Update available (1.2.0 → 1.2.0)` and the menu counting it until the next
+tick. `plugin-host-engine.js` calls this from `plugins.applyUpdate` and
+`plugins.removeSourcePlugin` after each succeeds. Dropping is correct at both:
+`applyUpdate` refuses unless the freshly fetched commit matches the one the
+operator accepted, so on success the tree is upstream by construction, and a
+removed plugin has nothing left to update. It routes through `publish()`, so
+the menu's `onChange` refires.

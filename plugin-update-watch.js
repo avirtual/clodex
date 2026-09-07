@@ -29,11 +29,16 @@ function createPluginUpdateWatch(deps) {
   }
 
   function publish(next) {
-    const key = (list) => list.map((e) => `${e.id}@${e.to}@${e.version}`).join(',');
+    const key = (list) => list.map((e) => `${e.id}@${e.from}@${e.to}@${e.version}`).join(',');
     const changed = key(next) !== key(cached);
     cached = next;
     if (!changed) return;
     try { if (typeof onChange === 'function') onChange(cached.slice()); } catch {}
+  }
+
+  function drop(id) {
+    const want = String(id == null ? '' : id);
+    publish(cached.filter((e) => e.id !== want));
   }
 
   function slice(candidates) {
@@ -118,7 +123,7 @@ function createPluginUpdateWatch(deps) {
     timer = null;
   }
 
-  return { run, start, stop, list: () => cached.slice() };
+  return { run, start, stop, drop, list: () => cached.slice() };
 }
 
 module.exports = {

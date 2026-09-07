@@ -259,6 +259,100 @@ test('start() does not fetch on the spot — the first sweep waits out a delay',
     'the shipped delay must be long enough to be off the launch path, not a token setTimeout(0)');
 });
 
+test('start() really does sweep after the delay, and keeps sweeping on the interval', async () => {
+  // The other half, and the one that matters in production: the subject above
+  // asserts an ABSENCE, which stays true if the deferred run — or the interval
+  // that follows it — is deleted outright. Then the feature never runs at all
+  // and every other test here, which drives run() by hand, stays green.
+  const asked = [];
+  const loader = {
+    libraryCatalog: async () => { asked.push('catalog'); return { ok: true, plugins: [] }; },
+    resolveUpdate: async () => ({ ok: true, changed: false }),
+  };
+  const w = createPluginUpdateWatch({
+    getLoader: () => loader, log: silent, firstRunDelayMs: 5, intervalMs: 20,
+  });
+  w.start();
+  await new Promise((r) => setTimeout(r, 80));
+  w.stop();
+  assert.ok(asked.length >= 2,
+    `the deferred sweep must fire AND re-arm on the interval — saw ${asked.length} fetches`);
+  const seen = asked.length;
+  await new Promise((r) => setTimeout(r, 60));
+  assert.strictEqual(asked.length, seen, 'stop() must end the polling, not just the first sweep');
+});
+
+// ── drop(), the seam that clears a badge on the click ───────────────────────
+
+test('drop() removes one id and refires onChange, leaving the others alone', async () => {
+  // The badge must not outlive the update that spent it. Two entries so the
+  // filter is a filter and not a clear.
+  const { loader } = mkLoader(
+    [
+      { id: 'x', installed: 'fetched', upToDate: false },
+      { id: 'y', installed: 'fetched', upToDate: false },
+    ],
+    { x: changed('1111111', '2222222', '1.2.0'), y: changed('3333333', '4444444', '2.0.0') },
+  );
+  let fired = 0;
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent, onChange: () => { fired++; } });
+  await w.run();
+  assert.deepStrictEqual(w.list().map((e) => e.id), ['x', 'y'], 'ENTER: both badges exist to be dropped from');
+  assert.strictEqual(fired, 1);
+  w.drop('x');
+  assert.deepStrictEqual(w.list().map((e) => e.id), ['y'], 'only the applied id goes');
+  assert.strictEqual(fired, 2, 'the menu count is rebuilt from onChange, so dropping must refire it');
+});
+
+test('dropping an id that is not badged changes nothing and does not refire', async () => {
+  // Every applyUpdate and removeSourcePlugin calls this, including for plugins
+  // the watcher never confirmed — that must not rebuild the app menu each time.
+  const { loader } = mkLoader(
+    [{ id: 'y', installed: 'fetched', upToDate: false }],
+    { y: changed('3333333', '4444444', '2.0.0') },
+  );
+  let fired = 0;
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent, onChange: () => { fired++; } });
+  await w.run();
+  assert.strictEqual(fired, 1, 'ENTER: the confirmation fired once');
+  w.drop('never-badged');
+  assert.deepStrictEqual(w.list().map((e) => e.id), ['y']);
+  assert.strictEqual(fired, 1, 'an unbadged id is not a change');
+});
+
+test('a dropped id comes back only if a later sweep re-confirms it', async () => {
+  // drop() is not a permanent suppression: if the operator's update failed to
+  // take, the next sweep must be free to badge it again.
+  const { loader } = mkLoader(
+    [{ id: 'y', installed: 'fetched', upToDate: false }],
+    { y: changed('3333333', '4444444', '2.0.0') },
+  );
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent });
+  await w.run();
+  w.drop('y');
+  assert.deepStrictEqual(w.list(), [], 'ENTER: the badge really went');
+  await w.run();
+  assert.deepStrictEqual(w.list().map((e) => e.id), ['y']);
+});
+
+test('publish keys on `from` too, so a changed previous commit refires onChange', async () => {
+  // `from` reaches the report and could reach the UI. A key that ignored it
+  // would leave the menu and any `from`-bearing surface stale.
+  const rows = [{ id: 'y', installed: 'fetched', upToDate: false }];
+  let answer = changed('1111111', '9999999', '2.0.0');
+  const loader = {
+    libraryCatalog: async () => ({ ok: true, plugins: rows }),
+    resolveUpdate: async () => answer,
+  };
+  let fired = 0;
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent, onChange: () => { fired++; } });
+  await w.run();
+  assert.strictEqual(fired, 1, 'ENTER: the first confirmation fired');
+  answer = changed('8888888', '9999999', '2.0.0');
+  await w.run();
+  assert.strictEqual(fired, 2, 'same id, same to, same version — only `from` moved');
+});
+
 test('onChange fires when the confirmed set changes and stays quiet when it does not', async () => {
   // The menu label is rebuilt from this callback. Firing on every tick would
   // rebuild the whole application menu every six hours for nothing; never firing

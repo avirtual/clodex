@@ -2115,6 +2115,7 @@ const toolCache = createToolCache({ whichBin });
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
         getPluginUpdates: () => (pluginUpdateWatch ? pluginUpdateWatch.list() : []),
+        onPluginUpdated: (id) => { if (pluginUpdateWatch) pluginUpdateWatch.drop(id); },
         getPersistence: () => persistence,
         onPluginStateChanged: () => scheduleAppMenuRefresh(),
         getNotifications: () => notifications,
