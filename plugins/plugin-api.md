@@ -557,6 +557,7 @@ host = {
 
   lib: { gitWorktree },                  // sanctioned shared core leaves
   telemetry: { snapshot(sessionName) },  // read-only, may be null
+  notify: { user({ title, body }) },     // -> { ok, id } | { ok: false, error }
 }
 ```
 
@@ -1133,6 +1134,33 @@ id nobody can identify, and names a pinned unit's pinned state on its own line.
 `snapshot(sessionName)` returns a read-only telemetry snapshot for a session
 proxied through Clodex's wire proxy, or `null` — for a session with no proxy, no
 telemetry yet, or if anything goes wrong. Treat `null` as the normal case.
+
+### `host.notify.user`
+
+`user({ title, body })` raises a note in the operator's inbox — the same inbox an
+agent reaches by typing `[agent:notify-user]`, and the only way an engine half
+can reach the operator when no session is involved (a webhook arriving from
+outside, a background poll finding something). It fires an OS notification and
+shows in the inbox until read.
+
+The note's `from` is `plugin:<your id>`, always. You cannot supply it, so a note
+can never impersonate an agent or another plugin. `title`, if given, becomes the
+note's first line followed by a blank line; omit it and the body stands alone.
+`workspaceId` is null — a plugin note is box-wide, not scoped to a window.
+
+Returns `{ ok: true, id }` with the stored note's id, or `{ ok: false, error }`.
+It never throws. It refuses an empty body, a body over 16 KiB (the same limit
+`[agent:notify-user]` enforces), and a call made after your plugin was
+deactivated. If the inbox store is unavailable the refusal says so.
+
+This interrupts a human. Keep status and progress out of it: raise a note when
+you need a decision only the operator can make, or have a finding they must act
+on.
+
+```js
+const r = host.notify.user({ title: 'Deploy failed', body: 'staging: 3 pods crash-looping' });
+if (!r.ok) host.log.error(`note refused: ${r.error}`);
+```
 
 ---
 
@@ -2035,10 +2063,13 @@ one, it is a conversation about extending the host, not a gap to route around.
 
 - **Clodex's persistence stores.** Sessions, workspaces, peers, teams — none of
   it. You get `storage` (your own file) and `settings` (your own key). A plugin
-  cannot corrupt `sessions.json` because it cannot reach it. The one exception
-  is `host.library.remove` (§4): deletion only, for registered kinds only, and
-  every kind's side effects are core's to perform. There is still no read, no
-  write and no create against the library.
+  cannot corrupt `sessions.json` because it cannot reach it. Two stores are
+  reachable, both through a narrow verb rather than as a store: `host.library.remove`
+  (§4) is deletion only, for registered kinds only, and every kind's side effects
+  are core's to perform — there is still no read, no write and no create against
+  the library. `host.notify.user` (§4) appends one note to the operator inbox,
+  stamped with your plugin id; it cannot read, edit or delete notes, its own or
+  anyone's.
 - **`fs` beyond `storage`.** Your engine half is plain Node and *can* `require('node:fs')`
   — nothing stops you, and the workbench pilot does exactly that. What the host
   does not do is hand you a filesystem helper that has already decided which

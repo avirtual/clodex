@@ -39,12 +39,20 @@ function makeManager(sessions = []) {
   };
 }
 
-function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds } = {}) {
+// `notifications: null` is how a test asks for the store-absent branch, so the
+// default cannot be reached by omission — undefined must still mean "present".
+function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds,
+  notifications = undefined, notifyOS = undefined } = {}) {
   const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = { ...settings };
   const logged = [];
   const removals = [];
   const pins = [];
+  const notes = [];
+  const osNotes = [];
+  const store = notifications === undefined
+    ? { add: (rec) => { const r = { ...rec, id: `n${notes.length + 1}` }; notes.push(r); return r; } }
+    : notifications;
   const engine = createPluginHostEngine({
     manager,
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
@@ -56,8 +64,11 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     libraryPinKinds: libraryPinKinds || { memory: (ref, on) => { pins.push([ref, on]); return { ok: true }; } },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
+    getNotifications: () => store,
+    notifyOS: notifyOS || ((spec) => { osNotes.push(spec); }),
+    broadcast: (channel, payload) => manager._broadcast(channel, payload),
   });
-  return { engine, manager, dir, logged, removals, pins, uiSettings: () => ui };
+  return { engine, manager, dir, logged, removals, pins, notes, osNotes, uiSettings: () => ui };
 }
 
 const sessionA = { name: 'a', type: 'claude', cwd: '/repo/a', workspaceId: 'ws-open' };
@@ -567,7 +578,7 @@ test('the host deliberately exposes no stores, manager, or transport seams', () 
   // so it should cost a deliberate edit here.
   assert.deepEqual(Object.keys(host).sort(), [
     'events', 'hostApiVersion', 'id', 'intents', 'ipc', 'lib', 'library', 'log',
-    'paths', 'sessions', 'settings', 'storage', 'telemetry',
+    'notify', 'paths', 'sessions', 'settings', 'storage', 'telemetry',
   ].sort());
 });
 
@@ -978,4 +989,144 @@ test('_host plugins.installFromSource does not rescan when the loader refuses', 
   const { engine } = makeHost({ manager, loader });
   const r = await engine.dispatch('_host', 'plugins.installFromSource', ['owner/repo'], 'desktop');
   assert.strictEqual(r.ok, false);
+});
+
+// ── host.notify.user ───────────────────────────────────────────────────────
+
+test('host.notify.user writes the inbox record under plugin:<id> and returns its id', () => {
+  const { engine, manager, notes, osNotes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+
+  const r = host.notify.user({ title: 'Deploy failed', body: 'staging: 3 pods crash-looping' });
+
+  assert.deepStrictEqual(r, { ok: true, id: 'n1' });
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one record reached the store');
+  // The whole record, not a field match: `from` is the security property here —
+  // a caller-supplied one would let a plugin post as an agent — and a partial
+  // assert would read around a workspaceId that arrived undefined.
+  assert.deepStrictEqual(notes[0], {
+    from: 'plugin:demo',
+    workspaceId: null,
+    body: 'Deploy failed\n\nstaging: 3 pods crash-looping',
+    id: 'n1',
+  });
+  assert.deepStrictEqual(osNotes, [{ title: 'plugin:demo', body: 'Deploy failed', silent: false }]);
+  const bcast = manager.sent.filter((s) => s.channel === 'ipc-message');
+  assert.deepStrictEqual(bcast, [{
+    to: 'all',
+    channel: 'ipc-message',
+    args: [{ type: 'notify', from: 'plugin:demo', to: 'user', body: 'Deploy failed' }],
+  }]);
+});
+
+test('host.notify.user without a title stores the body alone, with no leading blank line', () => {
+  const { engine, notes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  assert.strictEqual(host.notify.user({ body: '  the only line  ' }).ok, true);
+  assert.strictEqual(notes[0].body, 'the only line');
+});
+
+test('host.notify.user refuses an empty body, an oversized one, and an absent store — never throwing', () => {
+  const { engine, notes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+
+  for (const empty of [undefined, '', '   \n  ', null]) {
+    const r = host.notify.user({ body: empty });
+    assert.strictEqual(r.ok, false, `${JSON.stringify(empty)} must be refused`);
+    assert.match(r.error, /empty note/);
+  }
+  // A title alone is still an empty note: the title is a heading for a body,
+  // not a substitute for one.
+  assert.match(host.notify.user({ title: 'just a title' }).error, /empty note/);
+
+  const over = 'x'.repeat(16 * 1024 + 1);
+  assert.deepStrictEqual(host.notify.user({ body: over }),
+    { ok: false, error: 'note too long (>16KB) — keep it a summary, not a payload' });
+  // The boundary itself passes — an off-by-one here would silently narrow the
+  // limit the doc promises is the same one [agent:notify-user] enforces.
+  assert.strictEqual(host.notify.user({ body: 'y'.repeat(16 * 1024) }).ok, true);
+  assert.strictEqual(notes.length, 1, 'ENTER: only the in-limit note was stored');
+
+  const noStore = makeHost({ notifications: null });
+  const h2 = noStore.engine.register('demo', { activate() {} });
+  assert.deepStrictEqual(h2.notify.user({ body: 'hi' }),
+    { ok: false, error: 'the operator inbox is unavailable' });
+});
+
+test('host.notify.user answers an envelope when the inbox store itself throws or stores nothing', () => {
+  // The doc's "it never throws" is a promise about EVERY path, not just the
+  // notifyOS one — a plugin's activate() is core's stack, so an escaping throw
+  // here lands in the loader, not in plugin land.
+  const boom = makeHost({ notifications: { add: () => { throw new Error('disk full'); } } });
+  const h1 = boom.engine.register('demo', { activate() {} });
+  const r1 = h1.notify.user({ body: 'never lands' });
+  assert.strictEqual(r1.ok, false);
+  assert.match(r1.error, /inbox rejected the note: disk full/);
+  assert.strictEqual(boom.manager.sent.filter((s) => s.channel === 'ipc-message').length, 0,
+    'a note that was never stored must not be announced as if it were');
+
+  // A store that returns nothing is the same failure wearing a success: ok:true
+  // with `id: undefined` would hand the plugin an id it can never look up.
+  const empty = makeHost({ notifications: { add: () => null } });
+  const h2 = empty.engine.register('demo', { activate() {} });
+  assert.deepStrictEqual(h2.notify.user({ body: 'nowhere' }),
+    { ok: false, error: 'the operator inbox stored no note' });
+});
+
+test('host.notify.user still stores and returns ok when notifyOS throws', () => {
+  const { engine, manager, notes } = makeHost({
+    notifyOS: () => { throw new Error('no Notification in this process'); },
+  });
+  const host = engine.register('demo', { activate() {} });
+
+  const r = host.notify.user({ body: 'still reaches the inbox' });
+
+  assert.strictEqual(r.ok, true, 'an OS-layer failure must not lose the note');
+  assert.strictEqual(notes.length, 1);
+  // The broadcast sits AFTER notifyOS in the sequence, so an unguarded throw
+  // would take the renderer's IPC-log row with it and leave no trace anywhere
+  // but the store.
+  assert.strictEqual(manager.sent.filter((s) => s.channel === 'ipc-message').length, 1);
+});
+
+test('host.notify.user is refused after the plugin is deactivated', () => {
+  const { engine, notes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  assert.strictEqual(host.notify.user({ body: 'while live' }).ok, true);
+
+  engine.deactivate('demo');
+
+  // The frozen host object outlives deactivate — a plugin's own captured
+  // reference, or a timer it failed to clear, is the caller here.
+  assert.deepStrictEqual(host.notify.user({ body: 'after teardown' }),
+    { ok: false, error: 'plugin is deactivated' });
+  assert.strictEqual(notes.length, 1, 'ENTER: the post-teardown call stored nothing');
+});
+
+test('host.notify preview is the first non-blank line, capped at 200 chars', () => {
+  const { engine, osNotes, notes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+
+  host.notify.user({ body: '\n\n  first real line  \nsecond line\n' });
+  assert.strictEqual(osNotes[0].body, 'first real line',
+    'a body whose first line is blank must not preview as empty (body-preview.js)');
+  assert.strictEqual(notes[0].body, 'first real line  \nsecond line',
+    'the STORED note keeps its later lines — only the preview is one line');
+
+  host.notify.user({ body: 'z'.repeat(400) });
+  assert.strictEqual(osNotes[1].body.length, 200, 'the cut never exceeds the budget');
+  assert.strictEqual(osNotes[1].body, `${'z'.repeat(199)}…`);
+});
+
+test('plugins/plugin-api.md documents host.notify.user in §4 and does not list the inbox as unexposed in §13', () => {
+  const doc = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'plugin-api.md'), 'utf-8');
+  assert.match(doc, /^### `host\.notify\.user`$/m,
+    '§4 must carry the heading — an undocumented host key is a one-way door taken silently');
+  assert.match(doc, /notify: \{ user\(\{ title, body \}\) \}/,
+    'the §4 host sketch must list the key alongside the others');
+
+  const s13 = doc.slice(doc.indexOf('\n## 13.'), doc.indexOf('\n## 14.'));
+  assert.ok(s13.length > 200, 'ENTER: §13 was located, not an empty slice');
+  assert.match(s13, /`host\.notify\.user`/,
+    '§13 claims plugins reach no store; it must name this verb as the exception it now is');
 });

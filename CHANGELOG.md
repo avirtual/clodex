@@ -17,6 +17,7 @@ blocks a release.
 - [agent:gh issue <n>] keeps its untrusted fence intact on issues with many labels, and says so when a comment's text is withheld for lack of room.
 - The plugin library's GitHub repo is one click away: a link in Manage plugins ▸ Browse the Clodex library, and a Help menu with Clodex and clodex-plugins on GitHub.
 - Rename… now renames the seat for real: its name changes in the sidebar, in `[agent:who]` and DM addressing, and its messages, memory, pending DMs and reminders move with it; the seat restarts on the same conversation and is told its new name. Ticket seats and seats holding an open ticket cannot be renamed.
+- Plugins can raise a note in the operator inbox (`host.notify.user`), tagged with the plugin's id, under the same size rule as `[agent:notify-user]`.
 
 ## 5.35.9 — 2026-09-07
 
