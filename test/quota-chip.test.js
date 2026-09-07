@@ -172,6 +172,14 @@ test('quotaChip: a refusal under a minute reads in seconds, and needs no percent
   assert.strictEqual(chip.text, '5h quota · rate-limited 30s ago');
 });
 
+test('quotaChip: a fractional refusal age floors, so the seconds form never reads "60s"', () => {
+  // The wire stamps last_429_age_s to 0.1s and shapeQuota passes it through
+  // unrounded, so rounding would emit a seconds value the minutes branch can
+  // never produce.
+  const q = shapeQuota({ status: 'allowed', last_429_age_s: 59.6, age_s: 1, primary: { window: '5h' } }, CAPS);
+  assert.strictEqual(quotaChip(q).text, '5h quota · rate-limited 59s ago');
+});
+
 test('quotaChip: an OLD last_429 does not keep the chip up on its own', () => {
   const q = shapeQuota({ ...LIVE, status: 'allowed', last_429_age_s: QUOTA_429_RECENT_S + 1 }, CAPS);
   assert.strictEqual(quotaChip(q), null);
