@@ -384,7 +384,13 @@ test('reclaim: start() adopts an orphan and reports `managed`, not `external`', 
   fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
   const { sup } = makeSup(
     { ...ROUTED, wirescopePort: port, wirescopeDir: src },
-    { probe: async () => ({ product: 'wirescope', version: 'v9.9.9' }) },
+    // Reports the claude_design strip so the ADOPTION path is what this
+    // measures: a survivor that does not strip is restarted instead of returned
+    // (pinned below), and start() would then answer with the restart's result.
+    { probe: async () => ({
+      product: 'wirescope', version: 'v9.9.9',
+      capabilities: { strip_mcp: { available: true, servers: ['claude_design'] } },
+    }) },
   );
   fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
   await withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, async (p) => {
@@ -533,4 +539,103 @@ test('spawn env: STRIP_MCP_SERVERS defaults to claude_design, and an exported em
   const dflt = envFromSpawn(undefined);
   assert.strictEqual(dflt.get('STRIP_TOOLS_GLOBAL'), 'EndConversation');
   assert.strictEqual(dflt.get('WS_OMIT_DEFAULT'), 'useremail');
+});
+
+// ── the survivor an upgrade inherits ────────────────────────────────────────
+//
+// The env block above only reaches a proxy THIS build's _spawn launched, and the
+// managed instance deliberately outlives the GUI. So every user upgrading into
+// the STRIP_MCP_SERVERS default keeps their pre-upgrade survivor, whose
+// /_identity answers `servers: []` — the surgical strip never engages, every
+// Claude spawn falls back to --strict-mcp-config, and the row it prints tells
+// them to set a variable on a wirescope they do not operate. The version arm
+// next door does not cover it: the survivor's version is already current.
+//
+// The restart runs on the SAME _upgradeTried latch as the version arm, which is
+// what bounds it — a proxy that comes back still not stripping (a user source
+// too old to read the variable) must not be restarted forever.
+function stripSup(port, servers, { version } = {}) {
+  const src = mkTmpRoot('ws-src-');
+  fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
+  // wirescopeDir set ⇒ origin 'user' ⇒ _sourceVersion is null ⇒ the VERSION arm
+  // cannot fire. Without that the two arms are indistinguishable here and this
+  // would pass on the version check alone.
+  const { sup } = makeSup(
+    { ...ROUTED, wirescopePort: port, wirescopeDir: src },
+    { probe: async () => ({
+      product: 'wirescope',
+      version: version || 'v9.9.9',
+      capabilities: servers === undefined ? {} : { strip_mcp: { available: true, servers } },
+    }) },
+  );
+  fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
+  const restarts = [];
+  // restart() itself is pinned next door; stubbing it keeps this about WHETHER
+  // the arm fires and keeps a real SIGTERM + venv spawn out of the suite.
+  sup.restart = async () => { restarts.push(1); return { ok: true, state: 'restarted' }; };
+  return { sup, src, restarts };
+}
+
+async function withStripEnv(value, fn) {
+  const saved = process.env.STRIP_MCP_SERVERS;
+  if (value === undefined) delete process.env.STRIP_MCP_SERVERS;
+  else process.env.STRIP_MCP_SERVERS = value;
+  try { return await fn(); } finally {
+    if (saved === undefined) delete process.env.STRIP_MCP_SERVERS;
+    else process.env.STRIP_MCP_SERVERS = saved;
+  }
+}
+
+// Each row carries its own literal expectation; the restart decision is never
+// recomputed here from the rule start() uses.
+const SURVIVOR_ROWS = [
+  { what: 'a pre-upgrade survivor reporting servers: []', servers: [], env: undefined, restarts: 1 },
+  { what: 'a survivor with no strip_mcp capability at all', servers: undefined, env: undefined, restarts: 1 },
+  { what: 'a survivor already stripping claude_design', servers: ['claude_design'], env: undefined, restarts: 0 },
+  { what: 'a survivor stripping claude_design among others', servers: ['other', 'claude_design'], env: undefined, restarts: 0 },
+  { what: 'servers: [] but the kill switch is exported', servers: [], env: '', restarts: 0 },
+  { what: 'servers: [] but the operator exported their own set', servers: [], env: 'other_server', restarts: 0 },
+];
+
+test('start: a managed survivor that does not strip claude_design is restarted once', async () => {
+  for (const row of SURVIVOR_ROWS) {
+    // withListener consumes nextPort itself; the supervisor must be configured
+    // on the SAME port or `ours` is false and nothing is restarted for a reason
+    // that has nothing to do with the strip.
+    const { sup, src, restarts } = stripSup(nextPort, row.servers);
+    await withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, async () => {
+      await withStripEnv(row.env, () => withEnv({}, () => sup.start()));
+    });
+    assert.strictEqual(restarts.length, row.restarts, `${row.what}: expected ${row.restarts} restart(s)`);
+  }
+});
+
+test('start: the strip restart rides the _upgradeTried latch — never twice in one launch', async () => {
+  // A user source too old to read STRIP_MCP_SERVERS comes back still reporting
+  // `servers: []`, so an unlatched arm would restart it on every start() call
+  // for the life of the app.
+  const { sup, src, restarts } = stripSup(nextPort, []);
+  await withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, async () => {
+    await withStripEnv(undefined, () => withEnv({}, async () => {
+      await sup.start();
+      assert.strictEqual(restarts.length, 1, 'the first start must restart the non-stripping survivor');
+      await sup.start();
+      await sup.start();
+      assert.strictEqual(restarts.length, 1, 'the latch did not hold — this restart-loops');
+      assert.strictEqual(sup._upgradeTried, true);
+    }));
+  });
+});
+
+test('start: an ADOPTED external proxy is never restarted for the strip', async () => {
+  // Someone else's process on the port: not ours to kill, exactly as the version
+  // arm treats it. `ours` is false with no pidfile and no reclaimable listener,
+  // which is what a foreign cwd produces.
+  const { sup, restarts } = stripSup(nextPort, []);
+  await withListener({ cwd: os.tmpdir(), env: { WARMTH_DB: '/not/ours' } }, async () => {
+    const res = await withStripEnv(undefined, () => withEnv({}, () => sup.start()));
+    assert.strictEqual(res.state, 'external');
+    assert.strictEqual(res.adopted, true);
+  });
+  assert.deepStrictEqual(restarts, [], 'an external proxy was restarted');
 });

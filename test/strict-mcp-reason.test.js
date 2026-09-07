@@ -7,8 +7,8 @@
 // wirescope; `--strict-mcp-config` is the fallback and is ALL-OR-NOTHING, so on
 // the fallback path a user's real project/user MCP servers are disabled too.
 // The preferences hint documents that for the UNROUTED case. What was invisible:
-// a ROUTED session ALSO falls back when the wire is too old to advertise
-// strip_mcp, or when the probe fails at the spawn instant. The user reads
+// a ROUTED session ALSO falls back when its wire does not advertise a
+// claude_design strip, or when the probe fails at the spawn instant. The user reads
 // "routed = the proxy handles it" and in those two cases is wrong.
 //
 // t45 changes NOTHING about when the flag is pushed — only whether anyone can
@@ -30,10 +30,10 @@ const stripping = (servers) => ({
 
 // ── the three reasons, each distinct ─────────────────────────────────────────
 //
-// WINDOW: each fallback path names ITSELF. The remedies differ — deploy a newer
-// wire, restart the session, or nothing (unrouted is expected) — so a single
-// undifferentiated "strict was pushed" line would repeat this ticket's own bug
-// one level up: a true statement that leaves the user unable to act on it.
+// WINDOW: each fallback path names ITSELF, because the remedies differ — so a
+// single undifferentiated "strict was pushed" line would repeat this ticket's
+// own bug one level up: a true statement that leaves the user unable to act on
+// it. Which remedy belongs to which reason is pinned below, not here.
 
 test('unrouted: no proxy at all is the documented, expected fallback', () => {
   assert.strictEqual(strictMcpReason(null, null), 'unrouted');
@@ -90,6 +90,16 @@ test('the three reasons are distinct, and each carries its own remedy', () => {
 // distinctness above cannot see that; three lorem-ipsum strings pass both.
 test('each explanation names the remedy that reason\'s reader can actually perform', () => {
   const SETTINGS_REMEDY = 'Settings ▸ Disable claude_design MCP';
+  // The remedy names a control by its LABEL, and a label is renamed by someone
+  // editing the html who will never read this file. Pointing an operator at a
+  // setting that does not exist under that name is worse than saying nothing,
+  // so the label is read from the tree rather than assumed.
+  const prefs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const label = SETTINGS_REMEDY.replace('Settings ▸ ', '');
+  const at = prefs.indexOf('id="prefs-disable-design-mcp"');
+  assert.ok(at > 0, 'the claude_design MCP checkbox is gone — every remedy below names a control that does not exist');
+  assert.ok(prefs.slice(at, at + 400).replace(/<[^>]+>/g, '').includes(label),
+    `the checkbox label no longer reads ${JSON.stringify(label)}, which all three explanations send the operator to`);
   // Per-row literals, not a rule re-applied: the wire-no-strip row is the
   // exception — its reader owns a wirescope and needs the variable's NAME, and
   // the settings toggle alone would be the wrong advice to leave them with.

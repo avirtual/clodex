@@ -967,10 +967,10 @@
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
         <h5>Claude MCP</h5>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is too old to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
+        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is not configured to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-disable-design-mcp">
-          <span>Disable all MCP on unrouted sessions (<code>--strict-mcp-config</code>)</span>
+          <span>Disable <code>claude_design</code> MCP</span>
         </label>
       </details>
       <details class="prefs-group" data-group="env">

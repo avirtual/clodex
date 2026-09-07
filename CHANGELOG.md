@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- The embedded wirescope now strips only the claude_design MCP server, so your own MCP servers stay enabled and the per-session '--strict-mcp-config' notice stops appearing; the remaining fallback notices are reworded for operators.
+- The embedded wirescope now strips only the claude_design MCP server, so your own MCP servers stay enabled and the per-session '--strict-mcp-config' notice stops appearing; a wirescope left running from before the upgrade is restarted once to pick this up. The remaining fallback notices are reworded for operators, and the setting is now labelled "Disable claude_design MCP".
 
 ## 5.35.3 — 2026-09-07
 
