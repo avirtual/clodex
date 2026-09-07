@@ -106,10 +106,26 @@ strip ladder) is a deployment property riding the payload; only *enabled*
 tracks the live link. The 📄 files badge latches "unseen" only on an
 increase over a known baseline (the attach seed is silent).
 
-`quotaChip` (proxy-util.js) renders the quota statement first —
-`5h quota 80% used · resets in 40m` — with a recent refusal appended last and
+`quotaChip` (proxy-util.js) renders every window the payload carries as one
+compact bar — `5h:0% | W:76% | F:86%` — with a recent refusal appended last and
 past-tense, `· rate-limited 2m ago`, since a 429 up to five minutes old is not
-a present-tense outage.
+a present-tense outage. Per-window resets live in the tooltip, one line each
+(`week (all models): 76% used, resets in 18h 32m`). Labels are single-sourced
+in `QUOTA_WINDOW_LABEL`, against the names Claude Code's own panel uses:
+
+| API key | chip | tooltip |
+|---|---|---|
+| `5h` | `5h` | 5h |
+| `7d` | `W` | week (all models) |
+| `7d_oi` | `F` | week (Fable) |
+| `overage` | `O` | overage |
+
+An unknown key uses the key itself for both. Only windows carrying a percentage
+are shown, and only those vote on the level — an org with overage disabled
+publishes `overage` at `rejected` with a null percentage on every payload, and
+counting it would hold the chip permanently loud over a segment it does not
+render. A payload with no `windows` map (an older wirescope) falls back to the
+single-window statement, `week (all models) quota 80% used · resets in 40m`.
 
 `proxy.auth_refresh.stalled` on `/_status` (wirescope v0.6.59+) means the
 OAuth refresh token itself is dead — the proxy cannot renew and a human

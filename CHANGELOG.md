@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The quota chip now shows every window at a glance — `5h:0% | W:76% | F:86%` (5-hour, week all models, week Fable) — with per-window resets in its tooltip.
+
 ## 5.35.5 — 2026-09-07
 
 - First launch shows a short Welcome dialog to pick the default session mode (Clodex optimized or Standard) or skip; Settings ▸ Sessions can run it again.
