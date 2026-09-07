@@ -1,18 +1,19 @@
-// banners.js — the two top-of-window notification banners: the update banner
-// (click to open the GitHub release) and the spawn-diagnostics banner (surfaces
-// a broken-install warning — the usual cause of "posix_spawnp failed." — so
-// Finder-launched users who never see stdout still get a pointer to
-// `npx electron-rebuild`; click copies the full details for a bug report).
+// banners.js — the sidebar notification banners: update (click to open the
+// GitHub release), spawn-diagnostics (a broken-install warning — the usual cause
+// of "posix_spawnp failed." — so Finder-launched users who never see stdout get
+// a pointer to `npx electron-rebuild`; click copies details for a bug report),
+// and auth (the proxy can no longer refresh the Claude login).
 //
 // Mostly self-contained: window.api / navigator + an injected openInstallSession
-// (so the both-CLIs-missing banner can offer Install buttons, Task 18). Returns
-// refreshDiagBanner, which createSession re-runs after a spawn failure.
+// (so the both-CLIs-missing banner can offer Install buttons). Returns the
+// setters its callers drive: refreshDiagBanner (createSession re-runs it after a
+// spawn failure) and refreshAuthBanner (renderer.js, off the proxy sweep).
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the
-// guarantee. The Install-button DECISION (which CLIs, cliMissingIsCause) is the
-// tested tool-gate leaf + the diagnostics payload; this only plumbs it.
+// The DECISIONS live in tested leaves — tool-gate for the Install buttons,
+// lib/login-owed for the auth notice; this only plumbs them.
 
 const { agentInstallButtons } = require('./lib/tool-gate');
+const { loginOwedView } = require('./lib/login-owed');
 
 function initBanners({ openInstallSession } = {}) {
   // ---- Update banner ----
@@ -100,9 +101,24 @@ function initBanners({ openInstallSession } = {}) {
     }).catch(() => {});
   });
 
+  const authBanner = document.getElementById('auth-banner');
+  const authText = document.getElementById('auth-text');
+
+  function refreshAuthBanner(proxyEntries) {
+    if (!authBanner) return;
+    const v = loginOwedView(proxyEntries);
+    if (v.hidden) {
+      authBanner.classList.add('hidden');
+      return;
+    }
+    if (authText) authText.textContent = v.text;
+    authBanner.dataset.tip = v.tip;
+    authBanner.classList.remove('hidden');
+  }
+
   refreshDiagBanner();
 
-  return { refreshDiagBanner };
+  return { refreshDiagBanner, refreshAuthBanner };
 }
 
 module.exports = { initBanners };

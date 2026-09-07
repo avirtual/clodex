@@ -1164,6 +1164,11 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **served-banner.js** — the pure decision behind the sidebar notice that a peer
   has a shell open on this machine: given the seats being watched, is the notice
   shown and what does it say.
+- **login-owed.js** — the pure decision behind the sidebar notice that the proxy
+  can no longer refresh the Claude login (`proxy.auth_refresh.stalled`): given
+  the proxy payloads, is the notice shown and what does it say. Account-wide, so
+  any one stalled payload is the answer; a proxy too old to report it sends no
+  block and reads as not owed.
 - **team-roles.js** — the team-management popover's row model from a manifest,
   plus the client-side validation worth a unit test.
 - **web-notify.js** — browser-frontend OS notifications. The desktop raises

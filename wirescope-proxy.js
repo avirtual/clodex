@@ -18,6 +18,17 @@ const PROXY_LINK_GRACE = 20000;   // ms (~4 polls)
 const PROXY_STRIP_REPOST_MS = 4000; // ms — debounce identical strip re-POSTs to at
 const PROXY_PRODUCTS = new Set(['wirescope']);
 
+function authRefreshView(proxyBlock) {
+  const a = proxyBlock && proxyBlock.auth_refresh;
+  if (!a || typeof a !== 'object') return null;
+  return {
+    stalled: !!a.stalled,
+    lapsed: !!a.token_lapsed,
+    lastOutcome: a.last_outcome ?? null,
+    readError: a.read_error ?? null,
+  };
+}
+
 const ProxyClient = {
   _req(base, pathname, method = 'GET', timeout = PROXY_HTTP_TIMEOUT) {
     return new Promise((resolve, reject) => {
@@ -166,17 +177,19 @@ const ProxyClient = {
     return null;
   },
 
-  // Returns the WHOLE shape, not just the session array: `quota` is a
-  // top-level block on the same payload and was being discarded here. Always an
+  // Returns the WHOLE /_status envelope, not just the session array. Always an
   // object with a `sessions` array, so callers destructure rather than branch —
-  // an unreachable or malformed /_status degrades to zero sessions and no quota,
-  // exactly as the bare `[]` did.
+  // an unreachable or malformed /_status degrades to the empty reading.
   async status(base) {
     const st = await this._getJson(base, '/_status');
     if (st.status === 200 && st.json && Array.isArray(st.json.sessions)) {
-      return { sessions: st.json.sessions, quota: st.json.quota || null };
+      return {
+        sessions: st.json.sessions,
+        quota: st.json.quota || null,
+        authRefresh: authRefreshView(st.json.proxy),
+      };
     }
-    return { sessions: [], quota: null };
+    return { sessions: [], quota: null, authRefresh: null };
   },
 
   async subagentDetail(base, sessionId, child, maxlen) {
@@ -279,9 +292,9 @@ function createProxyPoller({
           } else if (this.stripCapBases.has(base) && !probeStripCap) {
             probe.capabilities = { ...probe.capabilities, strip_thinking: this.stripCapBases.get(base) };
           }
-          let records, quotaRaw;
+          let records, quotaRaw, authRefresh;
           try {
-            ({ sessions: records, quota: quotaRaw } = await ProxyClient.status(base));
+            ({ sessions: records, quota: quotaRaw, authRefresh } = await ProxyClient.status(base));
           } catch { continue; }
           // Account-scoped, so it is the SAME block for every session on this
           // base — shaped once per base, not once per session.
@@ -308,6 +321,9 @@ function createProxyPoller({
             // ACCOUNT, so it must still appear for a session the proxy has no
             // live record for.
             payload.quota = quota;
+            // Box-wide like the quota, and for the same reason it rides an
+            // unlinked payload: a dead refresh token is why the seat is unlinked.
+            payload.authRefresh = authRefresh || null;
             const entry = getPersistence().get(s.name);
             const level = stripLevelOf(entry);
             payload.stripLevel = level;
