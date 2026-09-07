@@ -462,8 +462,6 @@ function fmtQuotaReset(s) {
 // now"), not the absent value fmtQuotaReset maps to null.
 function fmtQuotaAge(s) {
   if (typeof s !== 'number' || !Number.isFinite(s) || s < 0) return null;
-  // Floor, not round: the wire stamps this to 0.1s, and rounding renders 59.6
-  // as "60s" — a seconds form the minutes branch can never produce.
   if (s < 60) return `${Math.floor(s)}s`;
   return fmtQuotaReset(s);
 }
