@@ -747,8 +747,8 @@ function createPluginLoader(deps) {
         error: `${link} already exists and is ${lst.isDirectory() ? 'a real directory' : 'a file'}, not a registered link — Clodex will not touch it. Move or remove it by hand first.`,
       };
     }
-    const core = discover().find((r) => r.id === v.id && r.root === 'core');
-    if (core) {
+    const coreRoot = roots.find((r) => r.id === 'core');
+    if (coreRoot && fs.existsSync(path.join(coreRoot.dir, v.id, 'manifest.json'))) {
       return {
         ok: false,
         error: `"${v.id}" is the id of a plugin built into Clodex, and only one copy of an id can run — which one is decided by version precedence, not by you. Give your plugin a different id and rename its folder to match.`,
@@ -1032,8 +1032,9 @@ function createPluginLoader(deps) {
   function unregisterUserPlugin(id) {
     const name = String(id || '');
     if (!isValidPluginId(name)) return { ok: false, error: `invalid plugin id: ${JSON.stringify(name)}` };
-    const root = ensureUserRoot();
-    if (!root) return { ok: false, error: 'no user plugin root configured' };
+    const userRoot = roots.find((r) => r.id === 'user');
+    if (!userRoot) return { ok: false, error: 'no user plugin root configured' };
+    const root = userRoot.dir;
     const link = path.join(root, name);
     let lst;
     try { lst = fs.lstatSync(link); } catch (e) {

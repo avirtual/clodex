@@ -13,10 +13,10 @@
 // error on a message that named the user's path.
 //
 // A SOURCE-SHAPE pin rather than a behavioural one, deliberately. The three
-// broken lines sat next to eleven correct ones and every engine-side test was
-// green, because the tests called the host with the array shape the renderer did
-// not use. Only a check over the call sites themselves covers all of them at
-// once, and it cannot rot into passing when a dialog is reorganised.
+// broken lines shipped with every engine-side test green, because the tests
+// called the host with the array shape the renderer did not use. Only a check
+// over the call sites themselves covers all of them at once, and it cannot rot
+// into passing when a dialog is reorganised.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -51,17 +51,97 @@ function callArgs(src, needle) {
       if (c === ')' || c === ']' || c === '}') { depth--; continue; }
       if (c === ',' && depth === 0) { args.push(src.slice(start, i)); start = i + 1; }
     }
-    calls.push({ line: src.slice(0, at).split('\n').length, args: args.map((a) => a.trim()) });
+    const line = src.slice(0, at).split('\n').length;
+    // Running off the end means quote state desynchronised: the truncated `args`
+    // that follows would be dropped by the `>= 3` filter downstream, silently
+    // retiring a call site from the audit instead of failing.
+    assert.ok(i < src.length, `${needle} at line ${line} did not close — the walker scanned to EOF`);
+    calls.push({ line, args: args.map((a) => a.trim()) });
   }
   return calls;
 }
 
+// Every `const args = …` / `let args = …` in the file, sliced from just past the
+// `=` to the `;` that ends it, with the same bracket and quote machinery.
+function argsInitialisers(src) {
+  const out = [];
+  for (const m of src.matchAll(/\b(?:const|let|var)\s+args\s*=/g)) {
+    let i = m.index + m[0].length;
+    const start = i;
+    let depth = 0;
+    let quote = null;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (quote) {
+        if (c === '\\') { i++; continue; }
+        if (c === quote) quote = null;
+        continue;
+      }
+      if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+      if (c === '(' || c === '[' || c === '{') { depth++; continue; }
+      if (c === ')' || c === ']' || c === '}') { depth--; continue; }
+      if (c === ';' && depth === 0) break;
+    }
+    if (i >= src.length) return null; // unterminated: refuse to judge it
+    out.push(src.slice(start, i).trim());
+  }
+  return out;
+}
+
+// The value positions of an initialiser: a ternary yields one per branch, and
+// anything else is its own single value. Splitting on top-level `?` and `:`
+// keeps a conditional honest without parsing it — `a ? [x] : [y]` must have an
+// array in BOTH arms to earn the exemption, since either can reach the call.
+function valuePositions(init) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let start = 0;
+  let sawTernary = false;
+  for (let i = 0; i < init.length; i++) {
+    const c = init[i];
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+    if (c === '(' || c === '[' || c === '{') { depth++; continue; }
+    if (c === ')' || c === ']' || c === '}') { depth--; continue; }
+    if (depth === 0 && (c === '?' || c === ':')) {
+      if (c === '?') sawTernary = true;
+      parts.push(init.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(init.slice(start));
+  // Before the first `?` sits the CONDITION, not a value — drop it. With no
+  // ternary at all the whole initialiser is the one value position.
+  return (sawTernary ? parts.slice(1) : parts).map((p) => p.trim()).filter((p) => p !== '');
+}
+
+function argsBindingsAreArrays(src) {
+  const inits = argsInitialisers(src);
+  if (inits === null) return false;
+  return inits.every((init) => {
+    const values = valuePositions(init);
+    return values.length >= 1 && values.every((v) => v.startsWith('['));
+  });
+}
+
 test('every renderer pluginInvoke passes its method arguments as an array', () => {
-  const files = ['renderer/renderer.js'];
+  // The needle omits the `window.` prefix on purpose: menubar.js calls through a
+  // bare `api` alias, and a needle carrying the prefix cannot see it.
+  const files = ['renderer/renderer.js', 'renderer/web/menubar.js'];
   const calls = [];
+  const exemptFiles = new Set();
   for (const rel of files) {
     const src = fs.readFileSync(path.join(ROOT, rel), 'utf-8');
-    for (const c of callArgs(src, 'window.api.pluginInvoke(')) calls.push({ ...c, rel });
+    const found = callArgs(src, 'api.pluginInvoke(');
+    // A listed file contributing nothing is dead weight that reads as coverage.
+    assert.ok(found.length >= 1, `ENTER: ${rel} is scanned for pluginInvoke call sites, found ${found.length}`);
+    for (const c of found) calls.push({ ...c, rel });
+    if (argsBindingsAreArrays(src)) exemptFiles.add(rel);
   }
 
   // The pin is worthless if the scan found nothing — a file reorganisation that
@@ -77,11 +157,24 @@ test('every renderer pluginInvoke passes its method arguments as an array', () =
   // A call with no third argument is fine: the method takes none, and the
   // handler's own `: []` is then the correct answer rather than a silent
   // substitution. Only a PRESENT third argument is constrained.
+  //
+  // A third argument spelled `args` is a variable, so the call site alone cannot
+  // say whether it holds an array. Waiving it on the NAME would waive
+  // `pluginInvoke('_host', 'plugins.register', args)` with `args` a bare string —
+  // the exact defect this file exists to catch, wearing the exempt spelling. So
+  // the exemption is earned by the BINDING instead: every `args` declared in the
+  // file must initialise to an array in all of its branches. One that does not
+  // withdraws the exemption for the whole file, and the pass-throughs then read
+  // as bare arguments and fail. Parameters are not declarations here — a
+  // forwarded `args` is the caller's already-built array, not a literal.
+  assert.ok(exemptFiles.size >= 1,
+    'ENTER: at least one scanned file earns the `args` exemption, so the check below waives something real');
+  const passThrough = (c) => c.args[2] === 'args' && exemptFiles.has(c.rel);
+  assert.ok(calls.some(passThrough),
+    'ENTER: an `args` pass-through is among the scanned calls — the exemption waives a real call site');
   const bare = calls
     .filter((c) => c.args.length >= 3 && c.args[2] !== '' && !c.args[2].startsWith('['))
-    // A pass-through forwarding a caller's already-built array (the plugin bar's
-    // `invoke` seam) is not a literal and is not the defect.
-    .filter((c) => c.args[2] !== 'args')
+    .filter((c) => !passThrough(c))
     .map((c) => `${c.rel}:${c.line} ${c.args[1]} <- ${c.args[2]}`);
   assert.deepStrictEqual(bare, [],
     'a bare argument is replaced by [] in ipc-handlers and the method runs with undefined — wrap it in an array');

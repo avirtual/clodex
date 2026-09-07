@@ -268,3 +268,15 @@ test('unregistering something that is not there, or is not a legal id, is refuse
   assert.deepStrictEqual(evil, { ok: false, error: 'invalid plugin id: "../../etc"' });
   assert.ok(fs.existsSync(path.dirname(userDir)), 'the tree above the root is untouched');
 });
+
+test('unregistering does not CREATE the plugins folder it removes from', () => {
+  // A remove that mkdirs is a remove with a side effect: the user root's absence
+  // is the honest representation of no user plugins, and only an explicit
+  // reveal-the-path action is allowed to end that.
+  const { loader, userDir } = mkLoaderWithUserRoot();
+  assert.ok(!fs.existsSync(userDir), 'ENTER: the user root does not exist yet, which is the state under test');
+  const r = loader.unregisterUserPlugin('alpha');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /nothing to unregister/);
+  assert.ok(!fs.existsSync(userDir), 'and the folder was not created on the way to that refusal');
+});
