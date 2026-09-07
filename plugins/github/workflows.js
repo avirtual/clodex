@@ -687,15 +687,14 @@ function login(who) {
   return typeof l === 'string' && l.trim() ? l.trim() : 'unknown';
 }
 
-function fenceUntrusted(head, interior) {
+function interiorBudget(head) {
   const overhead = '[gh] '.length + head.join('\n').length
     + UNTRUSTED_OPEN.length + UNTRUSTED_END.length + 60;
-  return [
-    ...head,
-    UNTRUSTED_OPEN,
-    clip(interior, Math.max(200, MAX_REPLY_CHARS - overhead)),
-    UNTRUSTED_END,
-  ];
+  return Math.max(200, MAX_REPLY_CHARS - overhead);
+}
+
+function fenceUntrusted(head, interior) {
+  return [...head, UNTRUSTED_OPEN, clip(interior, interiorBudget(head)), UNTRUSTED_END];
 }
 
 async function issues(cwd) {
@@ -735,12 +734,28 @@ async function issue(cwd, number) {
     String(d.url || '').trim() || '(no url)',
   ];
 
-  const parts = [neuter(clip(String(d.body == null ? '' : d.body).trim(), MAX_ISSUE_BODY_CHARS)) || '(no body)'];
-  const comments = (Array.isArray(d.comments) ? d.comments : []).filter((c) => c && typeof c === 'object');
-  for (const c of comments.slice(-MAX_ISSUE_COMMENTS)) {
-    parts.push(`-- comment by @${login(c.author)}, ${humanAge(c.createdAt)} ago --`);
-    parts.push(neuter(clip(String(c.body == null ? '' : c.body).trim(), MAX_ISSUE_COMMENT_CHARS)));
+  const budget = interiorBudget(head);
+  const body = neuter(clip(String(d.body == null ? '' : d.body).trim(),
+    Math.min(MAX_ISSUE_BODY_CHARS, Math.max(200, Math.round(budget * 0.6))))) || '(no body)';
+
+  const all = (Array.isArray(d.comments) ? d.comments : []).filter((c) => c && typeof c === 'object');
+  const newest = all.slice(-MAX_ISSUE_COMMENTS);
+
+  const kept = [];
+  let left = budget - body.length;
+  for (let i = newest.length - 1; i >= 0; i--) {
+    const c = newest[i];
+    const headLine = `-- comment by @${login(c.author)}, ${humanAge(c.createdAt)} ago --`;
+    const text = neuter(clip(String(c.body == null ? '' : c.body).trim(), MAX_ISSUE_COMMENT_CHARS));
+    const cost = headLine.length + text.length + 2;
+    if (kept.length && cost > left) break;
+    kept.unshift(`${headLine}\n${clip(text, Math.max(80, left - headLine.length - 2))}`);
+    left -= cost;
   }
+
+  const omitted = all.length - kept.length;
+  const parts = [body, ...kept];
+  if (omitted > 0) parts.push(`… ${omitted} earlier comment(s) omitted …`);
 
   return done(fenceUntrusted(head, parts.join('\n')));
 }
