@@ -200,24 +200,6 @@ const REARM_ABANDON_MS = 20000;
 // wedged flag costs one re-arm rather than the feature.
 const SPEECH_ABANDON_MS = 120000;
 
-// THE INDICATOR IS NOT EVIDENCE THAT *THIS DRAFT* WAS SPOKEN, which is why the
-// clear below exists and why it is not optional.
-//
-// t571's re-arm writes the trigger character at every turn end, so the recorder
-// is lit at the START of an ordinary turn, and it stays lit for ~15s of silence.
-// Typing into that lit composer would submit the operator's exact typed words
-// carrying a marker saying they were dictated — a mislabel of his own words, the
-// one thing this feature must never do. So typing is POSITIVE EVIDENCE OF
-// NOT-VOICE: it clears the stamp AND mutes the indicator path.
-//
-// THE MUTE IS WHAT MAKES THE CLEAR STICK. The stamp is level-triggered, so a
-// clear alone is undone by the next 300ms poll while the recorder is still lit —
-// which is how a narrower version of this fix left the defect open.
-//
-// This does not cost tap-listening, which is the workflow that matters: the tap
-// keypress mutes, the recorder then LIGHTS, and that rising edge unmutes and
-// stamps before the transcription lands.
-
 // How long evidence that the operator was DICTATING keeps a submit eligible for
 // the voice-origin marker.
 //
@@ -964,7 +946,12 @@ function createVoiceSubmitWatcher(terminal, {
     // produces one. Clearing the prefix here would resend the whole
     // accumulation the moment the operator clicks back and keeps dictating —
     // the same shape as the alt-screen arm, and the same answer.
-    if (!cfg) { forgetPending(); return; }
+    // CLEARED RATHER THAN LEFT FROZEN, and it must be written on THIS branch:
+    // the rise test below is unreachable out of scope, so a fall and a rise
+    // inside that window are both invisible, the mute never lifts, and a genuine
+    // tap-dictation ships unmarked. False makes a return to a lit recorder count
+    // as a rise. Not `= observed`, which would consume that rise silently.
+    if (!cfg) { forgetPending(); prevObserved = false; return; }
 
     // A RISE is the recorder starting, which is the operator reaching for the
     // microphone: it clears the mute so tap-listening marks normally (the tap

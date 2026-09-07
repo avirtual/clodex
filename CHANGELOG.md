@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Dictation is still marked as voice-originated after you switch to another session and back while the recorder is running — the marker used to go missing on that round trip.
+
 ## 5.36.1 — 2026-09-08
 
 - The ntfy plugin is no longer built in; it lives in the clodex-plugins library (Manage plugins ▸ Browse the Clodex library) for anyone who wants it.
