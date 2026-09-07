@@ -7249,7 +7249,7 @@ body {
       <p class="hint-text">Pick how new sessions should start. This is the only question.</p>
       <label class="prefs-check">
         <input type="radio" name="setup-mode" id="setup-mode-optimized" value="optimized" checked>
-        <span><strong>Clodex optimized</strong><br>New sessions start with Clodex's recommended tool set, agents and skills, routed through the built-in wirescope. Change per session under Advanced.</span>
+        <span><strong>Clodex optimized</strong><br>New sessions start from your default tools, skills and agents (Preferences), routed through the built-in wirescope. Change per session under Advanced.</span>
       </label>
       <label class="prefs-check">
         <input type="radio" name="setup-mode" id="setup-mode-standard" value="standard">
@@ -7346,6 +7346,18 @@ body {
         <label id="prefs-tools-row">Tools
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="prefs-tools-list" class="agent-checklist"></div>
+        </label>
+        <h5>Default skills</h5>
+        <p class="hint-text">Unchecked skills are off for new Claude sessions by default (you can still turn one back on per session at create). Every loaded skill costs prompt tokens each turn, so starting from none and opting in keeps the roster to what a session actually uses.</p>
+        <label id="prefs-skills-row">Skills
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+          <div id="prefs-skills-list" class="agent-checklist"></div>
+        </label>
+        <h5>Default agents</h5>
+        <p class="hint-text">Unchecked built-in subagents are denied for new Claude sessions by default (you can still allow one per session at create). A denied agent drops out of the injected roster entirely, so its description stops costing tokens every turn.</p>
+        <label id="prefs-agents-row">Agents
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+          <div id="prefs-agents-list" class="agent-checklist"></div>
         </label>
         <h5>Claude MCP</h5>
         <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy: the built-in wirescope strips <code>claude_design</code> by default and keeps your real MCPs. The fallback below is for the sessions it never sees — one you route nowhere, or one whose wire is unreachable at spawn. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
@@ -7486,7 +7498,7 @@ body {
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
         <h5>Default session mode</h5>
-        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> trims the tool roster and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
+        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
         <div class="prefs-row" style="margin-top: 4px;">
           <span>Mode</span>
           <select id="prefs-default-mode" style="flex: none;">
@@ -7899,6 +7911,8 @@ body {
         { name: "onSpeakerBusy", kind: "on", channel: "speaker-busy" },
         { name: "onZoomNudge", kind: "on", channel: "zoom-nudge" },
         { name: "setDefaultToolDeny", kind: "invoke", channel: "defaults:setToolDeny" },
+        { name: "setDefaultSkillDeny", kind: "invoke", channel: "defaults:setSkillDeny" },
+        { name: "setDefaultBuiltinDeny", kind: "invoke", channel: "defaults:setBuiltinDeny" },
         { name: "openWirescope", kind: "invoke", channel: "app:openWirescope" },
         { name: "wirescopeStatus", kind: "invoke", channel: "wirescope:status" },
         { name: "wirescopeStart", kind: "invoke", channel: "wirescope:start" },
@@ -22719,6 +22733,8 @@ ${String(body || "").trim()}
       var pluginCatalogCache = [];
       var claudeToolsCache = [];
       var defaultToolDenyCache = [];
+      var defaultSkillDenyCache = [];
+      var defaultBuiltinDenyCache = [];
       function setPromptLibCache(v) {
         promptLibCache = v;
       }
@@ -22746,6 +22762,12 @@ ${String(body || "").trim()}
       function setDefaultToolDenyCache(v) {
         defaultToolDenyCache = v;
       }
+      function setDefaultSkillDenyCache(v) {
+        defaultSkillDenyCache = v;
+      }
+      function setDefaultBuiltinDenyCache(v) {
+        defaultBuiltinDenyCache = v;
+      }
       function getPromptLibCache() {
         return promptLibCache;
       }
@@ -22754,6 +22776,12 @@ ${String(body || "").trim()}
       }
       function getDefaultToolDenyCache() {
         return defaultToolDenyCache;
+      }
+      function getDefaultSkillDenyCache() {
+        return defaultSkillDenyCache;
+      }
+      function getDefaultBuiltinDenyCache() {
+        return defaultBuiltinDenyCache;
       }
       var BUNDLE_EMPTY_HINT = {
         "prompts/append": '<span class="hint-text">No append prompts in library \u2014 add some via the Prompts drawer.</span>',
@@ -23151,9 +23179,13 @@ ${String(body || "").trim()}
         getPluginCatalogCache,
         setClaudeToolsCache,
         setDefaultToolDenyCache,
+        setDefaultSkillDenyCache,
+        setDefaultBuiltinDenyCache,
         getPromptLibCache,
         getSkillLibCache,
-        getDefaultToolDenyCache
+        getDefaultToolDenyCache,
+        getDefaultSkillDenyCache,
+        getDefaultBuiltinDenyCache
       };
     }
   });
@@ -34865,7 +34897,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -36230,7 +36262,7 @@ ${detail}` });
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
         if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
         if (claudeOnly && !skipAsyncRefresh) {
-          refreshNewSessionSkills();
+          refreshNewSessionSkills(modeSkillDenySet());
           refreshNewSessionInjectSkills();
           refreshNewSessionTools(modeToolDenySet());
         }
@@ -36475,10 +36507,10 @@ ${detail}` });
         renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         setSkillLibCache(cat.skills || []);
         renderInjectChecklist(inputInjectSkillsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
-        renderSkillChecklist(inputSkillsList, [], /* @__PURE__ */ new Set());
+        renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
         setClaudeToolsCache(cat.claudeTools || []);
         renderToolChecklist(inputToolsList, modeToolDenySet());
-        renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
+        renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
         refreshNewSessionExecCommands();
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setPromptLibCache({
@@ -36602,7 +36634,7 @@ ${detail}` });
       var inputMode = document.getElementById("input-mode");
       var modeHint = document.getElementById("mode-hint");
       var MODE_HINTS = {
-        optimized: "Trims the tool roster and strips prior-turn thinking from the wire. Open Advanced to see or change what it set.",
+        optimized: "Starts from your default tools, skills and agents (Preferences) and strips prior-turn thinking from the wire. Open Advanced to enable more for this session.",
         standard: "Runs the CLI with its own defaults \u2014 nothing trimmed, nothing stripped.",
         custom: "These fields were set by hand. Open Advanced to see them."
       };
@@ -36612,6 +36644,12 @@ ${detail}` });
       }
       function modeToolDenySet() {
         return inputMode && inputMode.value === "standard" ? /* @__PURE__ */ new Set() : new Set(getDefaultToolDenyCache());
+      }
+      function modeSkillDenySet() {
+        return inputMode && inputMode.value === "standard" ? /* @__PURE__ */ new Set() : new Set(getDefaultSkillDenyCache());
+      }
+      function modeBuiltinDenySet() {
+        return inputMode && inputMode.value === "standard" ? /* @__PURE__ */ new Set() : new Set(getDefaultBuiltinDenyCache());
       }
       function setModeSelect(mode) {
         if (!inputMode) return;
@@ -36627,9 +36665,10 @@ ${detail}` });
         if (inputType.value === "claude") {
           if (!catalogsFresh) {
             refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : /* @__PURE__ */ new Set());
+            refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : /* @__PURE__ */ new Set());
             refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
           }
-          renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
+          renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : /* @__PURE__ */ new Set());
           if (inputStripLevel) inputStripLevel.value = optimized ? "2" : "0";
           if (inputAutoCompact) inputAutoCompact.checked = true;
           if (inputNoWire) inputNoWire.checked = false;
@@ -36952,11 +36991,13 @@ ${detail}` });
         renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         refreshNewSessionExecCommands();
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
-        renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
         setClaudeToolsCache(settings?.claudeTools || []);
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
+        setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
+        setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
+        renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
         renderToolChecklist(inputToolsList, modeToolDenySet());
-        refreshNewSessionSkills();
+        refreshNewSessionSkills(modeSkillDenySet());
         refreshNewSessionTools(modeToolDenySet());
         setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
         labelProxyDefault(inputProxyMode, settings);
@@ -36968,7 +37009,7 @@ ${detail}` });
       });
       inputType.addEventListener("change", () => refreshNewSessionToolGate());
       inputPlacement.addEventListener("change", () => applyPlacement());
-      inputCwd.addEventListener("change", () => refreshNewSessionSkills());
+      inputCwd.addEventListener("change", () => refreshNewSessionSkills(modeSkillDenySet()));
       inputCwd.addEventListener("change", () => refreshNewSessionTools(modeToolDenySet()));
       inputCwd.addEventListener("change", () => refreshWorktreeForCwd());
       inputCwd.addEventListener("change", () => refreshTeamForCwd());
@@ -37266,7 +37307,7 @@ ${detail}` });
           return;
         }
         inputCwd.value = dir;
-        refreshNewSessionSkills();
+        refreshNewSessionSkills(modeSkillDenySet());
         refreshNewSessionTools(modeToolDenySet());
         refreshWorktreeForCwd();
       });
@@ -37325,6 +37366,8 @@ ${detail}` });
         const settings = await window.api.getSettings();
         setClaudeToolsCache(settings?.claudeTools || []);
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
+        setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
+        setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
         setAgentLibCache(await window.api.listAgents() || []);
         const agentType = inputType.value === "claude" || inputType.value === "codex";
         if (agentType) await loadPromptLib();
@@ -38665,7 +38708,7 @@ Click for live activity`;
           inputCwd.value = prefill.cwd;
           inputResume.value = prefill.resumeId;
           inputFork.checked = false;
-          refreshNewSessionSkills();
+          refreshNewSessionSkills(modeSkillDenySet());
           refreshNewSessionTools(modeToolDenySet());
           refreshWorktreeForCwd();
           dialogTitle.textContent = "Adopt Session";
@@ -38799,6 +38842,12 @@ Click for live activity`;
       var prefsToolsRow = document.getElementById("prefs-tools-row");
       var prefsToolsList = document.getElementById("prefs-tools-list");
       wireBulkToggles(prefsToolsRow, prefsToolsList);
+      var prefsSkillsRow = document.getElementById("prefs-skills-row");
+      var prefsSkillsList = document.getElementById("prefs-skills-list");
+      wireBulkToggles(prefsSkillsRow, prefsSkillsList);
+      var prefsAgentsRow = document.getElementById("prefs-agents-row");
+      var prefsAgentsList = document.getElementById("prefs-agents-list");
+      wireBulkToggles(prefsAgentsRow, prefsAgentsList);
       var wsDot = document.getElementById("ws-dot");
       var wsStatusText = document.getElementById("ws-status-text");
       var wsRestartBtn = document.getElementById("ws-restart-btn");
@@ -40896,6 +40945,31 @@ ${res.stderr}` : "");
         const picked = prefsTerminalReports.querySelector('input[type="radio"]:checked');
         return picked && TERMINAL_REPORTS.includes(picked.value) ? picked.value : "off";
       }
+      var prefsSkillDenyStored = [];
+      async function renderPrefsSkillDefaults(stored) {
+        prefsSkillDenyStored = Array.isArray(stored) ? stored.slice() : [];
+        let res = null;
+        try {
+          res = await window.api.getSkillCatalogFor(homeDir);
+        } catch {
+          res = null;
+        }
+        const names = res && res.ok && res.names || [];
+        renderSkillChecklist(
+          prefsSkillsList,
+          names,
+          new Set(prefsSkillDenyStored),
+          res && res.effective || {},
+          { skillsLocked: res && res.skillsLocked, canReenable: res && res.canReenable }
+        );
+      }
+      function collectPrefsSkillDefaults() {
+        const toggleable = new Set(Array.from(
+          prefsSkillsList.querySelectorAll('input[type="checkbox"]:not(:disabled)')
+        ).map((cb) => cb.value));
+        const carried = prefsSkillDenyStored.filter((n) => !toggleable.has(n));
+        return [.../* @__PURE__ */ new Set([...collectSkillChecklist(prefsSkillsList), ...carried])];
+      }
       async function openPrefs() {
         const s = await window.api.getSettings();
         renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
@@ -40931,6 +41005,8 @@ ${res.stderr}` : "");
         refreshPrefsEnv();
         setClaudeToolsCache(s.claudeTools || []);
         renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
+        await renderPrefsSkillDefaults(s.defaultSkillDeny || []);
+        renderBuiltinChecklist(prefsAgentsList, new Set(s.defaultBuiltinDeny || []));
         prefsOverlay.classList.remove("hidden");
         refreshWsStatus();
         refreshWsLogs();
@@ -41018,6 +41094,8 @@ ${res.stderr}` : "");
           remoteEnabled: prefsRemoteEnabled.checked
         });
         await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
+        await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());
+        await window.api.setDefaultBuiltinDeny(collectBuiltinChecklist(prefsAgentsList));
         await refreshVoiceSubmitConfig();
         closePrefs();
       });

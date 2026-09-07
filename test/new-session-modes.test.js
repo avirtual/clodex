@@ -68,6 +68,31 @@ test('#mode-row is a first-contact field: after Working directory, before #workt
     'optimized is the first option, and Custom ships hidden');
 });
 
+// --- what the mode PROMISES -----------------------------------------------
+
+// Three surfaces name the same mode, and the operator meets them in this order:
+// the first-run dialog, the Preferences hint, the dialog's own hint. t730 made
+// the mode mean the three default sets, so a surface still promising only a
+// trimmed tool roster is a false claim about what the button does — and none of
+// them is reachable from the others, so nothing but a pin keeps them together.
+test('all three "Clodex optimized" surfaces promise the three default sets', () => {
+  const MODE_HINT = /optimized: 'Starts from your default tools, skills and agents \(Preferences\) and strips prior-turn thinking from the wire\. Open Advanced to enable more for this session\.'/;
+  assert.match(rendererSrc, MODE_HINT, "renderer.js MODE_HINTS.optimized");
+
+  const SETUP = 'New sessions start from your default tools, skills and agents (Preferences), routed through the built-in wirescope.';
+  assert.ok(htmlSrc.includes(SETUP), 'the first-run setup dialog');
+
+  const PREFS = '<strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) and turns on wire stripping;';
+  assert.ok(htmlSrc.includes(PREFS), 'the Preferences default-mode hint');
+
+  // The anti-degenerate half: the superseded wording must be GONE, not merely
+  // outnumbered. A surface left behind reads as the current promise.
+  assert.ok(!htmlSrc.includes("Clodex's recommended tool set, agents and skills"),
+    'the old setup wording is replaced, not duplicated');
+  assert.ok(!rendererSrc.includes('Trims the tool roster and strips prior-turn thinking'),
+    'the old mode hint is replaced, not duplicated');
+});
+
 // --- the preset -----------------------------------------------------------
 
 const APPLY_FN = extract(/\n(function applyModeFields\([\s\S]*?\n\})\n/, 'applyModeFields');

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Preferences gains Default skills and Default agents beside Default tools, and "Clodex optimized" now starts every new session from all three sets (built-in agents default to Explore and general-purpose only). Enable more per session under Advanced.
+
 ## 5.35.6 — 2026-09-07
 
 - The quota chip now shows every window at a glance — `5h:0% | W:76% | F:86%` (5-hour, week all models, week Fable) — with per-window resets in its tooltip.
