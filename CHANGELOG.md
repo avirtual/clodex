@@ -17,6 +17,7 @@ blocks a release.
 - **Bundled wirescope updated to v0.6.61: the session view stamps every message with a wall-clock time derived from the capture series.**
 - [agent:gh issue <n>] keeps its untrusted fence intact on issues with many labels, and says so when a comment's text is withheld for lack of room.
 - The plugin library's GitHub repo is one click away: a link in Manage plugins ▸ Browse the Clodex library, and a Help menu with Clodex and clodex-plugins on GitHub.
+- Ticket seats (hands and reviewers) load exactly the plugins their template checks. Before, a template's unchecked built-in bundle (Clodex Plugin Builder, with its agent) was loaded into every ticket seat regardless.
 - Rename… now renames the seat for real: its name changes in the sidebar, in `[agent:who]` and DM addressing, and its messages, memory, pending DMs and reminders move with it; the seat restarts on the same conversation and is told its new name. Ticket seats and seats holding an open ticket cannot be renamed.
 - Plugins can raise a note in the operator inbox (`host.notify.user`), tagged with the plugin's id, under the same size rule as `[agent:notify-user]`.
 
