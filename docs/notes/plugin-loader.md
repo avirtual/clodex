@@ -2,9 +2,8 @@
 
 ## readBundle
 
-A skill's companion files are capped at 64 files / 1 MiB per skill; over
-either, the WHOLE skill is skipped. They are written at spawn 0600, except
-under `scripts/` which is 0700 — Claude Code executes those.
+Companion files are capped at 64 files / 1 MiB per skill; over either, the
+whole skill is skipped. Written at spawn 0600, except `scripts/` at 0700.
 
 `unreadable` separates a read that FAILED from content that is absent — only
 the first means a permission error, not a deletion. Set for the directory
