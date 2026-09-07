@@ -50,6 +50,11 @@ const HOST_CONTRACT = [
   { name: 'lib', kind: 'ns', members: ['gitWorktree'] },
   { name: 'library', kind: 'ns', members: ['remove', 'setPin'] },
   { name: 'telemetry', kind: 'ns', members: ['snapshot'] },
+  // Present even in this fixture, which injects none of the three notify deps:
+  // the member is published unconditionally and refuses at CALL time, so a host
+  // built without an inbox must not answer by dropping the key — an out-of-tree
+  // author feature-detecting on `host.notify` would read that as an old host.
+  { name: 'notify', kind: 'ns', members: ['user'] },
 ];
 
 // The SessionHandle — five fields and two methods, deliberately tiny. Widening
@@ -228,11 +233,15 @@ test('the engine host carries EXACTLY the published contract', () => {
     // plugin swapping them out, and nothing else holds a reference to patch.
     // Listed positively rather than as an exclusion so a new namespace has to
     // declare which it is.
-    for (const ns of ['paths', 'sessions', 'ipc', 'intents', 'events', 'lib', 'telemetry']) {
+    for (const ns of ['paths', 'sessions', 'ipc', 'intents', 'events', 'lib', 'telemetry', 'notify']) {
       assert.ok(Object.isFrozen(host[ns]), `host.${ns} must be frozen too`);
     }
     assert.strictEqual(host.id, 'demo');
     assert.strictEqual(host.hostApiVersion, HOST_API_VERSION);
+    // Backs the notify row's claim: this fixture injects no inbox, and the
+    // member still answers an envelope rather than throwing or being absent.
+    assert.deepStrictEqual(host.notify.user({ body: 'no inbox here' }),
+      { ok: false, error: 'the operator inbox is unavailable' });
   } finally { cleanup(); }
 });
 
