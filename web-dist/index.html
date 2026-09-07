@@ -6895,6 +6895,14 @@ body {
         </div>
         <datalist id="cwd-suggestions"></datalist>
       </label>
+      <label id="mode-row">Mode
+        <select id="input-mode">
+          <option value="optimized">Clodex optimized</option>
+          <option value="standard">Standard (CLI as-is)</option>
+          <option value="custom" hidden>Custom</option>
+        </select>
+        <span id="mode-hint" class="hint-text"></span>
+      </label>
       <label id="worktree-row" style="display:none;">Git worktree
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
           <input type="checkbox" id="input-worktree" style="margin: 0;">
@@ -6934,117 +6942,120 @@ body {
           </div>
         </div>
       </label>
-      <label id="system-prompt-row">System prompt
-        <select id="input-system-prompt">
-          <option value="">(CLI default)</option>
-        </select>
-        <span class="hint-text">Replaces the CLI's default system prompt. Authored in the Prompts library.</span>
-      </label>
-      <label id="append-prompts-row">Append prompts
-        <div id="input-append-list" class="agent-checklist"></div>
-        <span class="hint-text">Appended (non-system) on every spawn, in filename order — the clodex IPC protocol is always included first. Prefix a name (00-, 50-) to control order.</span>
-      </label>
-      <details id="tools-section" class="dialog-section" style="display:none;">
-        <summary>Tools</summary>
-        <label id="tools-row">
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
-          <div id="input-tools-list" class="agent-checklist"></div>
-          <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Pre-filled from your default set (Preferences). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
-        </label>
-        <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap) (Bash may be named)
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
-          <div id="input-tools-allow-list" class="agent-checklist"></div>
-          <span class="hint-text">Separate from the denylist above: this is the template's <code>tools</code> key. Only a <strong>reviewer</strong> seat reads it, intersected with the reviewer cap (plus <code>Bash</code>, shell-capped, if named). Leave every box unchecked to omit the key and accept the default cap.</span>
-        </label>
-      </details>
-      <details id="skills-section" class="dialog-section" style="display:none;">
-        <summary>Skills</summary>
-        <label id="skills-row">Skills
-          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
-          <div id="input-skills-list" class="agent-checklist"></div>
-          <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Known built-ins only; project/plugin skills appear in the per-session list once running.</span>
-        </label>
-        <label id="inject-skills-row">Custom skills
-          <div id="input-inject-skills-list" class="agent-checklist"></div>
-          <span class="hint-text">Inject skills from your <strong>Skills Library</strong> into this session (via a session-only <code>--plugin-dir</code>). They join the roster from the start and ride every turn — add only what this session needs.</span>
-        </label>
-      </details>
-      <details id="other-section" class="dialog-section" style="display:none;">
-        <summary>Other options</summary>
-        <label id="agents-row">Custom subagents
-          <div id="input-agents-list" class="agent-checklist"></div>
-          <div class="popover-subhead">Built-in Agents</div>
-          <div id="input-builtins-list" class="agent-checklist"></div>
-          <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op.</span>
-        </label>
-        <label id="exec-row">Exec commands
-          <div id="input-exec-list" class="agent-checklist"></div>
-          <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one.</span>
-        </label>
-        <label id="plugins-row">Plugins
-          <div id="input-plugin-list" class="agent-checklist"></div>
-          <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to it — no intents below, no grammar in its prompt, no turn feed. New seats start with the plugins shipped with Clodex ticked; one you installed yourself is off until you tick it here.</span>
-        </label>
-        <label id="intents-row">Intents
-          <div id="input-intent-list" class="agent-checklist"></div>
-          <span class="hint-text">Which <code>[agent:…]</code> intents this seat may <em>send</em>. Checked = allowed (all checked by default). Unchecking one makes that verb bounce when the seat emits it — send-side only, so a seat with <code>dm</code> off still <em>receives</em> DMs. <code>name</code> can't be gated. Applies immediately (no restart).</span>
-        </label>
-        <label id="strip-row">Wire stripping
-          <select id="input-strip-level">
-            <option value="0">Off</option>
-            <option value="1">Level 1 — strip prior-turn thinking</option>
-            <option value="2">Level 2 — + edit-acks &amp; failed-call stubs</option>
+      <details id="advanced-section" class="dialog-section">
+        <summary>Advanced</summary>
+        <label id="system-prompt-row">System prompt
+          <select id="input-system-prompt">
+            <option value="">(CLI default)</option>
           </select>
-          <span class="hint-text">Strip wasted re-read carriage from the wire to reclaim cost (needs a wirescope proxy). Best set here at creation — the cache is cold, so it costs nothing; changing it mid-session forces a one-time full-window re-write. Non-destructive: your local transcript is untouched.</span>
+          <span class="hint-text">Replaces the CLI's default system prompt. Authored in the Prompts library.</span>
         </label>
-        <label id="auto-compact-row">Auto-compact context
-          <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
-            <input type="checkbox" id="input-auto-compact" checked style="margin: 0;">
-            <span class="hint-text" style="margin: 0;">On by default: fire a <code>/compact</code> as this seat nears its context limit (needs a wirescope proxy). Uncheck to opt out — it runs to the CLI's own hard limit. Also togglable at runtime from the session ⚙ menu.</span>
+        <label id="append-prompts-row">Append prompts
+          <div id="input-append-list" class="agent-checklist"></div>
+          <span class="hint-text">Appended (non-system) on every spawn, in filename order — the clodex IPC protocol is always included first. Prefix a name (00-, 50-) to control order.</span>
+        </label>
+        <details id="tools-section" class="dialog-section" style="display:none;">
+          <summary>Tools</summary>
+          <label id="tools-row">
+            <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+            <div id="input-tools-list" class="agent-checklist"></div>
+            <span class="hint-text">Unchecked tools are denied for this session (<code>permissions.deny</code>). Pre-filled from your default set (Preferences). Any other tool can be denied by hand via <code>--disallowedTools</code> in Extra CLI args.</span>
           </label>
+          <label id="tools-allow-row" style="display:none;">Allowed tools (allowlist; reviewer seats intersect it with the read-only cap) (Bash may be named)
+            <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+            <div id="input-tools-allow-list" class="agent-checklist"></div>
+            <span class="hint-text">Separate from the denylist above: this is the template's <code>tools</code> key. Only a <strong>reviewer</strong> seat reads it, intersected with the reviewer cap (plus <code>Bash</code>, shell-capped, if named). Leave every box unchecked to omit the key and accept the default cap.</span>
+          </label>
+        </details>
+        <details id="skills-section" class="dialog-section" style="display:none;">
+          <summary>Skills</summary>
+          <label id="skills-row">Skills
+            <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+            <div id="input-skills-list" class="agent-checklist"></div>
+            <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Known built-ins only; project/plugin skills appear in the per-session list once running.</span>
+          </label>
+          <label id="inject-skills-row">Custom skills
+            <div id="input-inject-skills-list" class="agent-checklist"></div>
+            <span class="hint-text">Inject skills from your <strong>Skills Library</strong> into this session (via a session-only <code>--plugin-dir</code>). They join the roster from the start and ride every turn — add only what this session needs.</span>
+          </label>
+        </details>
+        <details id="other-section" class="dialog-section" style="display:none;">
+          <summary>Other options</summary>
+          <label id="agents-row">Custom subagents
+            <div id="input-agents-list" class="agent-checklist"></div>
+            <div class="popover-subhead">Built-in Agents</div>
+            <div id="input-builtins-list" class="agent-checklist"></div>
+            <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster (reclaims their per-turn description tokens) and no longer delegatable — a trim <em>and</em> a capability removal. Not every session loads all of these; denying an absent one is a no-op.</span>
+          </label>
+          <label id="exec-row">Exec commands
+            <div id="input-exec-list" class="agent-checklist"></div>
+            <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one.</span>
+          </label>
+          <label id="plugins-row">Plugins
+            <div id="input-plugin-list" class="agent-checklist"></div>
+            <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to it — no intents below, no grammar in its prompt, no turn feed. New seats start with the plugins shipped with Clodex ticked; one you installed yourself is off until you tick it here.</span>
+          </label>
+          <label id="intents-row">Intents
+            <div id="input-intent-list" class="agent-checklist"></div>
+            <span class="hint-text">Which <code>[agent:…]</code> intents this seat may <em>send</em>. Checked = allowed (all checked by default). Unchecking one makes that verb bounce when the seat emits it — send-side only, so a seat with <code>dm</code> off still <em>receives</em> DMs. <code>name</code> can't be gated. Applies immediately (no restart).</span>
+          </label>
+          <label id="strip-row">Wire stripping
+            <select id="input-strip-level">
+              <option value="0">Off</option>
+              <option value="1">Level 1 — strip prior-turn thinking</option>
+              <option value="2">Level 2 — + edit-acks &amp; failed-call stubs</option>
+            </select>
+            <span class="hint-text">Strip wasted re-read carriage from the wire to reclaim cost (needs a wirescope proxy). Best set here at creation — the cache is cold, so it costs nothing; changing it mid-session forces a one-time full-window re-write. Non-destructive: your local transcript is untouched.</span>
+          </label>
+          <label id="auto-compact-row">Auto-compact context
+            <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+              <input type="checkbox" id="input-auto-compact" checked style="margin: 0;">
+              <span class="hint-text" style="margin: 0;">On by default: fire a <code>/compact</code> as this seat nears its context limit (needs a wirescope proxy). Uncheck to opt out — it runs to the CLI's own hard limit. Also togglable at runtime from the session ⚙ menu.</span>
+            </label>
+          </label>
+          <label id="no-wire-row">Wire off
+            <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+              <input type="checkbox" id="input-no-wire" style="margin: 0;">
+              <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
+            </label>
+          </label>
+        </details>
+        <label id="model-row">Model
+          <input type="text" id="input-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
+          <span class="hint-text">The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
         </label>
-        <label id="no-wire-row">Wire off
+        <label>Extra CLI args
+          <input type="text" id="input-args" placeholder="(none)">
+          <span class="hint-text" id="args-hint"></span>
+        </label>
+        <details id="env-section" class="dialog-section">
+          <summary>Environment variables</summary>
+          <label id="env-row">
+            <textarea id="input-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
+            <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Applied at spawn; persisted so a restart/resume reuses them.</span>
+            <span id="env-hint" class="hint-text" style="display:none;"></span>
+          </label>
+        </details>
+        <label id="proxy-row">API proxy
+          <select id="input-proxy-mode">
+            <option value="">Default</option>
+            <option value="off">Off</option>
+            <option value="custom">Custom URL…</option>
+          </select>
+          <input type="text" id="input-proxy-url" placeholder="http://127.0.0.1:7800" spellcheck="false" style="display:none;">
+          <span class="hint-text">Traffic goes via &lt;proxy&gt;/agent/&lt;name&gt;/… — Claude: ANTHROPIC_BASE_URL · Codex: openai_base_url.</span>
+        </label>
+        <label id="resume-row">Resume from session ID
+          <div class="dir-picker">
+            <input type="text" id="input-resume" placeholder="(new session)" spellcheck="false">
+            <button id="btn-find-session" class="secondary" type="button" data-tip="Find an existing session on this machine to resume">Find…</button>
+          </div>
           <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
-            <input type="checkbox" id="input-no-wire" style="margin: 0;">
-            <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
+            <input type="checkbox" id="input-fork" style="margin: 0;">
+            <span class="hint-text" style="margin: 0;">Fork instead of resume (branch into new session, original untouched).</span>
           </label>
         </label>
       </details>
-      <label id="model-row">Model
-        <input type="text" id="input-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
-        <span class="hint-text">The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
-      </label>
-      <label>Extra CLI args
-        <input type="text" id="input-args" placeholder="(none)">
-        <span class="hint-text" id="args-hint"></span>
-      </label>
-      <details id="env-section" class="dialog-section">
-        <summary>Environment variables</summary>
-        <label id="env-row">
-          <textarea id="input-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
-          <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Applied at spawn; persisted so a restart/resume reuses them.</span>
-          <span id="env-hint" class="hint-text" style="display:none;"></span>
-        </label>
-      </details>
-      <label id="proxy-row">API proxy
-        <select id="input-proxy-mode">
-          <option value="">Default</option>
-          <option value="off">Off</option>
-          <option value="custom">Custom URL…</option>
-        </select>
-        <input type="text" id="input-proxy-url" placeholder="http://127.0.0.1:7800" spellcheck="false" style="display:none;">
-        <span class="hint-text">Traffic goes via &lt;proxy&gt;/agent/&lt;name&gt;/… — Claude: ANTHROPIC_BASE_URL · Codex: openai_base_url.</span>
-      </label>
-      <label id="resume-row">Resume from session ID
-        <div class="dir-picker">
-          <input type="text" id="input-resume" placeholder="(new session)" spellcheck="false">
-          <button id="btn-find-session" class="secondary" type="button" data-tip="Find an existing session on this machine to resume">Find…</button>
-        </div>
-        <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
-          <input type="checkbox" id="input-fork" style="margin: 0;">
-          <span class="hint-text" style="margin: 0;">Fork instead of resume (branch into new session, original untouched).</span>
-        </label>
-      </label>
       <!-- Tool-doctor gate (Task 12): shown when the selected type's CLI isn't on
            PATH — Create is disabled and this carries the install remedy. Ships
            hidden; bash never trips it. Same visual language as the docker notice. -->
@@ -36116,7 +36127,7 @@ ${detail}` });
         if (claudeOnly && !skipAsyncRefresh) {
           refreshNewSessionSkills();
           refreshNewSessionInjectSkills();
-          refreshNewSessionTools();
+          refreshNewSessionTools(modeToolDenySet());
         }
         if (agentType && !skipAsyncRefresh) {
           refreshNewSessionExecCommands();
@@ -36482,6 +36493,53 @@ ${detail}` });
       var skillsSection = document.getElementById("skills-section");
       var otherSection = document.getElementById("other-section");
       var envSection = document.getElementById("env-section");
+      var advancedSection = document.getElementById("advanced-section");
+      var modeRow = document.getElementById("mode-row");
+      var inputMode = document.getElementById("input-mode");
+      var modeHint = document.getElementById("mode-hint");
+      var MODE_HINTS = {
+        optimized: "Trims the tool roster and strips prior-turn thinking from the wire. Open Advanced to see or change what it set.",
+        standard: "Runs the CLI with its own defaults \u2014 nothing trimmed, nothing stripped.",
+        custom: "These fields were set by hand. Open Advanced to see them."
+      };
+      function modeToolDenySet() {
+        return inputMode && inputMode.value === "standard" ? /* @__PURE__ */ new Set() : new Set(getDefaultToolDenyCache());
+      }
+      function setModeSelect(mode) {
+        if (!inputMode) return;
+        inputMode.value = mode;
+        const customOpt = inputMode.querySelector('option[value="custom"]');
+        if (customOpt) customOpt.hidden = mode !== "custom";
+        if (modeHint) modeHint.textContent = MODE_HINTS[mode] || "";
+        if (mode === "custom" && advancedSection) advancedSection.open = true;
+      }
+      function applyModeFields(mode, { skipTools = false } = {}) {
+        if (mode !== "standard" && mode !== "optimized") return;
+        const optimized = mode === "optimized";
+        if (inputType.value === "claude") {
+          if (!skipTools) refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : /* @__PURE__ */ new Set());
+          renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
+          renderPluginChecklist(inputPluginList, defaultPluginTicks());
+          repaintNewSessionBundleRows();
+          if (inputStripLevel) inputStripLevel.value = optimized ? "2" : "0";
+          if (inputAutoCompact) inputAutoCompact.checked = true;
+          if (inputNoWire) inputNoWire.checked = false;
+        }
+        if (newSessionIsAgent()) setProxyControls(inputProxyMode, inputProxyUrl, null, inputProxyUrl.value);
+      }
+      if (advancedSection) {
+        for (const evName of ["input", "change"]) {
+          advancedSection.addEventListener(evName, () => {
+            if (inputMode && inputMode.value !== "custom") setModeSelect("custom");
+          });
+        }
+      }
+      if (inputMode) {
+        inputMode.addEventListener("change", () => {
+          setModeSelect(inputMode.value);
+          applyModeFields(inputMode.value);
+        });
+      }
       function newSessionSeat() {
         return { plugins: collectPluginChecklist(inputPluginList) };
       }
@@ -36740,6 +36798,8 @@ ${detail}` });
         for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
           if (sec) sec.open = false;
         }
+        setModeSelect(prefill ? "custom" : "optimized");
+        if (advancedSection) advancedSection.open = !!prefill || dialogMode !== "create";
         if (inputEnv) inputEnv.value = "";
         refreshEnvHint();
         applyTypeDefaults();
@@ -36761,6 +36821,7 @@ ${detail}` });
         dialogHostSettings = settings;
         dialogHostAgentLib = agentLib || [];
         populateHostCatalogs(settings, dialogHostAgentLib);
+        if (inputMode) applyModeFields(inputMode.value);
         populatePlacementOptions(boxes);
         inputPlacement.value = "host";
         placementRow.style.display = showPlacementSelector(boxes) ? "" : "none";
@@ -36778,18 +36839,21 @@ ${detail}` });
         renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
         setClaudeToolsCache(settings?.claudeTools || []);
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
-        renderToolChecklist(inputToolsList, new Set(getDefaultToolDenyCache()));
+        renderToolChecklist(inputToolsList, modeToolDenySet());
         refreshNewSessionSkills();
-        refreshNewSessionTools();
+        refreshNewSessionTools(modeToolDenySet());
         setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
         labelProxyDefault(inputProxyMode, settings);
       }
       inputName.addEventListener("input", () => refreshNameValidity());
       inputType.addEventListener("change", () => applyTypeDefaults());
+      inputType.addEventListener("change", () => {
+        if (inputMode) applyModeFields(inputMode.value, { skipTools: true });
+      });
       inputType.addEventListener("change", () => refreshNewSessionToolGate());
       inputPlacement.addEventListener("change", () => applyPlacement());
       inputCwd.addEventListener("change", () => refreshNewSessionSkills());
-      inputCwd.addEventListener("change", () => refreshNewSessionTools());
+      inputCwd.addEventListener("change", () => refreshNewSessionTools(modeToolDenySet()));
       inputCwd.addEventListener("change", () => refreshWorktreeForCwd());
       inputCwd.addEventListener("change", () => refreshTeamForCwd());
       if (teamToggle) {
@@ -36835,6 +36899,7 @@ ${detail}` });
         const resolved = await cwdFromTemplate(t);
         if (inputTemplate.value !== id) return;
         if (resolved.warn) showToast(resolved.warn, { kind: "warn", duration: 12e3 });
+        setModeSelect("custom");
         inputType.value = t.type;
         inputCwd.value = resolved.cwd;
         {
@@ -37086,7 +37151,7 @@ ${detail}` });
         }
         inputCwd.value = dir;
         refreshNewSessionSkills();
-        refreshNewSessionTools();
+        refreshNewSessionTools(modeToolDenySet());
         refreshWorktreeForCwd();
       });
       async function pickSandboxCwd(hostDir) {
@@ -37138,6 +37203,7 @@ ${detail}` });
         for (const sec of [toolsSection, skillsSection, otherSection]) {
           if (sec) sec.open = false;
         }
+        setModeSelect("custom");
         setDialogMode("template");
         applyTypeDefaults({ skipAsyncRefresh: true });
         const settings = await window.api.getSettings();
@@ -38473,6 +38539,7 @@ Click for live activity`;
           resumeId: rec.sessionId
         };
         if (!dialogOverlay.classList.contains("hidden")) {
+          setModeSelect("custom");
           inputName.value = prefill.name;
           refreshNameValidity();
           if (inputType.value !== prefill.type) {
@@ -38483,7 +38550,7 @@ Click for live activity`;
           inputResume.value = prefill.resumeId;
           inputFork.checked = false;
           refreshNewSessionSkills();
-          refreshNewSessionTools();
+          refreshNewSessionTools(modeToolDenySet());
           refreshWorktreeForCwd();
           dialogTitle.textContent = "Adopt Session";
           setTimeout(() => inputName.select(), 50);

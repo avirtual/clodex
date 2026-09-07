@@ -345,6 +345,15 @@ agents" bug. Clearing only `worktree` while keeping the row is WORSE, not a
 compromise — see ALWAYS_PRESERVE in session-manager.js for why absent is the
 dangerous state.
 
+The New Session dialog opens on Name / Type / Working directory / **Mode**;
+everything else lives in the collapsed **Advanced** section. Mode is a preset
+over the Advanced fields, not a stored key — `Clodex optimized` (the create-mode
+default) writes the default tool denylist and `stripLevel: 2`, `Standard` writes
+neither, and any edit inside Advanced flips the selector to `Custom`, which
+applies nothing. A template, an adopt prefill or the template editor opens as
+`Custom` with Advanced expanded, so `collectFormConfig` and template round-trips
+are unchanged.
+
 **templates.json** stores reusable session configs. Base fields
 (`id/name/type/cwd/extraArgs`) plus the config subset snapshotted by the
 session context menu's **Export as Template…** (agent sessions only):
