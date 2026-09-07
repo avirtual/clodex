@@ -5,17 +5,30 @@
 The closing `---- END UNTRUSTED ----` is load-bearing: an agent that cannot see
 where outside text STOPS has no fence at all. `reply` clips from the end, so an
 interior long enough to reach `MAX_REPLY_CHARS` would remove exactly that line.
-`interiorBudget` therefore sizes the interior against the room the header and
-both fence lines leave, and `reply` stays in the path only as a backstop.
+`interiorBudget` sizes the interior against the room the header and both fence
+lines leave; `reply` stays in the path only as a backstop.
 
 ## issue
 
 Comments are selected newest-first against the remaining budget and rendered
-chronologically. A straight tail-cut of the assembled text would drop the LAST
-comment, which on an issue is the one saying how it ended. The per-comment cap
-(2000) is a first bound, not the operative one: the whole reply is capped at
-3000, so on a busy issue the budget binds first — which is why a single long
-comment cannot starve the newest one.
+chronologically: a tail-cut of the assembled text drops the LAST comment, which
+on an issue is the one saying how it ended. Which cap binds depends on the
+issue — for one oversized comment the per-comment cap (2000), on a busy issue
+the reply cap (3000), which drops whole comments.
+
+## omittedLine
+
+Reserved inside the budget BEFORE selection, at the width of the largest count
+that can print, since the reserve is subtracted before the count is known.
+Appended after selection instead, it falls outside the budget and the interior
+clip lands on the declaration itself — the agent loses the notice that evidence
+was withheld.
+
+## clip
+
+Below a max of 40 it returns MORE than it was given: it slices to `max - 40` for
+its marker, so the index goes negative and counts from the end. Never hand it a
+small remaining-room figure as a bound — `MIN_CLIP_CHARS` guards that in `issue`.
 
 ## issues
 
