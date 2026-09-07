@@ -1563,7 +1563,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   }
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
-  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(); }
+  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(modeToolDenySet()); }
   if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
@@ -1918,6 +1918,58 @@ const toolsSection = document.getElementById('tools-section');
 const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
 const envSection = document.getElementById('env-section');
+const advancedSection = document.getElementById('advanced-section');
+const modeRow = document.getElementById('mode-row');
+const inputMode = document.getElementById('input-mode');
+const modeHint = document.getElementById('mode-hint');
+
+const MODE_HINTS = {
+  optimized: 'Trims the tool roster and strips prior-turn thinking from the wire. Open Advanced to see or change what it set.',
+  standard: 'Runs the CLI with its own defaults — nothing trimmed, nothing stripped.',
+  custom: 'These fields were set by hand. Open Advanced to see them.',
+};
+
+function modeToolDenySet() {
+  return inputMode && inputMode.value === 'standard' ? new Set() : new Set(getDefaultToolDenyCache());
+}
+
+function setModeSelect(mode) {
+  if (!inputMode) return;
+  inputMode.value = mode;
+  const customOpt = inputMode.querySelector('option[value="custom"]');
+  if (customOpt) customOpt.hidden = mode !== 'custom';
+  if (modeHint) modeHint.textContent = MODE_HINTS[mode] || '';
+  if (mode === 'custom' && advancedSection) advancedSection.open = true;
+}
+
+function applyModeFields(mode, { skipTools = false } = {}) {
+  if (mode !== 'standard' && mode !== 'optimized') return;
+  const optimized = mode === 'optimized';
+  if (inputType.value === 'claude') {
+    if (!skipTools) refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : new Set());
+    renderBuiltinChecklist(inputBuiltinsList, new Set());
+    renderPluginChecklist(inputPluginList, defaultPluginTicks());
+    repaintNewSessionBundleRows();
+    if (inputStripLevel) inputStripLevel.value = optimized ? '2' : '0';
+    if (inputAutoCompact) inputAutoCompact.checked = true;
+    if (inputNoWire) inputNoWire.checked = false;
+  }
+  if (newSessionIsAgent()) setProxyControls(inputProxyMode, inputProxyUrl, null, inputProxyUrl.value);
+}
+
+if (advancedSection) {
+  for (const evName of ['input', 'change']) {
+    advancedSection.addEventListener(evName, () => {
+      if (inputMode && inputMode.value !== 'custom') setModeSelect('custom');
+    });
+  }
+}
+if (inputMode) {
+  inputMode.addEventListener('change', () => {
+    setModeSelect(inputMode.value);
+    applyModeFields(inputMode.value);
+  });
+}
 
 function newSessionSeat() {
   return { plugins: collectPluginChecklist(inputPluginList) };
@@ -2177,6 +2229,8 @@ async function openDialog(prefill = null) {
   for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
     if (sec) sec.open = false;
   }
+  setModeSelect(prefill ? 'custom' : 'optimized');
+  if (advancedSection) advancedSection.open = !!prefill || dialogMode !== 'create';
   if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
   refreshEnvHint();
   applyTypeDefaults();
@@ -2198,6 +2252,9 @@ async function openDialog(prefill = null) {
   dialogHostSettings = settings;
   dialogHostAgentLib = agentLib || [];
   populateHostCatalogs(settings, dialogHostAgentLib);
+  // AFTER populateHostCatalogs, which is where the default-deny cache lands: run
+  // earlier and `optimized` would trim against the previous open's cache.
+  if (inputMode) applyModeFields(inputMode.value);
   populatePlacementOptions(boxes);
   inputPlacement.value = 'host';
   placementRow.style.display = showPlacementSelector(boxes) ? '' : 'none';
@@ -2216,15 +2273,20 @@ function populateHostCatalogs(settings, agentLib) {
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
-  renderToolChecklist(inputToolsList, new Set(getDefaultToolDenyCache()));
+  renderToolChecklist(inputToolsList, modeToolDenySet());
   refreshNewSessionSkills();
-  refreshNewSessionTools();
+  refreshNewSessionTools(modeToolDenySet());
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
 }
 
 inputName.addEventListener('input', () => refreshNameValidity());
 inputType.addEventListener('change', () => applyTypeDefaults());
+// Registered after applyTypeDefaults', which has already re-derived the tool
+// checklist from the same mode — re-running it here would race itself.
+inputType.addEventListener('change', () => {
+  if (inputMode) applyModeFields(inputMode.value, { skipTools: true });
+});
 inputType.addEventListener('change', () => refreshNewSessionToolGate());
 inputPlacement.addEventListener('change', () => applyPlacement());
 // cwd drives the skill catalog's provenance (which lower-layer settings apply),
@@ -2232,7 +2294,7 @@ inputPlacement.addEventListener('change', () => applyPlacement());
 // Bare refs would leak the DOM Event into the first (data) param — disabledSet —
 // which then throws `.has is not a function` mid-render and blanks the checklist.
 inputCwd.addEventListener('change', () => refreshNewSessionSkills());
-inputCwd.addEventListener('change', () => refreshNewSessionTools());
+inputCwd.addEventListener('change', () => refreshNewSessionTools(modeToolDenySet()));
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
 inputCwd.addEventListener('change', () => refreshTeamForCwd());
 
@@ -2302,6 +2364,9 @@ inputTemplate.addEventListener('change', async () => {
   const resolved = await cwdFromTemplate(t);
   if (inputTemplate.value !== id) return; // a newer template won the race
   if (resolved.warn) showToast(resolved.warn, { kind: 'warn', duration: 12000 });
+  // Before the fields land: a programmatic write fires no input event, so the
+  // drift listener cannot see a template populate the form.
+  setModeSelect('custom');
   inputType.value = t.type;
   inputCwd.value = resolved.cwd;
   {
@@ -2574,7 +2639,7 @@ document.getElementById('btn-browse').addEventListener('click', async () => {
   }
   inputCwd.value = dir;
   refreshNewSessionSkills();
-  refreshNewSessionTools();
+  refreshNewSessionTools(modeToolDenySet());
   refreshWorktreeForCwd();
 });
 
@@ -2624,6 +2689,7 @@ async function openTemplateEditor(tpl = null, bundle = null) {
   if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
   if (inputNoWire) inputNoWire.checked = (tpl && tpl.noWire) === true;
   for (const sec of [toolsSection, skillsSection, otherSection]) { if (sec) sec.open = false; }
+  setModeSelect('custom'); // the template's own fields follow; nothing to derive
   setDialogMode('template');
   applyTypeDefaults({ skipAsyncRefresh: true });
   const settings = await window.api.getSettings();
@@ -4216,6 +4282,7 @@ function adoptSession(rec) {
     resumeId: rec.sessionId,
   };
   if (!dialogOverlay.classList.contains('hidden')) {
+    setModeSelect('custom'); // a prefill is a populated form, same as openDialog's
     inputName.value = prefill.name;
     refreshNameValidity();
     if (inputType.value !== prefill.type) { inputType.value = prefill.type; applyTypeDefaults(); }
@@ -4223,7 +4290,7 @@ function adoptSession(rec) {
     inputResume.value = prefill.resumeId;
     inputFork.checked = false;
     refreshNewSessionSkills();
-    refreshNewSessionTools();
+    refreshNewSessionTools(modeToolDenySet());
     refreshWorktreeForCwd();
     dialogTitle.textContent = 'Adopt Session';
     setTimeout(() => inputName.select(), 50);
