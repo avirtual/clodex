@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
@@ -31,16 +32,20 @@ def _fmt_ago(ts, now=None):
     return f"{d / 86400:.1f}d ago"
 
 
-def _fmt_clock(ts):
+def _fmt_clock(ts, secs=False):
     """Wall-clock for a turn boundary: HH:MM, with the date prefixed once the
     turn is older than today (a bare 14:22 on a 3-day-old session is a lie you
-    can't see). Local time — these are read next to the operator's own clock."""
+    can't see). Local time — these are read next to the operator's own clock.
+    `secs` adds the seconds: per-message stamps inside one turn are often a few
+    seconds apart, and a minute-resolution stamp would show a tool loop as one
+    frozen instant."""
     if not ts:
         return "—"
     lt = time.localtime(ts)
-    return (time.strftime("%H:%M", lt)
+    hm = "%H:%M:%S" if secs else "%H:%M"
+    return (time.strftime(hm, lt)
             if time.strftime("%Y%j", lt) == time.strftime("%Y%j", time.localtime())
-            else time.strftime("%b %d %H:%M", lt))
+            else time.strftime("%b %d " + hm, lt))
 
 
 def _fmt_when(ts):
@@ -349,6 +354,9 @@ details>summary{cursor:pointer;color:#6ab0de}
 .turnhdr{margin:1.2em 0 .35em;padding-bottom:.15em;color:#9aa3b2;
          font-weight:bold;border-bottom:1px solid #2a2e36}
 .tstamp{float:right;color:#69707d;font-weight:normal;font-size:12px}
+.clk{color:#5f8fb3;font-size:11px;margin-right:.55em;font-variant-numeric:tabular-nums}
+.clk.est{color:#69707d;font-style:italic}
+.tline .clk{color:#4f7593}
 .tw{font-weight:normal;font-size:12px;color:#7ec699;margin-left:.6em}
 .tw.hot{color:#e5c07b}
 .twc{font-weight:normal;font-size:12px;color:#69707d;margin-left:.45em}
@@ -665,7 +673,10 @@ def _call_ordinals(session_id, from_stem=None):
         if prev is not None and n > prev:
             break                                 # older, longer lineage — stop
         ts = report_mod._epoch(report_mod._head_ts(path)) or mtime
-        calls.append({"n": n, "ts": ts})
+        # `path` rides along so a consumer can reach this call's SIBLING files
+        # (its .warmth.json receipt) by stem — an exact pairing, unlike any
+        # message-count key, which subagent captures in the same dir collide on.
+        calls.append({"n": n, "ts": ts, "path": path})
         prev = n
         if n <= 2:
             break                                 # reached this lineage's first call
@@ -777,6 +788,99 @@ def _call_label(i, debut, n_calls, role=None, cause=None):
                 'user turn opened this round trip.">&#9679;</span>')
     return (f'<span title="first sent on API call {k} of {n_calls} · '
             f'payload index {i}">call {k}</span>{mark}{times}')
+
+
+def _call_times(calls):
+    """Per API call, the two instants the captures already record: when the
+    request was SENT (the request record's `ts`, carried by _call_ordinals) and
+    when its response was RECEIVED (the `ts` of the `.warmth.json` sidecar the
+    receipt path writes NEXT TO that request — same stem, so the pairing is by
+    file, exact).
+
+    NOT keyed by message count. The first cut paired through _turn_clock's
+    {n_messages: ts} map and read 1,540 s "latencies" on the live coordinator:
+    subagents share the parent's capture dir, their sidecars carry small counts
+    and recent times, and the newest sidecar for n=8 was a subagent's, not the
+    main line's call 8. A stem names one request; a count names a class.
+
+    Returns {call number (1-based) -> {"sent": epoch, "got": epoch|None}}. `got`
+    is None when the sidecar is absent (side-call, pre-sidecar capture, a call
+    whose receipt never landed) or would predate the send — that pairing is
+    wrong, not early, so it is dropped rather than shown as negative latency.
+    One ~480 B read per call in the lineage (measured 63 calls: 3 ms)."""
+    out = {}
+    for k, c in enumerate(calls or (), start=1):
+        sent, got = c.get("ts"), None
+        p = c.get("path")
+        if p and p.endswith(".request.json"):
+            try:
+                w = json.loads(Path(p[:-len(".request.json")] + ".warmth.json")
+                               .read_text())
+                got = w.get("ts") if isinstance(w, dict) else None
+            except Exception:
+                got = None
+        if not isinstance(got, (int, float)) or (sent and got < sent):
+            got = None
+        out[k] = {"sent": sent, "got": got}
+    return out
+
+
+def _block_when(i, role, debut, times):
+    """WHEN a message happened, on the same emitter-vs-carriage rule the label
+    uses (_call_label): a user/system message happened when the call that first
+    carried it was SENT; an assistant message happened when the PREVIOUS call's
+    response was RECEIVED (it IS that response — the request only ships it
+    back). Returns (epoch, kind), kind in {"sent", "emitted", "carried",
+    "resent"}, or (None, None) when the debut is unknown.
+      carried — assistant block on call 1: the emitting response predates the
+                lineage; the best honest time is its first re-send.
+      resent  — assistant block whose emitting call has no receipt on disk:
+                same fallback, different reason, and the tooltip says which.
+
+    THIS IS THE ANSWER TO "WHEN DID BLOCK N HAPPEN" WITHOUT PER-BLOCK STATE.
+    Every request re-ships the whole history, so a body carries no time of its
+    own; but the capture SERIES does, and within a lineage a message's debut
+    call is fixed. Deriving the stamp at view time from the ordinals + sidecars
+    costs nothing on the request path and works on a cold session from disk."""
+    k = (debut or {}).get(i)
+    if not k or k not in (times or {}):
+        return None, None
+    if role == "assistant":
+        if k == 1:
+            return times[k].get("sent"), "carried"
+        if (times.get(k - 1) or {}).get("got"):
+            return times[k - 1]["got"], "emitted"
+        return times[k].get("sent"), "resent"
+    return times[k].get("sent"), "sent"
+
+
+def _when_html(i, role, debut, times):
+    """The per-message clock chip. Seconds resolution (a tool loop is seconds
+    apart); the date only once the stamp is not today. Empty when unknown, so
+    a session without captures renders exactly as before."""
+    ts, kind = _block_when(i, role, debut, times)
+    if not ts:
+        return ""
+    k = debut.get(i)
+    if kind == "emitted":
+        t = times[k - 1]
+        lat = (f' · {t["got"] - t["sent"]:.0f}s after call {k - 1} was sent'
+               if t.get("sent") else '')
+        title = f'response to call {k - 1} received {_fmt_when(ts)}{lat}'
+    elif kind == "carried":
+        title = (f'first re-sent on call {k} at {_fmt_when(ts)} — the response '
+                 f'that produced it predates the captured lineage')
+    elif kind == "resent":
+        title = (f'first re-sent on call {k} at {_fmt_when(ts)} — no receipt '
+                 f'captured for call {k - 1}, which produced it')
+    else:
+        t = times[k]
+        got = (f' · answered {_fmt_when(t["got"])} ({t["got"] - ts:.0f}s)'
+               if t.get("got") else '')
+        title = f'call {k} sent {_fmt_when(ts)}{got}'
+    est = " est" if kind in ("carried", "resent") else ""
+    return (f'<span class="clk{est}" title="{html.escape(title)}">'
+            f'{html.escape(_fmt_clock(ts, secs=True))}</span>')
 
 
 def _turn_weights(items, is_start):
@@ -1504,6 +1608,12 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
         # no request bodies are opened). A turn's boundary is keyed by the message
         # count at capture time, so msgs[:i] is the prefix that existed then.
         clock = _turn_clock(sid, render_ts=entry.get("ts"))
+        # per-call sent/received instants: each call's request `ts` (from the
+        # ordinal walk) paired with its own sidecar's receipt `ts` by stem. The
+        # per-MESSAGE stamps below derive from these — no per-block state, no
+        # body parse; a message's time is its debut call's, on the same
+        # emitter-vs-carriage rule as its label.
+        times = _call_times(ordinals["calls"])
         # how much each turn ADDED to the window (and the running total) —
         # scanning these headers is how you find where a session got heavy.
         weights = _turn_weights(msgs, meta_mod._is_prompt_msg)
@@ -1515,10 +1625,13 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 turn += 1
                 cur = (' · <span class="warm">current</span>'
                        if turn == n_turns else '')
+                # when the prompt was SENT (its debut call's request ts); else
                 # the request that OPENED this turn carried messages[0..i], i.e.
-                # a message count of i+1. Absent (side-call, swept, pre-sidecar
-                # capture) -> render the header exactly as before, no filler.
-                tts = clock.get(i + 1)
+                # a message count of i+1, so the sidecar keyed i+1 is its
+                # receipt. Absent (side-call, swept, pre-sidecar capture) ->
+                # render the header exactly as before, no filler.
+                tts, _kind = _block_when(i, "user", debut, times)
+                tts = tts or clock.get(i + 1)
                 stamp = (f' <span class="tstamp" title="{e(_fmt_when(tts))}">'
                          f'{e(_fmt_clock(tts))}</span>' if tts else '')
                 rows.append(f'<div class="turnhdr" id="turn-{turn}">'
@@ -1541,7 +1654,7 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 # message would repeat the same fact per tool_result.
                 bcause = cause_of.get(trigger_at.get(i)) if i in trigger_at \
                     else None
-                lbl = (f'<span class="role">'
+                lbl = (f'{_when_html(i, role, debut, times)}<span class="role">'
                        f'{_call_label(i, debut, n_calls, role, bcause)} ')
                 lbl += f'{e(role)}{pin}</span>'
                 if bt == "text":
