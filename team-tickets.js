@@ -541,6 +541,7 @@ function createTicketMethods(deps, shared) {
       const injectSkills = (tpl && tpl.injectSkills) || [];
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
+      const plugins = (tpl && Array.isArray(tpl.plugins)) ? tpl.plugins.map(String) : null;
       const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
 
       setImmediate(async () => {
@@ -583,6 +584,7 @@ function createTicketMethods(deps, shared) {
             // carry it. What it cannot do is redirect traffic: proxyBase is nulled
             // outright, never pointed somewhere the template chose.
             (tpl && tpl.noWire) === true,
+            plugins,
           );
           // AFTER create(), which is what mints the persistence entry: setWorktree
           // silently no-ops when no entry exists, so recording it earlier would
@@ -915,7 +917,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
-            false, null, shape.shellDeny,
+            false, shape.plugins, shape.shellDeny,
           );
           // The rule is "reported ONCE", and this is the one caller that can
           // report twice: a reviewer whose prompt rides as system fails the
@@ -3792,6 +3794,8 @@ function createTicketMethods(deps, shared) {
         envDropped: dropped,
         envBadType: badType,
         noWire: tpl.noWire === true,
+        // `|| []` inverts this: absent means every shipped bundle, `[]` means none.
+        plugins: Array.isArray(tpl.plugins) ? tpl.plugins.map(String) : null,
       };
     },
 
@@ -3974,6 +3978,7 @@ function createTicketMethods(deps, shared) {
           // `[]` (everything gated) is a real value that must apply; null means the
           // seat keeps the living all-enabled default. Not interchangeable.
           intents: shape ? shape.intents : null,
+          plugins: shape ? shape.plugins : null,
           env: (shape && shape.sessionEnv) || null,
           envDropped: (shape && shape.envDropped) || [],
           envBadType: (shape && shape.envBadType) || [],
@@ -4102,6 +4107,7 @@ function createTicketMethods(deps, shared) {
         // `[]`, not null: the reviewer's fallback gates every intent. See the
         // ticket arm — the two values mean opposite things to create().
         intents: (shape && Array.isArray(shape.intents)) ? shape.intents : [],
+        plugins: shape ? shape.plugins : null,
         // An object always, never null — and the fallback applies whenever the
         // TEMPLATE supplied no usable env, not merely when the template is
         // missing: a reviewer that booted without CLODEX_DISABLE_IPC_PROMPT gets
@@ -4129,6 +4135,7 @@ function createTicketMethods(deps, shared) {
       if (!tpl) return;
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
+      if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
     },
 
     // No `def` parameter: the resolver derives the role def from (team, roleKey)
@@ -4364,12 +4371,12 @@ function createTicketMethods(deps, shared) {
             shape.appendPromptFiles,
             shape.execCommands,
             shape.intents,
-            // Stops at the 20th positional: `noWire` is deliberately NOT threaded
-            // from the template here. A ticket seat is one Clodex spawns on the
-            // lead's behalf with no operator checkbox behind it, and a template is
-            // agent-writable — so honoring it would let a template silently blind
-            // the wire that measures what this seat costs.
+            // The `false` is noWire, a literal and never `shape.noWire`: a template
+            // is agent-writable, and honoring it would let one silently blind the
+            // wire that measures what this seat costs. It also cannot be dropped —
+            // the plugin list after it is positional.
             shape.env, true,
+            false, shape.plugins,
           );
           this._applyTemplatePersistence(seat.name, shape.tpl);
           // FIRST, before anything else that can throw. Between create() and this
