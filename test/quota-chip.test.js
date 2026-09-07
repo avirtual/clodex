@@ -329,7 +329,7 @@ test('quotaChip: a dead POLLER dims the chip even while the server age stays you
   // The failure the age_s rule exists to prevent, reached by the other route:
   // if delivery stops (proxy down, machine asleep, every base idle) age_s
   // freezes at whatever it last said, and a chip trusting it alone would render
-  // "resets in 2d 22h" at full confidence forever.
+  // week-old percentages at full confidence forever.
   const q = shapeQuota({ ...LIVE, age_s: 0.5 }, CAPS);
   assert.strictEqual(quotaChip(q, 0).stale, false, 'ENTER: fresh on both clocks must be non-stale, or the assertion below proves nothing');
   const dead = quotaChip(q, 3600);
