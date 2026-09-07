@@ -26,9 +26,10 @@ was withheld.
 
 ## clip
 
-Below a max of 40 it returns MORE than it was given: it slices to `max - 40` for
-its marker, so the index goes negative and counts from the end. Never hand it a
-small remaining-room figure as a bound — `MIN_CLIP_CHARS` guards that in `issue`.
+Below a max of 40 it slices to `max - 40` for its marker, so the index goes
+negative and counts from the end: on a 500-char input the result is `490 + max`,
+exceeding the INPUT for max 11..39. Never hand it a small remaining-room figure
+as a bound — `MIN_CLIP_CHARS` guards that in `issue`.
 
 ## issues
 
