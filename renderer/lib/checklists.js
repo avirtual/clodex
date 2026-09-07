@@ -53,6 +53,8 @@ let claudeToolsCache = [];
 // Global default tool-deny set (the "*" agent-default); new sessions start with
 // these tools unchecked.
 let defaultToolDenyCache = [];
+let defaultSkillDenyCache = [];
+let defaultBuiltinDenyCache = [];
 
 // Setters — every renderer.js reassignment routes through these.
 function setPromptLibCache(v) { promptLibCache = v; }
@@ -64,11 +66,15 @@ function setPluginCatalogCache(v) { pluginCatalogCache = Array.isArray(v) ? v : 
 function getPluginCatalogCache() { return pluginCatalogCache; }
 function setClaudeToolsCache(v) { claudeToolsCache = v; }
 function setDefaultToolDenyCache(v) { defaultToolDenyCache = v; }
+function setDefaultSkillDenyCache(v) { defaultSkillDenyCache = v; }
+function setDefaultBuiltinDenyCache(v) { defaultBuiltinDenyCache = v; }
 
 // Getters — for the three caches also read outside the checklist render path.
 function getPromptLibCache() { return promptLibCache; }
 function getSkillLibCache() { return skillLibCache; }
 function getDefaultToolDenyCache() { return defaultToolDenyCache; }
+function getDefaultSkillDenyCache() { return defaultSkillDenyCache; }
+function getDefaultBuiltinDenyCache() { return defaultBuiltinDenyCache; }
 
 const BUNDLE_EMPTY_HINT = {
   'prompts/append': '<span class="hint-text">No append prompts in library — add some via the Prompts drawer.</span>',
@@ -540,5 +546,7 @@ module.exports = {
   setPluginCatalogCache,
   getPluginCatalogCache,
   setClaudeToolsCache, setDefaultToolDenyCache,
+  setDefaultSkillDenyCache, setDefaultBuiltinDenyCache,
   getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache,
+  getDefaultSkillDenyCache, getDefaultBuiltinDenyCache,
 };

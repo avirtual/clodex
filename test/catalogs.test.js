@@ -6,8 +6,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED,
+  DEFAULT_BUILTIN_DENY_FLOOR,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
 } = require('../catalogs');
+const { BUILTIN_AGENTS } = require('../agents-util');
 
 test('CLAUDE_TOOLS: non-empty, unique, includes the staples', () => {
   assert.ok(Array.isArray(CLAUDE_TOOLS) && CLAUDE_TOOLS.length > 0);
@@ -36,6 +38,19 @@ test('DEFAULT_TOOL_DENY_FLOOR: every entry is a known tool', () => {
   for (const t of DEFAULT_TOOL_DENY_FLOOR) {
     assert.ok(CLAUDE_TOOLS.includes(t), `${t} not in CLAUDE_TOOLS`);
   }
+});
+
+// A name outside BUILTIN_AGENTS can never be denied: the checklist offers only
+// that list, and getDefaultBuiltinDeny filters against it — so a typo in the
+// floor is a silently weaker default, not an error.
+test('DEFAULT_BUILTIN_DENY_FLOOR: a subset of BUILTIN_AGENTS, sparing exactly Explore and general-purpose', () => {
+  assert.ok(Array.isArray(DEFAULT_BUILTIN_DENY_FLOOR));
+  for (const a of DEFAULT_BUILTIN_DENY_FLOOR) {
+    assert.ok(BUILTIN_AGENTS.includes(a), `${a} not in BUILTIN_AGENTS`);
+  }
+  const spared = BUILTIN_AGENTS.filter((a) => !DEFAULT_BUILTIN_DENY_FLOOR.includes(a));
+  assert.deepStrictEqual(spared.sort(), ['Explore', 'general-purpose'],
+    'the floor denies every built-in but these two');
 });
 
 test('CLAUDE_SKILLS + re-enable gate', () => {

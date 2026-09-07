@@ -74,9 +74,11 @@ const APPLY_FN = extract(/\n(function applyModeFields\([\s\S]*?\n\})\n/, 'applyM
 const SET_PROXY_FN = extract(/\n(function setProxyControls\([\s\S]*?\n\})\n/, 'setProxyControls');
 
 const DENY_CACHE = ['Bash', 'WebFetch', 'NotebookEdit'];
+const SKILL_DENY_CACHE = ['code-review', 'deep-research'];
+const BUILTIN_DENY_CACHE = ['Plan', 'statusline-setup'];
 
 function runApply(mode, { type = 'claude', catalogsFresh = false } = {}) {
-  const calls = { tools: [], builtins: [], plugins: 0, intents: 0 };
+  const calls = { tools: [], skills: [], builtins: [], plugins: 0, intents: 0 };
   const inputStripLevel = { value: 'untouched' };
   const inputAutoCompact = { checked: false };
   const inputNoWire = { checked: true };
@@ -86,6 +88,9 @@ function runApply(mode, { type = 'claude', catalogsFresh = false } = {}) {
     inputType: { value: type },
     refreshNewSessionTools: (s) => calls.tools.push(s),
     getDefaultToolDenyCache: () => DENY_CACHE,
+    refreshNewSessionSkills: (s) => calls.skills.push(s),
+    getDefaultSkillDenyCache: () => SKILL_DENY_CACHE,
+    getDefaultBuiltinDenyCache: () => BUILTIN_DENY_CACHE,
     renderBuiltinChecklist: (_el, s) => calls.builtins.push(s),
     inputBuiltinsList: {},
     // The SHIPPED refresh pair, stubbed: it is what fills
@@ -111,6 +116,9 @@ test('standard writes the CLI-as-is fields: nothing denied, stripping off', () =
   assert.strictEqual(r.calls.tools.length, 1, 'ENTER: the tool checklist was redrawn exactly once');
   assert.deepStrictEqual([...r.calls.tools[0]], [],
     'no tool is denied — the deny cache must NOT reach the checklist in standard');
+  assert.strictEqual(r.calls.skills.length, 1, 'ENTER: the skill checklist was redrawn exactly once');
+  assert.deepStrictEqual([...r.calls.skills[0]], [],
+    'no skill is denied — the skill deny cache must NOT reach the checklist in standard');
   assert.strictEqual(r.inputStripLevel.value, '0', 'wire stripping off');
   assert.strictEqual(r.inputAutoCompact.checked, true);
   assert.strictEqual(r.inputNoWire.checked, false);
@@ -122,19 +130,28 @@ test('optimized writes the trimmed fields: the default deny set, strip level 2',
   assert.strictEqual(r.calls.tools.length, 1, 'ENTER: the tool checklist was redrawn exactly once');
   assert.deepStrictEqual([...r.calls.tools[0]], DENY_CACHE,
     'the denied set is getDefaultToolDenyCache() — the dialog\'s own default, not a second list');
+  assert.strictEqual(r.calls.skills.length, 1, 'ENTER: the skill checklist was redrawn exactly once');
+  assert.deepStrictEqual([...r.calls.skills[0]], SKILL_DENY_CACHE,
+    'the denied skills are getDefaultSkillDenyCache() — the same tri-state store the tools come from');
   assert.strictEqual(r.inputStripLevel.value, '2', 'level 2, the literal the mode promises');
   assert.strictEqual(r.inputAutoCompact.checked, true);
   assert.strictEqual(r.inputNoWire.checked, false);
   assert.strictEqual(r.inputProxyMode.value, '', 'proxy back to the app default');
 });
 
-test('both modes reset the builtins, and redraw plugins through the shipped refresh', async () => {
+test('each mode writes its own built-in deny set, and redraws plugins through the shipped refresh', async () => {
+  // Per-mode, not shared: standard means "the CLI as installed", so it must
+  // clear the denies a previous optimized apply wrote; optimized means the
+  // stored default set. One expectation for both modes would be true of a
+  // build that ignored the mode entirely.
+  const expected = { standard: [], optimized: BUILTIN_DENY_CACHE };
   for (const mode of ['standard', 'optimized']) {
     const r = runApply(mode);
     // The intent refresh is chained off the plugin refresh's promise, so it
     // lands a microtask later — asserting synchronously reads 0 every time.
     await Promise.resolve();
-    assert.deepStrictEqual([...r.calls.builtins[0]], [], `${mode}: no built-in agent denied`);
+    assert.deepStrictEqual([...r.calls.builtins[0]], expected[mode],
+      `${mode}: the built-in deny set the mode promises`);
     // Not renderPluginChecklist directly: refreshNewSessionPlugins is what
     // assigns `newSessionPluginsRendered` before it draws, and a draw that
     // skips the fill silently drops a carried-forward plugin at save (t671).
@@ -151,13 +168,16 @@ test('catalogsFresh skips the two refreshes the caller has already run', () => {
   assert.strictEqual(r.calls.plugins, 0, 'no second plugin refresh');
   // The anti-degenerate half: the flag must skip ONLY the catalog redraws, so
   // name a field that must still be written.
+  assert.deepStrictEqual(r.calls.skills, [], 'no second skill redraw');
   assert.strictEqual(r.inputStripLevel.value, '2', 'the mode still writes its own fields');
-  assert.deepStrictEqual([...r.calls.builtins[0]], [], 'and still resets the builtins');
+  assert.deepStrictEqual([...r.calls.builtins[0]], BUILTIN_DENY_CACHE,
+    'and still writes the built-in deny set — the flag skips only the catalog redraws');
 });
 
 test('custom applies nothing at all — a hand-configured form is never overwritten', () => {
   const r = runApply('custom');
   assert.deepStrictEqual(r.calls.tools, []);
+  assert.deepStrictEqual(r.calls.skills, []);
   assert.deepStrictEqual(r.calls.builtins, []);
   assert.strictEqual(r.inputStripLevel.value, 'untouched');
   assert.strictEqual(r.inputNoWire.checked, true, 'the pre-set value survives');
@@ -167,6 +187,7 @@ test('custom applies nothing at all — a hand-configured form is never overwrit
 test('a non-claude type gets no claude-only writes, but still gets the proxy default', () => {
   const r = runApply('optimized', { type: 'codex' });
   assert.deepStrictEqual(r.calls.tools, [], 'no tool checklist exists for codex');
+  assert.deepStrictEqual(r.calls.skills, [], 'nor a skill checklist');
   assert.strictEqual(r.inputStripLevel.value, 'untouched');
   assert.strictEqual(r.inputProxyMode.value, '', 'proxy is an agent-wide row, so it is still reset');
 });
@@ -372,6 +393,41 @@ test('every tool-checklist draw in the dialog goes through modeToolDenySet()', (
 });
 
 // --- programmatic populates ----------------------------------------------
+
+test('no New Session path draws the skill or built-in checklist with a bare default', () => {
+  // The tool pin above, for the two sets t730 added. The bug this forbids is
+  // silent in the other direction from a wrong literal: a bare
+  // `refreshNewSessionSkills()` defaults to an EMPTY set, so every skill comes
+  // back ticked the moment the operator changes cwd — the dialog still says
+  // "Clodex optimized" while offering the untrimmed roster.
+  const dialogPaths = [
+    ['function applyTypeDefaults(', '\nfunction applyNewSessionToolOverlay(', 'applyTypeDefaults'],
+    ['function populateHostCatalogs(', "\ninputName.addEventListener('input'", 'the host catalog fill'],
+    ['function populateChecklistsFromCatalogs(', '\nasync function restoreHostCatalogs(', 'the sandbox catalog fill'],
+    ['function adoptSession(', '\nfunction renderDiscovery(', 'adoptSession'],
+  ];
+  let sawSkillDraw = 0;
+  for (const [from, to, what] of dialogPaths) {
+    const body = slice(from, to, what);
+    // ENTER: a body that mentions neither call would satisfy the absence
+    // assertions below without exercising anything.
+    const draws = (body.match(/refreshNewSessionSkills\s*\(/g) || []).length
+      + (body.match(/renderSkillChecklist\(inputSkillsList/g) || []).length;
+    sawSkillDraw += draws;
+    assert.ok(!/refreshNewSessionSkills\(\)/.test(body),
+      `${what}: a bare refreshNewSessionSkills() re-enables every skill, ignoring the mode`);
+    assert.ok(!/renderBuiltinChecklist\(inputBuiltinsList, new Set\(\)\)/.test(body),
+      `${what}: a bare new Set() re-enables every built-in agent, ignoring the mode`);
+  }
+  assert.ok(sawSkillDraw >= 3,
+    `ENTER: found only ${sawSkillDraw} skill draws across the dialog paths — the slices are wrong`);
+
+  // The cwd listener is a one-liner outside any function body.
+  const cwdListener = slice("inputCwd.addEventListener('change', () => refreshNewSessionSkills",
+    "inputCwd.addEventListener('change', () => refreshWorktreeForCwd", 'the cwd change listeners');
+  assert.match(cwdListener, /refreshNewSessionSkills\(modeSkillDenySet\(\)\)/,
+    'a cwd change in optimized mode must re-apply the defaults, not re-enable everything');
+});
 
 test('every path that fills the form by script marks it Custom itself', () => {
   // A scripted `.value =` fires no input/change event, so the drift listener on

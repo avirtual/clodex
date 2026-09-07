@@ -42,7 +42,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -1563,7 +1563,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   }
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
-  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(); refreshNewSessionInjectSkills(); refreshNewSessionTools(modeToolDenySet()); }
+  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(modeSkillDenySet()); refreshNewSessionInjectSkills(); refreshNewSessionTools(modeToolDenySet()); }
   if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
@@ -1776,10 +1776,10 @@ function populateChecklistsFromCatalogs(cat) {
   renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
   setSkillLibCache(cat.skills || []);
   renderInjectChecklist(inputInjectSkillsList, new Set(), null, newSessionSeat());
-  renderSkillChecklist(inputSkillsList, [], new Set());
+  renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
   setClaudeToolsCache(cat.claudeTools || []);
   renderToolChecklist(inputToolsList, modeToolDenySet());
-  renderBuiltinChecklist(inputBuiltinsList, new Set());
+  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache({
@@ -1923,7 +1923,7 @@ const inputMode = document.getElementById('input-mode');
 const modeHint = document.getElementById('mode-hint');
 
 const MODE_HINTS = {
-  optimized: 'Trims the tool roster and strips prior-turn thinking from the wire. Open Advanced to see or change what it set.',
+  optimized: 'Starts from your default tools, skills and agents (Preferences) and strips prior-turn thinking from the wire. Open Advanced to enable more for this session.',
   standard: 'Runs the CLI with its own defaults — nothing trimmed, nothing stripped.',
   custom: 'These fields were set by hand. Open Advanced to see them.',
 };
@@ -1935,6 +1935,14 @@ function defaultSessionMode(settings) {
 
 function modeToolDenySet() {
   return inputMode && inputMode.value === 'standard' ? new Set() : new Set(getDefaultToolDenyCache());
+}
+
+function modeSkillDenySet() {
+  return inputMode && inputMode.value === 'standard' ? new Set() : new Set(getDefaultSkillDenyCache());
+}
+
+function modeBuiltinDenySet() {
+  return inputMode && inputMode.value === 'standard' ? new Set() : new Set(getDefaultBuiltinDenyCache());
 }
 
 function setModeSelect(mode) {
@@ -1952,9 +1960,10 @@ function applyModeFields(mode, { catalogsFresh = false } = {}) {
   if (inputType.value === 'claude') {
     if (!catalogsFresh) {
       refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : new Set());
+      refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : new Set());
       refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
     }
-    renderBuiltinChecklist(inputBuiltinsList, new Set());
+    renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
     if (inputStripLevel) inputStripLevel.value = optimized ? '2' : '0';
     if (inputAutoCompact) inputAutoCompact.checked = true;
     if (inputNoWire) inputNoWire.checked = false;
@@ -2280,11 +2289,13 @@ function populateHostCatalogs(settings, agentLib) {
   renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
   refreshNewSessionExecCommands();
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
-  renderBuiltinChecklist(inputBuiltinsList, new Set());
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
+  setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
+  setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
+  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
   renderToolChecklist(inputToolsList, modeToolDenySet());
-  refreshNewSessionSkills();
+  refreshNewSessionSkills(modeSkillDenySet());
   refreshNewSessionTools(modeToolDenySet());
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
@@ -2301,7 +2312,7 @@ inputPlacement.addEventListener('change', () => applyPlacement());
 // so re-fetch when it changes.
 // Bare refs would leak the DOM Event into the first (data) param — disabledSet —
 // which then throws `.has is not a function` mid-render and blanks the checklist.
-inputCwd.addEventListener('change', () => refreshNewSessionSkills());
+inputCwd.addEventListener('change', () => refreshNewSessionSkills(modeSkillDenySet()));
 inputCwd.addEventListener('change', () => refreshNewSessionTools(modeToolDenySet()));
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
 inputCwd.addEventListener('change', () => refreshTeamForCwd());
@@ -2644,7 +2655,7 @@ document.getElementById('btn-browse').addEventListener('click', async () => {
     return;
   }
   inputCwd.value = dir;
-  refreshNewSessionSkills();
+  refreshNewSessionSkills(modeSkillDenySet());
   refreshNewSessionTools(modeToolDenySet());
   refreshWorktreeForCwd();
 });
@@ -2701,6 +2712,8 @@ async function openTemplateEditor(tpl = null, bundle = null) {
   const settings = await window.api.getSettings();
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
+  setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
+  setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
   setAgentLibCache((await window.api.listAgents()) || []);
   const agentType = inputType.value === 'claude' || inputType.value === 'codex';
   if (agentType) await loadPromptLib();
@@ -4295,7 +4308,7 @@ function adoptSession(rec) {
     inputCwd.value = prefill.cwd;
     inputResume.value = prefill.resumeId;
     inputFork.checked = false;
-    refreshNewSessionSkills();
+    refreshNewSessionSkills(modeSkillDenySet());
     refreshNewSessionTools(modeToolDenySet());
     refreshWorktreeForCwd();
     dialogTitle.textContent = 'Adopt Session';
@@ -4432,6 +4445,12 @@ const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startu
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
 wireBulkToggles(prefsToolsRow, prefsToolsList);
+const prefsSkillsRow = document.getElementById('prefs-skills-row');
+const prefsSkillsList = document.getElementById('prefs-skills-list');
+wireBulkToggles(prefsSkillsRow, prefsSkillsList);
+const prefsAgentsRow = document.getElementById('prefs-agents-row');
+const prefsAgentsList = document.getElementById('prefs-agents-list');
+wireBulkToggles(prefsAgentsRow, prefsAgentsList);
 const wsDot = document.getElementById('ws-dot');
 const wsStatusText = document.getElementById('ws-status-text');
 const wsRestartBtn = document.getElementById('ws-restart-btn');
@@ -6560,6 +6579,25 @@ function readTerminalReports() {
   return picked && TERMINAL_REPORTS.includes(picked.value) ? picked.value : 'off';
 }
 
+let prefsSkillDenyStored = [];
+
+async function renderPrefsSkillDefaults(stored) {
+  prefsSkillDenyStored = Array.isArray(stored) ? stored.slice() : [];
+  let res = null;
+  try { res = await window.api.getSkillCatalogFor(homeDir); } catch { res = null; }
+  const names = (res && res.ok && res.names) || [];
+  renderSkillChecklist(prefsSkillsList, names, new Set(prefsSkillDenyStored),
+    (res && res.effective) || {}, { skillsLocked: res && res.skillsLocked, canReenable: res && res.canReenable });
+}
+
+function collectPrefsSkillDefaults() {
+  const toggleable = new Set(Array.from(
+    prefsSkillsList.querySelectorAll('input[type="checkbox"]:not(:disabled)'),
+  ).map((cb) => cb.value));
+  const carried = prefsSkillDenyStored.filter((n) => !toggleable.has(n));
+  return [...new Set([...collectSkillChecklist(prefsSkillsList), ...carried])];
+}
+
 async function openPrefs() {
   const s = await window.api.getSettings();
   renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
@@ -6602,6 +6640,8 @@ async function openPrefs() {
   refreshPrefsEnv();
   setClaudeToolsCache(s.claudeTools || []);
   renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
+  await renderPrefsSkillDefaults(s.defaultSkillDeny || []);
+  renderBuiltinChecklist(prefsAgentsList, new Set(s.defaultBuiltinDeny || []));
   prefsOverlay.classList.remove('hidden');
   refreshWsStatus();
   refreshWsLogs();
@@ -6688,6 +6728,8 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     remoteEnabled: prefsRemoteEnabled.checked,
   });
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
+  await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());
+  await window.api.setDefaultBuiltinDeny(collectBuiltinChecklist(prefsAgentsList));
   // The watchers read a cache, so without this the setting applies only at the
   // next window load — including the OFF direction.
   await refreshVoiceSubmitConfig();

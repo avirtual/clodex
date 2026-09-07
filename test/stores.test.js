@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { initStores } = require('../stores');
+const { DEFAULT_BUILTIN_DENY_FLOOR } = require('../catalogs');
 const { shellCapGranted } = require('../peer-shell');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -2603,6 +2604,45 @@ test('agentDefaults: strip get/set and the deny-floor tri-state', () => {
     assert.deepStrictEqual(d.getDefaultDeny(), []);
     d.setDefaultDeny(['Bash', 'NotNADFakeTool', 'Read']); // unknown filtered out
     assert.deepStrictEqual(d.getDefaultDeny().sort(), ['Bash', 'Read']);
+  } finally { cleanup(); }
+});
+
+test('agentDefaults: the skill and built-in deny tri-states, and what each one filters', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const d = stores.agentDefaults;
+
+    // Skills: the floor is EMPTY (a fresh install denies no skill), and the
+    // list is NOT catalog-filtered — a project-only skill exists under one cwd
+    // and must survive being stored from anywhere else.
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), [], 'absent key -> deny no skill');
+    d.setDefaultSkillDeny(['code-review', 'a-project-only-skill', 'code-review']);
+    assert.deepStrictEqual(d.getDefaultSkillDeny().sort(),
+      ['a-project-only-skill', 'code-review'], 'deduped, and the unknown name is KEPT');
+    d.setDefaultSkillDeny([]);
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), [], 'PRESENT-empty means deny nothing, not the floor');
+
+    // Built-ins: a non-empty floor, filtered against BUILTIN_AGENTS.
+    assert.deepStrictEqual(d.getDefaultBuiltinDeny(), DEFAULT_BUILTIN_DENY_FLOOR,
+      'absent key -> the shipped floor');
+    assert.ok(!DEFAULT_BUILTIN_DENY_FLOOR.includes('Explore')
+      && !DEFAULT_BUILTIN_DENY_FLOOR.includes('general-purpose'),
+      'the floor is "everything but Explore and general-purpose"');
+    d.setDefaultBuiltinDeny(['Plan', 'NotAnAgent', 'Explore']);
+    assert.deepStrictEqual(d.getDefaultBuiltinDeny().sort(), ['Explore', 'Plan'],
+      'unknown agent filtered out');
+    d.setDefaultBuiltinDeny([]);
+    assert.deepStrictEqual(d.getDefaultBuiltinDeny(), [],
+      'PRESENT-empty means deny nothing, not the floor');
+
+    // All three sets live on the same "*" entry, so writing one must not clear
+    // the others — the failure a per-key store would never have.
+    d.setDefaultDeny(['Bash']);
+    d.setDefaultSkillDeny(['code-review']);
+    d.setDefaultBuiltinDeny(['Plan']);
+    assert.deepStrictEqual(d.getDefaultDeny(), ['Bash']);
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), ['code-review']);
+    assert.deepStrictEqual(d.getDefaultBuiltinDeny(), ['Plan']);
   } finally { cleanup(); }
 });
 
