@@ -675,6 +675,8 @@ test('the dialog\'s inline buttons share the dialog button rule, and the source 
     || /#btn-plugins-source-install[^{]*#btn-create[^{]*\{/.test(css),
     'Install is the primary action of its row and must take the accent from the same rule as #btn-create, '
     + 'not a second copy of var(--accent) that stops tracking it');
+  assert.ok(/#btn-create:hover[^{]*#btn-plugins-source-install:hover[^{]*\{/.test(css),
+    'and it must dim on hover from that same rule — an accent button with no hover state reads as disabled');
   assert.ok(/id="btn-plugins-source-cancel"[\s\S]*?id="btn-plugins-source-resolve"[\s\S]*?id="btn-plugins-source-install"/.test(html),
     'the row is ordered by markup alone: Cancel is pushed left by margin-right:auto, so Resolve and Install pair '
     + 'at the right with Install last — reorder the markup and the next-step action lands under the operator\'s cursor '
@@ -707,8 +709,8 @@ test('the trust warning names the host when the surface is a browser', () => {
 // ════════════════════════════════════════════════════════════════════════════
 
 // Each row carries its own literal label/enabled/reason rather than looking the
-// reason up by the rule libraryRowAction uses — the four disabled cases say
-// four different things, and that is exactly what a computed table could not
+// reason up by the rule libraryRowAction uses — the disabled cases each say
+// something different, and that is exactly what a computed table could not
 // express.
 const LIBRARY_CASES = [
   {
@@ -738,6 +740,16 @@ const LIBRARY_CASES = [
       label: 'Install',
       enabled: false,
       reason: 'Installed from a different repo — remove it before installing the library copy.',
+      action: null,
+    },
+  },
+  {
+    label: 'an id registered from a folder elsewhere',
+    row: { id: 'linked', installed: 'registered', installedRepo: null, upToDate: false },
+    expected: {
+      label: 'Install',
+      enabled: false,
+      reason: 'A plugin of that id is registered from a folder elsewhere — unregister it first.',
       action: null,
     },
   },
@@ -772,10 +784,10 @@ for (const c of LIBRARY_CASES) {
   });
 }
 
-test('the four disabled library verdicts say four DIFFERENT things', () => {
+test('the five disabled library verdicts say five DIFFERENT things', () => {
   const said = LIBRARY_CASES.filter((c) => !c.expected.enabled).map((c) => c.expected.reason);
-  assert.strictEqual(said.length, 4, 'ENTER: four rows really are disabled');
-  assert.strictEqual(new Set(said).size, 4,
+  assert.strictEqual(said.length, 5, 'ENTER: five rows really are disabled');
+  assert.strictEqual(new Set(said).size, 5,
     'each names a different thing the operator would have to do — one shared "cannot install" tells them nothing');
 });
 
@@ -836,9 +848,28 @@ test('a row installs only when libraryRowAction allows it', () => {
   assert.ok(disabled > verdict, 'the button state comes from that verdict');
   const handler = src.indexOf("btn.addEventListener('click'", verdict);
   assert.ok(handler > disabled, 'ENTER: the click handler is attached after the verdict is computed');
+  assert.ok(!/ref: cat\.ref/.test(src),
+    'the update reads the row\'s OWN ref: the catalog is read at the default branch, so cat.ref is null and '
+    + 'the trust warning would say "at the default branch" about a plugin pinned to a tag');
+  assert.match(src, /ref: p\.installedRef/);
   assert.match(src.slice(handler), /if \(verdict\.action === 'update'\)/,
     'a fetched row must reach openPluginsSourceUpdate, which resolves the sidecar\'s own repo by id — '
     + 'installFromSource on an existing id is refused, so an Install there is a click that cannot work');
+});
+
+test('a successful install repaints the one row instead of refetching the catalog', () => {
+  // loadPluginsLibrary is a second full-tarball fetch. Called from the install
+  // handler it also paints into a section the operator may have closed while the
+  // install was in flight, leaving a catalog live behind a hidden panel.
+  const src = librarySectionSrc();
+  const at = src.indexOf('async function installFromLibrary(');
+  assert.ok(at > 0, 'ENTER: the install handler is inside the sliced section');
+  const body = src.slice(at, src.indexOf('\nasync function loadPluginsLibrary(', at));
+  assert.ok(body.includes('paintPluginsLibrary()'), 'ENTER: the handler repaints');
+  assert.strictEqual((body.match(/loadPluginsLibrary\(\)/g) || []).length, 0,
+    'a second catalog fetch here downloads the identical tarball to learn what the install already returned');
+  assert.match(body, /classList\.contains\('hidden'\)/,
+    'and a closed section must stop the repaint rather than paint rows nobody can see');
 });
 
 test('Update rides the existing source section rather than a second update path', () => {

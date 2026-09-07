@@ -900,6 +900,52 @@ test('libraryCatalog decorates each row with what the plugins folder holds', asy
   assert.strictEqual(by.get('notes').upToDate, false, 'the sidecar is at 9999999, the library at abc1234');
 });
 
+test('libraryCatalog carries the sidecar\'s own ref and subpath, which the row\'s Update names', async () => {
+  // The catalog is read at the default branch, so cat.ref is null. A row
+  // installed at a tag updates from that tag: passing the catalog's ref to
+  // openPluginsSourceUpdate would make the trust warning say "at the default
+  // branch" about a pin the operator chose.
+  const bytes = buildLibraryBytes('abc1234', { 'notes-pack': 'notes' });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
+  fs.mkdirSync(path.join(userDir, 'notes'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'notes', 'manifest.json'), JSON.stringify(manifestFor('notes')));
+  fs.writeFileSync(path.join(userDir, 'notes', 'engine.js'), engineFile);
+  fs.writeFileSync(path.join(userDir, 'notes', '.clodex-source.json'), JSON.stringify({
+    source: 'github', repo: 'avirtual/clodex-plugins', ref: 'v2.1.0', subpath: 'notes-pack',
+    commit: '9999999', commitFull: false, fetchedAt: 1,
+  }));
+  const r = await loader.libraryCatalog();
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.ref, null, 'ENTER: the catalog itself was read at the default branch');
+  assert.strictEqual(r.plugins.length, 1, 'ENTER: the one row is present');
+  assert.strictEqual(r.plugins[0].installed, 'fetched', 'ENTER: the sidecar was read, so the fields below are its own');
+  assert.strictEqual(r.plugins[0].installedRef, 'v2.1.0');
+  assert.strictEqual(r.plugins[0].installedSubpath, 'notes-pack');
+});
+
+test('libraryCatalog reports a symlinked id as registered, not as the operator\'s own folder', async () => {
+  // installFromSource refuses a symlink with "unregister it first"; a row that
+  // said "move it aside" would name a repair that does not apply.
+  const bytes = buildLibraryBytes('abc1234', { notes: 'notes', mine: 'mine' });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
+  const elsewhere = mkTmpRoot('clodex-loader-registered-');
+  fs.mkdirSync(path.join(elsewhere, 'notes'), { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'notes', 'manifest.json'), JSON.stringify(manifestFor('notes')));
+  fs.writeFileSync(path.join(elsewhere, 'notes', 'engine.js'), engineFile);
+  fs.mkdirSync(userDir, { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, 'notes'), path.join(userDir, 'notes'));
+  fs.mkdirSync(path.join(userDir, 'mine'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'mine', 'manifest.json'), JSON.stringify(manifestFor('mine')));
+  fs.writeFileSync(path.join(userDir, 'mine', 'engine.js'), engineFile);
+  const r = await loader.libraryCatalog();
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  const by = new Map(r.plugins.map((p) => [p.id, p]));
+  assert.strictEqual(by.size, 2, 'ENTER: both rows survived the catalog read');
+  assert.strictEqual(by.get('notes').installed, 'registered');
+  assert.strictEqual(by.get('mine').installed, 'user-authored',
+    'a real folder with no sidecar is still the operator\'s own — the two repairs differ');
+});
+
 test('libraryCatalog calls a fetched row up to date only when its sidecar names the SAME repo', async () => {
   // A plugin of that id fetched from somewhere else is at whatever commit that
   // other repo minted. Comparing shas alone could call it up to date by

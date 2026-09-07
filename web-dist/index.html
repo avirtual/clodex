@@ -4354,7 +4354,8 @@ body {
 .toast-close:hover {
   color: var(--text);
 }
-#btn-create:hover {
+#btn-create:hover,
+#btn-plugins-source-install:hover {
   opacity: 0.85;
 }
 .secondary {
@@ -22034,6 +22035,7 @@ ${i3.join("\n")}
       var LIBRARY_REASONS = {
         core: "This plugin is built into Clodex \u2014 the copy in the library cannot replace it.",
         userAuthored: "A folder of that name in your plugins folder is yours, not from a source \u2014 move it aside first.",
+        registered: "A plugin of that id is registered from a folder elsewhere \u2014 unregister it first.",
         upToDate: "Already installed at the commit the library holds.",
         otherRepo: "Installed from a different repo \u2014 remove it before installing the library copy."
       };
@@ -22043,6 +22045,9 @@ ${i3.join("\n")}
         if (r.installed === "core") return { label: "Install", enabled: false, reason: LIBRARY_REASONS.core, action: null };
         if (r.installed === "user-authored") {
           return { label: "Install", enabled: false, reason: LIBRARY_REASONS.userAuthored, action: null };
+        }
+        if (r.installed === "registered") {
+          return { label: "Install", enabled: false, reason: LIBRARY_REASONS.registered, action: null };
         }
         if (r.installed === "fetched") {
           if (repo && r.installedRepo && r.installedRepo !== repo) {
@@ -36781,11 +36786,14 @@ ${detail}` });
         }
         argsHint.textContent = ARGS_HINTS[t.type] || "";
         applyTypeDefaults({ skipAsyncRefresh: true });
-        if (t.type === "claude") {
-          renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
+        const agentType = t.type === "claude" || t.type === "codex";
+        if (agentType) {
           await refreshNewSessionExecCommands(new Set(t.execCommands || []));
           await refreshNewSessionPlugins(t.plugins);
           await refreshNewSessionIntents(t.intents);
+        }
+        if (t.type === "claude") {
+          renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
           fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || "", newSessionSeat());
           renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
           renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
@@ -36795,12 +36803,8 @@ ${detail}` });
           if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
           if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
           if (inputNoWire) inputNoWire.checked = t.noWire === true;
-        } else if (t.type === "codex") {
-          await refreshNewSessionExecCommands(new Set(t.execCommands || []));
-          await refreshNewSessionPlugins(t.plugins);
-          await refreshNewSessionIntents(t.intents);
         }
-        if (t.type === "claude" || t.type === "codex") {
+        if (agentType) {
           setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
         }
       });
@@ -37088,15 +37092,11 @@ ${detail}` });
         if (agentType) {
           fillSystemPromptSelect(inputSystemPrompt, tpl && tpl.systemPromptFile || "", newSessionSeat());
           renderAppendChecklist(inputAppendList, new Set(tpl && tpl.appendPromptFiles || []), newSessionSeat());
-        }
-        if (inputType.value === "codex") {
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
           await refreshNewSessionIntents(tpl && tpl.intents);
         }
         if (inputType.value === "claude") {
           renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []), null, newSessionSeat());
-          await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
-          await refreshNewSessionIntents(tpl && tpl.intents);
           renderBuiltinChecklist(inputBuiltinsList, new Set(tpl && tpl.denyBuiltins || []));
           renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
           await refreshNewSessionTools(new Set(tpl && tpl.disabledTools || []));
@@ -39821,14 +39821,19 @@ ${res.stderr}` : "");
           btn.className = "secondary";
           btn.textContent = verdict.label;
           btn.disabled = !verdict.enabled;
-          btn.title = verdict.reason || `Fetch ${p.id} from github.com/${cat.repo} \u2014 it lands turned off`;
+          btn.title = verdict.reason || (verdict.action === "update" ? `Check github.com/${p.installedRepo || cat.repo} for a newer ${p.name || p.id}` : `Fetch ${p.id} from github.com/${cat.repo} \u2014 it lands turned off`);
           btn.addEventListener("click", () => {
             if (verdict.action === "update") {
               openPluginsSourceUpdate({
                 id: p.id,
                 name: p.name,
                 version: p.installedVersion,
-                source: { repo: p.installedRepo, ref: cat.ref, subpath: p.subpath, commit: p.installedCommit }
+                source: {
+                  repo: p.installedRepo,
+                  ref: p.installedRef,
+                  subpath: p.installedSubpath,
+                  commit: p.installedCommit
+                }
               });
               return;
             }
@@ -39856,7 +39861,16 @@ ${res.stderr}` : "");
         }
         showPluginsRegisterNote(`Installed ${p.name || p.id} at ${shortCommit(r.commit)} \u2014 it is off until you turn it on from its row above.`);
         await renderPluginsDialog();
-        await loadPluginsLibrary();
+        if (!pluginsLibrarySection || pluginsLibrarySection.classList.contains("hidden")) return;
+        if (pluginsLibraryCatalog !== cat) return;
+        Object.assign(p, {
+          installed: "fetched",
+          installedRepo: cat.repo,
+          installedCommit: r.commit,
+          installedSubpath: p.subpath,
+          upToDate: true
+        });
+        paintPluginsLibrary();
       }
       async function loadPluginsLibrary() {
         if (!pluginsLibraryList) return;

@@ -637,9 +637,11 @@ directories holding a `manifest.json` whose `id` passes `isValidPluginId`,
 skipping `_template`. No GitHub contents API and no per-plugin request: the
 catalog costs exactly what one install costs. `libraryCatalog` decorates each
 row with what `~/.clodex/plugins/<id>` already holds (`none` / `fetched` +
-its sidecar commit / `user-authored` / `core`), because the catalog says
+its sidecar commit, ref and subpath / `user-authored` / `registered` for a
+symlink / `core`), because the catalog says
 nothing about this machine and every one of those states is a click
-`installFromSource` would refuse by name. A row's Install builds
+`installFromSource` would refuse by name — each with a different repair, which
+is why a symlink is not folded into `user-authored`. A row's Install builds
 `avirtual/clodex-plugins:<subpath>` and calls `installFromSource`; its Update
 opens the SAME section a fetched row's Update… does, so `resolveUpdate` /
 `applyUpdate` still resolve the sidecar's own repo by id. `upToDate` asks for

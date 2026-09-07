@@ -2311,11 +2311,14 @@ inputTemplate.addEventListener('change', async () => {
   }
   argsHint.textContent = ARGS_HINTS[t.type] || '';
   applyTypeDefaults({ skipAsyncRefresh: true });
-  if (t.type === 'claude') {
-    renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
+  const agentType = t.type === 'claude' || t.type === 'codex';
+  if (agentType) {
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
     await refreshNewSessionPlugins(t.plugins);
     await refreshNewSessionIntents(t.intents);
+  }
+  if (t.type === 'claude') {
+    renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
     fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || '', newSessionSeat());
     renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
@@ -2325,12 +2328,8 @@ inputTemplate.addEventListener('change', async () => {
     if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
     if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
     if (inputNoWire) inputNoWire.checked = t.noWire === true;
-  } else if (t.type === 'codex') {
-    await refreshNewSessionExecCommands(new Set(t.execCommands || []));
-    await refreshNewSessionPlugins(t.plugins);
-    await refreshNewSessionIntents(t.intents);
   }
-  if (t.type === 'claude' || t.type === 'codex') {
+  if (agentType) {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
   }
 });
@@ -2641,15 +2640,11 @@ async function openTemplateEditor(tpl = null, bundle = null) {
   if (agentType) {
     fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '', newSessionSeat());
     renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []), newSessionSeat());
-  }
-  if (inputType.value === 'codex') {
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
     await refreshNewSessionIntents(tpl && tpl.intents);
   }
   if (inputType.value === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []), null, newSessionSeat());
-    await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
-    await refreshNewSessionIntents(tpl && tpl.intents);
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
     renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
     await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []));
@@ -5637,14 +5632,21 @@ function paintPluginsLibrary() {
     btn.className = 'secondary';
     btn.textContent = verdict.label;
     btn.disabled = !verdict.enabled;
-    btn.title = verdict.reason || `Fetch ${p.id} from github.com/${cat.repo} — it lands turned off`;
+    btn.title = verdict.reason || (verdict.action === 'update'
+      ? `Check github.com/${p.installedRepo || cat.repo} for a newer ${p.name || p.id}`
+      : `Fetch ${p.id} from github.com/${cat.repo} — it lands turned off`);
     btn.addEventListener('click', () => {
       if (verdict.action === 'update') {
         openPluginsSourceUpdate({
           id: p.id,
           name: p.name,
           version: p.installedVersion,
-          source: { repo: p.installedRepo, ref: cat.ref, subpath: p.subpath, commit: p.installedCommit },
+          source: {
+            repo: p.installedRepo,
+            ref: p.installedRef,
+            subpath: p.installedSubpath,
+            commit: p.installedCommit,
+          },
         });
         return;
       }
@@ -5670,7 +5672,16 @@ async function installFromLibrary(p, btn) {
   }
   showPluginsRegisterNote(`Installed ${p.name || p.id} at ${shortCommit(r.commit)} — it is off until you turn it on from its row above.`);
   await renderPluginsDialog();
-  await loadPluginsLibrary();
+  if (!pluginsLibrarySection || pluginsLibrarySection.classList.contains('hidden')) return;
+  if (pluginsLibraryCatalog !== cat) return;
+  Object.assign(p, {
+    installed: 'fetched',
+    installedRepo: cat.repo,
+    installedCommit: r.commit,
+    installedSubpath: p.subpath,
+    upToDate: true,
+  });
+  paintPluginsLibrary();
 }
 
 async function loadPluginsLibrary() {
@@ -6833,9 +6844,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const denyBuiltins = argsAgentsRow.style.display === 'none'
     ? [] : collectBuiltinChecklist(argsBuiltinsList);
   const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
-  // undefined = "untouched", exactly as `plugins` below: a hidden section is an
-  // absence of options, not the operator's answer. `null` here would reach
-  // session-args as an explicit clear of the allowlist.
+  // null here reaches session-args as an explicit clear of the allowlist; a hidden section must send undefined (untouched), as plugins below.
   const intents = argsIntentsSection.style.display === 'none' ? undefined : collectIntentChecklist(argsIntentsList);
   // undefined = "untouched", never []: a hidden section or a checklist that drew
   // no rows is an absence of options, not the operator's answer.

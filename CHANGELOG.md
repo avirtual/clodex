@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Manage Plugins library rows: Update names the installed ref in its trust warning, a registered plugin says "unregister it first", and installing one row no longer refetches the whole catalog.
+
 ## 5.35.1 — 2026-09-07
 
 - **Bundled wirescope updated to v0.6.59: keep-warm holds survive an OAuth token lapse.** The proxy now spends a cheap one-shot turn after the access token expires so idle seats refresh their credential; before this, every hold on an idle box died at the first lapse (04:26 this morning) and the next turn paid a full cold re-cache.
