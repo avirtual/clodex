@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Settings ▸ Sessions: a **Default session mode** (Clodex optimized / Standard) that the New Session dialog opens on.
+- Keep-warm pings now show in the IPC traffic tab with their outcome (warm hit or cold re-cache, tokens, TTL), as do ping failures and the hold stopping.
 
 ## 5.35.3 — 2026-09-07
 
