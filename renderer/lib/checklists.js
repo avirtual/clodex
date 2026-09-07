@@ -50,8 +50,8 @@ let execLibCache = [];
 let intentCatalogCache = [];
 let pluginCatalogCache = [];
 let claudeToolsCache = [];
-// Global default tool-deny set (the "*" agent-default); new sessions start with
-// these tools unchecked.
+// The global default deny sets (the "*" agent-default); a Clodex-optimized
+// session starts with these tools, skills and built-in agents unchecked.
 let defaultToolDenyCache = [];
 let defaultSkillDenyCache = [];
 let defaultBuiltinDenyCache = [];
@@ -69,7 +69,7 @@ function setDefaultToolDenyCache(v) { defaultToolDenyCache = v; }
 function setDefaultSkillDenyCache(v) { defaultSkillDenyCache = v; }
 function setDefaultBuiltinDenyCache(v) { defaultBuiltinDenyCache = v; }
 
-// Getters — for the three caches also read outside the checklist render path.
+// Getters — for the caches also read outside the checklist render path.
 function getPromptLibCache() { return promptLibCache; }
 function getSkillLibCache() { return skillLibCache; }
 function getDefaultToolDenyCache() { return defaultToolDenyCache; }

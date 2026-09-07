@@ -1540,7 +1540,7 @@ let sessionCounter = 0;
 
 // skipAsyncRefresh: when a template is being applied, the caller re-renders the
 // skill/inject/tool checklists itself with the template's captured sets — so
-// suppress the default (empty-set) async renders here to avoid a last-write-wins
+// suppress the async renders here to avoid a last-write-wins
 // race between the two. Also skips resetting extraArgs (the template supplies it).
 function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   const type = inputType.value;
