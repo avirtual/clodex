@@ -88,6 +88,17 @@ const ISSUE_VIEW = {
 // sizes are chosen so that more than one but not all of them fit — the only
 // shape in which oldest-first and newest-first selection differ, and in which
 // the render order is observable at all.
+//
+// 1200, not 600: at 600 the assembled interior landed on the budget EXACTLY
+// (2693/2693), so the omitted-comments line — appended after selection and
+// therefore outside the budget — was not yet being cut. One more character
+// pushed the interior clip onto that line and the agent silently lost the
+// notice that evidence had been withheld. The margin is deliberate: a fixture
+// sitting on a boundary passes for the wrong reason.
+//
+// Every comment here is UNDER the per-comment cap, so this fixture isolates the
+// budget: the reply cap is the only thing that can drop one. The per-comment cap
+// is pinned separately on #12 — see ISSUE_VIEW_ONE_HUGE.
 const ISSUE_VIEW_SHORT = {
   number: 11,
   title: 'short body, long comments',
@@ -97,10 +108,28 @@ const ISSUE_VIEW_SHORT = {
   url: 'https://github.com/avirtual/clodex/issues/11',
   body: 'short.',
   comments: [
-    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'e'.repeat(600) },
-    { author: { login: 'gus' }, createdAt: AGO_MIN(40), body: 'g'.repeat(600) },
-    { author: { login: 'hal' }, createdAt: AGO_MIN(35), body: 'h'.repeat(600) },
-    { author: { login: 'fay' }, createdAt: AGO_MIN(10), body: `the last word${'f'.repeat(2500)}` },
+    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'e'.repeat(1200) },
+    { author: { login: 'gus' }, createdAt: AGO_MIN(40), body: 'g'.repeat(1200) },
+    { author: { login: 'hal' }, createdAt: AGO_MIN(35), body: 'h'.repeat(1200) },
+    { author: { login: 'fay' }, createdAt: AGO_MIN(10), body: 'the last word' },
+  ],
+  labels: [],
+};
+
+// Issue #12: ONE comment over the per-comment cap. Separate from #11 because
+// the two properties need incompatible shapes — a comment big enough to prove
+// the per-comment cap clips it is also big enough to spend the whole budget,
+// leaving nothing else in the reply to observe an ORDER over.
+const ISSUE_VIEW_ONE_HUGE = {
+  number: 12,
+  title: 'one huge comment',
+  author: { login: 'dan' },
+  createdAt: AGO_MIN(120),
+  state: 'OPEN',
+  url: 'https://github.com/avirtual/clodex/issues/12',
+  body: 'short.',
+  comments: [
+    { author: { login: 'ida' }, createdAt: AGO_MIN(20), body: `the last word${'f'.repeat(2500)}` },
   ],
   labels: [],
 };
@@ -150,6 +179,7 @@ function answer(cmd, args, state) {
   }
   if (line.startsWith('gh issue list')) return Object.assign(ok('[]'), { data: state.noIssues ? [] : ISSUE_LIST });
   if (line.startsWith('gh issue view 11')) return Object.assign(ok('{}'), { data: ISSUE_VIEW_SHORT });
+  if (line.startsWith('gh issue view 12')) return Object.assign(ok('{}'), { data: ISSUE_VIEW_ONE_HUGE });
   if (line.startsWith('gh issue view')) return Object.assign(ok('{}'), { data: ISSUE_VIEW });
   return no(`unstubbed command: ${line}`);
 }
@@ -679,6 +709,11 @@ test('github: an empty tracker answers `no open issues`, not an empty reply', as
 test('github: a closed issue still reads, and older bulk cannot starve the newest comment', async () => {
   const { cleanup } = boot();
   try {
+    // ENTER: the interior must actually EXCEED the budget, or nothing is being
+    // cut and every assertion below is about an unconstrained reply.
+    const rough = ISSUE_VIEW_SHORT.comments.reduce((n, c) => n + c.body.length, 0);
+    assert.ok(rough > 3000 + 500, `ENTER: the comments (${rough}) exceed the reply cap by a margin, so the budget must drop one`);
+
     // ENTER: the fixture is the shape the selection order actually depends on —
     // every comment UNDER the per-comment cap, but collectively over the reply
     // cap. If they fit, oldest-first and newest-first render identically and
@@ -686,8 +721,6 @@ test('github: a closed issue still reads, and older bulk cannot starve the newes
     const older = ISSUE_VIEW_SHORT.comments.slice(0, 3);
     assert.ok(older.every((c) => c.body.length < 2000),
       'ENTER: no OLDER comment exceeds the per-comment cap, so that cap is not what drops them');
-    assert.ok(ISSUE_VIEW_SHORT.comments[3].body.length > 2000,
-      'ENTER: the newest comment DOES exceed the per-comment cap, so that cap is what clips it');
     assert.ok(ISSUE_VIEW_SHORT.comments.reduce((n, c) => n + c.body.length, 0) > 3000,
       'ENTER: together they exceed the whole reply cap, so something must be dropped');
 
@@ -705,14 +738,11 @@ test('github: a closed issue still reads, and older bulk cannot starve the newes
     // how it ended.
     assert.ok(out.includes('-- comment by @fay, 10m ago --'), 'the newest comment is attributed');
     assert.ok(out.includes('the last word'), 'and its text survived the older bulk');
-    // It is itself over the per-comment cap, so it is clipped rather than
-    // allowed to spend the whole reply — the newest comment is kept, not
-    // privileged.
-    assert.ok(!out.includes('f'.repeat(2100)), 'the newest comment is still held to the per-comment cap');
-    assert.match(out, /truncated, \d+ more chars/, 'and it says it was cut');
 
     // Its counterpart: the drop landed on the OLDEST, and was declared.
     assert.ok(!out.includes('@eve'), 'and the OLDEST is the one dropped');
+    assert.ok(out.includes('-- comment by @gus, 40m ago --'),
+      'while the ones that fit are kept — the cut is at the budget, not a fixed count');
     assert.match(out, /\d+ earlier comment\(s\) omitted/, 'and the agent is told some were');
 
     // Presence FIRST: indexOf returns -1 for a name that is absent, and -1 is
@@ -723,6 +753,55 @@ test('github: a closed issue still reads, and older bulk cannot starve the newes
       'and what survives renders oldest-first, though it was selected newest-first');
     assert.ok(out.includes('---- END UNTRUSTED ----'), 'the fence still closes around all of it');
     assert.ok(out.length <= 3000, 'and the whole reply stays inside the cap');
+
+    // The declaration is INSIDE the fence and intact — not itself truncated.
+    // It is the last thing assembled, so it is what the interior clip lands on
+    // when it is not reserved for, and a generic "… (truncated, N more chars)"
+    // in its place tells the agent nothing about withheld comments.
+    // Read from the LIVE module: boot() deletes workflows from the require
+    // cache, so a copy bound at file scope would be a different instance whose
+    // constants could drift from the ones that produced `out`.
+    const wfInternals = require(WORKFLOWS_PATH)._internals;
+    const { UNTRUSTED_OPEN, UNTRUSTED_END } = wfInternals;
+    const interior = out.slice(out.indexOf(UNTRUSTED_OPEN) + UNTRUSTED_OPEN.length + 1,
+      out.indexOf(UNTRUSTED_END) - 1);
+    assert.match(interior, /… \d+ earlier comment\(s\) omitted …$/,
+      'the omitted-count line survives whole, as the last line inside the fence');
+
+    // The invariant behind it, asserted against the module's own constant so a
+    // change to MAX_REPLY_CHARS or to the fence text fails HERE rather than
+    // silently eating comments.
+    const head = out.slice('[gh] '.length, out.indexOf(UNTRUSTED_OPEN) - 1).split('\n');
+    assert.ok(interior.length <= wfInternals.interiorBudget(head),
+      `interior (${interior.length}) must fit the budget (${wfInternals.interiorBudget(head)})`);
+  } finally { cleanup(); }
+});
+
+test('github: a single huge comment is held to the per-comment cap', async () => {
+  const { cleanup } = boot();
+  try {
+    // ENTER: one comment, over the cap. #11 cannot pin this — there the cap is
+    // slack and the budget does the cutting, so a removed per-comment cap would
+    // change nothing there and the pin would be vacuous.
+    assert.strictEqual(ISSUE_VIEW_ONE_HUGE.comments.length, 1, 'ENTER: exactly one comment');
+    assert.ok(ISSUE_VIEW_ONE_HUGE.comments[0].body.length > 2000,
+      'ENTER: it exceeds the per-comment cap');
+
+    const replies = await fireFor('[agent:gh issue 12]');
+    assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
+    const [out] = replies;
+
+    assert.ok(out.includes('-- comment by @ida, 20m ago --'), 'the comment is attributed');
+    assert.ok(out.includes('the last word'), 'its head is shown');
+    assert.ok(!out.includes('f'.repeat(2100)),
+      'but it is clipped — one comment may not spend the whole reply');
+    assert.match(out, /truncated, \d+ more chars/, 'and the agent is told it was cut');
+
+    // Nothing was dropped, so no omitted line should be invented.
+    assert.ok(!/earlier comment\(s\) omitted/.test(out),
+      'no omitted-count line when every comment was kept');
+    assert.ok(out.includes('---- END UNTRUSTED ----'), 'the fence closes');
+    assert.ok(out.length <= 3000, 'and the reply stays inside the cap');
   } finally { cleanup(); }
 });
 
