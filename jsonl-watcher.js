@@ -34,13 +34,15 @@ const TURN_COMPLETE_TIMEOUT = 1000; // ms
 // coming.
 const NON_FLUSHING_TYPES = ['assistant', 'response_item'];
 
-// Codex emits `token_count` between the reply and `task_complete`. It is
-// telemetry, not a turn boundary — but it is textless and its type is
-// `event_msg`, so it used to trigger the flush and carry away the pending text
-// BEFORE `task_complete` could mark it as ending the turn. Exempting it is what
-// lets the real terminator do that job.
+// Codex emits two usage records between the reply and `task_complete`: a
+// top-level `token_usage_record`, then an `event_msg` `token_count`. Both are
+// textless, so either one flushes the pending text BEFORE `task_complete` can
+// mark it as ending the turn — exempting BOTH is what lets the real terminator
+// do that job. Either one alone leaves every reply unspoken.
 function isTelemetryOnly(obj) {
-  return (obj.type || '') === 'event_msg' && (obj.payload || {}).type === 'token_count';
+  const type = obj.type || '';
+  return type === 'token_usage_record'
+    || (type === 'event_msg' && (obj.payload || {}).type === 'token_count');
 }
 
 function createJsonlWatcher({ REGISTRY_DIR }) {
@@ -192,13 +194,13 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         if (text) {
           const rid = obj.requestId || (obj.payload || {}).id || '';
           // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. A Codex
-          // function_call_output carries neither requestId nor payload.id, so
-          // its `rid` is '' and an equality test reads two unrelated text
-          // entries as the same turn — the second then OVERWRITES the first.
-          // What that silently discards is the intent scan's input: an
-          // [agent:dm ...] emitted in a commentary message followed by a quick
-          // tool call would never be seen. `token_count` used to be the
-          // accidental separator; exempting it from the textless flush removed
+          // function_call_output (the tool-output shape extractText reads)
+          // carries neither requestId nor payload.id, so its `rid` is '' and an
+          // equality test reads two unrelated text entries as the same turn —
+          // the second OVERWRITES the first. What that silently discards is the
+          // intent scan's input: an [agent:dm ...] emitted in a commentary
+          // message followed by a quick tool call would never be seen. The usage
+          // records used to be the accidental separator; exempting them removed
           // the only thing between them, so state the separation here instead.
           if ((rid !== this._pendingRid || !rid) && this._pendingText) {
             this._flushPending();

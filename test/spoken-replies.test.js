@@ -184,6 +184,13 @@ test('a turn ending on a tool output is not spoken', () => {
 // `response_item`, as it does in the rollout: the twin is textless, so it
 // flushes nothing, and the reply is still pending at the terminator. Reversed,
 // the twin would flush the reply early carrying turnEnd:false.
+//
+// EVERY entry below is one the rollout really has at that position — ordinals
+// 183-187 of the cited transcript, prose redacted. `token_usage_record` is the
+// one this fixture used to omit, and omitting it is what made the round-2 pin
+// green over a reply that still could not be spoken: it is textless and its
+// top-level type is neither non-flushing nor telemetry-exempt by default, so it
+// flushed the reply one entry before the terminator could flag it.
 test('a Codex response_item reply reaches onText once, flagged as ending the turn', () => {
   const seen = runWatcher([
     {
@@ -199,6 +206,13 @@ test('a Codex response_item reply reaches onText once, flagged as ending the tur
         type: 'message', id: 'msg_r', role: 'assistant',
         content: [{ type: 'output_text', text: '[agent:dm clodex] the audit' }],
         phase: 'commentary',
+      },
+    },
+    {
+      type: 'token_usage_record',
+      payload: {
+        thread_id: 't1', turn_id: 'u1', session_id: 't1', response_id: 'resp_1',
+        usage: { input_tokens: 105431, output_tokens: 352, total_tokens: 105783 },
       },
     },
     { type: 'event_msg', payload: { type: 'token_count' } },
