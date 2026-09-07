@@ -458,6 +458,14 @@ function fmtQuotaReset(s) {
   return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
 }
 
+// Elapsed-time twin of fmtQuotaReset. A zero here is a real reading ("just
+// now"), not the absent value fmtQuotaReset maps to null.
+function fmtQuotaAge(s) {
+  if (typeof s !== 'number' || !Number.isFinite(s) || s < 0) return null;
+  if (s < 60) return `${Math.round(s)}s`;
+  return fmtQuotaReset(s);
+}
+
 // The whole render decision, DOM-free. Returns null for "render nothing at
 // all" — the element appearing IS the signal, so a comfortable reading must
 // produce no element rather than a quiet one. A permanent readout showing a
@@ -481,13 +489,12 @@ function quotaChip(q, clientAgeS = 0) {
 
   const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
   const reset = fmtQuotaReset(q.resetsInS);
+  const age = hot429 ? fmtQuotaAge(q.last429AgeS) : null;
   const parts = [];
-  // "rate limited" named a past event without saying what it means now; the
-  // operator's actual question is whether requests are landing.
-  if (hot429) parts.push('requests being refused');
-  if (pct) parts.push(q.window ? `${pct} of ${q.window}` : pct);
-  else if (q.window) parts.push(q.window);
+  if (pct) parts.push(q.window ? `${q.window} quota ${pct} used` : `quota ${pct} used`);
+  else if (q.window) parts.push(`${q.window} quota`);
   if (reset) parts.push(`resets in ${reset}`);
+  if (age) parts.push(`rate-limited ${age} ago`);
   if (!parts.length) return null;
 
   const serverAge = q.ageS != null ? q.ageS : 0;
@@ -495,7 +502,7 @@ function quotaChip(q, clientAgeS = 0) {
   const tip = [
     'Account plan quota, not this session.',
     q.remainingPct != null ? `${Math.round(q.remainingPct)}% of the ${q.window || 'window'} left.` : null,
-    hot429 ? 'A request was rate-limited recently; a 429 carries no quota headers, so the figure beside it can lag.' : null,
+    age ? `A request was rate-limited ${age} ago; a 429 carries no quota headers, so the usage figure is from the last successful reading.` : null,
     stale ? 'Stale — nothing polls this, it updates only on a forwarded turn.' : null,
     // Distinct from the line above: that one is "the API has not spoken", this
     // one is "we are not receiving". The remedy differs, so the wording must.

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The quota chip now reads as a statement ("5h quota 80% used · resets in 40m"), with a recent rate-limit shown last as "rate-limited 2m ago" instead of leading with "requests being refused".
+
 ## 5.35.4 — 2026-09-07
 
 - Settings ▸ Sessions: a **Default session mode** (Clodex optimized / Standard) that the New Session dialog opens on.

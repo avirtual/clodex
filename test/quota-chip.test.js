@@ -116,12 +116,24 @@ test('quotaChip: allowed → nothing rendered at all', () => {
 });
 
 test('quotaChip: allowed_warning → visible, carrying percent, window and reset', () => {
+  // Literal, not a regex: /95%/ is true of the old "95% of 7d" shape and the
+  // new one both, so only the whole string pins which one ships.
   const chip = quotaChip(shapeQuota(LIVE, CAPS));
   assert.strictEqual(chip.level, 'warn');
-  assert.match(chip.text, /95%/);
-  assert.match(chip.text, /7d/);
-  assert.match(chip.text, /resets in 2d 22h/);
+  assert.strictEqual(chip.text, '7d quota 95% used · resets in 2d 22h');
   assert.strictEqual(chip.stale, false);
+});
+
+test('quotaChip: the quota statement leads even when the window is at 100% and rejected', () => {
+  const q = shapeQuota({ ...LIVE, status: 'rejected', primary: { ...LIVE.primary, used_pct: 100 } }, CAPS);
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.level, 'loud');
+  assert.strictEqual(chip.text, '7d quota 100% used · resets in 2d 22h');
+});
+
+test('quotaChip: a 5h window reads as its own quota statement', () => {
+  const q = shapeQuota({ status: 'allowed_warning', primary: { window: '5h', used_pct: 80, resets_in_s: 2400 }, age_s: 1 }, CAPS);
+  assert.strictEqual(quotaChip(q).text, '5h quota 80% used · resets in 40m');
 });
 
 test('quotaChip: rejected → loud', () => {
@@ -133,10 +145,20 @@ test('quotaChip: a recent last_429 is loud even while status still says allowed'
   // A 429 carries NO ratelimit headers, so the response that proves the wall was
   // hit cannot raise the percentage. A recent 429 beside a comfortable status is
   // the EXPECTED shape and is exactly when the operator most wants to know.
-  const q = shapeQuota({ ...LIVE, status: 'allowed', last_429_age_s: 30 }, CAPS);
+  const q = shapeQuota({ status: 'allowed', last_429_age_s: 120, age_s: 1, primary: { window: '5h', used_pct: 20, resets_in_s: 2400 } }, CAPS);
   const chip = quotaChip(q);
   assert.strictEqual(chip.level, 'loud');
-  assert.match(chip.text, /requests being refused/);
+  // The refusal comes LAST and past-tense: a present-tense lead made from one
+  // 429 up to five minutes old contradicted the 20% beside it.
+  assert.strictEqual(chip.text, '5h quota 20% used · resets in 40m · rate-limited 2m ago');
+  assert.match(chip.tip, /rate-limited 2m ago/);
+});
+
+test('quotaChip: a refusal under a minute reads in seconds, and needs no percentage', () => {
+  const q = shapeQuota({ status: 'allowed', last_429_age_s: 30, age_s: 1, primary: { window: '5h' } }, CAPS);
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.level, 'loud');
+  assert.strictEqual(chip.text, '5h quota · rate-limited 30s ago');
 });
 
 test('quotaChip: an OLD last_429 does not keep the chip up on its own', () => {
