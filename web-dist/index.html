@@ -7452,7 +7452,17 @@ body {
         </label>
       </details>
       <details class="prefs-group" data-group="discovery">
-        <summary><h4>Session discovery</h4><span class="prefs-group-sub">Adopt Claude/Codex sessions started outside Clodex</span></summary>
+        <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
+        <h5>Default session mode</h5>
+        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> trims the tool roster and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
+        <div class="prefs-row" style="margin-top: 4px;">
+          <span>Mode</span>
+          <select id="prefs-default-mode" style="flex: none;">
+            <option value="optimized">Clodex optimized</option>
+            <option value="standard">Standard (CLI as-is)</option>
+          </select>
+        </div>
+        <h5 style="margin-top: 14px;">Session discovery</h5>
         <p class="hint-text">Clodex can find Claude/Codex conversations on this machine that it isn't managing — including ones you started in a plain terminal — and let you adopt them (File ▸ Discover Sessions…). When enabled below, it checks on startup and offers any it finds; adopting resumes the conversation in a Clodex-managed session (it never attaches to a running process or spawns anything automatically).</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-discover-on-startup">
@@ -36501,6 +36511,10 @@ ${detail}` });
         standard: "Runs the CLI with its own defaults \u2014 nothing trimmed, nothing stripped.",
         custom: "These fields were set by hand. Open Advanced to see them."
       };
+      function defaultSessionMode(settings) {
+        const mode = settings && settings.defaultSessionMode;
+        return mode === "standard" || mode === "optimized" ? mode : "optimized";
+      }
       function modeToolDenySet() {
         return inputMode && inputMode.value === "standard" ? /* @__PURE__ */ new Set() : new Set(getDefaultToolDenyCache());
       }
@@ -36766,6 +36780,7 @@ ${detail}` });
         for (const p of res.popular || []) add(p.cwd, `${p.count} active session${p.count === 1 ? "" : "s"}`);
       }
       async function openDialog(prefill = null) {
+        const settingsFetch = window.api.getSettings();
         editingTemplateId = null;
         editingTemplateBundle = null;
         inputName.readOnly = false;
@@ -36803,7 +36818,8 @@ ${detail}` });
         for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
           if (sec) sec.open = false;
         }
-        setModeSelect(prefill ? "custom" : "optimized");
+        const hostSettings = await settingsFetch;
+        setModeSelect(prefill ? "custom" : defaultSessionMode(hostSettings));
         if (advancedSection) advancedSection.open = !!prefill;
         if (inputEnv) inputEnv.value = "";
         refreshEnvHint();
@@ -36812,7 +36828,7 @@ ${detail}` });
         const [, , settings, agentLib, boxes, reserved] = await Promise.all([
           refreshTemplatesDropdown(),
           refreshSystemPromptDropdown(),
-          window.api.getSettings(),
+          settingsFetch,
           window.api.listAgents(),
           window.api.sandboxListBoxes(),
           window.api.reservedSessionNames()
@@ -38683,6 +38699,7 @@ Click for live activity`;
       var prefsCtxEscalate = document.getElementById("prefs-ctx-escalate");
       var prefsCtxModels = document.getElementById("prefs-ctx-models");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
+      var prefsDefaultMode = document.getElementById("prefs-default-mode");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
       var prefsToolsList = document.getElementById("prefs-tools-list");
@@ -40802,6 +40819,7 @@ ${res.stderr}` : "");
         setSpeakSettings(s);
         setCtxThresholds(s);
         setTerminalReports(s.terminalReports);
+        if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
         applyPrefsGate();
@@ -40868,6 +40886,7 @@ ${res.stderr}` : "");
           // key is not omitted when the boxes are empty the way speakVoice is.
           ...prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {},
           terminalReports: readTerminalReports(),
+          defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : "optimized",
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked
         });

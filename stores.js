@@ -94,6 +94,7 @@ const DEFAULT_UI_SETTINGS = {
   // reach this value for this key — sanitizeTerminalReports resolves an absent
   // key to 'off' rather than falling through to the default.
   terminalReports: 'asked',
+  defaultSessionMode: 'optimized',
   discoverOnStartup: false,
   recentCwds: [],
   disableClaudeDesignMcp: false,
@@ -358,6 +359,7 @@ function sanitizeRebootNotice(v) {
 // a command, but stop narrating everything I type" was unexpressable, and is
 // almost certainly what most operators want.
 const TERMINAL_REPORTS = ['off', 'asked', 'all'];
+const SESSION_MODES = ['optimized', 'standard'];
 
 // The upgrade path, and the one place a version bump could hand an agent a
 // capability nobody enabled. Both directions are deliberate:
@@ -1323,6 +1325,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
             : DEFAULT_UI_SETTINGS.speakVoice,
           speakRate: sanitizeSpeakRate(raw?.speakRate),
           terminalReports: sanitizeTerminalReports(raw),
+          defaultSessionMode: SESSION_MODES.includes(raw?.defaultSessionMode) ? raw.defaultSessionMode : DEFAULT_UI_SETTINGS.defaultSessionMode,
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
@@ -1405,6 +1408,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         // narrates at 5 wpm without complaint.
         speakRate: partial?.speakRate === undefined ? cur.speakRate : sanitizeSpeakRate(partial.speakRate),
         terminalReports: TERMINAL_REPORTS.includes(partial?.terminalReports) ? partial.terminalReports : cur.terminalReports,
+        defaultSessionMode: SESSION_MODES.includes(partial?.defaultSessionMode) ? partial.defaultSessionMode : cur.defaultSessionMode,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
         disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,

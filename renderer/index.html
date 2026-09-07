@@ -1103,7 +1103,17 @@
         </label>
       </details>
       <details class="prefs-group" data-group="discovery">
-        <summary><h4>Session discovery</h4><span class="prefs-group-sub">Adopt Claude/Codex sessions started outside Clodex</span></summary>
+        <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
+        <h5>Default session mode</h5>
+        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> trims the tool roster and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
+        <div class="prefs-row" style="margin-top: 4px;">
+          <span>Mode</span>
+          <select id="prefs-default-mode" style="flex: none;">
+            <option value="optimized">Clodex optimized</option>
+            <option value="standard">Standard (CLI as-is)</option>
+          </select>
+        </div>
+        <h5 style="margin-top: 14px;">Session discovery</h5>
         <p class="hint-text">Clodex can find Claude/Codex conversations on this machine that it isn't managing — including ones you started in a plain terminal — and let you adopt them (File ▸ Discover Sessions…). When enabled below, it checks on startup and offers any it finds; adopting resumes the conversation in a Clodex-managed session (it never attaches to a running process or spawns anything automatically).</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-discover-on-startup">

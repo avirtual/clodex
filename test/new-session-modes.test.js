@@ -273,29 +273,57 @@ test('landing on custom opens Advanced, so a configured form is never hidden', (
 // would fail to extract when the default changes, and every assertion below
 // would report a missing statement rather than the wrong default.
 const OPEN_STMTS = extract(
-  /\n(  setModeSelect\([^\n]*\);\n  if \(advancedSection\) advancedSection\.open = [^\n]*;)\n/,
+  /\n(  const hostSettings = await [^\n]*;\n  setModeSelect\([^\n]*\);\n  if \(advancedSection\) advancedSection\.open = [^\n]*;)\n/,
   "openDialog's mode reset",
 );
+const MODE_OF_FN = extract(/\n(function defaultSessionMode\([\s\S]*?\n\})\n/, 'defaultSessionMode');
 
-function runOpen(prefill) {
+function runOpen(prefill, settings) {
   const seen = [];
   const advancedSection = { open: 'untouched' };
-  new Function('setModeSelect', 'advancedSection', 'prefill', OPEN_STMTS)(
-    (m) => seen.push(m), advancedSection, prefill);
-  return { mode: seen[0], open: advancedSection.open };
+  return new Function('setModeSelect', 'advancedSection', 'prefill', 'settingsFetch',
+    `${MODE_OF_FN}\nreturn (async () => {\n${OPEN_STMTS}\n})();`)(
+    (m) => seen.push(m), advancedSection, prefill, Promise.resolve(settings))
+    .then(() => ({ mode: seen[0], open: advancedSection.open }));
 }
 
-test('a fresh create-mode open defaults to optimized with Advanced collapsed', () => {
-  assert.deepStrictEqual(runOpen(null), { mode: 'optimized', open: false });
+test('a fresh create-mode open starts on the stored default', async () => {
+  assert.deepStrictEqual(await runOpen(null, { defaultSessionMode: 'standard' }),
+    { mode: 'standard', open: false },
+    'the Settings ▸ Sessions choice is what the dialog opens on');
+  assert.deepStrictEqual(await runOpen(null, { defaultSessionMode: 'optimized' }),
+    { mode: 'optimized', open: false });
 });
 
-test('a prefill open shows Custom and expands Advanced', () => {
-  assert.deepStrictEqual(runOpen({ name: 'adopted' }), { mode: 'custom', open: true },
-    'an adopt prefill arrives with the form already populated');
+test('an absent or unknown stored mode falls back to optimized', async () => {
+  // The web client against an older host sends no such key, and the store can be
+  // hand-edited. Neither may reach setModeSelect: an unknown value would land in
+  // the selector as a mode with no <option>, blanking it.
+  for (const settings of [{}, undefined, { defaultSessionMode: 'custom' },
+    { defaultSessionMode: 'bogus' }, { defaultSessionMode: 42 }]) {
+    assert.deepStrictEqual(await runOpen(null, settings), { mode: 'optimized', open: false },
+      `${JSON.stringify(settings)} falls back`);
+  }
+});
+
+test('a prefill open shows Custom and expands Advanced, whatever the default is', async () => {
+  assert.deepStrictEqual(await runOpen({ name: 'adopted' }, { defaultSessionMode: 'standard' }),
+    { mode: 'custom', open: true },
+    'an adopt prefill arrives with the form already populated — the preference must not override it');
   // openDialog cannot be reached in template mode — setDialogMode('create') runs
   // unconditionally above this. The template editor gets Custom + Advanced open
   // from its own setModeSelect('custom') call, pinned by the populate subject
   // below; asserting it here would pin a state production cannot produce.
+});
+
+test('the settings the mode reads are fetched per open, and fetched once', () => {
+  const body = slice('async function openDialog(', '\nfunction populateHostCatalogs(', 'openDialog');
+  assert.match(body, /^\s*const settingsFetch = window\.api\.getSettings\(\);/m,
+    'the fetch is inside openDialog — a module-level cache would keep serving the value from '
+    + 'before the operator changed it in Settings');
+  assert.strictEqual((body.match(/window\.api\.getSettings\(\)/g) || []).length, 1,
+    'and the later Promise.all awaits that same promise rather than asking a second time');
+  assert.match(body, /^\s*settingsFetch,$/m, 'ENTER: the Promise.all reuses it');
 });
 
 // --- the two order-bound call sites --------------------------------------
