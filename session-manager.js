@@ -2603,7 +2603,6 @@ function createSessionManager(deps) {
       return selectionArm.release(s.name, this._armCtx(s));
     }
 
-    // What is on its way to this session's agent, for the drawer's inspector.
     // Read-only: it registers nothing and takes nothing back, so opening the
     // popover cannot change what rides the next request.
     inspectSelection(name) {
@@ -3366,7 +3365,6 @@ function createSessionManager(deps) {
           // promise chain, then the quiet gate, and an inject hold parks it for up to
           // INJECT_HOLD_TIMEOUT — all inside the boot window this function runs in,
           // where a seat that dies early hits the _dead early-returns instead.
-          // Same shape as the deliveredTo bug.
           this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm',
             '', () => this._markRosterSent(session));
         } catch (e) {
@@ -3795,7 +3793,6 @@ function createSessionManager(deps) {
       }
       // Same edge, same meaning, for the plain-dm latch — and it is a SEPARATE
       // field, so it inherits nothing from the spec latch above by construction.
-      // That is why this line and the _cleanup entry each carry their own test.
       if (s && state !== 'idle' && ((s._dmUnconfirmed && s._dmUnconfirmed.length) || s._dmUnconfirmedLast)) {
         this._clearDmConfirm(s);
       }
