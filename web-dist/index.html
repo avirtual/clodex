@@ -4034,6 +4034,14 @@ body {
   opacity: 0.75;
   margin-top: 2px;
 }
+#plugins-library-repo-link {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+#plugins-library-repo-link:hover {
+  text-decoration: underline;
+}
 .plugin-row-note.warn {
   color: var(--warn);
   opacity: 1;
@@ -7568,7 +7576,7 @@ body {
         <!-- Surface-neutral on purpose: the browser frontend and the desktop share
              this markup, and "the machine running Clodex" is the true sentence on
              both, where "this machine" would be a lie in a browser. -->
-        <div id="plugins-library-head" class="plugin-row-note">Published in github.com/avirtual/clodex-plugins. Installing one runs its code with Clodex's full authority, on the machine running Clodex.</div>
+        <div id="plugins-library-head" class="plugin-row-note">Published in <a id="plugins-library-repo-link" role="button" tabindex="0" data-url="https://github.com/avirtual/clodex-plugins">github.com/avirtual/clodex-plugins</a>. Installing one runs its code with Clodex's full authority, on the machine running Clodex.</div>
         <div id="plugins-library-list"></div>
         <div class="plugin-settings-actions">
           <button id="btn-plugins-library-cancel" class="secondary" type="button">Cancel</button>
@@ -40080,6 +40088,7 @@ ${res.stderr}` : "");
       var pluginsLibraryList = document.getElementById("plugins-library-list");
       var pluginsLibraryBtn = document.getElementById("btn-plugins-library");
       var pluginsLibraryCancelBtn = document.getElementById("btn-plugins-library-cancel");
+      var pluginsLibraryRepoLink = document.getElementById("plugins-library-repo-link");
       var pluginsLibraryCatalog = null;
       function closePluginsLibrarySection() {
         pluginsLibraryCatalog = null;
@@ -40214,6 +40223,18 @@ ${res.stderr}` : "");
       }
       if (pluginsLibraryCancelBtn) {
         pluginsLibraryCancelBtn.addEventListener("click", () => closePluginsLibrarySection());
+      }
+      if (pluginsLibraryRepoLink) {
+        pluginsLibraryRepoLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          window.api.openExternal(pluginsLibraryRepoLink.dataset.url);
+        });
+        pluginsLibraryRepoLink.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            pluginsLibraryRepoLink.click();
+          }
+        });
       }
       var pluginsSourceSection = document.getElementById("plugins-source");
       var pluginsSourceLabel = document.getElementById("plugins-source-label");

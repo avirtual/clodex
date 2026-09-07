@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The plugin library's GitHub repo is one click away: a link in Manage plugins ▸ Browse the Clodex library, and a Help menu with Clodex and clodex-plugins on GitHub.
+
 ## 5.35.9 — 2026-09-07
 
 - Plugin skills now carry their companion files (scripts, references, assets) into the seat's plugin directory, so a skill that calls a bundled script works instead of pointing at nothing.

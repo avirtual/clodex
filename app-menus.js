@@ -17,6 +17,9 @@
 
 const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('electron');
 
+const CLODEX_REPO_URL = 'https://github.com/avirtual/clodex';
+const CLODEX_PLUGINS_REPO_URL = 'https://github.com/avirtual/clodex-plugins';
+
 // The Delete Workspace… confirm copy, shared by the tray menu and the Window
 // menu because both fire the same teardown (F005). It takes BOTH populations:
 // `running` (the live map) and `saved` (the workspace's archived /
@@ -705,6 +708,14 @@ function createAppMenus(deps) {
             { type: 'separator' },
             { role: 'window' },
           ] : []),
+        ],
+      },
+      {
+        label: 'Help',
+        role: 'help',
+        submenu: [
+          { label: 'Clodex on GitHub', click: () => shell.openExternal(CLODEX_REPO_URL) },
+          { label: 'Plugin library (clodex-plugins)', click: () => shell.openExternal(CLODEX_PLUGINS_REPO_URL) },
         ],
       },
     ];
