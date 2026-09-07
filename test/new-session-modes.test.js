@@ -331,6 +331,18 @@ test("the type-change mode re-apply is catalogsFresh, and registered after apply
     'listeners fire in registration order, and applyTypeDefaults already redrew the tool checklist from this mode');
 });
 
+test('every tool-checklist draw in the dialog goes through modeToolDenySet()', () => {
+  // Including the SANDBOX path: it draws from the box's catalogs, and a bare
+  // `new Set()` there ships an untrimmed roster under a label promising a trim.
+  const sandbox = slice('function populateChecklistsFromCatalogs(', '\nasync function restoreHostCatalogs(',
+    'the sandbox catalog fill');
+  assert.match(sandbox, /renderToolChecklist\(inputToolsList, modeToolDenySet\(\)\)/,
+    'a box-placed seat must honour the selected mode like a host one');
+  const host = slice('function populateHostCatalogs(', "\ninputName.addEventListener('input'",
+    'the host catalog fill');
+  assert.match(host, /renderToolChecklist\(inputToolsList, modeToolDenySet\(\)\)/);
+});
+
 // --- programmatic populates ----------------------------------------------
 
 test('every path that fills the form by script marks it Custom itself', () => {
