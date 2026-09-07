@@ -531,7 +531,10 @@ function createPluginHostEngine(deps) {
     const head = String(title == null ? '' : title).trim();
     const note = head ? `${head}\n\n${text}` : text;
     const from = `plugin:${pluginId}`;
-    const rec = store.add({ from, workspaceId: null, body: note });
+    let rec;
+    try { rec = store.add({ from, workspaceId: null, body: note }); }
+    catch (e) { return errorEnvelope(`the operator inbox rejected the note: ${(e && e.message) || e}`); }
+    if (!rec || rec.id == null) return errorEnvelope('the operator inbox stored no note');
     const preview = notePreview(note);
     try {
       if (typeof notifyOS === 'function') notifyOS({ title: from, body: preview, silent: false });

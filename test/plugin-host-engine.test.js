@@ -1053,6 +1053,26 @@ test('host.notify.user refuses an empty body, an oversized one, and an absent st
     { ok: false, error: 'the operator inbox is unavailable' });
 });
 
+test('host.notify.user answers an envelope when the inbox store itself throws or stores nothing', () => {
+  // The doc's "it never throws" is a promise about EVERY path, not just the
+  // notifyOS one — a plugin's activate() is core's stack, so an escaping throw
+  // here lands in the loader, not in plugin land.
+  const boom = makeHost({ notifications: { add: () => { throw new Error('disk full'); } } });
+  const h1 = boom.engine.register('demo', { activate() {} });
+  const r1 = h1.notify.user({ body: 'never lands' });
+  assert.strictEqual(r1.ok, false);
+  assert.match(r1.error, /inbox rejected the note: disk full/);
+  assert.strictEqual(boom.manager.sent.filter((s) => s.channel === 'ipc-message').length, 0,
+    'a note that was never stored must not be announced as if it were');
+
+  // A store that returns nothing is the same failure wearing a success: ok:true
+  // with `id: undefined` would hand the plugin an id it can never look up.
+  const empty = makeHost({ notifications: { add: () => null } });
+  const h2 = empty.engine.register('demo', { activate() {} });
+  assert.deepStrictEqual(h2.notify.user({ body: 'nowhere' }),
+    { ok: false, error: 'the operator inbox stored no note' });
+});
+
 test('host.notify.user still stores and returns ok when notifyOS throws', () => {
   const { engine, manager, notes } = makeHost({
     notifyOS: () => { throw new Error('no Notification in this process'); },
