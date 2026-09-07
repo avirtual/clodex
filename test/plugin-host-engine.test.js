@@ -42,7 +42,8 @@ function makeManager(sessions = []) {
 // `notifications: null` is how a test asks for the store-absent branch, so the
 // default cannot be reached by omission — undefined must still mean "present".
 function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds,
-  notifications = undefined, notifyOS = undefined } = {}) {
+  notifications = undefined, notifyOS = undefined, getPluginUpdates = undefined,
+  onPluginUpdated = undefined } = {}) {
   const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = { ...settings };
   const logged = [];
@@ -64,6 +65,8 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     libraryPinKinds: libraryPinKinds || { memory: (ref, on) => { pins.push([ref, on]); return { ok: true }; } },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
+    getPluginUpdates,
+    onPluginUpdated,
     getNotifications: () => store,
     notifyOS: notifyOS || ((spec) => { osNotes.push(spec); }),
     broadcast: (channel, payload) => manager._broadcast(channel, payload),
@@ -733,6 +736,77 @@ test('_host plugins.status serves the settings section every plugin ON DISK', as
 test('_host plugins.status degrades to empty with no loader (CLODEX_PLUGINS=0 shape)', async () => {
   const { engine } = makeHost();
   assert.deepEqual(await engine.dispatch('_host', 'plugins.status', [], 'desktop'), { ok: true, plugins: [], problems: [] });
+});
+
+test('_host plugins.updatesAvailable passes the watcher\'s confirmed list through untouched', async () => {
+  // The dialog and the menu both read this. It is a pure passthrough of a list
+  // the checker already filtered — the host must NOT recompute it from the
+  // loader's catalog, whose `upToDate` flag compares against the library repo's
+  // HEAD and is false for every installed plugin whenever any of them moves.
+  const updates = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({ loader: fakeLoader(), getPluginUpdates: () => updates });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates });
+});
+
+test('_host plugins.updatesAvailable is an empty list with no watcher wired', async () => {
+  // headless-main.js constructs no update watcher, and neither does any fixture
+  // written before t741. The method must answer rather than throw a
+  // ReferenceError out of dispatch.
+  const { engine } = makeHost({ loader: fakeLoader() });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates: [] });
+});
+
+test('a successful applyUpdate spends the badge: updatesAvailable goes empty', async () => {
+  // The failure this closes: the operator clicks Update…, applyUpdate succeeds,
+  // and the confirmed list still names the plugin — so the row re-renders as the
+  // literal `Update available (1.2.0 → 1.2.0)` and the menu keeps its count for
+  // up to a whole poll interval. The drop is safe exactly here because
+  // applyUpdate refuses unless the fetched commit matches the accepted one.
+  let updates = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({
+    loader: fakeLoader({ applyUpdate: async () => ({ ok: true, id: 'demo', commit: 'bbbbbbb' }) }),
+    getPluginUpdates: () => updates,
+    onPluginUpdated: (id) => { updates = updates.filter((u) => u.id !== id); },
+  });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates }, 'ENTER: the badge is there before the click');
+  const r = await engine.dispatch('_host', 'plugins.applyUpdate', ['demo', 'bbbbbbb'], 'desktop');
+  assert.equal(r.ok, true, 'ENTER: the update really applied, so the drop below is on the success path');
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates: [] });
+});
+
+test('a FAILED applyUpdate keeps the badge — the update is still outstanding', async () => {
+  // The other direction, and the one a bare "clear on click" would get wrong:
+  // nothing was installed, so the operator still needs to see the update.
+  let updates = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({
+    loader: fakeLoader({ applyUpdate: async () => ({ ok: false, error: 'the source now resolves to ccc' }) }),
+    getPluginUpdates: () => updates,
+    onPluginUpdated: (id) => { updates = updates.filter((u) => u.id !== id); },
+  });
+  const r = await engine.dispatch('_host', 'plugins.applyUpdate', ['demo', 'bbbbbbb'], 'desktop');
+  assert.equal(r.ok, false, 'ENTER: the update really failed');
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates });
+});
+
+test('removing a badged plugin drops its update too, so the menu stops counting it', async () => {
+  // Lower blast radius than applyUpdate but the same staleness: the row is gone
+  // from the dialog while the menu still claims an update for a plugin that is
+  // no longer installed.
+  let updates = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({
+    loader: fakeLoader({ removeSourcePlugin: () => ({ ok: true, id: 'demo' }) }),
+    getPluginUpdates: () => updates,
+    onPluginUpdated: (id) => { updates = updates.filter((u) => u.id !== id); },
+  });
+  const r = await engine.dispatch('_host', 'plugins.removeSourcePlugin', ['demo'], 'desktop');
+  assert.equal(r.ok, true, 'ENTER: the remove really succeeded');
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates: [] });
 });
 
 test('_host renderer.report forwards a window\'s outcome to the loader', async () => {

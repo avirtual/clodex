@@ -565,9 +565,12 @@ test('Remove asks before it deletes, never after', () => {
 test('the row block reaches removeSourcePlugin and nothing else new', () => {
   const src = pluginRowSrc();
   const calls = [...src.matchAll(/pluginInvoke\('_host', '([^']+)'/g)].map((m) => m[1]);
-  assert.deepStrictEqual(calls, ['plugins.status', 'plugins.unregister', 'plugins.rescan', 'plugins.removeSourcePlugin'],
+  assert.deepStrictEqual(calls,
+    ['plugins.status', 'plugins.updatesAvailable', 'plugins.unregister', 'plugins.rescan', 'plugins.removeSourcePlugin'],
     'removeSourcePlugin rescans host-side; the unregister above it does not, which is why only that '
-    + 'one is followed by an explicit plugins.rescan');
+    + 'one is followed by an explicit plugins.rescan. updatesAvailable sits with status at the TOP, '
+    + 'once for the whole dialog: it is a cached read, but moving it into the row loop would make the '
+    + 'badge cost one host round trip per row on every paint');
 });
 
 test('Remove closes the update section when it is the removed row that owns it', () => {

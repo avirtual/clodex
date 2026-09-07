@@ -290,6 +290,47 @@ test('clicking a QUARANTINED plugin clears its strike and retries it', () => {
     'and the "held back" marking is gone from the label');
 });
 
+// ── The update count on Manage Plugins… (t741) ──────────────────────────────
+// The one entry point OUT of the dialog. It counts plugin-update-watch's
+// CONFIRMED list, never libraryCatalog's `upToDate` flag — that flag compares
+// against the library repo's HEAD, so it is false for every installed plugin
+// whenever any plugin in the repo moves, and counting it would put a permanent
+// count on the menu. The dep is what makes the difference visible here: the
+// menu is handed a list that the checker already filtered.
+
+test('a confirmed update puts a count on Manage Plugins…, and none leaves the label bare', () => {
+  const dir = tmpdir('updates');
+  writePlugin(dir, 'alpha', { name: 'Alpha' });
+  const { host } = realStack(dir);
+  const last = (updates) => {
+    const menu = menusWith(() => host, { getPluginUpdates: () => updates }).buildPluginsMenu();
+    const item = menu.submenu[menu.submenu.length - 1];
+    assert.match(item.label, /^Manage Plugins…/, 'ENTER: the last row really is the dialog entry');
+    return item.label;
+  };
+  assert.strictEqual(last([]), 'Manage Plugins…');
+  assert.strictEqual(last([{ id: 'alpha', from: 'a', to: 'b', version: '1.2.0' }]), 'Manage Plugins… (1 update)');
+  assert.strictEqual(
+    last([{ id: 'alpha' }, { id: 'beta' }, { id: 'gamma' }]),
+    'Manage Plugins… (3 updates)',
+  );
+});
+
+test('a missing or throwing update source leaves the label bare rather than killing the menu', () => {
+  // headless-main.js builds no app menu, and the dep is absent in every fixture
+  // written before t741. A menu that threw here would take the whole Plugins
+  // menu with it, which is a worse outcome than an uncounted label.
+  const dir = tmpdir('updates-absent');
+  writePlugin(dir, 'alpha', { name: 'Alpha' });
+  const { host } = realStack(dir);
+  const bare = menusWith(() => host).buildPluginsMenu().submenu;
+  assert.strictEqual(bare[bare.length - 1].label, 'Manage Plugins…');
+  const thrown = menusWith(() => host, {
+    getPluginUpdates: () => { throw new Error('watcher exploded'); },
+  }).buildPluginsMenu().submenu;
+  assert.strictEqual(thrown[thrown.length - 1].label, 'Manage Plugins…');
+});
+
 test('every setEnabled notifies the main process, so EVERY menu is rebuilt', () => {
   // Ticket §4: "a toggle from the menu, from another window, or a quarantine
   // trip must all leave every menu correct". The menu's own click handler covers

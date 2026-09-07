@@ -26,6 +26,8 @@ function createPluginHostEngine(deps) {
     libraryPinKinds,  // kind -> handler for host.library.setPin; same refusal rule
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
+    getPluginUpdates,
+    onPluginUpdated,
     getPersistence,   // getter: the sessions store — read for per-session plugin grants
     onPluginStateChanged,
     getNotifications,
@@ -34,6 +36,9 @@ function createPluginHostEngine(deps) {
   } = deps;
   const notifyStateChanged = () => {
     try { if (typeof onPluginStateChanged === 'function') onPluginStateChanged(); } catch {}
+  };
+  const noteUpdateApplied = (pluginId) => {
+    try { if (typeof onPluginUpdated === 'function') onPluginUpdated(String(pluginId || '')); } catch {}
   };
 
 // A frozen façade of BOUND wrappers, not the module object: freezing a wrapper
@@ -721,6 +726,10 @@ function createPluginHostEngine(deps) {
         return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
     },
+    'plugins.updatesAvailable': () => ({
+      ok: true,
+      updates: (typeof getPluginUpdates === 'function' ? getPluginUpdates() : []) || [],
+    }),
     'plugins.installFromSource': async (spec) => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
@@ -748,6 +757,7 @@ function createPluginHostEngine(deps) {
         r = await loader.applyUpdate(String(pluginId || ''), String(commit || ''));
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
       if (!r.ok) return errorEnvelope(r.error);
+      noteUpdateApplied(pluginId);
       try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
       catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
     },
@@ -756,6 +766,7 @@ function createPluginHostEngine(deps) {
       if (!loader) return errorEnvelope('no plugin loader');
       const r = loader.removeSourcePlugin(String(pluginId || ''));
       if (!r.ok) return errorEnvelope(r.error);
+      noteUpdateApplied(pluginId);
       try { rescanAndAnnounce(loader); return { ok: true, ...r }; }
       catch (e) { return { ok: true, ...r, rescanError: String((e && e.message) || e) }; }
     },

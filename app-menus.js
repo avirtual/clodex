@@ -71,7 +71,7 @@ function createAppMenus(deps) {
     // getter deps (TDZ / whenReady-assigned when this factory runs)
     getManager, getPeerManager, getSandboxManager, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
-    getPromptLibrary, getTemplates, getExecLibrary,
+    getPromptLibrary, getTemplates, getExecLibrary, getPluginUpdates,
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
@@ -467,9 +467,14 @@ function createAppMenus(deps) {
     for (const pr of problems) {
       submenu.push({ label: `${pr.dir} — not loaded`, enabled: false });
     }
+    let updates = 0;
+    try { updates = ((getPluginUpdates && getPluginUpdates()) || []).length; } catch { updates = 0; }
     submenu.push(
       { type: 'separator' },
-      { label: 'Manage Plugins…', click: () => sendToFocused('request-open-plugins-dialog') }
+      {
+        label: updates ? `Manage Plugins… (${updates} update${updates === 1 ? '' : 's'})` : 'Manage Plugins…',
+        click: () => sendToFocused('request-open-plugins-dialog'),
+      }
     );
     return { label: 'Plugins', submenu };
   }

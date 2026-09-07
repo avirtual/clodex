@@ -257,6 +257,7 @@ const {
   getExecLibrary: () => execLibrary,
   getEnvScopes: () => envScopes,
   getPluginHost: () => (engine ? engine.getPluginHost() : null),
+  getPluginUpdates: () => (engine ? engine.getPluginUpdates() : []),
   getTeams: () => (engine ? { listTeams: engine.listTeams, loadManifest: engine.loadManifest } : null),
 });
 

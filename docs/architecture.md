@@ -589,6 +589,14 @@ worktree, which is why membership is by repo.
   plugin folders of the library repo off one such tarball
   (`fetchLibraryCatalog`); see docs/notes/plugin-source.md for the
   tarball-naming and byte-cap specifics.
+- **plugin-update-watch.js** — deps-injected factory (constructed in engine.js)
+  answering "which installed library plugin has a newer version". TWO STAGES,
+  and merging them is the bug it exists to avoid: `libraryCatalog`'s `upToDate`
+  compares against the library REPO's head, so it is false for every installed
+  plugin whenever any plugin in that repo moves — a candidate filter only.
+  `resolveUpdate(id)` is the per-plugin confirmation, and only a confirmed
+  change reaches `list()`. Detection and display only; nothing auto-updates.
+  See docs/notes/plugin-update-watch.md for the cap and the failure behaviour.
 - **plugin-prompt-refs.js** — the pure leaf resolving a `<plugin-id>:<stem>`
   prompt reference, and listing a plugin's templates. THROWS where the library
   path returns null: a namespaced stem the seat cannot reach means the template

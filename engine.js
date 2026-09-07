@@ -1049,8 +1049,10 @@ const gitWorktree = require('./git-worktree');
 // would be null for the app's whole life. Same getter discipline as every other
 // bootstrap-assigned seam.
 const { createPluginLoader } = require('./plugin-loader');
+const { createPluginUpdateWatch } = require('./plugin-update-watch');
 let pluginHost = null;
 let pluginLoader = null;
+let pluginUpdateWatch = null;
 
 
 
@@ -2112,6 +2114,8 @@ const toolCache = createToolCache({ whichBin });
         libraryPinKinds: { memory: (ref, on) => manager.setOperatorPin(ref.agent, ref.id, on) },
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
+        getPluginUpdates: () => (pluginUpdateWatch ? pluginUpdateWatch.list() : []),
+        onPluginUpdated: (id) => { if (pluginUpdateWatch) pluginUpdateWatch.drop(id); },
         getPersistence: () => persistence,
         onPluginStateChanged: () => scheduleAppMenuRefresh(),
         getNotifications: () => notifications,
@@ -2130,9 +2134,16 @@ const toolCache = createToolCache({ whichBin });
         https, execFile,
       });
       pluginLoader.loadAll(pluginHost);
+      pluginUpdateWatch = createPluginUpdateWatch({
+        getLoader: () => pluginLoader,
+        log,
+        onChange: () => scheduleAppMenuRefresh(),
+      });
+      pluginUpdateWatch.start();
     } catch (e) {
       pluginHost = null;
       pluginLoader = null;
+      if (pluginUpdateWatch) { try { pluginUpdateWatch.stop(); } catch {} pluginUpdateWatch = null; }
       log.info('plugin', `host construction failed, continuing without plugins: ${e && e.message}`);
     }
   } else {
@@ -2147,6 +2158,7 @@ const toolCache = createToolCache({ whichBin });
     try { log.info('app', 'shutdown — engine.shutdown(), killing all sessions'); } catch {}
     try { clearInterval(wsWatchdogTimer); } catch {}
     try { clearInterval(msgCleanupTimer); } catch {}
+    if (pluginUpdateWatch) { try { pluginUpdateWatch.stop(); } catch {} }
     try { proxyPoller.stop(); } catch {}
     try { if (remindScheduler) remindScheduler.stop(); } catch {}
     if (remoteServer) { try { remoteServer.stop(); } catch {} remoteServer = null; }
@@ -2193,6 +2205,7 @@ const toolCache = createToolCache({ whichBin });
     getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,
     getPluginLoader: () => pluginLoader,
+    getPluginUpdates: () => (pluginUpdateWatch ? pluginUpdateWatch.list() : []),
     listAllTemplates,
     resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
