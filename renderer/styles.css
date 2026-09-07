@@ -3773,20 +3773,20 @@ html, body {
    Bounded like #drawer-status and for the same reason: #drawer-tabs is the
    designated shrinker and #drawer is overflow:hidden, so an unbounded chip
    pushes the tabs and their unread badges off screen at exactly the moment the
-   loud one fires. The cap is measured in Electron at this size and font, not
-   scaled from a per-character estimate: the longest string the feature emits is
-   "overage quota 100% used · resets in 4h 59m · rate-limited 59s ago" at 337px
-   border-box. The window label is what makes it the worst case — wire/quota.js
-   CLAIM_WINDOW maps a representative claim to "overage" and "7d_oi" as well as
-   "5h"/"7d", so sizing to a 5h reading (311px) would ellipsise the trailing
-   refusal off the loudest chip there is. flex-shrink:1 lets it give up width
-   anyway under genuine pressure, ellipsising instead of shoving. Full text is
-   in the tooltip either way. */
+   loud one fires. The cap is measured in Electron at this size and font: the
+   longest string the feature emits is "overage quota 100% used · resets in
+   23h 59m · rate-limited 59s ago" at 343px border-box. Two parts make it the
+   worst case — wire/quota.js CLAIM_WINDOW maps a representative claim to
+   "overage" and "7d_oi" as well as "5h"/"7d", and fmtQuotaReset's hours branch
+   runs to "23h 59m", wider than any "Nd Nh" — so sizing to a 5h reading or to
+   a day-scale reset would ellipsise the trailing refusal off the loudest chip
+   there is. flex-shrink:1 lets it give up width anyway under genuine pressure,
+   ellipsising instead of shoving. Full text is in the tooltip either way. */
 #drawer-quota {
   font-size: 10px;
   white-space: nowrap;
   flex-shrink: 1;
-  max-width: 340px;
+  max-width: 350px;
   overflow: hidden;
   text-overflow: ellipsis;
   padding: 2px 7px;

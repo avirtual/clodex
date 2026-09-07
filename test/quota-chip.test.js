@@ -250,19 +250,20 @@ test('#drawer-quota max-width fits the longest string quotaChip can emit', () =>
 
   // Worst case built through the real function rather than hardcoded, so a new
   // window label or a longer part is measured rather than assumed. 'overage' is
-  // the longest CLAIM_WINDOW label and 100%/4h 59m/59s the longest renderings
-  // of the other three parts.
+  // the longest CLAIM_WINDOW label; `23h 59m` is the longest reset rendering —
+  // fmtQuotaReset's `${h}h ${m}m` branch runs up to 23h, one digit wider than
+  // the `4h 59m` this was first sized to and than any `Nd Nh` — and 100%/59s
+  // the longest pct and age.
   const longest = Object.values(CLAIM_WINDOW)
-    .map((w) => quotaChip({ status: 'rejected', window: w, usedPct: 100, resetsInS: 4 * 3600 + 59 * 60, last429AgeS: 59, ageS: 1 }, 0).text)
+    .map((w) => quotaChip({ status: 'rejected', window: w, usedPct: 100, resetsInS: 23 * 3600 + 59 * 60, last429AgeS: 59, ageS: 1 }, 0).text)
     .reduce((a, b) => (b.length > a.length ? b : a));
-  assert.strictEqual(longest, 'overage quota 100% used · resets in 4h 59m · rate-limited 59s ago');
+  assert.strictEqual(longest, 'overage quota 100% used · resets in 23h 59m · rate-limited 59s ago');
 
-  // 337px measured in Electron for this string at 10px in the app's font stack,
-  // border-box (padding included). 5.2px/ch is a LOWER bound on that measured
-  // width, not the estimate the cap was set from — the comment on the rule
-  // carries the measurement and says to re-measure.
+  // 343px measured in Electron for this string at 10px in the app's font stack,
+  // border-box (padding included); 66 × 5.2 = 344 keeps the pin at or above
+  // that. Re-measure rather than rescaling the constant if the wording changes.
   assert.ok(cap >= Math.ceil(longest.length * 5.2),
-    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 337px) — the trailing refusal is what gets cut`);
+    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 343px) — the trailing refusal is what gets cut`);
 });
 
 test('fmtQuotaReset: minutes, hours and days; nothing for absent or elapsed', () => {
