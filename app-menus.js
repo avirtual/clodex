@@ -71,11 +71,10 @@ function createAppMenus(deps) {
     // getter deps (TDZ / whenReady-assigned when this factory runs)
     getManager, getPeerManager, getSandboxManager, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
-    getPromptLibrary, getTemplates, getExecLibrary,
+    getPromptLibrary, getTemplates, getExecLibrary, getPluginUpdates,
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
-    getPluginUpdates,
     // The team manifest readers (t288), lazy for the same reason as the rest:
     // they live on the engine, which is assigned after this factory runs.
     getTeams,
