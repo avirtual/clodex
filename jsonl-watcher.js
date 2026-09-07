@@ -220,8 +220,8 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           // A textless entry ends the pending turn. Codex closes with
           // `task_complete`, which carries no text and so never reaches the
           // branch above — read the flag off THIS entry before flushing, or the
-          // flag that ships is the one computed from `agent_message`, which is
-          // false by construction and leaves a Codex reply permanently unspoken.
+          // flag that ships is the one computed at the reply, which is false by
+          // construction and leaves a Codex reply permanently unspoken.
           if (this._pendingIsReply && isTurnEndEntry(obj)) this._pendingTurnEnd = true;
           if (this._pendingText) this._flushPending();
         }
