@@ -49,6 +49,29 @@ test('persistence: missing file -> [], upsert/list/remove round-trip', () => {
   } finally { cleanup(); }
 });
 
+test('persistence: rename rewrites the entry in place, drops the label, refuses a taken name', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default', sessionId: 's1' });
+    stores.persistence.upsert({ name: 'b', type: 'codex', workspaceId: 'default' });
+    stores.persistence.setLabel('a', 'My Seat');
+
+    assert.strictEqual(stores.persistence.rename('a', 'b'), false, 'refuses a name already taken');
+    assert.strictEqual(stores.persistence.get('a').label, 'My Seat', 'and changes nothing');
+    assert.strictEqual(stores.persistence.rename('gone', 'c'), false, 'refuses an unknown seat');
+
+    assert.strictEqual(stores.persistence.rename('a', 'c'), true);
+    assert.strictEqual(stores.persistence.get('a'), null);
+    // The whole record minus the one field allowed to change: a spot check would
+    // read around a rename that dropped sessionId (the conversation).
+    assert.deepStrictEqual(stores.persistence.get('c'),
+      { name: 'c', type: 'claude', workspaceId: 'default', sessionId: 's1' },
+      'same record under the new name, and the label is gone with the old one');
+    assert.deepStrictEqual(stores.persistence.list().map(e => e.name), ['c', 'b'],
+      'ENTER: rewritten in place — its position in the file did not move');
+  } finally { cleanup(); }
+});
+
 test('persistence: setSessionId accumulates a dedup move-to-end history', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -3072,6 +3095,22 @@ test('reminders: listForAgent filters by agent', () => {
     assert.deepStrictEqual(stores.reminders.listForAgent('t1').map(r => r.body).sort(), ['a', 'c']);
     assert.deepStrictEqual(stores.reminders.listForAgent('t2').map(r => r.body), ['b']);
     assert.deepStrictEqual(stores.reminders.listForAgent('nobody'), []);
+  } finally { cleanup(); }
+});
+
+test('reminders: renameAgent re-points one agent\'s rows and leaves the rest', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const a = stores.reminders.add({ agent: 't1', kind: 'in', spec: 'in 1h', body: 'a', nextFireAt: 500 });
+    stores.reminders.add({ agent: 't2', kind: 'in', spec: 'in 2h', body: 'b' });
+    assert.strictEqual(stores.reminders.renameAgent('t1', 't3'), 1, 'one row moved');
+    assert.deepStrictEqual(stores.reminders.listForAgent('t1'), [], 'nothing answers to the old name');
+    // The WHOLE row, not just its agent: a rename that rebuilt the record would
+    // drop nextFireAt and the reminder would never fire again.
+    assert.deepStrictEqual(stores.reminders.listForAgent('t3'), [{ ...a, agent: 't3' }]);
+    assert.deepStrictEqual(stores.reminders.listForAgent('t2').map(r => r.body), ['b']);
+    assert.strictEqual(stores.reminders.renameAgent('nobody', 't4'), 0, 'an agent with no rows moves nothing');
+    assert.deepStrictEqual(stores.reminders.listForAgent('t4'), []);
   } finally { cleanup(); }
 });
 

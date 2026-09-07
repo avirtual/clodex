@@ -18,3 +18,22 @@ keeps its conversation and no transcript is copied. An id that does not exist
 anywhere is a different case — the CLI prints "No conversation found with session
 ID: <id>" and exits nonzero, which happens AFTER `create()` has returned, so a
 move cannot detect a bad resume id and report it.
+
+## _renameDirs
+
+`run/<name>/` is absent from the list on purpose. `cleanupClaudeHook` rm -rf's it
+on every exit path, including the kill `rename` performs, and `create()` rebuilds
+it under the new name — so moving it would race a delete that is already running.
+
+`library/exec/<name>.json` is absent for the opposite reason, and it is the one a
+reader is likeliest to add back: that directory is the exec COMMAND registry,
+keyed by command id and shared by every seat, not per-seat state. Moving it on a
+rename breaks the command for every seat granted it.
+
+## rename
+
+The open-ticket refusal reads the board directly instead of relying on
+`_openTicketsFor` alone. That helper filters on `ticketStarted`, so a QUEUED
+ticket — assigned to the seat by name, never started — passes it, and the rename
+strands the ticket naming an assignee nothing answers to. The direct read is
+unioned with the helper so the role-resolved and started cases it covers are kept.

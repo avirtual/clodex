@@ -15,6 +15,7 @@ blocks a release.
 
 - **Bundled wirescope updated to v0.6.61: the session view stamps every message with a wall-clock time derived from the capture series.**
 - The plugin library's GitHub repo is one click away: a link in Manage plugins ▸ Browse the Clodex library, and a Help menu with Clodex and clodex-plugins on GitHub.
+- Rename… now renames the seat for real: its name changes in the sidebar, in `[agent:who]` and DM addressing, and its messages, memory, pending DMs and reminders move with it; the seat restarts on the same conversation and is told its new name. Ticket seats and seats holding an open ticket cannot be renamed.
 
 ## 5.35.9 — 2026-09-07
 

@@ -408,6 +408,7 @@ function createSessionManager(deps) {
     removeRole,
     renameRole,
     setTeamWatchdog,
+    setLead,
     fs,
     hasActivePending,
     bodyModeFor,
@@ -2733,6 +2734,123 @@ function createSessionManager(deps) {
       s._archived = true;
       try { s.pty.kill(); } catch {}
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+    }
+
+    _renameDirs(oldName, newName) {
+      return [
+        [path.join(REGISTRY_DIR, 'messages', oldName), path.join(REGISTRY_DIR, 'messages', newName)],
+        [path.join(REGISTRY_DIR, 'pending', oldName), path.join(REGISTRY_DIR, 'pending', newName)],
+        [path.join(REGISTRY_DIR, 'promptcache', oldName), path.join(REGISTRY_DIR, 'promptcache', newName)],
+        [path.join(REGISTRY_DIR, 'notices', oldName), path.join(REGISTRY_DIR, 'notices', newName)],
+        [path.join(REGISTRY_DIR, 'library', 'memory', oldName), path.join(REGISTRY_DIR, 'library', 'memory', newName)],
+      ];
+    }
+
+    async rename(name, newName) {
+      if (typeof newName !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(newName)) {
+        return { ok: false, error: 'Name must be 1–64 chars: letters, digits, . _ - (and not only dots)' };
+      }
+      if (newName === name) return { ok: false, error: `${name} is already called that` };
+      const entry = getPersistence().get(name);
+      if (!entry) return { ok: false, error: `Session not found: ${name}` };
+      if (entry.worktree && entry.worktree.path) {
+        return { ok: false, error: `${name} runs in a ticket worktree (${entry.worktree.path}) — the loop keys that seat by name, so it cannot be renamed.` };
+      }
+      if (entry.ephemeral) {
+        return { ok: false, error: `${name} is an ephemeral seat minted by the ticket loop, which keys it by name — it cannot be renamed.` };
+      }
+      const team = (() => { try { return resolveTeam(entry.cwd); } catch { return null; } })();
+      if (team) {
+        let ids;
+        try {
+          const board = ticketsStore.load(team.root);
+          const byName = board.filter((t) => t && t.state === 'open' && t.assignee === name).map((t) => t.id);
+          ids = [...new Set([...byName, ...this._openTicketsFor(team, name).map((t) => t.id)])];
+        } catch { ids = ['<ticket check unavailable>']; }
+        if (ids.length) {
+          return { ok: false, error: `${name} is the assignee of open ticket${ids.length > 1 ? 's' : ''} ${ids.join(', ')} — close or reassign before renaming.` };
+        }
+      }
+      if (this.sessions.has(newName)) return { ok: false, error: `${newName} is already a live session` };
+      if (getPersistence().get(newName)) return { ok: false, error: `${newName} is already a saved session` };
+      for (const [, dest] of this._renameDirs(name, newName)) {
+        if (fs.existsSync(dest)) return { ok: false, error: `${newName} already owns ${dest} — a leftover from an earlier seat; clear it first` };
+      }
+      if (this._movingNames.has(name)) return { ok: false, error: 'move already in progress' };
+
+      this._movingNames.add(name);
+      try {
+        const s = this.sessions.get(name);
+        if (s) {
+          log.info('session', `rename ${name} → ${newName} pid=${s.pty.pid}`);
+          s._moving = true;
+          try { s.pty.kill(); } catch {}
+          setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          if (!await this._waitForExit(name)) {
+            return {
+              ok: false, kept: true,
+              error: 'old process did not exit in time — session not renamed',
+              name, type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            };
+          }
+        }
+        getPersistence().rename(name, newName);
+        const sched = getRemindScheduler && getRemindScheduler();
+        if (sched && typeof sched.renameAgent === 'function') {
+          try { sched.renameAgent(name, newName); } catch {}
+        }
+        for (const [src, dest] of this._renameDirs(name, newName)) {
+          try { if (fs.existsSync(src)) fs.renameSync(src, dest); } catch (e) {
+            log.warn('session', `rename ${name} → ${newName}: ${src} did not move (${e.message})`);
+          }
+        }
+        if (team && team.lead === name) {
+          try { setLead(team.name, newName); } catch (e) {
+            log.warn('session', `rename ${name} → ${newName}: team "${team.name}" lead pointer not repointed (${e.message})`);
+          }
+        }
+        try {
+          enqueueNotice(REGISTRY_DIR, newName,
+            `This seat was renamed from '${name}' to '${newName}'. Peers address you as '${newName}' now; `
+            + 'your run directory, messages and memory moved with it.');
+        } catch {}
+        const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
+        try {
+          await this.create(
+            newName, entry.type, entry.cwd, entry.extraArgs || [], entry.sessionId || null, workspaceId,
+            entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+            entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+            entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+            Array.isArray(entry.execCommands) ? entry.execCommands : [],
+            Array.isArray(entry.intents) ? entry.intents : null,
+            (entry.env && typeof entry.env === 'object') ? entry.env : null,
+            false,
+            entry.noWire === true,
+            Array.isArray(entry.plugins) ? entry.plugins : null,
+            Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+          );
+        } catch (err) {
+          const kept = { ...entry, name: newName };
+          delete kept.label;
+          getPersistence().upsert(this._stripClaimedTree(kept));
+          return {
+            ok: false, kept: true,
+            error: `${err.message} — session kept as ${newName}; retry from the sidebar row, or forget it.`,
+            name: newName, type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+          };
+        }
+        return {
+          ok: true,
+          name: newName,
+          type: entry.type,
+          cwd: entry.cwd,
+          backend: (this.sessions.get(newName) || {}).backend || null,
+          noWire: entry.noWire === true,
+          team: this.teamNameFor(entry.cwd),
+        };
+      } finally {
+        this._movingNames.delete(name);
+      }
     }
 
     async move(name, newCwd) {
