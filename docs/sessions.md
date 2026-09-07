@@ -356,6 +356,16 @@ per open so a change applies to the next dialog. A template, an adopt prefill or
 `Custom` with Advanced expanded, so `collectFormConfig` and template round-trips
 are unchanged.
 
+First launch asks for that preference once, in a **Welcome to Clodex** dialog:
+the two modes as radio cards, plus a Skip that leaves the shipped `optimized`.
+Either button writes `~/.clodex/setup.json` (registry root, so it outlives the
+per-agent run dirs), and `setup:complete` writes the marker and the preference in
+ONE handler — a box that never asks again but never applied the answer is the
+state that split would allow. The dialog is gated on `document.hasFocus()` like
+startup discovery, and the launch that shows it skips discovery, so a first run
+raises one modal rather than two. **Run setup again…** (Settings ▸ Sessions)
+reopens it over Preferences at any time, rewriting the marker.
+
 **templates.json** stores reusable session configs. Base fields
 (`id/name/type/cwd/extraArgs`) plus the config subset snapshotted by the
 session context menu's **Export as Template…** (agent sessions only):

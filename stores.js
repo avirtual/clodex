@@ -360,6 +360,7 @@ function sanitizeRebootNotice(v) {
 // almost certainly what most operators want.
 const TERMINAL_REPORTS = ['off', 'asked', 'all'];
 const SESSION_MODES = ['optimized', 'standard'];
+const SETUP_CHOICES = ['optimized', 'standard', 'skipped'];
 
 // The upgrade path, and the one place a version bump could hand an agent a
 // capability nobody enabled. Both directions are deliberate:
@@ -399,6 +400,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   const REMINDERS_FILE = path.join(userDataPath, 'reminders.json');
   const NOTIFICATIONS_FILE = path.join(userDataPath, 'notifications.json');
   const ENV_SCOPES_FILE = path.join(userDataPath, 'env-scopes.json');
+  const SETUP_FILE = path.join(registryDir, 'setup.json');
   const PROMPTS_DIR = path.join(registryDir, 'library', 'prompts');
   const AGENTS_DIR = path.join(registryDir, 'agents');
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
@@ -1444,6 +1446,24 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
     },
   };
 
+  const setupMarker = {
+    read() {
+      let raw;
+      try { raw = JSON.parse(fs.readFileSync(SETUP_FILE, 'utf-8')); } catch { return { done: false }; }
+      if (!raw || typeof raw !== 'object' || typeof raw.completedAt !== 'string') return { done: false };
+      return { done: true, choice: raw.choice, completedAt: raw.completedAt };
+    },
+    write({ choice, version } = {}) {
+      const body = {
+        completedAt: new Date().toISOString(),
+        version: typeof version === 'string' ? version : '',
+        choice: SETUP_CHOICES.includes(choice) ? choice : 'skipped',
+      };
+      atomicWriteFileSync(SETUP_FILE, JSON.stringify(body, null, 2));
+      return body;
+    },
+  };
+
   // A `workspace:`-scoped skill/agent keys off the workspace DISPLAY name, so a
   // rename must rewrite those files in the same motion or they orphan. Exact
   // match on the trimmed old name — the same comparison visibleTo makes.
@@ -1789,9 +1809,9 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   return {
     persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings,
-    envScopes, envDefaults,
+    envScopes, envDefaults, setupMarker,
     renameWorkspaceScope,
   };
 }
 
-module.exports = { initStores };
+module.exports = { initStores, SETUP_CHOICES };

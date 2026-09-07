@@ -3312,7 +3312,8 @@ body {
 #peer-session-overlay,
 #sandbox-overlay,
 #discovery-overlay,
-#plugins-overlay {
+#plugins-overlay,
+#setup-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -3328,13 +3329,18 @@ body {
 #peer-session-overlay.hidden,
 #sandbox-overlay.hidden,
 #discovery-overlay.hidden,
-#plugins-overlay.hidden {
+#plugins-overlay.hidden,
+#setup-overlay.hidden {
   display: none;
 }
 #discovery-overlay {
   z-index: 150;
 }
-#discovery-dialog {
+#setup-overlay {
+  z-index: 150;
+}
+#discovery-dialog,
+#setup-dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -3346,8 +3352,12 @@ body {
   flex-direction: column;
   gap: 12px;
 }
-#discovery-dialog h3 {
+#discovery-dialog h3,
+#setup-dialog h3 {
   margin: 0;
+}
+#setup-dialog {
+  width: 460px;
 }
 .discovery-list {
   flex: 1;
@@ -7232,6 +7242,28 @@ body {
     </div>
   </div>
 
+  <!-- First-run Welcome dialog -->
+  <div id="setup-overlay" class="hidden">
+    <div id="setup-dialog">
+      <h3>Welcome to Clodex</h3>
+      <p class="hint-text">Pick how new sessions should start. This is the only question.</p>
+      <label class="prefs-check">
+        <input type="radio" name="setup-mode" id="setup-mode-optimized" value="optimized" checked>
+        <span><strong>Clodex optimized</strong><br>New sessions start with Clodex's recommended tool set, agents and skills, routed through the built-in wirescope. Change per session under Advanced.</span>
+      </label>
+      <label class="prefs-check">
+        <input type="radio" name="setup-mode" id="setup-mode-standard" value="standard">
+        <span><strong>Standard</strong><br>New sessions run the CLI as installed, nothing tweaked.</span>
+      </label>
+      <div class="dialog-actions">
+        <div style="flex: 1;"></div>
+        <button id="btn-setup-skip" class="secondary" type="button">Skip</button>
+        <button id="btn-setup-save" type="button">Save and continue</button>
+      </div>
+      <p class="hint-text">Everything here can be changed later in Settings ▸ Sessions.</p>
+    </div>
+  </div>
+
   <!-- Preferences dialog -->
   <div id="prefs-overlay" class="hidden">
     <div id="prefs-dialog">
@@ -7316,7 +7348,7 @@ body {
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
         <h5>Claude MCP</h5>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is not configured to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
+        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy: the built-in wirescope strips <code>claude_design</code> by default and keeps your real MCPs. The fallback below is for the sessions it never sees — one you route nowhere, or one whose wire is unreachable at spawn. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-disable-design-mcp">
           <span>Disable <code>claude_design</code> MCP</span>
@@ -7461,6 +7493,9 @@ body {
             <option value="optimized">Clodex optimized</option>
             <option value="standard">Standard (CLI as-is)</option>
           </select>
+        </div>
+        <div class="prefs-row" style="margin-top: 8px;">
+          <button id="prefs-run-setup" class="secondary" type="button" style="flex: none;">Run setup again…</button>
         </div>
         <h5 style="margin-top: 14px;">Session discovery</h5>
         <p class="hint-text">Clodex can find Claude/Codex conversations on this machine that it isn't managing — including ones you started in a plain terminal — and let you adopt them (File ▸ Discover Sessions…). When enabled below, it checks on startup and offers any it finds; adopting resumes the conversation in a Clodex-managed session (it never attaches to a running process or spawns anything automatically).</p>
@@ -7855,6 +7890,8 @@ body {
         { name: "setTheme", kind: "invoke", channel: "theme:set" },
         { name: "onSetTheme", kind: "on", channel: "set-theme" },
         { name: "setSettings", kind: "invoke", channel: "settings:set" },
+        { name: "getSetupState", kind: "invoke", channel: "setup:state" },
+        { name: "completeSetup", kind: "invoke", channel: "setup:complete" },
         // Playback of a spoken reply started or ended, box-wide. The re-arm lives in
         // the renderer and the `say` child in main, so this is the only way the
         // recorder can be held off until the narration it would otherwise transcribe
@@ -22243,6 +22280,7 @@ ${i3.join("\n")}
         "plugins-overlay",
         "peers-overlay",
         "sandbox-overlay",
+        "setup-overlay",
         "file-peek-overlay",
         "report-overlay",
         "prompt-editor",
@@ -40850,6 +40888,38 @@ ${res.stderr}` : "");
         }
         voiceControl.stop();
       }
+      var setupOverlay = document.getElementById("setup-overlay");
+      function openSetupDialog({ fromPrefs } = {}) {
+        if (!setupOverlay) return;
+        const optimized = document.getElementById("setup-mode-optimized");
+        if (optimized) optimized.checked = true;
+        setupOverlay.dataset.fromPrefs = fromPrefs ? "1" : "";
+        setupOverlay.classList.remove("hidden");
+      }
+      async function finishSetup(choice) {
+        try {
+          await window.api.completeSetup({ choice });
+        } catch (e) {
+          console.error("setup:complete failed", e);
+        }
+        if (setupOverlay && setupOverlay.dataset.fromPrefs === "1" && prefsDefaultMode && !prefsOverlay.classList.contains("hidden")) {
+          try {
+            const s = await window.api.getSettings();
+            prefsDefaultMode.value = defaultSessionMode(s);
+          } catch {
+          }
+        }
+        if (setupOverlay) setupOverlay.classList.add("hidden");
+      }
+      if (setupOverlay) {
+        document.getElementById("btn-setup-save").addEventListener("click", () => {
+          const standard = document.getElementById("setup-mode-standard");
+          finishSetup(standard && standard.checked ? "standard" : "optimized");
+        });
+        document.getElementById("btn-setup-skip").addEventListener("click", () => finishSetup("skipped"));
+      }
+      var prefsRunSetup = document.getElementById("prefs-run-setup");
+      if (prefsRunSetup) prefsRunSetup.addEventListener("click", () => openSetupDialog({ fromPrefs: true }));
       function collectChecked(container) {
         return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
       }
@@ -41271,8 +41341,20 @@ ${res.stderr}` : "");
         if (firstHealthy) switchSession(firstHealthy);
         initSidebarView();
       })();
+      async function maybeFirstRunSetup() {
+        try {
+          if (!document.hasFocus()) return false;
+          const state = await window.api.getSetupState();
+          if (!state || state.done !== false) return false;
+          openSetupDialog({});
+          return true;
+        } catch {
+          return false;
+        }
+      }
       (async function maybeDiscoverOnStartup() {
         try {
+          if (await maybeFirstRunSetup()) return;
           if (!document.hasFocus()) return;
           const s = await window.api.getSettings();
           if (!s || !s.discoverOnStartup) return;
