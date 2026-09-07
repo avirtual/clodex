@@ -2572,6 +2572,8 @@ html, body {
 .plugin-row-name { font-size: 13px; }
 .plugin-row-version { opacity: 0.6; font-size: 11px; margin-left: 6px; }
 .plugin-row-note { font-size: 11px; opacity: 0.75; margin-top: 2px; }
+#plugins-library-repo-link { color: var(--accent); text-decoration: none; cursor: pointer; }
+#plugins-library-repo-link:hover { text-decoration: underline; }
 /* The quarantine / discovery-failure line. Uses the same warn accent the rest of
    the dialog does, so a held-back plugin reads as a state, not as decoration. */
 .plugin-row-note.warn { color: var(--warn); opacity: 1; }

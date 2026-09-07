@@ -30,6 +30,15 @@ test('the library note carries an hrefless anchor to the plugins repo', () => {
     'an hrefless anchor is not focusable and is not announced as a control without both');
 });
 
+test('the repo link is painted as a link', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'renderer', 'styles.css'), 'utf8');
+  assert.ok(/#plugins-library-repo-link\s*\{[^}]*cursor:\s*pointer/.test(css),
+    'there is no generic `a` rule in this stylesheet and the anchor has no href, so without this the '
+    + 'link renders as prose with a text cursor — the "nowhere to click" the ticket is about');
+  assert.ok(/#plugins-library-repo-link\s*\{[^}]*color:\s*var\(--accent\)/.test(css),
+    'nothing else distinguishes it from the sentence around it');
+});
+
 test('the library note routes the repo link through openExternal, keyboard included', () => {
   const src = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
   assert.ok(/pluginsLibraryRepoLink\s*=\s*document\.getElementById\('plugins-library-repo-link'\)/.test(src),
