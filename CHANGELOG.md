@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.35.2 — 2026-09-07
+
 - Manage Plugins library rows: Update names the installed ref in its trust warning, a registered plugin says "unregister it first", and installing one row no longer refetches the whole catalog.
 - **Codex sessions' replies reach Clodex again.** Intents (`[agent:dm]`, `[agent:task done]`, …) and the activity/spoken signals were silently dropped, because the current Codex CLI writes replies in a shape the transcript reader did not recognise.
 - When the bundled proxy can no longer refresh the Claude login, a sidebar banner says so and names the fix (`claude login`) — previously keep-warm holds just died quietly at the next token lapse.
