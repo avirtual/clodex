@@ -372,8 +372,13 @@ test('t738: every ticket-loop create() call site threads the template plugin lis
   assert.strictEqual(calls.length, 3,
     `ENTER: expected 3 this.create( call sites in team-tickets.js, found ${calls.length} — a new one is unmeasured, or the shape moved`);
   for (const [i, tail] of calls.entries()) {
-    const argv = tail.slice(0, tail.indexOf('\n          );') >= 0 ? tail.indexOf('\n          );') : 2000);
-    assert.match(argv, /\bplugins\b/,
+    const end = tail.indexOf('\n          );');
+    // Comment lines stripped BEFORE the match: every one of these call sites is
+    // commented, and prose about plugins would satisfy an argument-shaped regex
+    // that no argument satisfies.
+    const argv = tail.slice(0, end >= 0 ? end : 2000).split('\n')
+      .filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    assert.match(argv, /(^|[\s(])(shape\.)?plugins\s*[,)]/m,
       `create() call site ${i + 1} in team-tickets.js passes no plugin list — its seat falls back to every shipped bundle`);
   }
 });
