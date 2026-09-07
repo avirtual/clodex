@@ -15,18 +15,14 @@ const crypto = require('node:crypto');
 //
 // COMPARED TO CORE, in test/tickets-viewer-path-parity.test.js: projectDirFor,
 // nextTicketId, ticketTitle, extractTaskDir, ticketStarted, ticketTaskDirRefusal,
-// resolveTaskDir, ticketTaskDirLine, ticketTaskDirLineFor, closeLine. Editing one
-// of these to disagree with core fails the suite. `confine`/`confineOrThrow` are
-// covered only INDIRECTLY, through resolveTaskDir's escaping-pointer row.
+// resolveTaskDir, ticketTaskDirLine, ticketTaskDirLineFor, closeLine,
+// atomicWriteFileSync, stallMsFor, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS. Editing one
+// of these to disagree with core fails the suite. A symbol NOT on this list may
+// still be tested here, but never against core — so a green suite is not
+// evidence that it still agrees.
 //
-// NOT compared to core at all: DEFAULT_STALL_MS, RECENT_DONE_MS/CAP and
-// manifestWarning are merely frozen by viewer fixtures that hardcode the value —
-// that catches you changing the copy, never core changing underneath it. Nothing
-// at all guards atomicWriteFileSync or WATCHDOG_MIN/MAX_MS. Do not read a green
-// suite as agreement with core for anything in this paragraph.
-//
-// manifestWarning is additionally a deliberate SUBSET of core's validator, so it
-// must never be made byte-equal to it.
+// manifestWarning is a deliberate SUBSET of core's validator, so it must never
+// be made byte-equal to it.
 
 let clodexHomeOverride = null;
 
