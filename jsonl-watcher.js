@@ -1,16 +1,16 @@
 // jsonl-watcher.js — the JsonlWatcher class. Polls the run/<name>/transcript.jsonl
 // transcript symlink (created by the SessionStart hook) every 250ms, follows it
 // through /clear + /compact, extracts assistant text (Claude type:"assistant";
-// Codex event_msg/agent_message), buffers it, and flushes on a new requestId
-// (or ANY Codex text entry, which carries no id and so cannot be grouped by
-// one) / a non-telemetry textless entry / 1s silence — emitting onText (intent
-// scan, with a per-flush { turnEnd } that is true only when the pending text is
-// the agent's own REPLY and its turn ended), onSessionId (persistence),
-// onActivity (UI), onCompactSummary, onFileTouches.
+// Codex event_msg/agent_message and response_item message), buffers it, and
+// flushes on a new requestId (or ANY text entry carrying no id, which cannot be
+// grouped by one) / a non-telemetry textless entry / 1s silence — emitting
+// onText (intent scan, with a per-flush { turnEnd } that is true only when the
+// pending text is the agent's own REPLY and its turn ended), onSessionId
+// (persistence), onActivity (UI), onCompactSummary, onFileTouches.
 //
 // The flush rule is stated precisely because a header that mis-states it is
-// what made a silent text-loss bug hard to see: grouping by an id that Codex
-// never sets reads two unrelated replies as one turn and drops the first.
+// what made a silent text-loss bug hard to see: grouping by an id that a text
+// entry never sets reads two unrelated replies as one turn and drops the first.
 //
 // FACTORY (M3 DI): the class reads one main.js global, REGISTRY_DIR (to resolve
 // the run/<name>/transcript.jsonl symlink via clodex-paths.pathFor), injected as
@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { extractText, isTurnEndEntry } = require('./transcript');
+const { extractText, isTurnEndEntry, isCodexReply } = require('./transcript');
 const { extractFileTouches } = require('./file-touch');
 const { pathFor } = require('./clodex-paths');
 
@@ -191,15 +191,15 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         const text = extractText(obj);
         if (text) {
           const rid = obj.requestId || (obj.payload || {}).id || '';
-          // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. Codex entries
-          // carry no requestId and no payload.id, so `rid` is '' for every one
-          // and an equality test reads two unrelated text entries as the same
-          // turn — the second then OVERWRITES the first. What that silently
-          // discards is the intent scan's input: an [agent:dm ...] emitted in a
-          // commentary message followed by a quick tool call would never be
-          // seen. `token_count` used to be the accidental separator; exempting
-          // it from the textless flush removed the only thing standing between
-          // them, so the separation has to be stated here instead.
+          // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. A Codex
+          // function_call_output carries neither requestId nor payload.id, so
+          // its `rid` is '' and an equality test reads two unrelated text
+          // entries as the same turn — the second then OVERWRITES the first.
+          // What that silently discards is the intent scan's input: an
+          // [agent:dm ...] emitted in a commentary message followed by a quick
+          // tool call would never be seen. `token_count` used to be the
+          // accidental separator; exempting it from the textless flush removed
+          // the only thing between them, so state the separation here instead.
           if ((rid !== this._pendingRid || !rid) && this._pendingText) {
             this._flushPending();
           }
@@ -212,7 +212,8 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           // would mark a command dump as the reply — which is the one scope rule
           // the operator stated twice: never tool output.
           this._pendingIsReply = (obj.type || '') === 'assistant'
-            || ((obj.payload || {}).type === 'agent_message');
+            || ((obj.payload || {}).type === 'agent_message')
+            || isCodexReply(obj);
           this._pendingTurnEnd = isTurnEndEntry(obj);
           this._setActivity('thinking');
         } else if (!NON_FLUSHING_TYPES.includes(obj.type || '') && !isTelemetryOnly(obj)) {

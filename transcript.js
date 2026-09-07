@@ -29,6 +29,11 @@ function codexResponseMessage(obj) {
   return text ? { role, text } : null;
 }
 
+function isCodexReply(obj) {
+  const msg = codexResponseMessage(obj);
+  return !!msg && msg.role === 'assistant';
+}
+
 function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
   const raw = fs.readFileSync(jsonlPath, 'utf-8');
   const lines = raw.split('\n').filter(l => l.trim());
@@ -218,4 +223,4 @@ function extractText(obj) {
   return msg && msg.role === 'assistant' ? msg.text : '';
 }
 
-module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText, isTurnEndEntry };
+module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText, isTurnEndEntry, isCodexReply };

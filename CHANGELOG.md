@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- **Codex sessions' replies reach Clodex again.** Intents (`[agent:dm]`, `[agent:task done]`, …) and the activity signals were silently dropped, because the current Codex CLI writes replies in a shape the transcript reader did not recognise.
+- **Codex sessions' replies reach Clodex again.** Intents (`[agent:dm]`, `[agent:task done]`, …) and the activity/spoken signals were silently dropped, because the current Codex CLI writes replies in a shape the transcript reader did not recognise.
 
 ## 5.35.1 — 2026-09-07
 
