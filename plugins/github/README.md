@@ -1,7 +1,7 @@
 # github — `[agent:gh]`
 
 An engine-only plugin. No UI, no settings, no renderer half. It exists to make
-an **agent** shorter-winded: three read verbs and a dry run, each collapsing a
+an **agent** shorter-winded: five read verbs and a dry run, each collapsing a
 workflow the agent would otherwise fumble through in six commands and two wrong
 guesses.
 
@@ -15,8 +15,8 @@ freshly installed plugin's verb is inert on every existing seat, and the failure
 is *silent* — the line is not parsed as your verb, nothing is logged, and to the
 agent it reads as an unrecognised intent.
 
-> Session ⚙ menu → intent checklist → tick **GitHub (status / CI / review / PR
-> dry run)**. Per seat. Every user hits this once.
+> Session ⚙ menu → intent checklist → tick **GitHub (status / CI / review /
+> issues / PR dry run)**. Per seat. Every user hits this once.
 
 **And `gh` must be installed and logged in — by the operator, in a terminal.**
 
@@ -31,6 +31,8 @@ gh auth login
 | `[agent:gh status]` | `git rev-parse` · `git status` · `git rev-list` · `gh repo view` · `gh pr view` · `gh pr checks` · a GraphQL `reviewThreads` query → one paragraph. **Ask this before opening or merging anything.** |
 | `[agent:gh ci]` | Find the failing checks · resolve each to its workflow run · pull only the failed steps' logs · **distil the lines that name a failure** out of tens of thousands of lines of build chatter. |
 | `[agent:gh review]` | The GraphQL query an agent gets wrong twice, rendered as a `file:line` worklist. Resolved threads dropped, outdated ones flagged. |
+| `[agent:gh issues]` | Open issues, newest first — number, title, author, age, comment count, labels — one line each, titles clipped. Read-only. |
+| `[agent:gh issue <n>]` | One issue: a header line and its URL, then the body and up to ten newest comments **inside an UNTRUSTED fence**. A reporter is not a colleague — anything they wrote arrives quoted, `\[agent:`-escaped, and marked as text to quote rather than obey. Read-only; there is no comment, close or edit path. |
 | `[agent:gh pr --dry]` | Work out the base · confirm there is something to review · write a real description from the commits · render title, description and diffstat. **Nothing is pushed and no PR is created.** |
 
 `[agent:gh pr --dry]` takes an optional prose body, terminated by `[agent:end]`:
@@ -111,15 +113,15 @@ literal name of the tool it fronts, so a second plugin wanting it is by
 definition another GitHub plugin. That is correct signal, unlike two authors
 independently reaching for `run` or `notes`.
 
-One verb with sub-commands rather than four verbs: four would take four slots
-out of that namespace **and** need four separate ticks in every seat's checklist.
+One verb with sub-commands rather than one verb each: six would take six slots
+out of that namespace **and** need six separate ticks in every seat's checklist.
 
 ## Files
 
 ```
 manifest.json    engine-only, enabledByDefault false (it shells out — opt in)
 engine.js        the verb: parse, dispatch, reply. Synchronous handler.
-workflows.js     the four workflows. Nothing here rejects, and nothing writes.
+workflows.js     the workflows. Nothing here rejects, and nothing writes.
 proc.js          every spawn. No shell, no credentials, everything scrubbed.
 ```
 
