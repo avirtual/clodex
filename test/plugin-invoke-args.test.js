@@ -129,15 +129,34 @@ function argsBindingsAreArrays(src) {
   });
 }
 
+// Every .js under renderer/ that contains the needle. A hardcoded list is what
+// let menubar.js sit outside the audit unnoticed: the file that gets it wrong is
+// exactly the one nobody remembered to add, and a missing entry is invisible
+// against a total the remaining files already satisfy.
+function filesWithPluginInvoke(dir, needle, out = []) {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const abs = path.join(dir, ent.name);
+    if (ent.isDirectory()) { filesWithPluginInvoke(abs, needle, out); continue; }
+    if (!ent.isFile() || !ent.name.endsWith('.js')) continue;
+    if (fs.readFileSync(abs, 'utf-8').includes(needle)) out.push(path.relative(ROOT, abs));
+  }
+  return out;
+}
+
 test('every renderer pluginInvoke passes its method arguments as an array', () => {
   // The needle omits the `window.` prefix on purpose: menubar.js calls through a
   // bare `api` alias, and a needle carrying the prefix cannot see it.
-  const files = ['renderer/renderer.js', 'renderer/web/menubar.js'];
+  const NEEDLE = 'api.pluginInvoke(';
+  const files = filesWithPluginInvoke(path.join(ROOT, 'renderer'), NEEDLE);
+  // Named so a reader sees WHICH files are audited, and so a caller appearing in
+  // a new file arrives here as a failure rather than as silence.
+  assert.deepStrictEqual(files, ['renderer/renderer.js', 'renderer/web/menubar.js'],
+    'ENTER: the renderer files calling pluginInvoke are the ones this pin audits');
   const calls = [];
   const exemptFiles = new Set();
   for (const rel of files) {
     const src = fs.readFileSync(path.join(ROOT, rel), 'utf-8');
-    const found = callArgs(src, 'api.pluginInvoke(');
+    const found = callArgs(src, NEEDLE);
     // A listed file contributing nothing is dead weight that reads as coverage.
     assert.ok(found.length >= 1, `ENTER: ${rel} is scanned for pluginInvoke call sites, found ${found.length}`);
     for (const c of found) calls.push({ ...c, rel });
