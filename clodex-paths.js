@@ -56,9 +56,7 @@
 // wire-shadow.jsonl + wire-shadow-diag.jsonl (the global wire log, split into a
 // 14-day bulk lane and a kept-forever diagnostics lane — wire/shadow-log.js is
 // the authority on which records go where and why),
-// codex-session-hook.sh (the one shared Codex hook, routed by $WB_WRAP_NAME),
-// setup.json (the first-run marker — one per box, and the run dir it would
-// otherwise sit in is rm -rf'd on every exit, which would re-show the dialog).
+// codex-session-hook.sh (shared Codex hook, routed by $WB_WRAP_NAME), setup.json.
 //
 // BASH-MIRRORED GRAMMAR. One generated script resolves the agent name at
 // RUNTIME ($WB_WRAP_NAME) and so must rebuild these paths in bash — the

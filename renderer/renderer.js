@@ -6627,9 +6627,6 @@ function openSetupDialog({ fromPrefs } = {}) {
 
 async function finishSetup(choice) {
   try { await window.api.completeSetup({ choice }); } catch (e) { console.error('setup:complete failed', e); }
-  // Preferences stays OPEN underneath a "Run setup again…", and its Save writes
-  // the whole bag back from the controls — so a select left showing the old mode
-  // would silently undo the choice just made.
   if (setupOverlay && setupOverlay.dataset.fromPrefs === '1' && prefsDefaultMode
       && !prefsOverlay.classList.contains('hidden')) {
     try {
@@ -7074,8 +7071,6 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   initSidebarView();
 })();
 
-// First launch on this box. Same window gate as discovery below, for the same
-// reason: every restored workspace window runs this script.
 async function maybeFirstRunSetup() {
   try {
     if (!document.hasFocus()) return false;
@@ -7090,8 +7085,6 @@ async function maybeFirstRunSetup() {
 // script, so without the document.hasFocus() check all of them pop the picker at once.
 (async function maybeDiscoverOnStartup() {
   try {
-    // One modal per boot: a first launch that just asked a question does not
-    // then stack a second dialog over the answer.
     if (await maybeFirstRunSetup()) return;
     if (!document.hasFocus()) return;
     const s = await window.api.getSettings();

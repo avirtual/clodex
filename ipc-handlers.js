@@ -1054,9 +1054,6 @@ function registerIpcHandlers(deps) {
       peers: (s.peers || []).map(({ token, ...rest }) => ({ ...rest, hasToken: !!token })),
     };
   });
-  // One IPC, not two: the marker and the mode it chose must land together, or a
-  // crash between them leaves a box that never asks again and never applied the
-  // answer.
   handle('setup:state', () => setupMarker.read());
   handle('setup:complete', (_e, opts = {}) => {
     const choice = opts && opts.choice;
