@@ -797,12 +797,18 @@ function startRename(item, nameEl, sessionName) {
     window.api.renameSession(sessionName, wanted).then((res) => {
       if (!res || !res.ok) {
         if (res && res.kept) {
-          removeSession(sessionName, { keepPersisted: true });
-          addFailedSessionToSidebar({
+          const row = {
             name: res.name, type: res.type || snapType, cwd: res.cwd,
             error: res.error, team: res.team || null, backend: snapBackend,
-          });
-          refreshSidebarView();
+          };
+          if (res.name === sessionName && sessions.has(sessionName)) {
+            newNameEl.textContent = current;
+            movingFailed.set(sessionName, row);
+          } else {
+            removeSession(sessionName, { keepPersisted: true });
+            addFailedSessionToSidebar(row);
+            refreshSidebarView();
+          }
         } else {
           newNameEl.textContent = current;
         }

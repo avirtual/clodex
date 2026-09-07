@@ -606,7 +606,25 @@ test('create() throwing keeps the record under the NEW name, with kept:true', as
 // not rebuild one leaves a record on disk with nothing on screen naming it until
 // the next launch. The row must be rebuilt under res.name — the record moved
 // before create() threw, so the OLD name names nothing.
-test('renderer startRename rebuilds a failed row under the NEW name when the respawn is kept', () => {
+// The kept arm has no runtime fixture here, and it must serve TWO main-side
+// arms that differ in a way no single path can satisfy:
+//
+//   create() threw    the record already moved to res.name, the pty exit was
+//                     already consumed. Nothing will rebuild the row, so this
+//                     arm must draw a failed one itself, under the NEW name.
+//   _waitForExit timed out
+//                     the record is STILL the old name and the pty is STILL in
+//                     `sessions` — a wedged process that has not exited yet.
+//                     Removing the session here disposes a LIVE terminal, and
+//                     the failed row it draws is then deleted by the exit that
+//                     eventually arrives, leaving the seat invisible until
+//                     relaunch. This arm must stash into `movingFailed` and let
+//                     that pending exit rebuild the row, exactly as
+//                     moveSessionWithPicker's kept arm does.
+//
+// So both branches are asserted. A pin naming only one passes against a single
+// unbranched path — which is how the timeout regression survived round 2.
+test('renderer startRename splits its kept arm on liveness: stash if still live, failed row if not', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const start = src.indexOf('function startRename(');
   assert.ok(start > 0, 'ENTER: startRename is still in renderer.js under that name');
@@ -616,9 +634,17 @@ test('renderer startRename rebuilds a failed row under the NEW name when the res
   const kept = body.indexOf('res.kept');
   assert.ok(kept > 0, 'ENTER: the kept arm is still branched on res.kept');
   const arm = body.slice(kept, body.indexOf('showToast(`Rename failed', kept));
-  assert.match(arm, /addFailedSessionToSidebar\(/, 'the kept arm rebuilds a failed row');
+
+  assert.match(arm, /sessions\.has\(sessionName\)/,
+    'the arm branches on whether the old seat is still LIVE — the timeout arm returns while it is');
+  assert.match(arm, /res\.name === sessionName/,
+    'and on whether the record is still under the old name, which is what distinguishes the two arms');
+  assert.match(arm, /movingFailed\.set\(sessionName,/,
+    'the still-live branch stashes, so the pending exit rebuilds the row instead of this code disposing a running seat');
+
+  assert.match(arm, /addFailedSessionToSidebar\(/, 'the not-live branch rebuilds a failed row');
   assert.match(arm, /name:\s*res\.name/,
-    'under res.name — the record moved before create() threw, so the old name names nothing');
+    'under res.name — when create() threw, the record moved and the old name names nothing');
   assert.match(arm, /error:\s*res\.error/, 'carrying the error, so the row can say why');
 });
 
