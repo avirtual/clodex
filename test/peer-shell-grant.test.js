@@ -41,7 +41,7 @@ function shellAllowedFixture(initial) {
     },
     // Only `settings:get` needs these, and only to be callable — the values are
     // never asserted here.
-    agentDefaults: { getDefaultDeny: () => [] },
+    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [] },
     syncRemoteServer: () => { calls.sync += 1; },
     // The grant is box-wide but the toggle lives in one window's popover, so
     // the other windows learn about it here. Recorded with the ORDER against
