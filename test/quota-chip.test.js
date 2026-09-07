@@ -5,7 +5,10 @@
 // decision here pins the behaviour rather than a guess at the markup.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
 const { shapeQuota, quotaChip, fmtQuotaReset, QUOTA_429_RECENT_S } = require('../proxy-util');
+const { CLAIM_WINDOW } = require('../wire/quota');
 
 // Measured verbatim off this box's wirescope v0.6.53 /_status at 95% weekly.
 // Kept whole (unused keys included) so a shaping that starts reading a new
@@ -136,6 +139,14 @@ test('quotaChip: a 5h window reads as its own quota statement', () => {
   assert.strictEqual(quotaChip(q).text, '5h quota 80% used · resets in 40m');
 });
 
+test('quotaChip: a percentage with no window still says "quota", not a bare number', () => {
+  // Reachable: shapeQuota maps `window` and `used_pct` independently, so a
+  // payload whose representative claim did not resolve keeps the percentage.
+  const q = shapeQuota({ status: 'allowed_warning', age_s: 1, primary: { used_pct: 80, resets_in_s: 2400 } }, CAPS);
+  assert.strictEqual(q.window, null, 'ENTER: the window must really be absent, or this pins the windowed branch');
+  assert.strictEqual(quotaChip(q).text, 'quota 80% used · resets in 40m');
+});
+
 test('quotaChip: rejected → loud', () => {
   const q = shapeQuota({ ...LIVE, status: 'rejected' }, CAPS);
   assert.strictEqual(quotaChip(q).level, 'loud');
@@ -214,6 +225,36 @@ test('quotaChip: the tip says the figure is the account, not the session', () =>
   // The bottom bar's neighbouring numbers are all per-SESSION; an unlabelled
   // account percentage beside them invites a category error.
   assert.match(quotaChip(shapeQuota(LIVE, CAPS)).tip, /not this session/i);
+});
+
+// The chip is DOM-free everywhere above; this one case is not, because the cap
+// that decides whether the text SURVIVES to the screen lives in CSS. An
+// ellipsis eats the tail, and the tail is the refusal — so a wording change
+// that outgrows the cap silently hides the loudest part of the loudest chip
+// while every assertion above stays green.
+test('#drawer-quota max-width fits the longest string quotaChip can emit', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf-8');
+  const rule = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/#drawer-quota\s*\{([^}]*)\}/);
+  assert.ok(rule, 'ENTER: the #drawer-quota rule must be found, or the width below is read off nothing');
+  const cap = Number((rule[1].match(/max-width:\s*(\d+)px/) || [])[1]);
+  assert.ok(Number.isFinite(cap), 'the rule sets an explicit px max-width');
+  assert.match(rule[1], /text-overflow:\s*ellipsis/, 'ENTER: it ellipsises, which is what makes overflow silent');
+
+  // Worst case built through the real function rather than hardcoded, so a new
+  // window label or a longer part is measured rather than assumed. 'overage' is
+  // the longest CLAIM_WINDOW label and 100%/4h 59m/59s the longest renderings
+  // of the other three parts.
+  const longest = Object.values(CLAIM_WINDOW)
+    .map((w) => quotaChip({ status: 'rejected', window: w, usedPct: 100, resetsInS: 4 * 3600 + 59 * 60, last429AgeS: 59, ageS: 1 }, 0).text)
+    .reduce((a, b) => (b.length > a.length ? b : a));
+  assert.strictEqual(longest, 'overage quota 100% used · resets in 4h 59m · rate-limited 59s ago');
+
+  // 337px measured in Electron for this string at 10px in the app's font stack,
+  // border-box (padding included). 5.2px/ch is a LOWER bound on that measured
+  // width, not the estimate the cap was set from — the comment on the rule
+  // carries the measurement and says to re-measure.
+  assert.ok(cap >= Math.ceil(longest.length * 5.2),
+    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 337px) — the trailing refusal is what gets cut`);
 });
 
 test('fmtQuotaReset: minutes, hours and days; nothing for absent or elapsed', () => {

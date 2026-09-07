@@ -6615,6 +6615,39 @@ function closePrefs() {
   voiceControl.stop();
 }
 
+const setupOverlay = document.getElementById('setup-overlay');
+
+function openSetupDialog({ fromPrefs } = {}) {
+  if (!setupOverlay) return;
+  const optimized = document.getElementById('setup-mode-optimized');
+  if (optimized) optimized.checked = true;
+  setupOverlay.dataset.fromPrefs = fromPrefs ? '1' : '';
+  setupOverlay.classList.remove('hidden');
+}
+
+async function finishSetup(choice) {
+  try { await window.api.completeSetup({ choice }); } catch (e) { console.error('setup:complete failed', e); }
+  if (setupOverlay && setupOverlay.dataset.fromPrefs === '1' && prefsDefaultMode
+      && !prefsOverlay.classList.contains('hidden')) {
+    try {
+      const s = await window.api.getSettings();
+      prefsDefaultMode.value = defaultSessionMode(s);
+    } catch {}
+  }
+  if (setupOverlay) setupOverlay.classList.add('hidden');
+}
+
+if (setupOverlay) {
+  document.getElementById('btn-setup-save').addEventListener('click', () => {
+    const standard = document.getElementById('setup-mode-standard');
+    finishSetup(standard && standard.checked ? 'standard' : 'optimized');
+  });
+  document.getElementById('btn-setup-skip').addEventListener('click', () => finishSetup('skipped'));
+}
+
+const prefsRunSetup = document.getElementById('prefs-run-setup');
+if (prefsRunSetup) prefsRunSetup.addEventListener('click', () => openSetupDialog({ fromPrefs: true }));
+
 function collectChecked(container) {
   return [...container.querySelectorAll('input[type="checkbox"]:checked')].map(el => el.value);
 }
@@ -7038,10 +7071,21 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   initSidebarView();
 })();
 
+async function maybeFirstRunSetup() {
+  try {
+    if (!document.hasFocus()) return false;
+    const state = await window.api.getSetupState();
+    if (!state || state.done !== false) return false;
+    openSetupDialog({});
+    return true;
+  } catch { return false; }
+}
+
 // Opt-in startup discovery. Window gate: every restored workspace window loads this same
 // script, so without the document.hasFocus() check all of them pop the picker at once.
 (async function maybeDiscoverOnStartup() {
   try {
+    if (await maybeFirstRunSetup()) return;
     if (!document.hasFocus()) return;
     const s = await window.api.getSettings();
     if (!s || !s.discoverOnStartup) return;
