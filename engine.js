@@ -698,7 +698,9 @@ function writeBundlePlugins(name, bundles) {
   if (seatDir === null) throw new Error(`invalid session name: ${name}`);
   const out = [];
   for (const b of bundles || []) {
-    const skillRecords = (b.skills || []).map((s) => ({ name: s.name, content: s.content }));
+    const skillRecords = (b.skills || []).map((s) => ({
+      name: s.name, content: s.content, files: (s.files && typeof s.files === 'object') ? s.files : {},
+    }));
     const agentRecords = (b.agents || []).map((a) => {
       const { meta, body } = parseAgentFrontmatter(a.content);
       return { name: a.name, meta, body };
@@ -717,10 +719,18 @@ function writeBundlePlugins(name, bundles) {
     ensureDir(manifestDir);
     const manifest = (skillPlugin || agentPlugin).manifest;
     fs.writeFileSync(path.join(manifestDir, 'plugin.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
+    const filesOf = new Map(skillRecords.map((s) => [s.name, s.files]));
     for (const s of (skillPlugin ? skillPlugin.skills : [])) {
       const sdir = path.join(dir, 'skills', s.name);
       ensureDir(sdir);
       fs.writeFileSync(path.join(sdir, 'SKILL.md'), s.skillMd, { mode: 0o600 });
+      for (const [rel, bytes] of Object.entries(filesOf.get(s.name) || {})) {
+        const parts = String(rel).split('/');
+        if (!parts.length || !parts.every((p) => AGENT_NAME_RE.test(p))) continue;
+        const file = path.join(sdir, ...parts);
+        ensureDir(path.dirname(file));
+        fs.writeFileSync(file, bytes, { mode: parts[0] === 'scripts' ? 0o700 : 0o600 });
+      }
     }
     if (agentPlugin) {
       const agentsDir = path.join(dir, 'agents');

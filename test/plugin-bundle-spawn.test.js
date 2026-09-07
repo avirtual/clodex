@@ -25,6 +25,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { confine } = require('../path-confine');
+const { AGENT_NAME_RE } = require('../catalogs');
 const { buildAgentPlugin, parseAgentFrontmatter, qualifiedAgentName, DROPPED_AGENT_FIELDS, BUILTIN_AGENTS } = require('../agents-util');
 const { buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -66,7 +67,9 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
     if (seatDir === null) throw new Error(`invalid session name: ${name}`);
     const out = [];
     for (const b of wanted || []) {
-      const skillRecords = (b.skills || []).map((s) => ({ name: s.name, content: s.content }));
+      const skillRecords = (b.skills || []).map((s) => ({
+        name: s.name, content: s.content, files: (s.files && typeof s.files === 'object') ? s.files : {},
+      }));
       const agentRecords = (b.agents || []).map((a) => {
         const { meta, body } = parseAgentFrontmatter(a.content);
         return { name: a.name, meta, body };
@@ -84,9 +87,18 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
       ensureDir(path.join(dir, '.claude-plugin'));
       fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'),
         JSON.stringify((sp || ap).manifest, null, 2));
+      const filesOf = new Map(skillRecords.map((s) => [s.name, s.files]));
       for (const s of (sp ? sp.skills : [])) {
-        ensureDir(path.join(dir, 'skills', s.name));
-        fs.writeFileSync(path.join(dir, 'skills', s.name, 'SKILL.md'), s.skillMd);
+        const sdir = path.join(dir, 'skills', s.name);
+        ensureDir(sdir);
+        fs.writeFileSync(path.join(sdir, 'SKILL.md'), s.skillMd);
+        for (const [rel, bytes] of Object.entries(filesOf.get(s.name) || {})) {
+          const parts = String(rel).split('/');
+          if (!parts.length || !parts.every((p) => AGENT_NAME_RE.test(p))) continue;
+          const file = path.join(sdir, ...parts);
+          ensureDir(path.dirname(file));
+          fs.writeFileSync(file, bytes, { mode: parts[0] === 'scripts' ? 0o700 : 0o600 });
+        }
       }
       if (ap) {
         ensureDir(path.join(dir, 'agents'));
@@ -219,6 +231,33 @@ test('t672: a seat WITH the plugin gets one --plugin-dir per bundle, named for t
   assert.match(fs.readFileSync(path.join(dir, 'skills', 'foo', 'SKILL.md'), 'utf-8'), /Go look it up/);
   assert.match(fs.readFileSync(path.join(dir, 'agents', 'bar.md'), 'utf-8'), /You assess\./,
     'skills and agents share ONE dir — a Claude plugin may carry both');
+});
+
+test('t732: a bundle skill\'s companion files land beside its SKILL.md, scripts/ executable', async () => {
+  const RUN_SH = Buffer.from('#!/bin/sh\necho hi\n');
+  const REF_MD = Buffer.from('# reference\n');
+  const withFiles = {
+    ...STOCKS,
+    skills: [{ name: 'foo', content: SKILL_MD, files: { 'scripts/run.sh': RUN_SH, 'references/x.md': REF_MD } }],
+  };
+  // ENTER: both keys are on the record the scaffold is handed, so a write that
+  // dropped the map entirely is what the existence checks below can catch.
+  assert.deepStrictEqual(Object.keys(withFiles.skills[0].files).sort(), ['references/x.md', 'scripts/run.sh'],
+    'ENTER: the input record carries both companions');
+
+  const f = mkManager({ bundles: [withFiles], seatPlugins: ['stocks'] });
+  await f.spawn('seat');
+  const sdir = path.join(bundleDir(f, 'seat', 'stocks'), 'skills', 'foo');
+
+  const script = path.join(sdir, 'scripts', 'run.sh');
+  assert.deepStrictEqual(fs.readFileSync(script), RUN_SH, 'the script bytes reach the seat');
+  assert.strictEqual(fs.statSync(script).mode & 0o777, 0o700,
+    'and it is executable — Claude Code RUNS what a skill puts under scripts/');
+
+  const ref = path.join(sdir, 'references', 'x.md');
+  assert.deepStrictEqual(fs.readFileSync(ref), REF_MD);
+  assert.strictEqual(fs.statSync(ref).mode & 0o777, 0o600,
+    'a reference is read, never run');
 });
 
 test('t672: a seat WITHOUT the plugin gets no bundle dir, and none is written', async () => {

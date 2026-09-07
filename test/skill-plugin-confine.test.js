@@ -115,12 +115,16 @@ test('t672: a bundle dir is confined TWICE, and has no cleanup of its own', () =
   assert.ok(idGuard < body.indexOf('fs.rmSync'), 'and before the recursive delete');
 
   // The fixture in plugin-bundle-spawn.test.js re-creates this function and
-  // cannot carry the mode, so 0600 is pinned here or nowhere: a bundle holds
-  // the same skill and agent bodies the two flat scaffolders write 0600.
+  // cannot carry the mode, so the modes are pinned here or nowhere: a bundle
+  // holds the same skill and agent bodies the two flat scaffolders write 0600,
+  // and exactly one write — a skill's scripts/ companion, which Claude Code
+  // executes — is 0700. A write that took the default would be 0666 & umask.
   const writes = body.match(/writeFileSync\(/g) || [];
-  const modes = body.match(/mode: 0o600/g) || [];
+  const modes = body.match(/mode: (?:0o600|parts\[0\] === 'scripts' \? 0o700 : 0o600)/g) || [];
   assert.strictEqual(modes.length, writes.length,
-    `every write in writeBundlePlugins is 0600 (${writes.length} writes, ${modes.length} moded)`);
+    `every write in writeBundlePlugins names its mode (${writes.length} writes, ${modes.length} moded)`);
+  assert.strictEqual((body.match(/0o700/g) || []).length, 1,
+    'and 0700 appears once — only the scripts/ arm may hand a seat an executable');
 
   // Deliberately NO cleanupBundlePlugins: bundles/ lives INSIDE
   // skill-plugins/<seat>, which cleanupSkillPlugin already rm -rf's on exit. A
@@ -214,6 +218,54 @@ test('t687: a bundle plugin.json carries the plugin\'s own version and announce'
   assert.deepStrictEqual(manifestOf(written[2].dir), {
     name: 'bare', version: '0.0.0', description: 'Clodex plugin Bare Pack', author: { name: 'clodex' },
   }, 'a manifest with neither field falls back to the placeholder version and a named description');
+});
+
+// t732, behavioural against the REAL scaffolder for the same reason the subject
+// above is: well-formed name and id, so no arm depends on the confinement.
+// plugin-bundle-spawn.test.js asserts the same files through a re-creation of
+// this function, which cannot prove engine.js writes them.
+test('t732: writeBundlePlugins writes a skill\'s companion files under its dir', () => {
+  const tmp = mkTmpRoot('clx-t732-companions-');
+  const registryDir = path.join(tmp, 'clodex-home');
+  const before = capturedDeps.length;
+  createEngine({
+    userDataPath: tmp,
+    seams: { registryDir },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  assert.strictEqual(capturedDeps.length, before + 1,
+    'ENTER: the wrapped factory ran — zero calls means writeBundlePlugins below is undefined, not merely untested');
+  const writeBundlePlugins = capturedDeps[capturedDeps.length - 1].writeBundlePlugins;
+  assert.strictEqual(typeof writeBundlePlugins, 'function', 'ENTER: the real scaffolder, not a stub');
+
+  const RUN_SH = Buffer.from('#!/bin/sh\necho hi\n');
+  const REF_MD = Buffer.from('# reference\n');
+  const row = {
+    id: 'stocks',
+    name: 'Stocks',
+    skills: [{
+      name: 'foo',
+      content: '---\ndescription: Research a ticker.\n---\nGo look it up.\n',
+      files: { 'scripts/run.sh': RUN_SH, 'references/x.md': REF_MD },
+    }],
+  };
+  assert.deepStrictEqual(Object.keys(row.skills[0].files).sort(), ['references/x.md', 'scripts/run.sh'],
+    'ENTER: the input record carries both companions');
+
+  const written = writeBundlePlugins('seat', [row]);
+  assert.strictEqual(written.length, 1, 'ENTER: the row scaffolded');
+  const sdir = path.join(written[0].dir, 'skills', 'foo');
+
+  const script = path.join(sdir, 'scripts', 'run.sh');
+  assert.deepStrictEqual(fs.readFileSync(script), RUN_SH);
+  assert.strictEqual(fs.statSync(script).mode & 0o777, 0o700,
+    'Claude Code EXECUTES what a skill puts under scripts/');
+  const ref = path.join(sdir, 'references', 'x.md');
+  assert.deepStrictEqual(fs.readFileSync(ref), REF_MD);
+  assert.strictEqual(fs.statSync(ref).mode & 0o777, 0o600, 'a reference is read, never run');
+
+  assert.deepStrictEqual(written[0].skills, [{ name: 'foo', content: row.skills[0].content, files: row.skills[0].files }],
+    'and the returned record still carries the map — session-manager reads skills off it');
 });
 
 // createEngine's background timers keep the loop alive; exit once results flush.

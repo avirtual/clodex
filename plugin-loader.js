@@ -71,6 +71,56 @@ function namespaceTemplateRefs(tpl, pluginId) {
   return out;
 }
 
+const SKILL_COMPANION_FILE_CAP = 64;
+const SKILL_COMPANION_BYTE_CAP = 1024 * 1024;
+
+function readSkillCompanions(fs, path, skillDir) {
+  const files = {};
+  let count = 0;
+  let bytes = 0;
+  const walk = (rel) => {
+    const abs = rel ? path.join(skillDir, ...rel.split('/')) : skillDir;
+    let ents;
+    try { ents = fs.readdirSync(abs, { withFileTypes: true }); }
+    catch (e) {
+      return {
+        error: `unreadable companion directory — ${(e && e.message) || e}`,
+        unreadable: !!(e && e.code !== 'ENOENT'),
+      };
+    }
+    for (const ent of ents) {
+      if (ent.name.startsWith('.') || ent.name === 'node_modules') continue;
+      if (ent.isSymbolicLink() || (!ent.isDirectory() && !ent.isFile())) continue;
+      const childRel = rel ? `${rel}/${ent.name}` : ent.name;
+      if (!AGENT_NAME_RE.test(ent.name)) {
+        return { error: `companion path ${JSON.stringify(childRel)} is not a legal name` };
+      }
+      if (ent.isDirectory()) {
+        const sub = walk(childRel);
+        if (sub) return sub;
+        continue;
+      }
+      if (childRel === 'SKILL.md') continue;
+      let buf;
+      try { buf = fs.readFileSync(path.join(abs, ent.name)); }
+      catch (e) {
+        return {
+          error: `unreadable companion file ${JSON.stringify(childRel)} — ${(e && e.message) || e}`,
+          unreadable: !!(e && e.code !== 'ENOENT'),
+        };
+      }
+      count += 1;
+      bytes += buf.length;
+      if (count > SKILL_COMPANION_FILE_CAP || bytes > SKILL_COMPANION_BYTE_CAP) {
+        return { error: `companion files exceed the cap — ${count} files / ${bytes} bytes` };
+      }
+      files[childRel] = buf;
+    }
+    return null;
+  };
+  return walk('') || { files };
+}
+
 function readBundle(fs, path, dir, onSkip, pluginId) {
   const skip = typeof onSkip === 'function' ? onSkip : () => {};
   let unreadable = false;
@@ -96,7 +146,13 @@ function readBundle(fs, path, dir, onSkip, pluginId) {
       skip(`skills/${ent.name}`, `no readable SKILL.md — ${(e && e.message) || e}`);
       continue;
     }
-    skills.push({ name: ent.name, content });
+    const companions = readSkillCompanions(fs, path, path.join(dir, 'skills', ent.name));
+    if (companions.error) {
+      if (companions.unreadable) unreadable = true;
+      skip(`skills/${ent.name}`, companions.error);
+      continue;
+    }
+    skills.push({ name: ent.name, content, files: companions.files });
   }
   const agents = [];
   for (const ent of listing('agents')) {

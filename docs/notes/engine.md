@@ -15,3 +15,8 @@ scaffolders which each own a root. Two consequences the code cannot show:
 
 The CLI plugin name inside a bundle is the Clodex plugin id, which is what makes
 the CLI namespace its contents `<plugin-id>:<skill>` / `<plugin-id>:<agent>`.
+
+A skill's companion files ride the record `readBundle` built, capped there at
+64 files / 1 MiB per skill — over either, the whole skill is dropped. They are
+written 0600, except under `scripts/`, which Claude Code executes and which
+therefore gets 0700.

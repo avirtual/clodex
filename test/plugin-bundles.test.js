@@ -73,7 +73,7 @@ test('t672: a plugin dir with skills/ and agents/ and NO entry half loads, with 
   assert.deepStrictEqual(recs.map((r) => r.id), ['stocks'], 'ENTER: the pack was discovered');
 
   const rec = recs[0];
-  assert.deepStrictEqual(rec.skills, [{ name: 'foo', content: SKILL_MD }],
+  assert.deepStrictEqual(rec.skills, [{ name: 'foo', content: SKILL_MD, files: {} }],
     'the skill is read at DISCOVERY, content and all — a spawn never opens the plugin dir');
   assert.deepStrictEqual(rec.agents, [{ name: 'bar', content: AGENT_MD }]);
   assert.strictEqual(rec.enginePath, null, 'and it really has no engine half');
@@ -135,6 +135,94 @@ test('t672: a skill dir with no readable SKILL.md contributes nothing', () => {
   const recs = loader.discover();
   assert.deepStrictEqual(recs.map((r) => r.id), ['stocks'], 'ENTER: discovered');
   assert.deepStrictEqual(recs[0].skills.map((s) => s.name), ['foo']);
+});
+
+// ── t732: companion files ───────────────────────────────────────────────────
+//
+// A Claude Code skill is a DIRECTORY: SKILL.md plus the scripts/ and
+// references/ it links to. Discovery reads those bytes into `files` so the
+// spawn scaffold can write them beside the markdown.
+
+test('t732: a skill dir carries its companion files, keyed by relative posix path', () => {
+  const root = mkTree({
+    stocks: {
+      manifest: PACK.manifest,
+      files: {
+        'skills/foo/SKILL.md': SKILL_MD,
+        'skills/foo/scripts/run.sh': '#!/bin/sh\necho hi\n',
+        'skills/foo/references/x.md': '# reference\n',
+        'skills/foo/.DS_Store': 'junk',
+      },
+    },
+  });
+  // ENTER: the dotfile and SKILL.md are two of the four entries the walk must
+  // drop or keep by rule — a fixture that wrote fewer would pass the exactly-two
+  // assertion below without exercising either rule.
+  const onDisk = fs.readdirSync(path.join(root, 'stocks', 'skills', 'foo'));
+  assert.strictEqual(onDisk.length, 4, `ENTER: the fixture wrote 4 entries, got ${JSON.stringify(onDisk)}`);
+
+  const rec = mkLoader(root).loader.discover()[0];
+  assert.ok(rec, 'ENTER: the pack was discovered');
+  assert.deepStrictEqual(Object.keys(rec.skills[0].files).sort(), ['references/x.md', 'scripts/run.sh'],
+    'exactly the two companions — SKILL.md is the record content, the dotfile is noise');
+  assert.deepStrictEqual(rec.skills[0].files['scripts/run.sh'], Buffer.from('#!/bin/sh\necho hi\n'),
+    'as Buffers: a companion may be a binary asset');
+  assert.deepStrictEqual(rec.skills[0].files['references/x.md'], Buffer.from('# reference\n'));
+});
+
+test('t732: a symlink and a nested node_modules are not companion files', () => {
+  const root = mkTree({
+    stocks: {
+      manifest: PACK.manifest,
+      files: {
+        'skills/foo/SKILL.md': SKILL_MD,
+        'skills/foo/references/x.md': '# reference\n',
+        'skills/foo/node_modules/y.js': 'module.exports = 1;\n',
+      },
+    },
+  });
+  fs.symlinkSync('/etc/passwd', path.join(root, 'stocks', 'skills', 'foo', 'linked.md'));
+  const inFoo = fs.readdirSync(path.join(root, 'stocks', 'skills', 'foo')).sort();
+  assert.deepStrictEqual(inFoo, ['SKILL.md', 'linked.md', 'node_modules', 'references'],
+    'ENTER: the symlink and the node_modules dir really are on disk');
+
+  const rec = mkLoader(root).loader.discover()[0];
+  assert.ok(rec, 'ENTER: the pack was discovered');
+  assert.deepStrictEqual(Object.keys(rec.skills[0].files), ['references/x.md'],
+    'a symlink could point anywhere on the box, and node_modules is not a skill asset');
+});
+
+test('t732: a skill over the 64-file cap is dropped WHOLE, with the cap named', () => {
+  const spec = { manifest: PACK.manifest, files: { ...PACK.files } };
+  for (let i = 0; i < 65; i += 1) spec.files[`skills/foo/assets/a${i}.txt`] = `x${i}`;
+  const root = mkTree({ stocks: spec });
+  const written = fs.readdirSync(path.join(root, 'stocks', 'skills', 'foo', 'assets'));
+  assert.strictEqual(written.length, 65, `ENTER: the fixture wrote 65 companions, got ${written.length}`);
+
+  const { loader, logged } = mkLoader(root);
+  const rec = loader.discover()[0];
+  assert.ok(rec, 'ENTER: the plugin still loads — it has an agents/ half');
+  assert.deepStrictEqual(rec.skills, [],
+    'the whole skill goes: a half-shipped skill whose script is missing is worse than no skill');
+  assert.ok(logged.some((l) => /skills\/foo — companion files exceed the cap — \d+ files \/ \d+ bytes/.test(l)),
+    `the skip names the cap, got ${JSON.stringify(logged)}`);
+});
+
+test('t732: a bare SKILL.md yields an empty files map, not undefined', () => {
+  const rec = mkLoader(mkTree({ stocks: PACK })).loader.discover()[0];
+  assert.ok(rec, 'ENTER: discovered');
+  assert.deepStrictEqual(rec.skills[0].files, {},
+    'every consumer iterates it — an undefined here throws inside the spawn try/catch');
+});
+
+test('t732: the editor\'s single-file writer still reaches only SKILL.md', () => {
+  // Companion files are authored on disk and read at discovery. Teaching the
+  // in-app editor to write them too would be a SECOND mechanism writing into a
+  // plugin's skill dir, with its own containment to get right — the drawers
+  // compose their path from this same table (test/plugin-template-spawn.test.js).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin-loader.js'), 'utf8');
+  assert.ok(/skills: \(stem\) => \['skills', stem, 'SKILL\.md'\],/.test(src),
+    'BUNDLE_FILE_PATHS.skills maps a stem to exactly skills/<stem>/SKILL.md');
 });
 
 test('t672: a plugin with an engine half and no bundle reports empty arrays, not undefined', () => {

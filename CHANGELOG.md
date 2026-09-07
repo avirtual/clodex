@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Plugin skills now carry their companion files (scripts, references, assets) into the seat's plugin directory, so a skill that calls a bundled script works instead of pointing at nothing.
+
 ## 5.35.8 — 2026-09-07
 
 - New Session dialog: checklist checkboxes are checkbox-sized again instead of stretching across their column, and the rows read at full text colour like the same lists in Preferences.
