@@ -83,12 +83,6 @@ const ISSUE_VIEW = {
 // cannot exercise the comment path at all and a comment renderer that never ran
 // would look pinned.
 //
-// Three older comments, each UNDER the per-comment cap, then a newest one OVER
-// it. Both bounds are therefore live at once and on different comments, and the
-// sizes are chosen so that more than one but not all of them fit — the only
-// shape in which oldest-first and newest-first selection differ, and in which
-// the render order is observable at all.
-//
 // The sizes are load-bearing and were found by sweep, not chosen: with the
 // omitted-count line UNRESERVED (the r1 defect) the interior overruns the
 // budget only in a narrow window, and 1275 sits in it — at 1200 or 1400 the
@@ -130,6 +124,39 @@ const ISSUE_VIEW_ONE_HUGE = {
   comments: [
     { author: { login: 'ida' }, createdAt: AGO_MIN(20), body: `the last word${'f'.repeat(2500)}` },
   ],
+  labels: [],
+};
+
+// Issue #13: 30 labels of 40 chars each. Unbounded, that suffix is 1200+ chars
+// of head, which floors `interiorBudget` at its minimum and pushes the whole
+// reply past the cap, where `reply` tail-cuts the closing fence off.
+const MANY_LABELS = Array.from({ length: 30 }, (_, i) => `label-${i}`.padEnd(40, 'x'));
+const ISSUE_VIEW_MANY_LABELS = {
+  number: 13,
+  title: 'many labels',
+  author: { login: 'dan' },
+  createdAt: AGO_MIN(120),
+  state: 'OPEN',
+  url: 'https://github.com/avirtual/clodex/issues/13',
+  body: 'short.',
+  comments: [{ author: { login: 'zoe' }, createdAt: AGO_MIN(30), body: 'a comment' }],
+  labels: MANY_LABELS.map((name) => ({ name })),
+};
+
+// Issue #14: a URL long enough to floor `interiorBudget` at its 200 minimum, so
+// the single comment gets a `room` inside the 10..59 window where the text does
+// not fit AND clip() may not be handed the figure — the bare-header arm. The
+// exact width is asserted from _internals in the test rather than trusted here.
+const NO_ROOM_URL = `https://github.com/avirtual/clodex/issues/14?${'q'.repeat(2570)}`;
+const ISSUE_VIEW_NO_ROOM = {
+  number: 14,
+  title: 'no room',
+  author: { login: 'dan' },
+  createdAt: AGO_MIN(120),
+  state: 'OPEN',
+  url: NO_ROOM_URL,
+  body: 'b'.repeat(100),
+  comments: [{ author: { login: 'zoe' }, createdAt: AGO_MIN(30), body: 'w'.repeat(400) }],
   labels: [],
 };
 
@@ -179,6 +206,8 @@ function answer(cmd, args, state) {
   if (line.startsWith('gh issue list')) return Object.assign(ok('[]'), { data: state.noIssues ? [] : ISSUE_LIST });
   if (line.startsWith('gh issue view 11')) return Object.assign(ok('{}'), { data: ISSUE_VIEW_SHORT });
   if (line.startsWith('gh issue view 12')) return Object.assign(ok('{}'), { data: ISSUE_VIEW_ONE_HUGE });
+  if (line.startsWith('gh issue view 13')) return Object.assign(ok('{}'), { data: ISSUE_VIEW_MANY_LABELS });
+  if (line.startsWith('gh issue view 14')) return Object.assign(ok('{}'), { data: ISSUE_VIEW_NO_ROOM });
   if (line.startsWith('gh issue view')) return Object.assign(ok('{}'), { data: ISSUE_VIEW });
   return no(`unstubbed command: ${line}`);
 }
@@ -797,6 +826,72 @@ test('github: a single huge comment is held to the per-comment cap', async () =>
     // Nothing was dropped, so no omitted line should be invented.
     assert.ok(!/earlier comment\(s\) omitted/.test(out),
       'no omitted-count line when every comment was kept');
+    assert.ok(out.includes('---- END UNTRUSTED ----'), 'the fence closes');
+    assert.ok(out.length <= 3000, 'and the reply stays inside the cap');
+  } finally { cleanup(); }
+});
+
+test('github: many labels cannot push the closing fence off the reply', async () => {
+  const { cleanup } = boot();
+  try {
+    // ENTER: unbounded, this suffix alone is most of the reply cap — so an
+    // assertion that the fence closed is about the bound, not about a fixture
+    // that never stressed it.
+    const raw = `, labels: ${MANY_LABELS.join(', ')}`;
+    assert.ok(raw.length > 1200, `ENTER: the unbounded suffix (${raw.length}) would dominate the head`);
+
+    const replies = await fireFor('[agent:gh issue 13]');
+    assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
+    const [out] = replies;
+
+    assert.ok(out.includes('---- END UNTRUSTED ----'),
+      'the fence closes — an unbounded suffix tail-cuts exactly this line');
+    const head = out.split('\n')[0];
+    assert.ok(head.includes('labels: label-0'), 'the first labels that fit are named');
+    assert.ok(head.includes('+') && head.includes('more'),
+      'and the rest are declared as a count, not silently dropped');
+
+    const wfInternals = require(WORKFLOWS_PATH)._internals;
+    const { UNTRUSTED_OPEN, UNTRUSTED_END } = wfInternals;
+    const interior = out.slice(out.indexOf(UNTRUSTED_OPEN) + UNTRUSTED_OPEN.length + 1,
+      out.indexOf(UNTRUSTED_END) - 1);
+    const headLines = out.slice('[gh] '.length, out.indexOf(UNTRUSTED_OPEN) - 1).split('\n');
+    assert.ok(interior.length <= wfInternals.interiorBudget(headLines),
+      `interior (${interior.length}) must fit the budget (${wfInternals.interiorBudget(headLines)})`);
+    assert.ok(out.length <= 3000, 'and the whole reply stays inside the cap');
+  } finally { cleanup(); }
+});
+
+test('github: a comment with no room for its text says so instead of withholding it silently', async () => {
+  const { cleanup } = boot();
+  try {
+    const wfInternals = require(WORKFLOWS_PATH)._internals;
+    const { omittedLine, interiorBudget } = wfInternals;
+
+    // ENTER: recompute the arm's own `room` from the module's constants, so the
+    // fixture is asserted to land in the 10..59 window where the text does not
+    // fit and clip() may not be handed the figure. Outside that window this
+    // test would pin the ordinary clipped-text arm instead, and a removed
+    // notice would still be green.
+    const head = [
+      `#14 ${ISSUE_VIEW_NO_ROOM.title} — @dan, opened 2h ago, OPEN`,
+      NO_ROOM_URL,
+    ];
+    const budget = interiorBudget(head);
+    const room = budget - (omittedLine(1).length + 1) - ISSUE_VIEW_NO_ROOM.body.length
+      - '-- comment by @zoe, 30m ago --'.length - 2;
+    assert.ok(room >= 10 && room < 60,
+      `ENTER: the first comment's room (${room}) is in the bare-header window`);
+    assert.ok(ISSUE_VIEW_NO_ROOM.comments[0].body.length > room,
+      'ENTER: and its text does not fit that room');
+
+    const replies = await fireFor('[agent:gh issue 14]');
+    assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
+    const [out] = replies;
+
+    assert.ok(out.includes('-- comment by @zoe, 30m ago -- … (text withheld: no room)'),
+      'the header carries the literal notice that its text was withheld');
+    assert.ok(!out.includes('w'.repeat(20)), 'ENTER: the text really was withheld, not rendered');
     assert.ok(out.includes('---- END UNTRUSTED ----'), 'the fence closes');
     assert.ok(out.length <= 3000, 'and the reply stays inside the cap');
   } finally { cleanup(); }
