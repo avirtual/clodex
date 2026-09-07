@@ -890,7 +890,7 @@
       <p class="hint-text">Pick how new sessions should start. This is the only question.</p>
       <label class="prefs-check">
         <input type="radio" name="setup-mode" id="setup-mode-optimized" value="optimized" checked>
-        <span><strong>Clodex optimized</strong><br>New sessions start with Clodex's recommended tool set, agents and skills, routed through the built-in wirescope. Change per session under Advanced.</span>
+        <span><strong>Clodex optimized</strong><br>New sessions start from your default tools, skills and agents (Preferences), routed through the built-in wirescope. Change per session under Advanced.</span>
       </label>
       <label class="prefs-check">
         <input type="radio" name="setup-mode" id="setup-mode-standard" value="standard">
@@ -980,13 +980,25 @@
         <div id="prefs-codex-components" class="prefs-checkboxes"></div>
       </details>
       <details class="prefs-group" data-group="new-sessions">
-        <summary><h4>New session defaults</h4><span class="prefs-group-sub">Tools and MCP for sessions you create from now on</span></summary>
-        <p class="hint-text">Both apply at spawn and only to new sessions; existing ones are unaffected.</p>
+        <summary><h4>New session defaults</h4><span class="prefs-group-sub">Tools, skills, agents and MCP for sessions you create from now on</span></summary>
+        <p class="hint-text">These apply at spawn and only to new sessions; existing ones are unaffected.</p>
         <h5>Default tools</h5>
         <p class="hint-text">Unchecked tools are denied for new Claude sessions by default (you can still adjust per session at create). A consistent set lets sessions share one cached tools segment — leaving rarely-used tools off also trims each prompt.</p>
         <label id="prefs-tools-row">Tools
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="prefs-tools-list" class="agent-checklist"></div>
+        </label>
+        <h5>Default skills</h5>
+        <p class="hint-text">Unchecked skills are off for new Claude sessions by default (you can still turn one back on per session at create). Every loaded skill costs prompt tokens each turn, so starting from none and opting in keeps the roster to what a session actually uses.</p>
+        <label id="prefs-skills-row">Skills
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+          <div id="prefs-skills-list" class="agent-checklist"></div>
+        </label>
+        <h5>Default agents</h5>
+        <p class="hint-text">Unchecked built-in subagents are denied for new Claude sessions by default (you can still allow one per session at create). A denied agent drops out of the injected roster entirely, so its description stops costing tokens every turn.</p>
+        <label id="prefs-agents-row">Agents
+          <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+          <div id="prefs-agents-list" class="agent-checklist"></div>
         </label>
         <h5>Claude MCP</h5>
         <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy: the built-in wirescope strips <code>claude_design</code> by default and keeps your real MCPs. The fallback below is for the sessions it never sees — one you route nowhere, or one whose wire is unreachable at spawn. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
@@ -1127,7 +1139,7 @@
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
         <h5>Default session mode</h5>
-        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> trims the tool roster and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
+        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
         <div class="prefs-row" style="margin-top: 4px;">
           <span>Mode</span>
           <select id="prefs-default-mode" style="flex: none;">

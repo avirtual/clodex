@@ -211,7 +211,7 @@ function joinFixture({ existingHand }) {
     workspaceOfSender: () => 'default',
     nameConflict: () => null,
     persistence: { get: () => null, setStripLevel() {}, setAutoCompact() {} },
-    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     manager: {
       sessions: new Map(),
       create: async () => { calls.spawned += 1; return { name: 'seat' }; },

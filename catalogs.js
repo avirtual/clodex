@@ -119,11 +119,14 @@ const CLAUDE_SKILLS = [
 // is the same mechanism the popover already ships.
 const SKILL_REENABLE_CONFIRMED = false;
 
+const DEFAULT_BUILTIN_DENY_FLOOR = ['Plan', 'claude', 'claude-code-guide', 'statusline-setup'];
+
 const DEFAULT_WORKSPACE_ID = 'default';
 const AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session name rule
 const THEME_KEYS = ['midnight', 'claude', 'paper', 'light'];
 
 module.exports = {
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED,
+  DEFAULT_BUILTIN_DENY_FLOOR,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
 };

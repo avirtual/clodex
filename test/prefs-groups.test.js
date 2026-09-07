@@ -42,6 +42,8 @@ const CONTROLS = [
   'prefs-env-secret', 'prefs-env-add', 'prefs-env-restore-row', 'prefs-env-restore', 'prefs-env-state',
   'prefs-default-mode', 'prefs-run-setup', 'prefs-discover-on-startup', 'prefs-disable-design-mcp',
   'prefs-tools-row', 'prefs-tools-list',
+  'prefs-skills-row', 'prefs-skills-list',
+  'prefs-agents-row', 'prefs-agents-list',
 ];
 
 test('every Preferences control survives the grouping', () => {

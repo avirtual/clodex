@@ -25,3 +25,11 @@ Shared between `seedEnvDefaults` and `envDefaults.restore` (t681): `restore`
 used to clear `seeded` and save BEFORE this same refusal ran, only inside
 `seedEnvDefaults`, so a refused restore still stripped the shipped keys off
 the list and left the seeder re-armed for the next real launch.
+
+## getDefaultSkillDeny
+
+Deliberately NOT filtered against a skill catalog, unlike `getDefaultDeny` and
+`getDefaultBuiltinDeny`. Skill names are cwd-dependent — a project skill exists
+only under its own tree — so a name absent from the global catalog is still a
+real default, and filtering would silently drop it the first time Preferences
+was opened anywhere else.

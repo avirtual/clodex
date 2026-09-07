@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { envKeyError } = require('./env-scopes');
 const { loadEnvDefaults, planEnvSeed } = require('./env-defaults');
-const { parseAgentFrontmatter } = require('./agents-util');
+const { parseAgentFrontmatter, BUILTIN_AGENTS } = require('./agents-util');
 const { parseSkillFrontmatter } = require('./skills-util');
 // The CLI's own context validator, entered by its PUBLIC door (validateEntry).
 // Reused rather than re-implemented so a peer's typed cloud transport and a CLI
@@ -20,7 +20,7 @@ const { sanitizeCtxThresholds } = require('./ctx-reminder');
 const { confineOrThrow } = require('./path-confine');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
-  CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
+  CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
 } = require('./catalogs');
 
 const PROMPT_KINDS = ['system', 'append'];
@@ -991,6 +991,38 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         : [];
       const e = map['*'] || {};
       e.deny = clean;
+      map['*'] = e;
+      this._save(map);
+    },
+    getDefaultSkillDeny() {
+      const e = this._load()['*'];
+      if (e && Array.isArray(e.denySkills)) return [...new Set(e.denySkills.filter((s) => typeof s === 'string' && s))];
+      return [];
+    },
+    setDefaultSkillDeny(list) {
+      const map = this._load();
+      const clean = Array.isArray(list)
+        ? [...new Set(list.filter((s) => typeof s === 'string' && s))]
+        : [];
+      const e = map['*'] || {};
+      e.denySkills = clean;
+      map['*'] = e;
+      this._save(map);
+    },
+    getDefaultBuiltinDeny() {
+      const e = this._load()['*'];
+      if (e && Array.isArray(e.denyBuiltins)) {
+        return [...new Set(e.denyBuiltins.filter((a) => BUILTIN_AGENTS.includes(a)))];
+      }
+      return DEFAULT_BUILTIN_DENY_FLOOR.slice();
+    },
+    setDefaultBuiltinDeny(list) {
+      const map = this._load();
+      const clean = Array.isArray(list)
+        ? [...new Set(list.filter((a) => BUILTIN_AGENTS.includes(a)))]
+        : [];
+      const e = map['*'] || {};
+      e.denyBuiltins = clean;
       map['*'] = e;
       this._save(map);
     },

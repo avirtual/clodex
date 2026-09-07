@@ -55,7 +55,7 @@ test('team:create reaches createTeam with {name,root,lead} then spawns', async (
   const handlers = registerWith({
     manager: fakeManager(created),
     createTeam: (arg) => { writes.push(['createTeam', arg]); return { name: arg.name }; },
-    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
@@ -73,7 +73,7 @@ test('team:join reaches addRole (hand = stock def) then spawns', async () => {
   const handlers = registerWith({
     manager: fakeManager(created),
     addRole: (team, role, def) => { writes.push([team, role, def]); return {}; },
-    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
@@ -92,7 +92,7 @@ test('team:join custom role forwards the picked prompt into the role def', async
   const handlers = registerWith({
     manager: fakeManager(created),
     addRole: (team, role, def) => { writes.push([team, role, def]); return {}; },
-    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
@@ -136,7 +136,7 @@ test('a write refusal surfaces as {ok:false} WITHOUT spawning', async () => {
   const handlers = registerWith({
     manager: fakeManager(created),
     createTeam: () => { throw new Error('team "shop" already exists'); },
-    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
@@ -292,7 +292,7 @@ test('team:addRole / team:removeRole pass the operator opt-in; team:join does NO
     loadManifest: (t) => ({ name: t, roles: { lead: {} } }),
     addRole: (...args) => { writes.push(['addRole', ...args]); return { name: 'shop', roles: {} }; },
     removeRole: (...args) => { writes.push(['removeRole', ...args]); return { name: 'shop', roles: {} }; },
-    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });

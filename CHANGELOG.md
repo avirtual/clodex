@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - New Session dialog: tool, skill and agent checkboxes sit beside their names again instead of stacking above them.
+- Preferences gains Default skills and Default agents beside Default tools, and "Clodex optimized" now starts every new session from all three sets (built-in agents default to Explore and general-purpose only). Enable more per session under Advanced.
 
 ## 5.35.6 — 2026-09-07
 
