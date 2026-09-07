@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.36.0 — 2026-09-08
+
 - New built-in plugin: ntfy. Point it at an ntfy topic and every message (a GitHub webhook rendered by ntfy, for instance) becomes an operator inbox note and, if you name one, a DM to a seat, with the text fenced as untrusted. No polling; it resumes from the last seen message after a restart.
 - **Bundled wirescope updated to v0.6.61: the session view stamps every message with a wall-clock time derived from the capture series.**
 - [agent:gh issue <n>] keeps its untrusted fence intact on issues with many labels, and says so when a comment's text is withheld for lack of room.
