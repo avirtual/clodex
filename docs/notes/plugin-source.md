@@ -2,7 +2,7 @@
 
 ## createPluginSource
 
-Deps-injected leaf like plugin-loader.js (fs/path/https/execFile all arrive
+Deps-injected leaf like plugin-loader.js (fs/path/https/execFile/os all arrive
 through the deps object), not a pure leaf like clodex-paths.js — every network
 and `tar` call is a seam a test swaps out. `parseSourceSpec` is exported
 standalone since it needs neither.

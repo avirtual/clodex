@@ -1,8 +1,7 @@
 'use strict';
 
 // The Manage Plugins dialog is a flex column: the frame scrolls nothing, the
-// list scrolls alone, so the Register / Install / Open Folder / Re-scan / Close
-// bar cannot leave the screen with the rows. An `overflow: auto` back on
+// list scrolls alone, so the action bar cannot leave the screen with the rows. An `overflow: auto` back on
 // #plugins-dialog restores the shipped defect, which is what the first subject
 // forbids by value rather than by absence.
 //
@@ -61,7 +60,7 @@ test('the list is the only thing that scrolls, and it can shrink to let it', () 
     + 'which pushes the action bar out of the frame instead of scrolling');
 });
 
-test('five action buttons wrap at the min-width instead of overflowing', () => {
+test('the action buttons wrap at the min-width instead of overflowing', () => {
   assert.strictEqual(lastDeclaration(/^#plugins-dialog \.dialog-actions$/, 'flex-wrap'), 'wrap');
   assert.strictEqual(lastDeclaration(/^#plugins-dialog \.dialog-actions$/, 'flex-shrink'), '0');
 });

@@ -81,9 +81,6 @@ function libraryRowAction(row, opts) {
     return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.userAuthored, action: null };
   }
   if (r.installed === 'fetched') {
-    if (repo && r.installedRepo && r.installedRepo !== repo) {
-      return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.otherRepo, action: null };
-    }
     if (r.upToDate) return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.upToDate, action: null };
     return { label: 'Update', enabled: true, reason: '', action: 'update' };
   }

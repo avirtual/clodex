@@ -743,9 +743,11 @@ commit — above the warning text §7 specifies, and nothing more.
 
 End to end, today, with the user root implemented:
 
-1. Find a plugin. **There is no discovery mechanism.** No directory, no index, no
-   search, no listing inside the app. The user learns a plugin exists from a
-   README, a link, or a person.
+1. Find a plugin. **Manage Plugins ▸ Browse the Clodex library…** lists what
+   `avirtual/clodex-plugins` holds, and that is the whole of discovery: there is
+   no index, no search, and nothing that finds a plugin published anywhere else.
+   For those the user still learns a plugin exists from a README, a link, or a
+   person.
 2. Obtain it. From a public GitHub repo, **Install from GitHub…** in step 3 does
    this and step 3 together. From anywhere else, `git clone` or download and
    unzip, in a terminal or a file manager.
@@ -877,6 +879,7 @@ Consequences worth stating:
 | §9 sources: GitHub fetch, engine + host methods | **Implemented** |
 | §9 sources: install UI — Manage Plugins ▸ Install from GitHub… | **Implemented** |
 | §9 sources: update/remove UI on a fetched row | **Implemented** |
+| §9 sources: library UI — Manage Plugins ▸ Browse the Clodex library… | **Implemented** |
 | §9 sources: `changed` is a tree compare, so an unrelated commit is not an update | **Implemented** |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |
