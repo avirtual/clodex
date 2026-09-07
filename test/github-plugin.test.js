@@ -89,12 +89,11 @@ const ISSUE_VIEW = {
 // shape in which oldest-first and newest-first selection differ, and in which
 // the render order is observable at all.
 //
-// 1200, not 600: at 600 the assembled interior landed on the budget EXACTLY
-// (2693/2693), so the omitted-comments line — appended after selection and
-// therefore outside the budget — was not yet being cut. One more character
-// pushed the interior clip onto that line and the agent silently lost the
-// notice that evidence had been withheld. The margin is deliberate: a fixture
-// sitting on a boundary passes for the wrong reason.
+// The sizes are load-bearing and were found by sweep, not chosen: with the
+// omitted-count line UNRESERVED (the r1 defect) the interior overruns the
+// budget only in a narrow window, and 1275 sits in it — at 1200 or 1400 the
+// broken code produces a correct reply and a pin there is green against the
+// very bug it names. Re-tune by sweeping if any cap or fence string changes.
 //
 // Every comment here is UNDER the per-comment cap, so this fixture isolates the
 // budget: the reply cap is the only thing that can drop one. The per-comment cap
@@ -108,9 +107,9 @@ const ISSUE_VIEW_SHORT = {
   url: 'https://github.com/avirtual/clodex/issues/11',
   body: 'short.',
   comments: [
-    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'e'.repeat(1200) },
-    { author: { login: 'gus' }, createdAt: AGO_MIN(40), body: 'g'.repeat(1200) },
-    { author: { login: 'hal' }, createdAt: AGO_MIN(35), body: 'h'.repeat(1200) },
+    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'e'.repeat(1275) },
+    { author: { login: 'gus' }, createdAt: AGO_MIN(40), body: 'g'.repeat(1275) },
+    { author: { login: 'hal' }, createdAt: AGO_MIN(35), body: 'h'.repeat(1275) },
     { author: { login: 'fay' }, createdAt: AGO_MIN(10), body: 'the last word' },
   ],
   labels: [],
@@ -741,8 +740,8 @@ test('github: a closed issue still reads, and older bulk cannot starve the newes
 
     // Its counterpart: the drop landed on the OLDEST, and was declared.
     assert.ok(!out.includes('@eve'), 'and the OLDEST is the one dropped');
-    assert.ok(out.includes('-- comment by @gus, 40m ago --'),
-      'while the ones that fit are kept — the cut is at the budget, not a fixed count');
+    assert.ok(out.includes('-- comment by @hal, 35m ago --'),
+      'while the newest that fit are kept — the cut is at the budget, not a fixed count');
     assert.match(out, /\d+ earlier comment\(s\) omitted/, 'and the agent is told some were');
 
     // Presence FIRST: indexOf returns -1 for a name that is absent, and -1 is
