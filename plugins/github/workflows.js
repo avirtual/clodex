@@ -7,9 +7,9 @@
  * from the five-to-ten `git` and `gh` calls it actually takes. That assembly is
  * the entire product: an agent that has `[agent:gh status]` spends one line
  * where it would otherwise spend six commands, four parses and two wrong
- * guesses. Nothing here is a wrapper around a single endpoint — if a function
- * ever collapses to one `gh` call plus a rename, it should be deleted and the
- * agent told to run `gh` itself.
+ * guesses. A function that is one `gh` call plus a rename should be deleted and
+ * the agent told to run `gh` itself; `issues` and `issue` are one call each and
+ * earn their place on the SAFETY they add, not the assembly — see fenceUntrusted.
  *
  * Rules that hold throughout:
  *  - NOTHING here rejects. Every function resolves to { ok, text } where `text`
@@ -54,7 +54,7 @@ const UNTRUSTED_END = '---- END UNTRUSTED ----';
 // ---------------------------------------------------------------------------
 
 /**
- * Quoted content (a CI log line, a reviewer's comment) can itself begin with
+ * Quoted content (a CI log line, a reviewer's comment, a stranger's issue) can itself begin with
  * `[agent:` at column 1. Intents are scanned from ASSISTANT text and this is
  * arriving as USER text, so it cannot fire — but an agent that reads a stray
  * `[agent:dm ops]` in a log tail may well copy it into its own reply, which

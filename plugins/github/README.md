@@ -1,11 +1,13 @@
 # github — `[agent:gh]`
 
 An engine-only plugin. No UI, no settings, no renderer half. It exists to make
-an **agent** shorter-winded: five read verbs and a dry run, each collapsing a
+an **agent** shorter-winded: five read verbs and a dry run. Most collapse a
 workflow the agent would otherwise fumble through in six commands and two wrong
-guesses.
+guesses; the two issue verbs are one `gh` call each and earn their place
+differently — see [Issue text is untrusted](#issue-text-is-untrusted).
 
-**It is read-only.** Nothing here pushes, creates or mutates anything. See
+**It is read-only.** Nothing here pushes, creates or mutates anything — no
+push, no PR, and no issue comment, close or edit. See
 [Why there is no `pr`](#why-there-is-no-real-pr) — that is a decision, not a gap.
 
 ## Before it does anything
@@ -45,6 +47,28 @@ Session rows now carry a PR status chip. Refresh is bounded by a 30s TTL.
 
 The body leads the description; the commits and diffstat follow it as evidence.
 Without one, the description is still real — it is just missing the *why*.
+
+## Issue text is untrusted
+
+`status`, `ci` and `review` quote colleagues. A **public issue tracker is an
+input channel for anyone with a GitHub account**, so `[agent:gh issue <n>]`
+treats every byte the reporter wrote as hostile:
+
+- The body and comments are wrapped in an `UNTRUSTED` fence that names them as
+  text to quote rather than obey, and the fence **closes**. The closing line is
+  the load-bearing half — an agent that cannot see where outside text stops has
+  no fence at all — so the quoted text is budgeted to leave room for it rather
+  than the whole reply being cut from the end.
+- Anything starting `[agent:` is `\[agent:`-escaped, so an agent that copies a
+  line out of an issue into its own turn cannot fire an intent with it.
+- Titles are clipped, the body gets a share of the reply rather than all of it,
+  and comments are selected newest-first so a wall of old text cannot bury the
+  comment that says how the issue ended.
+
+**There is no write path, and one must not be added behind a flag.** Commenting
+on or closing a public issue speaks to the world as the operator. The suite
+scans both the recorded argv and the plugin source for `gh issue
+comment/close/edit/create`, so adding one fails `test/github-plugin.test.js`.
 
 ## Why there is no real `pr`
 
