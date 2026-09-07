@@ -5,7 +5,7 @@
 The API's window keys (`5h`, `7d`, `7d_oi`, `overage`) against the names Claude
 Code's own panel shows the operator — "Current session", "Current week (all
 models)", "Current week (Fable)". The operator compares the two side by side, so
-the chip's `short` and the tooltip's `long` must come from one table: they
+the chip's `short` and the tooltip's `long` must come from one table: them
 disagreeing about which window is which is the confusion this replaced.
 
 ## quotaWindows

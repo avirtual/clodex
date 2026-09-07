@@ -119,6 +119,49 @@ test('shapeQuota: non-finite numbers do not survive as numbers', () => {
   assert.strictEqual(q.resetsInS, null);
 });
 
+test('shapeQuota: a non-object `windows` shapes to {}, not to a hollow map', () => {
+  // The empty map is what makes quotaChip fall back to the single-window
+  // statement. A string surviving as `windows` would reach Object.entries and
+  // shape one entry per CHARACTER; a null would reach it and throw.
+  const base = { status: 'allowed_warning', representative_window: '7d', resets_in_s: 900, age_s: 1 };
+  for (const junk of ['x', null, 7, undefined]) {
+    assert.strictEqual(Boolean(junk && typeof junk === 'object'), false,
+      `ENTER: the input's windows must really be a non-object, got ${String(junk)}`);
+    // Whole-object where the fixture allows it: a partial match would read
+    // around a field that stopped being mapped while `windows` was being added.
+    assert.deepStrictEqual(shapeQuota({ ...base, windows: junk }, CAPS), {
+      status: 'allowed_warning',
+      window: '7d',
+      windows: {},
+      usedPct: null,
+      remainingPct: null,
+      resetsInS: 900,
+      reset: null,
+      ageS: 1,
+      last429AgeS: null,
+      last429At: null,
+    });
+  }
+});
+
+test('shapeQuota: a non-object ENTRY inside `windows` is skipped, not shaped', () => {
+  // Same guard one level down. A number here would shape to an all-null window,
+  // which quotaChip drops for having no percentage — silently, so the map would
+  // read as "the API published nothing for this window" rather than as junk.
+  const raw = {
+    status: 'allowed_warning', age_s: 1,
+    primary: { window: '7d', used_pct: 95, resets_in_s: 900 },
+    windows: { five_hour: 7, '7d': { used_pct: 95, status: 'allowed_warning', resets_in_s: 900 } },
+  };
+  assert.notStrictEqual(typeof raw.windows.five_hour, 'object',
+    'ENTER: the entry under test must really be a non-object, or nothing is being skipped');
+  const q = shapeQuota(raw, CAPS);
+  assert.deepStrictEqual(q.windows, {
+    '7d': { usedPct: 95, remainingPct: null, status: 'allowed_warning', reset: null, resetsInS: 900 },
+  });
+  assert.strictEqual('five_hour' in q.windows, false, 'the junk key must not survive as an all-null window');
+});
+
 // ---- the render decision ----
 
 // The three windows the operator's own account reports, at the percentages
