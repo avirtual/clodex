@@ -42,7 +42,7 @@ function makeManager(sessions = []) {
 // `notifications: null` is how a test asks for the store-absent branch, so the
 // default cannot be reached by omission — undefined must still mean "present".
 function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds,
-  notifications = undefined, notifyOS = undefined } = {}) {
+  notifications = undefined, notifyOS = undefined, getPluginUpdates = undefined } = {}) {
   const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = { ...settings };
   const logged = [];
@@ -64,6 +64,7 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     libraryPinKinds: libraryPinKinds || { memory: (ref, on) => { pins.push([ref, on]); return { ok: true }; } },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
+    getPluginUpdates,
     getNotifications: () => store,
     notifyOS: notifyOS || ((spec) => { osNotes.push(spec); }),
     broadcast: (channel, payload) => manager._broadcast(channel, payload),
@@ -733,6 +734,26 @@ test('_host plugins.status serves the settings section every plugin ON DISK', as
 test('_host plugins.status degrades to empty with no loader (CLODEX_PLUGINS=0 shape)', async () => {
   const { engine } = makeHost();
   assert.deepEqual(await engine.dispatch('_host', 'plugins.status', [], 'desktop'), { ok: true, plugins: [], problems: [] });
+});
+
+test('_host plugins.updatesAvailable passes the watcher\'s confirmed list through untouched', async () => {
+  // The dialog and the menu both read this. It is a pure passthrough of a list
+  // the checker already filtered — the host must NOT recompute it from the
+  // loader's catalog, whose `upToDate` flag compares against the library repo's
+  // HEAD and is false for every installed plugin whenever any of them moves.
+  const updates = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({ loader: fakeLoader(), getPluginUpdates: () => updates });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates });
+});
+
+test('_host plugins.updatesAvailable is an empty list with no watcher wired', async () => {
+  // headless-main.js constructs no update watcher, and neither does any fixture
+  // written before t741. The method must answer rather than throw a
+  // ReferenceError out of dispatch.
+  const { engine } = makeHost({ loader: fakeLoader() });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates: [] });
 });
 
 test('_host renderer.report forwards a window\'s outcome to the loader', async () => {

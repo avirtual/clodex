@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Manage plugins tells you when a plugin you installed from the Clodex library has a newer version: the row reads `Update available (1.1.0 → 1.2.0)` and the Plugins menu's `Manage plugins…` carries the count. Nothing updates itself — the row's existing Update… button is still the only way anything is replaced.
+
 ## 5.36.1 — 2026-09-08
 
 - The ntfy plugin is no longer built in; it lives in the clodex-plugins library (Manage plugins ▸ Browse the Clodex library) for anyone who wants it.

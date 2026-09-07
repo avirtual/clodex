@@ -178,6 +178,9 @@ const SCANNED_MODULES = [
   // https/execFile/os all arrive through `createPluginSource`'s deps object, so
   // it joins the scan the same way plugin-loader.js did.
   'plugin-source.js',
+  // t741: the two-stage update checker. Constructed in engine.js beside the
+  // other watchers, deps-object factory like the rest of the plugin core.
+  'plugin-update-watch.js',
   // The shared dial (t42/L1), collapsing three copies of spawn-and-kill. Listed
   // because the ticket requires every new extraction to join this list — but be
   // honest about what it proves HERE: this is a cli/ leaf that was never carved

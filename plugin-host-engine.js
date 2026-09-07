@@ -26,6 +26,7 @@ function createPluginHostEngine(deps) {
     libraryPinKinds,  // kind -> handler for host.library.setPin; same refusal rule
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
+    getPluginUpdates,
     getPersistence,   // getter: the sessions store — read for per-session plugin grants
     onPluginStateChanged,
     getNotifications,
@@ -721,6 +722,10 @@ function createPluginHostEngine(deps) {
         return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
     },
+    'plugins.updatesAvailable': () => ({
+      ok: true,
+      updates: (typeof getPluginUpdates === 'function' ? getPluginUpdates() : []) || [],
+    }),
     'plugins.installFromSource': async (spec) => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');

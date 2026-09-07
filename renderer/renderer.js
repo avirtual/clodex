@@ -5354,6 +5354,11 @@ async function renderPluginsDialog() {
   if (!pluginsList) return [];
   let status = null;
   try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
+  let updates = null;
+  try { updates = await window.api.pluginInvoke('_host', 'plugins.updatesAvailable'); } catch {}
+  const updateById = new Map(
+    (((updates && updates.ok && updates.updates) || [])).map((u) => [u.id, u]),
+  );
   const plugins = (status && status.ok && status.plugins) || [];
   const problems = (status && status.ok && status.problems) || [];
   const shadowed = (status && status.ok && status.shadowed) || [];
@@ -5388,6 +5393,15 @@ async function renderPluginsDialog() {
       nameEl.appendChild(v);
     }
     body.appendChild(nameEl);
+    const upd = updateById.get(p.id);
+    if (upd) {
+      const u = document.createElement('div');
+      u.className = 'plugin-row-note plugin-row-update';
+      u.textContent = (p.version && upd.version)
+        ? `Update available (${p.version} → ${upd.version})`
+        : 'Update available';
+      body.appendChild(u);
+    }
     if (p.description) {
       const d = document.createElement('div');
       d.className = 'plugin-row-note plugin-row-desc';

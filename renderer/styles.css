@@ -2596,6 +2596,7 @@ html, body {
   text-align: left;
 }
 .plugin-row-note.plugin-row-src { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plugin-row-note.plugin-row-update { color: var(--accent); opacity: 1; }
 .plugin-row-actions { display: flex; flex-direction: column; gap: 4px; align-self: center; flex-shrink: 0; }
 /* A plugin's own settings, inline under its row (t109). Not a second overlay:
    #prefs-overlay and #plugins-overlay are siblings with no stacking manager. */
