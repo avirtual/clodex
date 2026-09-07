@@ -2150,7 +2150,7 @@ html, body {
 
 /* Dialog */
 
-#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay, #discovery-overlay, #plugins-overlay {
+#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay, #discovery-overlay, #plugins-overlay, #setup-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -2160,7 +2160,7 @@ html, body {
   z-index: 100;
 }
 
-#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden, #discovery-overlay.hidden, #plugins-overlay.hidden {
+#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden, #discovery-overlay.hidden, #plugins-overlay.hidden, #setup-overlay.hidden {
   display: none;
 }
 
@@ -2168,8 +2168,12 @@ html, body {
    field's "Find…" button), so it sits one layer above the shared z100 modals. */
 #discovery-overlay { z-index: 150; }
 
+/* "Run setup again…" opens from inside Preferences, so the Welcome dialog has to
+   stack ABOVE the z100 modals rather than replace one. */
+#setup-overlay { z-index: 150; }
+
 /* Discover Sessions dialog — a scrollable list of adoptable sessions. */
-#discovery-dialog {
+#discovery-dialog, #setup-dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2181,7 +2185,8 @@ html, body {
   flex-direction: column;
   gap: 12px;
 }
-#discovery-dialog h3 { margin: 0; }
+#discovery-dialog h3, #setup-dialog h3 { margin: 0; }
+#setup-dialog { width: 460px; }
 .discovery-list {
   flex: 1;
   overflow-y: auto;

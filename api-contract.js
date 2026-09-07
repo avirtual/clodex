@@ -210,6 +210,8 @@ const API_CONTRACT = [
   { name: 'setTheme', kind: 'invoke', channel: 'theme:set' },
   { name: 'onSetTheme', kind: 'on', channel: 'set-theme' },
   { name: 'setSettings', kind: 'invoke', channel: 'settings:set' },
+  { name: 'getSetupState', kind: 'invoke', channel: 'setup:state' },
+  { name: 'completeSetup', kind: 'invoke', channel: 'setup:complete' },
   // Playback of a spoken reply started or ended, box-wide. The re-arm lives in
   // the renderer and the `say` child in main, so this is the only way the
   // recorder can be held off until the narration it would otherwise transcribe

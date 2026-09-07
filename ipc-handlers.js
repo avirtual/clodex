@@ -13,6 +13,7 @@ const { teamPreflight } = require('./team-preflight');
 const { teamPromptFile, readTeamJson } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
+const { SETUP_CHOICES } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
@@ -59,7 +60,7 @@ function registerIpcHandlers(deps) {
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
-    agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes, envDefaults,
+    agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes, envDefaults, setupMarker,
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
@@ -1053,6 +1054,18 @@ function registerIpcHandlers(deps) {
       peers: (s.peers || []).map(({ token, ...rest }) => ({ ...rest, hasToken: !!token })),
     };
   });
+  // One IPC, not two: the marker and the mode it chose must land together, or a
+  // crash between them leaves a box that never asks again and never applied the
+  // answer.
+  handle('setup:state', () => setupMarker.read());
+  handle('setup:complete', (_e, opts = {}) => {
+    const choice = opts && opts.choice;
+    if (!SETUP_CHOICES.includes(choice)) throw new Error(`Unknown setup choice: ${choice}`);
+    if (choice !== 'skipped') uiSettings.set({ defaultSessionMode: choice });
+    setupMarker.write({ choice, version: getAppVersion() });
+    return setupMarker.read();
+  });
+
   handle('settings:set', (_e, partial) => {
     // Read BEFORE the write: the revocation below is a transition, and the only
     // place the previous value still exists is here.
