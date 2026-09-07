@@ -143,6 +143,16 @@ function bodyAfter(src, anchor) {
 // it in one direction — a seat whose tree was removed by hand keeps the pointer
 // and is refused a move it could safely take. Conservative, and the recovery is
 // the same delete-and-recreate the operator has today.
+//
+// PRESENT, but with the second test waived: session-manager.js's
+// `rename(name, newName)`. It splits move's two reasons. It KEEPS `entry.cwd` as
+// the spawn cwd, so the first test is exactly as meaningful for it as for the
+// five below and it is listed. It refuses a ticket seat off `entry.worktree` on
+// the same reasoning as move's, so the second test is waived by
+// `worktreeRefusal` — a per-row opt-out, not a relaxed check, so a rename that
+// grew a real provenance read would still have to come here and say so. The
+// same one-directional staleness applies: a seat whose tree was removed by hand
+// keeps the pointer and is refused a rename it could safely take.
 const RESUME_SITES = [
   {
     file: 'ipc-handlers.js',
@@ -171,6 +181,14 @@ const RESUME_SITES = [
     call: 'manager.create',
     cwdArg: 'beforeKill.cwd',
     label: 'applySessionArgs — the args-edit restart (session:setArgs, the peer args POST); a SEPARATE create() from restartSession\'s, reading a beforeKill snapshot',
+  },
+  {
+    file: 'session-manager.js',
+    anchor: 'async rename(name, newName) {',
+    call: 'this.create',
+    cwdArg: 'entry.cwd',
+    worktreeRefusal: true,
+    label: 'rename(name, newName) — Rename…, which respawns the seat under a new name in the SAME folder',
   },
   {
     file: 'session-manager.js',
@@ -208,7 +226,13 @@ test('resume paths spawn in the record cwd, not its worktree path', () => {
 });
 
 test('resume paths do not read worktree provenance at all', () => {
+  const waived = RESUME_SITES.filter((s) => s.worktreeRefusal).map((s) => s.file);
+  // ENTER: the waiver is a per-row opt-out and must stay one. If it ever covers
+  // every row this test asserts nothing, and it would still pass.
+  assert.ok(waived.length < RESUME_SITES.length,
+    `every row is waived — this test would be vacuous (waived: ${waived.join(', ')})`);
   for (const site of RESUME_SITES) {
+    if (site.worktreeRefusal) continue;
     const src = fs.readFileSync(path.join(ROOT, site.file), 'utf8');
     // Comments may discuss worktrees; only executable references matter here.
     const body = bodyAfter(src, site.anchor)
