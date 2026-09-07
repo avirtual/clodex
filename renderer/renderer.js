@@ -1942,14 +1942,15 @@ function setModeSelect(mode) {
   if (mode === 'custom' && advancedSection) advancedSection.open = true;
 }
 
-function applyModeFields(mode, { skipTools = false } = {}) {
+function applyModeFields(mode, { catalogsFresh = false } = {}) {
   if (mode !== 'standard' && mode !== 'optimized') return;
   const optimized = mode === 'optimized';
   if (inputType.value === 'claude') {
-    if (!skipTools) refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : new Set());
+    if (!catalogsFresh) {
+      refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : new Set());
+      refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
+    }
     renderBuiltinChecklist(inputBuiltinsList, new Set());
-    renderPluginChecklist(inputPluginList, defaultPluginTicks());
-    repaintNewSessionBundleRows();
     if (inputStripLevel) inputStripLevel.value = optimized ? '2' : '0';
     if (inputAutoCompact) inputAutoCompact.checked = true;
     if (inputNoWire) inputNoWire.checked = false;
@@ -2252,7 +2253,7 @@ async function openDialog(prefill = null) {
   dialogHostSettings = settings;
   dialogHostAgentLib = agentLib || [];
   populateHostCatalogs(settings, dialogHostAgentLib);
-  if (inputMode) applyModeFields(inputMode.value);
+  if (inputMode) applyModeFields(inputMode.value, { catalogsFresh: true });
   populatePlacementOptions(boxes);
   inputPlacement.value = 'host';
   placementRow.style.display = showPlacementSelector(boxes) ? '' : 'none';
@@ -2281,7 +2282,7 @@ function populateHostCatalogs(settings, agentLib) {
 inputName.addEventListener('input', () => refreshNameValidity());
 inputType.addEventListener('change', () => applyTypeDefaults());
 inputType.addEventListener('change', () => {
-  if (inputMode) applyModeFields(inputMode.value, { skipTools: true });
+  if (inputMode) applyModeFields(inputMode.value, { catalogsFresh: true });
 });
 inputType.addEventListener('change', () => refreshNewSessionToolGate());
 inputPlacement.addEventListener('change', () => applyPlacement());

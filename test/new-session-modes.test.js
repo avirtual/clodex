@@ -75,9 +75,8 @@ const SET_PROXY_FN = extract(/\n(function setProxyControls\([\s\S]*?\n\})\n/, 's
 
 const DENY_CACHE = ['Bash', 'WebFetch', 'NotebookEdit'];
 
-function runApply(mode, { type = 'claude' } = {}) {
-  const calls = { tools: [], builtins: [], plugins: [], repaints: 0 };
-  const ticks = ['clodex-team'];
+function runApply(mode, { type = 'claude', catalogsFresh = false } = {}) {
+  const calls = { tools: [], builtins: [], plugins: 0, intents: 0 };
   const inputStripLevel = { value: 'untouched' };
   const inputAutoCompact = { checked: false };
   const inputNoWire = { checked: true };
@@ -89,18 +88,22 @@ function runApply(mode, { type = 'claude' } = {}) {
     getDefaultToolDenyCache: () => DENY_CACHE,
     renderBuiltinChecklist: (_el, s) => calls.builtins.push(s),
     inputBuiltinsList: {},
-    renderPluginChecklist: (_el, list) => calls.plugins.push(list),
-    inputPluginList: {},
-    defaultPluginTicks: () => ticks,
-    repaintNewSessionBundleRows: () => { calls.repaints++; },
+    // The SHIPPED refresh pair, stubbed: it is what fills
+    // `newSessionPluginsRendered` before drawing (t671, pinned in
+    // test/plugin-dialog-snapshot.test.js). A mode that drew the checklist
+    // directly would leave that snapshot unfilled.
+    refreshNewSessionPlugins: () => { calls.plugins++; return Promise.resolve(); },
+    refreshNewSessionIntents: () => { calls.intents++; },
     inputStripLevel, inputAutoCompact, inputNoWire,
     newSessionIsAgent: () => type === 'claude' || type === 'codex',
     inputProxyMode, inputProxyUrl,
   };
   const names = Object.keys(env);
-  new Function(...names, `${SET_PROXY_FN}\n${APPLY_FN}\napplyModeFields(${JSON.stringify(mode)});`)(
+  const opts = JSON.stringify({ catalogsFresh });
+  new Function(...names,
+    `${SET_PROXY_FN}\n${APPLY_FN}\napplyModeFields(${JSON.stringify(mode)}, ${opts});`)(
     ...names.map((n) => env[n]));
-  return { calls, ticks, inputStripLevel, inputAutoCompact, inputNoWire, inputProxyMode, inputProxyUrl };
+  return { calls, inputStripLevel, inputAutoCompact, inputNoWire, inputProxyMode, inputProxyUrl };
 }
 
 test('standard writes the CLI-as-is fields: nothing denied, stripping off', () => {
@@ -125,14 +128,31 @@ test('optimized writes the trimmed fields: the default deny set, strip level 2',
   assert.strictEqual(r.inputProxyMode.value, '', 'proxy back to the app default');
 });
 
-test('both modes reset the builtins and plugin checklists to their defaults', () => {
+test('both modes reset the builtins, and redraw plugins through the shipped refresh', async () => {
   for (const mode of ['standard', 'optimized']) {
     const r = runApply(mode);
+    // The intent refresh is chained off the plugin refresh's promise, so it
+    // lands a microtask later — asserting synchronously reads 0 every time.
+    await Promise.resolve();
     assert.deepStrictEqual([...r.calls.builtins[0]], [], `${mode}: no built-in agent denied`);
-    assert.strictEqual(r.calls.plugins[0], r.ticks,
-      `${mode}: the plugin ticks come from defaultPluginTicks(), not from a frozen list`);
-    assert.strictEqual(r.calls.repaints, 1, `${mode}: bundle rows repainted after the plugin redraw`);
+    // Not renderPluginChecklist directly: refreshNewSessionPlugins is what
+    // assigns `newSessionPluginsRendered` before it draws, and a draw that
+    // skips the fill silently drops a carried-forward plugin at save (t671).
+    assert.strictEqual(r.calls.plugins, 1, `${mode}: the plugin catalog is refreshed, not redrawn by hand`);
+    assert.strictEqual(r.calls.intents, 1, `${mode}: and the intent rows follow it, as everywhere else`);
   }
+});
+
+test('catalogsFresh skips the two refreshes the caller has already run', () => {
+  // Both flagged call sites run right after something that just refreshed the
+  // tool and plugin catalogs; re-running them here races the same redraw.
+  const r = runApply('optimized', { catalogsFresh: true });
+  assert.deepStrictEqual(r.calls.tools, [], 'no second tool redraw');
+  assert.strictEqual(r.calls.plugins, 0, 'no second plugin refresh');
+  // The anti-degenerate half: the flag must skip ONLY the catalog redraws, so
+  // name a field that must still be written.
+  assert.strictEqual(r.inputStripLevel.value, '2', 'the mode still writes its own fields');
+  assert.deepStrictEqual([...r.calls.builtins[0]], [], 'and still resets the builtins');
 });
 
 test('custom applies nothing at all — a hand-configured form is never overwritten', () => {
@@ -266,17 +286,17 @@ function slice(fromNeedle, toNeedle, what) {
 test("openDialog applies the mode AFTER populateHostCatalogs lands the deny cache", () => {
   const body = slice('async function openDialog(', '\nfunction populateHostCatalogs(', 'openDialog');
   const cat = body.indexOf('populateHostCatalogs(settings, dialogHostAgentLib)');
-  const apply = body.indexOf('applyModeFields(inputMode.value)');
+  const apply = body.indexOf('applyModeFields(inputMode.value,');
   assert.ok(cat > 0 && apply > 0, 'ENTER: both calls are in openDialog');
   assert.ok(cat < apply,
     'setDefaultToolDenyCache runs inside populateHostCatalogs — applying earlier trims against the PREVIOUS open\'s cache');
 });
 
-test("the type-change mode re-apply passes skipTools, and is registered after applyTypeDefaults'", () => {
+test("the type-change mode re-apply is catalogsFresh, and registered after applyTypeDefaults'", () => {
   const block = slice("inputName.addEventListener('input'", "inputPlacement.addEventListener('change'",
     'the dialog field listeners');
   const defaults = block.indexOf('applyTypeDefaults()');
-  const reapply = block.indexOf('applyModeFields(inputMode.value, { skipTools: true })');
+  const reapply = block.indexOf('applyModeFields(inputMode.value, { catalogsFresh: true })');
   assert.ok(defaults > 0 && reapply > 0, 'ENTER: both change listeners are registered here');
   assert.ok(defaults < reapply,
     'listeners fire in registration order, and applyTypeDefaults already redrew the tool checklist from this mode');
