@@ -73,21 +73,28 @@ const ISSUE_VIEW = {
   labels: [{ name: 'bug' }],
 };
 
-// Issue #11: a SHORT body, so the comments are what fills the reply. The two
+// Issue #11: a SHORT body, so the COMMENTS are what fills the reply. The two
 // fixtures differ in that one respect on purpose — with a body long enough to
 // spend the whole reply cap (#10) the comments are cut off entirely, so #10
 // cannot exercise the comment path at all and a comment renderer that never ran
 // would look pinned.
+//
+// Three long older comments, then a short newest one. The bulk is deliberate:
+// each is under the per-comment cap, so it is the REPLY cap they collectively
+// exceed. That is the only shape in which selecting oldest-first differs from
+// selecting newest-first, and it is the shape a busy issue actually has.
 const ISSUE_VIEW_SHORT = {
   number: 11,
-  title: 'short body, long comment',
+  title: 'short body, long comments',
   author: { login: 'dan' },
   createdAt: AGO_MIN(120),
   state: 'CLOSED',
   url: 'https://github.com/avirtual/clodex/issues/11',
   body: 'short.',
   comments: [
-    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'y'.repeat(5000) },
+    { author: { login: 'eve' }, createdAt: AGO_MIN(45), body: 'e'.repeat(1500) },
+    { author: { login: 'gus' }, createdAt: AGO_MIN(40), body: 'g'.repeat(1500) },
+    { author: { login: 'hal' }, createdAt: AGO_MIN(35), body: 'h'.repeat(1500) },
     { author: { login: 'fay' }, createdAt: AGO_MIN(10), body: 'the last word' },
   ],
   labels: [],
@@ -633,33 +640,40 @@ test('github: `issue 10` fences the body as untrusted, escapes it, and truncates
   } finally { cleanup(); }
 });
 
-test('github: a closed issue still reads, and one long comment cannot starve the rest', async () => {
+test('github: a closed issue still reads, and older bulk cannot starve the newest comment', async () => {
   const { cleanup } = boot();
   try {
-    // ENTER: the fixture's first comment is long enough to spend the whole
-    // reply on its own. Without the per-comment cap it would, and the second
-    // comment — the newest, the one an agent most needs — would not be there.
-    assert.ok(ISSUE_VIEW_SHORT.comments[0].body.length > 2000,
-      'ENTER: the first comment exceeds the per-comment cap');
+    // ENTER: the fixture is the shape the selection order actually depends on —
+    // every comment UNDER the per-comment cap, but collectively over the reply
+    // cap. If they fit, oldest-first and newest-first render identically and
+    // this test proves nothing about either.
+    const older = ISSUE_VIEW_SHORT.comments.slice(0, 3);
+    assert.ok(older.every((c) => c.body.length < 2000),
+      'ENTER: no single comment exceeds the per-comment cap, so that cap is not what binds');
+    assert.ok(older.reduce((n, c) => n + c.body.length, 0) > 3000,
+      'ENTER: together they exceed the whole reply cap, so something must be dropped');
 
     const replies = await fireFor('[agent:gh issue 11]');
     assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
     const [out] = replies;
 
-    assert.match(out, /#11 short body, long comment — @dan, opened 2h ago, CLOSED$/m,
+    assert.match(out, /#11 short body, long comments — @dan, opened 2h ago, CLOSED$/m,
       'a closed issue is returned, with its state saying so — not refused');
     assert.ok(!/labels:/.test(out), 'and no label suffix when it has none');
 
-    assert.ok(out.includes('-- comment by @eve, 45m ago --'), 'the older comment is attributed');
-    assert.ok(out.includes('-- comment by @fay, 10m ago --'), 'and so is the newest');
-    // THE assertion of this test. The older comment alone is longer than the
-    // whole reply cap, so a budget spent front-to-back — or a tail-cut of the
-    // assembled text — loses the newest comment, which on an issue is the one
-    // saying how it ended. It is kept and the long one is truncated instead.
-    assert.ok(out.includes('the last word'), 'the NEWEST comment survives the long older one');
-    assert.match(out, /truncated, \d+ more chars/, 'and the long one is cut, and says so');
-    assert.ok(out.indexOf('@eve') < out.indexOf('@fay'), 'rendered oldest-first despite being selected newest-first');
+    // THE assertion of this test: the NEWEST comment is present. Spending the
+    // budget oldest-first — or assembling everything and letting the reply cap
+    // tail-cut it — drops exactly this one, which on an issue is the one saying
+    // how it ended.
+    assert.ok(out.includes('-- comment by @fay, 10m ago --'), 'the newest comment is attributed');
+    assert.ok(out.includes('the last word'), 'and its text survived the older bulk');
 
+    // Its counterpart: the drop landed on the OLDEST, and was declared.
+    assert.ok(!out.includes('@eve'), 'the oldest comment is the one dropped');
+    assert.match(out, /\d+ earlier comment\(s\) omitted/, 'and the agent is told some were');
+
+    assert.ok(out.indexOf('@hal') < out.indexOf('@fay'),
+      'what survives renders oldest-first, though it was selected newest-first');
     assert.ok(out.includes('---- END UNTRUSTED ----'), 'the fence still closes around all of it');
     assert.ok(out.length <= 3000, 'and the whole reply stays inside the cap');
   } finally { cleanup(); }
