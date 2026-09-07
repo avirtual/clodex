@@ -113,7 +113,7 @@ function clip(text, max) {
 }
 
 function noteText(ev, topic) {
-  const head = `[ntfy] ${topic}: ${clip(ev.title, TITLE_MAX)}`.trimEnd();
+  const head = `[ntfy] ${topic}: ${clip(neuter(String(ev.title == null ? '' : ev.title).replace(/[\r\n]+/g, ' ')), TITLE_MAX)}`.trimEnd();
   return [head, '', UNTRUSTED_OPEN, clip(neuter(ev.message), MESSAGE_MAX), UNTRUSTED_END].join('\n');
 }
 
