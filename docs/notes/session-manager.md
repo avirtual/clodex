@@ -18,3 +18,11 @@ keeps its conversation and no transcript is copied. An id that does not exist
 anywhere is a different case — the CLI prints "No conversation found with session
 ID: <id>" and exits nonzero, which happens AFTER `create()` has returned, so a
 move cannot detect a bad resume id and report it.
+
+## _renameDirs
+
+`run/<name>/` is absent from the list on purpose. `cleanupClaudeHook` rm -rf's it
+on every exit path, including the kill `rename` performs, and `create()` rebuilds
+it under the new name — so moving it would race a delete that is already running.
+The six dirs listed are exactly those that live at the `~/.clodex` ROOT precisely
+because they must outlive the run dir.

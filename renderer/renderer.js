@@ -796,8 +796,6 @@ function startRename(item, nameEl, sessionName) {
     const snapBackend = item ? item.dataset.backend || null : null;
     window.api.renameSession(sessionName, wanted).then((res) => {
       if (!res || !res.ok) {
-        // `kept` means the record already carries the new name, so the row must
-        // not be relabelled back — only the respawn failed.
         if (!(res && res.kept)) newNameEl.textContent = current;
         showToast(`Rename failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name: sessionName });
         return;

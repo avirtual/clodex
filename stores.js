@@ -499,10 +499,6 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         this._save(all);
       }
     },
-    // In place, keeping the entry's position and every other field: the record
-    // IS the seat, so a remove+add would drop whatever a caller had not thought
-    // to copy across. `label` goes because it only ever existed to show a name
-    // other than this one.
     rename(name, newName) {
       const all = this._load();
       if (all.some(s => s.name === newName)) return false;

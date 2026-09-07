@@ -2736,9 +2736,6 @@ function createSessionManager(deps) {
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
-    // The six per-name dirs a rename must carry. run/<name>/ is deliberately
-    // absent: cleanupClaudeHook rm -rf's it on the kill below and create()
-    // rebuilds it under the new name, so moving it would only race that.
     _renameDirs(oldName, newName) {
       return [
         [path.join(REGISTRY_DIR, 'messages', oldName), path.join(REGISTRY_DIR, 'messages', newName)],
@@ -2765,9 +2762,6 @@ function createSessionManager(deps) {
       }
       const team = (() => { try { return resolveTeam(entry.cwd); } catch { return null; } })();
       if (team) {
-        // An unreadable board REFUSES, the way _roleInUse's catch does: a rename
-        // past a ticket whose assignee names the old seat strands that ticket,
-        // so "could not check" must not read as "nothing found".
         let ids;
         try { ids = this._openTicketsFor(team, name).map((t) => t.id); } catch { ids = ['<ticket check unavailable>']; }
         if (ids.length) {
@@ -2799,9 +2793,6 @@ function createSessionManager(deps) {
         }
         getPersistence().rename(name, newName);
         const sched = getRemindScheduler && getRemindScheduler();
-        // Through the STORE, not the scheduler: the rewrite changes no
-        // nextFireAt, so nothing needs re-arming, and the scheduler exposes no
-        // verb for it.
         if (sched && sched.store && typeof sched.store.renameAgent === 'function') {
           try { sched.store.renameAgent(name, newName); } catch {}
         }
@@ -2836,9 +2827,6 @@ function createSessionManager(deps) {
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
           );
         } catch (err) {
-          // Everything above already landed under the new name, so the record
-          // restored here must be the NEW one — a rollback to `name` would
-          // point the record at dirs that have moved.
           const kept = { ...entry, name: newName };
           delete kept.label;
           getPersistence().upsert(this._stripClaimedTree(kept));
