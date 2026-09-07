@@ -220,7 +220,11 @@ human `reason` string. Residual gap, accepted: a session that stays idle
 across the restart has nothing to warm-gate against, so it sits cold
 until its next organic turn. Operator-facing lifecycle (disarms, ping
 failures) logs to clodex.log under `keepwarm`; the per-ping firehose
-stays in the shadow log.
+stays in the shadow log. The same three events — an ok ping with its
+outcome (warm hit or cold re-cache, tokens, TTL slide), a failed ping,
+and the disarm — also broadcast a `keepwarm` ipc-message row into the IPC
+traffic tab. Skipped ticks get no row: the poll runs every 60s and
+declines most of them, so a row per tick would be noise, not signal.
 
 ## 7. Wirescope window & settings
 

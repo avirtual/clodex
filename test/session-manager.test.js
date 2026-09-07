@@ -562,6 +562,66 @@ test('_onHoldLifecycle: re-anchor re-persists, no disarm erases an intent, only 
     'no disarm cause writes to persistence at all — a failed ping is not evidence about the setting');
 });
 
+// A hold pings roughly hourly and, before this, a SUCCESSFUL ping was logged
+// nowhere and broadcast nowhere — the operator watched a seat's cache reset with
+// no way to tell a ping had fired, let alone whether it landed warm (one cached
+// read) or cold (a full re-cache, ~120 pings' worth of tokens). The row carries
+// the outcome, not just the event, because that distinction is the whole reason
+// to look.
+//
+// The bodies are asserted as LITERALS. The numbers are the point of the row, so
+// a test that rebuilt the expected string with the same k-formatting the code
+// uses would assert only that the code agrees with itself, and would have
+// nothing to say about the format being wrong in the same way twice.
+test('_onHoldLifecycle: every non-skipped ping and the disarm broadcast a keepwarm row', () => {
+  const rows = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: () => null, setHoldUntil: () => {}, setKeepWarmAlways: () => {} }),
+    log: { info: () => {}, warn: () => {} },
+  });
+  m._broadcast = (channel, msg) => rows.push([channel, msg]);
+  m.sessions.set('a', { name: 'a', sessionId: 'sid-1', _holdRearmed: true });
+
+  // Warm: the cache was READ, so cache_creation is 0 and the TTL slid a full
+  // hour off a handful of tokens. `usage` is the wire shape (wire/hold.js
+  // assembles it with nulls for absent fields), not a convenience object.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'ping', pings: 7,
+    result: { ok: true, cache_hit: true, ttl_s: 3600,
+      usage: { input_tokens: 4, output_tokens: 1,
+        cache_read_input_tokens: 184_200, cache_creation_input_tokens: 0 } } });
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', to: 'a',
+    body: 'keep-warm ping #7 for a: warm — 184.2k cached, 0 re-cached, cache slid 60m' }]],
+    'ENTER: the warm ping broadcast one row — the skipped assertion below is vacuous otherwise');
+
+  // A skipped tick is the every-60s poll DECLINING (no credential, prefix not
+  // warm, too soon). It is ok:true and it is not a ping, so a row per tick would
+  // be pure noise — the one thing this must not add.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'ping', pings: 7,
+    result: { ok: true, warmed: false, skipped: 'no-credential' } });
+  assert.strictEqual(rows.length, 1, 'a declined tick is not a ping and gets no row');
+
+  rows.length = 0;
+  m._onHoldLifecycle({ session: 'sid-1', event: 'ping', pings: 8,
+    result: { ok: false, status_code: 401, reason: 'rejected: 401 unauthorized' } });
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', to: 'a',
+    body: 'keep-warm ping for a FAILED: rejected: 401 unauthorized' }]]);
+
+  rows.length = 0;
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', to: 'a',
+    body: 'keep-warm stopped for a (max-pings, 24 pings)' }]]);
+
+  // An unmapped wire session (a child claude, or an id that rotated under a
+  // /clear) still gets a row under the raw sid: the ping happened and the tokens
+  // were spent whether or not a seat name can be resolved for it.
+  rows.length = 0;
+  m._onHoldLifecycle({ session: 'sid-stray', event: 'ping', pings: 1,
+    result: { ok: true, cache_hit: false, ttl_s: 3600,
+      usage: { cache_read_input_tokens: 0, cache_creation_input_tokens: 184_200 } } });
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'sid-stray', to: 'sid-stray',
+    body: 'keep-warm ping #1 for sid-stray: COLD — 0 cached, 184.2k re-cached, cache slid 60m' }]]);
+});
+
 // The end-to-end claim the ticket is about, driven through the real seams rather
 // than asserted on source text: a perpetual seat strikes out on a transient 401,
 // and its persisted flag both SURVIVES that and is re-armed on the next

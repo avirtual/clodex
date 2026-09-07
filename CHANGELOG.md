@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Keep-warm pings now show in the IPC traffic tab with their outcome (warm hit or cold re-cache, tokens, TTL), as do ping failures and the hold stopping.
+
 ## 5.35.3 — 2026-09-07
 
 - New Session opens with Name, Type, Folder and a Mode selector (Clodex optimized, the default, trims the tool roster and enables wire stripping; Standard runs the CLI untouched); everything else now lives under an Advanced section, opened automatically when editing a template or reopening a configured seat.
