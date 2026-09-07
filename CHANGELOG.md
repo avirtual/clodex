@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- New Session dialog: tool, skill and agent checkboxes sit beside their names again instead of stacking above them.
+
 ## 5.35.6 — 2026-09-07
 
 - The quota chip now shows every window at a glance — `5h:0% | W:76% | F:86%` (5-hour, week all models, week Fable) — with per-window resets in its tooltip.
