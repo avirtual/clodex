@@ -64,6 +64,148 @@ _AUTH_BOOTSTRAP_RESET = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_RESET", "3600"
 _AUTH_BOOTSTRAP = {"attempts": 0, "last_ts": 0.0, "inflight": False,
                    "last_reason": None, "spawns": 0}
 
+# PROACTIVE AUTH REFRESH (2026-09-07). The bootstrap above is REACTIVE: it fires
+# from this module's hold driver after a replay 401s. A consumer that runs its
+# own holds (clodex ports pinger+hold and arms nothing here) never reaches that
+# trigger, so the box's OAuth ACCESS token (~8h) lapses on an idle night, every
+# consumer-side ping correctly declines a dead bearer, and the prefix goes cold
+# — measured 2026-09-07: 10 declines, 0 sends, coordinator prefix expired 04:26:10,
+# the first real CLI turn refreshed the keychain at 04:26:13. Only a CLI-originated
+# request performs the refresh-token exchange (different host, rotating refresh
+# token — the CLI must stay the sole keychain writer), so any hold that outlives
+# one access-token lifetime needs one CLI turn per lifetime. Per ACCOUNT, not per
+# session: one throwaway one-shot refreshes the keychain for every seat.
+#
+# So: read ONLY `expiresAt` off the CLI's credential store (never the token) on
+# the hold-loop cadence, and once it is past (plus LEAD, default 0 = fire on the
+# first tick after expiry: wire-probed 2026-09-07, a CLI turn with 2h20m left on
+# the token did NOT refresh it, so pre-expiry firing buys nothing)
+# spend the existing bootstrap turn. Unconditional on purpose (~3 haiku turns a
+# day, ~$0.04 each — the one-shot still carries a ~20k-tok system prompt;
+# gating on "anyone holding" would couple this to consumer state the proxy
+# can't see). Bounded by the same budget/cooldown as the reactive
+# path. Success = expiresAt moved forward on re-read; a lapsed token that no
+# spawn moves is surfaced as `stalled` (refresh token dead → real login needed).
+WARMTH_AUTH_REFRESH = os.environ.get(
+    "WARMTH_AUTH_REFRESH", "1") not in ("0", "no", "off", "false")
+WARMTH_AUTH_REFRESH_LEAD = int(os.environ.get("WARMTH_AUTH_REFRESH_LEAD", "0"))
+_CLI_CRED_FILE = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+_CLI_KEYCHAIN_SERVICE = "Claude Code-credentials"
+_AUTH_REFRESH = {"expires_at": None, "checked_ts": 0.0, "read_error": None,
+                 "last_trigger_ts": 0.0, "last_outcome": None, "refreshed": 0}
+
+
+def _cli_token_expiry():
+    """`expiresAt` (epoch SECONDS) of the CLI's OAuth access token, or None.
+    Reads the plaintext file if present, else the login keychain — the same two
+    stores, same order, the CLI itself uses. Returns ONLY the expiry; the token
+    string is dropped on the floor here and never logged, stored, or returned.
+    A locked keychain would block on a GUI dialog, hence the timeout."""
+    import json
+    import subprocess
+    raw = None
+    try:
+        if os.path.exists(_CLI_CRED_FILE):
+            with open(_CLI_CRED_FILE, encoding="utf-8") as f:
+                raw = json.load(f)
+    except Exception:
+        raw = None
+    if raw is None:
+        try:
+            out = subprocess.run(
+                ["/usr/bin/security", "find-generic-password",
+                 "-s", _CLI_KEYCHAIN_SERVICE, "-w"],
+                capture_output=True, text=True, timeout=5, check=True)
+            raw = json.loads(out.stdout)
+        except Exception as e:
+            raise RuntimeError(f"credential store unreadable: {type(e).__name__}") from e
+    o = (raw or {}).get("claudeAiOauth") or {}
+    exp = o.get("expiresAt")
+    if not isinstance(exp, (int, float)):
+        return None
+    return exp / 1000.0    # the CLI writes epoch milliseconds
+
+
+def _auth_refresh_decision(expires_at, now=None, state=None, lead=None):
+    """Should this tick spend a refresh turn? PURE. Returns (go, reason).
+    Only answers the token-side question; the bootstrap budget/cooldown is
+    still applied by _bootstrap_decision when the spawn is actually requested."""
+    now = now or time.time()
+    lead = WARMTH_AUTH_REFRESH_LEAD if lead is None else lead
+    if not WARMTH_AUTH_REFRESH:
+        return False, "disabled (WARMTH_AUTH_REFRESH=0)"
+    if expires_at is None:
+        return False, "no expiry readable"
+    if expires_at - now > lead:
+        return False, f"token valid for {int(expires_at - now)}s"
+    return True, "token lapsed" if expires_at <= now else "token within lead"
+
+
+async def _auth_refresh_tick(now=None, reader=None, bootstrap=None):
+    """One pass of the proactive refresh: read expiry → maybe spawn → verify.
+    `reader`/`bootstrap` are injection points for the offline suite."""
+    now = now or time.time()
+    reader = reader or _cli_token_expiry
+    bootstrap = bootstrap or _auth_bootstrap
+    st = _AUTH_REFRESH
+    try:
+        exp = await asyncio.to_thread(reader)
+        st["read_error"] = None
+    except Exception as e:
+        st["read_error"] = str(e)
+        exp = None
+    st["expires_at"] = exp
+    st["checked_ts"] = now
+    go, why = _auth_refresh_decision(exp, now)
+    if not go:
+        return why
+    go2, why2 = _bootstrap_decision(None, now)
+    if not go2:
+        st["last_outcome"] = f"blocked: {why2}"
+        return st["last_outcome"]
+    st["last_trigger_ts"] = now
+    print(f"[auth] refresh: CLI access {why} (expiresAt "
+          f"{time.strftime('%H:%M:%S', time.localtime(exp))}); spawning a "
+          f"bootstrap turn so the CLI performs the refresh-token exchange", flush=True)
+    await bootstrap(None)
+    try:
+        new_exp = await asyncio.to_thread(reader)
+    except Exception as e:
+        new_exp = None
+        st["read_error"] = str(e)
+    st["expires_at"] = new_exp
+    if new_exp and (exp is None or new_exp > exp):
+        st["refreshed"] += 1
+        st["last_outcome"] = "refreshed"
+        print(f"[auth] refresh: token expiresAt moved to "
+              f"{time.strftime('%H:%M:%S', time.localtime(new_exp))}", flush=True)
+    else:
+        st["last_outcome"] = "not refreshed"
+        print("[auth] refresh: expiresAt did NOT move after the bootstrap turn "
+              "(refresh token dead? CLI not on PATH?) — will retry within budget",
+              flush=True)
+    return st["last_outcome"]
+
+
+def _auth_refresh_snapshot(now=None):
+    now = now or time.time()
+    st = dict(_AUTH_REFRESH)
+    exp = st["expires_at"]
+    lapsed = exp is not None and exp <= now
+    bst = _bootstrap_snapshot(now)
+    return {"enabled": WARMTH_AUTH_REFRESH, "lead_s": WARMTH_AUTH_REFRESH_LEAD,
+            "token_expires_at": exp,
+            "token_expires_in_s": round(exp - now, 1) if exp is not None else None,
+            "token_lapsed": lapsed,
+            "checked_ts": st["checked_ts"] or None,
+            "read_error": st["read_error"],
+            "last_trigger_ts": st["last_trigger_ts"] or None,
+            "last_outcome": st["last_outcome"],
+            "refreshed": st["refreshed"],
+            # lapsed AND nothing left to try: the refresh token itself is dead
+            # (or `claude` is not spawnable) — a human login is the only fix
+            "stalled": bool(lapsed and bst["budget_spent"])}
+
 
 def _bootstrap_decision(account, now=None, state=None):
     """May the proxy spend a bootstrap turn right now? PURE (offline-testable
@@ -154,8 +296,13 @@ async def _auth_bootstrap(account=None):
         # prompt must come BEFORE --tools: the flag is variadic and would
         # swallow a trailing positional as another tool name (the CLI then
         # exits 1 with "Input must be provided" before any API call)
+        # a managed (vendored) instance inherits the host app's PATH, which
+        # need not include the CLI's install dir — fall back to its default
+        import shutil
+        claude_bin = (shutil.which("claude")
+                      or os.path.join(os.path.expanduser("~"), ".local", "bin", "claude"))
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", "Reply with exactly: ok",
+            claude_bin, "-p", "Reply with exactly: ok",
             "--model", WARMTH_AUTH_BOOTSTRAP_MODEL,
             "--session-id", sid,
             "--tools", "Bash",
@@ -472,6 +619,13 @@ async def _hold_loop():
             await _hold_tick()
         except Exception as e:
             print(f"[hold] tick error: {e}", flush=True)
+        # the proactive refresh rides the same cadence but is independent of
+        # any proxy-side hold being armed (see WARMTH_AUTH_REFRESH)
+        if WARMTH_AUTH_REFRESH and WARMTH_AUTH_BOOTSTRAP:
+            try:
+                await _auth_refresh_tick()
+            except Exception as e:
+                print(f"[auth] refresh tick error: {e}", flush=True)
 
 
 async def _start_hold_loop():
@@ -479,7 +633,10 @@ async def _start_hold_loop():
         asyncio.create_task(_hold_loop())
         print(f"[hold] driver up: interval={WARMTH_HOLD_INTERVAL}s "
               f"margin={WARMTH_HOLD_MARGIN}s clamp={WARMTH_HOLD_MAX_HOURS}h "
-              f"max_pings={WARMTH_HOLD_MAX_PINGS}", flush=True)
+              f"max_pings={WARMTH_HOLD_MAX_PINGS} "
+              f"auth_refresh={'on' if WARMTH_AUTH_REFRESH and WARMTH_AUTH_BOOTSTRAP else 'off'}"
+              f"{f' lead={WARMTH_AUTH_REFRESH_LEAD}s' if WARMTH_AUTH_REFRESH else ''}",
+              flush=True)
 
 
 def _hold_snapshot():

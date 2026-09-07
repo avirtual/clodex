@@ -74,6 +74,11 @@ def _identity():
             "warmth": warmth_mod.WARMTH_LEDGER,
             "ping": pinger_mod.WARMTH_PINGER,
             "hold": hold_mod.WARMTH_HOLD,
+            # proactive CLI OAuth refresh: the proxy spends a bootstrap turn
+            # once the access token lapses so consumer-side holds (which
+            # decline a dead bearer) keep pinging through idle nights. Account
+            # scoped; readout on /_status proxy.auth_refresh.
+            "auth_refresh": hold_mod.WARMTH_AUTH_REFRESH and hold_mod.WARMTH_AUTH_BOOTSTRAP,
             "stats": True,                # /_status is always served
             "session_view": True,         # /_session HTML
             "context_view": True,         # /_context tool-roster JSON
@@ -381,6 +386,9 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
                      # a hold can read `armed:true` while the bootstrap that
                      # would revive its stale auth is spent — surface that
                      "auth_bootstrap": hold_mod._bootstrap_snapshot(now),
+                     # proactive OAuth refresh: `stalled` = lapsed token that
+                     # no bootstrap could move → a human login is owed
+                     "auth_refresh": hold_mod._auth_refresh_snapshot(now),
                      "tracked_last_requests": len(last_real),
                      "holds_armed": len(holds),
                      "sessions_total": sessions_total,

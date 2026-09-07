@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Bundled wirescope updated to v0.6.59: keep-warm holds survive an OAuth token lapse.** The proxy now spends a cheap one-shot turn after the access token expires so idle seats refresh their credential; before this, every hold on an idle box died at the first lapse (04:26 this morning) and the next turn paid a full cold re-cache.
+
 ## 5.35.0 — 2026-09-07
 
 - The drawer's Console tab works from the browser: a seat's Bash command output and live preview are read-only reads of that seat's own records, and a web client that can already open a shell on the box could always see the same thing.
