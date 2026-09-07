@@ -1778,7 +1778,7 @@ function populateChecklistsFromCatalogs(cat) {
   renderInjectChecklist(inputInjectSkillsList, new Set(), null, newSessionSeat());
   renderSkillChecklist(inputSkillsList, [], new Set());
   setClaudeToolsCache(cat.claudeTools || []);
-  renderToolChecklist(inputToolsList, new Set());
+  renderToolChecklist(inputToolsList, modeToolDenySet());
   renderBuiltinChecklist(inputBuiltinsList, new Set());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
@@ -1919,7 +1919,6 @@ const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
 const envSection = document.getElementById('env-section');
 const advancedSection = document.getElementById('advanced-section');
-const modeRow = document.getElementById('mode-row');
 const inputMode = document.getElementById('input-mode');
 const modeHint = document.getElementById('mode-hint');
 
@@ -1964,6 +1963,11 @@ if (advancedSection) {
       if (inputMode && inputMode.value !== 'custom') setModeSelect('custom');
     });
   }
+  advancedSection.addEventListener('click', (e) => {
+    if (!e.target || typeof e.target.closest !== 'function') return;
+    if (!e.target.closest('.popover-bulk [data-bulk]')) return;
+    if (inputMode && inputMode.value !== 'custom') setModeSelect('custom');
+  });
 }
 if (inputMode) {
   inputMode.addEventListener('change', () => {
@@ -2231,7 +2235,7 @@ async function openDialog(prefill = null) {
     if (sec) sec.open = false;
   }
   setModeSelect(prefill ? 'custom' : 'optimized');
-  if (advancedSection) advancedSection.open = !!prefill || dialogMode !== 'create';
+  if (advancedSection) advancedSection.open = !!prefill;
   if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
   refreshEnvHint();
   applyTypeDefaults();

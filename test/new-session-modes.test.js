@@ -203,8 +203,9 @@ function wireDialog() {
   const names = Object.keys(env);
   new Function(...names, `${SET_MODE_FN}\n${DRIFT_WIRING}\n${SELECT_WIRING}\nreturn setModeSelect;`)(
     ...names.map((n) => env[n]));
-  assert.deepStrictEqual(listeners.advanced.map(([ev]) => ev), ['input', 'change'],
-    'ENTER: both edit events inside Advanced are listened for — a checkbox fires change, a text field fires input');
+  assert.deepStrictEqual(listeners.advanced.map(([ev]) => ev), ['input', 'change', 'click'],
+    'ENTER: all three edit signals inside Advanced are listened for — a text field fires input, a '
+    + 'checkbox fires change, and a bulk toggle fires only click (setChecklistAll assigns .checked directly)');
   assert.deepStrictEqual(listeners.mode.map(([ev]) => ev), ['change'],
     'ENTER: the select is listened for');
   return { listeners, inputMode, advancedSection, customOpt, applied };
@@ -221,6 +222,32 @@ test('editing anything inside Advanced flips the selector to Custom and reveals 
     assert.deepStrictEqual(d.applied, [],
       'drift must NOT re-apply a preset — that would undo the edit that caused it');
   }
+});
+
+test("a Tools/Skills bulk toggle drifts too — it fires only click", () => {
+  const d = wireDialog();
+  const click = d.listeners.advanced.find(([ev]) => ev === 'click')[1];
+  const asked = [];
+  click({ target: { closest: (sel) => { asked.push(sel); return { dataset: { bulk: 'all' } }; } } });
+  assert.deepStrictEqual(asked, ['.popover-bulk [data-bulk]'],
+    'ENTER: the listener matches the selector wireBulkToggles renders, not the button label');
+  assert.strictEqual(d.inputMode.value, 'custom', '"Check All" is a hand edit like any other');
+  assert.strictEqual(d.customOpt.hidden, false, 'and Custom becomes selectable');
+  assert.deepStrictEqual(d.applied, [], 'no re-apply — that would undo the bulk edit');
+});
+
+test('a click on anything else inside Advanced does NOT drift', () => {
+  // The negative half: without it the subject above passes on a listener that
+  // flips for EVERY click, which would drift on opening a <summary>.
+  const d = wireDialog();
+  const click = d.listeners.advanced.find(([ev]) => ev === 'click')[1];
+  click({ target: { closest: () => null } });
+  assert.strictEqual(d.inputMode.value, 'optimized', 'expanding a section is not an edit');
+  assert.strictEqual(d.customOpt.hidden, true, 'and Custom stays hidden');
+  // A synthetic event with no element target must not throw either.
+  click({ target: {} });
+  click({});
+  assert.strictEqual(d.inputMode.value, 'optimized');
 });
 
 test('choosing a named mode again re-applies it and re-hides Custom', () => {
@@ -250,23 +277,25 @@ const OPEN_STMTS = extract(
   "openDialog's mode reset",
 );
 
-function runOpen(prefill, dialogMode) {
+function runOpen(prefill) {
   const seen = [];
   const advancedSection = { open: 'untouched' };
-  new Function('setModeSelect', 'advancedSection', 'prefill', 'dialogMode', OPEN_STMTS)(
-    (m) => seen.push(m), advancedSection, prefill, dialogMode);
+  new Function('setModeSelect', 'advancedSection', 'prefill', OPEN_STMTS)(
+    (m) => seen.push(m), advancedSection, prefill);
   return { mode: seen[0], open: advancedSection.open };
 }
 
 test('a fresh create-mode open defaults to optimized with Advanced collapsed', () => {
-  assert.deepStrictEqual(runOpen(null, 'create'), { mode: 'optimized', open: false });
+  assert.deepStrictEqual(runOpen(null), { mode: 'optimized', open: false });
 });
 
-test('a prefill or a non-create open shows Custom / opens Advanced instead', () => {
-  assert.deepStrictEqual(runOpen({ name: 'adopted' }, 'create'), { mode: 'custom', open: true },
+test('a prefill open shows Custom and expands Advanced', () => {
+  assert.deepStrictEqual(runOpen({ name: 'adopted' }), { mode: 'custom', open: true },
     'an adopt prefill arrives with the form already populated');
-  assert.strictEqual(runOpen(null, 'template').open, true,
-    'editing a template must show what is set');
+  // openDialog cannot be reached in template mode — setDialogMode('create') runs
+  // unconditionally above this. The template editor gets Custom + Advanced open
+  // from its own setModeSelect('custom') call, pinned by the populate subject
+  // below; asserting it here would pin a state production cannot produce.
 });
 
 // --- the two order-bound call sites --------------------------------------

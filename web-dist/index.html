@@ -36372,7 +36372,7 @@ ${detail}` });
         renderInjectChecklist(inputInjectSkillsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         renderSkillChecklist(inputSkillsList, [], /* @__PURE__ */ new Set());
         setClaudeToolsCache(cat.claudeTools || []);
-        renderToolChecklist(inputToolsList, /* @__PURE__ */ new Set());
+        renderToolChecklist(inputToolsList, modeToolDenySet());
         renderBuiltinChecklist(inputBuiltinsList, /* @__PURE__ */ new Set());
         refreshNewSessionExecCommands();
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
@@ -36494,7 +36494,6 @@ ${detail}` });
       var otherSection = document.getElementById("other-section");
       var envSection = document.getElementById("env-section");
       var advancedSection = document.getElementById("advanced-section");
-      var modeRow = document.getElementById("mode-row");
       var inputMode = document.getElementById("input-mode");
       var modeHint = document.getElementById("mode-hint");
       var MODE_HINTS = {
@@ -36534,6 +36533,11 @@ ${detail}` });
             if (inputMode && inputMode.value !== "custom") setModeSelect("custom");
           });
         }
+        advancedSection.addEventListener("click", (e) => {
+          if (!e.target || typeof e.target.closest !== "function") return;
+          if (!e.target.closest(".popover-bulk [data-bulk]")) return;
+          if (inputMode && inputMode.value !== "custom") setModeSelect("custom");
+        });
       }
       if (inputMode) {
         inputMode.addEventListener("change", () => {
@@ -36800,7 +36804,7 @@ ${detail}` });
           if (sec) sec.open = false;
         }
         setModeSelect(prefill ? "custom" : "optimized");
-        if (advancedSection) advancedSection.open = !!prefill || dialogMode !== "create";
+        if (advancedSection) advancedSection.open = !!prefill;
         if (inputEnv) inputEnv.value = "";
         refreshEnvHint();
         applyTypeDefaults();
