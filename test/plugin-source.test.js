@@ -405,10 +405,16 @@ async function buildLibraryTarball(sha, dirs) {
 }
 
 test('fetchLibraryCatalog lists only the top-level dirs holding a valid manifest', async () => {
+  // `_template`'s manifest carries a VALID id on purpose. The scaffold in the
+  // real repo is a working plugin skeleton, so its id passes isValidPluginId and
+  // the id rule cannot be what keeps it out — only the skip by NAME can. A
+  // fixture that gave it an underscore id would be rejected by the id check and
+  // stay green with the name skip deleted, which is exactly what it must catch.
   const bytes = await buildLibraryTarball('abc1234', {
-    _template: { 'manifest.json': '{"id":"_template","name":"Template","version":"0.0.0"}' },
+    _template: { 'manifest.json': '{"id":"template-plugin","name":"Template","version":"0.0.0"}' },
     notes: { 'manifest.json': '{"id":"notes","name":"Notes","version":"1.2.0","announce":"Takes notes."}' },
     docs: { 'README.md': 'not a plugin' },
+    '.github': { 'CODEOWNERS': 'not a plugin either' },
   });
   const source = createPluginSource({ fs, path, os, execFile: realExecFile, https: mkLibraryHttps(bytes) });
   const r = await source.fetchLibraryCatalog({ repo: 'avirtual/clodex-plugins' });
@@ -417,7 +423,7 @@ test('fetchLibraryCatalog lists only the top-level dirs holding a valid manifest
     'ENTER: the one valid plugin survived the enumeration, so the absences below are about the skips');
   assert.deepStrictEqual(r.plugins, [{
     id: 'notes', name: 'Notes', version: '1.2.0', subpath: 'notes', announce: 'Takes notes.',
-  }], '_template is a scaffold whose id is not a valid plugin id, and docs/ carries no manifest');
+  }], 'the scaffold is skipped by name even though its manifest is installable, and docs/ and .github/ carry none');
   assert.strictEqual(r.commit, 'abc1234');
   assert.strictEqual(r.repo, 'avirtual/clodex-plugins');
 });
