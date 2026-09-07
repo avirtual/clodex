@@ -210,7 +210,7 @@ function createPluginLoader(deps) {
     : [{ id: 'core', dir: pluginsDir, label: 'Built in' }]
   ).filter((r) => r && r.dir);
 
-  const source = createPluginSource({ fs, path, https, execFile });
+  const source = createPluginSource({ fs, path, https, execFile, os });
 
   const logIt = (msg) => { try { log.info('plugin', String(msg)); } catch {} };
 
@@ -933,6 +933,35 @@ function createPluginLoader(deps) {
     return { ok: true, id };
   }
 
+  async function libraryCatalog(opts) {
+    const cat = await source.fetchLibraryCatalog(opts || {});
+    if (!cat.ok) return cat;
+    const root = ensureUserRoot();
+    const recs = discover();
+    const core = new Set(recs.filter((rec) => rec.root === 'core').map((rec) => rec.id));
+    const versions = new Map(recs.map((rec) => [rec.id, rec.manifest.version || null]));
+    const bare = { installed: 'none', installedCommit: null, installedRepo: null, installedVersion: null, upToDate: false };
+    const plugins = cat.plugins.map((p) => {
+      if (core.has(p.id)) return { ...p, ...bare, installed: 'core' };
+      if (!root) return { ...p, ...bare };
+      const target = path.join(root, p.id);
+      let lst = null;
+      try { lst = fs.lstatSync(target); } catch { lst = null; }
+      if (!lst) return { ...p, ...bare };
+      const sidecar = lst.isSymbolicLink() ? null : source.readSidecar(target);
+      if (!sidecar || !sidecar.repo) return { ...p, ...bare, installed: 'user-authored' };
+      return {
+        ...p,
+        installed: 'fetched',
+        installedCommit: sidecar.commit == null ? null : sidecar.commit,
+        installedRepo: sidecar.repo,
+        installedVersion: versions.get(p.id) || null,
+        upToDate: sidecar.repo === cat.repo && commitsMatch(sidecar.commit, cat.commit),
+      };
+    });
+    return { ok: true, repo: cat.repo, ref: cat.ref, commit: cat.commit, plugins };
+  }
+
   function unregisterUserPlugin(id) {
     const name = String(id || '');
     if (!isValidPluginId(name)) return { ok: false, error: `invalid plugin id: ${JSON.stringify(name)}` };
@@ -1063,6 +1092,7 @@ function createPluginLoader(deps) {
     validateCandidate, registerUserPlugin, unregisterUserPlugin, writeBundleFile,
     status, noteRendererActivation, clearFailures, isQuarantined,
     resolveSource, installFromSource, resolveUpdate, applyUpdate, removeSourcePlugin,
+    libraryCatalog,
     _validateManifest: validateManifest,
     _isNewerVersion: isNewerVersion,
     _quarantineAfter: QUARANTINE_AFTER,

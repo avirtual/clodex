@@ -1124,6 +1124,16 @@
            the WRONG machine's folder. Filled by renderer.js from the engine's
            read-only listing; never created in Electron, which reveals instead. -->
       <div id="plugins-folder" class="hidden"></div>
+      <div id="plugins-library" class="hidden">
+        <!-- Surface-neutral on purpose: the browser frontend and the desktop share
+             this markup, and "the machine running Clodex" is the true sentence on
+             both, where "this machine" would be a lie in a browser. -->
+        <div id="plugins-library-head" class="plugin-row-note">Published in github.com/avirtual/clodex-plugins. Installing one runs its code with Clodex's full authority, on the machine running Clodex.</div>
+        <div id="plugins-library-list"></div>
+        <div class="plugin-settings-actions">
+          <button id="btn-plugins-library-cancel" class="secondary" type="button">Cancel</button>
+        </div>
+      </div>
       <div id="plugins-source" class="hidden">
         <label id="plugins-source-label" for="plugins-source-spec">Public GitHub repo</label>
         <input id="plugins-source-spec" type="text" spellcheck="false" placeholder="https://github.com/owner/repo/tree/main/folder — or owner/repo@ref:folder" />
@@ -1138,6 +1148,7 @@
       </div>
       <div class="dialog-actions">
         <button id="btn-plugins-register" class="secondary" type="button" title="Pick a plugin folder anywhere on disk and link it into ~/.clodex/plugins — the folder stays where it is">Register Plugin…</button>
+        <button id="btn-plugins-library" class="secondary" type="button" title="List the plugins published in github.com/avirtual/clodex-plugins and install one with a click — it lands turned off">Browse the Clodex library…</button>
         <button id="btn-plugins-source" class="secondary" type="button" title="Fetch a plugin from a public GitHub repo into ~/.clodex/plugins — it lands turned off">Install from GitHub…</button>
         <button id="btn-plugins-reveal" class="secondary" type="button" title="Open ~/.clodex/plugins in Finder — created if it does not exist yet">Open Plugins Folder</button>
         <button id="btn-plugins-rescan" class="secondary" type="button" title="Look for plugins added or removed since Clodex started">Re-scan</button>

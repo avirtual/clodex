@@ -66,6 +66,46 @@ function updatePreviewLines(resolved) {
   ];
 }
 
+const LIBRARY_REASONS = {
+  core: 'This plugin is built into Clodex — the copy in the library cannot replace it.',
+  userAuthored: 'A folder of that name in your plugins folder is yours, not from a source — move it aside first.',
+  upToDate: 'Already installed at the commit the library holds.',
+  otherRepo: 'Installed from a different repo — remove it before installing the library copy.',
+};
+
+function libraryRowAction(row, opts) {
+  const r = row || {};
+  const repo = (opts && opts.repo) || null;
+  if (r.installed === 'core') return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.core, action: null };
+  if (r.installed === 'user-authored') {
+    return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.userAuthored, action: null };
+  }
+  if (r.installed === 'fetched') {
+    if (repo && r.installedRepo && r.installedRepo !== repo) {
+      return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.otherRepo, action: null };
+    }
+    if (r.upToDate) return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.upToDate, action: null };
+    return { label: 'Update', enabled: true, reason: '', action: 'update' };
+  }
+  return { label: 'Install', enabled: true, reason: '', action: 'install' };
+}
+
+function librarySpec(repo, subpath) {
+  const r = repo == null ? '' : String(repo);
+  const s = subpath == null ? '' : String(subpath);
+  return s ? `${r}:${s}` : r;
+}
+
+function libraryRowLines(row) {
+  const r = row || {};
+  const id = r.id == null ? '' : String(r.id);
+  const version = r.version ? `v${r.version}` : 'no version';
+  const lines = [`${r.name || id} — ${id} ${version}`];
+  if (r.announce) lines.push(String(r.announce));
+  if (r.subpath) lines.push(`${r.subpath}/`);
+  return lines;
+}
+
 function installState({ resolved, fieldValue, mode } = {}) {
   if (!resolved) return { enabled: false, reason: INSTALL_REASONS.unresolved };
   if (!resolved.ok) return { enabled: false, reason: INSTALL_REASONS.failed };
@@ -81,6 +121,10 @@ function installState({ resolved, fieldValue, mode } = {}) {
 
 module.exports = {
   INSTALL_REASONS,
+  LIBRARY_REASONS,
+  libraryRowAction,
+  libraryRowLines,
+  librarySpec,
   shortCommit,
   refLabel,
   sourceLabel,

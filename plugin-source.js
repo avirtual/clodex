@@ -1,6 +1,9 @@
 'use strict';
 
+const { isValidPluginId } = require('./plugin-api');
+
 const SIDECAR_NAME = '.clodex-source.json';
+const LIBRARY_REPO = 'avirtual/clodex-plugins';
 
 function parseSourceSpec(text) {
   const raw = typeof text === 'string' ? text.trim() : '';
@@ -64,7 +67,7 @@ function encodeRefPath(ref) {
 }
 
 function createPluginSource(deps) {
-  const { fs, path, https, execFile } = deps || {};
+  const { fs, path, https, execFile, os } = deps || {};
 
   function fetchTarball({ repo, ref }, destFile, { maxBytes = 20 * 1024 * 1024 } = {}) {
     if (!https) return Promise.resolve({ ok: false, error: 'no https dependency injected' });
@@ -149,6 +152,53 @@ function createPluginSource(deps) {
     });
   }
 
+  async function fetchLibraryCatalog({ repo = LIBRARY_REPO, ref = null } = {}) {
+    const parsed = parseSourceSpec(String(repo == null ? '' : repo));
+    if (!parsed.ok) return parsed;
+    if (!os) return { ok: false, error: 'no os dependency injected' };
+    let work;
+    try {
+      work = path.join(os.tmpdir(), `clodex-plugin-library-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+      fs.mkdirSync(work, { recursive: true });
+    } catch (e) {
+      return { ok: false, error: `could not create a fetch directory — ${(e && e.message) || e}` };
+    }
+    const rm = () => { try { fs.rmSync(work, { recursive: true, force: true }); } catch {} };
+    const fail = (error) => { rm(); return { ok: false, error }; };
+    const wantRef = ref || parsed.ref || null;
+    try {
+      const tarFile = path.join(work, 'src.tar.gz');
+      const fetched = await fetchTarball({ repo: parsed.repo, ref: wantRef }, tarFile);
+      if (!fetched.ok) return fail(fetched.error);
+      const extracted = await extractPlugin(tarFile, path.join(work, 'x'), null);
+      if (!extracted.ok) return fail(extracted.error);
+      let entries;
+      try {
+        entries = fs.readdirSync(extracted.dir, { withFileTypes: true });
+      } catch (e) {
+        return fail(`could not read the extracted repo — ${(e && e.message) || e}`);
+      }
+      const plugins = [];
+      for (const ent of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (!ent.isDirectory() || ent.name === '_template') continue;
+        let m = null;
+        try { m = JSON.parse(fs.readFileSync(path.join(extracted.dir, ent.name, 'manifest.json'), 'utf8')); } catch { continue; }
+        if (!m || typeof m !== 'object' || !isValidPluginId(m.id)) continue;
+        plugins.push({
+          id: m.id,
+          name: typeof m.name === 'string' && m.name ? m.name : m.id,
+          version: typeof m.version === 'string' ? m.version : null,
+          subpath: ent.name,
+          announce: typeof m.announce === 'string' ? m.announce : null,
+        });
+      }
+      rm();
+      return { ok: true, repo: parsed.repo, ref: wantRef, commit: extracted.commit, plugins };
+    } catch (e) {
+      return fail(String((e && e.message) || e));
+    }
+  }
+
   function fetchCommitSha({ repo, ref }) {
     if (!https || !ref) return Promise.resolve(null);
     return new Promise((resolve) => {
@@ -221,7 +271,10 @@ function createPluginSource(deps) {
     fs.renameSync(tmp, file);
   }
 
-  return { parseSourceSpec, fetchTarball, extractPlugin, fetchCommitSha, readSidecar, sameTree, writeSidecar };
+  return {
+    parseSourceSpec, fetchTarball, extractPlugin, fetchLibraryCatalog,
+    fetchCommitSha, readSidecar, sameTree, writeSidecar,
+  };
 }
 
-module.exports = { createPluginSource, parseSourceSpec, SIDECAR_NAME };
+module.exports = { createPluginSource, parseSourceSpec, SIDECAR_NAME, LIBRARY_REPO };

@@ -175,7 +175,7 @@ const SCANNED_MODULES = [
   'plugin-loader.js',
   // Phase A sources (t683): tarball fetch + extraction. Deps-object factory
   // like plugin-loader.js, not a pure leaf like clodex-paths.js — fs/path/
-  // https/execFile all arrive through `createPluginSource`'s deps object, so
+  // https/execFile/os all arrive through `createPluginSource`'s deps object, so
   // it joins the scan the same way plugin-loader.js did.
   'plugin-source.js',
   // The shared dial (t42/L1), collapsing three copies of spawn-and-kill. Listed

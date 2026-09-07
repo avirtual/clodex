@@ -3623,6 +3623,7 @@ body {
 #plugins-dialog .hint-text,
 #plugins-dialog h3,
 #plugins-dialog #plugins-source,
+#plugins-dialog #plugins-library,
 #plugins-dialog #plugins-register-note,
 #plugins-dialog #plugins-folder {
   flex-shrink: 0;
@@ -4120,6 +4121,16 @@ body {
 #plugins-source-spec.hidden,
 #btn-plugins-source-resolve.hidden,
 #btn-plugins-source.hidden {
+  display: none;
+}
+#plugins-library {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  max-height: 240px;
+  overflow-y: auto;
+}
+#plugins-library.hidden {
   display: none;
 }
 #plugins-source-spec.hidden + #plugins-source-hint {
@@ -7445,6 +7456,16 @@ body {
            the WRONG machine's folder. Filled by renderer.js from the engine's
            read-only listing; never created in Electron, which reveals instead. -->
       <div id="plugins-folder" class="hidden"></div>
+      <div id="plugins-library" class="hidden">
+        <!-- Surface-neutral on purpose: the browser frontend and the desktop share
+             this markup, and "the machine running Clodex" is the true sentence on
+             both, where "this machine" would be a lie in a browser. -->
+        <div id="plugins-library-head" class="plugin-row-note">Published in github.com/avirtual/clodex-plugins. Installing one runs its code with Clodex's full authority, on the machine running Clodex.</div>
+        <div id="plugins-library-list"></div>
+        <div class="plugin-settings-actions">
+          <button id="btn-plugins-library-cancel" class="secondary" type="button">Cancel</button>
+        </div>
+      </div>
       <div id="plugins-source" class="hidden">
         <label id="plugins-source-label" for="plugins-source-spec">Public GitHub repo</label>
         <input id="plugins-source-spec" type="text" spellcheck="false" placeholder="https://github.com/owner/repo/tree/main/folder — or owner/repo@ref:folder" />
@@ -7459,6 +7480,7 @@ body {
       </div>
       <div class="dialog-actions">
         <button id="btn-plugins-register" class="secondary" type="button" title="Pick a plugin folder anywhere on disk and link it into ~/.clodex/plugins — the folder stays where it is">Register Plugin…</button>
+        <button id="btn-plugins-library" class="secondary" type="button" title="List the plugins published in github.com/avirtual/clodex-plugins and install one with a click — it lands turned off">Browse the Clodex library…</button>
         <button id="btn-plugins-source" class="secondary" type="button" title="Fetch a plugin from a public GitHub repo into ~/.clodex/plugins — it lands turned off">Install from GitHub…</button>
         <button id="btn-plugins-reveal" class="secondary" type="button" title="Open ~/.clodex/plugins in Finder — created if it does not exist yet">Open Plugins Folder</button>
         <button id="btn-plugins-rescan" class="secondary" type="button" title="Look for plugins added or removed since Clodex started">Re-scan</button>
@@ -22009,6 +22031,42 @@ ${i3.join("\n")}
           `${shortCommit(resolved.previousCommit) || "unknown"} \u2192 ${shortCommit(resolved.commit) || "unknown"}`
         ];
       }
+      var LIBRARY_REASONS = {
+        core: "This plugin is built into Clodex \u2014 the copy in the library cannot replace it.",
+        userAuthored: "A folder of that name in your plugins folder is yours, not from a source \u2014 move it aside first.",
+        upToDate: "Already installed at the commit the library holds.",
+        otherRepo: "Installed from a different repo \u2014 remove it before installing the library copy."
+      };
+      function libraryRowAction(row, opts) {
+        const r = row || {};
+        const repo = opts && opts.repo || null;
+        if (r.installed === "core") return { label: "Install", enabled: false, reason: LIBRARY_REASONS.core, action: null };
+        if (r.installed === "user-authored") {
+          return { label: "Install", enabled: false, reason: LIBRARY_REASONS.userAuthored, action: null };
+        }
+        if (r.installed === "fetched") {
+          if (repo && r.installedRepo && r.installedRepo !== repo) {
+            return { label: "Install", enabled: false, reason: LIBRARY_REASONS.otherRepo, action: null };
+          }
+          if (r.upToDate) return { label: "Install", enabled: false, reason: LIBRARY_REASONS.upToDate, action: null };
+          return { label: "Update", enabled: true, reason: "", action: "update" };
+        }
+        return { label: "Install", enabled: true, reason: "", action: "install" };
+      }
+      function librarySpec(repo, subpath) {
+        const r = repo == null ? "" : String(repo);
+        const s = subpath == null ? "" : String(subpath);
+        return s ? `${r}:${s}` : r;
+      }
+      function libraryRowLines(row) {
+        const r = row || {};
+        const id = r.id == null ? "" : String(r.id);
+        const version = r.version ? `v${r.version}` : "no version";
+        const lines = [`${r.name || id} \u2014 ${id} ${version}`];
+        if (r.announce) lines.push(String(r.announce));
+        if (r.subpath) lines.push(`${r.subpath}/`);
+        return lines;
+      }
       function installState({ resolved, fieldValue, mode } = {}) {
         if (!resolved) return { enabled: false, reason: INSTALL_REASONS.unresolved };
         if (!resolved.ok) return { enabled: false, reason: INSTALL_REASONS.failed };
@@ -22021,6 +22079,10 @@ ${i3.join("\n")}
       }
       module.exports = {
         INSTALL_REASONS,
+        LIBRARY_REASONS,
+        libraryRowAction,
+        libraryRowLines,
+        librarySpec,
         shortCommit,
         refLabel,
         sourceLabel,
@@ -34609,7 +34671,10 @@ ${detail}` });
         installState,
         sourceLabel,
         sourceLine,
-        shortCommit
+        shortCommit,
+        libraryRowAction,
+        libraryRowLines,
+        librarySpec
       } = require_plugin_source_dialog();
       var { evalRendererModule } = require_plugin_module_eval();
       var { prefsGate } = require_prefs_gate();
@@ -39342,6 +39407,7 @@ ${res.stderr}` : "");
       }
       async function openPluginsDialog() {
         showPluginsRegisterNote("");
+        closePluginsLibrarySection();
         closePluginsSourceSection();
         await renderPluginsDialog();
         pluginsOverlay.classList.remove("hidden");
@@ -39699,6 +39765,131 @@ ${res.stderr}` : "");
           pluginsRegisterBtn.disabled = false;
         }
       });
+      var pluginsLibrarySection = document.getElementById("plugins-library");
+      var pluginsLibraryList = document.getElementById("plugins-library-list");
+      var pluginsLibraryBtn = document.getElementById("btn-plugins-library");
+      var pluginsLibraryCancelBtn = document.getElementById("btn-plugins-library-cancel");
+      var pluginsLibraryCatalog = null;
+      function closePluginsLibrarySection() {
+        pluginsLibraryCatalog = null;
+        if (pluginsLibraryList) pluginsLibraryList.innerHTML = "";
+        if (pluginsLibrarySection) pluginsLibrarySection.classList.add("hidden");
+      }
+      function paintPluginsLibrary() {
+        if (!pluginsLibraryList) return;
+        pluginsLibraryList.innerHTML = "";
+        const cat = pluginsLibraryCatalog;
+        if (!cat) return;
+        if (!cat.plugins.length) {
+          const empty = document.createElement("div");
+          empty.className = "plugin-row-note";
+          empty.textContent = `github.com/${cat.repo} holds no plugins at ${shortCommit(cat.commit) || "this commit"}.`;
+          pluginsLibraryList.appendChild(empty);
+          return;
+        }
+        for (const p of cat.plugins) {
+          const row = document.createElement("div");
+          row.className = "plugin-row";
+          const body = document.createElement("div");
+          body.className = "plugin-row-body";
+          const lines = libraryRowLines(p);
+          const nameEl = document.createElement("div");
+          nameEl.className = "plugin-row-name";
+          nameEl.textContent = lines[0];
+          body.appendChild(nameEl);
+          for (const line of lines.slice(1)) {
+            const d = document.createElement("div");
+            d.className = "plugin-row-note";
+            d.textContent = line;
+            d.title = line;
+            body.appendChild(d);
+          }
+          if (p.installed === "fetched") {
+            const s = document.createElement("div");
+            s.className = "plugin-row-note plugin-row-src";
+            s.textContent = `Installed from github.com/${p.installedRepo} at ${shortCommit(p.installedCommit) || "an unknown commit"}`;
+            s.title = s.textContent;
+            body.appendChild(s);
+          }
+          row.appendChild(body);
+          const rowActions = document.createElement("div");
+          rowActions.className = "plugin-row-actions";
+          row.appendChild(rowActions);
+          const verdict = libraryRowAction(p, { repo: cat.repo });
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "secondary";
+          btn.textContent = verdict.label;
+          btn.disabled = !verdict.enabled;
+          btn.title = verdict.reason || `Fetch ${p.id} from github.com/${cat.repo} \u2014 it lands turned off`;
+          btn.addEventListener("click", () => {
+            if (verdict.action === "update") {
+              openPluginsSourceUpdate({
+                id: p.id,
+                name: p.name,
+                version: p.installedVersion,
+                source: { repo: p.installedRepo, ref: cat.ref, subpath: p.subpath, commit: p.installedCommit }
+              });
+              return;
+            }
+            installFromLibrary(p, btn);
+          });
+          rowActions.appendChild(btn);
+          pluginsLibraryList.appendChild(row);
+        }
+      }
+      async function installFromLibrary(p, btn) {
+        const cat = pluginsLibraryCatalog;
+        if (!cat) return;
+        const spec = librarySpec(cat.repo, p.subpath);
+        showPluginsRegisterNote("");
+        btn.disabled = true;
+        let r = null;
+        try {
+          r = await window.api.pluginInvoke("_host", "plugins.installFromSource", [spec]);
+        } catch {
+        }
+        if (!r || !r.ok) {
+          btn.disabled = false;
+          showPluginsRegisterNote(`Could not install ${p.name || p.id}: ${r && r.error || "unknown error"}`, "warn");
+          return;
+        }
+        showPluginsRegisterNote(`Installed ${p.name || p.id} at ${shortCommit(r.commit)} \u2014 it is off until you turn it on from its row above.`);
+        await renderPluginsDialog();
+        await loadPluginsLibrary();
+      }
+      async function loadPluginsLibrary() {
+        if (!pluginsLibraryList) return;
+        pluginsLibraryList.innerHTML = "";
+        const loading = document.createElement("div");
+        loading.className = "plugin-row-note";
+        loading.textContent = "Reading the library\u2026";
+        pluginsLibraryList.appendChild(loading);
+        let r = null;
+        try {
+          r = await window.api.pluginInvoke("_host", "plugins.libraryCatalog", []);
+        } catch {
+        }
+        if (!r || !r.ok) {
+          closePluginsLibrarySection();
+          showPluginsRegisterNote(`Could not read the Clodex library: ${r && r.error || "unknown error"}`, "warn");
+          return;
+        }
+        pluginsLibraryCatalog = r;
+        paintPluginsLibrary();
+      }
+      if (pluginsLibraryBtn) {
+        pluginsLibraryBtn.addEventListener("click", async () => {
+          showPluginsRegisterNote("");
+          closePluginsSourceSection();
+          closePluginsLibrarySection();
+          pluginsLibrarySection.classList.remove("hidden");
+          await loadPluginsLibrary();
+        });
+      }
+      if (pluginsLibraryCancelBtn) {
+        pluginsLibraryCancelBtn.addEventListener("click", () => closePluginsLibrarySection());
+      }
       var pluginsSourceSection = document.getElementById("plugins-source");
       var pluginsSourceLabel = document.getElementById("plugins-source-label");
       var pluginsSourceSpec = document.getElementById("plugins-source-spec");
@@ -39747,6 +39938,7 @@ ${res.stderr}` : "");
       }
       pluginsSourceBtn.addEventListener("click", () => {
         showPluginsRegisterNote("");
+        closePluginsLibrarySection();
         closePluginsSourceSection();
         pluginsSourceSection.classList.remove("hidden");
         pluginsSourceSpec.focus();
@@ -39829,6 +40021,7 @@ ${res.stderr}` : "");
       });
       async function openPluginsSourceUpdate(p) {
         showPluginsRegisterNote("");
+        closePluginsLibrarySection();
         closePluginsSourceSection();
         const name = p.name || p.id;
         const target = p.id;

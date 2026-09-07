@@ -599,10 +599,12 @@ scripts disabled. **Recommend, do not build.**
 ## 9. Sources — a GitHub fetch
 
 **Phase A implemented** (t683): `plugin-source.js` + five loader methods +
-five `_host` methods. **All five are reached from Manage Plugins**: Install from
-GitHub… resolves and installs (t688), and a fetched row's Update… and Remove
-reach `resolveUpdate`/`applyUpdate` and `removeSourcePlugin` (t689) — both
-described in §10 step 3. A row knows it is fetched because `status()` carries a
+five `_host` methods, joined by `libraryCatalog` in t718. **All are reached
+from Manage Plugins**: Install from GitHub… resolves and installs (t688), a
+fetched row's Update… and Remove reach `resolveUpdate`/`applyUpdate` and
+`removeSourcePlugin` (t689) — both described in §10 step 3 — and Browse the
+Clodex library… lists `avirtual/clodex-plugins` and installs a row with one
+click. A row knows it is fetched because `status()` carries a
 `source` field (`{ repo, ref, subpath, commit }`, from the sidecar) for a user-root
 directory that is not a symlink, and `null` for everything else; that one field
 decides whether the row shows the "From github.com/…" line and the two buttons or
@@ -623,8 +625,27 @@ about any of them changed to add this.
 `.clodex-source.json` sidecar (`{ source, repo, ref, subpath, commit,
 commitFull, fetchedAt, hostVersion }`) marks a directory as fetched;
 `update`/`remove` only ever touch a sidecar-carrying directory, and a plain
-user directory sharing an id is refused with "not from a source" rather than
-silently adopted.
+user directory sharing an id is refused rather than silently adopted — with
+"already exists in your plugins folder and is not from a source" on the install
+path, and "is not installed from a source" on update/remove.
+
+**The library is a catalog over one tarball of `avirtual/clodex-plugins`;
+install is the ordinary source install with a fixed repo** (t718).
+`fetchLibraryCatalog` makes ONE `fetchTarball` call — same cap, same headers,
+same injected https — extracts the whole tree, and lists the top-level
+directories holding a `manifest.json` whose `id` passes `isValidPluginId`,
+skipping `_template`. No GitHub contents API and no per-plugin request: the
+catalog costs exactly what one install costs. `libraryCatalog` decorates each
+row with what `~/.clodex/plugins/<id>` already holds (`none` / `fetched` +
+its sidecar commit / `user-authored` / `core`), because the catalog says
+nothing about this machine and every one of those states is a click
+`installFromSource` would refuse by name. A row's Install builds
+`avirtual/clodex-plugins:<subpath>` and calls `installFromSource`; its Update
+opens the SAME section a fetched row's Update… does, so `resolveUpdate` /
+`applyUpdate` still resolve the sidecar's own repo by id. `upToDate` asks for
+the same repo as well as the same commit — a plugin of that id fetched from
+somewhere else is at a sha that repo minted, and a bare sha comparison would
+call it current by coincidence.
 
 **Spec grammar** (`parseSourceSpec`, `plugin-source.js`): `owner/repo`,
 `owner/repo@ref`, `owner/repo:sub/path`, `owner/repo@ref:sub/path`, and
@@ -692,7 +713,9 @@ only writer of the enabled list here, same as every other install path.
 **`installFromSource`/`applyUpdate` refusals mirror `registerUserPlugin`'s**:
 a core id is refused by name; an existing symlink at the target says
 "registered link, unregister it first"; an existing real directory WITHOUT a
-sidecar says "not from a source" and is left byte-identical; a sidecar already
+sidecar says "already exists in your plugins folder and is not from a source"
+(`applyUpdate`, which is only ever reached for a fetched id, says "is not
+installed from a source") and is left byte-identical; a sidecar already
 present says "use update instead". `applyUpdate` moves the old copy aside
 (`.old-<id>-<nonce>`) before the rename-in, and on any failure after that
 point removes whatever landed at the target and renames the old copy back —
@@ -720,9 +743,11 @@ commit — above the warning text §7 specifies, and nothing more.
 
 End to end, today, with the user root implemented:
 
-1. Find a plugin. **There is no discovery mechanism.** No directory, no index, no
-   search, no listing inside the app. The user learns a plugin exists from a
-   README, a link, or a person.
+1. Find a plugin. **Manage Plugins ▸ Browse the Clodex library…** lists what
+   `avirtual/clodex-plugins` holds, and that is the whole of discovery: there is
+   no index, no search, and nothing that finds a plugin published anywhere else.
+   For those the user still learns a plugin exists from a README, a link, or a
+   person.
 2. Obtain it. From a public GitHub repo, **Install from GitHub…** in step 3 does
    this and step 3 together. From anywhere else, `git clone` or download and
    unzip, in a terminal or a file manager.
@@ -854,6 +879,7 @@ Consequences worth stating:
 | §9 sources: GitHub fetch, engine + host methods | **Implemented** |
 | §9 sources: install UI — Manage Plugins ▸ Install from GitHub… | **Implemented** |
 | §9 sources: update/remove UI on a fetched row | **Implemented** |
+| §9 sources: library UI — Manage Plugins ▸ Browse the Clodex library… | **Implemented** |
 | §9 sources: `changed` is a tree compare, so an unrelated commit is not an update | **Implemented** |
 | §10 reveal the user plugins folder; re-scan without restart | **Implemented** |
 | §10 replacing a RUNNING plugin without a restart | Not possible — require caches by path; reported, never faked |

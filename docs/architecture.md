@@ -580,11 +580,15 @@ worktree, which is why membership is by repo.
   never defaulted: `scopeOf` resolves anything unknown to `global`, so a typo on
   a plugin meant to be invisible would silently load it everywhere. Also owns
   installing a plugin from a source (`resolveSource`/`installFromSource`/
-  `resolveUpdate`/`applyUpdate`/`removeSourcePlugin`, plugins/plugin-sources.md
-  §9), built on the **plugin-source.js** leaf below.
-- **plugin-source.js** — deps-injected leaf (fs/path/https/execFile) parsing a
-  GitHub plugin-source spec and fetching/extracting its tarball; see
-  docs/notes/plugin-source.md for the tarball-naming and byte-cap specifics.
+  `resolveUpdate`/`applyUpdate`/`removeSourcePlugin`, plus `libraryCatalog`,
+  which decorates the library listing with what the plugins folder already
+  holds; plugins/plugin-sources.md §9), built on the **plugin-source.js** leaf
+  below.
+- **plugin-source.js** — deps-injected leaf (fs/path/https/execFile/os) parsing a
+  GitHub plugin-source spec and fetching/extracting its tarball, and listing the
+  plugin folders of the library repo off one such tarball
+  (`fetchLibraryCatalog`); see docs/notes/plugin-source.md for the
+  tarball-naming and byte-cap specifics.
 - **plugin-prompt-refs.js** — the pure leaf resolving a `<plugin-id>:<stem>`
   prompt reference, and listing a plugin's templates. THROWS where the library
   path returns null: a namespaced stem the seat cannot reach means the template
@@ -1093,7 +1097,10 @@ and are not, which is why the judgement worth testing is pushed down here.
   is enabled — for an install only while the resolved spec still equals the
   trimmed field, so an edit after a resolve disables it; for an update only
   while the source has actually moved off the installed commit. Either way the
-  warning on screen is always about the code that would land),
+  warning on screen is always about the code that would land. It also decides a
+  Clodex-library row: `libraryRowAction` reads the row's `installed` state into
+  one Install/Update verdict with the reason a disabled one carries, and
+  `librarySpec` builds the `repo:subpath` the ordinary install path parses),
   **plugin-module-eval.js** (the CommonJS shim a renderer half that is NOT in
   the built web bundle is evaluated through — a user plugin's half arrives as
   source text over `renderer.info` and runs here, so it gets its buttons and

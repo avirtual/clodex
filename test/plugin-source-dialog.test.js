@@ -28,7 +28,9 @@ const path = require('node:path');
 const {
   INSTALL_REASONS, shortCommit, refLabel, sourceLabel, sourceLine,
   previewLines, updatePreviewLines, warningText, installState,
+  libraryRowAction, librarySpec, libraryRowLines,
 } = require('../renderer/lib/plugin-source-dialog');
+const { parseSourceSpec } = require('../plugin-source');
 
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
@@ -696,3 +698,208 @@ test('the trust warning names the host when the surface is a browser', () => {
     + 'browser operator the code runs where the browser is');
 });
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// t718 — the "From the Clodex library" section. One mechanism: a catalog
+// listing plus install-by-click over the SAME source-install path, so the
+// interesting properties are (a) the spec the click builds, and (b) that a row
+// whose action cannot succeed never offers it.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Each row carries its own literal label/enabled/reason rather than looking the
+// reason up by the rule libraryRowAction uses — the four disabled cases say
+// four different things, and that is exactly what a computed table could not
+// express.
+const LIBRARY_CASES = [
+  {
+    label: 'never installed',
+    row: { id: 'notes', installed: 'none', installedRepo: null, upToDate: false },
+    expected: { label: 'Install', enabled: true, reason: '', action: 'install' },
+  },
+  {
+    label: 'fetched from the library at an older commit',
+    row: { id: 'notes', installed: 'fetched', installedRepo: 'avirtual/clodex-plugins', upToDate: false },
+    expected: { label: 'Update', enabled: true, reason: '', action: 'update' },
+  },
+  {
+    label: 'fetched from the library at the same commit',
+    row: { id: 'notes', installed: 'fetched', installedRepo: 'avirtual/clodex-plugins', upToDate: true },
+    expected: {
+      label: 'Install',
+      enabled: false,
+      reason: 'Already installed at the commit the library holds.',
+      action: null,
+    },
+  },
+  {
+    label: 'fetched from a DIFFERENT repo',
+    row: { id: 'notes', installed: 'fetched', installedRepo: 'someone/else', upToDate: false },
+    expected: {
+      label: 'Install',
+      enabled: false,
+      reason: 'Installed from a different repo — remove it before installing the library copy.',
+      action: null,
+    },
+  },
+  {
+    label: 'a core id',
+    row: { id: 'workbench', installed: 'core', installedRepo: null, upToDate: false },
+    expected: {
+      label: 'Install',
+      enabled: false,
+      reason: 'This plugin is built into Clodex — the copy in the library cannot replace it.',
+      action: null,
+    },
+  },
+  {
+    label: 'the operator\'s own folder of that name',
+    row: { id: 'mine', installed: 'user-authored', installedRepo: null, upToDate: false },
+    expected: {
+      label: 'Install',
+      enabled: false,
+      reason: 'A folder of that name in your plugins folder is yours, not from a source — move it aside first.',
+      action: null,
+    },
+  },
+];
+
+for (const c of LIBRARY_CASES) {
+  test(`libraryRowAction: ${c.label} → ${c.expected.label}${c.expected.enabled ? '' : ' (disabled)'}`, () => {
+    assert.deepStrictEqual(
+      libraryRowAction(c.row, { repo: 'avirtual/clodex-plugins' }),
+      c.expected,
+    );
+  });
+}
+
+test('the four disabled library verdicts say four DIFFERENT things', () => {
+  const said = LIBRARY_CASES.filter((c) => !c.expected.enabled).map((c) => c.expected.reason);
+  assert.strictEqual(said.length, 4, 'ENTER: four rows really are disabled');
+  assert.strictEqual(new Set(said).size, 4,
+    'each names a different thing the operator would have to do — one shared "cannot install" tells them nothing');
+});
+
+test('librarySpec builds the spec the source install path parses', () => {
+  assert.strictEqual(librarySpec('avirtual/clodex-plugins', 'notes-pack'), 'avirtual/clodex-plugins:notes-pack');
+  assert.deepStrictEqual(
+    parseSourceSpec(librarySpec('avirtual/clodex-plugins', 'notes-pack')),
+    { ok: true, repo: 'avirtual/clodex-plugins', ref: null, subpath: 'notes-pack' },
+    'the spec is built here and parsed there — a shape parseSourceSpec refuses would fail only at click time');
+  assert.strictEqual(librarySpec('avirtual/clodex-plugins', null), 'avirtual/clodex-plugins',
+    'a row at the repo root carries no colon, which would parse as an empty subpath');
+});
+
+test('libraryRowLines names the version and drops the lines a row has nothing to say for', () => {
+  assert.deepStrictEqual(
+    libraryRowLines({ id: 'notes', name: 'Notes', version: '1.2.0', subpath: 'notes-pack', announce: 'Takes notes.' }),
+    ['Notes — notes v1.2.0', 'Takes notes.', 'notes-pack/'],
+  );
+  assert.deepStrictEqual(
+    libraryRowLines({ id: 'notes', name: 'Notes', version: null, subpath: null, announce: null }),
+    ['Notes — notes no version'],
+    'an absent announce must not paint an empty note, and an absent subpath no bare slash');
+});
+
+function librarySectionSrc() {
+  const start = rendererSrc.indexOf("const pluginsLibrarySection = document.getElementById('plugins-library');");
+  assert.ok(start >= 0, 'the Clodex library section was not found in renderer.js');
+  const end = rendererSrc.indexOf("const pluginsSourceSection = document.getElementById('plugins-source');", start);
+  assert.ok(end > start, 'the end of the library section was not found');
+  const src = rendererSrc.slice(start, end);
+  assert.match(src, /plugins\.libraryCatalog/, 'ENTER: the slice captured the catalog fetch');
+  return src;
+}
+
+test('the library section reaches exactly two _host methods, in source order', () => {
+  const src = librarySectionSrc();
+  const calls = [...src.matchAll(/pluginInvoke\('_host', '([^']+)'/g)].map((m) => m[1]);
+  assert.deepStrictEqual(calls, ['plugins.installFromSource', 'plugins.libraryCatalog'],
+    'install rides the existing source path unchanged, and installFromSource already rescans host-side — '
+    + 'an explicit plugins.rescan here would be a second rescan, and Update belongs to the source section '
+    + 'via openPluginsSourceUpdate, not to a third method');
+});
+
+test('Install builds the spec from the CATALOG\'s repo and the row\'s subpath', () => {
+  const src = librarySectionSrc();
+  assert.match(src, /librarySpec\(cat\.repo, p\.subpath\)/,
+    'the repo comes from the catalog the rows were drawn from, not from a literal re-typed at the click — '
+    + 'a fixed string here would install from a repo the listing never read');
+  assert.match(src, /plugins\.installFromSource', \[spec\]/,
+    'the built spec is what goes to the loader; anything else installs a row nobody was shown');
+});
+
+test('a row installs only when libraryRowAction allows it', () => {
+  const src = librarySectionSrc();
+  const verdict = src.indexOf('const verdict = libraryRowAction(p, { repo: cat.repo });');
+  assert.ok(verdict > 0, 'the leaf must decide the row, not the renderer');
+  const disabled = src.indexOf('btn.disabled = !verdict.enabled;', verdict);
+  assert.ok(disabled > verdict, 'the button state comes from that verdict');
+  const handler = src.indexOf("btn.addEventListener('click'", verdict);
+  assert.ok(handler > disabled, 'ENTER: the click handler is attached after the verdict is computed');
+  assert.match(src.slice(handler), /if \(verdict\.action === 'update'\)/,
+    'a fetched row must reach openPluginsSourceUpdate, which resolves the sidecar\'s own repo by id — '
+    + 'installFromSource on an existing id is refused, so an Install there is a click that cannot work');
+});
+
+test('Update rides the existing source section rather than a second update path', () => {
+  const src = librarySectionSrc();
+  assert.match(src, /openPluginsSourceUpdate\(\{/,
+    'resolveUpdate/applyUpdate already have a section that shows the diff and the trust warning before '
+    + 'anything is replaced — a library row that applied an update directly would skip both');
+  assert.strictEqual((src.match(/plugins\.applyUpdate/g) || []).length, 0,
+    'and it must not call applyUpdate itself');
+});
+
+test('opening either section closes the other, and opening the dialog closes both', () => {
+  // They are siblings in one dialog with no stacking manager: both visible at
+  // once is a section headed "Public GitHub repo" sitting under a list of
+  // library rows, with two Install buttons and no way to tell which is armed.
+  const libraryOpen = rendererSrc.match(/pluginsLibraryBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?\n  \}\);/);
+  assert.ok(libraryOpen, 'the library button handler was not found');
+  assert.match(libraryOpen[0], /closePluginsSourceSection\(\)/,
+    'opening the library must close Install from GitHub…');
+  const sourceOpen = rendererSrc.match(/pluginsSourceBtn\.addEventListener\('click', \(\) => \{[\s\S]*?\n\}\);/);
+  assert.ok(sourceOpen, 'the source button handler was not found');
+  assert.match(sourceOpen[0], /closePluginsLibrarySection\(\)/,
+    'and opening Install from GitHub… must close the library');
+  const open = rendererSrc.match(/async function openPluginsDialog\(\) \{[\s\S]*?\n\}/);
+  assert.ok(open, 'openPluginsDialog not found');
+  assert.match(open[0], /closePluginsLibrarySection\(\)/,
+    'a catalog read minutes ago says "up to date" about commits that have moved since');
+  const update = rendererSrc.match(/async function openPluginsSourceUpdate\(p\) \{[\s\S]*?\n  let r = null;/);
+  assert.ok(update, 'openPluginsSourceUpdate not found');
+  assert.match(update[0], /closePluginsLibrarySection\(\)/,
+    'the library row that opened the update must not stay on screen behind it');
+});
+
+test('the library markup ships hidden, with a rule that hides it', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /<div id="plugins-library" class="hidden">/,
+    'the section must not be on screen until the button is pressed');
+  assert.match(html, /id="btn-plugins-library"/);
+  assert.match(html, /id="plugins-library-list"/);
+  assert.match(html, /id="btn-plugins-library-cancel"/);
+  const css = fs.readFileSync(path.join(ROOT, 'renderer', 'styles.css'), 'utf8');
+  assert.ok(/#plugins-library\.hidden\s*\{\s*display:\s*none/.test(css),
+    'there is no generic .hidden rule in this stylesheet, so without this line the class hides nothing '
+    + 'and the empty section ships open');
+});
+
+test('the library head names the machine the code will run on', () => {
+  // The same markup serves the browser frontend, where "this machine" is the
+  // one holding the browser and the code runs somewhere else entirely.
+  const html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+  const head = html.match(/<div id="plugins-library-head"[^>]*>([\s\S]*?)<\/div>/);
+  assert.ok(head, 'the head element must exist');
+  assert.ok(head[1].includes('full authority'),
+    'the library is one click from running third-party code — the warning cannot be weaker than the one '
+    + 'the manual install path paints');
+  assert.ok(head[1].includes('the machine running Clodex'),
+    'surface-neutral wording: a browser operator is not the host');
+});
+
+test('Browse the Clodex library… is offered on the web surface', () => {
+  assert.ok(!/pluginsLibraryBtn\.classList\.add\('hidden'\)/.test(rendererSrc),
+    'libraryCatalog and installFromSource both answer the web surface (test/plugin-surface-gate.test.js) — '
+    + 'hiding the button would leave a browser operator with no library at all');
+});
