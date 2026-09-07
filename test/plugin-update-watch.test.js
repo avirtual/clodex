@@ -259,27 +259,51 @@ test('start() does not fetch on the spot — the first sweep waits out a delay',
     'the shipped delay must be long enough to be off the launch path, not a token setTimeout(0)');
 });
 
-test('start() really does sweep after the delay, and keeps sweeping on the interval', async () => {
-  // The other half, and the one that matters in production: the subject above
-  // asserts an ABSENCE, which stays true if the deferred run — or the interval
-  // that follows it — is deleted outright. Then the feature never runs at all
-  // and every other test here, which drives run() by hand, stays green.
+// The two production triggers, pinned SEPARATELY. Every other subject here
+// drives run() by hand, so nothing else notices if start() stops sweeping — the
+// feature would never run in production with the suite fully green. A single
+// "saw ≥2 fetches" assertion does NOT cover both: with a short interval the
+// polling alone reaches 2, so deleting the deferred first sweep keeps it green.
+// That is not hypothetical — it is what the first version of this test did.
+
+function countingLoader() {
   const asked = [];
-  const loader = {
+  return {
+    asked,
     libraryCatalog: async () => { asked.push('catalog'); return { ok: true, plugins: [] }; },
     resolveUpdate: async () => ({ ok: true, changed: false }),
   };
+}
+
+test('the DEFERRED first sweep fires on its own, before any interval tick', async () => {
+  // The interval is set a whole second out, so the one fetch seen here can only
+  // be the run() inside the delay callback. Deleting that call makes this zero.
+  const loader = countingLoader();
   const w = createPluginUpdateWatch({
-    getLoader: () => loader, log: silent, firstRunDelayMs: 5, intervalMs: 20,
+    getLoader: () => loader, log: silent, firstRunDelayMs: 5, intervalMs: 1000,
   });
   w.start();
-  await new Promise((r) => setTimeout(r, 80));
-  w.stop();
-  assert.ok(asked.length >= 2,
-    `the deferred sweep must fire AND re-arm on the interval — saw ${asked.length} fetches`);
-  const seen = asked.length;
   await new Promise((r) => setTimeout(r, 60));
-  assert.strictEqual(asked.length, seen, 'stop() must end the polling, not just the first sweep');
+  w.stop();
+  assert.strictEqual(loader.asked.length, 1,
+    'exactly the deferred sweep — the interval is 1s away and cannot have contributed');
+});
+
+test('the interval keeps sweeping after the first, and stop() ends it', async () => {
+  // The second trigger. A first sweep with no re-arm would check for updates
+  // once per launch and never again.
+  const loader = countingLoader();
+  const w = createPluginUpdateWatch({
+    getLoader: () => loader, log: silent, firstRunDelayMs: 5, intervalMs: 15,
+  });
+  w.start();
+  await new Promise((r) => setTimeout(r, 90));
+  assert.ok(loader.asked.length >= 3,
+    `the poll must re-arm, not fire once — saw ${loader.asked.length} fetches`);
+  w.stop();
+  const seen = loader.asked.length;
+  await new Promise((r) => setTimeout(r, 60));
+  assert.strictEqual(loader.asked.length, seen, 'stop() must end the polling too');
 });
 
 // ── drop(), the seam that clears a badge on the click ───────────────────────
