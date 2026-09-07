@@ -5672,6 +5672,7 @@ const pluginsLibrarySection = document.getElementById('plugins-library');
 const pluginsLibraryList = document.getElementById('plugins-library-list');
 const pluginsLibraryBtn = document.getElementById('btn-plugins-library');
 const pluginsLibraryCancelBtn = document.getElementById('btn-plugins-library-cancel');
+const pluginsLibraryRepoLink = document.getElementById('plugins-library-repo-link');
 let pluginsLibraryCatalog = null;
 
 function closePluginsLibrarySection() {
@@ -5807,6 +5808,15 @@ if (pluginsLibraryBtn) {
 }
 if (pluginsLibraryCancelBtn) {
   pluginsLibraryCancelBtn.addEventListener('click', () => closePluginsLibrarySection());
+}
+if (pluginsLibraryRepoLink) {
+  pluginsLibraryRepoLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.api.openExternal(pluginsLibraryRepoLink.dataset.url);
+  });
+  pluginsLibraryRepoLink.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pluginsLibraryRepoLink.click(); }
+  });
 }
 
 const pluginsSourceSection = document.getElementById('plugins-source');
