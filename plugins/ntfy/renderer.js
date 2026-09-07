@@ -99,6 +99,6 @@ module.exports.activate = (rhost) => {
   return () => {
     disposed = true;
     statusEl = null;
-    try { if (typeof disposeSection === 'function') disposeSection(); } catch (_) { /* ignore */ }
+    try { if (typeof disposeSection === 'function') disposeSection(); } catch (_) {}
   };
 };

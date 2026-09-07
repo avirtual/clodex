@@ -221,6 +221,25 @@ test('a reconnect resumes with since=<lastId>, and the first connect uses latest
   }
 });
 
+test('a topic URL carrying a query or a trailing slash still builds a clean stream URL', async () => {
+  const srv = ntfyServer();
+  const base = await srv.listen();
+  const h = makeHost({ settings: { url: `${base}/?auth=leak#frag`, routes: { inbox: true, seat: '' } } });
+  try {
+    h.engine.register('ntfy', loadEngine(), MANIFEST);
+    assert.ok(await until(() => srv.state.requests.length === 1), 'the request was made');
+    // The query and fragment belong to the URL the operator pasted, not to the
+    // stream: appending `/json?since=` to a href that kept them yields
+    // `/clodex?auth=leak#frag/json?since=latest`, where the cursor is inside a
+    // fragment and never reaches the server.
+    assert.equal(srv.state.requests[0].path, '/clodex/json', 'the stream path is clean');
+    assert.equal(srv.state.requests[0].since, 'latest', 'the cursor survived as a real query parameter');
+  } finally {
+    h.cleanup();
+    await srv.close();
+  }
+});
+
 test('a repeated id is dropped, and a keepalive is ignored', async () => {
   const srv = ntfyServer();
   const url = await srv.listen();

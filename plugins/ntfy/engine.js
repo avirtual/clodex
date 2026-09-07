@@ -30,11 +30,11 @@ let lastEventAt = null;
 let lastError = null;
 
 function logInfo(msg) {
-  try { if (host) host.log.info(msg); } catch (_) { /* ignore */ }
+  try { if (host) host.log.info(msg); } catch (_) {}
 }
 
 function logError(msg) {
-  try { if (host) host.log.error(msg); } catch (_) { /* ignore */ }
+  try { if (host) host.log.error(msg); } catch (_) {}
 }
 
 function errText(e) {
@@ -53,7 +53,7 @@ function schedule(fn, ms) {
 
 function clearTimers() {
   for (const t of timers) {
-    try { clearTimeout(t); } catch (_) { /* ignore */ }
+    try { clearTimeout(t); } catch (_) {}
   }
   timers.clear();
 }
@@ -68,7 +68,7 @@ function parseTopicUrl(raw) {
   if (!segs.length) return null;
   const topic = segs[segs.length - 1];
   if (!TOPIC_RE.test(topic)) return null;
-  return { href: u.href.replace(/\/+$/, ''), topic, secure: u.protocol === 'https:' };
+  return { href: `${u.origin}${u.pathname}`.replace(/\/+$/, ''), topic, secure: u.protocol === 'https:' };
 }
 
 function readSettings() {
@@ -162,7 +162,7 @@ function scheduleReconnect() {
 
 function endStream(err) {
   if (req) {
-    try { req.destroy(); } catch (_) { /* ignore */ }
+    try { req.destroy(); } catch (_) {}
     req = null;
   }
   connected = false;
@@ -227,7 +227,7 @@ function connect() {
 function restart() {
   clearTimers();
   if (req) {
-    try { req.destroy(); } catch (_) { /* ignore */ }
+    try { req.destroy(); } catch (_) {}
     req = null;
   }
   connected = false;
@@ -298,7 +298,7 @@ module.exports.deactivate = () => {
   stopped = true;
   clearTimers();
   if (req) {
-    try { req.destroy(); } catch (_) { /* ignore */ }
+    try { req.destroy(); } catch (_) {}
     req = null;
   }
   connected = false;

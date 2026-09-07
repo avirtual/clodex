@@ -13,8 +13,9 @@ captured log.
 
 The topic is the LAST path segment, not the whole path: ntfy servers are often
 reverse-proxied under a prefix (`https://host/ntfy/clodex`). The stream URL is
-rebuilt from `href` with trailing slashes stripped, so `.../clodex/` and
-`.../clodex` produce the same request.
+rebuilt from `origin + pathname`, never `href`: a pasted URL carrying a query or
+a fragment would otherwise put `/json?since=` after them, leaving the cursor
+inside a fragment that never reaches the server.
 
 ## remember
 
@@ -24,9 +25,8 @@ rebuilt from `href` with trailing slashes stripped, so `.../clodex/` and
 ## scheduleReconnect
 
 ntfy closes an idle stream itself, so `res.on('end')` is the ordinary case, not
-an error: the backoff resets to zero on a successful connect (`attempt = 0`
-inside the 200 handler), which is what stops a long-lived subscription from
-drifting to the 60s cap through normal churn.
+an error: `attempt = 0` inside the 200 handler is what stops a long-lived
+subscription drifting to the 60s cap through normal churn.
 
 ## handleLine
 
