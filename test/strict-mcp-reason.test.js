@@ -171,10 +171,15 @@ test('session-manager pushes the flag and logs ONLY inside the reason guard', ()
   assert.ok(guarded.includes("args.push('--strict-mcp-config')"), 'the flag is not pushed inside the guard');
   assert.ok(guarded.includes("this._broadcast('ipc-message'"), 'the log line is not broadcast inside the guard');
   assert.ok(guarded.includes('STRICT_MCP_EXPLANATION[reason]'), 'the log line does not carry the reason explanation');
-  // The `MCP: ` prefix is how the row is found in an ipc log full of other
-  // system rows; the reason key moved out of the body when the text was
-  // rewritten for operators, so the prefix is now the only greppable handle.
+  // The row leads with the CONSEQUENCE and carries the flag in parentheses. The
+  // earlier shape led with `--strict-mcp-config (${reason})`, i.e. two pieces of
+  // Clodex jargon before anything the reader could act on, and the reason key it
+  // opened with is not a term that appears anywhere in the UI. `MCP: ` stays as
+  // the greppable handle in an ipc log full of other system rows.
   assert.ok(guarded.includes('body: `MCP: '), 'the row no longer opens with the greppable MCP: prefix');
+  assert.ok(guarded.includes('MCP: all MCP servers disabled for this session (--strict-mcp-config) —'),
+    'the row no longer leads with the consequence, with the flag in parentheses');
+  assert.ok(!/MCP: --strict-mcp-config/.test(guarded), 'the row leads with the flag again');
 
   // And nothing between the call and the guard emits anything — i.e. there is
   // no second, ungated line that would fire on the healthy path.
