@@ -18,6 +18,14 @@ Three things make this unlike the rest of the proxy's state:
     window). The rejection body is `{"type":"rate_limit_error"}` with no
     utilization, so the last good numbers stay the state and the 429 is tracked
     beside them as its own fact (`last_429`).
+  * ALMOST EVERY 429 IS THE CLI'S STARTUP PROBE, NOT A REFUSED TURN. Measured
+    2026-09-07 over the live corpus: 5,081 of 5,114 429s were the 1-token
+    "quota" probe Claude Code fires at boot/clear/resume (no system, no tools,
+    max_tokens 1), tripped by several seats booting in the same second; the
+    seat's first real turn succeeded seconds later. A consumer rendering
+    `last_429` as "rate-limited Nm ago" was therefore reporting a burst-limit
+    collision as a plan wall, ~170x more often than the wall was hit. So a
+    probe's 429 is filed under `last_429_probe`, never `last_429`.
 
 Parsing is DELIBERATELY GENERIC. Windows are discovered from the header names
 rather than hardcoded, because they demonstrably appear without warning: a
@@ -88,10 +96,12 @@ def _parse(headers):
     return {"fields": fields, "windows": windows, "unmapped": unmapped}
 
 
-def note(headers, *, status_code=None, now=None):
+def note(headers, *, status_code=None, now=None, probe=False):
     """Record the quota headers off a finished upstream response. Called from
     receipts for every anthropic-wire response; cheap and lock-free enough to
-    sit on that path (a dict scan of ~30 headers)."""
+    sit on that path (a dict scan of ~30 headers). `probe` = the request was
+    the CLI's startup quota probe (meta._is_probe_call): its 429 is a burst
+    collision, recorded as `last_429_probe`, and must never reach `last_429`."""
     if not QUOTA_TRACK:
         return
     global _LAST_ACCOUNT
@@ -112,7 +122,7 @@ def note(headers, *, status_code=None, now=None):
             key = acct if acct in _QUOTA else _LAST_ACCOUNT
             cur = _QUOTA.get(key)
             if cur is not None:
-                cur["last_429"] = now
+                cur["last_429_probe" if probe else "last_429"] = now
                 _persist(key, cur)
         return
     entry = dict(parsed)
@@ -120,8 +130,9 @@ def note(headers, *, status_code=None, now=None):
     entry["org_id"] = headers.get("anthropic-organization-id")
     entry["workspace_id"] = headers.get("anthropic-workspace-id")
     prev = _QUOTA.get(acct) or {}
-    if prev.get("last_429"):
-        entry["last_429"] = prev["last_429"]
+    for k in ("last_429", "last_429_probe"):
+        if prev.get(k):
+            entry[k] = prev[k]
     _QUOTA[acct] = entry
     _LAST_ACCOUNT = acct
     _persist(acct, entry)
@@ -189,9 +200,10 @@ def snapshot(now=None):
     if f.get("upgrade_paths"):
         out["upgrade_paths"] = [p.strip() for p in f["upgrade_paths"].split(",")
                                 if p.strip()]
-    if e.get("last_429"):
-        out["last_429"] = e["last_429"]
-        out["last_429_age_s"] = round(now - e["last_429"], 1)
+    for k in ("last_429", "last_429_probe"):
+        if e.get(k):
+            out[k] = e[k]
+            out[k + "_age_s"] = round(now - e[k], 1)
     if e.get("unmapped"):
         # a meter we do not model yet: surfaced raw rather than swallowed
         out["unmapped"] = e["unmapped"]

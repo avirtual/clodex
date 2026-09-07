@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Bundled wirescope updated to v0.6.60: the status-bar quota chip no longer says "rate-limited Nm ago" for a refused startup probe.** Claude Code fires a 1-token quota probe at startup and after clear/resume, and Anthropic refuses about half of them; the proxy now records those separately (`last_429_probe`) and stamps `last_429` only when a real turn is refused, so the chip's rate-limit note means what it says.
+
 ## 5.35.5 — 2026-09-07
 
 - First launch shows a short Welcome dialog to pick the default session mode (Clodex optimized or Standard) or skip; Settings ▸ Sessions can run it again.

@@ -61,13 +61,16 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
     (same vocabulary as report._line_key)."""
     # back-compat: callers that pass only title_call get the old behavior
     side_call = title_call if side_call is None else side_call
+    # the CLI's startup quota probe: the side-call that is not the title call
+    probe = bool(side_call) and not title_call
     # Feed the upstream-health hint provider: every forwarded outcome, so the
     # "upstream is shedding" fact is measured from real traffic, not a probe.
-    hints_native_mod.note_outcome(status_code)
+    hints_native_mod.note_outcome(status_code, probe=probe)
     # Account-scoped plan quota rides the response headers of every successful
     # turn (and is ABSENT on 429s — see quota.py). Off the per-session path:
-    # every agent on the box spends the same plan.
-    quota_mod.note(resp_headers, status_code=status_code)
+    # every agent on the box spends the same plan. A probe's 429 is a burst
+    # collision, not the plan wall — quota files it apart from `last_429`.
+    quota_mod.note(resp_headers, status_code=status_code, probe=probe)
     # ONE-SHOT POP: commit on a 200, roll back on anything else. THIS is the
     # confirmation point — 5.9% of forwarded requests never reach a 200 and
     # failures come in runs up to 38, so a pop at injection would silently

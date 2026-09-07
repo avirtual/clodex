@@ -54,9 +54,14 @@ UPSTREAM_MIN_N = int(os.environ.get("HINTS_UPSTREAM_MIN_N", "4"))
 UPSTREAM_MIN_RATE = float(os.environ.get("HINTS_UPSTREAM_MIN_RATE", "0.25"))
 
 
-def note_outcome(status_code):
+def note_outcome(status_code, probe=False):
     """Record an upstream outcome. Called from the response path for every
-    forwarded request (cheap: one deque append)."""
+    forwarded request (cheap: one deque append). The CLI's 1-token startup
+    quota probe is excluded: its 429s are per-second burst collisions between
+    seats booting together (99% of all 429s), not upstream shedding, and a
+    fleet boot would otherwise read as a storm."""
+    if probe:
+        return
     try:
         _OUTCOMES.append((time.time(), int(status_code)))
     except Exception:
