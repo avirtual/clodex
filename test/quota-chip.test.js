@@ -5,7 +5,10 @@
 // decision here pins the behaviour rather than a guess at the markup.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
 const { shapeQuota, quotaChip, fmtQuotaReset, QUOTA_429_RECENT_S } = require('../proxy-util');
+const { CLAIM_WINDOW } = require('../wire/quota');
 
 // Measured verbatim off this box's wirescope v0.6.53 /_status at 95% weekly.
 // Kept whole (unused keys included) so a shaping that starts reading a new
@@ -116,12 +119,32 @@ test('quotaChip: allowed → nothing rendered at all', () => {
 });
 
 test('quotaChip: allowed_warning → visible, carrying percent, window and reset', () => {
+  // Literal, not a regex: /95%/ is true of the old "95% of 7d" shape and the
+  // new one both, so only the whole string pins which one ships.
   const chip = quotaChip(shapeQuota(LIVE, CAPS));
   assert.strictEqual(chip.level, 'warn');
-  assert.match(chip.text, /95%/);
-  assert.match(chip.text, /7d/);
-  assert.match(chip.text, /resets in 2d 22h/);
+  assert.strictEqual(chip.text, '7d quota 95% used · resets in 2d 22h');
   assert.strictEqual(chip.stale, false);
+});
+
+test('quotaChip: the quota statement leads even when the window is at 100% and rejected', () => {
+  const q = shapeQuota({ ...LIVE, status: 'rejected', primary: { ...LIVE.primary, used_pct: 100 } }, CAPS);
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.level, 'loud');
+  assert.strictEqual(chip.text, '7d quota 100% used · resets in 2d 22h');
+});
+
+test('quotaChip: a 5h window reads as its own quota statement', () => {
+  const q = shapeQuota({ status: 'allowed_warning', primary: { window: '5h', used_pct: 80, resets_in_s: 2400 }, age_s: 1 }, CAPS);
+  assert.strictEqual(quotaChip(q).text, '5h quota 80% used · resets in 40m');
+});
+
+test('quotaChip: a percentage with no window still says "quota", not a bare number', () => {
+  // Reachable: shapeQuota maps `window` and `used_pct` independently, so a
+  // payload whose representative claim did not resolve keeps the percentage.
+  const q = shapeQuota({ status: 'allowed_warning', age_s: 1, primary: { used_pct: 80, resets_in_s: 2400 } }, CAPS);
+  assert.strictEqual(q.window, null, 'ENTER: the window must really be absent, or this pins the windowed branch');
+  assert.strictEqual(quotaChip(q).text, 'quota 80% used · resets in 40m');
 });
 
 test('quotaChip: rejected → loud', () => {
@@ -133,10 +156,28 @@ test('quotaChip: a recent last_429 is loud even while status still says allowed'
   // A 429 carries NO ratelimit headers, so the response that proves the wall was
   // hit cannot raise the percentage. A recent 429 beside a comfortable status is
   // the EXPECTED shape and is exactly when the operator most wants to know.
-  const q = shapeQuota({ ...LIVE, status: 'allowed', last_429_age_s: 30 }, CAPS);
+  const q = shapeQuota({ status: 'allowed', last_429_age_s: 120, age_s: 1, primary: { window: '5h', used_pct: 20, resets_in_s: 2400 } }, CAPS);
   const chip = quotaChip(q);
   assert.strictEqual(chip.level, 'loud');
-  assert.match(chip.text, /requests being refused/);
+  // The refusal comes LAST and past-tense: a present-tense lead made from one
+  // 429 up to five minutes old contradicted the 20% beside it.
+  assert.strictEqual(chip.text, '5h quota 20% used · resets in 40m · rate-limited 2m ago');
+  assert.match(chip.tip, /rate-limited 2m ago/);
+});
+
+test('quotaChip: a refusal under a minute reads in seconds, and needs no percentage', () => {
+  const q = shapeQuota({ status: 'allowed', last_429_age_s: 30, age_s: 1, primary: { window: '5h' } }, CAPS);
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.level, 'loud');
+  assert.strictEqual(chip.text, '5h quota · rate-limited 30s ago');
+});
+
+test('quotaChip: a fractional refusal age floors, so the seconds form never reads "60s"', () => {
+  // The wire stamps last_429_age_s to 0.1s and shapeQuota passes it through
+  // unrounded, so rounding would emit a seconds value the minutes branch can
+  // never produce.
+  const q = shapeQuota({ status: 'allowed', last_429_age_s: 59.6, age_s: 1, primary: { window: '5h' } }, CAPS);
+  assert.strictEqual(quotaChip(q).text, '5h quota · rate-limited 59s ago');
 });
 
 test('quotaChip: an OLD last_429 does not keep the chip up on its own', () => {
@@ -192,6 +233,37 @@ test('quotaChip: the tip says the figure is the account, not the session', () =>
   // The bottom bar's neighbouring numbers are all per-SESSION; an unlabelled
   // account percentage beside them invites a category error.
   assert.match(quotaChip(shapeQuota(LIVE, CAPS)).tip, /not this session/i);
+});
+
+// The chip is DOM-free everywhere above; this one case is not, because the cap
+// that decides whether the text SURVIVES to the screen lives in CSS. An
+// ellipsis eats the tail, and the tail is the refusal — so a wording change
+// that outgrows the cap silently hides the loudest part of the loudest chip
+// while every assertion above stays green.
+test('#drawer-quota max-width fits the longest string quotaChip can emit', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf-8');
+  const rule = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/#drawer-quota\s*\{([^}]*)\}/);
+  assert.ok(rule, 'ENTER: the #drawer-quota rule must be found, or the width below is read off nothing');
+  const cap = Number((rule[1].match(/max-width:\s*(\d+)px/) || [])[1]);
+  assert.ok(Number.isFinite(cap), 'the rule sets an explicit px max-width');
+  assert.match(rule[1], /text-overflow:\s*ellipsis/, 'ENTER: it ellipsises, which is what makes overflow silent');
+
+  // Worst case built through the real function rather than hardcoded, so a new
+  // window label or a longer part is measured rather than assumed. 'overage' is
+  // the longest CLAIM_WINDOW label; `23h 59m` is the longest reset rendering —
+  // fmtQuotaReset's `${h}h ${m}m` branch runs up to 23h, one digit wider than
+  // the `4h 59m` this was first sized to and than any `Nd Nh` — and 100%/59s
+  // the longest pct and age.
+  const longest = Object.values(CLAIM_WINDOW)
+    .map((w) => quotaChip({ status: 'rejected', window: w, usedPct: 100, resetsInS: 23 * 3600 + 59 * 60, last429AgeS: 59, ageS: 1 }, 0).text)
+    .reduce((a, b) => (b.length > a.length ? b : a));
+  assert.strictEqual(longest, 'overage quota 100% used · resets in 23h 59m · rate-limited 59s ago');
+
+  // 343px measured in Electron for this string at 10px in the app's font stack,
+  // border-box (padding included); 66 × 5.2 = 344 keeps the pin at or above
+  // that. Re-measure rather than rescaling the constant if the wording changes.
+  assert.ok(cap >= Math.ceil(longest.length * 5.2),
+    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 343px) — the trailing refusal is what gets cut`);
 });
 
 test('fmtQuotaReset: minutes, hours and days; nothing for absent or elapsed', () => {

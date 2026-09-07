@@ -5217,7 +5217,7 @@ body {
   font-size: 10px;
   white-space: nowrap;
   flex-shrink: 1;
-  max-width: 245px;
+  max-width: 350px;
   overflow: hidden;
   text-overflow: ellipsis;
   padding: 2px 7px;
@@ -20822,6 +20822,11 @@ ${i3.join("\n")}
         const d = Math.floor(h / 24);
         return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
       }
+      function fmtQuotaAge(s) {
+        if (typeof s !== "number" || !Number.isFinite(s) || s < 0) return null;
+        if (s < 60) return `${Math.floor(s)}s`;
+        return fmtQuotaReset(s);
+      }
       function quotaChip(q, clientAgeS = 0) {
         if (!q) return null;
         const hot429 = q.last429AgeS != null && q.last429AgeS <= QUOTA_429_RECENT_S;
@@ -20831,18 +20836,19 @@ ${i3.join("\n")}
         if (!level) return null;
         const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
         const reset = fmtQuotaReset(q.resetsInS);
+        const age = hot429 ? fmtQuotaAge(q.last429AgeS) : null;
         const parts = [];
-        if (hot429) parts.push("requests being refused");
-        if (pct) parts.push(q.window ? `${pct} of ${q.window}` : pct);
-        else if (q.window) parts.push(q.window);
+        if (pct) parts.push(q.window ? `${q.window} quota ${pct} used` : `quota ${pct} used`);
+        else if (q.window) parts.push(`${q.window} quota`);
         if (reset) parts.push(`resets in ${reset}`);
+        if (age) parts.push(`rate-limited ${age} ago`);
         if (!parts.length) return null;
         const serverAge = q.ageS != null ? q.ageS : 0;
         const stale = Math.max(serverAge, clientAgeS || 0) > QUOTA_STALE_S;
         const tip = [
           "Account plan quota, not this session.",
           q.remainingPct != null ? `${Math.round(q.remainingPct)}% of the ${q.window || "window"} left.` : null,
-          hot429 ? "A request was rate-limited recently; a 429 carries no quota headers, so the figure beside it can lag." : null,
+          age ? `A request was rate-limited ${age} ago; a 429 carries no quota headers, so the usage figure is from the last successful reading.` : null,
           stale ? "Stale \u2014 nothing polls this, it updates only on a forwarded turn." : null,
           // Distinct from the line above: that one is "the API has not spoken", this
           // one is "we are not receiving". The remedy differs, so the wording must.

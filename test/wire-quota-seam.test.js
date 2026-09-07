@@ -101,7 +101,7 @@ test('seam: a codex 429 does NOT touch the Claude reading and does not broadcast
   // The bug this gate exists for: a 429 carries no ratelimit headers from ANY
   // provider, so the store's 429 branch is reached on status alone and files
   // the refusal against `_lastAccount` — the Claude org. The chip then reads
-  // "requests being refused" for a plan that was never refused.
+  // "rate-limited … ago" for a plan that was never refused.
   await onWire(async ({ wire, m, broadcasts }) => {
     wire.emit('response', {
       agent: 'a', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,

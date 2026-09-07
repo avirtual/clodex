@@ -106,6 +106,11 @@ strip ladder) is a deployment property riding the payload; only *enabled*
 tracks the live link. The 📄 files badge latches "unseen" only on an
 increase over a known baseline (the attach seed is silent).
 
+`quotaChip` (proxy-util.js) renders the quota statement first —
+`5h quota 80% used · resets in 40m` — with a recent refusal appended last and
+past-tense, `· rate-limited 2m ago`, since a 429 up to five minutes old is not
+a present-tense outage.
+
 `proxy.auth_refresh.stalled` on `/_status` (wirescope v0.6.59+) means the
 OAuth refresh token itself is dead — the proxy cannot renew and a human
 must run `claude login`. It rides every payload as `authRefresh` beside

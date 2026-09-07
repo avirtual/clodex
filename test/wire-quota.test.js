@@ -389,8 +389,7 @@ test('pickQuota: the picked reading renders through quotaChip unchanged below th
   const picked = pickQuota([{ quota: wireQ(), at: nowMs, source: 'wire' }], nowMs);
   const chip = quotaChip(picked.quota, picked.clientAgeS);
   assert.strictEqual(chip.level, 'warn');
-  assert.match(chip.text, /95% of 7d/);
-  assert.match(chip.text, /resets in 16m/);
+  assert.strictEqual(chip.text, '7d quota 95% used · resets in 16m');
 });
 
 // ---- end to end: headers in, chip out ----
@@ -402,7 +401,7 @@ test('the whole path: live headers → store → shapeQuota → pickQuota → ch
   const picked = pickQuota([{ quota: shaped, at: NOW * 1000, source: 'wire' }], NOW * 1000);
   const chip = quotaChip(picked.quota, picked.clientAgeS);
   assert.strictEqual(chip.level, 'warn');
-  assert.match(chip.text, /95% of 7d/);
+  assert.strictEqual(chip.text, '7d quota 95% used · resets in 2d 22h');
   assert.match(chip.tip, /not this session/i);
 });
 
