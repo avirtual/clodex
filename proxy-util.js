@@ -55,9 +55,9 @@ function strictMcpReason(proxyBase, probe) {
 }
 
 const STRICT_MCP_EXPLANATION = {
-  'unrouted': 'session is not routed through a wirescope',
-  'wire-no-strip': 'the wire does not strip claude_design — deploy a newer wirescope, or use a stripping port',
-  'probe-failed': 'the wire did not answer at spawn — restart the session to retry',
+  'unrouted': 'this session is not routed through wirescope, so Clodex could not remove only the claude_design MCP server; to keep your other MCP servers, route the session through wirescope or turn off Settings ▸ Disable claude_design MCP',
+  'wire-no-strip': 'the wirescope this session uses is not configured to strip claude_design, so Clodex could not remove only that MCP server; to keep your other MCP servers, set STRIP_MCP_SERVERS=claude_design on that wirescope or turn off Settings ▸ Disable claude_design MCP',
+  'probe-failed': 'wirescope did not answer when the session started; restart the session to retry, or turn off Settings ▸ Disable claude_design MCP',
 };
 
 // The owner's proxyBase is on their loopback and unreachable from a viewer; a

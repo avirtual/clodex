@@ -442,6 +442,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
             // STRIP_TOOLS_GLOBAL= (empty) to turn it off; per-spawn
             // re-admit via [wirescope:keep-tools EndConversation].
             STRIP_TOOLS_GLOBAL: process.env.STRIP_TOOLS_GLOBAL ?? 'EndConversation',
+            STRIP_MCP_SERVERS: process.env.STRIP_MCP_SERVERS ?? 'claude_design',
           },
           detached: true,
           stdio: ['ignore', logFd, logFd],

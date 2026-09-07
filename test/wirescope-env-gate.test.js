@@ -457,3 +457,80 @@ test('localReach is SYNCHRONOUS and probes nothing — the hello answers on the 
     assert.deepEqual(probes, [], 'and nothing was probed to answer it');
   });
 });
+
+// ── the spawn env the managed proxy inherits ────────────────────────────────
+//
+// _spawn's env block is the only place the vendored proxy's feature defaults are
+// chosen, and every one of them is OFF in the vendor's own code — start_proxy.sh
+// is what turns them on for the lab, and Clodex does not run that script. So a
+// default that is absent here is a feature silently disabled in the packaged app,
+// which is exactly what STRIP_MCP_SERVERS was: the wire answered `servers: []`,
+// every Claude spawn fell back to --strict-mcp-config and dropped the user's own
+// MCP servers along with claude_design.
+//
+// Driven for real rather than read from the source: `python` is a stub that dumps
+// its environment, so this asserts what a child process actually receives.
+function envFromSpawn(patch) {
+  const dir = mkTmpRoot('ws-spawnenv-');
+  const out = path.join(dir, 'env.txt');
+  const stub = path.join(dir, 'fake-python');
+  // Spool-then-rename: `>` creates the file before `export -p` has written a
+  // byte, so waiting on existence alone reads an EMPTY env and every assertion
+  // below reports the variable as absent — which reads exactly like the bug this
+  // pins.
+  fs.writeFileSync(stub, `#!/bin/sh\nexport -p > ${JSON.stringify(out + '.tmp')}\nmv -f ${JSON.stringify(out + '.tmp')} ${JSON.stringify(out)}\n`);
+  fs.chmodSync(stub, 0o755);
+
+  const saved = process.env.STRIP_MCP_SERVERS;
+  if (patch === undefined) delete process.env.STRIP_MCP_SERVERS;
+  else process.env.STRIP_MCP_SERVERS = patch;
+  try {
+    const { sup } = makeSup(ROUTED);
+    sup._spawn(stub, dir, 47999);
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(out)) {
+      if (Date.now() > deadline) throw new Error('the stub python never ran');
+      execFileSync('sleep', ['0.05']);
+    }
+    sup.child = null;
+  } finally {
+    if (saved === undefined) delete process.env.STRIP_MCP_SERVERS;
+    else process.env.STRIP_MCP_SERVERS = saved;
+  }
+
+  // `export -p` quotes values, so an empty export and an absent one are
+  // distinguishable — which is the whole point of the kill-switch case.
+  const env = new Map();
+  for (const line of fs.readFileSync(out, 'utf8').split('\n')) {
+    const m = /^(?:export|declare -x)\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!m) continue;
+    let v = m[2];
+    if (/^".*"$/.test(v) || /^'.*'$/.test(v)) v = v.slice(1, -1);
+    env.set(m[1], v.replace(/\\(.)/g, '$1'));
+  }
+  return env;
+}
+
+test('spawn env: STRIP_MCP_SERVERS defaults to claude_design, and an exported empty string sticks', () => {
+  // The default. Hardcoded, never derived from the module — an expectation read
+  // out of wirescope-supervisor.js would assert only that the file agrees with
+  // itself, and this value has to match the server name the vendored proxy
+  // advertises at /_identity for strictMcpReason() to return null.
+  assert.strictEqual(envFromSpawn(undefined).get('STRIP_MCP_SERVERS'), 'claude_design');
+
+  // The kill switch. `??` passes '' through; `||` would silently re-enable the
+  // default and there would be no way to turn the strip off for the managed
+  // instance at all.
+  const off = envFromSpawn('');
+  assert.ok(off.has('STRIP_MCP_SERVERS'), 'the variable must still be exported, so the vendor default cannot apply');
+  assert.strictEqual(off.get('STRIP_MCP_SERVERS'), '');
+
+  // An explicit non-default value is not overridden either.
+  assert.strictEqual(envFromSpawn('other_server').get('STRIP_MCP_SERVERS'), 'other_server');
+
+  // Its neighbours in the same block, so a rewrite that drops one is caught here
+  // rather than as a silently disabled feature in the packaged app.
+  const dflt = envFromSpawn(undefined);
+  assert.strictEqual(dflt.get('STRIP_TOOLS_GLOBAL'), 'EndConversation');
+  assert.strictEqual(dflt.get('WS_OMIT_DEFAULT'), 'useremail');
+});

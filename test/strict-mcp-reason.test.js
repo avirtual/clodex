@@ -82,6 +82,37 @@ test('the three reasons are distinct, and each carries its own remedy', () => {
   assert.strictEqual(new Set(reasons.map((r) => STRICT_MCP_EXPLANATION[r])).size, 3);
 });
 
+// The row reaches an OPERATOR, in the ipc log, next to nothing that explains the
+// flag. "the wire does not strip claude_design — deploy a newer wirescope" named
+// a remedy the operator of the embedded wirescope cannot perform and did not need
+// (it ships strip-capable), so the only assertion that means anything is that
+// each reason names a remedy its own reader can actually carry out. Length and
+// distinctness above cannot see that; three lorem-ipsum strings pass both.
+test('each explanation names the remedy that reason\'s reader can actually perform', () => {
+  const SETTINGS_REMEDY = 'Settings ▸ Disable claude_design MCP';
+  // Per-row literals, not a rule re-applied: the wire-no-strip row is the
+  // exception — its reader owns a wirescope and needs the variable's NAME, and
+  // the settings toggle alone would be the wrong advice to leave them with.
+  const rows = [
+    ['unrouted', ['not routed through wirescope', SETTINGS_REMEDY]],
+    ['wire-no-strip', ['STRIP_MCP_SERVERS', SETTINGS_REMEDY]],
+    ['probe-failed', ['restart the session', SETTINGS_REMEDY]],
+  ];
+  assert.deepStrictEqual(rows.map(([r]) => r).sort(), Object.keys(STRICT_MCP_EXPLANATION).sort(),
+    'a reason gained or lost an explanation without gaining or losing a remedy row');
+  for (const [reason, needles] of rows) {
+    for (const needle of needles) {
+      assert.ok(STRICT_MCP_EXPLANATION[reason].includes(needle),
+        `${reason}: explanation does not name the remedy ${JSON.stringify(needle)} — got ${JSON.stringify(STRICT_MCP_EXPLANATION[reason])}`);
+    }
+  }
+  // The stale remedy specifically: it told everyone to deploy a newer wirescope,
+  // which for the embedded one is both impossible and unnecessary.
+  for (const reason of Object.keys(STRICT_MCP_EXPLANATION)) {
+    assert.ok(!/deploy a newer wirescope/.test(STRICT_MCP_EXPLANATION[reason]), `${reason}: the stale remedy is back`);
+  }
+});
+
 // ── the assertion that matters most ──────────────────────────────────────────
 //
 // WINDOW: the HEALTHY path — routed to a wire that advertises a claude_design
@@ -140,6 +171,10 @@ test('session-manager pushes the flag and logs ONLY inside the reason guard', ()
   assert.ok(guarded.includes("args.push('--strict-mcp-config')"), 'the flag is not pushed inside the guard');
   assert.ok(guarded.includes("this._broadcast('ipc-message'"), 'the log line is not broadcast inside the guard');
   assert.ok(guarded.includes('STRICT_MCP_EXPLANATION[reason]'), 'the log line does not carry the reason explanation');
+  // The `MCP: ` prefix is how the row is found in an ipc log full of other
+  // system rows; the reason key moved out of the body when the text was
+  // rewritten for operators, so the prefix is now the only greppable handle.
+  assert.ok(guarded.includes('body: `MCP: '), 'the row no longer opens with the greppable MCP: prefix');
 
   // And nothing between the call and the guard emits anything — i.e. there is
   // no second, ungated line that would fire on the healthy path.
