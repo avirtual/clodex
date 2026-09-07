@@ -7,8 +7,8 @@
 // wirescope; `--strict-mcp-config` is the fallback and is ALL-OR-NOTHING, so on
 // the fallback path a user's real project/user MCP servers are disabled too.
 // The preferences hint documents that for the UNROUTED case. What was invisible:
-// a ROUTED session ALSO falls back when the wire is too old to advertise
-// strip_mcp, or when the probe fails at the spawn instant. The user reads
+// a ROUTED session ALSO falls back when its wire does not advertise a
+// claude_design strip, or when the probe fails at the spawn instant. The user reads
 // "routed = the proxy handles it" and in those two cases is wrong.
 //
 // t45 changes NOTHING about when the flag is pushed — only whether anyone can
@@ -30,10 +30,10 @@ const stripping = (servers) => ({
 
 // ── the three reasons, each distinct ─────────────────────────────────────────
 //
-// WINDOW: each fallback path names ITSELF. The remedies differ — deploy a newer
-// wire, restart the session, or nothing (unrouted is expected) — so a single
-// undifferentiated "strict was pushed" line would repeat this ticket's own bug
-// one level up: a true statement that leaves the user unable to act on it.
+// WINDOW: each fallback path names ITSELF, because the remedies differ — so a
+// single undifferentiated "strict was pushed" line would repeat this ticket's
+// own bug one level up: a true statement that leaves the user unable to act on
+// it. Which remedy belongs to which reason is pinned below, not here.
 
 test('unrouted: no proxy at all is the documented, expected fallback', () => {
   assert.strictEqual(strictMcpReason(null, null), 'unrouted');
@@ -80,6 +80,47 @@ test('the three reasons are distinct, and each carries its own remedy', () => {
   assert.deepStrictEqual(Object.keys(STRICT_MCP_EXPLANATION).sort(), [...reasons].sort());
   // Distinct text, not three labels on one sentence.
   assert.strictEqual(new Set(reasons.map((r) => STRICT_MCP_EXPLANATION[r])).size, 3);
+});
+
+// The row reaches an OPERATOR, in the ipc log, next to nothing that explains the
+// flag. "the wire does not strip claude_design — deploy a newer wirescope" named
+// a remedy the operator of the embedded wirescope cannot perform and did not need
+// (it ships strip-capable), so the only assertion that means anything is that
+// each reason names a remedy its own reader can actually carry out. Length and
+// distinctness above cannot see that; three lorem-ipsum strings pass both.
+test('each explanation names the remedy that reason\'s reader can actually perform', () => {
+  const SETTINGS_REMEDY = 'Settings ▸ Disable claude_design MCP';
+  // The remedy names a control by its LABEL, and a label is renamed by someone
+  // editing the html who will never read this file. Pointing an operator at a
+  // setting that does not exist under that name is worse than saying nothing,
+  // so the label is read from the tree rather than assumed.
+  const prefs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const label = SETTINGS_REMEDY.replace('Settings ▸ ', '');
+  const at = prefs.indexOf('id="prefs-disable-design-mcp"');
+  assert.ok(at > 0, 'the claude_design MCP checkbox is gone — every remedy below names a control that does not exist');
+  assert.ok(prefs.slice(at, at + 400).replace(/<[^>]+>/g, '').includes(label),
+    `the checkbox label no longer reads ${JSON.stringify(label)}, which all three explanations send the operator to`);
+  // Per-row literals, not a rule re-applied: the wire-no-strip row is the
+  // exception — its reader owns a wirescope and needs the variable's NAME, and
+  // the settings toggle alone would be the wrong advice to leave them with.
+  const rows = [
+    ['unrouted', ['not routed through wirescope', SETTINGS_REMEDY]],
+    ['wire-no-strip', ['STRIP_MCP_SERVERS', SETTINGS_REMEDY]],
+    ['probe-failed', ['restart the session', SETTINGS_REMEDY]],
+  ];
+  assert.deepStrictEqual(rows.map(([r]) => r).sort(), Object.keys(STRICT_MCP_EXPLANATION).sort(),
+    'a reason gained or lost an explanation without gaining or losing a remedy row');
+  for (const [reason, needles] of rows) {
+    for (const needle of needles) {
+      assert.ok(STRICT_MCP_EXPLANATION[reason].includes(needle),
+        `${reason}: explanation does not name the remedy ${JSON.stringify(needle)} — got ${JSON.stringify(STRICT_MCP_EXPLANATION[reason])}`);
+    }
+  }
+  // The stale remedy specifically: it told everyone to deploy a newer wirescope,
+  // which for the embedded one is both impossible and unnecessary.
+  for (const reason of Object.keys(STRICT_MCP_EXPLANATION)) {
+    assert.ok(!/deploy a newer wirescope/.test(STRICT_MCP_EXPLANATION[reason]), `${reason}: the stale remedy is back`);
+  }
 });
 
 // ── the assertion that matters most ──────────────────────────────────────────
@@ -140,6 +181,15 @@ test('session-manager pushes the flag and logs ONLY inside the reason guard', ()
   assert.ok(guarded.includes("args.push('--strict-mcp-config')"), 'the flag is not pushed inside the guard');
   assert.ok(guarded.includes("this._broadcast('ipc-message'"), 'the log line is not broadcast inside the guard');
   assert.ok(guarded.includes('STRICT_MCP_EXPLANATION[reason]'), 'the log line does not carry the reason explanation');
+  // The row leads with the CONSEQUENCE and carries the flag in parentheses. The
+  // earlier shape led with `--strict-mcp-config (${reason})`, i.e. two pieces of
+  // Clodex jargon before anything the reader could act on, and the reason key it
+  // opened with is not a term that appears anywhere in the UI. `MCP: ` stays as
+  // the greppable handle in an ipc log full of other system rows.
+  assert.ok(guarded.includes('body: `MCP: '), 'the row no longer opens with the greppable MCP: prefix');
+  assert.ok(guarded.includes('MCP: all MCP servers disabled for this session (--strict-mcp-config) —'),
+    'the row no longer leads with the consequence, with the flag in parentheses');
+  assert.ok(!/MCP: --strict-mcp-config/.test(guarded), 'the row leads with the flag again');
 
   // And nothing between the call and the guard emits anything — i.e. there is
   // no second, ungated line that would fire on the healthy path.

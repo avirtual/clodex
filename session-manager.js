@@ -1456,7 +1456,7 @@ function createSessionManager(deps) {
               args.push('--strict-mcp-config');
               this._broadcast('ipc-message', {
                 type: 'system', from: name, to: name,
-                body: `MCP: --strict-mcp-config (${reason}) — ${STRICT_MCP_EXPLANATION[reason]}. All MCP servers are disabled for this session.`,
+                body: `MCP: all MCP servers disabled for this session (--strict-mcp-config) — ${STRICT_MCP_EXPLANATION[reason]}.`,
               });
             }
           }

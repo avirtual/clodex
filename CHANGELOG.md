@@ -15,6 +15,7 @@ blocks a release.
 
 - Settings ▸ Sessions: a **Default session mode** (Clodex optimized / Standard) that the New Session dialog opens on.
 - Keep-warm pings now show in the IPC traffic tab with their outcome (warm hit or cold re-cache, tokens, TTL), as do ping failures and the hold stopping.
+- The embedded wirescope now strips only the claude_design MCP server, so your own MCP servers stay enabled and the per-session '--strict-mcp-config' notice stops appearing; a wirescope left running from before the upgrade is restarted once to pick this up. The remaining fallback notices are reworded for operators, and the setting is now labelled "Disable claude_design MCP".
 
 ## 5.35.3 — 2026-09-07
 

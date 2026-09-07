@@ -7316,10 +7316,10 @@ body {
           <div id="prefs-tools-list" class="agent-checklist"></div>
         </label>
         <h5>Claude MCP</h5>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is too old to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
+        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy, which removes just those tools and keeps your real MCPs. But it falls back if the proxy is not configured to strip or is unreachable at spawn — so <em>routed is not a guarantee</em>. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-disable-design-mcp">
-          <span>Disable all MCP on unrouted sessions (<code>--strict-mcp-config</code>)</span>
+          <span>Disable <code>claude_design</code> MCP</span>
         </label>
       </details>
       <details class="prefs-group" data-group="env">
@@ -20495,9 +20495,9 @@ ${i3.join("\n")}
         return "wire-no-strip";
       }
       var STRICT_MCP_EXPLANATION = {
-        "unrouted": "session is not routed through a wirescope",
-        "wire-no-strip": "the wire does not strip claude_design \u2014 deploy a newer wirescope, or use a stripping port",
-        "probe-failed": "the wire did not answer at spawn \u2014 restart the session to retry"
+        "unrouted": "this session is not routed through wirescope, so Clodex could not remove only the claude_design MCP server; to keep your other MCP servers, route the session through wirescope or turn off Settings \u25B8 Disable claude_design MCP",
+        "wire-no-strip": "the wirescope this session uses is not configured to strip claude_design, so Clodex could not remove only that MCP server; to keep your other MCP servers, set STRIP_MCP_SERVERS=claude_design on that wirescope or turn off Settings \u25B8 Disable claude_design MCP",
+        "probe-failed": "wirescope did not answer when the session started; restart the session to retry, or turn off Settings \u25B8 Disable claude_design MCP"
       };
       function boxWirescopeView(p, publicUrl) {
         const base = (publicUrl || "").trim().replace(/\/+$/, "");

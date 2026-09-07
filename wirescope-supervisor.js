@@ -242,11 +242,18 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       if (probe) {
         this.lastError = null;
         const ours = !!(this._survivorPid() || this._reclaimPidFile(port));
-// The _upgradeTried latch is once per app launch — without it an unexpected
-// version string restart-loops. Adopted external instances are never touched.
+// The _upgradeTried latch is once per app launch and covers BOTH arms below: a
+// probe that never reports what we want restart-loops without it.
         if (ours && !this._upgradeTried) {
           const want = this._sourceVersion(this._source());
           if (want && probe.version && probe.version !== want) {
+            this._upgradeTried = true;
+            return this.restart();
+          }
+          const strips = probe.capabilities && probe.capabilities.strip_mcp
+            && probe.capabilities.strip_mcp.servers;
+          if (process.env.STRIP_MCP_SERVERS === undefined
+              && !(Array.isArray(strips) && strips.includes('claude_design'))) {
             this._upgradeTried = true;
             return this.restart();
           }
@@ -442,6 +449,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
             // STRIP_TOOLS_GLOBAL= (empty) to turn it off; per-spawn
             // re-admit via [wirescope:keep-tools EndConversation].
             STRIP_TOOLS_GLOBAL: process.env.STRIP_TOOLS_GLOBAL ?? 'EndConversation',
+            STRIP_MCP_SERVERS: process.env.STRIP_MCP_SERVERS ?? 'claude_design',
           },
           detached: true,
           stdio: ['ignore', logFd, logFd],
