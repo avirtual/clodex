@@ -2765,10 +2765,13 @@ function createSessionManager(deps) {
       }
       const team = (() => { try { return resolveTeam(entry.cwd); } catch { return null; } })();
       if (team) {
-        let open = [];
-        try { open = this._openTicketsFor(team, name); } catch { open = []; }
-        if (open.length) {
-          return { ok: false, error: `${name} is the assignee of open ticket${open.length > 1 ? 's' : ''} ${open.map((t) => t.id).join(', ')} — close or reassign before renaming.` };
+        // An unreadable board REFUSES, the way _roleInUse's catch does: a rename
+        // past a ticket whose assignee names the old seat strands that ticket,
+        // so "could not check" must not read as "nothing found".
+        let ids;
+        try { ids = this._openTicketsFor(team, name).map((t) => t.id); } catch { ids = ['<ticket check unavailable>']; }
+        if (ids.length) {
+          return { ok: false, error: `${name} is the assignee of open ticket${ids.length > 1 ? 's' : ''} ${ids.join(', ')} — close or reassign before renaming.` };
         }
       }
       if (this.sessions.has(newName)) return { ok: false, error: `${newName} is already a live session` };
