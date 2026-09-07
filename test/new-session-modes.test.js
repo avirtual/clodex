@@ -222,8 +222,11 @@ test('landing on custom opens Advanced, so a configured form is never hidden', (
 
 // --- open-time defaults ---------------------------------------------------
 
+// Captured by SHAPE, not by the literals it decides: a regex naming 'optimized'
+// would fail to extract when the default changes, and every assertion below
+// would report a missing statement rather than the wrong default.
 const OPEN_STMTS = extract(
-  /\n(  setModeSelect\(prefill \? 'custom' : 'optimized'\);\n  if \(advancedSection\) advancedSection\.open = [^\n]*;)\n/,
+  /\n(  setModeSelect\([^\n]*\);\n  if \(advancedSection\) advancedSection\.open = [^\n]*;)\n/,
   "openDialog's mode reset",
 );
 
