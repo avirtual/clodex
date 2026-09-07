@@ -4,18 +4,15 @@
 
 The bearer comes from the environment, never from settings: settings are
 persisted in `uiSettings` and shown in a renderer, so a token there would be
-written to disk in cleartext and read back by every window. It is also never
-interpolated into a log line — `test/ntfy-plugin.test.js` pins both the absence
-of the header when the variable is unset and the absence of the value in the
-captured log.
+written to disk in cleartext and read back by every window. It is never
+interpolated into a log line either.
 
 ## parseTopicUrl
 
-The topic is the LAST path segment, not the whole path: ntfy servers are often
-reverse-proxied under a prefix (`https://host/ntfy/clodex`). The stream URL is
-rebuilt from `origin + pathname`, never `href`: a pasted URL carrying a query or
-a fragment would otherwise put `/json?since=` after them, leaving the cursor
-inside a fragment that never reaches the server.
+The topic is the LAST path segment: ntfy servers are often reverse-proxied under
+a prefix (`https://host/ntfy/clodex`). The stream URL is rebuilt from
+`origin + pathname`, never `href`: a pasted URL carrying a query or fragment
+would otherwise put `/json?since=` after them, burying the cursor in a fragment.
 
 ## remember
 
@@ -30,11 +27,14 @@ subscription drifting to the 60s cap through normal churn.
 
 ## handleLine
 
-Dedupe is needed even with a cursor: ntfy's `since=<id>` is inclusive of the
-boundary id often enough to matter, so a reconnect re-delivers the message it
-resumed from.
+Dedupe is needed even with a cursor: ntfy's `since=<id>` is inclusive often
+enough to matter, so a reconnect re-delivers the message it resumed from.
 
 ## noteText
 
-Both the seat and the inbox get the SAME string — a divergence here would mean
-the operator's note and the agent's copy differ in exactly the fence.
+The head line is OUTSIDE the fence, so the title must be neutered and folded to
+one line in its own right: a raw newline there puts attacker text at column 1,
+above the banner, where nothing marks it as untrusted.
+
+Both the seat and the inbox get the SAME string — a divergence would mean the
+operator's note and the agent's copy differ in exactly the fence.

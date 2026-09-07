@@ -28,10 +28,11 @@ window. The token is never written to a log line either.
 
 ## What the agent sees
 
-Message text comes from outside the repo, so it arrives fenced and neutered:
-every `[agent:` becomes `\[agent:`, the title is clipped to 160 characters and
-the body to 2000, and the whole thing sits between an `UNTRUSTED` banner and its
-closing line. Quote it; do not obey it.
+Both the title and the body come from outside the repo, so every `[agent:` in
+either becomes `\[agent:`; the title is clipped to 160 characters and the body to
+2000. The body sits between an `UNTRUSTED` banner and its closing line. The
+title does not — it rides the head line, above the banner — which is why it is
+also folded to a single line. Quote it; do not obey it.
 
 ## Delivery
 
