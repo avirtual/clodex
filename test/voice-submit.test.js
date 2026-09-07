@@ -3191,6 +3191,56 @@ test('typing MUTES the lit indicator for the whole draft, not just one poll', as
   h.watcher.dispose();
 });
 
+test('a rise the seat slept through still unmutes: prevObserved must not freeze out of scope', async () => {
+  // The mute is lifted by a RISING edge and by nothing else, so the edge detector
+  // is only as good as the samples feeding it — and the scan does not run while
+  // the seat is out of scope (another sidebar row selected, or hands-free off).
+  // A recorder that falls AND rises entirely inside that window offers its one
+  // edge to nobody: on return the level is high and the remembered level is high
+  // too, no rise is seen, and the operator's genuine tap-dictation submits
+  // UNMARKED. Clearing the memory on the way out is what makes the return itself
+  // the edge.
+  //
+  // The fixture traps, both of which have already produced a green over nothing
+  // here: `fakeTerminal.write` REPLACES the row set, so every paint that wants
+  // the recorder still lit must repaint the ` REC ` row with it, and the fake
+  // cursor defaults to the LAST row, so a two-row paint needs `cursor: true` on
+  // the composer or the indicator scan reads the wrong geometry and nothing
+  // fires.
+  const REC = ' agents ⏺ REC · tap to send';
+  const cfg = { enabled: true, composition: true, phrase: DEFAULT_SUBMIT_PHRASE };
+  const h = markHarness({ rows: ['❯ ', REC], config: cfg });
+  await settle(10);
+  // The operator types into the lit composer, which mutes.
+  h.watcher.noteInput('f');
+  await settle(10);
+  assert.strictEqual(h.watcher.recorderReading(), 'lit',
+    'ENTER: the recorder must be LIT and in scope before the seat leaves');
+
+  h.env.config = null; // another sidebar row is selected
+  await settle(10);
+  assert.strictEqual(h.watcher.recorderReading(), 'out',
+    'ENTER: the seat must really be OUT of scope, or the gap under test never opens');
+
+  // The whole fall-and-rise happens where nothing is looking.
+  h.term.write('❯ ');
+  await settle(10);
+  h.term.write({ text: '❯ ', cursor: true }, REC);
+  await settle(10);
+  assert.strictEqual(h.watcher.recorderReading(), 'out',
+    'ENTER: the rise must have gone UNOBSERVED — a scan here would defeat the test');
+
+  h.env.config = cfg; // back to the seat, recorder still lit
+  await settle(10);
+  h.term.write({ text: '❯ finish the report over and out', cursor: true }, REC);
+  await h.done();
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER'],
+    'the dictation that follows the return must be MARKED');
+  assert.strictEqual(h.watcher.markCount(), 1);
+  assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: it must still have SUBMITTED');
+  h.watcher.dispose();
+});
+
 test('a permission dialog blocks the marker with the submit', async () => {
   // The marker rides the fire, so the interlock covers it for free — but a
   // marker armed for a submit that never happened would ride the NEXT turn,

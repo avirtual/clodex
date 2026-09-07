@@ -25491,6 +25491,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!cfg) {
             forgetPending();
+            prevObserved = false;
             return;
           }
           if (observed && !prevObserved) mutedByTyping = false;
