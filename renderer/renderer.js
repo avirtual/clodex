@@ -1928,6 +1928,11 @@ const MODE_HINTS = {
   custom: 'These fields were set by hand. Open Advanced to see them.',
 };
 
+function defaultSessionMode(settings) {
+  const mode = settings && settings.defaultSessionMode;
+  return mode === 'standard' || mode === 'optimized' ? mode : 'optimized';
+}
+
 function modeToolDenySet() {
   return inputMode && inputMode.value === 'standard' ? new Set() : new Set(getDefaultToolDenyCache());
 }
@@ -2193,6 +2198,7 @@ async function refreshCwdSuggestions() {
 }
 
 async function openDialog(prefill = null) {
+  const settingsFetch = window.api.getSettings();
   editingTemplateId = null;
   editingTemplateBundle = null;
   inputName.readOnly = false;
@@ -2234,7 +2240,8 @@ async function openDialog(prefill = null) {
   for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
     if (sec) sec.open = false;
   }
-  setModeSelect(prefill ? 'custom' : 'optimized');
+  const hostSettings = await settingsFetch;
+  setModeSelect(prefill ? 'custom' : defaultSessionMode(hostSettings));
   if (advancedSection) advancedSection.open = !!prefill;
   if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
   refreshEnvHint();
@@ -2243,7 +2250,7 @@ async function openDialog(prefill = null) {
   const [, , settings, agentLib, boxes, reserved] = await Promise.all([
     refreshTemplatesDropdown(),
     refreshSystemPromptDropdown(),
-    window.api.getSettings(),
+    settingsFetch,
     window.api.listAgents(),
     window.api.sandboxListBoxes(),
     window.api.reservedSessionNames(),
@@ -4420,6 +4427,7 @@ const prefsCtxNudge = document.getElementById('prefs-ctx-nudge');
 const prefsCtxEscalate = document.getElementById('prefs-ctx-escalate');
 const prefsCtxModels = document.getElementById('prefs-ctx-models');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
+const prefsDefaultMode = document.getElementById('prefs-default-mode');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
@@ -6572,6 +6580,7 @@ async function openPrefs() {
   setSpeakSettings(s);
   setCtxThresholds(s);
   setTerminalReports(s.terminalReports);
+  if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
@@ -6641,6 +6650,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     // key is not omitted when the boxes are empty the way speakVoice is.
     ...(prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {}),
     terminalReports: readTerminalReports(),
+    defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : 'optimized',
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Settings ▸ Sessions: a **Default session mode** (Clodex optimized / Standard) that the New Session dialog opens on.
+
 ## 5.35.3 — 2026-09-07
 
 - New Session opens with Name, Type, Folder and a Mode selector (Clodex optimized, the default, trims the tool roster and enables wire stripping; Standard runs the CLI untouched); everything else now lives under an Advanced section, opened automatically when editing a template or reopening a configured seat.
