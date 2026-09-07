@@ -555,6 +555,27 @@ test('rename allows a seat whose only ticket is CLOSED', async () => {
 
 // ---------------------------------------------------------- create() throws
 
+// BOTH kept arms must carry a `name`, because the renderer builds its failed row
+// from `res.name` — a kept arm that omits it puts a row named `undefined` on
+// screen. The two arms carry DIFFERENT names on purpose: this one returns before
+// the record is renamed, so the seat is still the old name.
+test('the exit-timeout kept arm names the OLD seat — nothing was renamed yet', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const { m, store, created } = mkRename({ root, entries: [BASE] });
+  // A pty that never frees its map slot: _waitForExit polls the map, so this is
+  // exactly the timeout the arm under test handles.
+  m.sessions.set('seat', { name: 'seat', agentType: 'claude', pty: { pid: 9, kill() {} } });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.kept, true);
+  assert.strictEqual(r.name, 'seat',
+    'the record was never rewritten in this arm, so the row must be rebuilt under the old name');
+  assert.strictEqual(store[0].name, 'seat');
+  assert.deepStrictEqual(created, [], 'and nothing was respawned');
+  assertUntouched(root, 'seat', 'newseat');
+});
+
 test('create() throwing keeps the record under the NEW name, with kept:true', async () => {
   const root = mkTmpRoot('clodex-rename-');
   seedDirs(root, 'seat');

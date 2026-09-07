@@ -2791,7 +2791,7 @@ function createSessionManager(deps) {
             return {
               ok: false, kept: true,
               error: 'old process did not exit in time — session not renamed',
-              type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+              name, type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
             };
           }
         }
