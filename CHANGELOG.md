@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Manage Plugins library rows: Update names the installed ref in its trust warning, a registered plugin says "unregister it first", and installing one row no longer refetches the whole catalog.
+- When the bundled proxy can no longer refresh the Claude login, a sidebar banner says so and names the fix (`claude login`) — previously keep-warm holds just died quietly at the next token lapse.
 
 ## 5.35.1 — 2026-09-07
 

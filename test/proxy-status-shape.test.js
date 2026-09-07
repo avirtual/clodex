@@ -33,7 +33,7 @@ test('status(): sessions AND the top-level quota block come back', async () => {
   });
   try {
     const out = await ProxyClient.status(base);
-    assert.deepStrictEqual(out, { sessions, quota });
+    assert.deepStrictEqual(out, { sessions, quota, authRefresh: null });
   } finally { srv.close(); }
 });
 
@@ -43,7 +43,7 @@ test('status(): a proxy with no quota block yields sessions plus a null quota', 
   const sessions = [{ agent: 'clodex-a-1' }];
   const { srv, base } = await serve((_req, res) => json(res, 200, { sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions, quota: null });
+    assert.deepStrictEqual(await ProxyClient.status(base), { sessions, quota: null, authRefresh: null });
   } finally { srv.close(); }
 });
 
@@ -53,13 +53,62 @@ test('status(): a non-200, or a body with no sessions array, degrades to empty',
     json(res, 200, {});
   });
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions: [], quota: null });
+    assert.deepStrictEqual(await ProxyClient.status(base), { sessions: [], quota: null, authRefresh: null });
   } finally { srv.close(); }
 
   const { srv: s2, base: b2 } = await serve((_req, res) => json(res, 200, { proxy: {} }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(b2), { sessions: [], quota: null });
+    assert.deepStrictEqual(await ProxyClient.status(b2), { sessions: [], quota: null, authRefresh: null });
   } finally { s2.close(); }
+});
+
+// proxy.auth_refresh: the readout that says a human owes `claude login`. When
+// the refresh token is dead the proxy cannot renew and every keep-warm hold
+// dies at the next lapse — so the flag has to survive the reduce, not be
+// summarised away into the boolean the banner happens to need today.
+test('status(): a stalled auth_refresh block comes back beside the sessions', async () => {
+  const sessions = [{ agent: 'clodex-a-1' }];
+  const authRefresh = {
+    enabled: true, lead_s: 300, token_expires_at: 1786791110, token_expires_in_s: -20,
+    token_lapsed: true, checked_ts: 1786791130, read_error: null,
+    last_trigger_ts: 1786791120, last_outcome: 'refresh_failed', refreshed: false, stalled: true,
+  };
+  const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { version: 'v0.6.59', auth_refresh: authRefresh }, sessions }));
+  try {
+    assert.deepStrictEqual(await ProxyClient.status(base), {
+      sessions,
+      quota: null,
+      authRefresh: { stalled: true, lapsed: true, lastOutcome: 'refresh_failed', readError: null },
+    });
+  } finally { srv.close(); }
+});
+
+test('status(): a healthy auth_refresh block reads as not stalled', async () => {
+  const sessions = [];
+  const authRefresh = {
+    enabled: true, token_lapsed: false, read_error: null,
+    last_outcome: 'refreshed', refreshed: true, stalled: false,
+  };
+  const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { auth_refresh: authRefresh }, sessions }));
+  try {
+    assert.deepStrictEqual(await ProxyClient.status(base), {
+      sessions,
+      quota: null,
+      authRefresh: { stalled: false, lapsed: false, lastOutcome: 'refreshed', readError: null },
+    });
+  } finally { srv.close(); }
+});
+
+// The older proxy. `null` and "present but not stalled" must stay distinct on
+// the wire: the banner reads stalled off an object, and a reduce that folded
+// absence into `{stalled:false}` would be indistinguishable here yet claim a
+// healthy reading the proxy never sent.
+test('status(): a proxy with no auth_refresh block yields a null readout', async () => {
+  const sessions = [{ agent: 'clodex-a-1' }];
+  const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { version: 'v0.6.53' }, sessions }));
+  try {
+    assert.deepStrictEqual(await ProxyClient.status(base), { sessions, quota: null, authRefresh: null });
+  } finally { srv.close(); }
 });
 
 test('status(): every caller in the tree destructures rather than treating it as an array', () => {

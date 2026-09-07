@@ -36,7 +36,7 @@ const SHAPED = {
   last429At: null,
 };
 
-function serveProxy({ quota, capabilities, sessions }) {
+function serveProxy({ quota, capabilities, sessions, authRefresh }) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       const url = req.url.split('?')[0];
@@ -45,7 +45,9 @@ function serveProxy({ quota, capabilities, sessions }) {
         return res.end(JSON.stringify({ product: 'wirescope', version: 'v0.6.53', capabilities }));
       }
       if (url === '/_status') {
-        const body = { proxy: { version: 'v0.6.53' }, sessions };
+        const proxy = { version: 'v0.6.53' };
+        if (authRefresh) proxy.auth_refresh = authRefresh;
+        const body = { proxy, sessions };
         if (quota) body.quota = quota;
         return res.end(JSON.stringify(body));
       }
@@ -56,11 +58,11 @@ function serveProxy({ quota, capabilities, sessions }) {
 }
 
 // Runs one real tick and returns the payloads the poller sent to the renderer.
-async function tickOnce({ quota, capabilities = { stats: true, quota: true }, linked = true }) {
+async function tickOnce({ quota, capabilities = { stats: true, quota: true }, linked = true, authRefresh = null }) {
   const sessions = linked
     ? [{ agent: 'clodex-seat-1-abcd', session_id: 's1', model: 'sonnet', last_seen: 1 }]
     : [];
-  const { srv, base } = await serveProxy({ quota, capabilities, sessions });
+  const { srv, base } = await serveProxy({ quota, capabilities, sessions, authRefresh });
   const emitted = [];
   const manager = {
     sessions: new Map([['seat-1', {
@@ -124,4 +126,34 @@ test('poller: quota rides an UNLINKED payload too — it is the account, not the
   assert.strictEqual(emitted.length, 1, 'ENTER: an unlinked seat must still emit');
   assert.strictEqual(emitted[0].payload.linked, false);
   assert.deepStrictEqual(emitted[0].payload.quota, SHAPED);
+});
+
+// The auth_refresh carry-through, on the same path and for the same reason: it
+// is account-scoped, the renderer's banner is the only surface for it, and the
+// hazard is identical — a reduce the poller reads but never attaches.
+test('poller: a stalled auth_refresh reaches the emitted payload', async () => {
+  const emitted = await tickOnce({
+    quota: null,
+    authRefresh: { enabled: true, token_lapsed: true, last_outcome: 'refresh_failed', read_error: null, stalled: true },
+  });
+  assert.strictEqual(emitted.length, 1, 'ENTER: the poller must emit for the seat — zero payloads makes the assertion below vacuous');
+  assert.deepStrictEqual(emitted[0].payload.authRefresh,
+    { stalled: true, lapsed: true, lastOutcome: 'refresh_failed', readError: null });
+});
+
+test('poller: no auth_refresh block (older proxy) → null on the payload', async () => {
+  const emitted = await tickOnce({ quota: null });
+  assert.strictEqual(emitted[0].payload.authRefresh, null);
+});
+
+// The seat whose hold the dead token killed is exactly the one with no live
+// record, so gating this on `linked` would blank it precisely when it matters.
+test('poller: it rides an UNLINKED payload too', async () => {
+  const emitted = await tickOnce({
+    quota: null, linked: false,
+    authRefresh: { token_lapsed: true, last_outcome: 'refresh_failed', read_error: null, stalled: true },
+  });
+  assert.strictEqual(emitted.length, 1, 'ENTER: an unlinked seat must still emit');
+  assert.strictEqual(emitted[0].payload.linked, false);
+  assert.strictEqual(emitted[0].payload.authRefresh.stalled, true);
 });

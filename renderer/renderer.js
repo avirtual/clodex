@@ -3293,6 +3293,7 @@ function refreshQuotaChip() {
   // below so a dead source visibly dims instead of lying quietly.
   const picked = pickQuota(entries);
   drawerHost.setQuota(picked ? quotaChip(picked.quota, picked.clientAgeS) : null);
+  refreshAuthBanner(proxyState.values());
 }
 
 window.api.onSessionProxy((name, payload) => {
@@ -4175,7 +4176,7 @@ if (window.__CLODEX_WEB__) {
 
 
 
-const { refreshDiagBanner } = initBanners({ openInstallSession });
+const { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession });
 
 window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());

@@ -4934,6 +4934,22 @@ body {
 #diag-banner:hover {
   background: rgba(240, 173, 78, 0.24);
 }
+#auth-banner {
+  margin: 6px 12px 10px;
+  padding: 8px 10px;
+  background: rgba(240, 173, 78, 0.14);
+  border: 1px solid rgba(240, 173, 78, 0.45);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+#auth-banner.hidden {
+  display: none;
+}
 #new-session-tool-notice.hidden {
   display: none;
 }
@@ -6426,6 +6442,10 @@ body {
       <!-- Install buttons (Task 18) appear here only when a missing agent CLI is
            the warning's actual cause (cliMissingIsCause). -->
       <span id="diag-actions"></span>
+    </div>
+    <div id="auth-banner" class="hidden">
+      <span class="diag-dot">▲</span>
+      <span id="auth-text">Claude login expired</span>
     </div>
     <div id="sidebar-footer">
       <button id="inbox-open" data-tip="Operator inbox — notes agents raised for you" type="button">
@@ -25612,10 +25632,35 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/login-owed.js
+  var require_login_owed = __commonJS({
+    "renderer/lib/login-owed.js"(exports, module) {
+      "use strict";
+      var LOGIN_OWED_TEXT = 'Claude login expired \u2014 run "claude login" in a terminal; keep-warm holds are paused until then';
+      var LOGIN_OWED_TIP = "The bundled proxy can no longer refresh the Claude OAuth token; keep-warm holds stay paused until you log in again";
+      function loginOwedView(entries) {
+        let owed = false;
+        if (entries && typeof entries[Symbol.iterator] === "function") {
+          for (const st of entries) {
+            const a = st && st.payload && st.payload.authRefresh;
+            if (a && a.stalled) {
+              owed = true;
+              break;
+            }
+          }
+        }
+        if (!owed) return { hidden: true, text: "", tip: "" };
+        return { hidden: false, text: LOGIN_OWED_TEXT, tip: LOGIN_OWED_TIP };
+      }
+      module.exports = { loginOwedView };
+    }
+  });
+
   // renderer/banners.js
   var require_banners = __commonJS({
     "renderer/banners.js"(exports, module) {
       var { agentInstallButtons } = require_tool_gate();
+      var { loginOwedView } = require_login_owed();
       function initBanners({ openInstallSession } = {}) {
         const updateBanner = document.getElementById("update-banner");
         const updateText = document.getElementById("update-text");
@@ -25691,8 +25736,21 @@ helper=${d.helperPath}`;
           }).catch(() => {
           });
         });
+        const authBanner = document.getElementById("auth-banner");
+        const authText = document.getElementById("auth-text");
+        function refreshAuthBanner(proxyEntries) {
+          if (!authBanner) return;
+          const v = loginOwedView(proxyEntries);
+          if (v.hidden) {
+            authBanner.classList.add("hidden");
+            return;
+          }
+          if (authText) authText.textContent = v.text;
+          authBanner.title = v.tip;
+          authBanner.classList.remove("hidden");
+        }
         refreshDiagBanner();
-        return { refreshDiagBanner };
+        return { refreshDiagBanner, refreshAuthBanner };
       }
       module.exports = { initBanners };
     }
@@ -37644,6 +37702,7 @@ ${detail}` });
         }
         const picked = pickQuota(entries);
         drawerHost.setQuota(picked ? quotaChip(picked.quota, picked.clientAgeS) : null);
+        refreshAuthBanner(proxyState.values());
       }
       window.api.onSessionProxy((name, payload) => {
         proxyState.set(name, { payload, at: Date.now() });
@@ -38375,7 +38434,7 @@ Click for live activity`;
         document.addEventListener("pointerdown", askOnce, true);
         document.addEventListener("keydown", askOnce, true);
       }
-      var { refreshDiagBanner } = initBanners({ openInstallSession });
+      var { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession });
       window.api.onRequestSwitchSession((name) => switchSession(name));
       window.api.onRequestOpenNewDialog(() => openDialog());
       var discoveryOverlay = document.getElementById("discovery-overlay");

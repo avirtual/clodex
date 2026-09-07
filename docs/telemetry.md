@@ -106,6 +106,13 @@ strip ladder) is a deployment property riding the payload; only *enabled*
 tracks the live link. The 📄 files badge latches "unseen" only on an
 increase over a known baseline (the attach seed is silent).
 
+`proxy.auth_refresh.stalled` on `/_status` (wirescope v0.6.59+) means the
+OAuth refresh token itself is dead — the proxy cannot renew and a human
+must run `claude login`. It rides every payload as `authRefresh` beside
+`quota` (account-scoped, so unlinked payloads carry it too) and drives the
+sidebar `#auth-banner` off `refreshQuotaChip`'s sweep; an older proxy sends
+no block and `authRefresh` is null, which shows nothing.
+
 **`popoverApi(name)`** is the local-vs-peer data seam: local sessions call
 the direct IPC (getProxyContext/Report/Bust, sessionFiles, filePeek,
 fileDiff); peer sessions route the same kinds through `peerQuery`, with
