@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- New Session dialog: checklist checkboxes are checkbox-sized again instead of stretching across their column, and the rows read at full text colour like the same lists in Preferences.
+
 ## 5.35.7 — 2026-09-07
 
 - New Session dialog: tool, skill and agent checkboxes sit beside their names again instead of stacking above them.
