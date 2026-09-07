@@ -28,6 +28,9 @@ function createPluginHostEngine(deps) {
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
     getPersistence,   // getter: the sessions store — read for per-session plugin grants
     onPluginStateChanged,
+    getNotifications,
+    notifyOS,
+    broadcast,
   } = deps;
   const notifyStateChanged = () => {
     try { if (typeof onPluginStateChanged === 'function') onPluginStateChanged(); } catch {}
@@ -497,7 +500,47 @@ function createPluginHostEngine(deps) {
           try { return JSON.parse(JSON.stringify(live)); } catch { return null; }
         },
       }),
+
+      notify: Object.freeze({
+        user: ({ title, body } = {}) => notifyUser(pluginId, title, body),
+      }),
     });
+  }
+
+  const NOTIFY_USER_MAX_BYTES = 16 * 1024;
+
+  function notePreview(text) {
+    for (const line of String(text).split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      return trimmed.length <= 200 ? trimmed : `${trimmed.slice(0, 199).trimEnd()}…`;
+    }
+    return '';
+  }
+
+  function notifyUser(pluginId, title, body) {
+    if (!registered.has(pluginId)) return errorEnvelope('plugin is deactivated');
+    const text = String(body == null ? '' : body).trim();
+    if (!text) return errorEnvelope('empty note — say what decision you need from the operator');
+    if (Buffer.byteLength(text, 'utf8') > NOTIFY_USER_MAX_BYTES) {
+      return errorEnvelope(`note too long (>${Math.round(NOTIFY_USER_MAX_BYTES / 1024)}KB) — keep it a summary, not a payload`);
+    }
+    const store = getNotifications && getNotifications();
+    if (!store) return errorEnvelope('the operator inbox is unavailable');
+
+    const head = String(title == null ? '' : title).trim();
+    const note = head ? `${head}\n\n${text}` : text;
+    const from = `plugin:${pluginId}`;
+    const rec = store.add({ from, workspaceId: null, body: note });
+    const preview = notePreview(note);
+    try {
+      if (typeof notifyOS === 'function') notifyOS({ title: from, body: preview, silent: false });
+    } catch {}
+    try {
+      if (typeof broadcast === 'function') broadcast('ipc-message', { type: 'notify', from, to: 'user', body: preview });
+    } catch {}
+    logFor(pluginId).info(`notify-user: ${rec.id}`);
+    return { ok: true, id: rec.id };
   }
 
   function emitScoped(pluginId, topic, payload, scope) {

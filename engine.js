@@ -2113,6 +2113,9 @@ const toolCache = createToolCache({ whichBin });
         getLoader: () => pluginLoader,
         getPersistence: () => persistence,
         onPluginStateChanged: () => scheduleAppMenuRefresh(),
+        getNotifications: () => notifications,
+        notifyOS,
+        broadcast: (ch, p) => manager._broadcast(ch, p),
       });
       pluginLoader = createPluginLoader({
         fs, path,
