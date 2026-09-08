@@ -106,8 +106,8 @@ test('t754: role-add lead dispatch:worktree is refused — a reserved role stays
   const b = mkBox(t);
   const before = b.bytes();
   b.m._handleTeam(b.lead, { type: 'team', sub: 'role-add', name: 'lead', dispatch: 'worktree', body: 'the lead' });
-  assert.ok(/^\[agent:team\] error: /.test(b.last()) && /lead/.test(b.last()),
-    `expected a refusal naming the role, got: ${b.last()}`);
+  assert.ok(/^\[agent:team\] error: the "lead" role is standing — it cannot dispatch to a worktree/.test(b.last()),
+    `expected the reserved-role dispatch refusal, got: ${b.last()}`);
   assert.strictEqual(b.bytes(), before, 'and the manifest is untouched');
 });
 
