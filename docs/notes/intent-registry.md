@@ -30,3 +30,11 @@ operator never saw the plugin to re-tick it. This module sees verbs only, so a
 loaded plugin that happens to register none is exempted by the same test — that
 widens what is RETAINED, never what is revoked, and a grant for a registered
 plugin the seat unticked is still dropped.
+
+## parseTeamCreate
+
+`team-create` is its own row type, not a `team` sub-verb, because it gates
+differently: creating a manifest is PRIVILEGED (intent-catalog), while every
+other `[agent:team …]` verb is lead-gated inside a team that already exists. A
+shared type would force one gate to serve both. Its row sits ahead of the `team`
+row in CORE_ROWS so `create` never reaches parseTeam's alternation.

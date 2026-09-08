@@ -396,3 +396,12 @@ so you do not have to teach it the vocabulary.
 5. Start the lead seat and open a ticket.
 
 Steps 1 and 5 are the team. Steps 2–4 are the parts only you can write.
+
+An agent can do step 1 instead of you, if you granted it the privileged
+`team-create` intent (Settings ▸ the seat's intent checklist — off by default):
+`[agent:team create <name> root:<abs-path> [lead:<seat>]]` writes the same
+manifest `Create Team…` does. The root must already exist and belong to no other
+team; the lead defaults to `<name>-lead` and names a seat that does not exist yet,
+so the next step is still to spawn it there and run `[agent:team gather]` and
+`[agent:team role-add …]` from it. `[agent:team set-lead <seat>]` re-points the
+lead afterwards, and only the current lead may do it.

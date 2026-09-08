@@ -27,7 +27,7 @@ const {
 const { isDraftOpen } = require('./proxy-util');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
-const { matchSeatRole } = require('./team-manifest');
+const { matchSeatRole, defaultLeadSeat } = require('./team-manifest');
 const { readTeamJson } = require('./team-prompt-dir');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
@@ -366,6 +366,10 @@ function createTicketMethods(deps, shared) {
     removeRole,
     renameRole,
     setTeamWatchdog,
+    setLead,
+    createTeam,
+    teamsDir,
+    refreshAppMenu,
     gatherTeam,
     resolveTeam,
     resolveSystemPromptFile,
@@ -2070,6 +2074,39 @@ function createTicketMethods(deps, shared) {
       this.kill(session.name);
     },
 
+    // Not a `_handleTeam` case: the gate is the PRIVILEGED `team-create` grant on
+    // the seat, not _handleTeam's "you are this team's lead" — a seat minting a
+    // team for another project is on no team of that project's.
+    _handleTeamCreate(session, intent) {
+      const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
+      const name = intent.name || null;
+      const root = intent.root || null;
+      if (!name) { reply('error: create needs a team name — [agent:team create <name> root:<abs-path> [lead:<seat>]]'); return; }
+      if (!root || !nodePath.isAbsolute(root)) {
+        reply(`error: create needs an absolute root — [agent:team create ${name} root:<abs-path>]`);
+        return;
+      }
+      let isDir = false;
+      try { isDir = fs.statSync(root).isDirectory(); } catch { isDir = false; }
+      if (!isDir) {
+        reply(`error: root ${root} is not an existing directory — create it first; Clodex never makes it for you`);
+        return;
+      }
+      let team;
+      try {
+        team = createTeam({ name, root, lead: defaultLeadSeat(name, intent.lead || null) });
+      } catch (err) {
+        reply(`error: ${err.message}`);
+        return;
+      }
+      // Outside the try, like team:createBare: a throwing rebuild must not report
+      // a failure for a write that landed, since the retry would then hit
+      // "already exists". Optional — headless hosts pass no menu.
+      if (typeof refreshAppMenu === 'function') refreshAppMenu();
+      reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${nodePath.join(teamsDir, team.name)}. `
+        + 'Next: spawn the lead in that root, then [agent:team gather] and [agent:team role-add …] from it.');
+    },
+
     _handleTeam(session, intent) {
       const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
       let team;
@@ -2144,6 +2181,12 @@ function createTicketMethods(deps, shared) {
             reply(formatGatherReport(result, { dry }));
             return;
           }
+          case 'set-lead': {
+            if (!name) { reply('error: set-lead needs a seat name — [agent:team set-lead <seat>]'); return; }
+            setLead(team.name, name);
+            reply(`lead of ${team.name} is now "${name}"`);
+            return;
+          }
           case 'watchdog': {
             if (intent.ms == null || !Number.isFinite(intent.ms)) {
               reply('error: watchdog needs a millisecond number — [agent:team watchdog <ms>]');
@@ -2155,7 +2198,7 @@ function createTicketMethods(deps, shared) {
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | watchdog | gather`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);

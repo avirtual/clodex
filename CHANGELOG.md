@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A seat granted the new privileged "Create teams" intent can mint a team from `[agent:team create <name> root:<dir>]` and a lead can hand off with `[agent:team set-lead <seat>]`, so an agent can bootstrap a team for another project end to end (create, gather, add roles) without the operator clicking through Create Team….
+
 ## 5.40.0 — 2026-09-08 — Codex seats pick their skills and plugins like Claude seats do
 
 - A Codex seat's Skills… menu entry now opens the same Custom skills editor a Claude seat has (the Claude-only skill roster stays out of it), so skills picked at creation can be changed later; and loading a template into the new-session dialog now fills the system and append prompts for a Codex seat too, which it always consumed but never received from a template.

@@ -4541,6 +4541,11 @@ function createSessionManager(deps) {
           this._handleTeam(session, intent);
           break;
         }
+        case 'team-create': {
+          if (!session || !session.agentType) break;
+          this._handleTeamCreate(session, intent);
+          break;
+        }
         case 'reboot': {
           if (!session || !session.agentType) break;
           this._handleRebootIntent(session, intent.body || '');

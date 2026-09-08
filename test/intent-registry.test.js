@@ -118,7 +118,26 @@ function parseIntentLegacy(rawLine) {
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather)\b([^\]]*)\]\s*(.*)/s);
+  // t751: `create` is its own TYPE, and its row sits ahead of the team row — so
+  // this copy must sit ahead of the team match too, or the two chains disagree
+  // about which arm claims `[agent:team create …]`. The same lockstep rule the
+  // task and team copies above state.
+  const teamCreateMatch = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*$/);
+  if (teamCreateMatch) {
+    const argStr = teamCreateMatch[1];
+    const rootM = argStr.match(/\broot:(\S+)/);
+    const leadM = argStr.match(/\blead:(\S+)/);
+    const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+    return {
+      type: 'team-create',
+      name: positional[0] || null,
+      root: rootM ? rootM[1] : null,
+      lead: leadM ? leadM[1] : null,
+      body: '',
+    };
+  }
+
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -129,7 +148,7 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'role-add' || sub === 'role-set') {
       return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, body };
     }
-    if (sub === 'role-rm') return { type: 'team', sub, name: positional[0] || null, body: '' };
+    if (sub === 'role-rm' || sub === 'set-lead') return { type: 'team', sub, name: positional[0] || null, body: '' };
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
     // t701's gather, landed here in the same commit as parseTeam's — the same
     // lockstep rule the task copy above states, and the reason it is stated:
@@ -327,6 +346,14 @@ const ADVERSARIAL = [
   '[agent:team role-rename a b]', '[agent:team watchdog 5000]',
   '[agent:team gather]', '[agent:team gather dry]', '[agent:team gather junk]',
   '[agent:team gatherx]',
+  '[agent:team set-lead bob]', '[agent:team set-lead]', '[agent:team set-lead a b]',
+  '[agent:team create shop root:/proj/shop]',
+  '[agent:team create shop root:/proj/shop lead:boss]',
+  '[agent:team create lead:boss root:/proj/shop shop]',
+  '[agent:team create shop]', '[agent:team create root:/proj/shop]',
+  '[agent:team create shop root:rel/path]', '[agent:team create]',
+  '[agent:team create shop root:/proj/shop] trailing',
+  '[agent:team created shop root:/p]',
   '[agent:team watchdog abc]', '[agent:team watchdog]', '[agent:team foo]',
   '[agent:team]', '[agent:team-reviewer]',
   '[agent:spawn name:x cwd:/a]', '[agent:spawn name:x cwd:/a template:t]',
@@ -394,7 +421,7 @@ const CLOSED_SUB_VERB_FAMILIES = ['task', 'team'];
 // pinned, so shrinking the grammar trips this rather than quietly shrinking
 // what the loop below iterates. A single shared floor would have to be the
 // smaller of the two and would stop measuring the larger family.
-const MIN_SUBS = { task: 9, team: 5 };
+const MIN_SUBS = { task: 9, team: 7 };
 
 function corpusCovers(family, sub) {
   return CORPUS.some((line) => {
@@ -560,6 +587,30 @@ test('name is parsed but not gateable; reboot is gateable and privileged', () =>
   assert.strictEqual(registry.rowFor('reboot').privileged, true);
 });
 
+// t751. `team-create` is a SEPARATE row from `team` precisely so it can carry a
+// different gate: the whole point is a privileged verb, and a row that came back
+// gateable-but-not-privileged would ride the all-enabled default onto every seat
+// that has no explicit allowlist. Asserted against its neighbour, which must stay
+// ordinary — one Set membership decides both, so pinning only the new row would
+// pass on a change that made `team` privileged too and silently broke every
+// existing lead.
+test('t751: team-create is its own privileged row; plain team stays ordinary', () => {
+  const create = registry.rowFor('team-create');
+  assert.ok(create, 'team-create is a real registry verb');
+  assert.strictEqual(create.gateable, true);
+  assert.strictEqual(create.privileged, true);
+  assert.strictEqual(registry.rowFor('team').privileged, false,
+    'the lead-gated team verbs are NOT privileged — a seat with no allowlist still edits its own team');
+  assert.strictEqual(registry.intentEnabledFor('team-create', null), false, 'absent list does not grant it');
+  assert.strictEqual(registry.intentEnabledFor('team-create', []), false);
+  assert.strictEqual(registry.intentEnabledFor('team-create', ['team-create']), true);
+  assert.strictEqual(registry.intentEnabledFor('team', null), true,
+    'and the ordinary team verbs still ride the living all-enabled default');
+  // The strip at the mint/wire boundary follows from PRIVILEGED_INTENTS, so an
+  // agent-authored template cannot grant itself the mint.
+  assert.deepStrictEqual(registry.withoutPrivilegedIntentsFor(['dm', 'team-create', 'team']), ['dm', 'team']);
+});
+
 test('end and escape are NOT rows — the scanner shell owns them', () => {
   assert.strictEqual(registry.rowFor('end'), null);
   assert.strictEqual(registry.rowFor('escape'), null);
@@ -583,6 +634,8 @@ test('bodyMode is decided per PARSED intent: task add captures, task assign does
 });
 
 test('bodyMode per sub-verb for team / memory / context', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team set-lead bob]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team create shop root:/proj/shop]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-add lead] brief')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-set lead] brief')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-rm lead]')), 'none');

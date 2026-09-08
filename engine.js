@@ -1161,6 +1161,7 @@ const SessionManager = createSessionManager({
     renameRole,
     setTeamWatchdog,
     setLead,
+    teamsDir,
     gatherTeam,
     fs,
     hasActivePending,
