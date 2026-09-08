@@ -144,9 +144,11 @@ function parseIntentLegacy(rawLine) {
     const body = teamMatch[3];
     const promptM = argStr.match(/\bprompt:(\S+)/);
     const templateM = argStr.match(/\btemplate:(\S+)/);
+    const dispatchM = argStr.match(/\bdispatch:(\S+)/);
+    const cwdM = argStr.match(/\bcwd:(\S+)/);
     const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
     if (sub === 'role-add' || sub === 'role-set') {
-      return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, body };
+      return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, body };
     }
     if (sub === 'role-rm' || sub === 'set-lead') return { type: 'team', sub, name: positional[0] || null, body: '' };
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
@@ -349,6 +351,7 @@ const ADVERSARIAL = [
   '[agent:task add hand park] spec', '[agent:task add parked] spec',
   '[agent:team role-add lead] brief', '[agent:team role-add lead prompt:p.md] brief',
   '[agent:team role-set lead template:t] brief', '[agent:team role-rm lead]',
+  '[agent:team role-add hand dispatch:worktree template:t] brief', '[agent:team role-set hand cwd:/tmp/x] ',
   '[agent:team role-rename a b]', '[agent:team watchdog 5000]',
   '[agent:team gather]', '[agent:team gather dry]', '[agent:team gather junk]',
   '[agent:team gatherx]',

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team role-add]` and `[agent:team role-set]` now take `dispatch:standing|spawn|worktree` and `cwd:<rel>` beside `prompt:` and `template:`, so a team bootstrapped entirely from intents can mint a worktree hand without the roles popover — previously a role added by intent could only ever be standing.
+
 ## 5.41.0 — 2026-09-08 — An agent can bootstrap a team from intents, and a hand lives in its worktree
 
 - A team lead can now write its team's templates and prompts from intents (`[agent:team template-save <stem>]`, `[agent:team prompt-save system|append <stem>]`, plus the matching `-rm` verbs, which refuse to remove a file a role still names), completing the intent path from `[agent:team create]` to a working role without the drawers.
