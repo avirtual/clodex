@@ -345,8 +345,9 @@ test('term grammar line: the documented line scope matches what the row actually
 // `<command>` is itself a legal body, so leaving them in would let the very bug
 // this pins slip through.
 test('every rendered grammar line parses, with its placeholders filled in', () => {
-  const p = buildIpcPrompt(['term', 'reboot', ...ALL_GATEABLE]);
+  const p = buildIpcPrompt(['term', 'reboot', 'team-create', ...ALL_GATEABLE]);
   const fill = (l) => l
+    .replace('<name> root:<abs-path> [lead:<seat>]', 'shop root:/tmp lead:boss')
     .replace('<command>', 'pwd')
     .replace('<text>', 'a fact')
     .replace('<id|query>', 'mem-1')
@@ -368,9 +369,35 @@ test('every rendered grammar line parses, with its placeholders filled in', () =
   assert.ok(forms.length >= 15, `ENTER: the grammar block was found (got ${forms.length} lines)`);
   assert.ok(forms.includes('[agent:term exec] <command>'),
     'ENTER: the term form survived the split — this test exists for that row');
+  // The team-create form is the one whose placeholders sit INSIDE the brackets
+  // beside real keyed args, so a fill that missed it would leave a line that
+  // parses for the wrong reason (`root:<abs-path>` is a legal token shape).
+  assert.ok(forms.includes('[agent:team create <name> root:<abs-path> [lead:<seat>]]'),
+    'ENTER: the team-create form survived the split');
+  assert.deepStrictEqual(
+    parseIntent(fill('[agent:team create <name> root:<abs-path> [lead:<seat>]]')),
+    { type: 'team-create', name: 'shop', root: '/tmp', lead: 'boss', body: '' },
+    'ENTER: the filled form parses to the fields the handler reads, not merely to non-null',
+  );
   const bad = forms.filter((f) => !parseIntent(fill(f)));
   assert.deepStrictEqual(bad, [],
     'each of these renders a form the parser rejects — a seat copying it emits nothing');
+});
+
+// t751. Same guard as the reboot case above and for the same reason: ALL_GATEABLE
+// excludes every privileged type, so the byte-pins say nothing about whether this
+// line renders for the seat that was granted it — only that it stays out of the
+// default seat's prompt.
+test('team-create line renders ONLY for a seat whose intents explicitly grant it', () => {
+  const line = '[agent:team create <name> root:<abs-path> [lead:<seat>]]';
+  const granted = buildIpcPrompt(['team-create', ...ALL_GATEABLE]);
+  assert.ok(granted.includes(line), 'a team-create-granted seat sees the line');
+  assert.ok(!buildIpcPrompt(null).includes(line), 'default seat: no team-create line (null pin holds)');
+  assert.ok(!buildIpcPrompt(ALL_GATEABLE).includes(line), 'all-non-privileged seat: none either (fork-drift pin holds)');
+  // The set-lead half rides the ordinary lead gate, so it is documented on this
+  // line rather than granted separately — a seat that reads the grant as covering
+  // both would emit a verb it can already emit, never the reverse.
+  assert.ok(granted.includes('[agent:team set-lead <seat>]'), 'the hand-off verb is named where the mint is');
 });
 
 // ── exec: a synthesized section keyed on the granted command-id allowlist ─────

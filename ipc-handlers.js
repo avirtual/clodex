@@ -8,7 +8,7 @@ const { nameConflict } = require('./session-manager');
 // rather than injected so there is one draft notion: a focus decision computed
 // from a second one would drift from the delivery it is supposed to agree with.
 const { isDraftOpen } = require('./proxy-util');
-const { STOCK_ROLE_DEFS } = require('./team-manifest');
+const { STOCK_ROLE_DEFS, defaultLeadSeat } = require('./team-manifest');
 const { teamPreflight } = require('./team-preflight');
 const { badStem, teamPromptFile, readTeamJson } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
@@ -139,16 +139,7 @@ function registerIpcHandlers(deps) {
     const { name, root, lead } = spec || {};
     let team;
     try {
-      // The DEFAULT lead is minted here, so the refusal for it is owed here too:
-      // `${name}-lead` overflows the 64-char seat-name limit (NAME_RE in
-      // team-manifest.js) for a 60-64 char team name, and createTeam would then
-      // refuse a `lead` field the Create Team… dialog never shows. An EXPLICIT
-      // lead is the caller's own value and goes to the writer untouched.
-      const seat = lead || `${name}-lead`;
-      if (!lead && seat.length > 64) {
-        throw new Error(`team name "${name}" is too long: its default lead seat name "${seat}" exceeds the 64-character seat-name limit`);
-      }
-      team = createTeam({ name, root, lead: seat });
+      team = createTeam({ name, root, lead: defaultLeadSeat(name, lead) });
     } catch (err) {
       return { ok: false, error: err.message };
     }

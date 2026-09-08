@@ -10,20 +10,22 @@ const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // what collapses back to null when every one is checked.
 const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
 
-test('catalog: the 12 gateable types in grammar order (privileged last), name excluded', () => {
+test('catalog: the 13 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'notify-user', 'term', 'reboot'],
+    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'notify-user', 'term', 'reboot', 'team-create'],
   );
-  // The privileged set, and the reason it is worth naming both members: `term`
+  // The privileged set, and the reason it is worth naming all three: `term`
   // runs arbitrary shell in the operator's own login shell, so a seat
-  // deliberately given no shell tool would acquire one through it. Membership
-  // here is what makes withoutPrivilegedIntents strip it at the mint/wire
-  // boundary — a non-privileged term could be granted by a spawn template or a
-  // peer, i.e. by an agent rather than by the operator.
-  assert.deepStrictEqual([...PRIVILEGED_INTENTS], ['reboot', 'term']);
+  // deliberately given no shell tool would acquire one through it; `team-create`
+  // writes a manifest under ~/.clodex/teams that binds a project root and a lead
+  // seat name. Membership here is what makes withoutPrivilegedIntents strip them
+  // at the mint/wire boundary — non-privileged, either could be granted by a
+  // spawn template or a peer, i.e. by an agent rather than by the operator.
+  assert.deepStrictEqual([...PRIVILEGED_INTENTS], ['reboot', 'term', 'team-create']);
   assert.strictEqual(GATEABLE_TYPES.has('reboot'), true);
   assert.strictEqual(GATEABLE_TYPES.has('term'), true);
+  assert.strictEqual(GATEABLE_TYPES.has('team-create'), true);
   // Identity is never gateable.
   assert.strictEqual(GATEABLE_TYPES.has('name'), false);
   // Every catalog row has a non-empty label for the checklist.
@@ -43,6 +45,16 @@ test('intentEnabled: absent list → ordinary intents enabled, PRIVILEGED off (T
 });
 
 test('intentEnabled: a privileged intent fires only when explicitly listed', () => {
+  // team-create alongside reboot: the inversion has to hold for EVERY member of
+  // the set, and a per-verb assertion is what catches a member added to
+  // GATEABLE_INTENTS but forgotten in PRIVILEGED_INTENTS — which reads as an
+  // ordinary verb and rides the all-enabled default onto every existing seat.
+  for (const t of PRIVILEGED_INTENTS) {
+    assert.strictEqual(intentEnabled(t, null), false, `${t} must not ride the absent-list default`);
+    assert.strictEqual(intentEnabled(t, []), false, `${t} is off under "everything gated"`);
+    assert.strictEqual(intentEnabled(t, [t]), true, `${t} fires when explicitly granted`);
+    assert.strictEqual(intentEnabled(t, ['dm', 'who']), false, `${t} is not granted by granting others`);
+  }
   assert.strictEqual(intentEnabled('reboot', ['reboot']), true);
   assert.strictEqual(intentEnabled('reboot', ['dm', 'reboot']), true);
   assert.strictEqual(intentEnabled('reboot', ['dm', 'who']), false); // granted others, not reboot
@@ -51,6 +63,7 @@ test('intentEnabled: a privileged intent fires only when explicitly listed', () 
 
 test('withoutPrivilegedIntents: strips privileged from an array, passes non-arrays through', () => {
   assert.deepStrictEqual(withoutPrivilegedIntents(['dm', 'reboot', 'who']), ['dm', 'who']);
+  assert.deepStrictEqual(withoutPrivilegedIntents(['dm', 'team-create', 'who']), ['dm', 'who']);
   assert.deepStrictEqual(withoutPrivilegedIntents(['reboot']), []); // privileged-only → everything gated
   assert.deepStrictEqual(withoutPrivilegedIntents(['dm', 'who']), ['dm', 'who']); // nothing to strip
   assert.deepStrictEqual(withoutPrivilegedIntents([]), []);
@@ -102,6 +115,7 @@ test('intentsAllowlistFromChecked: a privileged grant forces an explicit array (
   const r = intentsAllowlistFromChecked(ALL_TYPES);
   assert.ok(Array.isArray(r));
   assert.ok(r.includes('reboot'), 'the reboot grant survives collection');
+  assert.ok(r.includes('team-create'), 'and so does the team-create grant');
   assert.deepStrictEqual(r, ALL_TYPES); // catalog order, reboot last
 });
 

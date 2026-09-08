@@ -144,8 +144,24 @@ function parseTask(cleaned) {
   return { type: 'task', sub, id: argToks[0] || null, who: null, body };
 }
 
+function parseTeamCreate(cleaned) {
+  const m = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*$/);
+  if (!m) return null;
+  const argStr = m[1];
+  const rootM = argStr.match(/\broot:(\S+)/);
+  const leadM = argStr.match(/\blead:(\S+)/);
+  const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+  return {
+    type: 'team-create',
+    name: positional[0] || null,
+    root: rootM ? rootM[1] : null,
+    lead: leadM ? leadM[1] : null,
+    body: '',
+  };
+}
+
 function parseTeam(cleaned) {
-  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather)\b([^\]]*)\]\s*(.*)/s);
+  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const sub = m[1];
   const argStr = m[2];
@@ -156,7 +172,7 @@ function parseTeam(cleaned) {
   if (sub === 'role-add' || sub === 'role-set') {
     return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, body };
   }
-  if (sub === 'role-rm') return { type: 'team', sub, name: positional[0] || null, body: '' };
+  if (sub === 'role-rm' || sub === 'set-lead') return { type: 'team', sub, name: positional[0] || null, body: '' };
   if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
   if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };
   const ms = positional[0] != null ? Number(positional[0]) : null;
@@ -206,6 +222,7 @@ const CORE_ROWS = [
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },
   { type: 'reboot', parse: parseReboot, bodyMode: NONE },
   { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'respec' || i.sub === 'cancel' || i.sub === 'accept' ? 'greedy' : 'none') },
+  { type: 'team-create', parse: parseTeamCreate, bodyMode: NONE },
   { type: 'team', parse: parseTeam, bodyMode: (i) => (i.sub === 'role-add' || i.sub === 'role-set' ? 'greedy' : 'none') },
   { type: 'spawn', parse: parseSpawn, bodyMode: NONE },
 ].map((r) => Object.freeze({

@@ -37,6 +37,7 @@ const GATEABLE_INTENTS = [
   // agent-initiated grant is stripped at the mint/wire boundary.
   { type: 'term', label: "Run commands in the seat's terminal (term) — privileged, off by default" },
   { type: 'reboot', label: 'Relaunch the app (reboot) — privileged, off by default' },
+  { type: 'team-create', label: 'Create teams (team create) — privileged, off by default' },
 ];
 
 // PRIVILEGED intents (Task 27): gateable verbs that INVERT the "absent = enabled"
@@ -49,7 +50,7 @@ const GATEABLE_INTENTS = [
 // second reason more than the first: a seat that was deliberately given no shell
 // tool would acquire one through it, and without the strip a seat could spawn a
 // peer holding a capability nobody granted it.
-const PRIVILEGED_INTENTS = new Set(['reboot', 'term']);
+const PRIVILEGED_INTENTS = new Set(['reboot', 'term', 'team-create']);
 
 // The bare type set, for O(1) "is this gateable at all?" checks.
 const GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));

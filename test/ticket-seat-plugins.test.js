@@ -241,7 +241,13 @@ function mkWorld({ tplPlugins } = {}) {
     addRole: () => {}, setRole: () => {}, removeRole: () => {}, renameRole: () => {},
     setTeamWatchdog: () => {},
   };
-  assertTicketDepsCovered(assert, deps, { optional: ['ticketSuiteTimeoutMs'] });
+  // The t751 mint/hand-off deps: createTeam, setLead and teamsDir are read only
+  // by _handleTeamCreate and _handleTeam's set-lead case, neither of which a
+  // plugin-inheritance subject drives. refreshAppMenu is optional in a stronger
+  // sense — the call site guards on typeof for the headless host.
+  assertTicketDepsCovered(assert, deps, {
+    optional: ['ticketSuiteTimeoutMs', 'createTeam', 'setLead', 'teamsDir', 'refreshAppMenu'],
+  });
 
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();

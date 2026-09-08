@@ -12,6 +12,16 @@ const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 // must satisfy the session-name grammar (CLAUDE.md).
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
+const SEAT_NAME_MAX = 64;
+
+function defaultLeadSeat(teamName, explicitLead) {
+  const seat = explicitLead || `${teamName}-lead`;
+  if (!explicitLead && seat.length > SEAT_NAME_MAX) {
+    throw new Error(`team name "${teamName}" is too long: its default lead seat name "${seat}" exceeds the ${SEAT_NAME_MAX}-character seat-name limit`);
+  }
+  return seat;
+}
+
 const MANIFEST_VERSION = 3;
 
 // Unmodeled keys are dropped at load with a warning, never a throw: every caller
@@ -818,7 +828,7 @@ function formatCompositionDelta(teamName, verb, { seat = null, role = null } = {
 
 module.exports = {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
-  formatCompositionDelta, STOCK_ROLE_DEFS, TEAM_FILE,
+  formatCompositionDelta, defaultLeadSeat, SEAT_NAME_MAX, STOCK_ROLE_DEFS, TEAM_FILE,
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,

@@ -112,9 +112,9 @@ A warm-up no-op tool call first (e.g. Bash(true)) does nothing but bill a full r
 // intentEnabled. `name` is NOT gateable (always included); `resend` has NO
 // grammar line at all (its instruction rides the dm park-bounce notice); `exec`
 // has no grammar line either but a seat holding grants gets a synthesized EXEC
-// section (execSection, listing its ids), gated on the execCommands arg. `reboot`
-// is PRIVILEGED — its line lives here but renders only for a seat explicitly
-// granted it, so both byte-pins (which pass no privileged grant) stay clean. A
+// section (execSection, listing its ids), gated on the execCommands arg. The
+// PRIVILEGED rows' lines live here but render only for a seat explicitly granted
+// them, so both byte-pins (which pass no privileged grant) stay clean. A
 // future NON-privileged grammar line added to IPC_PROMPT but forgotten here is
 // caught by the buildIpcPrompt(<all non-privileged gateable>) === IPC_PROMPT pin.
 const GRAMMAR_LINES = [
@@ -135,10 +135,10 @@ const GRAMMAR_LINES = [
   // task is NOT gateable (absent from intent-catalog's GATEABLE_INTENTS, and
   // intentEnabled returns true for anything not in it), so this row renders for
   // EVERY seat — including buildIpcPrompt([]) — and the identical bytes are
-  // therefore also in IPC_PROMPT above. term/reboot are the opposite case and
-  // the wrong model to copy here: they are PRIVILEGED, which is why their lines
-  // are absent from the literal. Placed before the privileged pair for that
-  // reason, and both byte-pins fail if the two copies diverge.
+  // therefore also in IPC_PROMPT above. The rows below it are the opposite case
+  // and the wrong model to copy here: they are PRIVILEGED, which is why their
+  // lines are absent from the literal. Placed before them for that reason, and
+  // both byte-pins fail if the two copies diverge.
   { type: 'task', text: `  [agent:task done <id>] <report>  Close a ticket dispatched to you. The report is the BODY — greedy, ended by a bare [agent:end] line — and it is REQUIRED: a bodyless done bounces. It is a line you emit like every intent here, not an exec command and not a capability to be granted. A dm carrying your report does NOT close the ticket: it reaches the lead looking identical while the ticket silently stays open, and everything downstream of the close never runs.
   [agent:task list]                List the board your cwd belongs to — that is how you find your own ticket id. A filter token narrows it: open is the default, then done, cancelled, all, as in [agent:task list all]. The remaining sub-verbs are the LEAD's dispatch protocol, named here only so you do not invent a spelling: add (greedy body = the spec, an optional assignee token, and a position-free park modifier), assign <id> <who>, start <id>, park <id>, and reject / respec / cancel / accept <id>, each with a greedy body.` },
   { type: 'spawn', text: `  [agent:spawn name:X cwd:Y]       Mint a new peer session named X rooted at Y; it joins your workspace and is DM-able. Result returns in your input as an [agent:spawn] line.
@@ -161,8 +161,8 @@ const GRAMMAR_LINES = [
   // operator explicitly granted it, so intentEnabled('reboot', …) is false for
   // BOTH byte-pinned calls (absent list and the all-NON-privileged list) and this
   // line renders ONLY for a seat whose persisted `intents` array lists 'reboot'.
-  // Last in prompt order: the rarest, most privileged verb.
   { type: 'reboot', text: `  [agent:reboot] [reason]          Relaunch the whole Clodex app (privileged, operator-granted). Bodyless or with a one-line free-text reason (logged only). Sessions are killed and resume on relaunch (--resume). Rate-limited: a second reboot inside a few minutes is refused. Your own process dies with the app, so a "relaunch complete" notice reaches you only after it comes back.` },
+  { type: 'team-create', text: `  [agent:team create <name> root:<abs-path> [lead:<seat>]]   Mint a team manifest (privileged, operator-granted): root must be an existing absolute dir no team owns; default lead <name>-lead. Then spawn the lead there, [agent:team gather], [agent:team role-add]. [agent:team set-lead <seat>] hands the lead off (current lead only).` },
 ];
 
 const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.`;
@@ -236,8 +236,8 @@ Your Bash tool starts in the session's working directory (the project root) and 
 // `intentsList` (array | null; null/absent = all enabled — the interpretation
 // lives in intentEnabled) and whose granted exec command-ids are `execCommands`
 // (array | absent). Grammar lines for disabled intents are dropped, in prompt
-// order; the MEMORY section is gated by `memory`; the reboot line renders only
-// for a seat granted the privileged `reboot` intent; the EXEC section renders
+// order; the MEMORY section is gated by `memory`; a PRIVILEGED line renders only
+// for a seat whose list names that intent; the EXEC section renders
 // only when execCommands is non-empty. name/resend carry no grammar line.
 // buildIpcPrompt(null) — and buildIpcPrompt over the all-NON-privileged list with
 // no exec arg — reproduce IPC_PROMPT byte-for-byte (the two byte-pins).
