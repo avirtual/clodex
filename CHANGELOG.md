@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The template editor no longer greys out a tool or skill that the template's cwd denies through its own .claude/settings.json: a template travels to other directories (a ticket seat boots in its worktree), so those rows stay toggleable and are saved with the template instead of being dropped. Live-session popovers keep the read-only treatment, since there the cwd is fixed.
+
 ## 5.41.0 — 2026-09-08 — An agent can bootstrap a team from intents, and a hand lives in its worktree
 
 - A team lead can now write its team's templates and prompts from intents (`[agent:team template-save <stem>]`, `[agent:team prompt-save system|append <stem>]`, plus the matching `-rm` verbs, which refuse to remove a file a role still names), completing the intent path from `[agent:team create]` to a working role without the drawers.

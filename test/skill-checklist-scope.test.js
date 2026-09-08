@@ -117,6 +117,45 @@ test('policy lock and a lower-layer off still win the label over out-of-scope', 
   assert.match(rowsOf(lower)[0].html, /off via project settings/);
 }));
 
+test('template editor: a lower-layer off row stays toggleable and collects', () => withDom(() => {
+  // A template travels to any cwd, so the deny read from the cwd in the form
+  // describes a directory the saved template is not bound to. Greying the row
+  // made it uncollectable, and the save silently dropped the name.
+  const eff = { loop: { value: 'off', source: 'project', advisory: true } };
+
+  const c = el('div');
+  renderSkillChecklist(c, NAMES, new Set(), eff, { canReenable: false });
+  const loop = rowsOf(c).find((r) => r.name === 'loop');
+  assert.deepStrictEqual(
+    { checked: loop.checked, disabled: loop.disabled, greyed: loop.cls.includes('skill-readonly') },
+    { checked: true, disabled: false, greyed: false });
+  assert.match(loop.html, /off via project settings/, 'the provenance note survives as information');
+  assert.deepStrictEqual(collectSkillChecklist(c), []);
+
+  const c2 = el('div');
+  renderSkillChecklist(c2, NAMES, new Set(['loop']), eff, { canReenable: false });
+  const off = rowsOf(c2).find((r) => r.name === 'loop');
+  assert.strictEqual(off.checked, false, 'the template\'s own list drives the tick');
+  assert.deepStrictEqual(collectSkillChecklist(c2), ['loop'],
+    'the name the save path dropped must round-trip');
+}));
+
+test('advisory does not leak past the entry that carries it', () => withDom(() => {
+  // Only the marked entries are advisory: a policy lock and an out-of-scope row
+  // are still facts about the seat, not about one cwd.
+  const c = el('div');
+  renderSkillChecklist(c, ['assess', 'loop'], new Set(),
+    { loop: { value: 'off', source: 'project', advisory: true } },
+    { skillsLocked: true, outOfScope: OOS });
+  const rows = rowsOf(c);
+  assert.strictEqual(rows.find((r) => r.name === 'loop').disabled, true, 'a policy lock still wins');
+
+  const c2 = el('div');
+  renderSkillChecklist(c2, ['assess'], new Set(),
+    { assess: { value: 'off', source: 'project', advisory: true } }, { outOfScope: OOS });
+  assert.strictEqual(rowsOf(c2)[0].disabled, true, 'out-of-scope still wins');
+}));
+
 test('omitting outOfScope leaves every row toggleable', () => withDom(() => {
   // The peer/new-session paths that do not supply it must not grey out.
   const c = el('div');
