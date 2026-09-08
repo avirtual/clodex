@@ -2580,6 +2580,13 @@ html, body {
 .plugin-row input[type="checkbox"] { margin: 2px 0 0; }
 .plugin-row-body { flex: 1; min-width: 0; }
 .plugin-row-name { font-size: 13px; }
+.plugin-row-origin {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  display: inline-block;
+  width: 14px;
+  opacity: 0.55;
+  margin-right: 4px;
+}
 .plugin-row-version { opacity: 0.6; font-size: 11px; margin-left: 6px; }
 .plugin-row-note { font-size: 11px; opacity: 0.75; margin-top: 2px; }
 #plugins-library-repo-link { color: var(--accent); text-decoration: none; cursor: pointer; }

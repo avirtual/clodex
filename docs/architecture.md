@@ -1166,6 +1166,12 @@ and are not, which is why the judgement worth testing is pushed down here.
   bounded carry for an escape sequence split across PTY chunks.
 - **ipc-export.js** — one grep-friendly line per message for the IPC log's
   Export button, plus the download filename.
+- **plugin-origin.js** — where a Manage Plugins row's plugin came from, as a
+  glyph and a tooltip: built in, the clodex-plugins library, another GitHub
+  repo, or a local folder. A pure function of the `plugins.status` row. It
+  MIRRORS `plugin-source.js`'s `LIBRARY_REPO` as a literal rather than requiring
+  it — the require would drag that module's https/tar code into the web bundle
+  for one constant — and test/plugin-origin.test.js pins the two copies equal.
 - **mcp-group.js** — fold a wirescope tool roster into per-MCP-server groups.
   MCP servers are the single biggest per-turn context carriage, which is why the
   grouping is a leaf and not a rendering detail.

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Manage Plugins marks each row with where the plugin comes from: built in, the clodex-plugins library, another GitHub repo, or a local folder.
+
 ## 5.42.0 — 2026-09-08 — The github plugin moves to the library, and a template keeps its gates wherever it boots
 
 - The built-in github plugin is removed from core; it now installs from the clodex-plugins library (Settings, Plugins, Library, github). Seats that list it keep the id and pick the library copy up once installed.

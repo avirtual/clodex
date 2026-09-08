@@ -20,6 +20,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer/renderer.js'), 'utf-8');
+const { pluginOrigin } = require('../renderer/lib/plugin-origin');
 
 function el(tag) {
   const e = {
@@ -42,7 +43,7 @@ function el(tag) {
 const FREE = ['pluginsList', 'window', 'document', 'sourceLine', 'pluginBar',
   'makePluginSettingsPanel', 'renderPluginsDialog', 'showPluginsRegisterNote',
   'openPluginsSourceUpdate', 'showToast', 'pluginsSourceTarget',
-  'closePluginsSourceSection', 'confirm'];
+  'closePluginsSourceSection', 'confirm', 'pluginOrigin'];
 
 function extractRenderPluginsDialog() {
   const start = rendererSrc.indexOf('async function renderPluginsDialog() {');
@@ -78,6 +79,7 @@ async function renderRows(plugins, updates, asked = []) {
     () => el('div'),
     async () => {},
     () => {}, () => {}, () => {}, null, () => {}, () => true,
+    pluginOrigin,
   );
   const got = await fn();
   assert.strictEqual(got.length, plugins.length,
@@ -141,6 +143,7 @@ test('a refusal from the update read leaves the dialog rendering, unbadged', asy
     { settingsSectionOwners: () => [] },
     () => el('div'),
     async () => {}, () => {}, () => {}, () => {}, null, () => {}, () => true,
+    pluginOrigin,
   );
   const got = await fn();
   assert.strictEqual(got.length, 1, 'the row survived the refusal');
@@ -155,4 +158,41 @@ test('the badge is read BEFORE the rows are built, from its own host method', as
   await renderRows([INSTALLED, { ...INSTALLED, id: 'two' }], [], asked);
   assert.deepStrictEqual(asked, ['plugins.status', 'plugins.updatesAvailable'],
     'one read for the whole dialog, and no libraryCatalog fetch on the paint path');
+});
+
+const CORE = { id: 'core-demo', name: 'Core Demo', root: 'core', enabled: true };
+const REMOTE = { id: 'remote-demo', name: 'Remote Demo', enabled: true, source: { repo: 'someone/theirs', ref: null } };
+const LOCAL = { id: 'local-demo', name: 'Local Demo', enabled: true, linkedFrom: '/Users/someone/src/demo' };
+
+function originOf(row) {
+  const body = row.children.find((c) => c.className === 'plugin-row-body');
+  assert.ok(body, 'ENTER: the row has a body');
+  const nameEl = body.children.find((c) => c.className === 'plugin-row-name');
+  assert.ok(nameEl, 'ENTER: the row has a name node to carry the glyph');
+  return nameEl.children.find((c) => c.className === 'plugin-row-origin') || null;
+}
+
+test('each row carries its origin glyph and the label as a tooltip', async () => {
+  const rows = await renderRows([CORE, INSTALLED, REMOTE, LOCAL], []);
+  const got = [...rows].map((r) => {
+    const o = originOf(r);
+    assert.ok(o, 'every row must carry a .plugin-row-origin span, or the operator sees no difference at all');
+    return [o.textContent, o.title];
+  });
+  assert.deepStrictEqual(got, [
+    ['◆', 'Built in'],
+    ['▣', 'From the clodex-plugins library'],
+    ['↗', 'From github.com/someone/theirs'],
+    ['▪', 'Local, registered from /Users/someone/src/demo'],
+  ], 'the four origins must reach the row as four different glyphs');
+});
+
+test('the glyph is the first thing in the name node, ahead of the name', async () => {
+  const rows = await renderRows([REMOTE], []);
+  const body = rows[0].children.find((c) => c.className === 'plugin-row-body');
+  const nameEl = body.children.find((c) => c.className === 'plugin-row-name');
+  assert.strictEqual(nameEl.children[0].className, 'plugin-row-origin',
+    'a glyph appended after the name column reads as a suffix and breaks the fixed-width alignment');
+  assert.strictEqual(nameEl.children[1].textContent, 'Remote Demo',
+    'the name still has to be on the row beside the glyph');
 });
