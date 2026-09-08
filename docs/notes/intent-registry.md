@@ -30,4 +30,3 @@ operator never saw the plugin to re-tick it. This module sees verbs only, so a
 loaded plugin that happens to register none is exempted by the same test — that
 widens what is RETAINED, never what is revoked, and a grant for a registered
 plugin the seat unticked is still dropped.
-
