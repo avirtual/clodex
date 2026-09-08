@@ -3297,7 +3297,10 @@ function createSessionManager(deps) {
       const main = entry.worktree && entry.worktree.main;
       if (!there(main)) return entry.cwd;
       if (log) log.info('session', `resume of ${entry.name}: tree ${entry.cwd} is gone, booting in ${main}`);
-      try { getPersistence().setWorktree(entry.name, null); } catch {}
+      try {
+        getPersistence().setCwd(entry.name, main);
+        getPersistence().setWorktree(entry.name, null);
+      } catch {}
       return main;
     }
 

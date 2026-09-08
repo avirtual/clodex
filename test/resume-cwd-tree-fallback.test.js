@@ -270,15 +270,26 @@ test('no resume path reads worktree provenance itself', () => {
 //
 // createEngine starts background timers with no host to stop them; force-exit in
 // `after` once results flush, as engine-args-env.test.js does.
+// `info` lines are CAPTURED, not swallowed: the fallback announces itself with one,
+// and "it did not fall back a second time" is otherwise unobservable — the return
+// value is `main` either way.
 function mkEngine() {
   const tmp = mkTmpRoot('clx-resumecwd-');
+  const info = [];
   // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
-  return createEngine({
+  const eng = createEngine({
     userDataPath: tmp,
     seams: { registryDir: path.join(tmp, 'clodex-home') },
-    log: { info() {}, warn() {}, error() {} },
+    log: { info: (_area, msg) => info.push(String(msg)), warn() {}, error() {} },
   });
+  eng._info = info;
+  return eng;
 }
+
+// The fallback's own line, matched on its shape rather than on the word "resume":
+// the engine logs plenty at construction, and a substring that loose would count
+// unrelated traffic as a fallback.
+const fallbackLines = (eng) => eng._info.filter((m) => / is gone, booting in /.test(m));
 
 test('a tree that is still there is where the seat resumes', () => {
   const eng = mkEngine();
@@ -321,6 +332,56 @@ test('a tree that is GONE falls back to worktree.main, and the pointer goes with
   // "upgrade kills my agents" bug; only the pointer goes.
   assert.strictEqual(eng.stores.persistence.get('hand-43').name, 'hand-43',
     'the record itself is kept');
+});
+
+// The DURABILITY of that fallback, which the row above cannot see: it reads the
+// return value, and a helper that decided correctly but persisted nothing passes
+// it. Four of the six callers route through kill(), which drops the record, so the
+// question only exists at the other two — session:retrySpawn and restore-on-launch
+// keep the record across a create() throw. There, a decision held only in the
+// return value dies with the throw and every later retry re-resolves the tree that
+// is already gone: a permanent ENOENT behind the failed-tab retry button.
+//
+// create() is made to THROW here rather than stubbed out: a create that quietly
+// succeeds would rewrite `cwd` itself, so the record would end up right for a
+// reason that says nothing about the helper.
+test('the fallback is DURABLE — a create() that throws leaves the record already fixed', async () => {
+  const eng = mkEngine();
+  const root = mkTmpRoot('clx-resumecwd-throw-');
+  const tree = path.join(root, 'repo-t45');   // deliberately never created
+  const main = path.join(root, 'repo');
+  fs.mkdirSync(main);
+  eng.stores.persistence.upsert({
+    name: 'hand-45', type: 'claude', cwd: tree, workspaceId: 'default',
+    worktree: { path: tree, branch: 't45', main },
+  });
+
+  const logged = [];
+  eng.manager.create = async () => { throw new Error('spawn refused'); };
+  const entry = eng.stores.persistence.get('hand-45');
+  const before = eng.manager.resumeCwdOf(entry);
+  assert.strictEqual(before, main, 'ENTER: the fallback fired at all');
+  await eng.manager.create().catch(() => { logged.push('threw'); });
+  assert.deepStrictEqual(logged, ['threw'], 'ENTER: create() really failed, so the record was NOT rewritten by it');
+
+  const rec = eng.stores.persistence.get('hand-45');
+  assert.strictEqual(rec.cwd, main,
+    'the record already names the shared checkout: a fallback the helper only RETURNED is lost with the '
+    + 'throw, and retrySpawn/restore-on-launch would resolve the vanished tree forever after');
+  assert.strictEqual(rec.worktree, undefined, 'and the pointer is gone with it');
+
+  assert.strictEqual(fallbackLines(eng).length, 1, 'ENTER: exactly one fallback so far, the one above');
+
+  // The second call is the proof the first one STUCK. It must take the
+  // HEALTHY-RECORD arm — same answer, but reached without falling back, which the
+  // return value alone cannot distinguish. The absent second log line is the
+  // difference between a record that was repaired and one that re-decides forever.
+  const again = eng.manager.resumeCwdOf(eng.stores.persistence.get('hand-45'));
+  assert.strictEqual(again, main, 'a second resume answers main again');
+  assert.strictEqual(fallbackLines(eng).length, 1,
+    'and does NOT fall back again — it reads a record that already names an existing cwd');
+  assert.strictEqual(eng.stores.persistence.get('hand-45').worktree, undefined,
+    'with no pointer left to drop — the record is settled, not re-deciding each time');
 });
 
 test('a pre-t752 record — tree gone, no main — is left exactly as it was', () => {
