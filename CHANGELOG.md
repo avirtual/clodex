@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The built-in github plugin is removed from core; it now installs from the clodex-plugins library (Settings, Plugins, Library, github). Seats that list it keep the id and pick the library copy up once installed.
+
 ## 5.41.0 — 2026-09-08 — An agent can bootstrap a team from intents, and a hand lives in its worktree
 
 - A team lead can now write its team's templates and prompts from intents (`[agent:team template-save <stem>]`, `[agent:team prompt-save system|append <stem>]`, plus the matching `-rm` verbs, which refuse to remove a file a role still names), completing the intent path from `[agent:team create]` to a working role without the drawers.
