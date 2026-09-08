@@ -10,7 +10,7 @@
 // The discriminator is two-sided, because either side alone is satisfiable by a
 // broken fix:
 //   - a test-constructed engine must not write the home it would have written
-//   - a default-constructed engine must still RESOLVE the real home
+//   - a default-constructed engine must still RESOLVE a real root
 //     (a fix that just stops seeding satisfies the first and breaks the app)
 //
 // Every case below runs under a FAKE $HOME. That is load-bearing twice over:
@@ -113,43 +113,46 @@ test('a test-constructed engine seeds its OWN registry root and writes no home a
 });
 
 // The other side of the discriminator. Pure resolution, no construction, no IO —
-// proving the production default still points at the home must not write one.
-test('the default registry root is the home-derived path, and ignores CLODEX_HOME', () => {
+// proving the production default still resolves a real root must not write one.
+test('the default registry root is CLODEX_HOME when set, else the home-derived path', () => {
   withFakeHome((fakeHome) => {
-    const expected = path.join(fakeHome, '.clodex');
+    const homeDerived = path.join(fakeHome, '.clodex');
 
     assert.strictEqual(resolveRegistryDir({ registryDir: '/tmp/elsewhere' }), '/tmp/elsewhere',
       'an explicit seam wins');
 
-    // The production default. resolveRegistryDir throws under node --test when
-    // no seam is given (the backstop), so unset that marker for exactly this
-    // resolution — the property under test is what PRODUCTION resolves, and
-    // production never runs with it set. Restored in the finally below.
-    //
-    // This case carries t118's pin, which the t359 diff otherwise deleted:
-    // test/clodex-home-app-root.test.js used to construct an engine with no
-    // seam while CLODEX_HOME held a decoy, so a root honouring the env var went
-    // red. Every engine construction now passes an explicit registryDir, which
-    // made that mutant green suite-wide while main.js and headless-main.js pass
-    // no seam — production would have followed CLODEX_HOME with nothing red.
-    // Hence a decoy here: `|| process.env.CLODEX_HOME` in resolveRegistryDir
-    // must fail THIS assertion.
+    // resolveRegistryDir throws under node --test when no seam is given (the
+    // backstop), so unset that marker for exactly these resolutions — the
+    // property under test is what PRODUCTION resolves, and production never
+    // runs with it set. Restored in the finally below.
     const prevCtx = process.env.NODE_TEST_CONTEXT;
     const prevHomeVar = process.env.CLODEX_HOME;
-    const decoy = path.join(fakeHome, 'decoy-clodex-home-from-env');
+    const override = path.join(fakeHome, 'second-instance-root');
     try {
       delete process.env.NODE_TEST_CONTEXT;
-      process.env.CLODEX_HOME = decoy;
 
-      // ENTER: the decoy must differ from the answer, or the assertion holds
-      // whatever the code does.
-      assert.notStrictEqual(decoy, expected,
-        'the fixture must make the decoy and the expected root DIFFER');
+      // ENTER: the override must differ from the home-derived path, or both
+      // assertions below hold whatever the code does.
+      assert.notStrictEqual(override, homeDerived,
+        'the fixture must make the override and the home-derived root DIFFER');
 
-      assert.strictEqual(resolveRegistryDir({}), expected,
-        'the app root must ignore CLODEX_HOME — t118: the env var is a seam for the standalone scripts only');
-      assert.strictEqual(resolveRegistryDir(undefined), expected,
-        'a missing seams object must resolve the operator home, still ignoring CLODEX_HOME');
+      process.env.CLODEX_HOME = override;
+      assert.strictEqual(resolveRegistryDir({}), override,
+        'CLODEX_HOME moves the app root — t760, reversing t118 so two instances can share a box');
+      assert.strictEqual(resolveRegistryDir(undefined), override,
+        'a missing seams object must follow CLODEX_HOME too');
+
+      delete process.env.CLODEX_HOME;
+      assert.strictEqual(resolveRegistryDir({}), homeDerived,
+        'with the var unset the app root is still the home-derived path');
+      assert.strictEqual(resolveRegistryDir(undefined), homeDerived,
+        'a missing seams object resolves the home-derived path with the var unset');
+
+      // The seam outranks the env var, not merely the home: a host that injects
+      // a root must get it even when the operator exported CLODEX_HOME.
+      process.env.CLODEX_HOME = override;
+      assert.strictEqual(resolveRegistryDir({ registryDir: '/tmp/elsewhere' }), '/tmp/elsewhere',
+        'an injected seam still outranks a set CLODEX_HOME');
     } finally {
       if (prevCtx === undefined) delete process.env.NODE_TEST_CONTEXT;
       else process.env.NODE_TEST_CONTEXT = prevCtx;
@@ -157,6 +160,23 @@ test('the default registry root is the home-derived path, and ignores CLODEX_HOM
       else process.env.CLODEX_HOME = prevHomeVar;
     }
   });
+});
+
+// The env var must not defeat the backstop: the throw sits BEFORE the fallback,
+// so a developer with CLODEX_HOME exported in their shell still gets a loud
+// failure from a seam-less test rather than a write into that real root.
+test('a set CLODEX_HOME does not let a seam-less test resolve a root', () => {
+  const prevHomeVar = process.env.CLODEX_HOME;
+  try {
+    assert.ok(process.env.NODE_TEST_CONTEXT,
+      'this test is meaningless unless node --test marks the process');
+    process.env.CLODEX_HOME = '/tmp/exported-in-the-developers-shell';
+    assert.throws(() => resolveRegistryDir({}), /refusing to resolve the real/,
+      'the throw must precede the CLODEX_HOME fallback');
+  } finally {
+    if (prevHomeVar === undefined) delete process.env.CLODEX_HOME;
+    else process.env.CLODEX_HOME = prevHomeVar;
+  }
 });
 
 // The backstop the lead promoted from the reviewer's structural nit: forgetting

@@ -72,9 +72,7 @@ const crypto = require('crypto');
 // The ~/.clodex root a caller falls back to when nothing injected one. Lives
 // here, not in team-manifest.js, because both a TEAMS module and a project-scoped
 // one (tickets-store) need it: importing it from teams would make the project
-// board depend on the team subsystem it was decoupled from. Every in-app caller
-// injects REGISTRY_DIR instead, which deliberately does NOT read CLODEX_HOME —
-// see engine.js's note at createTeamManifest.
+// board depend on the team subsystem it was decoupled from.
 function defaultClodexHome() {
   return process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
 }

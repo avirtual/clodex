@@ -1,16 +1,16 @@
 'use strict';
-// clodex-home-app-root.test.js — t118's decision: REGISTRY_DIR is the app's
-// root, and the team layer must follow it. CLODEX_HOME stays a seam for the
-// STANDALONE script (scripts/clodex-team.js, pinned by clodex-team.test.js),
-// never app configuration.
+// clodex-home-app-root.test.js — the invariant t118 protected, kept while its
+// ruling is reversed (t760): ONE root per instance. An INJECTED REGISTRY_DIR is
+// the app's root and every subsystem must follow it, outranking CLODEX_HOME —
+// which since t760 supplies the app's root only when nothing injected one.
 //
 // The fixture is the whole point. `createTeamManifest({ fs })` fell back to
 // defaultClodexHome(), i.e. the env var, so with CLODEX_HOME set the teams
 // resolved to one tree while memory, messages, pending, peer-outbox, run/ and
 // skill-plugins resolved to another. A test asserting the two AGREE while the
 // variable is unset passes whatever the code does — they agree then regardless.
-// So every case below sets CLODEX_HOME to a tree that is not REGISTRY_DIR and
-// asserts the app ignores it.
+// So every case below sets CLODEX_HOME to a tree that is not the injected
+// REGISTRY_DIR and asserts the injected one still wins.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -20,8 +20,7 @@ const path = require('node:path');
 
 const { createEngine } = require('../engine');
 
-// The app's root, derived exactly as engine.js:133 / main.js / headless-main.js
-// derive it: bare homedir, no env var in the expression.
+// The operator's live tree, which no case here may resolve to.
 const APP_ROOT = path.join(os.homedir(), '.clodex');
 
 // A decoy CLODEX_HOME carrying a team the app must not see. The name is
@@ -53,7 +52,7 @@ async function withDecoyHome(fn) {
   }
 }
 
-test('the in-app team layer follows REGISTRY_DIR, not CLODEX_HOME', async () => {
+test('an injected REGISTRY_DIR outranks CLODEX_HOME for the in-app team layer', async () => {
   await withDecoyHome(() => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-home-'));
     try {
@@ -138,6 +137,53 @@ test('the exec child is given CLODEX_HOME=REGISTRY_DIR rather than inheriting th
     } finally { fs.rmSync(REGISTRY_DIR, { recursive: true, force: true }); }
   });
 });
+
+// t760's other half: with nothing injected, CLODEX_HOME MOVES the root. Driven
+// through writeComposeFile because sandbox.js resolves its registryDir from the
+// same fallback and then bakes it into the compose file's bind sources — a real
+// consumer, not a re-derivation. Every other dep is injected, so no docker, no
+// settings store and no port probe is touched.
+test('an un-injected registryDir follows CLODEX_HOME into the compose mounts', async () => {
+  const { createSandbox } = require('../sandbox');
+  await withDecoyHome(async (home) => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-sbx-ud-'));
+    try {
+      const box = createSandbox({
+        getUserDataPath: () => userData,
+        getUiSettings: () => ({ get: () => ({}), set: () => {} }),
+        isPortInUse: async () => false,
+        log: { info() {}, error() {} },
+      });
+      const gen = await box.writeComposeFile();
+      const yaml = fs.readFileSync(gen.path, 'utf8');
+      assert.ok(yaml.includes(`${path.join(home, 'library')}:`),
+        `the library bind must come from CLODEX_HOME — got:\n${yaml}`);
+      assert.ok(!yaml.includes(`${path.join(APP_ROOT, 'library')}:`),
+        'the operator home must not appear once CLODEX_HOME is set');
+      assert.ok(fs.existsSync(path.join(home, 'library')),
+        'the mount sources are created under the override, not under the operator home');
+    } finally { fs.rmSync(userData, { recursive: true, force: true }); }
+  });
+});
+
+// main.js and headless-main.js cannot be required here — one needs electron, the
+// other takes a pidfile and stands a live engine up at module scope. Their share
+// of the flip is therefore pinned on the source: each must derive REGISTRY_DIR
+// from the shared resolver, and hang LOG_FILE off that same const, so the log
+// file, the host stamp and the engine agree by construction.
+for (const host of ['main.js', 'headless-main.js']) {
+  test(`${host} derives its registry root from defaultClodexHome()`, () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', host), 'utf8');
+    assert.ok(/const REGISTRY_DIR = defaultClodexHome\(\);/.test(src),
+      `${host} must resolve its root through the shared CLODEX_HOME-aware resolver`);
+    assert.ok(/require\('\.\/clodex-paths'\)/.test(src),
+      `${host} must import that resolver rather than re-implement it`);
+    assert.ok(!/path\.join\(os\.homedir\(\), '\.clodex'\)/.test(src),
+      `${host} must keep no hard-coded ~/.clodex, or the override splits the root`);
+    assert.ok(/const LOG_FILE = path\.join\(REGISTRY_DIR, 'clodex\.log'\);/.test(src),
+      `${host}'s log file must hang off REGISTRY_DIR so it moves with the root`);
+  });
+}
 
 // createEngine starts background timers that keep the loop alive.
 after(() => { setImmediate(() => process.exit(0)); });

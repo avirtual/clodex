@@ -22,6 +22,7 @@ const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const { ensureDir } = require('./fs-util');
+const { defaultClodexHome } = require('./clodex-paths');
 const { createEngine } = require('./engine');
 const { DEFAULT_WORKSPACE_ID } = require('./catalogs');
 
@@ -47,9 +48,9 @@ function defaultUserDataPath() {
 const userDataPath = process.env.CLODEX_DATA_DIR || defaultUserDataPath();
 ensureDir(userDataPath);
 
-// ── Ops log ── ~/.clodex/clodex.log (same file the Electron host uses), plus a
-// mirror to stdout/stderr so `journalctl -u clodex` / `docker logs` capture it.
-const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
+// ── Ops log ── clodex.log in the registry root (same file the Electron host
+// uses), mirrored to stdout/stderr so `journalctl -u clodex` / `docker logs` see it.
+const REGISTRY_DIR = defaultClodexHome();
 const LOG_FILE = path.join(REGISTRY_DIR, 'clodex.log');
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 function initLog() {

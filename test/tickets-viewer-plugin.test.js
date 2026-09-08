@@ -16,10 +16,11 @@
 // engine is keyed by is a project KEY — the directory name under projects/ —
 // and a team is enrichment: a display name and a watchdogMs.
 //
-// The engine derives its clodex home from a bare homedir join, matching core's
-// REGISTRY_DIR — it deliberately does NOT read CLODEX_HOME, or the board would
-// report on a different tree than the app hosting it. So the seam here is
-// _internals.setClodexHomeForTest, not an environment variable.
+// The engine derives its clodex home the way core's REGISTRY_DIR does — since
+// t760 that is CLODEX_HOME when set, else the homedir join — because the board
+// must report on the tree the app hosting it uses. The seam here is still
+// _internals.setClodexHomeForTest, which outranks the variable, so a fixture
+// cannot be disturbed by whatever the operator exported.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -30,6 +31,7 @@ const path = require('node:path');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/tickets-viewer/engine');
+const { defaultClodexHome } = require('../clodex-paths');
 
 const {
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, VIEWER_ACTOR,
@@ -209,20 +211,34 @@ function assertWritesLandInFixture(home, key) {
 
 // ── the roots follow the app, not the environment ───────────────────────────
 
-test('tickets-viewer: the teams root ignores CLODEX_HOME and matches core\'s', () => {
-  // The board must report on the tree the app hosting it uses. Core's root is
-  // engine.js:133's bare homedir join; if this plugin read CLODEX_HOME, a set
-  // variable would point the two at different trees. Asserted with the variable
-  // SET to something else, because with it unset the two agree whatever the
-  // code does.
+test('tickets-viewer: the teams root follows CLODEX_HOME exactly as core\'s does', () => {
+  // The board must report on the tree the app hosting it uses. Since t760 that
+  // tree is CLODEX_HOME when set, resolved for core by clodex-paths.js
+  // defaultClodexHome, which this plugin re-derives because it cannot require
+  // core. Both roots are asserted against defaultClodexHome itself, so a copy
+  // that drifts from core is what fails — not merely one that ignores the var.
+  // Checked with the variable SET, because with it unset the two agree whatever
+  // the code does.
   const prev = process.env.CLODEX_HOME;
-  process.env.CLODEX_HOME = path.join(os.tmpdir(), 'clodex-tv-decoy-home');
+  const scratch = path.join(os.tmpdir(), 'clodex-tv-scratch-home');
   try {
     setClodexHomeForTest(null);
-    assert.equal(viewerEngine._internals.teamsRoot(), path.join(os.homedir(), '.clodex', 'teams'));
+
+    process.env.CLODEX_HOME = scratch;
+    // ENTER: the override must differ from the home-derived root, or both
+    // assertions below hold whatever the code does.
+    assert.notEqual(scratch, path.join(os.homedir(), '.clodex'));
+    assert.equal(defaultClodexHome(), scratch, 'ENTER: core follows the variable');
+    assert.equal(viewerEngine._internals.teamsRoot(), path.join(scratch, 'teams'));
     // The projects root is the one that matters now — it is where the board
     // lives and, since t304, where a write lands.
-    assert.equal(viewerEngine._internals.projectsRoot(), path.join(os.homedir(), '.clodex', 'projects'));
+    assert.equal(viewerEngine._internals.projectsRoot(), path.join(scratch, 'projects'));
+
+    delete process.env.CLODEX_HOME;
+    assert.equal(viewerEngine._internals.teamsRoot(),
+      path.join(defaultClodexHome(), 'teams'), 'unset, both fall back to the home path');
+    assert.equal(viewerEngine._internals.projectsRoot(),
+      path.join(os.homedir(), '.clodex', 'projects'));
   } finally {
     if (prev === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prev;
   }
@@ -1849,7 +1865,7 @@ test('tickets-viewer: the board a write lands in is the one that was ASKED for',
 
 test('tickets-viewer: a write REFUSES once the test home has been cleared', async () => {
   // The hazard this closes: clodexHome() falls back to the operator's REAL
-  // ~/.clodex, which was harmless while this plugin only read. A mutating call
+  // root, which was harmless while this plugin only read. A mutating call
   // that lands outside a live boot()/cleanup() pair — a test that forgot to
   // boot, one whose cleanup already ran, an await resolving late — would
   // rewrite the operator's live board, and there is no undo.
@@ -1862,8 +1878,11 @@ test('tickets-viewer: a write REFUSES once the test home has been cleared', asyn
 
   // The precondition, without which this passes for the wrong reason — a
   // refusal because the project vanished is not a refusal because the home did.
-  assert.equal(viewerEngine._internals.clodexHome(), path.join(os.homedir(), '.clodex'),
-    'ENTER: the override really is cleared, so an unlatched write would hit the real home');
+  // Compared against the RESOLVER, not a bare homedir join: since t760 the
+  // fallback is CLODEX_HOME when set, so a join would describe the operator's
+  // real root only on an instance that never set the variable.
+  assert.equal(viewerEngine._internals.clodexHome(), defaultClodexHome(),
+    'ENTER: the override really is cleared, so an unlatched write would hit the real root');
 
   for (const [method, payload] of [
     ['add', { project: key, spec: 'this must never reach the real board' }],

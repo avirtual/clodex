@@ -6,6 +6,7 @@ const os = require('os');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const { ensureDir } = require('./fs-util');
+const { defaultClodexHome } = require('./clodex-paths');
 const { isExternallyOpenable } = require('./external-link');
 const { DEFAULT_WORKSPACE_ID, THEME_KEYS } = require('./catalogs');
 const { createEngine } = require('./engine');
@@ -70,10 +71,10 @@ process.on('unhandledRejection', (reason) => {
 });
 
 
-// Must stay in $HOME, not /tmp: macOS's 3-day tmp reaper would delete files under
-// long-running sessions. Kept short because run/{name}/agent.sock must fit the
-// 104-char Unix socket path limit.
-const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
+// Two constraints a CLODEX_HOME override inherits: not under /tmp, where macOS's
+// 3-day reaper deletes files beneath long-running sessions, and short, because
+// run/{name}/agent.sock must fit the 104-char Unix socket path limit.
+const REGISTRY_DIR = defaultClodexHome();
 
 
 

@@ -57,6 +57,14 @@ Configuration is by environment:
   headless-main.js` **auto-adopts the existing `~/.config/clodex/sessions.json`
   unchanged** — the sessions carry straight over. Set it explicitly to migrate
   from a packaged build or to relocate the data dir.
+- **`CLODEX_HOME`** — the registry root: teams, the library, `run/<name>/`,
+  memory, messages, projects and `clodex.log`. Defaults to `~/.clodex`. Every
+  host reads it (`main.js`, `headless-main.js`, `sandbox.js` and the engine all
+  resolve through `defaultClodexHome()`), and each spawned agent's `[agent:exec]`
+  children are given the resolved root, so one setting moves the whole tree —
+  which is how you run **two instances on one box**. Caveat for the desktop app:
+  a packaged `.app` launched from Finder inherits no shell environment, so the
+  override reaches it only when it is launched from a shell.
 - **`CLODEX_WORKSPACES`** — comma-separated workspace ids to restore. Defaults to
   the single default workspace (headless nodes are single-workspace by
   convention).
