@@ -7,8 +7,8 @@
 // drawer-host.js — this module now learns about traffic (notify) and about
 // becoming visible (onShow) and owns nothing else about the drawer.
 //
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the
-// guarantee for the row/export half that stayed.
+// DOM-bound, so no unit tests here: a row's badges are decided by
+// lib/ipc-export.js's ipcRowParts, shared with the export mirror and pinned there.
 
 const { esc } = require('./lib/format');
 const { MAX_EXPORT_LINES, ipcRowParts, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');

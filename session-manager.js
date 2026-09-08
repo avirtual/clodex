@@ -932,7 +932,7 @@ function createSessionManager(deps) {
 
     // Conversations this seat has moved off, oldest first. Bounded: only the
     // recent past can still have a turn in flight, and a long-lived seat clears
-    // many times. Written at BOTH handover sites, read only by the backstop.
+    // many times. Written at BOTH handover sites.
     _noteSessionLeft(s, sid) {
       if (!sid) return;
       const left = s._leftSessionIds || (s._leftSessionIds = []);
