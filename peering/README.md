@@ -68,9 +68,23 @@ Configuration is by environment:
   which is how you run **two instances on one box**. Caveat for the desktop app:
   a packaged `.app` launched from Finder inherits no shell environment, so the
   override reaches it only when it is launched from a shell.
+- **`CLODEX_LABEL`** — the origin this instance announces to the peers it
+  **dials**: a dialed box tags our agents `name@<our label>`, keys its reply
+  outbox by it, and its agents reply to that address. It is also the hello
+  `host` field that box displays for us. (On the *dialing* side the suffix is
+  that side's own configured peer label instead.) Defaults to the box's
+  hostname minus a `.local` suffix, which is what two instances on one box
+  would otherwise share — leaving every peer they both dial to conflate their
+  agents and their reply outboxes. Must clear the same charset gate a
+  wire-supplied origin does (`[A-Za-z0-9._-]`, 1–64 chars, not `.` or `..`);
+  anything else is ignored with a warning in `clodex.log` and the hostname is
+  used.
 - **`CLODEX_WORKSPACES`** — comma-separated workspace ids to restore. Defaults to
   the single default workspace (headless nodes are single-workspace by
   convention).
+
+The full two-instances-on-one-box walkthrough, with every instance-scoped
+variable in one table, is `docs/recipes/two-instances.md`.
 
 ### Exit codes & supervision
 
