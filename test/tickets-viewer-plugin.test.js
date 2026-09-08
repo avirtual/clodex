@@ -16,10 +16,11 @@
 // engine is keyed by is a project KEY — the directory name under projects/ —
 // and a team is enrichment: a display name and a watchdogMs.
 //
-// The engine derives its clodex home from a bare homedir join, matching core's
-// REGISTRY_DIR — it deliberately does NOT read CLODEX_HOME, or the board would
-// report on a different tree than the app hosting it. So the seam here is
-// _internals.setClodexHomeForTest, not an environment variable.
+// The engine derives its clodex home the way core's REGISTRY_DIR does — since
+// t760 that is CLODEX_HOME when set, else the homedir join — because the board
+// must report on the tree the app hosting it uses. The seam here is still
+// _internals.setClodexHomeForTest, which outranks the variable, so a fixture
+// cannot be disturbed by whatever the operator exported.
 
 const test = require('node:test');
 const assert = require('node:assert');

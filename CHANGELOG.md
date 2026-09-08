@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- CLODEX_HOME now moves the whole ~/.clodex root for the app and every child it spawns, not just the standalone scripts.
+- CLODEX_HOME now moves the whole ~/.clodex root for the app, every child it spawns, and the tickets and memory boards, not just the standalone scripts.
 
 ## 5.43.0 — 2026-09-08 — Manage Plugins says where each plugin comes from and shows its README
 
