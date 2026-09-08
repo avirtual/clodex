@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Preferences ▸ default session settings now lists every skill any agent on this box has discovered, not just the built-in seed — so a runtime-discovered skill like `design` or `dataviz` can be unchecked in the defaults instead of arriving enabled on every new agent with no way to opt out. The list survives a restart, so a box with no agents running still offers it.
+
 ## 5.37.0 — 2026-09-08 — your plugins tell you when they've moved on
 
 - Manage plugins tells you when a plugin you installed from the Clodex library has a newer version: the row reads `Update available (1.1.0 → 1.2.0)` and the Plugins menu's `Manage plugins…` carries the count. Nothing updates itself — the row's existing Update… button is still the only way anything is replaced, and the badge and count clear as soon as you click it.

@@ -400,6 +400,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   const REMINDERS_FILE = path.join(userDataPath, 'reminders.json');
   const NOTIFICATIONS_FILE = path.join(userDataPath, 'notifications.json');
   const ENV_SCOPES_FILE = path.join(userDataPath, 'env-scopes.json');
+  const SKILLS_SEEN_FILE = path.join(userDataPath, 'skills-seen.json');
   const SETUP_FILE = path.join(registryDir, 'setup.json');
   const PROMPTS_DIR = path.join(registryDir, 'library', 'prompts');
   const AGENTS_DIR = path.join(registryDir, 'agents');
@@ -1496,6 +1497,26 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
     },
   };
 
+  const skillsSeen = {
+    list() {
+      try {
+        const raw = JSON.parse(fs.readFileSync(SKILLS_SEEN_FILE, 'utf-8'));
+        if (!Array.isArray(raw)) return [];
+        return [...new Set(raw.filter((s) => typeof s === 'string' && s))].sort();
+      } catch { return []; }
+    },
+    record(names) {
+      if (!Array.isArray(names) || !names.length) return this.list();
+      const cur = this.list();
+      const next = [...new Set([...cur, ...names.filter((s) => typeof s === 'string' && s)])].sort();
+      if (next.length === cur.length) return cur;
+      try {
+        atomicWriteFileSync(SKILLS_SEEN_FILE, JSON.stringify(next, null, 2));
+      } catch (e) { console.error('skills-seen save failed:', e); }
+      return next;
+    },
+  };
+
   const setupMarker = {
     read() {
       let raw;
@@ -1859,7 +1880,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   return {
     persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings,
-    envScopes, envDefaults, setupMarker,
+    envScopes, envDefaults, setupMarker, skillsSeen,
     renameWorkspaceScope,
   };
 }
