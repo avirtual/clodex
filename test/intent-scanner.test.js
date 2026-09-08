@@ -395,16 +395,20 @@ test('parseIntent: an escaped task is reported, not dispatched', () => {
 });
 
 // --- [agent:team <verb>] — T29 team metadata mutation ----------------------
-test('parseIntent: team role-add — brief BODY + optional prompt/template key:val tokens', () => {
+test('parseIntent: team role-add — brief BODY + optional prompt/template/dispatch/cwd key:val tokens', () => {
   assert.deepStrictEqual(parseIntent('[agent:team role-add worker] does the widgets'),
-    { type: 'team', sub: 'role-add', name: 'worker', prompt: null, template: null, body: 'does the widgets' });
+    { type: 'team', sub: 'role-add', name: 'worker', prompt: null, template: null, dispatch: null, cwd: null, body: 'does the widgets' });
   assert.deepStrictEqual(parseIntent('[agent:team role-add worker prompt:my-p template:tpl] the brief'),
-    { type: 'team', sub: 'role-add', name: 'worker', prompt: 'my-p', template: 'tpl', body: 'the brief' });
+    { type: 'team', sub: 'role-add', name: 'worker', prompt: 'my-p', template: 'tpl', dispatch: null, cwd: null, body: 'the brief' });
+  assert.deepStrictEqual(parseIntent('[agent:team role-add worker dispatch:worktree cwd:sub] the brief'),
+    { type: 'team', sub: 'role-add', name: 'worker', prompt: null, template: null, dispatch: 'worktree', cwd: 'sub', body: 'the brief' });
 });
 
 test('parseIntent: team role-set — same shape as role-add', () => {
   assert.deepStrictEqual(parseIntent('[agent:team role-set worker prompt:new-p] new brief'),
-    { type: 'team', sub: 'role-set', name: 'worker', prompt: 'new-p', template: null, body: 'new brief' });
+    { type: 'team', sub: 'role-set', name: 'worker', prompt: 'new-p', template: null, dispatch: null, cwd: null, body: 'new brief' });
+  assert.deepStrictEqual(parseIntent('[agent:team role-set worker dispatch:spawn] new brief'),
+    { type: 'team', sub: 'role-set', name: 'worker', prompt: null, template: null, dispatch: 'spawn', cwd: null, body: 'new brief' });
 });
 
 test('parseIntent: team role-rm / role-rename / watchdog carry no body', () => {

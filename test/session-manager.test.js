@@ -10092,6 +10092,50 @@ test('team: lead role-add / role-set call the mutators with the parsed def/patch
   assert.ok(f.injected.some((t) => /role "runner" updated/.test(t)), 'confirm line');
 });
 
+test('t754: role-add carries dispatch: and cwd: through to addRole', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-add', name: 'builder', template: 't1', dispatch: 'worktree', cwd: 'sub', body: 'builds things' });
+  assert.deepStrictEqual(f.calls[0], ['addRole', 'team', 'builder',
+    { prompt: null, template: 't1', brief: 'builds things', dispatch: 'worktree', cwd: 'sub' }],
+    'dispatch:worktree reaches the mutator in the def — without it an intent-added role can only ever be standing');
+});
+
+test('t754: role-add WITHOUT the kvs sends the pre-t754 def, with no dispatch/cwd keys at all', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-add', name: 'builder', prompt: 'p1', template: 't1', body: 'builds things' });
+  const def = f.calls[0][3];
+  assert.deepStrictEqual(def, { prompt: 'p1', template: 't1', brief: 'builds things' },
+    'the def is byte-identical to the pre-t754 one — a dispatch: null leaking in would land a null in team.json');
+  assert.deepStrictEqual(Object.keys(def).sort(), ['brief', 'prompt', 'template'],
+    'the keys themselves, so an added-then-nulled field fails here rather than on disk');
+});
+
+test('t754: role-set patches ONLY the kvs it was given', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-set', name: 'runner', cwd: 'sub', body: '' });
+  assert.deepStrictEqual(f.calls[0], ['setRole', 'team', 'runner', { cwd: 'sub' }],
+    'a cwd-only role-set must not carry an empty brief or a null dispatch that would overwrite the stored ones');
+  f.calls.length = 0;
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-set', name: 'runner', dispatch: 'spawn', body: 'new brief' });
+  assert.deepStrictEqual(f.calls[0], ['setRole', 'team', 'runner', { brief: 'new brief', dispatch: 'spawn' }]);
+});
+
+// Not validated in _handleTeam: addRole/setRole already refuse a bad dispatch
+// (ROLE_DISPATCH_VALUES) and a reserved role, and a second copy of those rules
+// here would be the copy that drifts. What must hold here is only that the throw
+// becomes a reply instead of an unhandled error; the mutators are stubbed in this
+// fixture, so the throw TEXT below is this test's own invention, not evidence.
+test('t754: a mutator throw on the dispatch/cwd path comes back as an error: reply', () => {
+  const f = mkTeamMut({ addRole: () => { throw new Error('role "builder" dispatch must be one of standing, spawn, worktree'); } });
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-add', name: 'builder', dispatch: 'bogus', body: 'b' });
+  assert.ok(/^\[agent:team\] error: role "builder" dispatch must be one of standing, spawn, worktree/.test(f.last ? f.last() : f.injected[f.injected.length - 1]),
+    'the mutator text is surfaced verbatim, not swallowed or reworded');
+});
+
 test('team: a NON-lead is bounced for every verb (D2 lead-gate)', () => {
   const f = mkTeamMut();
   f.seat('team-hand');

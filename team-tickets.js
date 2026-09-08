@@ -2139,6 +2139,8 @@ function createTicketMethods(deps, shared) {
               template: intent.template || null,
               brief: brief || null,
             };
+            if (intent.dispatch) def.dispatch = intent.dispatch;
+            if (intent.cwd) def.cwd = intent.cwd;
             addRole(team.name, name, def);
             reply(`role "${name}" added to ${team.name}`);
             return;
@@ -2151,6 +2153,8 @@ function createTicketMethods(deps, shared) {
             if (brief) patch.brief = brief;
             if (intent.prompt) patch.prompt = intent.prompt;
             if (intent.template) patch.template = intent.template;
+            if (intent.dispatch) patch.dispatch = intent.dispatch;
+            if (intent.cwd) patch.cwd = intent.cwd;
             setRole(team.name, name, patch);
             reply(`role "${name}" updated on ${team.name}`);
             return;
