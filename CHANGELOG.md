@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Manage Plugins says where each plugin comes from and shows its README
+## Unreleased
+
+## 5.43.0 — 2026-09-08 — Manage Plugins says where each plugin comes from and shows its README
 
 - Editing a template's cwd (typing or Browse) no longer greys out its tool and skill rows again or resets what is ticked: the redraw keeps the template treatment from the previous release.
 - Manage Plugins marks each row with where the plugin comes from: built in, the clodex-plugins library, another GitHub repo, or a local folder.
