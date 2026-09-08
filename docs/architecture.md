@@ -406,16 +406,28 @@ not by size:
   prompt, template or exec def served by the team's own directory, noted because
   the shadowing is the fact. Not a hot path (it stats files and parses template/exec JSON), so it
   belongs to a popover open or a team create, never to `resolveTeam`.
-- **team-prompt-dir.js** — `teamPromptFile({fs,path}, team, kind, stem)` and
-  `teamJsonFile`/`readTeamJson` for kinds `templates` and `exec`: the one place
-  that knows a team directory carries `prompts/system`, `prompts/append`,
-  `templates/` and `exec/` beside its `team.json`. Returns the path (or the
-  parsed object) when the file is readable, else null; never throws, never lists
-  a directory. Confinement is on the INPUT — a stem with a separator, a leading
+- **team-prompt-dir.js** — the one place that knows a team directory carries
+  `prompts/system`, `prompts/append`, `templates/` and `exec/` beside its
+  `team.json`, on both the read and the write side.
+  READ: `teamPromptFile({fs,path}, team, kind, stem)` and
+  `teamJsonFile`/`readTeamJson` for kinds `templates` and `exec` — the path (or
+  the parsed object) when the file is readable, else null; never throws, never
+  lists a directory. These take the RESOLVED team object and key off `team.dir`.
+  WRITE: `teamTemplateSave`/`teamTemplateRemove`/`teamPromptSave`/
+  `teamPromptRemove`, each returning `{ok, file}` or `{ok:false, error}` rather
+  than throwing. These take the team NAME plus `{fs, path, teamsDir, listTeams}`
+  and refuse a name `listTeams()` does not carry, so an unknown team is a
+  refusal and never an mkdir. Both `templates:saveTeam`/`removeTeam`
+  (ipc-handlers.js) and the four `[agent:team template-save|prompt-save|…]`
+  verbs (team-tickets.js) go through them — one writer, so the drawer and the
+  intent cannot drift into producing different bytes.
+  Confinement is on the INPUT — a stem with a separator, a leading
   `..` or a `:` is refused before any join, because `team.dir` comes off an
   agent-writable manifest and a post-hoc containment check would have to be
-  re-derived correctly at every call site. Pure leaf, deps injected, so like
-  `clodex-paths.js` it is not in the leak scanner's lists.
+  re-derived correctly at every call site. Deps injected except durability:
+  `ensureDir` + `atomicWriteFileSync` are required directly, for the reason
+  team-manifest.js states — a caller must not be able to vary whether a write
+  is durable. Not in the leak scanner's lists, like `clodex-paths.js`.
 - **team-gather.js** — `planGather(team, sources)` / `applyGather(plan, io)` /
   `formatGatherReport(result, {dry})` / `usesByRole(items, roleKeys)` (the plan
   folded per role into `{kind, stem, via, where}` rows, `where` being
