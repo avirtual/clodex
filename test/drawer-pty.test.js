@@ -13,6 +13,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const { createDrawerPtys } = require('../drawer-pty');
+const { withUtf8Charset } = require('../env-scopes');
 
 // A fake node-pty. Records what it was constructed with and lets a test drive
 // the data/exit callbacks, which is the whole surface the real one provides.
@@ -68,7 +69,8 @@ function mk(over = {}) {
     // engine.js wires rather than a stand-in that could drift from it.
     makeMarkParser: over.makeMarkParser || require('../term-marks').createMarkParser,
     onShellEnd: over.onShellEnd || ((seat, why) => ended.push([seat, why])),
-    env: { PATH: '/usr/bin' },
+    env: over.env || { PATH: '/usr/bin' },
+    withUtf8Charset,
     log: { info() {}, warn() {}, error() {} },
   });
   return { w, sent, spawn, ended };
@@ -93,7 +95,7 @@ test('spawn: a real login shell in the workspace cwd', () => {
     cols: 100,
     rows: 30,
     cwd: '/tmp/ws',
-    env: { PATH: '/usr/bin', TERM: 'xterm-256color' },
+    env: { PATH: '/usr/bin', TERM: 'xterm-256color', LC_CTYPE: 'UTF-8' },
   });
 });
 
@@ -595,6 +597,35 @@ test('marks: a throwing reporter cannot break the terminal', () => {
   const data = sent.filter((s) => s[1] === 'wterm:data').map((s) => s[2]).join('');
   assert.ok(data.length > 0, 'ENTER: output still reached the renderer');
   assert.strictEqual(w._count(), 1, 'the shell is still alive');
+});
+
+// --- t746: a UTF-8 charset for a Finder-launched app -------------------------
+// The workbench shell is the second PTY spawn site; a Finder-launched app hands
+// it an env with no LANG/LC_ALL/LC_CTYPE and pbcopy then mangles non-ASCII
+// (gh #10). The helper arrives by INJECTION because this module requires
+// nothing — see the not-a-session test below. Whole-object equality, as the
+// spawn test above: the charset key is one entry in the env, and a probe would
+// pass on an env built the wrong way around.
+
+test('charset: a base env with no LANG/LC_ALL/LC_CTYPE gains LC_CTYPE=UTF-8', () => {
+  const { w, spawn } = mk();
+  w.spawn('ws-1', null, { cols: 100, rows: 30 });
+  assert.deepStrictEqual(spawn.spawned[0].opts.env,
+    { PATH: '/usr/bin', TERM: 'xterm-256color', LC_CTYPE: 'UTF-8' });
+});
+
+test('charset: LANG alone suppresses it — the shell gets no LC_CTYPE', () => {
+  const { w, spawn } = mk({ env: { PATH: '/usr/bin', LANG: 'pl_PL.UTF-8' } });
+  w.spawn('ws-1', null, { cols: 100, rows: 30 });
+  assert.deepStrictEqual(spawn.spawned[0].opts.env,
+    { PATH: '/usr/bin', LANG: 'pl_PL.UTF-8', TERM: 'xterm-256color' });
+});
+
+test('charset: an explicit LC_ALL=C is left exactly as the operator set it', () => {
+  const { w, spawn } = mk({ env: { PATH: '/usr/bin', LC_ALL: 'C' } });
+  w.spawn('ws-1', null, { cols: 100, rows: 30 });
+  assert.deepStrictEqual(spawn.spawned[0].opts.env,
+    { PATH: '/usr/bin', LC_ALL: 'C', TERM: 'xterm-256color' });
 });
 
 // --- the shell shim seam -------------------------------------------------

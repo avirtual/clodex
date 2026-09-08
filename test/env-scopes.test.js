@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
-  DENY_KEYS, envKeyError, flattenScope, sanitizeFlat, mergeSessionEnv,
+  DENY_KEYS, envKeyError, flattenScope, sanitizeFlat, mergeSessionEnv, withUtf8Charset,
 } = require('../env-scopes');
 
 function tmpFile(body) {
@@ -138,4 +138,53 @@ test('driving case: AWS_PROFILE + AWS_ROLE_SESSION_NAME per session', () => {
   assert.strictEqual(merged.AWS_PROFILE, 'clientA');
   assert.strictEqual(merged.AWS_ROLE_SESSION_NAME, 'agent-bob');
   assert.strictEqual(merged.PATH, '/usr/bin');
+});
+
+// ── withUtf8Charset ──────────────────────────────────────────────────────────
+// A GUI process launched from Finder/Dock inherits launchd's env, which carries
+// none of the three charset keys, and pbcopy inside a CLI child then writes the
+// pasteboard in the legacy Mac encoding for the system language (gh #10; the
+// measurement is in docs/notes/env-scopes.md). Each row states its whole
+// expected env as a literal — the question is what the three keys look like
+// TOGETHER, so a probe on one of them would pass on an env built wrong.
+test('withUtf8Charset: a charset-less env gains LC_CTYPE=UTF-8, nothing else', () => {
+  assert.deepStrictEqual(withUtf8Charset({ PATH: '/usr/bin', TERM: 'xterm-256color' }),
+    { PATH: '/usr/bin', TERM: 'xterm-256color', LC_CTYPE: 'UTF-8' });
+});
+
+test('withUtf8Charset: LANG alone suppresses it — no LC_CTYPE key is added', () => {
+  assert.deepStrictEqual(withUtf8Charset({ PATH: '/usr/bin', LANG: 'pl_PL.UTF-8' }),
+    { PATH: '/usr/bin', LANG: 'pl_PL.UTF-8' });
+});
+
+test('withUtf8Charset: LC_CTYPE already set is not rewritten, even to another value', () => {
+  assert.deepStrictEqual(withUtf8Charset({ LC_CTYPE: 'en_US.ISO8859-1' }),
+    { LC_CTYPE: 'en_US.ISO8859-1' });
+});
+
+// The operator's own choice, and it is a choice AGAINST UTF-8 — the one case
+// where the fix would be the regression.
+test('withUtf8Charset: an explicit LC_ALL=C is left alone', () => {
+  assert.deepStrictEqual(withUtf8Charset({ PATH: '/usr/bin', LC_ALL: 'C' }),
+    { PATH: '/usr/bin', LC_ALL: 'C' });
+});
+
+// An empty string is SET — POSIX reads it as "unset this category's override",
+// which is a state an operator can only reach deliberately.
+test('withUtf8Charset: an empty LC_ALL counts as set', () => {
+  assert.deepStrictEqual(withUtf8Charset({ LC_ALL: '' }), { LC_ALL: '' });
+});
+
+test('withUtf8Charset: it copies rather than mutating its input', () => {
+  const base = { PATH: '/usr/bin' };
+  const out = withUtf8Charset(base);
+  assert.deepStrictEqual(base, { PATH: '/usr/bin' }, 'the caller\'s object is untouched');
+  assert.notStrictEqual(out, base);
+});
+
+// The identity arm returns the SAME object, so a caller cannot tell the two arms
+// apart by reference and start relying on a copy it does not always get.
+test('withUtf8Charset: the untouched arm returns the same object it was given', () => {
+  const base = { LANG: 'C.UTF-8' };
+  assert.strictEqual(withUtf8Charset(base), base);
 });

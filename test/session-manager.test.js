@@ -10819,6 +10819,23 @@ const bashCreateWithEnv = (m, name, sessionEnv) => m.create(
   [], [], [], [], [], null, [], [], null, sessionEnv,
 );
 
+// Whether the spawn env gains a charset depends on the env the TEST RUNNER was
+// launched with (withUtf8Charset only fires when all three keys are absent), so
+// every whole-object pin below runs with the three forced to a known state —
+// otherwise the same assertion is green under `npm start`'s shell and red under
+// a launchd-launched one, which is exactly the difference this feature is about.
+const CHARSET_KEYS = ['LC_ALL', 'LC_CTYPE', 'LANG'];
+async function withCharset(vars, fn) {
+  const saved = {};
+  for (const k of CHARSET_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  for (const [k, v] of Object.entries(vars)) process.env[k] = v;
+  try { return await fn(); } finally {
+    for (const k of CHARSET_KEYS) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+  }
+}
+
 test('create → PTY env: no scopes reduces to byte-identical { ...process.env, TERM, CLODEX_HOME }', async () => {
   // The load-bearing no-behavior-change pin: with nothing set anywhere and no
   // override file, mergeSessionEnv returns exactly its base, so the spawned env
@@ -10831,10 +10848,12 @@ test('create → PTY env: no scopes reduces to byte-identical { ...process.env, 
   // seeded as ordinary GLOBAL-scope entries (stores.js seedEnvDefaults), which
   // is the case below. A default re-appearing in this empty-scope result means
   // one was baked back into the merge base, out of the operator's reach.
-  const { m, captured, registryDir } = mkEnvProbe();
-  await bashCreate(m, 'env-none', null);
-  assert.deepStrictEqual(captured(), {
-    ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
+  await withCharset({ LC_CTYPE: 'UTF-8' }, async () => {
+    const { m, captured, registryDir } = mkEnvProbe();
+    await bashCreate(m, 'env-none', null);
+    assert.deepStrictEqual(captured(), {
+      ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
+    });
   });
 });
 
@@ -10842,18 +10861,20 @@ test('create → PTY env: a SEEDED shipped default reaches the PTY as an ordinar
   // The other half of the move: the value the app used to bake now arrives
   // through the global scope, and a workspace/session value still beats it
   // (pinned in full by test/stream-idle-default.test.js).
-  const { m, captured, registryDir } = mkEnvProbe({
-    global: {
-      CLAUDE_STREAM_IDLE_TIMEOUT_MS: { value: '1800000', secret: false },
-      CLAUDE_CODE_TURN_UPDATES: { value: 'false', secret: false },
-    },
-  });
-  await bashCreate(m, 'env-seeded', null);
-  assert.deepStrictEqual(captured(), {
-    ...process.env,
-    CLAUDE_STREAM_IDLE_TIMEOUT_MS: '1800000',
-    CLAUDE_CODE_TURN_UPDATES: 'false',
-    TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
+  await withCharset({ LC_CTYPE: 'UTF-8' }, async () => {
+    const { m, captured, registryDir } = mkEnvProbe({
+      global: {
+        CLAUDE_STREAM_IDLE_TIMEOUT_MS: { value: '1800000', secret: false },
+        CLAUDE_CODE_TURN_UPDATES: { value: 'false', secret: false },
+      },
+    });
+    await bashCreate(m, 'env-seeded', null);
+    assert.deepStrictEqual(captured(), {
+      ...process.env,
+      CLAUDE_STREAM_IDLE_TIMEOUT_MS: '1800000',
+      CLAUDE_CODE_TURN_UPDATES: 'false',
+      TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
+    });
   });
 });
 
@@ -10895,6 +10916,52 @@ test('create → PTY env: a deny-listed scope key never reaches the PTY', async 
   assert.strictEqual(env.OK, '1', 'a legal sibling key still lands');
   assert.strictEqual(env.CLODEX_REMOTE_TOKEN, process.env.CLODEX_REMOTE_TOKEN,
     'the scope did not inject the deny key (base value, whatever it is, untouched)');
+});
+
+// --- t746: a UTF-8 charset for a Finder-launched app -------------------------
+// A GUI process launched from Finder/Dock inherits launchd's env, which carries
+// no LANG/LC_ALL/LC_CTYPE, and pbcopy inside the CLI then writes the pasteboard
+// in the legacy Mac encoding for the system language (gh #10). Each row forces
+// the base env itself rather than probing one key: the helper's whole question
+// is what the THREE keys look like together, and a probe would pass on a runner
+// that happened to have a charset already.
+
+test('create → PTY env: a charset-less base env gains LC_CTYPE=UTF-8', async () => {
+  await withCharset({}, async () => {
+    const { m, captured, registryDir } = mkEnvProbe();
+    await bashCreate(m, 'env-charset-none', null);
+    assert.deepStrictEqual(captured(), {
+      ...process.env,
+      TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
+      LC_CTYPE: 'UTF-8',
+    });
+  });
+});
+
+test('create → PTY env: LANG alone suppresses the charset default — no LC_CTYPE is added', async () => {
+  await withCharset({ LANG: 'pl_PL.UTF-8' }, async () => {
+    const { m, captured, registryDir } = mkEnvProbe();
+    await bashCreate(m, 'env-charset-lang', null);
+    const env = captured();
+    assert.deepStrictEqual(env, {
+      ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
+    });
+    assert.strictEqual('LC_CTYPE' in env, false, 'the operator set a charset through LANG; we add no second key');
+    assert.strictEqual(env.LANG, 'pl_PL.UTF-8');
+  });
+});
+
+test('create → PTY env: an explicit LC_ALL=C is the operator\'s choice and is left alone', async () => {
+  await withCharset({ LC_ALL: 'C' }, async () => {
+    const { m, captured, registryDir } = mkEnvProbe();
+    await bashCreate(m, 'env-charset-c', null);
+    const env = captured();
+    assert.deepStrictEqual(env, {
+      ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
+    });
+    assert.strictEqual(env.LC_ALL, 'C', 'a deliberate non-UTF-8 choice is not overridden');
+    assert.strictEqual('LC_CTYPE' in env, false);
+  });
 });
 
 // t173: CLODEX_HOME is an app-owned key, applied AFTER the merge like TERM.

@@ -6,7 +6,7 @@
 
 // Keyed by (WINDOW, SEAT): collapsing the two gives a seat a shell in another
 // seat's directory. A seatless key is the workspace-wide shell.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL is the one byte neither half can contain; any other separator would let one
@@ -80,7 +80,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         cols,
         rows,
         cwd,
-        env: { ...(env || process.env), ...((shim && shim.env) || {}), TERM: 'xterm-256color' },
+        env: withUtf8Charset({ ...(env || process.env), ...((shim && shim.env) || {}), TERM: 'xterm-256color' }),
       });
     } catch (e) {
       logger.warn('wterm', `spawn failed: ${e.message}`);

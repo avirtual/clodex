@@ -170,6 +170,7 @@ function mk(over = {}) {
     // does — the shared-shell property the peer terminal rests on.
     onOutput: (seat, data) => mirrored.push([seat, data]),
     onShellEnd: (seat, code) => mirrored.push([seat, { exit: code }]),
+    withUtf8Charset: require('../env-scopes').withUtf8Charset,
   };
   assert.deepStrictEqual(Object.keys(deps).sort(), declaredDeps(),
     'the fixture must wire EVERY dep — an unwired one is undefined, which is legal and silent');

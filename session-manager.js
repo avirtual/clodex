@@ -86,7 +86,7 @@ const VOICE_MODE_SETTLE_MS = 1500;
 const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
-const { mergeSessionEnv, sanitizeFlat } = require('./env-scopes');
+const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
@@ -1645,7 +1645,7 @@ function createSessionManager(deps) {
       // Finder. Forcing it removes that inheritance. Click-to-open does NOT
       // depend on this — it scans rendered text (renderer.js, registerLinkProvider)
       // precisely because the Claude CLI is not observed to emit OSC 8 either way.
-      const env = { ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' };
+      const env = withUtf8Charset({ ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' });
       if (type === 'codex') env.WB_WRAP_NAME = name;
 
       let ptyProc;
