@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Codex seats pick their skills and plugins like Claude seats do
+## Unreleased
+
+## 5.40.0 — 2026-09-08 — Codex seats pick their skills and plugins like Claude seats do
 
 - A Codex seat's Skills… menu entry now opens the same Custom skills editor a Claude seat has (the Claude-only skill roster stays out of it), so skills picked at creation can be changed later; and loading a template into the new-session dialog now fills the system and append prompts for a Codex seat too, which it always consumed but never received from a template.
 - New-session and Edit dialogs now show a Codex seat the sections Codex actually honours: Custom skills (delivered since 5.39.0) and Plugins (which the seat already consumed but could not be chosen — every shipped plugin was ticked silently). Claude-only settings — skill roster, subagents, tools, wire stripping — stay hidden for Codex rather than pretending to apply. The gates come from one per-CLI capability table, so a third CLI is a row.
