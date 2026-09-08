@@ -10137,7 +10137,7 @@ test('team: a bad watchdog ms is bounced without calling the mutator', () => {
 // REAL createTeamManifest over a temp clodexHome: the assertion that matters is
 // team.json ON DISK carrying the root and lead, and a stub would let a handler
 // that forwarded nothing still look right.
-function mkTeamCreate({ intents = ['team-create'], refreshThrows = false } = {}) {
+function mkTeamCreate({ intents = ['team-create'], refreshThrows = false, noRefreshDep = false } = {}) {
   const home = mkTmpRoot('clodex-t751-');
   const projectRoot = mkTmpRoot('clodex-t751-proj-');
   const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
@@ -10149,7 +10149,7 @@ function mkTeamCreate({ intents = ['team-create'], refreshThrows = false } = {})
     createTeam: tm.createTeam,
     teamsDir: tm.teamsDir,
     resolveTeam: () => null,
-    refreshAppMenu: () => { refreshes.push(1); if (refreshThrows) throw new Error('menu boom'); },
+    refreshAppMenu: noRefreshDep ? undefined : () => { refreshes.push(1); if (refreshThrows) throw new Error('menu boom'); },
   });
   m._broadcast = () => {};
   m._sendToSession = () => {};
@@ -10192,6 +10192,29 @@ test('t751 create: an UNGRANTED seat gets no manifest and no reply at all', asyn
       'and no success line was injected');
     assert.strictEqual(f.refreshes.length, 0, 'the menu was never rebuilt');
   }
+});
+
+test('t751 create: a throwing menu rebuild does not un-report a write that landed', async () => {
+  // The refresh sits OUTSIDE the try that wraps createTeam, matching team:createBare.
+  // Inside it, a throwing rebuild would answer the seat with `error: menu boom`
+  // for a manifest that is on disk, and the seat's retry would then hit
+  // "already exists" — a team it can neither use nor re-create.
+  const f = mkTeamCreate({ refreshThrows: true });
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.strictEqual(f.refreshes.length, 1, 'ENTER: the rebuild really was attempted and really threw');
+  assert.ok(f.teamExists('shop'), 'the write landed');
+  assert.ok(f.injected.some((t) => /team "shop" created/.test(t)), 'and the seat is told so');
+  assert.deepStrictEqual(f.injected.filter((t) => /menu boom/.test(t)), [], 'no failure reported');
+});
+
+test('t751 create: a host that wires NO menu still mints the team', async () => {
+  // headless-main builds the same graph with no Electron menu to rebuild, so the
+  // dep is absent there — an unguarded call would be a TypeError on the success
+  // path only, i.e. every successful create failing in headless and none in the app.
+  const f = mkTeamCreate({ noRefreshDep: true });
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.teamExists('shop'));
+  assert.ok(f.injected.some((t) => /team "shop" created/.test(t)));
 });
 
 test('t751 create: an explicit lead: is recorded verbatim', async () => {

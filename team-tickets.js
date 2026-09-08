@@ -2074,9 +2074,6 @@ function createTicketMethods(deps, shared) {
       this.kill(session.name);
     },
 
-    // Not a `_handleTeam` case: the gate is the PRIVILEGED `team-create` grant on
-    // the seat, not _handleTeam's "you are this team's lead" — a seat minting a
-    // team for another project is on no team of that project's.
     _handleTeamCreate(session, intent) {
       const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
       const name = intent.name || null;
@@ -2099,10 +2096,7 @@ function createTicketMethods(deps, shared) {
         reply(`error: ${err.message}`);
         return;
       }
-      // Outside the try, like team:createBare: a throwing rebuild must not report
-      // a failure for a write that landed, since the retry would then hit
-      // "already exists". Optional — headless hosts pass no menu.
-      if (typeof refreshAppMenu === 'function') refreshAppMenu();
+      try { if (typeof refreshAppMenu === 'function') refreshAppMenu(); } catch {}
       reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${nodePath.join(teamsDir, team.name)}. `
         + 'Next: spawn the lead in that root, then [agent:team gather] and [agent:team role-add …] from it.');
     },
