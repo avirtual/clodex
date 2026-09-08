@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Keep-warm rows in the IPC log now fit on one line and say which seat they are about: the seat name, then a short session id, then the ping. They used to repeat one 36-character session id three times — twice as a badge with an arrow between a thing and itself, once more in the text — and if the seat had cleared since the hold was armed, the name was missing entirely and only the raw id showed.
+- Preferences ▸ default session settings now lists every skill any agent on this box has discovered, not just the built-in seed — so a runtime-discovered skill like `design` or `dataviz` can be unchecked in the defaults instead of arriving enabled on every new agent with no way to opt out. The list survives a restart, so a box with no agents running still offers it.
 
 ## 5.37.0 — 2026-09-08 — your plugins tell you when they've moved on
 

@@ -77,4 +77,19 @@ function classifySkillRoster(input, opts) {
   return { roster: rosterNames, outOfScope, sawRoster: roster !== null };
 }
 
-module.exports = { classifySkillRoster, emptyRoster };
+function listedRosterNames(input) {
+  const lines = Array.isArray(input) ? input : String(input || '').split('\n');
+  const out = new Set();
+  for (const line of lines) {
+    if (typeof line !== 'string' || line.indexOf(LISTING_TYPE) === -1) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    const att = obj && obj.type === 'attachment' ? obj.attachment : null;
+    if (!att || att.type !== LISTING_TYPE || !Array.isArray(att.names)) continue;
+    if (att.isInitial === false) continue;
+    for (const n of att.names) if (typeof n === 'string' && n) out.add(n);
+  }
+  return [...out].sort();
+}
+
+module.exports = { classifySkillRoster, emptyRoster, listedRosterNames };
