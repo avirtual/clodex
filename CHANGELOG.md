@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Two Clodexes on one box: CLODEX_HOME, CLODEX_DATA_DIR and CLODEX_LABEL
+## Unreleased
+
+## 5.44.0 — 2026-09-09 — Two Clodexes on one box: CLODEX_HOME, CLODEX_DATA_DIR and CLODEX_LABEL
 
 - CLODEX_LABEL names an instance on the peer wire, and docs/recipes/two-instances.md is the recipe for running two Clodexes on one box.
 - CLODEX_DATA_DIR moves the desktop app's settings and session store too, so a second Clodex can run beside the first.
