@@ -400,7 +400,8 @@ so you do not have to teach it the vocabulary.
    using `${TEAM_ROOT}` so they travel.
 5. Start the lead seat and open a ticket.
 
-Steps 1 and 5 are the team. Steps 2–4 are the parts only you can write.
+Steps 1 and 5 are the team. Steps 2–4 are the content — yours to decide, though
+a lead granted the intents below can write step 2 for you.
 
 An agent can do step 1 instead of you, if you granted it the privileged
 `team-create` intent (Settings ▸ the seat's intent checklist — off by default):
@@ -410,3 +411,23 @@ team; the lead defaults to `<name>-lead` and names a seat that does not exist ye
 so the next step is still to spawn it there and run `[agent:team gather]` and
 `[agent:team role-add …]` from it. `[agent:team set-lead <seat>]` re-points the
 lead afterwards, and only the current lead may do it.
+
+Step 2 is reachable from the lead too, so the intent path runs from an empty team
+to a working role — create, gather, `role-add`, then write the files the role
+names:
+
+- `[agent:team template-save <stem>]` + a JSON body writes
+  `~/.clodex/teams/<name>/templates/<stem>.json` — the seat template a role's
+  `template:` names.
+- `[agent:team prompt-save system|append <stem>]` + a markdown body writes
+  `prompts/system/<stem>.md` or `prompts/append/<stem>.md` — a role prompt, or
+  the project knowledge of step 2.
+- `[agent:team template-rm <stem>]` and `[agent:team prompt-rm system|append
+  <stem>]` delete one. A template, or a `system` prompt, that a role in
+  `team.json` still names is refused: the drawers have no such guard, because a
+  person deleting one can see the roles popover and an agent cannot. An `append`
+  stem is named by no role, so nothing guards it.
+
+All four are lead-only, like every other `[agent:team …]` verb, and write only
+inside the team's own directory. The library at `~/.clodex/library/` stays yours,
+as do the `exec/` defs of step 4 — no intent writes either.

@@ -10,10 +10,9 @@ const { nameConflict } = require('./session-manager');
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS, defaultLeadSeat } = require('./team-manifest');
 const { teamPreflight } = require('./team-preflight');
-const { badStem, teamPromptFile, readTeamJson } = require('./team-prompt-dir');
+const { teamPromptFile, readTeamJson, teamTemplateSave, teamTemplateRemove } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
-const { atomicWriteFileSync } = require('./fs-util');
 const { SETUP_CHOICES } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
@@ -503,34 +502,19 @@ function registerIpcHandlers(deps) {
     return templates.list();
   });
 
-  const TEMPLATE_STEM_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-  function teamTemplatePath(team, stem) {
-    if (typeof team !== 'string' || !TEMPLATE_STEM_RE.test(team)) return null;
-    if (badStem(stem) || !TEMPLATE_STEM_RE.test(stem)) return null;
-    let names;
-    try { names = listTeams(); } catch { return null; }
-    if (!Array.isArray(names) || !names.includes(team)) return null;
-    return path.join(teamsDir, team, 'templates', `${stem}.json`);
-  }
+  const teamFileDeps = { fs, path, teamsDir, listTeams };
   const teamTemplateList = () => (listAllTemplates ? listAllTemplates() : templates.list());
 
   handle('templates:saveTeam', (_e, team, stem, body) => {
-    const file = teamTemplatePath(team, stem);
-    if (!file) return { ok: false, error: `no team "${team}" or bad template name "${stem}"`, templates: teamTemplateList() };
-    if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.type !== 'string') {
-      return { ok: false, error: 'a template body must be an object with a string type', templates: teamTemplateList() };
-    }
-    try { atomicWriteFileSync(file, `${JSON.stringify(body, null, 2)}\n`); }
-    catch (err) { return { ok: false, error: err.message, templates: teamTemplateList() }; }
+    const res = teamTemplateSave(teamFileDeps, team, stem, body);
+    if (!res.ok) return { ok: false, error: res.error, templates: teamTemplateList() };
     refreshAppMenu();
     return { ok: true, templates: teamTemplateList() };
   });
 
   handle('templates:removeTeam', (_e, team, stem) => {
-    const file = teamTemplatePath(team, stem);
-    if (!file) return { ok: false, error: `no team "${team}" or bad template name "${stem}"`, templates: teamTemplateList() };
-    try { fs.unlinkSync(file); }
-    catch (err) { return { ok: false, error: err.message, templates: teamTemplateList() }; }
+    const res = teamTemplateRemove(teamFileDeps, team, stem);
+    if (!res.ok) return { ok: false, error: res.error, templates: teamTemplateList() };
     refreshAppMenu();
     return { ok: true, templates: teamTemplateList() };
   });

@@ -28,10 +28,14 @@ const { isDraftOpen } = require('./proxy-util');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { matchSeatRole, defaultLeadSeat } = require('./team-manifest');
-const { readTeamJson } = require('./team-prompt-dir');
+const {
+  readTeamJson, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
+} = require('./team-prompt-dir');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
+
+const TEAM_FILE_BODY_MAX = 64 * 1024;
 
 // How long a queued ticket waits for another run to release the shared lock.
 // Sized to a whole suite run: giving up earlier escalates a ticket whose only
@@ -398,6 +402,7 @@ function createTicketMethods(deps, shared) {
     getUserDataPath,
     gitWorktree,
     isAlive,
+    listTeams,
     log,
     withoutPrivilegedIntentsFor,
   } = deps;
@@ -2202,12 +2207,85 @@ function createTicketMethods(deps, shared) {
             reply(`watchdog set to ${m.watchdogMs}ms on ${team.name}${clamp}`);
             return;
           }
+          case 'template-save': {
+            const stem = intent.stem || null;
+            if (!stem) { reply('error: template-save needs a stem — [agent:team template-save <stem>] <json>'); return; }
+            const raw = String(intent.body == null ? '' : intent.body);
+            const bytes = Buffer.byteLength(raw, 'utf-8');
+            if (bytes > TEAM_FILE_BODY_MAX) { reply(`error: template body too long (${bytes} > ${TEAM_FILE_BODY_MAX} bytes)`); return; }
+            let parsed;
+            try { parsed = JSON.parse(raw); }
+            catch (err) { reply(`error: template body is not JSON (${err.message})`); return; }
+            const res = teamTemplateSave(this._teamFileDeps(), team.name, stem, parsed);
+            if (!res.ok) { reply(`error: ${res.error}`); return; }
+            this._refreshAppMenuQuietly();
+            reply(`template "${stem}" saved to ${res.file}`);
+            return;
+          }
+          case 'template-rm': {
+            const stem = intent.stem || null;
+            if (!stem) { reply('error: template-rm needs a stem — [agent:team template-rm <stem>]'); return; }
+            const users = this._rolesNaming(team, 'template', stem);
+            if (users.length) {
+              reply(`error: template "${stem}" is still named by role(s): ${users.join(', ')} — repoint them with [agent:team role-set …] first`);
+              return;
+            }
+            const res = teamTemplateRemove(this._teamFileDeps(), team.name, stem);
+            if (!res.ok) { reply(`error: ${res.error}`); return; }
+            this._refreshAppMenuQuietly();
+            reply(`template "${stem}" removed from ${res.file}`);
+            return;
+          }
+          case 'prompt-save': {
+            const kind = intent.kind || null;
+            const stem = intent.stem || null;
+            if (!stem) { reply('error: prompt-save needs a kind and a stem — [agent:team prompt-save system|append <stem>] <markdown>'); return; }
+            const raw = String(intent.body == null ? '' : intent.body);
+            const bytes = Buffer.byteLength(raw, 'utf-8');
+            if (bytes > TEAM_FILE_BODY_MAX) { reply(`error: prompt body too long (${bytes} > ${TEAM_FILE_BODY_MAX} bytes)`); return; }
+            const res = teamPromptSave(this._teamFileDeps(), team.name, kind, stem, raw);
+            if (!res.ok) { reply(`error: ${res.error}`); return; }
+            this._refreshAppMenuQuietly();
+            reply(`prompt ${kind}/${stem} saved to ${res.file}`);
+            return;
+          }
+          case 'prompt-rm': {
+            const kind = intent.kind || null;
+            const stem = intent.stem || null;
+            if (!stem) { reply('error: prompt-rm needs a kind and a stem — [agent:team prompt-rm system|append <stem>]'); return; }
+            const users = kind === 'system' ? this._rolesNaming(team, 'prompt', stem) : [];
+            if (users.length) {
+              reply(`error: prompt system/${stem} is still named by role(s): ${users.join(', ')} — repoint them with [agent:team role-set …] first`);
+              return;
+            }
+            const res = teamPromptRemove(this._teamFileDeps(), team.name, kind, stem);
+            if (!res.ok) { reply(`error: ${res.error}`); return; }
+            this._refreshAppMenuQuietly();
+            reply(`prompt ${kind}/${stem} removed from ${res.file}`);
+            return;
+          }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
       }
+    },
+
+    _teamFileDeps() {
+      return { fs, path, teamsDir, listTeams };
+    },
+
+    _refreshAppMenuQuietly() {
+      try { if (typeof refreshAppMenu === 'function') refreshAppMenu(); } catch {}
+    },
+
+    _rolesNaming(team, field, stem) {
+      const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
+      return Object.entries(roles)
+        .filter(([, def]) => def && typeof def === 'object' && def[field] === stem)
+        .map(([roleName]) => roleName)
+        .sort();
     },
 
     _staleHostSuffix(now = Date.now(), seams = {}) {
