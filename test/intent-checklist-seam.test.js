@@ -344,8 +344,7 @@ test('t717: the New Session type-change handler paints both checklists for codex
   assert.match(guarded, /async function refreshNewSessionIntents[\s\S]{0,120}if \(!newSessionIsAgent\(\)\) return;/);
   // A seat with no plugin checklist saves defaultPluginTicks(), so the intent
   // catalog must be asked about what collectFormConfig will SAVE, not about an
-  // unpainted container. Since t749 codex DOES paint one, so the two arms have
-  // to agree on the same predicate.
+  // unpainted container. Both arms must therefore read the same predicate.
   assert.match(guarded, /getIntentCatalog\(null, newSessionPluginTicks\(\)\)/);
   assert.match(guarded, /capsFor\(inputType\.value\)\.plugins \? collectPluginChecklist\(inputPluginList\) : defaultPluginTicks\(\)/);
 });
