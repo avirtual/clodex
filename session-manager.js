@@ -1373,17 +1373,14 @@ function createSessionManager(deps) {
       // a toast is not visible to the agent that asked for the spawn.
       if (missingPrompt) warnings.push(missingPrompt);
 
-      // One list, both arms: the set a provider adapter is asked to deliver is
-      // also the set unresolvedSubagentRefs scans, so a skill that reached the
-      // seat and a skill that was checked for dangling refs cannot diverge.
-      const librarySkills = skillDeliveryProviders().includes(type)
-        ? effectiveInjectedSkills(name, injectSkills).map((rec) => ({ name: rec.name, content: rec.content }))
-        : [];
-      // The plugin-owned half of the same set. Claude scaffolds each bundle as
-      // its own --plugin-dir (its agents ride the same dir), so the claude
-      // adapter is handed the library records ONLY and the bundle WRITE stays
-      // in the claude arm; codex has no plugin dir to ride, so its adapter is
-      // handed both and nothing calls writeBundles.
+      const librarySkills = [];
+      try {
+        if (skillDeliveryProviders().includes(type)) {
+          for (const rec of effectiveInjectedSkills(name, injectSkills)) {
+            librarySkills.push({ name: rec.name, content: rec.content });
+          }
+        }
+      } catch {}
       const seatBundles = () => (bundlesFor() || [])
         .filter((b) => seatHasPlugin(b.id, Array.isArray(plugins) ? plugins : null, b.shipped));
       const bundleSkills = (wanted) => (wanted || []).flatMap(
@@ -1621,10 +1618,6 @@ function createSessionManager(deps) {
           }
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          // Codex 0.153.4 has no per-process skill root, so the catalog is the
-          // delivery: the files are materialized under the seat's own dir and
-          // the seat is told where they are. Above teamBlock because the team
-          // block is the last thing in the file by construction elsewhere.
           const codexSkills = deliverSkills('codex', name, [...librarySkills, ...bundleSkills(seatBundles())]);
           const codexBody = codexSkills && codexSkills.instructions
             ? `${merged}\n\n${codexSkills.instructions}`
