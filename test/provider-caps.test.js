@@ -113,6 +113,17 @@ test('t749: the Edit dialog gates plugins and skills on caps, not on isClaude', 
   assert.match(body, /argsAgentsRow\.style\.display = caps\.agents \?/);
 });
 
+// The Skills section opens for any provider whose caps row has injectSkills OR
+// skillRoster, so a codex seat opens it for the inject checklist alone and never
+// paints the roster list inside it. The save must not read that unpainted list:
+// collectSkillChecklist would answer [], or whatever a previous claude edit left
+// in the container, and either lands as this seat's real answer — a re-enable of
+// every skill the box had turned off.
+//
+// `undefined` is NOT the alternative: peerSkillsSource's save (peers-ui.js) skips
+// the whole peerSetSessionSkills call when disabledSkills is absent, so the
+// injectSkills this ticket exists to deliver would never land. Echoing back what
+// readSkillCatalog reported is the only option that satisfies both.
 test('t749: the Edit save echoes a roster it never painted instead of clearing it', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const at = src.indexOf("document.getElementById('btn-args-save')");
@@ -120,9 +131,13 @@ test('t749: the Edit save echoes a roster it never painted instead of clearing i
   const body = src.slice(at, src.indexOf('\nasync function ', at));
   assert.match(body, /const skillsShown = argsSkillsSection\.style\.display !== 'none';/,
     'ENTER: the section-shown flag the save reads');
-  // A codex seat draws no roster list. Collecting it would send `[]` — a real
-  // answer that re-enables every skill the seat had off.
   assert.match(body, /argsSkillsRow\.style\.display === 'none'\s*\n?\s*\? argsSkillsDisabledPersisted/);
   assert.ok(!/const disabledSkills = skillsShown \? collectSkillChecklist/.test(body),
     'the roster collect is no longer keyed on the whole section');
+  // The echo is only as good as its source: an open that skips the capture leaves
+  // the last seat's roster in the variable, which the save would then send.
+  const dlg = src.slice(src.indexOf('async function openArgsDialog('),
+    src.indexOf('\nfunction closeArgsDialog'));
+  assert.match(dlg, /argsSkillsDisabledPersisted = sc\.disabledSkills \|\| \[\];/,
+    'openArgsDialog captures the read roster for the save to echo');
 });

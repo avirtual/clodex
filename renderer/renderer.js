@@ -7089,11 +7089,6 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     ? undefined
     : parseEnvLines(argsEnv.value || '').env;
   const skillsShown = argsSkillsSection.style.display !== 'none';
-  // A codex seat opens the section for its inject checklist alone, leaving the
-  // roster list unpainted — collecting it would send a previous claude edit's
-  // leftovers, or `[]`, as this seat's answer. Echo what was read instead:
-  // `undefined` is not an option here, since the peer save skips the whole skills
-  // call when disabledSkills is absent and injectSkills would never land.
   const disabledSkills = !skillsShown
     ? undefined
     : (argsSkillsRow.style.display === 'none'
