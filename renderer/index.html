@@ -420,13 +420,15 @@
     </div>
     <div id="skills-popover" class="hidden">
       <div class="popover-title"><span>Skills — <span id="skills-popover-name"></span></span><button type="button" class="popover-close" id="skills-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
-      <div id="popover-skills-list" class="agent-checklist"></div>
-      <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source.</span>
+      <div id="popover-skills-roster">
+        <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+        <div id="popover-skills-list" class="agent-checklist"></div>
+        <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source.</span>
+      </div>
       <div id="popover-inject-skills-section" style="display:none;">
         <div class="popover-subhead">Inject from Skills Library</div>
         <div id="popover-inject-skills-list" class="agent-checklist"></div>
-        <span class="hint-text">Checked library skills are injected into this session (via <code>--plugin-dir</code>). Like trimming, this only takes effect in a NEW conversation.</span>
+        <span class="hint-text">Checked library skills are injected into this session (via the seat's skill delivery). Like trimming, this only takes effect in a NEW conversation.</span>
       </div>
       <label class="tools-popover-restart">
         <input type="checkbox" id="skills-popover-restart">

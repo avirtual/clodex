@@ -1464,6 +1464,16 @@ html, body {
 #intents-popover .popover-title,
 #plugins-popover .popover-title,
 #peer-select-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+/* The roster block is one toggleable unit (hidden for a provider with no skill
+   roster), so it sits between the popover's flex column and the scrolling list:
+   without min-height:0 the list's own overflow-y never engages and the popover
+   grows past its max-height instead of scrolling. */
+#popover-skills-roster {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
 #tools-popover #popover-tools-list,
 #skills-popover #popover-skills-list,
 #agents-popover #popover-agents-list,

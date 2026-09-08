@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const { sessionMenuEntries } = require('../renderer/lib/session-actions');
+const { PROVIDER_CAPS, capsFor } = require('../renderer/lib/provider-caps');
 
 test('claude: full config surface + conversation actions, in order', () => {
   const acts = sessionMenuEntries('claude').map((e) => e.act);
@@ -15,14 +16,33 @@ test('claude: full config surface + conversation actions, in order', () => {
   }
 });
 
-test('codex: the intent gate plus the shared entries, which include the plugin editor', () => {
+test('codex: the intent gate, the skills editor, and the shared entries', () => {
   const acts = sessionMenuEntries('codex').map((e) => e.act);
-  assert.deepStrictEqual(acts, ['intents', 'plugins', 'edit', 'history', 'reload']);
+  assert.deepStrictEqual(acts, ['intents', 'skills', 'plugins', 'edit', 'history', 'reload']);
   // Codex consumes the intent allowlist on spawn and the dispatch gate is shared,
-  // so the editor must be reachable; the CLI-roster launchers stay claude-only.
+  // so the editor must be reachable; the same holds for the Custom skills it is
+  // given at create time (t750). The CLI-roster launchers stay claude-only.
   assert.ok(acts.includes('intents'), 'the intent gate bites a codex seat, so it must be editable');
-  for (const gone of ['tools', 'skills', 'agents']) {
+  for (const gone of ['tools', 'agents']) {
     assert.ok(!acts.includes(gone), `${gone} must not be offered to codex`);
+  }
+});
+
+// t750: the entry is offered exactly where the caps table says a skills surface
+// exists, so a provider added to that table cannot get the menu row without the
+// popover that opens from it, or vice versa. Literal per row, not `capsFor(t)`
+// re-applied: an expectation computed by the module's own rule would assert only
+// that it agrees with itself, and could not express an exception.
+test('t750: skills is offered exactly to the types with a skills capability', () => {
+  const EXPECTED = { claude: true, codex: true };
+  assert.deepStrictEqual(Object.keys(PROVIDER_CAPS).sort(), Object.keys(EXPECTED).sort(),
+    'ENTER: the caps table still holds exactly the rows this table names');
+  for (const [type, want] of Object.entries(EXPECTED)) {
+    const caps = capsFor(type);
+    assert.strictEqual(caps.injectSkills || caps.skillRoster, want,
+      `ENTER: ${type}'s caps row must have a skills surface for this row to mean anything`);
+    assert.strictEqual(sessionMenuEntries(type).some((e) => e.act === 'skills'), want,
+      `${type} must ${want ? '' : 'not '}be offered the skills editor`);
   }
 });
 
@@ -60,8 +80,9 @@ test('plugins leads the shared block for both types', () => {
   assert.strictEqual(claude[claude.indexOf('plugins') - 1], 'intents');
   assert.strictEqual(claude[claude.indexOf('plugins') + 1], 'edit');
   const codex = sessionMenuEntries('codex').map((e) => e.act);
-  assert.strictEqual(codex[0], 'intents', 'the one gating editor a codex seat has leads its menu');
-  assert.strictEqual(codex[1], 'plugins');
+  assert.strictEqual(codex[0], 'intents', 'the gating editor a codex seat has leads its menu');
+  assert.strictEqual(codex[codex.indexOf('plugins') - 1], 'skills');
+  assert.strictEqual(codex[codex.indexOf('plugins') + 1], 'edit');
 });
 
 test('non-agent / absent type → no entries (caller renders no button)', () => {

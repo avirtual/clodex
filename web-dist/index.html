@@ -1932,6 +1932,12 @@ body {
   font-weight: 600;
   margin-bottom: 8px;
 }
+#popover-skills-roster {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
 #tools-popover #popover-tools-list,
 #skills-popover #popover-skills-list,
 #agents-popover #popover-agents-list,
@@ -6815,13 +6821,15 @@ body {
     </div>
     <div id="skills-popover" class="hidden">
       <div class="popover-title"><span>Skills — <span id="skills-popover-name"></span></span><button type="button" class="popover-close" id="skills-popover-close" title="Close" aria-label="Close">&times;</button></div>
-      <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
-      <div id="popover-skills-list" class="agent-checklist"></div>
-      <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source.</span>
+      <div id="popover-skills-roster">
+        <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
+        <div id="popover-skills-list" class="agent-checklist"></div>
+        <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source.</span>
+      </div>
       <div id="popover-inject-skills-section" style="display:none;">
         <div class="popover-subhead">Inject from Skills Library</div>
         <div id="popover-inject-skills-list" class="agent-checklist"></div>
-        <span class="hint-text">Checked library skills are injected into this session (via <code>--plugin-dir</code>). Like trimming, this only takes effect in a NEW conversation.</span>
+        <span class="hint-text">Checked library skills are injected into this session (via the seat's skill delivery). Like trimming, this only takes effect in a NEW conversation.</span>
       </div>
       <label class="tools-popover-restart">
         <input type="checkbox" id="skills-popover-restart">
@@ -30045,6 +30053,7 @@ Opening it here and saving would overwrite the file with what this editor could 
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var { esc } = require_format();
+      var { capsFor } = require_provider_caps();
       var { makeDraggable, resetDrag } = require_popover_drag();
       var { placeAboveAnchor } = require_popover_place();
       var BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
@@ -30059,10 +30068,14 @@ Opening it here and saving would overwrite the file with what this editor could 
         (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || "").meta })),
         session
       ));
-      function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf }) {
+      function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf, getSessionType }) {
         function seatFor(name, source = null) {
           if (source || typeof seatPluginsOf !== "function") return null;
           return { plugins: seatPluginsOf(name) };
+        }
+        function skillsTypeOf(name, source) {
+          if (source) return "claude";
+          return typeof getSessionType === "function" ? getSessionType(name) : null;
         }
         const toolsPopover = document.getElementById("tools-popover");
         const toolsPopoverName = document.getElementById("tools-popover-name");
@@ -30129,6 +30142,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         const skillsPopover = document.getElementById("skills-popover");
         const skillsPopoverName = document.getElementById("skills-popover-name");
         const popoverSkillsList = document.getElementById("popover-skills-list");
+        const popoverSkillsRoster = document.getElementById("popover-skills-roster");
         const popoverInjectSkillsSection = document.getElementById("popover-inject-skills-section");
         const popoverInjectSkillsList = document.getElementById("popover-inject-skills-list");
         const skillsPopoverRestart = document.getElementById("skills-popover-restart");
@@ -30136,6 +30150,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         let skillsInjectPersisted = [];
         let skillsInjectRendered = [];
         let skillsInjectAuto = [];
+        let skillsDisabledPersisted = [];
         function closeSkillsPopover() {
           skillsPopover.classList.add("hidden");
           skillsPopover.dataset.name = "";
@@ -30149,13 +30164,18 @@ Opening it here and saving would overwrite the file with what this editor could 
           }
           setPluginCatalogCache(await window.api.pluginCatalog() || []);
           skillsEditingSource = source;
-          renderSkillChecklist(
-            popoverSkillsList,
-            res.names || [],
-            new Set(res.disabledSkills || []),
-            res.effective || {},
-            { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope }
-          );
+          const caps = capsFor(skillsTypeOf(name, source));
+          skillsDisabledPersisted = res.disabledSkills || [];
+          if (caps.skillRoster) {
+            renderSkillChecklist(
+              popoverSkillsList,
+              res.names || [],
+              new Set(skillsDisabledPersisted),
+              res.effective || {},
+              { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope }
+            );
+          }
+          popoverSkillsRoster.style.display = caps.skillRoster ? "" : "none";
           setSkillLibCache(res.skillLib || []);
           const seat = seatFor(name, source);
           if (getSkillLibCache().length || seat && bundleSectionsOf("skills").length) {
@@ -30182,7 +30202,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         document.getElementById("skills-popover-apply").addEventListener("click", async () => {
           const name = skillsPopover.dataset.name;
           if (!name) return closeSkillsPopover();
-          const disabledSkills = collectSkillChecklist(popoverSkillsList);
+          const disabledSkills = popoverSkillsRoster.style.display === "none" ? skillsDisabledPersisted : collectSkillChecklist(popoverSkillsList);
           const injectSkills = popoverInjectSkillsSection.style.display === "none" ? void 0 : reconcilePartialSelection(
             skillsInjectPersisted,
             skillsInjectRendered,
@@ -31981,11 +32001,10 @@ You can add it back from this popover.` : "";
   // renderer/lib/session-actions.js
   var require_session_actions = __commonJS({
     "renderer/lib/session-actions.js"(exports, module) {
-      var CLAUDE_ONLY_ENTRIES = [
-        { act: "tools", label: "\u{1F6E0} Tools\u2026" },
-        { act: "skills", label: "\u{1F9E9} Skills\u2026" },
-        { act: "agents", label: "\u{1F916} Agents\u2026" }
-      ];
+      var { capsFor } = require_provider_caps();
+      var TOOLS_ENTRY = { act: "tools", label: "\u{1F6E0} Tools\u2026" };
+      var AGENTS_ENTRY = { act: "agents", label: "\u{1F916} Agents\u2026" };
+      var SKILLS_ENTRY = { act: "skills", label: "\u{1F9E9} Skills\u2026" };
       var AGENT_ENTRIES = [
         { act: "intents", label: "\u{1F512} Intents\u2026" }
       ];
@@ -31996,8 +32015,10 @@ You can add it back from this popover.` : "";
         { act: "reload", label: "\u{1F504} Reload (fresh restart)" }
       ];
       function sessionMenuEntries(type) {
-        if (type === "claude") return [...CLAUDE_ONLY_ENTRIES, ...AGENT_ENTRIES, ...SHARED_ENTRIES];
-        if (type === "codex") return [...AGENT_ENTRIES, ...SHARED_ENTRIES];
+        const caps = capsFor(type);
+        const skills = caps.injectSkills || caps.skillRoster ? [SKILLS_ENTRY] : [];
+        if (type === "claude") return [TOOLS_ENTRY, ...skills, AGENTS_ENTRY, ...AGENT_ENTRIES, ...SHARED_ENTRIES];
+        if (type === "codex") return [...AGENT_ENTRIES, ...skills, ...SHARED_ENTRIES];
         return [];
       }
       module.exports = { sessionMenuEntries };
@@ -37251,10 +37272,12 @@ ${detail}` });
         }
         const tplCaps = capsFor(t.type);
         if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
-        if (t.type === "claude") {
-          renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
+        if (agentType) {
           fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || "", newSessionSeat());
           renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
+        }
+        if (t.type === "claude") {
+          renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
           renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
           await refreshNewSessionTools(new Set(t.disabledTools || []));
           await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -38413,7 +38436,8 @@ Click for live activity`;
         addSessionToSidebar,
         switchSession,
         refreshSidebarMeta,
-        seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins
+        seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
+        getSessionType: sessionTypeOf
       });
       var { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
       function openCreateTeamDialog() {
