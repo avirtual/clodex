@@ -428,13 +428,13 @@ names:
   person deleting one can see the roles popover and an agent cannot. An `append`
   stem is named by no role, so nothing guards it.
 
+All four file verbs are lead-only, like every other `[agent:team …]` verb, and
+write only inside the team's own directory. The library at `~/.clodex/library/` stays yours,
+as do the `exec/` defs of step 4 — no intent writes either.
+
 `[agent:team role-add <role>]` and `[agent:team role-set <role>]` take
 `dispatch:standing|spawn|worktree` and `cwd:<rel>` beside `prompt:` and
 `template:`, so the intent path reaches every field the roles popover edits —
 `dispatch:worktree` is the one that makes a hand role mint a branch, tree and
 seat per ticket, and without it an agent-built team can only ever add a standing
 role. `cwd:` is relative to the team root, as everywhere else.
-
-All four file verbs are lead-only, like every other `[agent:team …]` verb, and
-write only inside the team's own directory. The library at `~/.clodex/library/` stays yours,
-as do the `exec/` defs of step 4 — no intent writes either.
