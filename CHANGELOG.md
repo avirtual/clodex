@@ -15,6 +15,7 @@ blocks a release.
 
 - The built-in github plugin is removed from core; it now installs from the clodex-plugins library (Settings, Plugins, Library, github). Seats that list it keep the id and pick the library copy up once installed.
 - `[agent:team role-add]` and `[agent:team role-set]` now take `dispatch:standing|spawn|worktree` and `cwd:<rel>` beside `prompt:` and `template:`, so a team bootstrapped entirely from intents can mint a worktree hand without the roles popover — previously a role added by intent could only ever be standing.
+- The template editor no longer greys out a tool or skill that the template's cwd denies through its own .claude/settings.json: a template travels to other directories (a ticket seat boots in its worktree), so those rows stay toggleable and are saved with the template instead of being dropped. Live-session popovers keep the read-only treatment, since there the cwd is fixed.
 
 ## 5.41.0 — 2026-09-08 — An agent can bootstrap a team from intents, and a hand lives in its worktree
 

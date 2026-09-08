@@ -23141,13 +23141,14 @@ ${String(body || "").trim()}
           const eff = effective[name];
           const lowerOff = !!(eff && eff.value === "off");
           const clodexOff = disabledSet.has(name);
+          const readonly = lowerOff && !(eff && eff.advisory);
           const row = document.createElement("label");
-          row.className = "agent-check" + (lowerOff ? " skill-readonly" : "");
+          row.className = "agent-check" + (readonly ? " skill-readonly" : "");
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.value = name;
-          cb.checked = !clodexOff && !lowerOff;
-          if (lowerOff) cb.disabled = true;
+          cb.checked = !clodexOff && !readonly;
+          if (readonly) cb.disabled = true;
           const txt = document.createElement("span");
           let note = "";
           if (lowerOff) note = eff.locked ? ' <span class="skill-src">denied by policy</span>' : ` <span class="skill-src">off via ${esc(eff.source)} settings</span>`;
@@ -23200,13 +23201,14 @@ ${String(body || "").trim()}
           const lowerOff = !!(eff && eff.value === "off");
           const clodexOff = disabledSet.has(name);
           const outOfScope = oos.has(name);
-          const readonly = skillsLocked || outOfScope || lowerOff && !canReenable;
+          const advisory = !!(eff && eff.advisory);
+          const readonly = skillsLocked || outOfScope || lowerOff && !canReenable && !advisory;
           const row = document.createElement("label");
           row.className = "agent-check" + (readonly ? " skill-readonly" : "");
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.value = name;
-          cb.checked = !clodexOff && !lowerOff && !outOfScope;
+          cb.checked = !clodexOff && !(lowerOff && !advisory) && !outOfScope;
           if (readonly) cb.disabled = true;
           const txt = document.createElement("span");
           let note = "";
@@ -36960,7 +36962,12 @@ ${detail}` });
         setIntentCatalogCache(await window.api.getIntentCatalog(null, newSessionPluginTicks()) || []);
         renderIntentChecklist(inputIntentList, intentsList);
       }
-      async function refreshNewSessionSkills(disabledSet = /* @__PURE__ */ new Set()) {
+      function advisoryEffective(effective, forTemplate) {
+        const eff = effective || {};
+        if (!forTemplate) return eff;
+        return Object.fromEntries(Object.entries(eff).map(([k, v]) => [k, { ...v, advisory: true }]));
+      }
+      async function refreshNewSessionSkills(disabledSet = /* @__PURE__ */ new Set(), { forTemplate = false } = {}) {
         if (inputType.value !== "claude") return;
         const cwd = expandPath(inputCwd.value.trim()) || homeDir;
         const res = await window.api.getSkillCatalogFor(cwd);
@@ -36972,16 +36979,20 @@ ${detail}` });
           inputSkillsList,
           res.names || [],
           disabledSet,
-          res.effective || {},
+          advisoryEffective(res.effective, forTemplate),
           { skillsLocked: res.skillsLocked, canReenable: res.canReenable }
         );
       }
-      async function refreshNewSessionTools(disabledSet = null) {
+      async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
         if (inputType.value !== "claude") return;
         const cwd = expandPath(inputCwd.value.trim()) || homeDir;
         const res = await window.api.getToolCatalogFor(cwd);
         const disabled = disabledSet || new Set(getDefaultToolDenyCache());
-        renderToolChecklist(inputToolsList, disabled, res && res.ok && res.effective || {});
+        renderToolChecklist(
+          inputToolsList,
+          disabled,
+          advisoryEffective(res && res.ok && res.effective || {}, forTemplate)
+        );
       }
       if (inputWorktree) {
         inputWorktree.addEventListener("change", () => {
@@ -37608,8 +37619,8 @@ ${detail}` });
           renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []), null, newSessionSeat());
           renderBuiltinChecklist(inputBuiltinsList, new Set(tpl && tpl.denyBuiltins || []));
           renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
-          await refreshNewSessionTools(new Set(tpl && tpl.disabledTools || []));
-          await refreshNewSessionSkills(new Set(tpl && tpl.disabledSkills || []));
+          await refreshNewSessionTools(new Set(tpl && tpl.disabledTools || []), { forTemplate: true });
+          await refreshNewSessionSkills(new Set(tpl && tpl.disabledSkills || []), { forTemplate: true });
           await refreshNewSessionInjectSkills(new Set(tpl && tpl.injectSkills || []));
         }
         setProxyControls(inputProxyMode, inputProxyUrl, (tpl && tpl.proxy) ?? null, settings?.lastCustomProxyUrl || settings?.proxyUrl);

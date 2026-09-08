@@ -512,3 +512,107 @@ test('every path that fills the form by script marks it Custom itself', () => {
       `${what} populates the form by script, so it must set Custom itself`);
   }
 });
+
+// --- template editor: lower-layer denies stay toggleable -------------------
+
+// The DOM the renderer touches, minimal and local — new-session-modes.test.js
+// otherwise runs shipped source as text, and this is the one subject here that
+// needs real rows. Same shape as test/skill-checklist-scope.test.js's stub.
+function el(tag) {
+  const e = {
+    tagName: tag, className: '', type: '', value: '', checked: false, disabled: false,
+    innerHTML: '', children: [],
+    appendChild(c) { e.children.push(c); return c; },
+    querySelectorAll(sel) {
+      // Spelled out, not pattern-matched: a stub answering every selector with
+      // everything would make the collect assertion below vacuous.
+      assert.strictEqual(sel, 'input[type="checkbox"]:not(:checked):not(:disabled)');
+      const flat = [];
+      const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
+      walk(e);
+      return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox' && !c.checked && !c.disabled);
+    },
+  };
+  let text = '';
+  Object.defineProperty(e, 'textContent', {
+    get: () => text,
+    set(v) {
+      text = v == null ? '' : String(v);
+      e.innerHTML = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    },
+  });
+  return e;
+}
+
+function withDom(fn) {
+  const had = global.document;
+  global.document = { createElement: el, addEventListener() {} };
+  try { return fn(); } finally { global.document = had; }
+}
+
+const checklists = withDom(() => require('../renderer/lib/checklists'));
+const TOOL_NAMES = ['Read', 'AskUserQuestion', 'EnterPlanMode'];
+const toolRowsOf = (c) => c.children.map((row) => {
+  const cb = row.children.find((x) => x.tagName === 'input');
+  return { name: cb.value, checked: cb.checked, disabled: cb.disabled, cls: row.className, html: row.children.find((x) => x.tagName === 'span').innerHTML };
+});
+
+function drawTools(disabled, effective) {
+  return withDom(() => {
+    checklists.setClaudeToolsCache([...TOOL_NAMES]);
+    const c = el('div');
+    checklists.renderToolChecklist(c, disabled, effective);
+    return c;
+  });
+}
+
+test('template editor: a lower-layer off tool row stays toggleable and collects', () => {
+  // The operator's hand template lost 15 tool denies this way: the row the cwd
+  // denied was disabled, so collectToolChecklist skipped it on save.
+  const eff = { AskUserQuestion: { value: 'off', source: 'project', advisory: true } };
+
+  const c = drawTools(new Set(), eff);
+  const row = toolRowsOf(c).find((r) => r.name === 'AskUserQuestion');
+  assert.deepStrictEqual(
+    { checked: row.checked, disabled: row.disabled, greyed: row.cls.includes('skill-readonly') },
+    { checked: true, disabled: false, greyed: false });
+  assert.match(row.html, /off via project settings/, 'the provenance note survives as information');
+  assert.deepStrictEqual(checklists.collectToolChecklist(c), []);
+
+  const c2 = drawTools(new Set(['AskUserQuestion']), eff);
+  const off = toolRowsOf(c2).find((r) => r.name === 'AskUserQuestion');
+  assert.strictEqual(off.checked, false, "the template's own list drives the tick");
+  assert.deepStrictEqual(checklists.collectToolChecklist(c2), ['AskUserQuestion'],
+    'the name the save path dropped must round-trip');
+});
+
+test('a live-session tool row keeps the read-only treatment', () => {
+  // The New Session dialog runs in that cwd, where the CLI really would ignore
+  // a re-enable — only the template path marks entries advisory.
+  const c = drawTools(new Set(), { AskUserQuestion: { value: 'off', source: 'project' } });
+  const row = toolRowsOf(c).find((r) => r.name === 'AskUserQuestion');
+  assert.deepStrictEqual(
+    { checked: row.checked, disabled: row.disabled, greyed: row.cls.includes('skill-readonly') },
+    { checked: false, disabled: true, greyed: true });
+  assert.deepStrictEqual(checklists.collectToolChecklist(c), []);
+
+  const locked = drawTools(new Set(), { Read: { value: 'off', source: 'policy', locked: true, advisory: true } });
+  const lockedRow = toolRowsOf(locked).find((r) => r.name === 'Read');
+  assert.match(lockedRow.html, /denied by policy/, 'a policy lock still labels itself as one');
+});
+
+test('openTemplateEditor marks both refreshers as drawing a template', () => {
+  const body = slice('async function openTemplateEditor(', '\nasync function saveTemplateFromForm(',
+    'the template editor');
+  for (const call of [
+    'await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []), { forTemplate: true });',
+    'await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []), { forTemplate: true });',
+  ]) {
+    assert.ok(body.includes(call),
+      `the template editor must pass the template flag: ${call}`);
+  }
+  const live = slice("inputTemplate.addEventListener('change'", '\nbtnTemplateDelete.addEventListener',
+    'the template picker');
+  assert.ok(!live.includes('forTemplate'),
+    'the New Session dialog runs in that cwd, so it keeps the lower-layer treatment');
+});

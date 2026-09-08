@@ -2079,20 +2079,27 @@ async function refreshNewSessionIntents(intentsList) {
   renderIntentChecklist(inputIntentList, intentsList);
 }
 
-async function refreshNewSessionSkills(disabledSet = new Set()) {
+function advisoryEffective(effective, forTemplate) {
+  const eff = effective || {};
+  if (!forTemplate) return eff;
+  return Object.fromEntries(Object.entries(eff).map(([k, v]) => [k, { ...v, advisory: true }]));
+}
+async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = false } = {}) {
   if (inputType.value !== 'claude') return;
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getSkillCatalogFor(cwd);
   if (!res || !res.ok) { renderSkillChecklist(inputSkillsList, [], disabledSet); return; }
   renderSkillChecklist(inputSkillsList, res.names || [], disabledSet,
-    res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
+    advisoryEffective(res.effective, forTemplate),
+    { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
 }
-async function refreshNewSessionTools(disabledSet = null) {
+async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
   if (inputType.value !== 'claude') return;
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getToolCatalogFor(cwd);
   const disabled = disabledSet || new Set(getDefaultToolDenyCache());
-  renderToolChecklist(inputToolsList, disabled, (res && res.ok && res.effective) || {});
+  renderToolChecklist(inputToolsList, disabled,
+    advisoryEffective((res && res.ok && res.effective) || {}, forTemplate));
 }
 
 if (inputWorktree) {
@@ -2771,8 +2778,8 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []), null, newSessionSeat());
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
     renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
-    await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []));
-    await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []));
+    await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []), { forTemplate: true });
+    await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []), { forTemplate: true });
     await refreshNewSessionInjectSkills(new Set((tpl && tpl.injectSkills) || []));
   }
   setProxyControls(inputProxyMode, inputProxyUrl, (tpl && tpl.proxy) ?? null, settings?.lastCustomProxyUrl || settings?.proxyUrl);

@@ -402,9 +402,9 @@ function collectInjectChecklist(container) {
 // Mirror of renderSkillChecklist for tools. `disabledSet` is clodex's own
 // layer-4 off list; `effective` (tool -> {value:'off', source, locked}) is the
 // lower-layer permissions.deny state. A tool denied in a layer clodex doesn't
-// own renders unchecked + read-only + labeled with provenance — and because
-// permissions.deny is union (no allow overrides a deny), it is ALWAYS read-only
-// here, never re-enableable from clodex's settings (unlike skills' canReenable).
+// own renders unchecked + read-only + labeled with provenance, unless the entry
+// is `advisory` — the cwd's deny is then information about one directory the
+// row is not bound to, so the row stays toggleable and the note is only a label.
 function renderToolChecklist(container, disabledSet, effective) {
   effective = effective || {};
   container.innerHTML = '';
@@ -420,13 +420,14 @@ function renderToolChecklist(container, disabledSet, effective) {
     const eff = effective[name];
     const lowerOff = !!(eff && eff.value === 'off');
     const clodexOff = disabledSet.has(name);
+    const readonly = lowerOff && !(eff && eff.advisory);
     const row = document.createElement('label');
-    row.className = 'agent-check' + (lowerOff ? ' skill-readonly' : '');
+    row.className = 'agent-check' + (readonly ? ' skill-readonly' : '');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = name;
-    cb.checked = !clodexOff && !lowerOff;
-    if (lowerOff) cb.disabled = true; // external deny is unrevokable from here
+    cb.checked = !clodexOff && !readonly;
+    if (readonly) cb.disabled = true;
     const txt = document.createElement('span');
     let note = '';
     if (lowerOff) note = eff.locked
@@ -475,6 +476,7 @@ function collectToolAllowChecklist(container) {
 // labeled with provenance: clodex can't change it from its layer-4 file (a
 // lower-layer off can only be re-enabled if SKILL_REENABLE_CONFIRMED, a managed
 // lock never), so we show it honestly rather than as a silently-inert toggle.
+// An `advisory` entry labels without disabling: it describes one cwd only.
 function renderSkillChecklist(container, names, disabledSet, effective, opts) {
   effective = effective || {};
   opts = opts || {};
@@ -496,13 +498,14 @@ function renderSkillChecklist(container, names, disabledSet, effective, opts) {
     // Read-only when clodex's layer-4 write can't actually change it: a lower-
     // layer off we can't re-enable yet, a managed-policy lock, or a skill that
     // isn't loaded here at all.
-    const readonly = skillsLocked || outOfScope || (lowerOff && !canReenable);
+    const advisory = !!(eff && eff.advisory);
+    const readonly = skillsLocked || outOfScope || (lowerOff && !canReenable && !advisory);
     const row = document.createElement('label');
     row.className = 'agent-check' + (readonly ? ' skill-readonly' : '');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = name;
-    cb.checked = !clodexOff && !lowerOff && !outOfScope;
+    cb.checked = !clodexOff && !(lowerOff && !advisory) && !outOfScope;
     if (readonly) cb.disabled = true;
     const txt = document.createElement('span');
     let note = '';

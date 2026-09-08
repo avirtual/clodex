@@ -881,7 +881,7 @@ function readEffectiveSkillState(cwd) {
 // Only a BARE tool name ("SendMessage") disables the tool; a SCOPED entry
 // ("Bash(rm:*)") denies a slice and is ignored here. permissions.deny is a
 // UNION with no allow override, so a lower-layer deny is unrevokable from our
-// layer-4 settings — hence always read-only.
+// layer-4 settings for that cwd.
 function readEffectiveToolState(cwd) {
   const layers = [
     { src: 'global', file: path.join(os.homedir(), '.claude', 'settings.json') },
