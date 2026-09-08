@@ -3076,6 +3076,58 @@ test('team-retire: a discarded seat takes its worktree with it', async () => {
   assert.deepStrictEqual(archived, [], 'discard path never archives');
 });
 
+// t752 made the seat LIVE in the tree the discard then removes, so the test above
+// — whose seat had cwd '/proj/r' and a tree at '/wt/t900' — no longer describes
+// the shape that ships. Two things it cannot see: whether git will remove a tree
+// some process holds as its cwd, and whether the seat is dead before the attempt.
+// Both are real here (a real repo, a real worktree, the real removeWorktree, and a
+// kill() that records its ordering) because a stub answers neither question.
+test('team-retire: a discarded seat LIVING IN its tree is killed first, and the tree still goes', async () => {
+  const repoDir = mkTmpRoot('clodex-retire-intree-');
+  const runGit = (...a) => require('child_process').execFileSync('git', ['-C', repoDir, ...a], { stdio: 'ignore' });
+  runGit('init', '-q');
+  runGit('config', 'user.email', 't@example.com');
+  runGit('config', 'user.name', 'Test');
+  fsReal.writeFileSync(pathReal.join(repoDir, 'a.txt'), 'hi\n');
+  runGit('add', '-A');
+  runGit('commit', '-qm', 'init');
+  const realWt = require('../git-worktree');
+  const made = await realWt.createWorktree(repoDir, 't905');
+  assert.strictEqual(made.ok, true, made.error);
+
+  const order = [];
+  const { m, archived } = mkRetire(
+    { '/proj/a': '/proj', [made.path]: '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: made.path, branch: 't905', main: repoDir } } : null),
+      }),
+      gitWorktree: {
+        // The REAL remove, against the REAL tree the seat's cwd names.
+        removeWorktree: async (p) => { order.push('remove'); return realWt.removeWorktree(p); },
+        isDirty: async () => ({ ok: true, dirty: false }),
+      },
+    },
+  );
+  m.kill = async (name) => { order.push('kill'); m.sessions.delete(name); };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  // The cwd IS the tree — the whole point of t752, and what makes the removal a
+  // question rather than a formality.
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: made.path });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 200));
+
+  assert.deepStrictEqual(order, ['kill', 'remove'],
+    'the seat is killed BEFORE the tree is removed — reversed, git is asked to remove a checkout a live pty holds');
+  assert.strictEqual(fsReal.existsSync(made.path), false,
+    'and the tree is really gone: kill() drops the persistence record, which is the only pointer to it');
+  assert.deepStrictEqual(archived, [], 'discard path never archives');
+});
+
 // The honesty half. "State lives in its task artifact" is true only of what the
 // seat COMMITTED or wrote out; the confirmation must name the tree it deleted,
 // or a lead reads a reassuring line over a destructive act.
@@ -14381,6 +14433,17 @@ test('task start: a role cwd adds an AREA line under an UNCHANGED WORK IN:, and 
     'the seat boots in the role subdirectory OF ITS WORKTREE');
   assert.notStrictEqual(createdCwd, pathReal.join(repo, 'api'),
     'ENTER: the same subdirectory exists under the shared repo, so the two are really distinguished');
+
+  // Membership now depends on the .git-FILE walk for every ticket seat, not just
+  // the `[agent:spawn worktree:]` ones. From a role area that walk starts one
+  // level DOWN from the tree root, where there is no .git at all, so a resolver
+  // that only looked beside the cwd would report this seat as belonging to no
+  // team — and every ticket verb it ran would answer "no team here".
+  const { createTeamManifest } = require('../team-manifest');
+  const tm = createTeamManifest({ fs: fsReal, clodexHome: pathReal.join(root, 'home-probe') });
+  assert.ok(tm.cwdInProject(createdCwd, repo),
+    'a seat in a subdirectory of its worktree is still a member of the repo team');
+
   const body = f.gated[0].body;
   assert.match(body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(git worktree`),
     'WORK IN: still names the tree ROOT — every git command in the spec is relative to it');
