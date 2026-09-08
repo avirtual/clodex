@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — copying Polish out of a seat no longer comes out as mojibake
+## Unreleased
+
+## 5.38.0 — 2026-09-08 — copying Polish out of a seat no longer comes out as mojibake
 
 - Keep-warm rows in the IPC log now fit on one line and say which seat they are about: the seat name, then a short session id, then the ping. They used to repeat one 36-character session id three times — twice as a badge with an arrow between a thing and itself, once more in the text — and if the seat had cleared since the hold was armed, the name was missing entirely and only the raw id showed.
 - Copying non-ASCII text out of a CLI running inside Clodex (e.g. Claude Code's `/copy`) no longer comes out as mojibake when Clodex was launched from Finder: sessions now get a UTF-8 character set when the app inherited none. (#10)
