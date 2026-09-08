@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Editing a template's cwd (typing or Browse) no longer greys out its tool and skill rows again or resets what is ticked: the redraw keeps the template treatment from the previous release.
+
 ## 5.42.0 — 2026-09-08 — The github plugin moves to the library, and a template keeps its gates wherever it boots
 
 - The built-in github plugin is removed from core; it now installs from the clodex-plugins library (Settings, Plugins, Library, github). Seats that list it keep the id and pick the library copy up once installed.

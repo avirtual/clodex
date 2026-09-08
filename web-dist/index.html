@@ -37241,8 +37241,18 @@ ${detail}` });
       });
       inputType.addEventListener("change", () => refreshNewSessionToolGate());
       inputPlacement.addEventListener("change", () => applyPlacement());
-      inputCwd.addEventListener("change", () => refreshNewSessionSkills(modeSkillDenySet()));
-      inputCwd.addEventListener("change", () => refreshNewSessionTools(modeToolDenySet()));
+      function redrawGatesForCwd() {
+        const opts = { forTemplate: dialogMode === "template" };
+        refreshNewSessionSkills(
+          opts.forTemplate ? new Set(collectSkillChecklist(inputSkillsList)) : modeSkillDenySet(),
+          opts
+        );
+        refreshNewSessionTools(
+          opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : modeToolDenySet(),
+          opts
+        );
+      }
+      inputCwd.addEventListener("change", () => redrawGatesForCwd());
       inputCwd.addEventListener("change", () => refreshWorktreeForCwd());
       inputCwd.addEventListener("change", () => refreshTeamForCwd());
       if (teamToggle) {
@@ -37543,8 +37553,7 @@ ${detail}` });
           return;
         }
         inputCwd.value = dir;
-        refreshNewSessionSkills(modeSkillDenySet());
-        refreshNewSessionTools(modeToolDenySet());
+        redrawGatesForCwd();
         refreshWorktreeForCwd();
       });
       async function pickSandboxCwd(hostDir) {
