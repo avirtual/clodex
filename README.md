@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20arm64%20%C2%B7%20Linux%20headless-lightgrey)](#install)
 
-[Install](#install) · [Feature tour](#feature-tour) · [clodexctl](#clodexctl-the-fleet-from-a-terminal) · [Plugins](plugins/) · [How it works](#how-it-works)
+[Install](#install) · [Feature tour](#feature-tour) · [clodexctl](#clodexctl-the-fleet-from-a-terminal) · [Plugins](#plugins-install-one-or-write-your-own) · [How it works](#how-it-works)
 
 </div>
 
@@ -143,7 +143,15 @@ The Clodex engine runs headless on Linux — plain Node, no display, kept alive 
 
 Every deployed node also serves the **full Clodex GUI in a browser** — sidebar, terminals, popovers — bound to `127.0.0.1` on the box, reachable only through the authenticated tunnel: `clodexctl web <ctx>` and you're looking at a cloud instance's fleet in a local browser tab, with zero ports open to the world. The same server (Preferences → Phone access on the desktop app) serves a chat-style view for your phone via tailnet or ssh tunnel.
 
-### Plugins: extend it yourself
+### Plugins: install one, or write your own
+
+**[clodex-plugins](https://github.com/avirtual/clodex-plugins)** is the public library, one plugin per folder, and the app installs from it directly: **Plugins ▸ Manage Plugins… ▸ Install from GitHub…**, paste `avirtual/clodex-plugins:<id>` (or the folder's URL as copied from the browser), done. Installed plugins get an update badge when the library moves on, and update in place. What is there today:
+
+- **ntfy** — subscribes to an [ntfy](https://ntfy.sh) topic and turns each message into an inbox note and, optionally, a DM to one seat. Point a GitHub webhook at a topic and your lead agent hears about new issues.
+- **review-kit** — one skill that fans a change out to three focused reviewer subagents and consolidates their findings into a single ranked report.
+- **intent-log** — a live feed of every `[agent:…]` intent your seats emit, across windows.
+- **clodex-plugin-builder** — a skill that scaffolds a plugin, wires the surfaces you ask for and verifies it, without reading the whole contract first.
+- **crypto-research** and **stock-assessments** — sidebar buttons over dated research runs: tickers on the left, runs in the middle, the document on the right.
 
 Clodex loads plugins in process, and the API is **frozen at `hostApi "1"`** — a directory with a manifest and up to two halves: an engine half (plain Node, filesystem and session access, can contribute an `[agent:…]` verb) and a renderer half (DOM, one per window, seven named UI slots — status-bar actions and segments, a sidebar footer button, a session row badge, a session-menu provider, a settings panel on its Manage Plugins row, a full-window overlay). The shipped plugins are written against the same contract you get: a git-branch badge, the Workbench (Files, Source Control, Worktrees), read-only viewers for memories and tickets, and a GitHub plugin whose `[agent:gh]` verb answers repo, PR, CI and review state in one call.
 
