@@ -1742,6 +1742,7 @@ const ctlService = enableDrawerServices ? createCtlService({}) : null;
 // text the operator can still withdraw by switching the firehose off.
 const PASSIVE_TERM_KIND = 'terminal-passive';
 const { createDrawerPtys } = require('./drawer-pty');
+const { withUtf8Charset } = require('./env-scopes');
 const { buildTermShim, unsupportedShellReason } = require('./term-shim');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
@@ -1755,6 +1756,7 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   },
   cwdFor: (workspaceId, seat) => drawerPtyCwd(workspaceId, seat),
   scrollbackMax: SCROLLBACK_MAX,
+  withUtf8Charset,
   // The OSC 133 shim, built per seat so its generated rc can be removed with the
   // seat. Gated on the pref at SPAWN time, which is coarse on purpose: a shell
   // already running keeps whatever startup it was born with, and toggling the

@@ -99,6 +99,7 @@ async function withShell(run, { profile, env: envOver } = {}) {
     // what they last typed.
     env: { ...process.env, HOME: home, HISTFILE: path.join(dir, 'hist'), ...(envOver || {}) },
     shimEnv: () => buildTermShim({ dir: shimDir, shell: BASH }),
+    withUtf8Charset: require('../env-scopes').withUtf8Charset,
     makeMarkParser: createMarkParser,
     onCommand: (seat, rec) => passive.push(rec),
     onExecResult: (seat, res) => results.push(res),

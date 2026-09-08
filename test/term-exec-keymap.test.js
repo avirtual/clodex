@@ -137,6 +137,7 @@ async function runCase({ shellPath, keymapCmd, prefill, armHup, graceMs }) {
     // recorded flakes were rows in this file, and none of them could reach the
     // mark-based ack while it was stubbed out.
     shimEnv: () => buildTermShim({ dir, shell: shellPath }),
+    withUtf8Charset: require('../env-scopes').withUtf8Charset,
     makeMarkParser: createMarkParser,
     onCommand: () => {},
     log: { info() {}, warn() {}, error() {} },

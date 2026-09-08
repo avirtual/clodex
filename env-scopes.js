@@ -117,6 +117,12 @@ function mergeSessionEnv({ base = {}, global = null, workspace = null, session =
   return merged;
 }
 
+function withUtf8Charset(env) {
+  const base = env || {};
+  if (base.LC_ALL != null || base.LC_CTYPE != null || base.LANG != null) return env;
+  return { ...base, LC_CTYPE: 'UTF-8' };
+}
+
 module.exports = {
   DENY_KEYS,
   ENV_KEY_RE,
@@ -124,4 +130,5 @@ module.exports = {
   flattenScope,
   sanitizeFlat,
   mergeSessionEnv,
+  withUtf8Charset,
 };
