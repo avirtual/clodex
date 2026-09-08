@@ -2351,10 +2351,14 @@ inputType.addEventListener('change', () => refreshNewSessionToolGate());
 inputPlacement.addEventListener('change', () => applyPlacement());
 // cwd drives the skill catalog's provenance (which lower-layer settings apply),
 // so re-fetch when it changes.
-// Bare refs would leak the DOM Event into the first (data) param — disabledSet —
-// which then throws `.has is not a function` mid-render and blanks the checklist.
-inputCwd.addEventListener('change', () => refreshNewSessionSkills(modeSkillDenySet()));
-inputCwd.addEventListener('change', () => refreshNewSessionTools(modeToolDenySet()));
+function redrawGatesForCwd() {
+  const opts = { forTemplate: dialogMode === 'template' };
+  refreshNewSessionSkills(
+    opts.forTemplate ? new Set(collectSkillChecklist(inputSkillsList)) : modeSkillDenySet(), opts);
+  refreshNewSessionTools(
+    opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : modeToolDenySet(), opts);
+}
+inputCwd.addEventListener('change', () => redrawGatesForCwd());
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
 inputCwd.addEventListener('change', () => refreshTeamForCwd());
 
@@ -2700,8 +2704,7 @@ document.getElementById('btn-browse').addEventListener('click', async () => {
     return;
   }
   inputCwd.value = dir;
-  refreshNewSessionSkills(modeSkillDenySet());
-  refreshNewSessionTools(modeToolDenySet());
+  redrawGatesForCwd();
   refreshWorktreeForCwd();
 });
 

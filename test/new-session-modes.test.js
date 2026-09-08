@@ -467,11 +467,12 @@ test('no New Session path draws the skill or built-in checklist with a bare defa
   assert.ok(sawSkillDraw >= 3,
     `ENTER: found only ${sawSkillDraw} skill draws across the dialog paths — the slices are wrong`);
 
-  // The cwd listener is a one-liner outside any function body.
-  const cwdListener = slice("inputCwd.addEventListener('change', () => refreshNewSessionSkills",
-    "inputCwd.addEventListener('change', () => refreshWorktreeForCwd", 'the cwd change listeners');
-  assert.match(cwdListener, /refreshNewSessionSkills\(modeSkillDenySet\(\)\)/,
+  const cwdListener = slice('function redrawGatesForCwd()',
+    "inputCwd.addEventListener('change', () => refreshWorktreeForCwd", 'the cwd change redraw');
+  assert.match(cwdListener, /modeSkillDenySet\(\)/,
     'a cwd change in optimized mode must re-apply the defaults, not re-enable everything');
+  assert.ok(!/refreshNewSessionSkills\(\)/.test(cwdListener),
+    'a bare refreshNewSessionSkills() re-enables every skill, ignoring the mode');
 });
 
 // t750: the codex spawn arm reads systemPromptFile and appendPromptFiles
@@ -615,4 +616,46 @@ test('openTemplateEditor marks both refreshers as drawing a template', () => {
     'the template picker');
   assert.ok(!live.includes('forTemplate'),
     'the New Session dialog runs in that cwd, so it keeps the lower-layer treatment');
+});
+
+test('the cwd change listener and Browse redraw gates through one template-aware helper', () => {
+  const helper = slice('function redrawGatesForCwd()', "\ninputCwd.addEventListener('change', () => refreshWorktreeForCwd())",
+    'the cwd gate redraw helper');
+  for (const frag of [
+    "{ forTemplate: dialogMode === 'template' }",
+    'new Set(collectSkillChecklist(inputSkillsList))',
+    'new Set(collectToolChecklist(inputToolsList))',
+    'modeSkillDenySet()',
+    'modeToolDenySet()',
+  ]) {
+    assert.ok(helper.includes(frag), `the redraw helper must carry ${frag}`);
+  }
+  assert.ok(helper.includes("inputCwd.addEventListener('change', () => redrawGatesForCwd())"),
+    'the cwd change listener must route through the helper, not the bare refreshers');
+
+  const browse = slice("document.getElementById('btn-browse')", '\nasync function pickSandboxCwd(', 'the Browse handler');
+  assert.ok(browse.includes('redrawGatesForCwd();'),
+    'Browse must redraw through the same helper');
+  assert.ok(!/refreshNewSession(Tools|Skills)\(/.test(browse),
+    'Browse must not call the refreshers directly — it would drop the template flag');
+});
+
+test('a cwd redraw preserves the template rows the operator unticked', () => {
+  const eff = { AskUserQuestion: { value: 'off', source: 'project', advisory: true } };
+  const c = drawTools(new Set(), eff);
+  const cb = c.children
+    .map((row) => row.children.find((x) => x.tagName === 'input'))
+    .find((x) => x.value === 'AskUserQuestion');
+  cb.checked = false;
+
+  const carried = new Set(checklists.collectToolChecklist(c));
+  assert.deepStrictEqual([...carried], ['AskUserQuestion'],
+    'the untick must survive as a name the redraw can carry');
+
+  const after = drawTools(carried, eff);
+  const row = toolRowsOf(after).find((r) => r.name === 'AskUserQuestion');
+  assert.deepStrictEqual(
+    { checked: row.checked, disabled: row.disabled },
+    { checked: false, disabled: false },
+    'after the cwd redraw the row is still unticked and still toggleable');
 });
