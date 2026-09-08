@@ -23,19 +23,18 @@ therefore gets 0700.
 
 ## sweepDiscoveredSkills
 
-Head-bounded at 256 KiB per transcript: the CLI writes its `skill_listing`
-attachment near the top of a session (measured on a live box, every seat's first
-initial listing sat below 23 KiB, while two transcripts had grown past 38 MB).
-The bounded sweep over 17 seats took 9.6 ms and found the same 21 names a full
-read (221 ms, 88.7 MB) did. Truncating at the last newline keeps the tail's
-partial line out of the JSON parse. Its result is folded into the `skillsSeen`
-store so a box whose run dirs are gone after a restart still offers the names.
+Head-bounded at 256 KiB per transcript: the CLI writes its `skill_listing` near
+the top of a session — measured live, every seat's first initial listing sat
+below 23 KiB while two transcripts had passed 38 MB, and the bounded sweep over
+17 seats took 9.6 ms for the same 21 names a full read (221 ms, 88.7 MB) found.
+Truncating at the last newline keeps the tail's partial line out of the JSON
+parse. Folded into `skillsSeen`, so a box whose run dirs went still has them.
 
 ## readSkillCatalog
 
 Takes `{name}` for a seat or `{cwd}` for the defaults dialog, which has no
-session and so no transcript to scan. Two separate unions until t744, and the
-defaults copy silently missed every DISCOVERED skill — `design`, `dataviz` — so
-they could never be pre-unchecked. The defaults return shape is deliberately
-NARROWER: no `outOfScope`, `disabledSkills`, `skillLib` or `injectSkills`, since
-a default disabled-list must not inherit one seat's per-session state.
+session and so no transcript to scan. These were two separate unions, and the
+defaults copy silently missed every DISCOVERED skill — `design`, `dataviz` —
+which could therefore never be pre-unchecked. The defaults shape is deliberately
+NARROWER (no `outOfScope`/`disabledSkills`/`skillLib`/`injectSkills`): a default
+disabled-list must not inherit one seat's per-session state.
