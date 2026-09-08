@@ -31,10 +31,10 @@ let clodexHomeOverride = null;
 // rather than landing in the operator's real ~/.clodex.
 let everOverridden = false;
 
-// Must NOT honour CLODEX_HOME: core's REGISTRY_DIR does not, so reading it would
-// report on a different tree than the app hosting the board.
+// Honours CLODEX_HOME because core's REGISTRY_DIR does (clodex-paths.js
+// defaultClodexHome), re-derived only because a plugin cannot require core.
 function clodexHome() {
-  return path.join(clodexHomeOverride || path.join(os.homedir(), '.clodex'));
+  return path.join(clodexHomeOverride || process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex'));
 }
 
 function teamsRoot() {

@@ -34,9 +34,11 @@ const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/memory-viewer/engine');
 
-// The plugin derives MEMORY_ROOT from os.homedir() at require time (it is
-// deliberately not injectable — see its header). Point HOME at a temp dir and
-// re-require so the module binds to it.
+// The plugin derives MEMORY_ROOT at require time (it is deliberately not
+// injectable — see its header). Point HOME at a temp dir and re-require so the
+// module binds to it. CLODEX_HOME must be cleared alongside, or a fixture is
+// hermetic only on a machine where nobody exported it — and every seat Clodex
+// spawns has it set, so the whole file would read the operator's real store.
 function bootStore() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-home-'));
   const root = path.join(home, '.clodex', 'library', 'memory');
@@ -63,7 +65,9 @@ function writeUnit(root, agent, base, { pinned = false, body = 'a body', metaId 
 function boot({ removeImpl } = {}) {
   const { home, root } = bootStore();
   const prevHome = process.env.HOME;
+  const prevVar = process.env.CLODEX_HOME;
   process.env.HOME = home;
+  delete process.env.CLODEX_HOME;
   delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
   const engine = require('../plugins/memory-viewer/engine');
 
@@ -95,6 +99,7 @@ function boot({ removeImpl } = {}) {
   host.register('memory-viewer', engine, { hostApi: HOST_API_VERSION });
   const cleanup = () => {
     if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevVar === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prevVar;
     delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
@@ -395,12 +400,14 @@ test('memory-viewer: the store still reads when the ROOT itself is behind a syml
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-link-'));
   const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-real-'));
   const prevHome = process.env.HOME;
+  const prevVar = process.env.CLODEX_HOME;
   try {
     fs.mkdirSync(path.join(home, '.clodex', 'library'), { recursive: true });
     fs.symlinkSync(real, path.join(home, '.clodex', 'library', 'memory'));
     writeUnit(path.join(home, '.clodex', 'library', 'memory'), 'clodex', 'mem-1-aaaaaa', { body: 'through the link' });
 
     process.env.HOME = home;
+    delete process.env.CLODEX_HOME;
     delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
     const engine = require('../plugins/memory-viewer/engine');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-data-'));
@@ -425,6 +432,7 @@ test('memory-viewer: the store still reads when the ROOT itself is behind a syml
     fs.rmSync(dir, { recursive: true, force: true });
   } finally {
     if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevVar === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prevVar;
     delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(real, { recursive: true, force: true });
@@ -440,4 +448,55 @@ test('memory-viewer: the engine registers exactly four rows, its two mutations a
       'memory-viewer:agents', 'memory-viewer:forget', 'memory-viewer:setPin', 'memory-viewer:units',
     ]);
   } finally { cleanup(); }
+});
+
+test('memory-viewer: the store follows CLODEX_HOME, not the home-derived root', async () => {
+  // t760's other half. Core's registry root moved to CLODEX_HOME, and this
+  // plugin re-derives that expression rather than importing it (a plugin cannot
+  // require core), so a copy that stayed on the bare homedir join would list the
+  // operator's real memory while the app wrote somewhere else. The discriminator
+  // is a HOME and a CLODEX_HOME that hold DIFFERENT agents: asserting only that
+  // the override's agent appears would also pass for a root that reads both.
+  const overrideHome = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-envroot-'));
+  const decoyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-decoyhome-'));
+  const prevHome = process.env.HOME;
+  const prevVar = process.env.CLODEX_HOME;
+  try {
+    writeUnit(path.join(overrideHome, 'library', 'memory'), 'agent-from-the-env-root', 'mem-1-aaaaaa');
+    writeUnit(path.join(decoyHome, '.clodex', 'library', 'memory'), 'agent-from-the-home-root', 'mem-2-bbbbbb');
+
+    process.env.HOME = decoyHome;
+    process.env.CLODEX_HOME = overrideHome;
+    delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
+    const engine = require('../plugins/memory-viewer/engine');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-data-'));
+    const host = createPluginHostEngine({
+      manager: {
+        sessions: new Map(),
+        list: () => [], listForWorkspace: () => [],
+        _broadcast() {}, _sendToSession() {}, windowForWorkspace: () => null,
+      },
+      getUiSettings: () => ({ get: () => ({}), set: () => {} }),
+      log: { info: () => {}, error: () => {} },
+      userDataPath: dir,
+      fs, path,
+      gitWorktree: {},
+      libraryKinds: { memory: () => ({ ok: true }) },
+    });
+    host.register('memory-viewer', engine, { hostApi: HOST_API_VERSION });
+
+    const res = await host.dispatch('memory-viewer', 'agents', [], 'desktop');
+    const names = res.agents.map((a) => a.agent);
+    assert.ok(names.includes('agent-from-the-env-root'),
+      `the store must come from CLODEX_HOME — got ${JSON.stringify(names)}`);
+    assert.ok(!names.includes('agent-from-the-home-root'),
+      `the home-derived root must be invisible once CLODEX_HOME is set — got ${JSON.stringify(names)}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevVar === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prevVar;
+    delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
+    fs.rmSync(overrideHome, { recursive: true, force: true });
+    fs.rmSync(decoyHome, { recursive: true, force: true });
+  }
 });

@@ -209,20 +209,35 @@ function assertWritesLandInFixture(home, key) {
 
 // ── the roots follow the app, not the environment ───────────────────────────
 
-test('tickets-viewer: the teams root ignores CLODEX_HOME and matches core\'s', () => {
-  // The board must report on the tree the app hosting it uses. Core's root is
-  // engine.js:133's bare homedir join; if this plugin read CLODEX_HOME, a set
-  // variable would point the two at different trees. Asserted with the variable
-  // SET to something else, because with it unset the two agree whatever the
-  // code does.
+test('tickets-viewer: the teams root follows CLODEX_HOME exactly as core\'s does', () => {
+  // The board must report on the tree the app hosting it uses. Since t760 that
+  // tree is CLODEX_HOME when set, resolved for core by clodex-paths.js
+  // defaultClodexHome, which this plugin re-derives because it cannot require
+  // core. Both roots are asserted against defaultClodexHome itself, so a copy
+  // that drifts from core is what fails — not merely one that ignores the var.
+  // Checked with the variable SET, because with it unset the two agree whatever
+  // the code does.
+  const { defaultClodexHome } = require('../clodex-paths');
   const prev = process.env.CLODEX_HOME;
-  process.env.CLODEX_HOME = path.join(os.tmpdir(), 'clodex-tv-decoy-home');
+  const scratch = path.join(os.tmpdir(), 'clodex-tv-scratch-home');
   try {
     setClodexHomeForTest(null);
-    assert.equal(viewerEngine._internals.teamsRoot(), path.join(os.homedir(), '.clodex', 'teams'));
+
+    process.env.CLODEX_HOME = scratch;
+    // ENTER: the override must differ from the home-derived root, or both
+    // assertions below hold whatever the code does.
+    assert.notEqual(scratch, path.join(os.homedir(), '.clodex'));
+    assert.equal(defaultClodexHome(), scratch, 'ENTER: core follows the variable');
+    assert.equal(viewerEngine._internals.teamsRoot(), path.join(scratch, 'teams'));
     // The projects root is the one that matters now — it is where the board
     // lives and, since t304, where a write lands.
-    assert.equal(viewerEngine._internals.projectsRoot(), path.join(os.homedir(), '.clodex', 'projects'));
+    assert.equal(viewerEngine._internals.projectsRoot(), path.join(scratch, 'projects'));
+
+    delete process.env.CLODEX_HOME;
+    assert.equal(viewerEngine._internals.teamsRoot(),
+      path.join(defaultClodexHome(), 'teams'), 'unset, both fall back to the home path');
+    assert.equal(viewerEngine._internals.projectsRoot(),
+      path.join(os.homedir(), '.clodex', 'projects'));
   } finally {
     if (prev === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prev;
   }

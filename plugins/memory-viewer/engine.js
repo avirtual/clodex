@@ -12,10 +12,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 // Re-derived rather than imported: nothing exports it to plugins, and requiring
-// core's memory-store is the reach-around the boundary lint refuses. If core
-// moves the library root this plugin shows an empty list — the coupling's
-// accepted failure mode, not a bug in the walk below.
-const MEMORY_ROOT = path.join(os.homedir(), '.clodex', 'library', 'memory');
+// core's memory-store is the reach-around the boundary lint refuses. The
+// CLODEX_HOME half mirrors clodex-paths.js defaultClodexHome, so the board and
+// core move together.
+const MEMORY_ROOT = path.join(
+  process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex'), 'library', 'memory');
 
 // Same rule as core's session names — a character filter, nothing more. NOT the
 // containment check: `.` is in the class, so '.' and '..' both match it, and
