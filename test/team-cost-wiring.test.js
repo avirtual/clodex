@@ -146,7 +146,7 @@ test('create() mints from the record label, and both spawn paths seed it before 
     // seed rides the reviewFor upsert specifically, and a `[\s\S]*?` bridge would
     // also accept a wireLabel seeded on some other nearby object.
     ['reviewer', /reviewFor: session\.name,\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.\(reviewTicket \? \{ reviewTicket \} : \{\}\),\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, shape\.extraArgs, null, shape\.workspaceId,/],
-    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, shape\.cwd,/],
+    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, seatCwd,/],
   ]) {
     const seedAt = ticketSrc.search(seedRe);
     const createAt = ticketSrc.search(createRe);

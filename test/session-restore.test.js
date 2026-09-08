@@ -45,6 +45,7 @@ test('restores a missing session — spawns it and returns its row', async () =>
       created.push({ name, type, cwd, rest });
       manager.sessions.set(name, { backend: 'claude-code' });
     },
+    resumeCwdOf: (e) => e.cwd,
     pendingCountFor: () => 0,
     teamNameFor: (cwd) => (cwd === '/w/a' ? 'shop' : null), // cwd-in-team resolves
   };
@@ -77,6 +78,7 @@ test('skips an already-running session — no re-spawn, flushes buffered replay'
   const manager = {
     sessions: new Map([['beta', running]]),
     async create(name) { created.push(name); },
+    resumeCwdOf: (e) => e.cwd,
     pendingCountFor: () => 3,
     teamNameFor: (cwd) => (cwd === '/w/b' ? 'shop' : null),
   };
@@ -105,6 +107,7 @@ test('archived session is NOT spawned and comes back archived:true', async () =>
   const manager = {
     sessions: new Map(),
     async create(name) { created.push(name); },
+    resumeCwdOf: (e) => e.cwd,
     pendingCountFor: () => 0,
     teamNameFor: (cwd) => (cwd === '/w/z' ? 'shop' : null),
   };
@@ -130,6 +133,7 @@ test('keeps a failed spawn in persistence and returns failed:true', async () => 
   const manager = {
     sessions: new Map(),
     async create() { throw new Error('boom: spawn refused'); },
+    resumeCwdOf: (e) => e.cwd,
     pendingCountFor: () => 0,
     teamNameFor: () => null, // teamless failed entry
   };
@@ -160,6 +164,7 @@ test('mixed batch — one running, one restored, one failed — order preserved'
       if (name === 'bad') throw new Error('nope');
       manager.sessions.set(name, { backend: 'claude-code' });
     },
+    resumeCwdOf: (e) => e.cwd,
     pendingCountFor: () => 0,
     teamNameFor: () => null,
   };
@@ -197,6 +202,7 @@ test('t189: noWire reaches every row shape — running, restored, archived and f
       manager.sessions.set(name, { backend: null, noWire: true });
       return { name };
     },
+    resumeCwdOf: (e) => e.cwd,
     pendingCountFor: () => 0,
     teamNameFor: () => null,
   };
@@ -249,4 +255,44 @@ test('t189: noWire reaches every row shape — running, restored, archived and f
 
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']],
     'and the restore path still mutates nothing');
+});
+
+// The restore path must spawn where `resumeCwdOf` says, not where the record
+// says, and must REPORT the same directory. A ticket seat's cwd IS its worktree
+// and the record outlives the tree, so the fallback fires on a real board — and a
+// row still naming the vanished tree is what "Reveal Working Directory in Finder"
+// would open, and what the record is rebuilt from at the next launch.
+//
+// The stub answers a path that appears NOWHERE on the entry, so a call site that
+// went back to `entry.cwd` cannot produce it by coincidence.
+test('a restore spawns in the resolved cwd, and reports that one — not the record cwd', async () => {
+  const created = [];
+  const asked = [];
+  const manager = {
+    sessions: new Map(),
+    async create(name, type, cwd) {
+      created.push({ name, cwd });
+      manager.sessions.set(name, { backend: 'claude-code' });
+    },
+    resumeCwdOf: (e) => { asked.push(e.name); return '/w/main'; },
+    pendingCountFor: () => 0,
+    teamNameFor: (cwd) => (cwd === '/w/main' ? 'shop' : null),
+  };
+  const persistence = fakePersistence([
+    { name: 'hand', type: 'claude', cwd: '/w/tree-gone', label: null },
+  ]);
+
+  const out = await restoreSessionsForWorkspace({
+    workspaceId: 'ws1', persistence, manager, ...noopDeps,
+  });
+
+  // ENTER: the helper was consulted at all. Without this the two assertions below
+  // would also pass against a call site that hardcoded '/w/main'.
+  assert.deepStrictEqual(asked, ['hand'], 'ENTER: resumeCwdOf was asked about this entry');
+  assert.deepStrictEqual(created, [{ name: 'hand', cwd: '/w/main' }],
+    'create() gets the resolved cwd — booting into the record\'s vanished tree is the ENOENT this closes');
+  assert.strictEqual(out[0].cwd, '/w/main',
+    'and the row reports it, or the sidebar points at a directory the seat is not in');
+  assert.strictEqual(out[0].team, 'shop',
+    'the team is resolved from the same directory — a stale cwd can resolve a different team, or none');
 });
