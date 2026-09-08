@@ -290,9 +290,14 @@ the two directions use different transports (full wire detail in
   origin string) so the reply trailer routes back through our own config.
 - `SELF_LABEL` = `CLODEX_LABEL` if set and it clears peer-outbox's
   `validOrigin` gate, else the hostname minus `.local` (the fallback also
-  covers a blank or rejected value, which logs one warning). Two instances
-  on one box need it to read apart — see `docs/recipes/two-instances.md`.
-  `[agent:who]` appends federated
+  covers a blank or rejected value, which logs one warning). It is what this
+  box calls ITSELF: the hello `host` field, the `origin` it hands a peer to
+  key our reply outbox, and the `@origin` half of the relay sender tag — NOT
+  the suffix in a who-line or a dm target, which is our own configured label
+  for that peer per the bullet above. Two instances on one box share a
+  hostname, so `CLODEX_LABEL` is how a hub's spokes tell them apart — see
+  `docs/recipes/two-instances.md`.
+- `[agent:who]` appends federated
   addresses for online dm-cap peers. It also lists ALL local agent sessions
   regardless of workspace (not just the sender's) — parity with that
   cross-workspace federated listing, and every listed name is a valid dm

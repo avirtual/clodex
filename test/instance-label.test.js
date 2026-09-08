@@ -2,9 +2,10 @@
 // instance-label.test.js — CLODEX_LABEL, the third of the three env vars that
 // let two Clodexes share one box (with CLODEX_HOME and CLODEX_DATA_DIR).
 //
-// Without it both instances self-label as the hostname, so every `[agent:who]`
-// line, hello `host` field and relay sender tag reads the same. Routing already
-// survives that; legibility does not.
+// Without it both instances self-label as the hostname, so the hello `host`
+// field a peer displays and the `@origin` half of a relayed sender tag read the
+// same for both. Addressing is unaffected either way — a dm target resolves
+// against the SENDER's own peer labels — so what is at stake is legibility.
 //
 // Two layers, because either alone is a pin that cannot fail for the right
 // reason. resolveSelfLabel's four cases are the policy; the engine case is the

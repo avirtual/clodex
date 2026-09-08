@@ -68,8 +68,10 @@ Configuration is by environment:
   which is how you run **two instances on one box**. Caveat for the desktop app:
   a packaged `.app` launched from Finder inherits no shell environment, so the
   override reaches it only when it is launched from a shell.
-- **`CLODEX_LABEL`** — this instance's name on the wire: the `@suffix` on
-  federated agent addresses, the hello `host` field, the relay sender tag.
+- **`CLODEX_LABEL`** — what this instance calls ITSELF on the wire: the hello
+  `host` field a peer displays for it, and the `@origin` half of the sender tag
+  on relayed DMs. It is not what other boxes address it by — a peer dms *this*
+  box's agents using the label *it* gave *us* in its own peer settings.
   Defaults to the box's hostname minus a `.local` suffix, which is what two
   instances on one box would otherwise share. Must clear the same charset gate a
   wire-supplied origin does (`[A-Za-z0-9._-]`, 1–64 chars, not `.` or `..`);

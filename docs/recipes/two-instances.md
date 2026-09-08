@@ -15,7 +15,7 @@ edit, no build flag.
 |---|---|---|
 | `CLODEX_HOME` | the registry root — teams, library, `run/<name>/`, memory, messages, projects, tickets, `clodex.log`. Read by `main.js`, `headless-main.js`, `sandbox.js` and the engine, and handed to every agent's `[agent:exec]` children | `~/.clodex` |
 | `CLODEX_DATA_DIR` | the persistence dir — `sessions.json` and the settings stores (peers, ports, workspaces). The desktop app moves `userData` here before taking its single-instance lock | platform userData: `~/Library/Application Support/clodex` (macOS), `$XDG_CONFIG_HOME`/`~/.config/clodex` (Linux), `%APPDATA%/clodex` (Windows) |
-| `CLODEX_LABEL` | this instance's name on the peer wire — the `@suffix` on federated agent addresses, the hello `host` field, the relay sender tag, the `[agent:who]` lines. Must match the outbox origin charset (`[A-Za-z0-9._-]`, 1–64, not `.`/`..`); a value that does not is ignored with a warning in `clodex.log` | the box's hostname, minus a `.local` suffix |
+| `CLODEX_LABEL` | what this instance calls itself on the peer wire — the hello `host` field a peer displays, and the `@origin` half of the sender tag on relayed DMs. Not the address other boxes dm it by (see step 3). Must match the outbox origin charset (`[A-Za-z0-9._-]`, 1–64, not `.`/`..`); a value that does not is ignored with a warning in `clodex.log` | the box's hostname, minus a `.local` suffix |
 | `CLODEX_WEB_PORT` | the browser frontend's port (headless only) | unset — no web host is started |
 | `CLODEX_WEB_HOST` | the interface the web host binds | unset — all interfaces |
 | `CLODEX_WEB_TOKEN` | the web frontend's bearer token | unset — localhost trust |
@@ -63,9 +63,10 @@ collide on both. Give B, say, `7901` and `7801`.
 They are ordinary peers, over loopback:
 
 1. In A's Settings, add a peer at `http://127.0.0.1:<B's wire port>` with B's
-   `CLODEX_REMOTE_TOKEN`.
-2. Once the hello lands, B's agents appear in A's `[agent:who]` suffixed with
-   B's label, and A's agents dm them by that address:
+   `CLODEX_REMOTE_TOKEN`, and **give that peer a label**. Use the same word B
+   exports as `CLODEX_LABEL` — `box-b` — so the two names agree.
+2. Once the hello lands, B's agents appear in A's `[agent:who]` as
+   `name@<that peer label>`, and A's agents dm them at that address:
 
 ```
 [agent:dm worker@box-b]
@@ -73,11 +74,17 @@ your message
 [agent:end]
 ```
 
-That suffix is exactly what `CLODEX_LABEL` sets. Left at the default both
-instances self-label as the hostname, both sides read the same, and nothing
-on either screen says which instance a line came from. Routing survives it —
-a reply trailer uses *our* configured label for a peer, not the box's own
-origin string — but legibility does not.
+The suffix there is **A's own peer label for B**, set in A's Settings — not
+B's `CLODEX_LABEL`. A dm target is matched against A's peer list, so renaming
+the peer in A renames the address A's agents type, and B never learns of it.
+
+What `CLODEX_LABEL` changes is what B calls *itself*: the host name A's peers
+panel shows for B, and the `@origin` half of the sender tag on DMs relayed
+through a hub. That is why two instances on one box want it — left at the
+default they both self-label as the hostname, and a hub's spokes cannot tell
+which of the two a relayed message came from. Keeping the peer label and
+`CLODEX_LABEL` the same word means the address you type and the name on the
+screen agree.
 
 ## 4. Caveats
 
@@ -91,5 +98,6 @@ origin string — but legibility does not.
   instances headless.
 - **Agent names are global per root, not per workspace.** Two instances with
   different `CLODEX_HOME`s therefore have fully independent namespaces: both may
-  have a `worker`, and `worker@box-a` and `worker@box-b` are different seats.
-  Two instances sharing a root would not be two instances.
+  have a `worker`, and the two are different seats — reached from the other
+  instance by the peer label it was given there. Two instances sharing a root
+  would not be two instances.
