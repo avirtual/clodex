@@ -78,10 +78,11 @@ async function restoreSessionsForWorkspace({
       // wire (bake ⊆ live-strip), so it can't bust a warm prefix. No-op unless
       // the compactOnResume setting + a live wirescope are both present.
       await maybeCompactBeforeResume(entry);
+      const cwd = manager.resumeCwdOf(entry);
       await manager.create(
         entry.name,
         entry.type,
-        entry.cwd,
+        cwd,
         entry.extraArgs || [],
         entry.sessionId,
         workspaceId,
@@ -106,10 +107,10 @@ async function restoreSessionsForWorkspace({
       restored.push({
         name: entry.name,
         type: entry.type,
-        cwd: entry.cwd,
+        cwd,
         label: entry.label || null,
         backend: (manager.sessions.get(entry.name) || {}).backend || null,
-        team: manager.teamNameFor(entry.cwd),
+        team: manager.teamNameFor(cwd),
         createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
         proxy: proxyPoller.snapshot(entry.name),

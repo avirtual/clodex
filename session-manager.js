@@ -3290,6 +3290,20 @@ function createSessionManager(deps) {
       return stripped;
     }
 
+    resumeCwdOf(entry) {
+      if (!entry || !entry.cwd) return entry ? entry.cwd : undefined;
+      const there = (p) => { try { return !!p && fs.existsSync(p); } catch { return false; } };
+      if (there(entry.cwd)) return entry.cwd;
+      const main = entry.worktree && entry.worktree.main;
+      if (!there(main)) return entry.cwd;
+      if (log) log.info('session', `resume of ${entry.name}: tree ${entry.cwd} is gone, booting in ${main}`);
+      try {
+        getPersistence().setCwd(entry.name, main);
+        getPersistence().setWorktree(entry.name, null);
+      } catch {}
+      return main;
+    }
+
     // Re-seed post-create persistence fields across a kill()+create restart. The
     // APP-RELAUNCH restore path keeps the persistence record, so create()'s
     // existingEntry carries these fields. But the IN-PLACE restart paths
@@ -5597,8 +5611,9 @@ function createSessionManager(deps) {
             // at accept: no teardown, a leaked worktree, and a reply claiming it
             // is not a one-shot ticket seat.
             this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate']);
+            const cwd = this.resumeCwdOf(entry);
             await this.create(
-              name, entry.type, entry.cwd, entry.extraArgs || [], null, entry.workspaceId,
+              name, entry.type, cwd, entry.extraArgs || [], null, entry.workspaceId,
               entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
               entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
               entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
@@ -5619,7 +5634,7 @@ function createSessionManager(deps) {
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
             if (entry.label) getPersistence().setLabel(name, entry.label);
             this._sendToSession(name, 'session:context-action', {
-              action: 'reattach', name, type: entry.type, cwd: entry.cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+              action: 'reattach', name, type: entry.type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
             });
             const fresh = this.sessions.get(name);
             if (fresh) this._injectReloadHandoff(fresh, handoff);

@@ -195,9 +195,10 @@ you `task add` to that role mints a branch off the ticket id, creates a worktree
 on it, spawns a seat, and re-pins the ticket to that seat. Set it from the team
 popover's Roles section — each role has a `dispatch` picker (`standing` delivers
 the spec to the live seat holding the role; `worktree` is this behaviour) — so
-there is no need to hand-edit team.json. The seat's cwd stays
-the shared REPO — it is TOLD where its tree is, by a `WORK IN:` line at the head
-of the spec, and goes there itself. One ticket, one branch, one seat.
+there is no need to hand-edit team.json. The seat's cwd IS that
+tree, and a `WORK IN:` line at the head of the spec names it and its branch —
+which a replay still needs, since a respawned seat has no memory of either.
+One ticket, one branch, one seat.
 
 For a one-off outside the ticket flow, spawn a seat that LIVES in the worktree:
 `[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]`. That is the other

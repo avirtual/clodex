@@ -356,6 +356,17 @@ const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
 const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
+// A cwd not inside `root` yields the tree ROOT: joining an escape would put the
+// seat outside the tree, which is the isolation this dispatch exists for.
+function seatCwdInTree(root, seatCwd, treePath) {
+  if (!treePath) return seatCwd;
+  if (!root || !seatCwd) return treePath;
+  const rel = nodePath.relative(nodePath.resolve(root), nodePath.resolve(seatCwd));
+  if (!rel) return treePath;
+  if (rel.startsWith('..') || nodePath.isAbsolute(rel)) return treePath;
+  return nodePath.join(treePath, rel);
+}
+
 function createTicketMethods(deps, shared) {
   const {
     AGENT_NAME_RE,
@@ -2462,14 +2473,14 @@ function createTicketMethods(deps, shared) {
           + `written. And if the body gates on a specific condition you cannot confirm was met, report that rather than `
           + `assuming it was discharged.\n`
         : '';
-      // A ticket with its own worktree: the seat's cwd is the REPO, so the tree is
-      // somewhere it would not otherwise look (git puts a worktree BESIDE the repo).
-      // Rides the spec on every delivery INCLUDING a replay — a respawned seat needs
-      // the location as much as the first incarnation did, and it has no memory of it.
+      // Rides the spec on every delivery INCLUDING a replay — a respawned seat has
+      // no memory of it, and one that resumed after its tree was removed is not
+      // even standing in it. The branch and the no-push rule never followed from a
+      // cwd anyway.
       const wtLine = (ticket && ticket.worktree && ticket.worktree.path)
-        ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — cd there first. `
-          + `That tree is yours for this ticket: commit to ${ticket.worktree.branch} as you go, never push, and do not merge it. `
-          + `Your cwd is the shared repo checkout; editing files there instead would collide with the other seats working in it.\n`
+        ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd. `
+          + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
+          + `${team && team.root ? `The shared checkout is ${team.root}; do not edit files there.` : ''}\n`
         : '';
       // ADDITIVE to the line above, never a rewrite of it. `wt.path` is the tree
       // identity every other mechanism uses — claimTree, the suite runner, the
@@ -3734,8 +3745,9 @@ function createTicketMethods(deps, shared) {
     },
 
     // The live seat working in `treePath`, or null. Read off the PERSISTED record
-    // rather than the session: a seat's cwd is the shared repo (it is told its tree
-    // rather than booted in it), so cwd cannot answer this.
+    // rather than the session's cwd: a role area puts the seat one directory below
+    // the tree root, and a seat whose tree went missing resumes in the shared
+    // checkout — so cwd answers a different question than occupancy does.
     _ticketTreeHolder(treePath) {
       if (!treePath) return null;
       const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
@@ -3891,17 +3903,17 @@ function createTicketMethods(deps, shared) {
       const { rel, raw, reason } = this._roleCwdRel(def);
       if (!root) return { cwd: root, fallback: null };
       if (reason === 'absolute') {
-        return { cwd: root, fallback: `role cwd "${raw}" is absolute (it must be relative to the team root) — the seat was spawned in ${root} instead` };
+        return { cwd: root, fallback: `role cwd "${raw}" is absolute (it must be relative to the team root) — the seat was spawned at the root of its checkout instead` };
       }
       if (reason === 'escape') {
-        return { cwd: root, fallback: `role cwd "${raw}" resolves outside the team root — the seat was spawned in ${root} instead` };
+        return { cwd: root, fallback: `role cwd "${raw}" resolves outside the team root — the seat was spawned at the root of its checkout instead` };
       }
       if (!rel) return { cwd: root, fallback: null };
       const resolved = path.resolve(root, rel);
       let isDir = false;
       try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = false; }
       if (!isDir) {
-        return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned in ${root} instead` };
+        return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned at the root of its checkout instead` };
       }
       // Confinement decided on the REAL paths: the lexical check above compares
       // strings, and `cwd: "link"` where link → another project passes it while
@@ -3913,11 +3925,11 @@ function createTicketMethods(deps, shared) {
       const realCwd = real(resolved);
       if (!realRoot || !realCwd) {
         // Only reachable if the path vanished between the stat above and here.
-        return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned in ${root} instead` };
+        return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned at the root of its checkout instead` };
       }
       const within = path.relative(realRoot, realCwd);
       if (within.startsWith('..') || path.isAbsolute(within)) {
-        return { cwd: root, fallback: `role cwd "${rel}" resolves outside the team root (it is a symlink to ${realCwd}) — the seat was spawned in ${root} instead` };
+        return { cwd: root, fallback: `role cwd "${rel}" resolves outside the team root (it is a symlink to ${realCwd}) — the seat was spawned at the root of its checkout instead` };
       }
       // Compared by ROOT, not by name: two manifests can name the same root only
       // by hand-edit, while the reparenting case is precisely a DIFFERENT root
@@ -3925,7 +3937,7 @@ function createTicketMethods(deps, shared) {
       let owner = null;
       try { owner = resolveTeam(resolved); } catch { owner = null; }
       if (owner && path.resolve(owner.root) !== path.resolve(root)) {
-        return { cwd: root, fallback: `role cwd "${rel}" belongs to team "${owner.name}" (its own team.json at ${owner.root} owns that directory), so a seat there would join THAT team's board — the seat was spawned in ${root} instead` };
+        return { cwd: root, fallback: `role cwd "${rel}" belongs to team "${owner.name}" (its own team.json at ${owner.root} owns that directory), so a seat there would join THAT team's board — the seat was spawned at the root of its checkout instead` };
       }
       return { cwd: resolved, fallback: null };
     },
@@ -3973,15 +3985,10 @@ function createTicketMethods(deps, shared) {
           // sit here was honored verbatim on this path and overridden with a
           // warning on the review path.
           type: opener.type || 'claude',
-          // The REPO, not the worktree. The seat is TOLD where its tree is and goes
-          // there itself. Booting it in the worktree would bind the seat's whole
-          // identity — transcript, project root, team block, recent-cwd — to one
-          // branch's checkout, which is removed when the ticket's session is deleted.
-          //
-          // A role `cwd` moves this WITHIN the main checkout (team.root by
-          // default), never into the worktree: the property above is about which
-          // CHECKOUT the seat lives in, and it is unchanged by which subdirectory
-          // of that checkout the role names.
+          // Resolved against the MAIN checkout, and it must stay so: _resolveRoleCwd
+          // stats the directory and refuses one a nested team.json owns, neither of
+          // which is answerable about a tree that does not exist yet. A worktree
+          // dispatch re-roots this under its tree at the spawn site instead.
           cwd: roleCwd.cwd,
           // Why the cwd is not what the role asked for, or null. A key on the
           // shape rather than a second resolution at the call site: both spawn
@@ -4261,7 +4268,9 @@ function createTicketMethods(deps, shared) {
       const claimTree = (w) => {
         if (!w || !w.path) return;
         try {
-          getPersistence().setWorktree(seat.name, w);
+          // A spread, never a mutation of `w`: that object is also written onto the
+          // TICKET record, where `main` has no reader. resumeCwdOf is the reader.
+          getPersistence().setWorktree(seat.name, { ...w, ...(team.root ? { main: team.root } : {}) });
           // Canonically. A record written through another route (session:markWorktree,
           // a spawn-intent tree, one carried across a restart) can name the same
           // tree through a symlinked prefix (/tmp vs /private/tmp), and a raw string
@@ -4399,8 +4408,11 @@ function createTicketMethods(deps, shared) {
             if (e) linkWarn = ` — NOTE: ${e}; the seat starts without dependencies (require() and npm run build:web will fail there until the root has a node_modules)`;
           }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
+          // Not inside resolveSeatShape: the tree is minted above, after the shape
+          // is built, and the review path shares that resolver with no tree at all.
+          const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);
           const spawned = await this.create(
-            seat.name, shape.type, shape.cwd,
+            seat.name, shape.type, seatCwd,
             shape.extraArgs, null,
             shape.workspaceId, null, false, opener.proxy ?? null,
             shape.agents, shape.denyBuiltins,
@@ -4425,14 +4437,12 @@ function createTicketMethods(deps, shared) {
           // forever. A throw anywhere in that window used to leave exactly that state.
           claimTree(wt);
           this._sendToSession(seat.name, 'session:context-action', {
-            // shape.cwd, not team.root: this feeds the sidebar row's dataset.cwd,
-            // which is what "Reveal Working Directory in Finder" / "Open in
-            // Terminal" open. After a restart the row is rebuilt from the
-            // persistence record — which IS shape.cwd — so sending the root here
-            // makes the app disagree with itself across a restart, on exactly the
-            // seats a role cwd creates.
+            // The cwd create() actually got: this feeds the sidebar row's
+            // dataset.cwd, which "Reveal Working Directory in Finder" opens. After a
+            // restart the row is rebuilt from the persistence record — which IS this
+            // path — so anything else makes the app disagree with itself.
             action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
-            cwd: shape.cwd, backend: (this.sessions.get(seat.name) || {}).backend || null,
+            cwd: seatCwd, backend: (this.sessions.get(seat.name) || {}).backend || null,
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
             background: true,
           });

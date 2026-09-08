@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket seat now boots inside its own worktree instead of the shared checkout, so its shell starts where it works and it no longer loads the repo's local `.claude/CLAUDE.md` on every turn; a seat whose tree was removed by hand resumes in the shared checkout it came from instead of failing.
 - A seat granted the new privileged "Create teams" intent can mint a team from `[agent:team create <name> root:<dir>]` and a lead can hand off with `[agent:team set-lead <seat>]`, so an agent can bootstrap a team for another project end to end (create, gather, add roles) without the operator clicking through Create Team….
 
 ## 5.40.0 — 2026-09-08 — Codex seats pick their skills and plugins like Claude seats do

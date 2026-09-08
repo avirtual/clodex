@@ -521,13 +521,13 @@ template's `systemPromptFile` when the template names one, the role's `prompt`
 otherwise — and a role prompt that did not ride as the system prompt is appended
 after the team block by `_teamBlockFor` (session-manager.js), so nothing is
 dropped.
-The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
-`WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
-in the tree would bind its transcript, project root and team block to a checkout
-that is deleted with the session. The path is stored on the TICKET
-(`ticket.worktree`) so a replay can re-tell a respawned seat. The
-`[agent:spawn worktree:]` path is the other shape — there the seat's cwd IS the
-worktree, which is why membership is by repo.
+A worktree-dispatch seat's cwd IS its tree (`seatCwdInTree` re-roots a role area
+onto it), which is why team membership is by repo and not by path. The path is
+stored on the TICKET (`ticket.worktree`) so a replay can re-tell a respawned seat
+where it is, and on the SEAT's record with a `main` naming the shared checkout —
+`SessionManager.resumeCwdOf` falls back to it when the tree is gone, which is
+what keeps a resume out of ENOENT now that the seat lives in a checkout the
+accept teardown removes.
 
 ### Peering and remote
 

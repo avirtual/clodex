@@ -2131,7 +2131,7 @@ function registerIpcHandlers(deps) {
       await manager.create(
         entry.name,
         entry.type,
-        entry.cwd,
+        manager.resumeCwdOf(entry),
         entry.extraArgs || [],
         entry.sessionId,
         workspaceId,

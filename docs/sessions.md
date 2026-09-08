@@ -335,16 +335,35 @@ from content that parses, and a missing or unparseable file writes nothing and
 leaves any existing `.bak` alone. Load falls back to it only when
 sessions.json itself does not parse.
 
-A `worktree` pointer naming a tree that no longer exists is EXPECTED and is not
-swept. Three supported routes produce one: team-retire with archive on a dirty
-tree, the same on a tree it could not inspect, and the merge gate's
-not-merged arm followed by a later accept. Nothing reads the pointer in a way a
-missing tree breaks — all five respawn-from-record paths (retrySpawn, restore-on-
-launch, `restartSession`, `applySessionArgs`, the `[agent:context reload]`
-intent) spawn in the shared checkout the record names — `entry.cwd`, or
-`beforeKill.cwd` at applySessionArgs — never in `worktree.path` (pinned as a
-source-shape property by `test/resume-cwd-not-worktree.test.js`, whose row set
-is kept in step with `test/create-mint-census.test.js`);
+A ticket seat's `cwd` IS its worktree, and its record carries `worktree.main` —
+the shared checkout the tree was cut from. A `worktree` pointer naming a tree
+that no longer exists is EXPECTED and is not swept: team-retire with discard
+removes the tree, an operator can remove one by hand, team-retire with archive on
+a dirty or uninspectable tree keeps a record whose pointer outlives the checkout,
+and so does the merge gate's not-merged arm followed by a later accept. Every
+respawn-from-record path that can meet one (retrySpawn, restore-on-launch,
+`restartSession`, `applySessionArgs`, the `[agent:context reload]` intent)
+resolves its cwd through the ONE helper
+`SessionManager.resumeCwdOf(entry)`: the `cwd` when it is on disk, else
+`worktree.main` when THAT is on disk — logging one line and REWRITING the record
+to `{cwd: main}` with the now-unusable `worktree` pointer dropped — else the `cwd`
+unchanged, which is a pre-t752 record with nowhere better to go and lands in the
+failed-tab retry/forget UI. `rename` is the sixth respawn site and deliberately
+does NOT go through it: it refuses any record carrying a `worktree.path` outright,
+so it can never meet a stale one. Both halves are pinned by
+`test/resume-cwd-tree-fallback.test.js` (a source-shape pin that every site asks
+the helper, and a runtime pin of what it answers), whose row set is kept in step
+with `test/create-mint-census.test.js`.
+
+The fallback is WRITTEN to the record, not merely returned, and that is the
+load-bearing half. `retrySpawn` and restore-on-launch do not route through
+`kill()`, so the record survives a `create()` throw: a decision held only in the
+return value dies with the throw, and every retry afterwards resolves the vanished
+tree again — a permanent ENOENT behind the retry button. Persisted, the record is
+already repaired whether or not the spawn lands, and the next call takes the
+healthy-record arm instead of falling back a second time.
+
+Nothing else reads the pointer in a way a missing tree breaks:
 `_ticketTreeHolder` only scans live sessions; the ticket-dispatch mint's
 `claimTree` (team-tickets.js) clears any other record naming a path it mints —
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
@@ -360,7 +379,10 @@ evidence a session is dead (an unmounted volume or a moved repo reads
 identically), and dropping records on it is the pre-v0.5.3 "upgrade kills my
 agents" bug. Clearing only `worktree` while keeping the row is WORSE, not a
 compromise — see ALWAYS_PRESERVE in session-manager.js for why absent is the
-dangerous state.
+dangerous state. `resumeCwdOf` is not an exception to that: it drops the pointer
+only where it has a `main` to put in `cwd` at the same moment, so the record it
+leaves names a checkout that exists rather than nothing at all — and it acts on
+one record being resumed, never as a sweep over the store.
 
 The New Session dialog opens on Name / Type / Working directory / **Mode**;
 everything else lives in the collapsed **Advanced** section. Mode is a preset

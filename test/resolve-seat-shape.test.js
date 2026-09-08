@@ -843,7 +843,12 @@ function teamOnDisk(roles) {
   return { name: 'crew', lead: 'lead', root, roles };
 }
 
-test('role cwd: the ticket arm boots the seat in the role subdirectory — whole shape', () => {
+// The shape's cwd is resolved against the MAIN checkout on every arm, including a
+// worktree dispatch whose seat ends up in its tree: the resolver stats the
+// directory and asks resolveTeam who owns it, and the tree does not exist yet when
+// this runs. `_spawnTicketSeat` re-roots the answer onto the tree afterwards
+// (`seatCwdInTree`), which is where session-manager.test.js pins the joined path.
+test('role cwd: the ticket arm resolves the role subdirectory of the main checkout — whole shape', () => {
   const team = teamOnDisk({ hand: { dispatch: 'worktree', prompt: 'hand-brief', cwd: 'api' } });
   const m = managerWith([]);
   const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
@@ -885,7 +890,7 @@ test('role cwd: the ticket arm boots the seat in the role subdirectory — whole
   });
 });
 
-test('role cwd: a role WITHOUT one still boots at the team root — whole shape', () => {
+test('role cwd: a role WITHOUT one still resolves to the team root — whole shape', () => {
   // The control for the pin above. Same team, same everything, one field absent:
   // the difference between the two objects is the whole feature.
   const team = teamOnDisk({ hand: { dispatch: 'worktree', prompt: 'hand-brief' } });
@@ -992,7 +997,7 @@ test('role cwd: an ABSOLUTE cwd on disk cannot point a seat out of the project',
   const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
   assert.ok(shape.cwdFallback, 'ENTER: the absolute path was refused and reported');
   assert.match(shape.cwdFallback, /absolute/);
-  assert.strictEqual(shape.cwd, team.root, 'the seat boots at the team root, never at the absolute path');
+  assert.strictEqual(shape.cwd, team.root, 'the shape falls back to the team root, never to the absolute path');
 });
 
 test('role cwd: a `..` escape on disk cannot point a seat out of the project', () => {
