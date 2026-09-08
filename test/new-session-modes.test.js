@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
+const { capsFor } = require('../renderer/lib/provider-caps');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
 
@@ -103,7 +104,7 @@ const SKILL_DENY_CACHE = ['code-review', 'deep-research'];
 const BUILTIN_DENY_CACHE = ['Plan', 'statusline-setup'];
 
 function runApply(mode, { type = 'claude', catalogsFresh = false } = {}) {
-  const calls = { tools: [], skills: [], builtins: [], plugins: 0, intents: 0 };
+  const calls = { tools: [], skills: [], injectSkills: 0, builtins: [], plugins: 0, intents: 0 };
   const inputStripLevel = { value: 'untouched' };
   const inputAutoCompact = { checked: false };
   const inputNoWire = { checked: true };
@@ -124,9 +125,14 @@ function runApply(mode, { type = 'claude', catalogsFresh = false } = {}) {
     // directly would leave that snapshot unfilled.
     refreshNewSessionPlugins: () => { calls.plugins++; return Promise.resolve(); },
     refreshNewSessionIntents: () => { calls.intents++; },
+    refreshNewSessionInjectSkills: () => { calls.injectSkills++; },
     inputStripLevel, inputAutoCompact, inputNoWire,
     newSessionIsAgent: () => type === 'claude' || type === 'codex',
     inputProxyMode, inputProxyUrl,
+    // The REAL table, not a stub: which fields a mode writes is now the caps
+    // row's answer, so stubbing it would assert only that this file agrees
+    // with itself — and the codex subject below would stop meaning anything.
+    capsFor,
   };
   const names = Object.keys(env);
   const opts = JSON.stringify({ catalogsFresh });
@@ -212,9 +218,23 @@ test('custom applies nothing at all — a hand-configured form is never overwrit
 test('a non-claude type gets no claude-only writes, but still gets the proxy default', () => {
   const r = runApply('optimized', { type: 'codex' });
   assert.deepStrictEqual(r.calls.tools, [], 'no tool checklist exists for codex');
-  assert.deepStrictEqual(r.calls.skills, [], 'nor a skill checklist');
+  assert.deepStrictEqual(r.calls.skills, [], 'nor a skill ROSTER checklist');
   assert.strictEqual(r.inputStripLevel.value, 'untouched');
   assert.strictEqual(r.inputProxyMode.value, '', 'proxy is an agent-wide row, so it is still reset');
+  // t749: the two codex DOES honour. A mode that widened the section but left the
+  // container holding the previous claude selection is worse than a hidden one.
+  assert.strictEqual(r.calls.injectSkills, 1, 'the Custom skills checklist IS repainted for codex');
+  assert.strictEqual(r.calls.plugins, 1, 'and so is the Plugins one');
+});
+
+test('t749: a bash type gets nothing at all — the all-false row, not a missing one', () => {
+  const r = runApply('optimized', { type: 'bash' });
+  assert.deepStrictEqual(r.calls.tools, []);
+  assert.deepStrictEqual(r.calls.skills, []);
+  assert.strictEqual(r.calls.injectSkills, 0);
+  assert.strictEqual(r.calls.plugins, 0, 'an unlisted type reads all-false, never undefined');
+  assert.deepStrictEqual(r.calls.builtins, []);
+  assert.strictEqual(r.inputStripLevel.value, 'untouched');
 });
 
 // --- drift ----------------------------------------------------------------

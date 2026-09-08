@@ -284,11 +284,20 @@ test('t717: collectFormConfig collects intents and exec grants for both agent ty
   // The CLI-roster settings stay claude-only: codex consumes none of them, and
   // widening them would pretend to enforce something.
   for (const claudeOnly of ['collectAgentChecklist', 'collectBuiltinChecklist', 'collectToolChecklist',
-    'collectSkillChecklist', 'collectInjectChecklist']) {
+    'collectSkillChecklist']) {
     assert.ok(new RegExp(`type === 'claude' \\? ${claudeOnly}\\(`).test(fn),
       `${claudeOnly} must stay gated on claude alone`);
   }
   assert.match(fn, /stripLevel: type === 'claude' \?/, 'wire stripping stays claude-only');
+
+  // t749: the two codex HONOURS — its spawn arm already reads both, so a
+  // claude-only save was a silent default (every shipped plugin, no skills).
+  assert.match(fn, /injectSkills: caps\.injectSkills \? collectInjectChecklist\(inputInjectSkillsList\)/,
+    'a codex seat must be able to save the Custom skills its spawn arm delivers');
+  assert.match(fn, /const plugins = caps\.plugins\n\s*\? mergePlugins\(collectPluginChecklist\(inputPluginList\)/,
+    'and the plugins it already consumes, instead of defaultPluginTicks() behind its back');
+  assert.ok(!/type === 'claude' \? collectInjectChecklist/.test(fn));
+  assert.ok(!/const plugins = type === 'claude'/.test(fn));
 });
 
 test('t717: the Edit dialog draws the intents and exec sections for a codex seat', () => {
@@ -306,10 +315,10 @@ test('t717: the Edit dialog draws the intents and exec sections for a codex seat
   assert.ok(!/argsIntentsSection\.style\.display = isClaude \?/.test(body));
   assert.ok(!/const isExecEditable = isClaude &&/.test(body));
 
-  // Unwidened, deliberately: codex reads none of these.
-  assert.match(body, /argsToolsSection\.style\.display = isClaude \? '' : 'none'/);
-  assert.match(body, /argsAgentsRow\.style\.display = isClaude \? '' : 'none'/);
-  assert.match(body, /const isPluginsEditable = isClaude && !argsSource/);
+  // Unwidened, deliberately: codex reads none of these. Gated through the t749
+  // caps table, whose codex row pins both to false (test/provider-caps.test.js).
+  assert.match(body, /argsToolsSection\.style\.display = caps\.tools \? '' : 'none'/);
+  assert.match(body, /argsAgentsRow\.style\.display = caps\.agents \? '' : 'none'/);
 });
 
 test('t717: the New Session type-change handler paints both checklists for codex', () => {
@@ -317,13 +326,13 @@ test('t717: the New Session type-change handler paints both checklists for codex
   const at = src.indexOf('function applyTypeDefaults(');
   assert.ok(at > 0, 'ENTER: applyTypeDefaults was located');
   const fn = src.slice(at, src.indexOf('\nlet lastToolCheck', at));
-  assert.ok(fn.includes('claudeOnly'), 'ENTER: the function body really was captured');
+  assert.ok(fn.includes('const caps = capsFor(type)'), 'ENTER: the function body really was captured');
 
   // A section widened but never repainted is worse than a hidden one: it shows
   // whatever a previous claude selection left in the container.
   assert.match(fn, /if \(agentType && !skipAsyncRefresh\) \{ refreshNewSessionExecCommands\(\); refreshNewSessionPlugins\(\)\.then\(\(\) => refreshNewSessionIntents\(\)\); \}/,
     'both checklists repaint on a change to EITHER agent type');
-  assert.ok(!/claudeOnly && !skipAsyncRefresh[^\n]*refreshNewSessionIntents/.test(fn),
+  assert.ok(!/claudeOnly/.test(fn),
     'and no longer only for claude');
   assert.match(fn, /if \(otherSection\) otherSection\.style\.display = agentType \? '' : 'none'/,
     'the section holding those two rows opens for codex');
@@ -333,8 +342,9 @@ test('t717: the New Session type-change handler paints both checklists for codex
   const guarded = src.slice(src.indexOf('function newSessionIsAgent()'));
   assert.match(guarded, /async function refreshNewSessionExecCommands[\s\S]{0,120}if \(!newSessionIsAgent\(\)\) return;/);
   assert.match(guarded, /async function refreshNewSessionIntents[\s\S]{0,120}if \(!newSessionIsAgent\(\)\) return;/);
-  // A codex seat draws no plugin checklist, so the intent catalog must be asked
-  // about what collectFormConfig will SAVE, not about an unpainted container.
+  // A seat with no plugin checklist saves defaultPluginTicks(), so the intent
+  // catalog must be asked about what collectFormConfig will SAVE, not about an
+  // unpainted container. Both arms must therefore read the same predicate.
   assert.match(guarded, /getIntentCatalog\(null, newSessionPluginTicks\(\)\)/);
-  assert.match(guarded, /inputType\.value === 'claude' \? collectPluginChecklist\(inputPluginList\) : defaultPluginTicks\(\)/);
+  assert.match(guarded, /capsFor\(inputType\.value\)\.plugins \? collectPluginChecklist\(inputPluginList\) : defaultPluginTicks\(\)/);
 });

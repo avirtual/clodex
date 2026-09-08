@@ -1105,7 +1105,12 @@ and are not, which is why the judgement worth testing is pushed down here.
   `{ok:false}` create reply closes the dialog; it never closes on a refusal, so
   a configured form survives one),
   **tool-gate.js** (whether Create is allowed given the tools:check report, the
-  inline notice, and the missing-CLI overlay plan), **placement.js** (the "Run
+  inline notice, and the missing-CLI overlay plan), **provider-caps.js** (which
+  Advanced sections a CLI's seat may be shown, in the new-session dialog and in
+  Edit Session alike — `capsFor(type)` answers a whole-object row and an unlisted
+  type reads all-false; a third CLI is a row, not a new gate. Its `injectSkills`
+  column may not exceed `skill-delivery.js`'s adapters, since the dialog must not
+  offer skills main cannot deliver), **placement.js** (the "Run
   in" selector: `'host'` or a sandbox BOX ID), **prefs-gate.js** (which
   Preferences controls are inert given dialog state, plus the reason line),
   **plugin-source-dialog.js** (Manage Plugins ▸ Install from GitHub… and a

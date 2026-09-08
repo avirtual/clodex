@@ -82,6 +82,7 @@ const {
   setPluginCatalogCache, getPluginCatalogCache,
 } = checklists;
 const { mergePlugins, pluginsForUnlistedPlugins } = require('../plugin-api');
+const { capsFor } = require('../renderer/lib/provider-caps');
 
 // One statement of shipped source, captured to its first statement terminator.
 function extract(re, what) {
@@ -122,7 +123,7 @@ function snapshotFrom(stmt, varName) {
 
 test('t668: the New Session save keeps a plugin enabled between draw and save', () => withDom(() => {
   const stmt = extract(
-    /\n(  const plugins = type === 'claude'[\s\S]*?;)\n/,
+    /\n(  const plugins = caps\.plugins[\s\S]*?;)\n/,
     "collectFormConfig's plugins expression",
   );
   assert.match(stmt, /pluginsForUnlistedPlugins\(/, 'ENTER: the captured statement is the carry-forward one');
@@ -146,7 +147,7 @@ test('t668: the New Session save keeps a plugin enabled between draw and save', 
   setPluginCatalogCache(REFILLED);
 
   const saved = run(stmt, {
-    type: 'claude',
+    caps: capsFor('claude'),
     mergePlugins,
     collectPluginChecklist,
     inputPluginList,
@@ -163,7 +164,7 @@ test('t668: the New Session save keeps a plugin enabled between draw and save', 
   // pin above is not satisfied by a collect that carries everything.
   for (const row of inputPluginList.children) for (const c of row.children) if (c.type === 'checkbox') c.checked = false;
   const unticked = run(stmt, {
-    type: 'claude',
+    caps: capsFor('claude'),
     mergePlugins,
     collectPluginChecklist,
     inputPluginList,

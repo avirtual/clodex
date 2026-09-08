@@ -7230,11 +7230,11 @@ body {
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="args-skills-list" class="agent-checklist"></div>
           <span class="hint-text">Unchecked skills are turned off for this session (<code>skillOverrides</code>), reclaiming their per-turn context. Skills disabled by a lower settings layer are shown locked, with their source. Like subagents, a skill change takes effect only in a NEW conversation — tick "Restart session now" to apply immediately (this clears the session's history).</span>
-          <div id="args-inject-skills-section" style="display:none;">
-            <div class="popover-subhead">Inject from Skills Library</div>
-            <div id="args-inject-skills-list" class="agent-checklist"></div>
-            <span class="hint-text">Checked library skills are injected into this session (via <code>--plugin-dir</code>). Also applies only in a new conversation.</span>
-          </div>
+        </label>
+        <label id="args-inject-skills-section" style="display:none;">
+          <div class="popover-subhead">Inject from Skills Library</div>
+          <div id="args-inject-skills-list" class="agent-checklist"></div>
+          <span class="hint-text">Checked library skills are injected into this session (via <code>--plugin-dir</code>). Also applies only in a new conversation.</span>
         </label>
       </details>
       <details id="args-exec-section" class="dialog-section">
@@ -21639,6 +21639,41 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/provider-caps.js
+  var require_provider_caps = __commonJS({
+    "renderer/lib/provider-caps.js"(exports, module) {
+      "use strict";
+      var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire"];
+      var PROVIDER_CAPS = {
+        claude: {
+          injectSkills: true,
+          skillRoster: true,
+          plugins: true,
+          agents: true,
+          tools: true,
+          strip: true,
+          autoCompact: true,
+          noWire: true
+        },
+        codex: {
+          injectSkills: true,
+          skillRoster: false,
+          plugins: true,
+          agents: false,
+          tools: false,
+          strip: false,
+          autoCompact: false,
+          noWire: false
+        }
+      };
+      var NO_CAPS = Object.freeze(Object.fromEntries(CAP_KEYS.map((k) => [k, false])));
+      function capsFor(type) {
+        return PROVIDER_CAPS[type] || NO_CAPS;
+      }
+      module.exports = { PROVIDER_CAPS, CAP_KEYS, capsFor };
+    }
+  });
+
   // team-root-expand.js
   var require_team_root_expand = __commonJS({
     "team-root-expand.js"(exports, module) {
@@ -34974,6 +35009,7 @@ ${detail}` });
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
       var { splitModelArg, withModelArg } = require_args_model();
+      var { capsFor } = require_provider_caps();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
       var { createMirrorLatch } = require_mirror_latch();
@@ -36387,20 +36423,23 @@ ${detail}` });
         systemPromptRow.style.display = agentType ? "" : "none";
         if (appendPromptsRow) appendPromptsRow.style.display = agentType ? "" : "none";
         if (!agentType) inputSystemPrompt.value = "";
-        const claudeOnly = type === "claude";
-        for (const sec of [toolsSection, skillsSection]) {
-          if (sec) sec.style.display = claudeOnly ? "" : "none";
-        }
+        const caps = capsFor(type);
+        if (toolsSection) toolsSection.style.display = caps.tools ? "" : "none";
+        if (skillsSection) skillsSection.style.display = caps.injectSkills || caps.skillRoster ? "" : "none";
+        if (skillsRow) skillsRow.style.display = caps.skillRoster ? "" : "none";
+        if (injectSkillsRow) injectSkillsRow.style.display = caps.injectSkills ? "" : "none";
         if (otherSection) otherSection.style.display = agentType ? "" : "none";
-        for (const row of [agentsRow, pluginsRow, stripRow, autoCompactRow, noWireRow]) {
-          if (row) row.style.display = claudeOnly ? "" : "none";
-        }
+        if (agentsRow) agentsRow.style.display = caps.agents ? "" : "none";
+        if (pluginsRow) pluginsRow.style.display = caps.plugins ? "" : "none";
+        if (stripRow) stripRow.style.display = caps.strip ? "" : "none";
+        if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? "" : "none";
+        if (noWireRow) noWireRow.style.display = caps.noWire ? "" : "none";
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
-        if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
-        if (claudeOnly && !skipAsyncRefresh) {
-          refreshNewSessionSkills(modeSkillDenySet());
-          refreshNewSessionInjectSkills();
-          refreshNewSessionTools(modeToolDenySet());
+        if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
+        if (!skipAsyncRefresh) {
+          if (caps.skillRoster) refreshNewSessionSkills(modeSkillDenySet());
+          if (caps.injectSkills) refreshNewSessionInjectSkills();
+          if (caps.tools) refreshNewSessionTools(modeToolDenySet());
         }
         if (agentType && !skipAsyncRefresh) {
           refreshNewSessionExecCommands();
@@ -36798,17 +36837,17 @@ ${detail}` });
       function applyModeFields(mode, { catalogsFresh = false } = {}) {
         if (mode !== "standard" && mode !== "optimized") return;
         const optimized = mode === "optimized";
-        if (inputType.value === "claude") {
-          if (!catalogsFresh) {
-            refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : /* @__PURE__ */ new Set());
-            refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : /* @__PURE__ */ new Set());
-            refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
-          }
-          renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : /* @__PURE__ */ new Set());
-          if (inputStripLevel) inputStripLevel.value = optimized ? "2" : "0";
-          if (inputAutoCompact) inputAutoCompact.checked = true;
-          if (inputNoWire) inputNoWire.checked = false;
+        const caps = capsFor(inputType.value);
+        if (!catalogsFresh) {
+          if (caps.tools) refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : /* @__PURE__ */ new Set());
+          if (caps.skillRoster) refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : /* @__PURE__ */ new Set());
+          if (caps.injectSkills) refreshNewSessionInjectSkills();
+          if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         }
+        if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : /* @__PURE__ */ new Set());
+        if (caps.strip && inputStripLevel) inputStripLevel.value = optimized ? "2" : "0";
+        if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
+        if (caps.noWire && inputNoWire) inputNoWire.checked = false;
         if (newSessionIsAgent()) setProxyControls(inputProxyMode, inputProxyUrl, null, inputProxyUrl.value);
       }
       if (advancedSection) {
@@ -36833,7 +36872,7 @@ ${detail}` });
         return { plugins: collectPluginChecklist(inputPluginList) };
       }
       async function refreshNewSessionInjectSkills(enabledSet = /* @__PURE__ */ new Set()) {
-        if (inputType.value !== "claude") return;
+        if (!capsFor(inputType.value).injectSkills) return;
         setSkillLibCache(await window.api.listSkillLib() || []);
         renderInjectChecklist(inputInjectSkillsList, enabledSet, null, newSessionSeat());
       }
@@ -36841,7 +36880,7 @@ ${detail}` });
         return inputType.value === "claude" || inputType.value === "codex";
       }
       function newSessionPluginTicks() {
-        return inputType.value === "claude" ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
+        return capsFor(inputType.value).plugins ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
       }
       async function refreshNewSessionExecCommands(enabledSet = /* @__PURE__ */ new Set()) {
         if (!newSessionIsAgent()) return;
@@ -36852,17 +36891,18 @@ ${detail}` });
       var newSessionPluginsRendered = [];
       async function refreshNewSessionPlugins(pluginsList2) {
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
-        if (inputType.value !== "claude") return;
+        if (!capsFor(inputType.value).plugins) return;
         newSessionPluginsPersisted = Array.isArray(pluginsList2) ? pluginsList2 : null;
         newSessionPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
         renderPluginChecklist(inputPluginList, Array.isArray(pluginsList2) ? pluginsList2 : defaultPluginTicks());
         repaintNewSessionBundleRows();
       }
       function repaintNewSessionBundleRows() {
-        if (inputType.value !== "claude") return;
+        if (!newSessionIsAgent()) return;
+        const caps = capsFor(inputType.value);
         const seat = newSessionSeat();
-        repaintBundleSections(inputAgentsList, "agents", seat);
-        repaintBundleSections(inputInjectSkillsList, "skills", seat);
+        if (caps.agents) repaintBundleSections(inputAgentsList, "agents", seat);
+        if (caps.injectSkills) repaintBundleSections(inputInjectSkillsList, "skills", seat);
         repaintBundleSections(
           inputAppendList,
           "prompts/append",
@@ -37209,6 +37249,8 @@ ${detail}` });
           await refreshNewSessionPlugins(t.plugins);
           await refreshNewSessionIntents(t.intents);
         }
+        const tplCaps = capsFor(t.type);
+        if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
         if (t.type === "claude") {
           renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
           fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || "", newSessionSeat());
@@ -37216,7 +37258,6 @@ ${detail}` });
           renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
           await refreshNewSessionTools(new Set(t.disabledTools || []));
           await refreshNewSessionSkills(new Set(t.disabledSkills || []));
-          await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
           if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
           if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
           if (inputNoWire) inputNoWire.checked = t.noWire === true;
@@ -37270,8 +37311,9 @@ ${detail}` });
       function collectFormConfig() {
         const type = inputType.value;
         const agentType = type === "claude" || type === "codex";
+        const caps = capsFor(type);
         const intents = agentType ? collectIntentChecklist(inputIntentList) : null;
-        const plugins = type === "claude" ? mergePlugins(
+        const plugins = caps.plugins ? mergePlugins(
           collectPluginChecklist(inputPluginList),
           pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered)
         ) : defaultPluginTicks();
@@ -37293,7 +37335,7 @@ ${detail}` });
           denyBuiltins: type === "claude" ? collectBuiltinChecklist(inputBuiltinsList) : [],
           disabledTools: type === "claude" ? collectToolChecklist(inputToolsList) : [],
           disabledSkills: type === "claude" ? collectSkillChecklist(inputSkillsList) : [],
-          injectSkills: type === "claude" ? collectInjectChecklist(inputInjectSkillsList) : [],
+          injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
           stripLevel: type === "claude" ? Number(inputStripLevel && inputStripLevel.value) || 0 : 0,
           systemPromptFile: agentType ? inputSystemPrompt.value || null : null,
           appendPromptFiles: agentType ? collectAppendChecklist(inputAppendList) : []
@@ -41388,6 +41430,7 @@ ${res.stderr}` : "");
       var argsAgentsAuto = [];
       var argsPluginsPersisted = null;
       var argsPluginsRendered = [];
+      var argsSkillsDisabledPersisted = [];
       var argsSkillsInjectPersisted = [];
       var argsSkillsInjectRendered = [];
       var argsSkillsInjectAuto = [];
@@ -41438,9 +41481,10 @@ ${res.stderr}` : "");
         argsAppendRow.style.display = isAgent ? "" : "none";
         argsAppendSection.style.display = isAgent ? "" : "none";
         const isClaude = res.type === "claude";
-        argsAgentsRow.style.display = isClaude ? "" : "none";
+        const caps = capsFor(res.type);
+        argsAgentsRow.style.display = caps.agents ? "" : "none";
         argsOtherSection.style.display = isClaude ? "" : "none";
-        const isPluginsEditable = isClaude && !argsSource;
+        const isPluginsEditable = caps.plugins && !argsSource;
         argsPluginsSection.style.display = isPluginsEditable ? "" : "none";
         setPluginCatalogCache(await window.api.pluginCatalog() || []);
         argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
@@ -41454,8 +41498,8 @@ ${res.stderr}` : "");
         argsAgentsRendered = (agentLib || []).map((a) => a.name);
         argsAgentsAuto = [...argsAuto];
         renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
-        argsToolsRow.style.display = isClaude ? "" : "none";
-        argsToolsSection.style.display = isClaude ? "" : "none";
+        argsToolsRow.style.display = caps.tools ? "" : "none";
+        argsToolsSection.style.display = caps.tools ? "" : "none";
         setClaudeToolsCache(settings?.claudeTools || []);
         renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
         argsIntentsSection.style.display = isAgent ? "" : "none";
@@ -41467,20 +41511,24 @@ ${res.stderr}` : "");
           setExecLibCache(await window.api.listExecCommands() || []);
           renderExecChecklist(argsExecList, new Set(res.execCommands || []));
         }
-        const isSkillsEditable = isClaude && !!argsSource && !!skillCatalog;
+        const isSkillsEditable = (caps.injectSkills || caps.skillRoster) && !!argsSource && !!skillCatalog;
         argsSkillsSection.style.display = isSkillsEditable ? "" : "none";
+        argsSkillsRow.style.display = isSkillsEditable && caps.skillRoster ? "" : "none";
         if (isSkillsEditable) {
           const sc = skillCatalog;
-          renderSkillChecklist(
-            argsSkillsList,
-            sc.names || [],
-            new Set(sc.disabledSkills || []),
-            sc.effective || {},
-            { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope }
-          );
+          argsSkillsDisabledPersisted = sc.disabledSkills || [];
+          if (caps.skillRoster) {
+            renderSkillChecklist(
+              argsSkillsList,
+              sc.names || [],
+              new Set(sc.disabledSkills || []),
+              sc.effective || {},
+              { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope }
+            );
+          }
           setSkillLibCache(sc.skillLib || []);
           const seat = argsSeat();
-          if ((sc.skillLib || []).length || seat && bundleSectionsOf("skills").length) {
+          if (caps.injectSkills && ((sc.skillLib || []).length || seat && bundleSectionsOf("skills").length)) {
             const auto = skillAutoSet(sc.skillLib, name);
             renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto, seat);
             argsSkillsInjectPersisted = sc.injectSkills || [];
@@ -41541,7 +41589,7 @@ ${res.stderr}` : "");
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : collectExecChecklist(argsExecList);
         const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
         const skillsShown = argsSkillsSection.style.display !== "none";
-        const disabledSkills = skillsShown ? collectSkillChecklist(argsSkillsList) : void 0;
+        const disabledSkills = !skillsShown ? void 0 : argsSkillsRow.style.display === "none" ? argsSkillsDisabledPersisted : collectSkillChecklist(argsSkillsList);
         const injectSkills = !skillsShown || argsInjectSkillsSection.style.display === "none" ? void 0 : reconcilePartialSelection(
           argsSkillsInjectPersisted,
           argsSkillsInjectRendered,

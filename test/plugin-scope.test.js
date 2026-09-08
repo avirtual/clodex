@@ -1293,16 +1293,16 @@ test('ROUND-3 NIT5: the Plugins section is hidden on a PEER row, exactly as exec
   const body = src.slice(at, src.indexOf('\nasync function ', at + 10));
 
   // The mirrored half is `!argsSource`, not the type test: t717 widened exec to
-  // codex (which consumes the grants) while plugins stays claude-only, so the two
-  // agree on the PEER hide and are free to differ on type.
+  // codex (which consumes the grants) and t749 widened plugins to it too (via the
+  // caps table), so the two agree on the PEER hide and stay free to differ on type.
   assert.match(body, /isExecEditable = isAgent && !argsSource/,
     'ENTER: exec\'s peer hide is the shape being mirrored — if it changed, this test is comparing against nothing');
-  assert.match(body, /isPluginsEditable = isClaude && !argsSource/,
+  assert.match(body, /isPluginsEditable = caps\.plugins && !argsSource/,
     'the Plugins section takes the same peer-row hide as exec');
   assert.match(body, /argsPluginsSection\.style\.display = isPluginsEditable \? '' : 'none'/,
     'and the section is actually hidden by it');
-  assert.strictEqual(/argsPluginsSection\.style\.display = isClaude \?/.test(body), false,
-    'never on isClaude alone, which draws it for a peer row whose save silently discards the untick');
+  assert.strictEqual(/argsPluginsSection\.style\.display = caps\.plugins \?/.test(body), false,
+    'never on the cap alone, which draws it for a peer row whose save silently discards the untick');
 
   // The other half of the claim, and the reason hiding is the right fix rather
   // than sending the field: the peer save branch must NOT carry `plugins`.
@@ -1378,13 +1378,13 @@ test('ROUND-3 MF2: refreshNewSessionPlugins FETCHES the catalog before the type 
   const body = src.slice(at, end);
 
   const fetchAt = body.indexOf('setPluginCatalogCache(');
-  const guardAt = body.indexOf("!== 'claude'");
+  const guardAt = body.indexOf('capsFor(inputType.value).plugins');
   assert.ok(fetchAt > 0, 'ENTER: the fetch is in this body at all — moving it out would make the order assertion vacuous');
   assert.ok(guardAt > 0, 'ENTER: and so is the type guard, or there is no ordering to pin');
   assert.ok(fetchAt < guardAt,
-    'the catalog fetch must run BEFORE the non-claude early return: defaultPluginTicks() answers off '
-    + 'this cache for every session type, and a dialog opened already typed non-claude returns at the '
-    + 'guard — leaving [] , which persists that seat closed to every plugin with no UI to reopen it');
+    'the catalog fetch must run BEFORE the early return: defaultPluginTicks() answers off '
+    + 'this cache for every session type, and a dialog opened already typed with no Plugins section '
+    + 'returns at the guard — leaving [] , which persists that seat closed to every plugin with no UI to reopen it');
 });
 
 // ── NIT: registering after deactivate must refuse, not silently globalize ────
