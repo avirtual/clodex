@@ -168,7 +168,7 @@ function mkManager({ units = [], extraDeps = {} } = {}) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     setupClaudeHook: () => path.join(root, 'settings.json'),
     setupCodexHook: () => {},
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
     writeClaudeDigestFile: () => true,
     buildIpcPrompt: () => '',
     bakePrompt: () => '',   // written to disk by create(); null throws in writeFileSync
@@ -218,7 +218,7 @@ function mkManager({ units = [], extraDeps = {} } = {}) {
     InjectQueue: require('../inject-queue').InjectQueue,
     isInjectInFlight: require('../inject-queue').isInjectInFlight,
     canFireCompact: require('../inject-queue').canFireCompact,
-    writeSkillPlugin: () => {},
+    deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     whichBin: () => null,
     codexStatusLineArg: () => [],
     mergeCodexInstructions: (a) => ({ cleaned: [...a], append: null }),

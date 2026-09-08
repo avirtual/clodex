@@ -372,7 +372,7 @@ function createSessionManager(deps) {
     classifyNotification,
     cleanupClaudeHook,
     cleanupCodexHook,
-    cleanupSkillPlugin,
+    cleanupSkills,
     cleanupAgentPlugin,
     effectiveInjectedSkills,
     effectiveInjectedAgents,
@@ -479,7 +479,8 @@ function createSessionManager(deps) {
     writeClaudeDigestFile,
     readVoiceMode,
     writeVoiceMode,
-    writeSkillPlugin,
+    deliverSkills,
+    skillDeliveryProviders,
     writeAgentPlugin,
     writeBundlePlugins,
     getPluginBundles,
@@ -1372,6 +1373,22 @@ function createSessionManager(deps) {
       // a toast is not visible to the agent that asked for the spawn.
       if (missingPrompt) warnings.push(missingPrompt);
 
+      // One list, both arms: the set a provider adapter is asked to deliver is
+      // also the set unresolvedSubagentRefs scans, so a skill that reached the
+      // seat and a skill that was checked for dangling refs cannot diverge.
+      const librarySkills = skillDeliveryProviders().includes(type)
+        ? effectiveInjectedSkills(name, injectSkills).map((rec) => ({ name: rec.name, content: rec.content }))
+        : [];
+      // The plugin-owned half of the same set. Claude scaffolds each bundle as
+      // its own --plugin-dir (its agents ride the same dir), so the claude
+      // adapter is handed the library records ONLY and the bundle WRITE stays
+      // in the claude arm; codex has no plugin dir to ride, so its adapter is
+      // handed both and nothing calls writeBundles.
+      const seatBundles = () => (bundlesFor() || [])
+        .filter((b) => seatHasPlugin(b.id, Array.isArray(plugins) ? plugins : null, b.shipped));
+      const bundleSkills = (wanted) => (wanted || []).flatMap(
+        (b) => (b.skills || []).map((s) => ({ name: `${b.id}:${s.name}`, content: s.content })));
+
       switch (type) {
         case 'claude': {
           cmd = 'claude';
@@ -1481,18 +1498,11 @@ function createSessionManager(deps) {
             cleanupAgentPlugin(name);
           }
           if (!userPluginDir) {
-            const pluginDir = writeSkillPlugin(name, injectSkills);
-            if (pluginDir) args.push('--plugin-dir', pluginDir);
+            const delivery = deliverSkills('claude', name, librarySkills);
+            if (delivery) args.push(...delivery.args);
+            for (const rec of librarySkills) injectedSkills.push({ ...rec });
             try {
-              for (const rec of effectiveInjectedSkills(name, injectSkills)) {
-                injectedSkills.push({ name: rec.name, content: rec.content });
-              }
-            } catch {}
-            try {
-              const seatPlugins = Array.isArray(plugins) ? plugins : null;
-              const wanted = (bundlesFor() || [])
-                .filter((b) => seatHasPlugin(b.id, seatPlugins, b.shipped));
-              for (const b of writeBundles(name, wanted)) {
+              for (const b of writeBundles(name, seatBundles())) {
                 args.push('--plugin-dir', b.dir);
                 for (const s of b.skills) injectedSkills.push({ name: `${b.id}:${s.name}`, content: s.content });
                 for (const a of b.agents) injectedAgents.push({ ...a, qualified: `${b.id}:${a.name}`, bundle: true });
@@ -1501,7 +1511,7 @@ function createSessionManager(deps) {
               warnings.push(`Plugin-owned skills and agents could not be scaffolded for this session: ${(e && e.message) || e}`);
             }
           } else {
-            cleanupSkillPlugin(name);
+            cleanupSkills('claude', name);
           }
           // The CLI's own warning for three of these goes to a log the
           // operator doesn't read, and initialPrompt gets none at all.
@@ -1611,8 +1621,17 @@ function createSessionManager(deps) {
           }
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
+          // Codex 0.153.4 has no per-process skill root, so the catalog is the
+          // delivery: the files are materialized under the seat's own dir and
+          // the seat is told where they are. Above teamBlock because the team
+          // block is the last thing in the file by construction elsewhere.
+          const codexSkills = deliverSkills('codex', name, [...librarySkills, ...bundleSkills(seatBundles())]);
+          const codexBody = codexSkills && codexSkills.instructions
+            ? `${merged}\n\n${codexSkills.instructions}`
+            : merged;
+          if (codexSkills) args.push(...codexSkills.args);
           const instructionsPath = pathFor(REGISTRY_DIR, name, 'instructions');
-          fs.writeFileSync(instructionsPath, teamBlock ? `${merged}\n\n${teamBlock}\n` : merged, { mode: 0o600 });
+          fs.writeFileSync(instructionsPath, teamBlock ? `${codexBody}\n\n${teamBlock}\n` : codexBody, { mode: 0o600 });
           args.push('-c', `model_instructions_file=${instructionsPath}`);
           if (proxyBase && !args.some(a => a.startsWith('openai_base_url='))) {
             args.push('-c', `openai_base_url=${proxyBase}/agent/${proxyAgent || name}/openai/v1`);
@@ -3655,8 +3674,9 @@ function createSessionManager(deps) {
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
       if (s.transport) s.transport.stop();
       if (s.agentType) registry.unregister(name);
-      if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupSkillPlugin(name); cleanupAgentPlugin(name); }
+      if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupAgentPlugin(name); }
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
+      if (s.agentType) cleanupSkills(s.agentType, name);
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());
       try { this._intentDeduper.prune(live); this._activity.prune(live); } catch {}

@@ -15,6 +15,7 @@ const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { confine } = require('./path-confine');
+const { createSkillDelivery } = require('./skill-delivery');
 const { teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
@@ -613,42 +614,6 @@ function effectiveInjectedSkills(name, injectSkills) {
   return effective.map((n) => byName.get(n)).filter(Boolean);
 }
 
-// Scaffold the per-session injection plugin from the enabled skill names and
-// return its directory (for --plugin-dir), or null when nothing is injected.
-// The dir is rebuilt from scratch each spawn so a removed/edited library skill
-// can't linger. Writes only under ~/.clodex — never the repo or ~/.claude.
-function writeSkillPlugin(name, injectSkills) {
-  const records = effectiveInjectedSkills(name, injectSkills);
-  const plugin = buildSkillPlugin(records.map((s) => s.name), records, SKILL_PLUGIN_NAME);
-  // The rmSync below is RECURSIVE and fires on every claude spawn, before the
-  // no-skills bail — so `dir` is the highest-consequence join in the app, and
-  // it must be a confined child of SKILL_PLUGINS_DIR or that delete lands on
-  // ~/.clodex (name `..`) or $HOME (name `../..`). The session-name gates
-  // upstream are charset filters and never established this.
-  const dir = confine(SKILL_PLUGINS_DIR, name);
-  if (dir === null) throw new Error(`invalid session name: ${name}`);
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-  if (!plugin) return null;
-  const manifestDir = path.join(dir, '.claude-plugin');
-  ensureDir(manifestDir);
-  fs.writeFileSync(path.join(manifestDir, 'plugin.json'), JSON.stringify(plugin.manifest, null, 2), { mode: 0o600 });
-  for (const s of plugin.skills) {
-    const sdir = path.join(dir, 'skills', s.name);
-    ensureDir(sdir);
-    fs.writeFileSync(path.join(sdir, 'SKILL.md'), s.skillMd, { mode: 0o600 });
-  }
-  return dir;
-}
-
-function cleanupSkillPlugin(name) {
-  // Same recursive delete on the teardown path — confined for the same reason.
-  // Silent on a refused name (teardown has no caller to tell), unlike
-  // writeSkillPlugin, where a refusal must abort the spawn.
-  const dir = confine(SKILL_PLUGINS_DIR, name);
-  if (dir === null) return;
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-}
-
 // Mirrors effectiveInjectedSkills. The spawn-time reference check depends on
 // this being the set actually SCAFFOLDED, not the set requested.
 function effectiveInjectedAgents(name, agents) {
@@ -664,10 +629,10 @@ function effectiveInjectedAgents(name, agents) {
 function writeAgentPlugin(name, agents) {
   const records = effectiveInjectedAgents(name, agents);
   const plugin = buildAgentPlugin(records.map((a) => a.name), records, AGENT_PLUGIN_NAME);
-  // Second instance of writeSkillPlugin's hazard: the rmSync below is RECURSIVE
-  // and fires on every claude spawn, before the no-agents bail, so `dir` must be
-  // a confined child of AGENT_PLUGINS_DIR or the delete lands on ~/.clodex
-  // (name `..`) or $HOME (`../..`).
+  // The rmSync below is RECURSIVE and fires on every claude spawn, before the
+  // no-agents bail, so `dir` must be a confined child of AGENT_PLUGINS_DIR or
+  // the delete lands on ~/.clodex (name `..`) or $HOME (`../..`). The
+  // session-name gates upstream are charset filters and never established this.
   const dir = confine(AGENT_PLUGINS_DIR, name);
   if (dir === null) throw new Error(`invalid session name: ${name}`);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
@@ -685,7 +650,7 @@ function writeAgentPlugin(name, agents) {
 
 function cleanupAgentPlugin(name) {
   // Same recursive delete on the teardown path — confined for the same reason,
-  // and silent on a refused name, exactly as cleanupSkillPlugin.
+  // and silent on a refused name: teardown has no caller to tell.
   const dir = confine(AGENT_PLUGINS_DIR, name);
   if (dir === null) return;
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
@@ -814,8 +779,17 @@ function randBase36(len) {
 const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('./ctx-reminder');
 const { bakePrompt, promptCacheDir, readCache } = require('./ipc-prompt-cache');
 const { enqueueNotice, versionNoticeFor, clearNotices } = require('./notice-queue');
-const { buildSkillPlugin, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
+const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
 const { classifySkillRoster, emptyRoster, listedRosterNames } = require('./skill-roster');
+// Below the skills-util require, not up by SKILL_PLUGINS_DIR: the deps object
+// reads buildSkillPlugin/skillMd at construction, and a const destructure is in
+// its temporal dead zone until this line runs.
+const skillDelivery = createSkillDelivery({
+  fs, path, confine, ensureDir, SKILL_PLUGINS_DIR, SKILL_PLUGIN_NAME, buildSkillPlugin, skillMd, parseSkillFrontmatter,
+});
+const deliverSkills = (provider, name, records) => skillDelivery.deliver(provider, name, records);
+const cleanupSkills = (provider, name) => skillDelivery.cleanup(provider, name);
+const skillDeliveryProviders = () => skillDelivery.providers();
 const { unionEnabled } = require('./scope-util');
 const { sshRun } = require('./ssh-run');
 const { probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, homeRelativize, resolveDeployFolder } = require('./peer-deploy');
@@ -1114,7 +1088,7 @@ const SessionManager = createSessionManager({
     classifyNotification,
     cleanupClaudeHook,
     cleanupCodexHook,
-    cleanupSkillPlugin,
+    cleanupSkills,
     cleanupAgentPlugin,
     effectiveInjectedSkills,
     effectiveInjectedAgents,
@@ -1224,7 +1198,8 @@ const SessionManager = createSessionManager({
     writeClaudeDigestFile,
     readVoiceMode,
     writeVoiceMode,
-    writeSkillPlugin,
+    deliverSkills,
+    skillDeliveryProviders,
     writeAgentPlugin,
     writeBundlePlugins,
     readSystemPromptBody,

@@ -86,7 +86,7 @@ function boot(opts = {}) {
     findProjectRoot: () => null,
     setupClaudeHook: () => path.join(root, 'settings.json'),
     setupCodexHook: (name) => fs.mkdirSync(runDirFor(root, name), { recursive: true }),
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
     writeClaudeDigestFile: () => false,
     buildIpcPrompt: () => '', bakePrompt: () => '',
     teeBlindBackend: () => null,
@@ -100,7 +100,7 @@ function boot(opts = {}) {
     getAgentLibrary: () => ({ list: () => [] }),
     getPromptLibrary: () => ({ raw: () => null }),
     writeAgentPlugin: () => null, effectiveInjectedAgents: () => [], effectiveInjectedSkills: () => [],
-    unresolvedSubagentRefs: () => [], writeSkillPlugin: () => null,
+    unresolvedSubagentRefs: () => [], deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     unionEnabled: require('../scope-util').unionEnabled,
     intentEnabled: require('../intent-catalog').intentEnabled,
     // Real leaves: _handleIntent gates on intentEnabledFor before it reaches the

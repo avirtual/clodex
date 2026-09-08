@@ -61,7 +61,7 @@ function autoEnabledFor(library, session) {
 
 // The effective enabled set at spawn: the session's PERSISTED selection unioned
 // with the `sessions:`-scoped auto-includes (dedup, persisted order first). Pure
-// — the caller (session-manager for agents, writeSkillPlugin for skills) keeps
+// — the caller (session-manager for agents, effectiveInjectedSkills for skills) keeps
 // this off the persisted record, so it's recomputed every spawn and never
 // mutates the user's saved choices.
 function unionEnabled(persisted, library, session) {

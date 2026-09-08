@@ -7,9 +7,9 @@
 // over a temp ~/.clodex, so the argv asserted is the argv a spawn builds and
 // the files asserted are the files a spawn writes. writeBundlePlugins is
 // module-private in engine.js, so it is reconstructed here from the same public
-// parts it composes — exactly as test/agent-plugin-spawn.test.js does for the
-// two flat scaffolders — and the confinement ordering is pinned at source level
-// in test/skill-plugin-confine.test.js.
+// parts it composes, and the confinement ordering is pinned at source level in
+// test/skill-plugin-confine.test.js. The flat skills half is NOT reconstructed:
+// skill-delivery.js exports its factory, so the real adapter runs here.
 //
 // The gate's central property is an ABSENCE (a non-member seat gets no dir),
 // and an absence passes trivially against a create() that threw or a fixture
@@ -27,7 +27,8 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { confine } = require('../path-confine');
 const { AGENT_NAME_RE } = require('../catalogs');
 const { buildAgentPlugin, parseAgentFrontmatter, qualifiedAgentName, DROPPED_AGENT_FIELDS, BUILTIN_AGENTS } = require('../agents-util');
-const { buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
+const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('../skills-util');
+const { createSkillDelivery } = require('../skill-delivery');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SKILL_MD = '---\ndescription: Research a ticker.\n---\nGo look it up.\n';
@@ -48,6 +49,11 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
   const ensureDir = (d) => fs.mkdirSync(d, { recursive: true });
   const store = new Map();
   let spawnArgs = null;
+
+  const delivery = createSkillDelivery({
+    fs, path, confine, ensureDir, SKILL_PLUGINS_DIR,
+    SKILL_PLUGIN_NAME: 'clodex-skills', buildSkillPlugin, skillMd, parseSkillFrontmatter,
+  });
 
   const scaffold = (rootDir, name, plugin, write) => {
     const dir = confine(rootDir, name);
@@ -142,7 +148,7 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
     },
     setupCodexHook: () => {},
     cleanupClaudeHook: () => {}, cleanupCodexHook: () => {},
-    cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
     buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
     teeBlindBackend: () => null,
     readEffectiveClaudeEnv: () => ({}),
@@ -168,15 +174,10 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
     effectiveInjectedAgents: () => [],
     effectiveInjectedSkills: () => skills,
     writeAgentPlugin: () => null,
-    writeSkillPlugin: (name) => {
-      const plugin = buildSkillPlugin(skills.map((s) => s.name), skills);
-      return scaffold(SKILL_PLUGINS_DIR, name, plugin, (dir, p) => {
-        for (const s of p.skills) {
-          ensureDir(path.join(dir, 'skills', s.name));
-          fs.writeFileSync(path.join(dir, 'skills', s.name, 'SKILL.md'), s.skillMd);
-        }
-      });
-    },
+    // The REAL delivery over the temp root: the flat skills dir this file
+    // asserts a bundle nests INSIDE is written by the code the app runs.
+    deliverSkills: (provider, name, records) => delivery.deliver(provider, name, records),
+    skillDeliveryProviders: () => delivery.providers(),
     ...(omitWriter ? {} : { writeBundlePlugins }),
     getPluginBundles: () => bundles,
     bakePrompt: () => '',
@@ -311,7 +312,7 @@ test('t672: --agents does NOT stand the bundles down', async () => {
 });
 
 test('t672: the flat skills scaffold and a bundle coexist under one seat dir', async () => {
-  // writeSkillPlugin rm -rf's skill-plugins/<seat>, which CONTAINS bundles/.
+  // The claude adapter rm -rf's skill-plugins/<seat>, which CONTAINS bundles/.
   // Writing a bundle before it deletes the bundle; this is that ordering.
   const f = mkManager({
     seatPlugins: ['stocks'],

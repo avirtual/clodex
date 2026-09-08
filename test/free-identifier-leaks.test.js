@@ -122,6 +122,13 @@ const SCANNED_MODULES = [
   // object — so the forward scan says something real: a name it reached for in
   // session-manager's scope instead of taking by injection would show up here.
   'ipc-prompt-cache.js',
+  // The per-provider skill delivery (t747), extracted from engine.js's
+  // writeSkillPlugin/cleanupSkillPlugin. Every name it writes with — fs, the
+  // skills root, confine — arrives in its deps object, and the forward scan is
+  // what keeps that true: the module does the app's most destructive rmSync, so
+  // a reach back into the engine scope for SKILL_PLUGINS_DIR would put the root
+  // of that delete somewhere a test cannot aim at a temp tree.
+  'skill-delivery.js',
   // The deferred-notice queue (t240). Same shape and the same reason as the
   // prompt cache above: a pure fs/string leaf, injected into session-manager
   // and required DIRECTLY by cli-hooks for the horizon constant it interpolates
