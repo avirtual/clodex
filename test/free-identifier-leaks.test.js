@@ -334,6 +334,11 @@ const RENDERER_SCANNED_MODULES = [
   // reaching for renderer.js's ambient `document` instead would put it straight
   // back out of reach of a test.
   'renderer/lib/env-row.js',
+  // The Manage Plugins origin classification (t758). A pure function of one
+  // status row, read only from renderPluginsDialog — where `plugins`, `status`
+  // and `p` are all in easy reach, and a classifier that read the loop's `p`
+  // instead of its own argument would pass every unit test it has.
+  'renderer/lib/plugin-origin.js',
   // The MCP roster fold (t46). A pure leaf like the rest of lib/, read by
   // context-popover (DOM-bound, untested), so the cheap guard that it never
   // reaches for a renderer.js name is worth having.

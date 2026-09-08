@@ -4030,6 +4030,17 @@ body {
 .plugin-row-name {
   font-size: 13px;
 }
+.plugin-row-origin {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  display: inline-block;
+  width: 14px;
+  opacity: 0.55;
+  margin-right: 4px;
+}
 .plugin-row-version {
   opacity: 0.6;
   font-size: 11px;
@@ -22354,6 +22365,40 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/plugin-origin.js
+  var require_plugin_origin = __commonJS({
+    "renderer/lib/plugin-origin.js"(exports, module) {
+      "use strict";
+      var LIBRARY_REPO = "avirtual/clodex-plugins";
+      var ORIGIN_GLYPHS = {
+        core: "\u25C6",
+        library: "\u25A3",
+        remote: "\u2197",
+        local: "\u25AA"
+      };
+      function pluginOrigin(p) {
+        const row = p || {};
+        if (row.root === "core") {
+          return { kind: "core", glyph: ORIGIN_GLYPHS.core, label: "Built in" };
+        }
+        const repo = row.source && row.source.repo || "";
+        if (repo === LIBRARY_REPO) {
+          return { kind: "library", glyph: ORIGIN_GLYPHS.library, label: "From the clodex-plugins library" };
+        }
+        if (repo) {
+          return { kind: "remote", glyph: ORIGIN_GLYPHS.remote, label: `From github.com/${repo}` };
+        }
+        const linked = row.linkedFrom || "";
+        return {
+          kind: "local",
+          glyph: ORIGIN_GLYPHS.local,
+          label: linked ? `Local, registered from ${linked}` : "Local"
+        };
+      }
+      module.exports = { pluginOrigin, ORIGIN_GLYPHS, LIBRARY_REPO };
+    }
+  });
+
   // renderer/lib/prefs-gate.js
   var require_prefs_gate = __commonJS({
     "renderer/lib/prefs-gate.js"(exports, module) {
@@ -35078,6 +35123,7 @@ ${detail}` });
         librarySpec
       } = require_plugin_source_dialog();
       var { evalRendererModule } = require_plugin_module_eval();
+      var { pluginOrigin } = require_plugin_origin();
       var { prefsGate } = require_prefs_gate();
       var { planNewSession } = require_focus_policy();
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
@@ -40006,7 +40052,15 @@ ${res.stderr}` : "");
           body.className = "plugin-row-body";
           const nameEl = document.createElement("div");
           nameEl.className = "plugin-row-name";
-          nameEl.textContent = p.name || p.id;
+          const origin = pluginOrigin(p);
+          const originEl = document.createElement("span");
+          originEl.className = "plugin-row-origin";
+          originEl.textContent = origin.glyph;
+          originEl.title = origin.label;
+          nameEl.appendChild(originEl);
+          const nameText = document.createElement("span");
+          nameText.textContent = p.name || p.id;
+          nameEl.appendChild(nameText);
           if (p.version) {
             const v = document.createElement("span");
             v.className = "plugin-row-version";

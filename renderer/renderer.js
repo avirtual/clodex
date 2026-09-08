@@ -34,6 +34,7 @@ const {
   libraryRowAction, libraryRowLines, librarySpec,
 } = require('./lib/plugin-source-dialog');
 const { evalRendererModule } = require('./lib/plugin-module-eval');
+const { pluginOrigin } = require('./lib/plugin-origin');
 const { prefsGate } = require('./lib/prefs-gate');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
@@ -5423,7 +5424,15 @@ async function renderPluginsDialog() {
     body.className = 'plugin-row-body';
     const nameEl = document.createElement('div');
     nameEl.className = 'plugin-row-name';
-    nameEl.textContent = p.name || p.id;
+    const origin = pluginOrigin(p);
+    const originEl = document.createElement('span');
+    originEl.className = 'plugin-row-origin';
+    originEl.textContent = origin.glyph;
+    originEl.title = origin.label;
+    nameEl.appendChild(originEl);
+    const nameText = document.createElement('span');
+    nameText.textContent = p.name || p.id;
+    nameEl.appendChild(nameText);
     if (p.version) {
       const v = document.createElement('span');
       v.className = 'plugin-row-version';

@@ -27,6 +27,7 @@ const css = fs.readFileSync(path.join(ROOT, 'renderer/styles.css'), 'utf-8')
   .replace(/\/\*[\s\S]*?\*\//g, '');
 const html = fs.readFileSync(path.join(ROOT, 'renderer/index.html'), 'utf-8');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer/renderer.js'), 'utf-8');
+const { pluginOrigin } = require('../renderer/lib/plugin-origin');
 
 function rules(selectorRe) {
   return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
@@ -115,7 +116,7 @@ function el(tag) {
 const FREE = ['pluginsList', 'window', 'document', 'sourceLine', 'pluginBar',
   'makePluginSettingsPanel', 'renderPluginsDialog', 'showPluginsRegisterNote',
   'openPluginsSourceUpdate', 'showToast', 'pluginsSourceTarget',
-  'closePluginsSourceSection', 'confirm'];
+  'closePluginsSourceSection', 'confirm', 'pluginOrigin'];
 
 function extractRenderPluginsDialog() {
   const start = rendererSrc.indexOf('async function renderPluginsDialog() {');
@@ -143,6 +144,7 @@ async function renderRow(plugin) {
     (p, rowActions) => { rowActions.appendChild(settingsToggle); return el('div'); },
     async () => {},
     () => {}, () => {}, () => {}, null, () => {}, () => true,
+    pluginOrigin,
   );
   const got = await fn();
   assert.strictEqual(got.length, 1, 'ENTER: the fixture plugin reached the row loop');
