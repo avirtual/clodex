@@ -4412,7 +4412,7 @@ function createTicketMethods(deps, shared) {
           // is built, and the review path shares that resolver with no tree at all.
           const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);
           const spawned = await this.create(
-            seat.name, shape.type, shape.cwd,
+            seat.name, shape.type, seatCwd,
             shape.extraArgs, null,
             shape.workspaceId, null, false, opener.proxy ?? null,
             shape.agents, shape.denyBuiltins,
