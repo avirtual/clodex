@@ -25,10 +25,10 @@ const { registerIpcHandlers } = require('../ipc-handlers');
 const { CLAUDE_TOOLS } = require('../catalogs');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-// The whole catalog off, which is the shape that lost names: the operator's own
-// hand template denies 35 of the 44 tools and 26 skills. Denying EVERY name is
-// strictly the harder round-trip and needs no reference to a file outside the
-// repo, which a fixture reading their template would have.
+// What the fixture CWD denies. The template under test denies the whole catalog
+// (built in the subject from CLAUDE_TOOLS and the catalog's skill names), so the
+// round-trip is at least as wide as the real one that lost names — 35 of 44
+// tools and 26 skills — without reading a file outside the repo.
 const DENIED_TOOLS = ['AskUserQuestion', 'EnterPlanMode'];
 const DENIED_SKILLS = ['code-review', 'review'];
 
