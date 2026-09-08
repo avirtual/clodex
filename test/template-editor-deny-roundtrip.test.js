@@ -25,10 +25,10 @@ const { registerIpcHandlers } = require('../ipc-handlers');
 const { CLAUDE_TOOLS } = require('../catalogs');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const TPL = {
-  disabledTools: ['AskUserQuestion', 'EnterPlanMode', 'Workflow'],
-  disabledSkills: ['code-review', 'review', 'loop'],
-};
+// The whole catalog off, which is the shape that lost names: the operator's own
+// hand template denies 35 of the 44 tools and 26 skills. Denying EVERY name is
+// strictly the harder round-trip and needs no reference to a file outside the
+// repo, which a fixture reading their template would have.
 const DENIED_TOOLS = ['AskUserQuestion', 'EnterPlanMode'];
 const DENIED_SKILLS = ['code-review', 'review'];
 
@@ -126,13 +126,18 @@ test('a template opened in a cwd that denies its entries saves them unchanged', 
       `ENTER: the fixture cwd must really turn ${name} off`);
   }
 
+  const tplTools = [...CLAUDE_TOOLS];
+  const tplSkills = [...(skillRes.names || [])];
+  assert.ok(tplTools.length >= 35 && tplSkills.length >= 14,
+    `ENTER: the fixture template must be at least the size of the one that lost names (got ${tplTools.length}/${tplSkills.length})`);
+
   const collected = withDom(() => {
     checklists.setClaudeToolsCache([...CLAUDE_TOOLS]);
     const toolList = el('div');
-    checklists.renderToolChecklist(toolList, new Set(TPL.disabledTools),
+    checklists.renderToolChecklist(toolList, new Set(tplTools),
       ADVISORY_FN(toolRes.effective, true));
     const skillList = el('div');
-    checklists.renderSkillChecklist(skillList, skillRes.names || [], new Set(TPL.disabledSkills),
+    checklists.renderSkillChecklist(skillList, tplSkills, new Set(tplSkills),
       ADVISORY_FN(skillRes.effective, true),
       { skillsLocked: skillRes.skillsLocked, canReenable: skillRes.canReenable });
     return {
@@ -141,9 +146,9 @@ test('a template opened in a cwd that denies its entries saves them unchanged', 
     };
   });
 
-  assert.deepStrictEqual(collected.tools.slice().sort(), TPL.disabledTools.slice().sort(),
+  assert.deepStrictEqual(collected.tools.slice().sort(), tplTools.slice().sort(),
     'every disabled tool must survive open -> save, denied by the cwd or not');
-  assert.deepStrictEqual(collected.skills.slice().sort(), TPL.disabledSkills.slice().sort(),
+  assert.deepStrictEqual(collected.skills.slice().sort(), tplSkills.slice().sort(),
     'every disabled skill must survive open -> save');
 });
 
@@ -157,7 +162,7 @@ test('the same read, unmarked, is what dropped the names', () => {
   const collected = withDom(() => {
     checklists.setClaudeToolsCache([...CLAUDE_TOOLS]);
     const list = el('div');
-    checklists.renderToolChecklist(list, new Set(TPL.disabledTools), toolRes.effective);
+    checklists.renderToolChecklist(list, new Set([...DENIED_TOOLS, 'Workflow']), toolRes.effective);
     return checklists.collectToolChecklist(list);
   });
   for (const name of DENIED_TOOLS) {
