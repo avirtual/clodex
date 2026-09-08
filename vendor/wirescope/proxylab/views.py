@@ -375,6 +375,9 @@ details.more>summary{color:#69707d;font-size:12px}
 .tline summary{color:#8a93a3} .tline summary:hover{color:#cdd3dd}
 .tline .sz{float:right;color:#4d535e;margin-left:1em}
 .tline pre{max-height:20em}
+.tline .kv{margin:.35em 0 .35em .2em}
+.tline .kv>b{display:block;color:#b8a25a;font-size:11px;letter-spacing:.03em}
+.tline .kv pre{margin-top:.15em}
 .cmark{margin:.8em 0 .6em;border-top:2px dashed #b08a3e;color:#e5c07b;
        font-size:12px;padding-top:.15em}
 .navbar{border:1px solid #2a2e36;border-radius:4px;padding:.3em .6em;
@@ -1024,6 +1027,56 @@ def _tline(cls, label, what, body, cap=2000):
             f'{_prevu(t, cap=cap)}</details></div>')
 
 
+_GIST_KEYS = {
+    "Bash": ("description", "command"),
+    "Read": ("file_path",), "Edit": ("file_path",), "Write": ("file_path",),
+    "MultiEdit": ("file_path",), "NotebookEdit": ("notebook_path",),
+    "Glob": ("pattern",), "Grep": ("pattern",),
+    "Agent": ("description",), "Task": ("description",),
+    "WebFetch": ("url",), "WebSearch": ("query",), "Skill": ("skill",),
+}
+
+
+def _tool_gist(name, inp):
+    """The one string a human would use to name this call: Bash's description
+    (else its command's first line), a file path, a pattern, a url…"""
+    if not isinstance(inp, dict):
+        return ""
+    for k in _GIST_KEYS.get(name, ()):
+        v = inp.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().splitlines()[0]
+    for v in inp.values():
+        if isinstance(v, str) and v.strip():
+            return v.strip().splitlines()[0]
+    return ""
+
+
+def _tool_use_html(cls, label, what, name, inp, cap=2000):
+    """tool_use rendered as FIELDS, not a JSON blob: the summary carries a
+    human gist (Bash description, file path, pattern), the body one row per
+    argument with real newlines in the value (a `node -e` script reads as the
+    script, not as one line of `\\n` escapes)."""
+    raw = json.dumps(inp or {}, ensure_ascii=False)
+    gist = _tool_gist(name, inp)
+    snip = html.escape(gist[:90]) + ("…" if len(gist) > 90 else "")
+    head = f'{label} {what} <b>{html.escape(name or "?")}</b>'
+    if not isinstance(inp, dict) or not inp:
+        return (f'<div class="tline {cls}"><span class="sz">{len(raw):,} ch</span>'
+                f'{head} <span class="dim">{html.escape(raw[:90])}</span></div>')
+    kv = []
+    for k, v in inp.items():
+        if isinstance(v, str):
+            val = _prevu(v, cap=cap)
+        else:
+            val = _prevu(json.dumps(v, indent=2, ensure_ascii=False), cap=cap)
+        kv.append(f'<div class="kv"><b>{html.escape(str(k))}</b>{val}</div>')
+    return (f'<div class="tline {cls}"><details><summary>'
+            f'<span class="sz">{len(raw):,} ch</span>{head} '
+            f'<span class="dim">{snip}</span></summary>'
+            f'{"".join(kv)}</details></div>')
+
+
 def _prefix_tokens(obj, usage):
     """Receipt-calibrated token sizing for one captured anthropic-wire request.
 
@@ -1199,9 +1252,19 @@ def _render_session_openai_body(entry, resp=None):
                             f'<span class="role">#{i} {e(role)}</span>'
                             f'{machine}{_prevu(txt)}</div>')
         elif t == "function_call":
-            rows.append(_tline("tooluse", f'<span class="role">#{i} assistant</span>',
-                               f'function_call <b>{e(it.get("name") or "?")}</b>',
-                               it.get("arguments") or ""))
+            args = it.get("arguments") or ""
+            try:
+                inp = json.loads(args)
+            except (TypeError, ValueError):
+                inp = None
+            if isinstance(inp, dict):
+                rows.append(_tool_use_html("tooluse",
+                                           f'<span class="role">#{i} assistant</span>',
+                                           "function_call", it.get("name"), inp))
+            else:
+                rows.append(_tline("tooluse", f'<span class="role">#{i} assistant</span>',
+                                   f'function_call <b>{e(it.get("name") or "?")}</b>',
+                                   args))
         elif t == "function_call_output":
             out = it.get("output")
             txt = out if isinstance(out, str) else json.dumps(out or "")
@@ -1665,10 +1728,8 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                                 f'<span class="sz">{len(txt):,} ch</span>'
                                 f'{lbl}{rem}{_prevu(txt)}</div>')
                 elif bt == "tool_use":
-                    args = json.dumps(b.get("input") or {}, ensure_ascii=False)
-                    rows.append(_tline("tooluse", lbl,
-                                       f'tool_use <b>{e(b.get("name") or "?")}</b>',
-                                       args))
+                    rows.append(_tool_use_html("tooluse", lbl, "tool_use",
+                                               b.get("name"), b.get("input")))
                 elif bt == "tool_result":
                     txt = _flat_text(b.get("content"))
                     err = (' <span class="bad">ERROR</span>'
