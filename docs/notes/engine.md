@@ -38,15 +38,3 @@ defaults copy silently missed every DISCOVERED skill — `design`, `dataviz` —
 which could therefore never be pre-unchecked. The defaults shape is deliberately
 NARROWER (no `outOfScope`/`disabledSkills`/`skillLib`/`injectSkills`): a default
 disabled-list must not inherit one seat's per-session state.
-
-## listAllTemplates
-
-Team-owned rows (`team:<team>:<stem>`) come LAST and carry `team`; a library row
-whose stem a team also holds gains `shadowedBy`. The team rows are for the
-Templates drawer only — they are keyed by bare stem across every team, so any
-consumer that resolves a template BY NAME must filter `!t.team` or one team's
-copy answers for another's. The seat paths reach their own team's copy through
-`readTeamJson` (team-tickets.js `_templateShape`), not through this list.
-A team file that will not parse becomes an `unreadable: true` row rather than a
-silent skip: the stem shadows the library copy either way, so dropping it would
-leave the drawer claiming the library row is the one a seat reads.
