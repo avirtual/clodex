@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — An agent can bootstrap a team from intents, and a hand lives in its worktree
 
 - A team lead can now write its team's templates and prompts from intents (`[agent:team template-save <stem>]`, `[agent:team prompt-save system|append <stem>]`, plus the matching `-rm` verbs, which refuse to remove a file a role still names), completing the intent path from `[agent:team create]` to a working role without the drawers.
 - A ticket seat now boots inside its own worktree instead of the shared checkout, so its shell starts where it works and it no longer loads the repo's local `.claude/CLAUDE.md` on every turn; a seat whose tree was removed by hand resumes in the shared checkout it came from instead of failing.
