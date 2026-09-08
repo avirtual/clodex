@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Codex seats get their skills, and a team template is edited where it lives
 
 - Codex seats now get the skills you select for them — the same library and plugin skills a Claude seat gets, listed in the seat's instructions with the path to each and read on demand. Delivery is one adapter per CLI, so a third CLI is an adapter, not another spawn block.
 - Templates the team owns (the copies Gather makes under `~/.clodex/teams/<name>/templates/`) now show in the Templates drawer under their team and are edited and deleted there — that copy is the one a ticket seat is spawned from. The library row it was copied from says which team shadows it, so an edit no longer lands in a file nothing reads.
