@@ -135,15 +135,6 @@ function resolveRegistryDir(seams) {
   return defaultClodexHome();
 }
 
-// This box's name on the peer wire, resolved as a pure function so the four
-// cases can be pinned without constructing an engine.
-//
-// The guard is peer-outbox's own validOrigin, reused by symbol rather than
-// copied: SELF_LABEL becomes the `@origin` suffix on a relay sender tag AND a
-// single path segment under the outbox root, so a value this box chooses must
-// clear the same gate a wire-supplied one does. A rejected or blank value falls
-// through to the hostname — an instance that cannot be named is still reachable
-// under its old name, where a throw would strand it.
 function resolveSelfLabel(env, hostname, log) {
   const fallback = String(hostname || '').replace(/\.local$/, '');
   const raw = env ? env.CLODEX_LABEL : undefined;

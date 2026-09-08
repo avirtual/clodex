@@ -1,6 +1,6 @@
 'use strict';
-// instance-label.test.js — t762: CLODEX_LABEL, the third of the three env vars
-// that let two Clodexes share one box (CLODEX_HOME t760, CLODEX_DATA_DIR t761).
+// instance-label.test.js — CLODEX_LABEL, the third of the three env vars that
+// let two Clodexes share one box (with CLODEX_HOME and CLODEX_DATA_DIR).
 //
 // Without it both instances self-label as the hostname, so every `[agent:who]`
 // line, hello `host` field and relay sender tag reads the same. Routing already
@@ -88,7 +88,7 @@ function engineHostLabel(label) {
   try {
     const engine = createEngine({
       userDataPath: tmp,
-      // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+      // registryDir or the engine seeds the operator's live ~/.clodex.
       seams: { registryDir: path.join(tmp, 'clodex-home') },
       log,
     });
@@ -107,7 +107,7 @@ function engineHostLabel(label) {
 test('the engine const reads the env: CLODEX_LABEL reaches the wire as hostLabel', () => {
   const hostname = os.hostname().replace(/\.local$/, '');
   assert.strictEqual(engineHostLabel(undefined).hostLabel, hostname,
-    'unset → the hostname, unchanged from before t762');
+    'unset → the hostname, exactly as before this variable existed');
   assert.strictEqual(engineHostLabel('box-b').hostLabel, 'box-b');
   assert.strictEqual(engineHostLabel('  ').hostLabel, hostname);
   const bad = engineHostLabel('a/b');

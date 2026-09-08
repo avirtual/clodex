@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- CLODEX_LABEL names an instance on the peer wire, and docs/recipes/two-instances.md is the recipe for running two Clodexes on one box.
 - CLODEX_DATA_DIR moves the desktop app's settings and session store too, so a second Clodex can run beside the first.
 - CLODEX_HOME now moves the whole ~/.clodex root for the app, every child it spawns, and the tickets and memory boards, not just the standalone scripts.
 

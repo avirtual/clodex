@@ -68,9 +68,19 @@ Configuration is by environment:
   which is how you run **two instances on one box**. Caveat for the desktop app:
   a packaged `.app` launched from Finder inherits no shell environment, so the
   override reaches it only when it is launched from a shell.
+- **`CLODEX_LABEL`** — this instance's name on the wire: the `@suffix` on
+  federated agent addresses, the hello `host` field, the relay sender tag.
+  Defaults to the box's hostname minus a `.local` suffix, which is what two
+  instances on one box would otherwise share. Must clear the same charset gate a
+  wire-supplied origin does (`[A-Za-z0-9._-]`, 1–64 chars, not `.` or `..`);
+  anything else is ignored with a warning in `clodex.log` and the hostname is
+  used.
 - **`CLODEX_WORKSPACES`** — comma-separated workspace ids to restore. Defaults to
   the single default workspace (headless nodes are single-workspace by
   convention).
+
+The full two-instances-on-one-box walkthrough, with every instance-scoped
+variable in one table, is `docs/recipes/two-instances.md`.
 
 ### Exit codes & supervision
 
