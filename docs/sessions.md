@@ -348,21 +348,20 @@ resolves its cwd through the ONE helper
 `worktree.main` when THAT is on disk — logging one line and REWRITING the record
 to `{cwd: main}` with the now-unusable `worktree` pointer dropped — else the `cwd`
 unchanged, which is a pre-t752 record with nowhere better to go and lands in the
-failed-tab retry/forget UI.
+failed-tab retry/forget UI. `rename` is the sixth respawn site and deliberately
+does NOT go through it: it refuses any record carrying a `worktree.path` outright,
+so it can never meet a stale one. Both halves are pinned by
+`test/resume-cwd-tree-fallback.test.js` (a source-shape pin that every site asks
+the helper, and a runtime pin of what it answers), whose row set is kept in step
+with `test/create-mint-census.test.js`.
 
-The fallback is written to the record, not merely returned, and that is the
+The fallback is WRITTEN to the record, not merely returned, and that is the
 load-bearing half. `retrySpawn` and restore-on-launch do not route through
 `kill()`, so the record survives a `create()` throw: a decision held only in the
 return value dies with the throw, and every retry afterwards resolves the vanished
 tree again — a permanent ENOENT behind the retry button. Persisted, the record is
 already repaired whether or not the spawn lands, and the next call takes the
 healthy-record arm instead of falling back a second time.
-`rename` is the sixth respawn site and deliberately does NOT go through it: it
-refuses any record carrying a `worktree.path` outright, so it can never meet a
-stale one. Both halves are pinned by `test/resume-cwd-tree-fallback.test.js` (a
-source-shape pin that every site asks the helper, and a runtime pin of what it
-answers), whose row set is kept in step with
-`test/create-mint-census.test.js`.
 
 Nothing else reads the pointer in a way a missing tree breaks:
 `_ticketTreeHolder` only scans live sessions; the ticket-dispatch mint's
@@ -380,7 +379,10 @@ evidence a session is dead (an unmounted volume or a moved repo reads
 identically), and dropping records on it is the pre-v0.5.3 "upgrade kills my
 agents" bug. Clearing only `worktree` while keeping the row is WORSE, not a
 compromise — see ALWAYS_PRESERVE in session-manager.js for why absent is the
-dangerous state.
+dangerous state. `resumeCwdOf` is not an exception to that: it drops the pointer
+only where it has a `main` to put in `cwd` at the same moment, so the record it
+leaves names a checkout that exists rather than nothing at all — and it acts on
+one record being resumed, never as a sweep over the store.
 
 The New Session dialog opens on Name / Type / Working directory / **Mode**;
 everything else lives in the collapsed **Advanced** section. Mode is a preset
