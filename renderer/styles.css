@@ -1200,6 +1200,7 @@ html, body {
 #agents-popover,
 #intents-popover,
 #plugins-popover,
+#plugin-readme-popover,
 #team-roles-popover,
 #peer-select-popover {
   position: fixed;
@@ -1215,7 +1216,13 @@ html, body {
   padding: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
-#tools-popover.hidden, #skills-popover.hidden, #agents-popover.hidden, #intents-popover.hidden, #plugins-popover.hidden, #team-roles-popover.hidden, #peer-select-popover.hidden { display: none; }
+#tools-popover.hidden, #skills-popover.hidden, #agents-popover.hidden, #intents-popover.hidden, #plugins-popover.hidden, #plugin-readme-popover.hidden, #team-roles-popover.hidden, #peer-select-popover.hidden { display: none; }
+/* Above #plugins-overlay (z-index 100): this popover is opened FROM a row in
+   that dialog, so the shared z-index 50 would paint it behind its own opener. */
+#plugin-readme-popover { z-index: 110; }
+#plugin-readme-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.plugin-readme-body { overflow-y: auto; flex: 1; font-size: 12px; line-height: 1.5; }
+.plugin-readme-body pre { overflow-x: auto; }
 #team-roles-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 #team-roles-popover .popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 

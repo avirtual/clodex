@@ -524,6 +524,25 @@ test('status() lists every plugin ON DISK plus the directories that were refused
   assert.match(s.problems.find((p) => p.dir === 'mismatch').why, /does not match its directory/);
 });
 
+test('status() flags the row of every plugin that ships a README, and only those', () => {
+  // The renderer has no filesystem, so this flag is the ONLY thing that decides
+  // whether a row offers Help. `plugins.readme` refuses anything that is not a
+  // file, so a flag set by mere existence would offer Help on the `dirlike` row
+  // and open the popover onto that refusal.
+  const root = mkTree({
+    alpha: { manifest: OK_MANIFEST, files: { 'README.md': '# Alpha\n' } },
+    bare: { manifest: { ...OK_MANIFEST, id: 'bare' } },
+    dirlike: { manifest: { ...OK_MANIFEST, id: 'dirlike' } },
+  });
+  fs.mkdirSync(path.join(root, 'dirlike', 'README.md'));
+  const { loader } = mkLoader(root);
+  const rows = loader.status().plugins;
+  assert.deepStrictEqual(rows.map((p) => p.id), ['alpha', 'bare', 'dirlike'],
+    'ENTER: all three fixtures were discovered, so the flags below are verdicts');
+  assert.deepStrictEqual(rows.map((p) => [p.id, p.hasReadme]),
+    [['alpha', true], ['bare', false], ['dirlike', false]]);
+});
+
 // t692: the WHOLE row, as literals. The Plugin Access UI dims a capability off
 // `reads`, and the field reaches it only through this row — so a status() that
 // drops it silently restores today's "offer all three as equals". A field-by-field
@@ -562,6 +581,7 @@ test('t692: status() carries `reads` on every row — null when undeclared, the 
     source: null,
     scope: 'global',
     reads: null,
+    hasReadme: false,
   }, 'an undeclared manifest reports reads: null — every grant row stays live');
   assert.deepStrictEqual(s.plugins[1], {
     id: 'reader',
@@ -580,6 +600,7 @@ test('t692: status() carries `reads` on every row — null when undeclared, the 
     source: null,
     scope: 'session',
     reads: ['turns'],
+    hasReadme: false,
   }, 'a declaring manifest carries its declaration through to the row the UI reads');
 });
 

@@ -298,7 +298,7 @@ test('the _host pseudo-plugin stays reachable from the web surface', async () =>
   } finally { b.cleanup(); }
 });
 
-test('_host holds exactly these eighteen methods, and no nineteenth by inheritance', () => {
+test('_host holds exactly these nineteen methods, and no twentieth by inheritance', () => {
   // The exemption is a WHOLE-TABLE early return, so a method added to
   // hostMethods is web-reachable the moment it is written, with nothing to edit
   // and nothing to notice — unless it is named in HOST_DESKTOP_ONLY. Same
@@ -310,7 +310,7 @@ test('_host holds exactly these eighteen methods, and no nineteenth by inheritan
     'plugins.applyUpdate',
     'plugins.installFromSource',
     'plugins.libraryCatalog',
-    'plugins.listUserRoot', 'plugins.register', 'plugins.removeSourcePlugin',
+    'plugins.listUserRoot', 'plugins.readme', 'plugins.register', 'plugins.removeSourcePlugin',
     'plugins.rescan', 'plugins.resolveSource', 'plugins.resolveUpdate',
     'plugins.status',
     'plugins.unregister', 'plugins.updatesAvailable', 'plugins.userRoot', 'plugins.validateCandidate',

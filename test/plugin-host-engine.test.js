@@ -738,6 +738,62 @@ test('_host plugins.status degrades to empty with no loader (CLODEX_PLUGINS=0 sh
   assert.deepEqual(await engine.dispatch('_host', 'plugins.status', [], 'desktop'), { ok: true, plugins: [], problems: [] });
 });
 
+function readmeLoader(dirs) {
+  return fakeLoader({ discover: () => Object.entries(dirs).map(([id, dir]) => ({ id, dir })) });
+}
+
+test('_host plugins.readme serves the bytes on disk for a known id', async () => {
+  const dir = mkTmpRoot('clodex-readme-');
+  fs.writeFileSync(path.join(dir, 'README.md'), '# Demo\n\nHello.\n');
+  const { engine } = makeHost({ loader: readmeLoader({ demo: dir }) });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.readme', ['demo'], 'desktop'),
+    { ok: true, markdown: '# Demo\n\nHello.\n' });
+});
+
+test('_host plugins.readme refuses an id the loader does not discover', async () => {
+  // The id is a caller-supplied string that becomes a path join, so an id no
+  // record claims must die BEFORE the read — not resolve to some other dir.
+  const dir = mkTmpRoot('clodex-readme-');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'not yours');
+  const { engine } = makeHost({ loader: readmeLoader({ demo: dir }) });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.readme', ['nope'], 'desktop'),
+    { ok: false, error: 'no such plugin' });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.readme', ['../demo'], 'desktop'),
+    { ok: false, error: 'no such plugin' });
+});
+
+test('_host plugins.readme answers ok:false for a plugin that ships none', async () => {
+  const { engine } = makeHost({ loader: readmeLoader({ demo: mkTmpRoot('clodex-readme-') }) });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.readme', ['demo'], 'desktop'),
+    { ok: false, error: 'no README.md' });
+});
+
+test('_host plugins.readme refuses a README.md that is a DIRECTORY', async () => {
+  // readFileSync on a directory throws EISDIR on Linux but answers on some
+  // platforms; the isFile guard is what makes the refusal the same everywhere.
+  const dir = mkTmpRoot('clodex-readme-');
+  fs.mkdirSync(path.join(dir, 'README.md'));
+  const { engine } = makeHost({ loader: readmeLoader({ demo: dir }) });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.readme', ['demo'], 'desktop'),
+    { ok: false, error: 'no README.md' });
+});
+
+test('_host plugins.readme caps the reply at 64KB', async () => {
+  const dir = mkTmpRoot('clodex-readme-');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'x'.repeat(64 * 1024 + 500));
+  const { engine } = makeHost({ loader: readmeLoader({ demo: dir }) });
+  const r = await engine.dispatch('_host', 'plugins.readme', ['demo'], 'desktop');
+  assert.equal(r.ok, true);
+  assert.equal(r.markdown.length, 64 * 1024,
+    'an unbounded README would cross the IPC boundary whole');
+});
+
+test('_host plugins.readme degrades to a refusal with no loader', async () => {
+  const { engine } = makeHost();
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.readme', ['demo'], 'desktop'),
+    { ok: false, error: 'no plugin loader' });
+});
+
 test('_host plugins.updatesAvailable passes the watcher\'s confirmed list through untouched', async () => {
   // The dialog and the menu both read this. It is a pure passthrough of a list
   // the checker already filtered — the host must NOT recompute it from the

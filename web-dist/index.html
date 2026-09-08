@@ -1436,6 +1436,7 @@ body {
 #agents-popover,
 #intents-popover,
 #plugins-popover,
+#plugin-readme-popover,
 #team-roles-popover,
 #peer-select-popover {
   position: fixed;
@@ -1456,9 +1457,27 @@ body {
 #agents-popover.hidden,
 #intents-popover.hidden,
 #plugins-popover.hidden,
+#plugin-readme-popover.hidden,
 #team-roles-popover.hidden,
 #peer-select-popover.hidden {
   display: none;
+}
+#plugin-readme-popover {
+  z-index: 110;
+}
+#plugin-readme-popover .popover-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.plugin-readme-body {
+  overflow-y: auto;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.plugin-readme-body pre {
+  overflow-x: auto;
 }
 #team-roles-popover .popover-title {
   font-size: 12px;
@@ -6749,6 +6768,10 @@ body {
         <button id="intents-popover-cancel" class="secondary" type="button">Cancel</button>
         <button id="intents-popover-apply" type="button">Apply</button>
       </div>
+    </div>
+    <div id="plugin-readme-popover" class="hidden">
+      <div class="popover-title"><span><span id="plugin-readme-popover-name"></span> — README</span><button type="button" class="popover-close" id="plugin-readme-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="plugin-readme-popover-body" class="plugin-readme-body"></div>
     </div>
     <div id="plugins-popover" class="hidden">
       <div class="popover-title"><span>Plugins — <span id="plugins-popover-name"></span></span><button type="button" class="popover-close" id="plugins-popover-close" title="Close" aria-label="Close">&times;</button></div>
@@ -21484,6 +21507,267 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/render-markdown.js
+  var require_render_markdown = __commonJS({
+    "renderer/lib/render-markdown.js"(exports, module) {
+      "use strict";
+      var SAFE_SCHEME = /^https?:\/\//i;
+      var MAX_QUOTE_DEPTH = 8;
+      var FENCE = /^ {0,3}(`{3,}|~{3,})\s*(\S*)\s*$/;
+      var HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
+      var QUOTE = /^ {0,3}> ?(.*)$/;
+      var BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
+      var ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
+      var LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
+      var INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(([^)\s]*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
+      function safeHref(raw) {
+        const href = String(raw == null ? "" : raw).trim().replace(/^<+/, "").replace(/>+$/, "");
+        return SAFE_SCHEME.test(href) ? href : null;
+      }
+      function isTableRule(line) {
+        return typeof line === "string" && /^[\s|:-]+$/.test(line) && line.includes("-") && line.includes("|");
+      }
+      function splitRow(line) {
+        let s = line.trim();
+        if (s.startsWith("|")) s = s.slice(1);
+        if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+        return s.replace(/\\\|/g, "\0").split("|").map((c) => c.replace(/\u0000/g, "|").trim());
+      }
+      function startsBlock(line) {
+        return !line.trim() || FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || BULLET.test(line) || ORDERED.test(line);
+      }
+      function appendInline(parent, text, doc) {
+        const s = String(text == null ? "" : text);
+        INLINE.lastIndex = 0;
+        let at = 0;
+        let m = INLINE.exec(s);
+        while (m !== null) {
+          if (m.index > at) parent.appendChild(doc.createTextNode(s.slice(at, m.index)));
+          if (m[1] !== void 0) {
+            const code = doc.createElement("code");
+            code.textContent = m[1];
+            parent.appendChild(code);
+          } else if (m[2] !== void 0) {
+            parent.appendChild(doc.createTextNode(m[2]));
+          } else if (m[3] !== void 0) {
+            const href = safeHref(m[4]);
+            if (href) {
+              const a = doc.createElement("a");
+              a.setAttribute("href", href);
+              a.setAttribute("rel", "noreferrer noopener");
+              a.setAttribute("target", "_blank");
+              a.textContent = m[3];
+              parent.appendChild(a);
+            } else {
+              parent.appendChild(doc.createTextNode(m[0]));
+            }
+          } else if (m[5] !== void 0 || m[6] !== void 0) {
+            const strong = doc.createElement("strong");
+            strong.textContent = m[5] !== void 0 ? m[5] : m[6];
+            parent.appendChild(strong);
+          } else {
+            const em = doc.createElement("em");
+            em.textContent = m[7] !== void 0 ? m[7] : m[8];
+            parent.appendChild(em);
+          }
+          at = INLINE.lastIndex;
+          m = INLINE.exec(s);
+        }
+        if (at < s.length) parent.appendChild(doc.createTextNode(s.slice(at)));
+        return parent;
+      }
+      function renderFence(lines, i, parent, doc) {
+        const open = FENCE.exec(lines[i]);
+        const marker = open[1][0];
+        const body = [];
+        let j = i + 1;
+        while (j < lines.length) {
+          const close = FENCE.exec(lines[j]);
+          if (close && close[1][0] === marker && close[2] === "") break;
+          body.push(lines[j]);
+          j++;
+        }
+        const pre = doc.createElement("pre");
+        const code = doc.createElement("code");
+        if (LANG.test(open[2])) code.setAttribute("data-lang", open[2]);
+        code.textContent = body.join("\n");
+        pre.appendChild(code);
+        parent.appendChild(pre);
+        return j < lines.length ? j + 1 : j;
+      }
+      function renderQuote(lines, i, parent, doc, depth) {
+        const body = [];
+        let j = i;
+        while (j < lines.length) {
+          const q = QUOTE.exec(lines[j]);
+          if (!q) break;
+          body.push(q[1]);
+          j++;
+        }
+        const quote = doc.createElement("blockquote");
+        if (depth >= MAX_QUOTE_DEPTH) {
+          const p = doc.createElement("p");
+          appendInline(p, body.join(" "), doc);
+          quote.appendChild(p);
+        } else {
+          renderBlocks(body, quote, doc, depth + 1);
+        }
+        parent.appendChild(quote);
+        return j;
+      }
+      function renderList(lines, i, parent, doc) {
+        const ordered = ORDERED.test(lines[i]);
+        const item = ordered ? ORDERED : BULLET;
+        const list = doc.createElement(ordered ? "ol" : "ul");
+        if (ordered) {
+          const first = ORDERED.exec(lines[i])[1];
+          if (first !== "1") list.setAttribute("start", first);
+        }
+        const texts = [];
+        let j = i;
+        while (j < lines.length) {
+          const m = item.exec(lines[j]);
+          if (m) {
+            texts.push(ordered ? m[2] : m[1]);
+            j++;
+            continue;
+          }
+          if (texts.length && lines[j].trim() && !startsBlock(lines[j])) {
+            texts[texts.length - 1] += ` ${lines[j].trim()}`;
+            j++;
+            continue;
+          }
+          break;
+        }
+        for (const t of texts) {
+          const li = doc.createElement("li");
+          appendInline(li, t, doc);
+          list.appendChild(li);
+        }
+        parent.appendChild(list);
+        return j;
+      }
+      function renderTable(lines, i, parent, doc) {
+        const table = doc.createElement("table");
+        const thead = doc.createElement("thead");
+        const headRow = doc.createElement("tr");
+        for (const cell of splitRow(lines[i])) {
+          const th = doc.createElement("th");
+          appendInline(th, cell, doc);
+          headRow.appendChild(th);
+        }
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        const tbody = doc.createElement("tbody");
+        let j = i + 2;
+        while (j < lines.length && lines[j].includes("|") && lines[j].trim()) {
+          const tr = doc.createElement("tr");
+          for (const cell of splitRow(lines[j])) {
+            const td = doc.createElement("td");
+            appendInline(td, cell, doc);
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+          j++;
+        }
+        table.appendChild(tbody);
+        parent.appendChild(table);
+        return j;
+      }
+      function renderParagraph(lines, i, parent, doc) {
+        const body = [lines[i].trim()];
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim() && !startsBlock(lines[j]) && !(lines[j].includes("|") && isTableRule(lines[j + 1]))) {
+          body.push(lines[j].trim());
+          j++;
+        }
+        const p = doc.createElement("p");
+        appendInline(p, body.join(" "), doc);
+        parent.appendChild(p);
+        return j;
+      }
+      function renderBlocks(lines, parent, doc, depth = 0) {
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
+          if (!line.trim()) {
+            i++;
+            continue;
+          }
+          if (FENCE.test(line)) {
+            i = renderFence(lines, i, parent, doc);
+            continue;
+          }
+          const h = HEADING.exec(line);
+          if (h) {
+            const heading = doc.createElement(`h${h[1].length}`);
+            appendInline(heading, h[2].replace(/\s+#+\s*$/, ""), doc);
+            parent.appendChild(heading);
+            i++;
+            continue;
+          }
+          if (QUOTE.test(line)) {
+            i = renderQuote(lines, i, parent, doc, depth);
+            continue;
+          }
+          if (BULLET.test(line) || ORDERED.test(line)) {
+            i = renderList(lines, i, parent, doc);
+            continue;
+          }
+          if (line.includes("|") && isTableRule(lines[i + 1])) {
+            i = renderTable(lines, i, parent, doc);
+            continue;
+          }
+          i = renderParagraph(lines, i, parent, doc);
+        }
+        return parent;
+      }
+      function renderMarkdown(text) {
+        const doc = document;
+        const frag = doc.createDocumentFragment();
+        const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\u0000/g, "").split("\n");
+        return renderBlocks(lines, frag, doc);
+      }
+      module.exports = { renderMarkdown };
+    }
+  });
+
+  // renderer/lib/popover-place.js
+  var require_popover_place = __commonJS({
+    "renderer/lib/popover-place.js"(exports, module) {
+      "use strict";
+      var MARGIN = 8;
+      var GAP = 6;
+      function isDetachedRect(rect) {
+        return !rect || rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0;
+      }
+      function barPlacement(rect, size, viewport, margin = MARGIN) {
+        const maxBottom = Math.max(margin, viewport.height - size.height - margin);
+        if (isDetachedRect(rect)) return { left: margin, bottom: margin, detached: true };
+        const left = Math.max(margin, Math.min(rect.left, viewport.width - size.width - margin));
+        const wantBottom = Math.max(margin, viewport.height - rect.top + GAP);
+        return { left, bottom: Math.min(wantBottom, maxBottom), detached: false };
+      }
+      function liveAnchor(captured, selector) {
+        if (captured && captured.isConnected) return captured;
+        const live = selector ? document.querySelector(selector) : null;
+        return live || captured || null;
+      }
+      function placeAboveAnchor(popover, anchor, selector) {
+        const el = liveAnchor(anchor, selector);
+        const p = barPlacement(
+          el && typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : null,
+          { width: popover.offsetWidth, height: popover.offsetHeight },
+          { width: window.innerWidth, height: window.innerHeight }
+        );
+        popover.style.left = `${p.left}px`;
+        popover.style.bottom = `${p.bottom}px`;
+        return p;
+      }
+      module.exports = { isDetachedRect, barPlacement, liveAnchor, placeAboveAnchor, MARGIN, GAP };
+    }
+  });
+
   // renderer/lib/path-scan.js
   var require_path_scan = __commonJS({
     "renderer/lib/path-scan.js"(exports, module) {
@@ -30056,42 +30340,6 @@ Opening it here and saving would overwrite the file with what this editor could 
     }
   });
 
-  // renderer/lib/popover-place.js
-  var require_popover_place = __commonJS({
-    "renderer/lib/popover-place.js"(exports, module) {
-      "use strict";
-      var MARGIN = 8;
-      var GAP = 6;
-      function isDetachedRect(rect) {
-        return !rect || rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0;
-      }
-      function barPlacement(rect, size, viewport, margin = MARGIN) {
-        const maxBottom = Math.max(margin, viewport.height - size.height - margin);
-        if (isDetachedRect(rect)) return { left: margin, bottom: margin, detached: true };
-        const left = Math.max(margin, Math.min(rect.left, viewport.width - size.width - margin));
-        const wantBottom = Math.max(margin, viewport.height - rect.top + GAP);
-        return { left, bottom: Math.min(wantBottom, maxBottom), detached: false };
-      }
-      function liveAnchor(captured, selector) {
-        if (captured && captured.isConnected) return captured;
-        const live = selector ? document.querySelector(selector) : null;
-        return live || captured || null;
-      }
-      function placeAboveAnchor(popover, anchor, selector) {
-        const el = liveAnchor(anchor, selector);
-        const p = barPlacement(
-          el && typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : null,
-          { width: popover.offsetWidth, height: popover.offsetHeight },
-          { width: window.innerWidth, height: window.innerHeight }
-        );
-        popover.style.left = `${p.left}px`;
-        popover.style.bottom = `${p.bottom}px`;
-        return p;
-      }
-      module.exports = { isDetachedRect, barPlacement, liveAnchor, placeAboveAnchor, MARGIN, GAP };
-    }
-  });
-
   // renderer/popovers/checklist-popovers.js
   var require_checklist_popovers = __commonJS({
     "renderer/popovers/checklist-popovers.js"(exports, module) {
@@ -34090,231 +34338,6 @@ ${detail}` });
     }
   });
 
-  // renderer/lib/render-markdown.js
-  var require_render_markdown = __commonJS({
-    "renderer/lib/render-markdown.js"(exports, module) {
-      "use strict";
-      var SAFE_SCHEME = /^https?:\/\//i;
-      var MAX_QUOTE_DEPTH = 8;
-      var FENCE = /^ {0,3}(`{3,}|~{3,})\s*(\S*)\s*$/;
-      var HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
-      var QUOTE = /^ {0,3}> ?(.*)$/;
-      var BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
-      var ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
-      var LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
-      var INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(([^)\s]*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
-      function safeHref(raw) {
-        const href = String(raw == null ? "" : raw).trim().replace(/^<+/, "").replace(/>+$/, "");
-        return SAFE_SCHEME.test(href) ? href : null;
-      }
-      function isTableRule(line) {
-        return typeof line === "string" && /^[\s|:-]+$/.test(line) && line.includes("-") && line.includes("|");
-      }
-      function splitRow(line) {
-        let s = line.trim();
-        if (s.startsWith("|")) s = s.slice(1);
-        if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
-        return s.replace(/\\\|/g, "\0").split("|").map((c) => c.replace(/\u0000/g, "|").trim());
-      }
-      function startsBlock(line) {
-        return !line.trim() || FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || BULLET.test(line) || ORDERED.test(line);
-      }
-      function appendInline(parent, text, doc) {
-        const s = String(text == null ? "" : text);
-        INLINE.lastIndex = 0;
-        let at = 0;
-        let m = INLINE.exec(s);
-        while (m !== null) {
-          if (m.index > at) parent.appendChild(doc.createTextNode(s.slice(at, m.index)));
-          if (m[1] !== void 0) {
-            const code = doc.createElement("code");
-            code.textContent = m[1];
-            parent.appendChild(code);
-          } else if (m[2] !== void 0) {
-            parent.appendChild(doc.createTextNode(m[2]));
-          } else if (m[3] !== void 0) {
-            const href = safeHref(m[4]);
-            if (href) {
-              const a = doc.createElement("a");
-              a.setAttribute("href", href);
-              a.setAttribute("rel", "noreferrer noopener");
-              a.setAttribute("target", "_blank");
-              a.textContent = m[3];
-              parent.appendChild(a);
-            } else {
-              parent.appendChild(doc.createTextNode(m[0]));
-            }
-          } else if (m[5] !== void 0 || m[6] !== void 0) {
-            const strong = doc.createElement("strong");
-            strong.textContent = m[5] !== void 0 ? m[5] : m[6];
-            parent.appendChild(strong);
-          } else {
-            const em = doc.createElement("em");
-            em.textContent = m[7] !== void 0 ? m[7] : m[8];
-            parent.appendChild(em);
-          }
-          at = INLINE.lastIndex;
-          m = INLINE.exec(s);
-        }
-        if (at < s.length) parent.appendChild(doc.createTextNode(s.slice(at)));
-        return parent;
-      }
-      function renderFence(lines, i, parent, doc) {
-        const open = FENCE.exec(lines[i]);
-        const marker = open[1][0];
-        const body = [];
-        let j = i + 1;
-        while (j < lines.length) {
-          const close = FENCE.exec(lines[j]);
-          if (close && close[1][0] === marker && close[2] === "") break;
-          body.push(lines[j]);
-          j++;
-        }
-        const pre = doc.createElement("pre");
-        const code = doc.createElement("code");
-        if (LANG.test(open[2])) code.setAttribute("data-lang", open[2]);
-        code.textContent = body.join("\n");
-        pre.appendChild(code);
-        parent.appendChild(pre);
-        return j < lines.length ? j + 1 : j;
-      }
-      function renderQuote(lines, i, parent, doc, depth) {
-        const body = [];
-        let j = i;
-        while (j < lines.length) {
-          const q = QUOTE.exec(lines[j]);
-          if (!q) break;
-          body.push(q[1]);
-          j++;
-        }
-        const quote = doc.createElement("blockquote");
-        if (depth >= MAX_QUOTE_DEPTH) {
-          const p = doc.createElement("p");
-          appendInline(p, body.join(" "), doc);
-          quote.appendChild(p);
-        } else {
-          renderBlocks(body, quote, doc, depth + 1);
-        }
-        parent.appendChild(quote);
-        return j;
-      }
-      function renderList(lines, i, parent, doc) {
-        const ordered = ORDERED.test(lines[i]);
-        const item = ordered ? ORDERED : BULLET;
-        const list = doc.createElement(ordered ? "ol" : "ul");
-        if (ordered) {
-          const first = ORDERED.exec(lines[i])[1];
-          if (first !== "1") list.setAttribute("start", first);
-        }
-        const texts = [];
-        let j = i;
-        while (j < lines.length) {
-          const m = item.exec(lines[j]);
-          if (m) {
-            texts.push(ordered ? m[2] : m[1]);
-            j++;
-            continue;
-          }
-          if (texts.length && lines[j].trim() && !startsBlock(lines[j])) {
-            texts[texts.length - 1] += ` ${lines[j].trim()}`;
-            j++;
-            continue;
-          }
-          break;
-        }
-        for (const t of texts) {
-          const li = doc.createElement("li");
-          appendInline(li, t, doc);
-          list.appendChild(li);
-        }
-        parent.appendChild(list);
-        return j;
-      }
-      function renderTable(lines, i, parent, doc) {
-        const table = doc.createElement("table");
-        const thead = doc.createElement("thead");
-        const headRow = doc.createElement("tr");
-        for (const cell of splitRow(lines[i])) {
-          const th = doc.createElement("th");
-          appendInline(th, cell, doc);
-          headRow.appendChild(th);
-        }
-        thead.appendChild(headRow);
-        table.appendChild(thead);
-        const tbody = doc.createElement("tbody");
-        let j = i + 2;
-        while (j < lines.length && lines[j].includes("|") && lines[j].trim()) {
-          const tr = doc.createElement("tr");
-          for (const cell of splitRow(lines[j])) {
-            const td = doc.createElement("td");
-            appendInline(td, cell, doc);
-            tr.appendChild(td);
-          }
-          tbody.appendChild(tr);
-          j++;
-        }
-        table.appendChild(tbody);
-        parent.appendChild(table);
-        return j;
-      }
-      function renderParagraph(lines, i, parent, doc) {
-        const body = [lines[i].trim()];
-        let j = i + 1;
-        while (j < lines.length && lines[j].trim() && !startsBlock(lines[j]) && !(lines[j].includes("|") && isTableRule(lines[j + 1]))) {
-          body.push(lines[j].trim());
-          j++;
-        }
-        const p = doc.createElement("p");
-        appendInline(p, body.join(" "), doc);
-        parent.appendChild(p);
-        return j;
-      }
-      function renderBlocks(lines, parent, doc, depth = 0) {
-        let i = 0;
-        while (i < lines.length) {
-          const line = lines[i];
-          if (!line.trim()) {
-            i++;
-            continue;
-          }
-          if (FENCE.test(line)) {
-            i = renderFence(lines, i, parent, doc);
-            continue;
-          }
-          const h = HEADING.exec(line);
-          if (h) {
-            const heading = doc.createElement(`h${h[1].length}`);
-            appendInline(heading, h[2].replace(/\s+#+\s*$/, ""), doc);
-            parent.appendChild(heading);
-            i++;
-            continue;
-          }
-          if (QUOTE.test(line)) {
-            i = renderQuote(lines, i, parent, doc, depth);
-            continue;
-          }
-          if (BULLET.test(line) || ORDERED.test(line)) {
-            i = renderList(lines, i, parent, doc);
-            continue;
-          }
-          if (line.includes("|") && isTableRule(lines[i + 1])) {
-            i = renderTable(lines, i, parent, doc);
-            continue;
-          }
-          i = renderParagraph(lines, i, parent, doc);
-        }
-        return parent;
-      }
-      function renderMarkdown(text) {
-        const doc = document;
-        const frag = doc.createDocumentFragment();
-        const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\u0000/g, "").split("\n");
-        return renderBlocks(lines, frag, doc);
-      }
-      module.exports = { renderMarkdown };
-    }
-  });
-
   // renderer/plugin-host.js
   var require_plugin_host = __commonJS({
     "renderer/plugin-host.js"(exports, module) {
@@ -35096,6 +35119,8 @@ ${detail}` });
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require_render_html();
+      var { renderMarkdown } = require_render_markdown();
+      var { placeAboveAnchor } = require_popover_place();
       var { scanPaths } = require_path_scan();
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
@@ -39999,7 +40024,25 @@ ${res.stderr}` : "");
         pluginsRegisterNote.classList.toggle("hidden", !text);
       }
       function closePluginsDialog() {
+        closePluginReadmePopover();
         pluginsOverlay.classList.add("hidden");
+      }
+      var pluginReadmePopover = document.getElementById("plugin-readme-popover");
+      var pluginReadmePopoverName = document.getElementById("plugin-readme-popover-name");
+      var pluginReadmePopoverBody = document.getElementById("plugin-readme-popover-body");
+      function closePluginReadmePopover() {
+        if (pluginReadmePopover) pluginReadmePopover.classList.add("hidden");
+      }
+      function openPluginReadmePopover(name, markdown, anchor) {
+        if (!pluginReadmePopover) return;
+        pluginReadmePopoverName.textContent = name;
+        pluginReadmePopoverBody.innerHTML = "";
+        pluginReadmePopoverBody.appendChild(renderMarkdown(markdown));
+        pluginReadmePopover.classList.remove("hidden");
+        placeAboveAnchor(pluginReadmePopover, anchor);
+      }
+      if (pluginReadmePopover) {
+        document.getElementById("plugin-readme-popover-close").addEventListener("click", closePluginReadmePopover);
       }
       async function openPluginsDialog() {
         showPluginsRegisterNote("");
@@ -40119,6 +40162,26 @@ ${res.stderr}` : "");
           const rowActions = document.createElement("div");
           rowActions.className = "plugin-row-actions";
           row.appendChild(rowActions);
+          if (p.hasReadme) {
+            const help = document.createElement("button");
+            help.type = "button";
+            help.className = "secondary";
+            help.textContent = "Help";
+            help.title = `Show ${p.name || p.id}'s README`;
+            help.addEventListener("click", async () => {
+              let r = null;
+              try {
+                r = await window.api.pluginInvoke("_host", "plugins.readme", [p.id]);
+              } catch {
+              }
+              if (!r || !r.ok) {
+                showPluginsRegisterNote(`Could not read ${p.name || p.id}'s README: ${r && r.error || "unknown error"}`, "warn");
+                return;
+              }
+              openPluginReadmePopover(p.name || p.id, r.markdown, help);
+            });
+            rowActions.appendChild(help);
+          }
           if (p.quarantined) {
             const retry = document.createElement("button");
             retry.type = "button";
@@ -40209,7 +40272,12 @@ ${res.stderr}` : "");
           body.className = "plugin-row-body";
           const nameEl = document.createElement("div");
           nameEl.className = "plugin-row-name";
-          nameEl.textContent = pr.dir;
+          const prPad = document.createElement("span");
+          prPad.className = "plugin-row-origin";
+          nameEl.appendChild(prPad);
+          const prName = document.createElement("span");
+          prName.textContent = pr.dir;
+          nameEl.appendChild(prName);
           body.appendChild(nameEl);
           const n = document.createElement("div");
           n.className = "plugin-row-note warn";
@@ -40225,7 +40293,12 @@ ${res.stderr}` : "");
           body.className = "plugin-row-body";
           const nameEl = document.createElement("div");
           nameEl.className = "plugin-row-name";
-          nameEl.textContent = sh.id;
+          const shPad = document.createElement("span");
+          shPad.className = "plugin-row-origin";
+          nameEl.appendChild(shPad);
+          const shName = document.createElement("span");
+          shName.textContent = sh.id;
+          nameEl.appendChild(shName);
           if (sh.rootLabel) {
             const r = document.createElement("span");
             r.className = "plugin-row-version";

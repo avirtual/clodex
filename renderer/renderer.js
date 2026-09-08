@@ -11,6 +11,8 @@ const { versionSeverity, updateApplies, releaseAgeInfo, quotaChip, shapeQuota, p
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
+const { renderMarkdown } = require('./lib/render-markdown');
+const { placeAboveAnchor } = require('./lib/popover-place');
 const { scanPaths } = require('./lib/path-scan');
 const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 
@@ -5379,7 +5381,32 @@ function showPluginsRegisterNote(text, kind) {
   pluginsRegisterNote.classList.toggle('hidden', !text);
 }
 
-function closePluginsDialog() { pluginsOverlay.classList.add('hidden'); }
+function closePluginsDialog() {
+  closePluginReadmePopover();
+  pluginsOverlay.classList.add('hidden');
+}
+
+const pluginReadmePopover = document.getElementById('plugin-readme-popover');
+const pluginReadmePopoverName = document.getElementById('plugin-readme-popover-name');
+const pluginReadmePopoverBody = document.getElementById('plugin-readme-popover-body');
+
+function closePluginReadmePopover() {
+  if (pluginReadmePopover) pluginReadmePopover.classList.add('hidden');
+}
+
+function openPluginReadmePopover(name, markdown, anchor) {
+  if (!pluginReadmePopover) return;
+  pluginReadmePopoverName.textContent = name;
+  pluginReadmePopoverBody.innerHTML = '';
+  pluginReadmePopoverBody.appendChild(renderMarkdown(markdown));
+  pluginReadmePopover.classList.remove('hidden');
+  placeAboveAnchor(pluginReadmePopover, anchor);
+}
+
+if (pluginReadmePopover) {
+  document.getElementById('plugin-readme-popover-close')
+    .addEventListener('click', closePluginReadmePopover);
+}
 
 async function openPluginsDialog() {
   showPluginsRegisterNote('');
@@ -5500,6 +5527,23 @@ async function renderPluginsDialog() {
     const rowActions = document.createElement('div');
     rowActions.className = 'plugin-row-actions';
     row.appendChild(rowActions);
+    if (p.hasReadme) {
+      const help = document.createElement('button');
+      help.type = 'button';
+      help.className = 'secondary';
+      help.textContent = 'Help';
+      help.title = `Show ${p.name || p.id}'s README`;
+      help.addEventListener('click', async () => {
+        let r = null;
+        try { r = await window.api.pluginInvoke('_host', 'plugins.readme', [p.id]); } catch {}
+        if (!r || !r.ok) {
+          showPluginsRegisterNote(`Could not read ${p.name || p.id}'s README: ${(r && r.error) || 'unknown error'}`, 'warn');
+          return;
+        }
+        openPluginReadmePopover(p.name || p.id, r.markdown, help);
+      });
+      rowActions.appendChild(help);
+    }
     if (p.quarantined) {
       const retry = document.createElement('button');
       retry.type = 'button';
@@ -5578,7 +5622,12 @@ async function renderPluginsDialog() {
     body.className = 'plugin-row-body';
     const nameEl = document.createElement('div');
     nameEl.className = 'plugin-row-name';
-    nameEl.textContent = pr.dir;
+    const prPad = document.createElement('span');
+    prPad.className = 'plugin-row-origin';
+    nameEl.appendChild(prPad);
+    const prName = document.createElement('span');
+    prName.textContent = pr.dir;
+    nameEl.appendChild(prName);
     body.appendChild(nameEl);
     const n = document.createElement('div');
     n.className = 'plugin-row-note warn';
@@ -5599,7 +5648,12 @@ async function renderPluginsDialog() {
     body.className = 'plugin-row-body';
     const nameEl = document.createElement('div');
     nameEl.className = 'plugin-row-name';
-    nameEl.textContent = sh.id;
+    const shPad = document.createElement('span');
+    shPad.className = 'plugin-row-origin';
+    nameEl.appendChild(shPad);
+    const shName = document.createElement('span');
+    shName.textContent = sh.id;
+    nameEl.appendChild(shName);
     if (sh.rootLabel) {
       const r = document.createElement('span');
       r.className = 'plugin-row-version';
