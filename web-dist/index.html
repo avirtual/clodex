@@ -40024,6 +40024,7 @@ ${res.stderr}` : "");
         pluginsRegisterNote.classList.toggle("hidden", !text);
       }
       function closePluginsDialog() {
+        closePluginReadmePopover();
         pluginsOverlay.classList.add("hidden");
       }
       var pluginReadmePopover = document.getElementById("plugin-readme-popover");

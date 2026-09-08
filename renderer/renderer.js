@@ -5381,7 +5381,10 @@ function showPluginsRegisterNote(text, kind) {
   pluginsRegisterNote.classList.toggle('hidden', !text);
 }
 
-function closePluginsDialog() { pluginsOverlay.classList.add('hidden'); }
+function closePluginsDialog() {
+  closePluginReadmePopover();
+  pluginsOverlay.classList.add('hidden');
+}
 
 const pluginReadmePopover = document.getElementById('plugin-readme-popover');
 const pluginReadmePopoverName = document.getElementById('plugin-readme-popover-name');
