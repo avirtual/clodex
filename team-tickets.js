@@ -35,9 +35,6 @@ const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 
-// The intent transport's own message cap (engine.js MAX_MSG). A body at the wire
-// limit is still a legal file, so the refusal is about the transport, not the
-// content — restating it here keeps the verb's error naming a number a lead can act on.
 const TEAM_FILE_BODY_MAX = 64 * 1024;
 
 // How long a queued ticket waits for another run to release the shared lock.
@@ -2254,9 +2251,6 @@ function createTicketMethods(deps, shared) {
             const kind = intent.kind || null;
             const stem = intent.stem || null;
             if (!stem) { reply('error: prompt-rm needs a kind and a stem — [agent:team prompt-rm system|append <stem>]'); return; }
-            // Only `system` is reachable from a role def: `prompt` names the system
-            // stem and nothing in team.json names an append one, so an append guard
-            // here would refuse on a dependency that cannot exist.
             const users = kind === 'system' ? this._rolesNaming(team, 'prompt', stem) : [];
             if (users.length) {
               reply(`error: prompt system/${stem} is still named by role(s): ${users.join(', ')} — repoint them with [agent:team role-set …] first`);

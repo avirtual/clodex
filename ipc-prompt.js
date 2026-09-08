@@ -167,11 +167,6 @@ const GRAMMAR_LINES = [
   // line renders ONLY for a seat whose persisted `intents` array lists 'reboot'.
   { type: 'reboot', text: `  [agent:reboot] [reason]          Relaunch the whole Clodex app (privileged, operator-granted). Bodyless or with a one-line free-text reason (logged only). Sessions are killed and resume on relaunch (--resume). Rate-limited: a second reboot inside a few minutes is refused. Your own process dies with the app, so a "relaunch complete" notice reaches you only after it comes back.` },
   { type: 'team-create', text: `  [agent:team create <name> root:<abs-path> [lead:<seat>]]   Mint a team manifest (privileged, operator-granted): root must be an existing absolute dir no team owns; default lead <name>-lead. Then spawn the lead there, [agent:team gather], [agent:team role-add]. [agent:team set-lead <seat>] hands the lead off (current lead only).` },
-  // Ungateable, like task: `team` is absent from intent-catalog, so intentEnabled
-  // returns true for it and this row renders in BOTH byte-pinned builds. That is
-  // why the same four lines must also sit in the IPC_PROMPT literal above — and
-  // why the row goes AFTER the privileged team-create one, which neither pin
-  // renders: any other position would put the literal's lines out of order.
   { type: 'team', text: `  [agent:team template-save <stem>] <json>   Write a seat template into your OWN team's directory, at templates/<stem>.json (team lead only; every team verb is). The body is the template JSON — an object with a string "type" — and it is GREEDY, so close it with [agent:end]. A role picks it up with [agent:team role-set <role> template:<stem>], and the team's own copy wins over a library one of the same name.
   [agent:team prompt-save system|append <stem>] <markdown>   Same for a prompt, into prompts/system/<stem>.md or prompts/append/<stem>.md. A system stem is what a role's prompt:<stem> names; append stems ride a seat's template. Greedy body, close it with [agent:end]. Both verbs refuse a body over 64KB — that is the intent transport's cap, not the file's.
   [agent:team template-rm <stem>]  Delete that template. Refused while any role in team.json still names it: repoint the role with [agent:team role-set …] first, since nothing else tells you the role would break.
