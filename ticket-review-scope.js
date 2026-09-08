@@ -116,9 +116,9 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
   out.push(`You are reviewing ticket ${id}.`);
   out.push('');
 
-  // The same `WORK IN:` shape _deliverTicketSpec uses, deliberately: the hand
-  // was told where the tree is in exactly these words, and a reviewer given a
-  // different phrasing for the same fact has to work out they are the same tree.
+  // The same `WORK IN: <path> (git worktree, branch <b>) —` head as
+  // _deliverTicketSpec: other words for the same fact leave the reviewer working out
+  // it is the same tree. The tail differs because the hand BOOTS there and this seat cds in.
   if (wtPath) {
     out.push(`WORK IN: ${wtPath} (git worktree, branch ${branch || '(unknown)'}) — cd there first. `
       + 'Read only; do not commit, merge, push or edit anything in that tree.');
