@@ -65,6 +65,8 @@ clodexctl ctx add prod --url https://box:8787 --token <T> && clodexctl sessions
 
 The unit of work is a **session**: a real PTY running `claude`, `codex`, or plain `bash`, embedded as an xterm.js terminal. Press ⌘T, name it, point it at a directory, hit Create. Then make nine more.
 
+> **Codex support is not on par with Claude Code.** Clodex was built around the Claude Code CLI and Codex came later. A Codex seat gets the intent grammar, DMs, teams, plugins, custom skills, system and append prompts, and the statusline; it does not get tool gating, the skill roster, wire stripping, or custom subagent definitions, because Codex has no place to receive them, and the Activity tab does not show a Codex seat's native sub-agents. The dialogs only offer a Codex seat what it honours.
+
 - **Multi-window workspaces** — each window is a workspace with its own session set (⌘⇧N for a new one). Close a window and its sessions keep running; the app lives in the tray. Only the most-recently-focused workspace opens on startup, IDE-style — the rest are one click away.
 - **Persistence** — quit and relaunch, and every session `--resume`s with its history. ✕ or ⌘W *archives* a session (dimmed row, one click to resume it right where it left off); deleting is a separate, confirmed act. The New Session dialog can also resume an arbitrary session ID, or fork it into a new branch.
 - **Per-session configuration at spawn** — pick a system prompt and append prompts from the library, check exactly which tools the agent gets, attach custom subagent types and skills, set the wire-strip level, add raw CLI args. Most of it is editable later (right-click → Edit Session; apply on next spawn or restart in place, keeping the conversation).
