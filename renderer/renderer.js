@@ -2435,10 +2435,12 @@ inputTemplate.addEventListener('change', async () => {
   }
   const tplCaps = capsFor(t.type);
   if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
-  if (t.type === 'claude') {
-    renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
+  if (agentType) {
     fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || '', newSessionSeat());
     renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
+  }
+  if (t.type === 'claude') {
+    renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
     await refreshNewSessionTools(new Set(t.disabledTools || []));
     await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -3725,6 +3727,7 @@ const {
 } = initChecklistPopovers({
   sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta,
   seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
+  getSessionType: sessionTypeOf,
 });
 
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });

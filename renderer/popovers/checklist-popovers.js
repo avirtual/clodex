@@ -23,6 +23,7 @@ const {
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
 const { parseSkillFrontmatter } = require('../../skills-util');
 const { esc } = require('../lib/format');
+const { capsFor } = require('../lib/provider-caps');
 const { makeDraggable, resetDrag } = require('../lib/popover-drag');
 const { placeAboveAnchor } = require('../lib/popover-place');
 
@@ -52,10 +53,15 @@ const agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
 
-function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf }) {
+function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf, getSessionType }) {
   function seatFor(name, source = null) {
     if (source || typeof seatPluginsOf !== 'function') return null;
     return { plugins: seatPluginsOf(name) };
+  }
+
+  function skillsTypeOf(name, source) {
+    if (source) return 'claude';
+    return typeof getSessionType === 'function' ? getSessionType(name) : null;
   }
 
   // --- Tools quick-access popover ------------------------------------------
@@ -130,6 +136,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   const skillsPopover = document.getElementById('skills-popover');
   const skillsPopoverName = document.getElementById('skills-popover-name');
   const popoverSkillsList = document.getElementById('popover-skills-list');
+  const popoverSkillsRoster = document.getElementById('popover-skills-roster');
   const popoverInjectSkillsSection = document.getElementById('popover-inject-skills-section');
   const popoverInjectSkillsList = document.getElementById('popover-inject-skills-list');
   const skillsPopoverRestart = document.getElementById('skills-popover-restart');
@@ -142,6 +149,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   let skillsInjectPersisted = [];
   let skillsInjectRendered = [];
   let skillsInjectAuto = [];
+  let skillsDisabledPersisted = [];
 
   function closeSkillsPopover() {
     skillsPopover.classList.add('hidden');
@@ -154,8 +162,13 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!res || !res.ok) { alert(source ? `Read skills on peer failed: ${res && res.error ? res.error : 'unknown error'}` : 'Session not found in persistence.'); return; }
     setPluginCatalogCache((await window.api.pluginCatalog()) || []);
     skillsEditingSource = source;
-    renderSkillChecklist(popoverSkillsList, res.names || [], new Set(res.disabledSkills || []),
-      res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope });
+    const caps = capsFor(skillsTypeOf(name, source));
+    skillsDisabledPersisted = res.disabledSkills || [];
+    if (caps.skillRoster) {
+      renderSkillChecklist(popoverSkillsList, res.names || [], new Set(skillsDisabledPersisted),
+        res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope });
+    }
+    popoverSkillsRoster.style.display = caps.skillRoster ? '' : 'none';
     setSkillLibCache(res.skillLib || []);
     const seat = seatFor(name, source);
     if (getSkillLibCache().length || (seat && bundleSectionsOf('skills').length)) {
@@ -181,7 +194,9 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   document.getElementById('skills-popover-apply').addEventListener('click', async () => {
     const name = skillsPopover.dataset.name;
     if (!name) return closeSkillsPopover();
-    const disabledSkills = collectSkillChecklist(popoverSkillsList);
+    const disabledSkills = popoverSkillsRoster.style.display === 'none'
+      ? skillsDisabledPersisted
+      : collectSkillChecklist(popoverSkillsList);
     // Only send injectSkills when the library section is shown; otherwise pass
     // undefined so the handler preserves the persisted set (empty library != none).
     // When shown, RECONCILE against the scoped render: an out-of-scope persisted

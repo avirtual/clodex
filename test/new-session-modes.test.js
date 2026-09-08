@@ -474,6 +474,31 @@ test('no New Session path draws the skill or built-in checklist with a bare defa
     'a cwd change in optimized mode must re-apply the defaults, not re-enable everything');
 });
 
+// t750: the codex spawn arm reads systemPromptFile and appendPromptFiles
+// (session-manager's readSystemPromptBody / readAppendBodies), so a template
+// carrying either must fill those two fields for a codex seat as well —
+// otherwise the seat spawns without prompts the template author chose. The rest
+// of the claude block (agents, builtins, tools, the skill roster, strip,
+// autoCompact) stays claude-only, so the pin is the ABSENCE of these two calls
+// from that block plus their presence in the handler around it.
+test('t750: template load fills the prompt fields outside the claude-only block', () => {
+  const handler = slice("inputTemplate.addEventListener('change'",
+    '\nbtnTemplateDelete.addEventListener', 'the template picker');
+  const claudeAt = handler.indexOf("if (t.type === 'claude') {");
+  assert.ok(claudeAt > 0, 'ENTER: the claude-only block is still in the template handler');
+  const close = handler.indexOf('\n  }\n', claudeAt);
+  assert.ok(close > claudeAt, 'ENTER: the claude-only block closes');
+  const claudeBlock = handler.slice(claudeAt, close);
+  assert.match(claudeBlock, /renderAgentChecklist\(inputAgentsList/,
+    'ENTER: the slice really is the claude-only block — it still holds a claude-only write');
+
+  for (const call of ['fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile',
+    'renderAppendChecklist(inputAppendList']) {
+    assert.ok(handler.includes(call), `${call} must still run on a template load`);
+    assert.ok(!claudeBlock.includes(call), `${call} must not be gated on the claude-only block`);
+  }
+});
+
 test('every path that fills the form by script marks it Custom itself', () => {
   // A scripted `.value =` fires no input/change event, so the drift listener on
   // #advanced-section is blind to all three of these.
