@@ -793,7 +793,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
         await window.api.removeTemplate(t.id);
         refreshTemplatesList();
       });
-      for (const btn of (el.querySelectorAll ? el.querySelectorAll('[data-action="team"]') : [])) {
+      for (const btn of el.querySelectorAll('[data-action="team"]')) {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
           const row = teamRows.find((x) => x.team === btn.dataset.team && x.name === t.name);
