@@ -7,10 +7,10 @@
 const cp = require('child_process');
 const crypto = require('crypto');
 const net = require('net');
-const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { readEnvFile, writeEnvFile } = require('./env-file');
+const { defaultClodexHome } = require('./clodex-paths');
 const { createDetectCache } = require('./detect-cache');
 
 const DEFAULT_PORTS = { web: 7810, wirescope: 7811, wire: 7820 };
@@ -393,7 +393,7 @@ function createSandbox(deps = {}) {
   const log = deps.log || { info() {}, error() {} };
   const detect = deps.detect || (() => probeDocker(spawn));
   const invalidateDetect = deps.invalidateDetect || (() => {});
-  const registryDir = deps.registryDir || path.join(os.homedir(), '.clodex');
+  const registryDir = deps.registryDir || defaultClodexHome();
 
   const id = deps.id || SANDBOX_PEER_ID;
   const boxLabel = deps.label || SANDBOX_PEER_LABEL;
