@@ -167,6 +167,22 @@ test('task grammar lives in BOTH the literal and GRAMMAR_LINES, byte-identical',
   assert.deepStrictEqual(fromRows, lines, 'the two copies must be the same lines in the same order');
 });
 
+// t754 added dispatch:/cwd: to role-add and role-set. The byte-pins above hold
+// whether or not the row documents them — they compare the literal to
+// GRAMMAR_LINES, and a row deleted from both sides stays equal. So the grammar
+// for the kvs is pinned on its own, on both copies: a lead that cannot read
+// `dispatch:worktree` here has no other way to learn the verb exists.
+test('t754: the role-add row documents dispatch:/cwd:, in the literal AND in GRAMMAR_LINES', () => {
+  const ROW = /^ {2}\[agent:team role-add <role>.*\[dispatch:standing\|spawn\|worktree\].*\[cwd:<rel>\]\]/m;
+  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the role-add kvs row');
+  assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
+  for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
+    assert.ok(/dispatch:worktree gives every ticket to that role its own branch, tree and seat/.test(src),
+      'the row says what worktree DOES — the reason the ticket exists');
+    assert.ok(/role-set <role> …\] takes the same kvs/.test(src), 'and that role-set takes them too');
+  }
+});
+
 // task is NOT in GATEABLE_INTENTS, and intentEnabled opens with
 // `if (!GATEABLE_TYPES.has(type)) return true`. So there is no allowlist that
 // removes this line — including `[]`, which denies everything gateable. A future
