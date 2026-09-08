@@ -1,6 +1,7 @@
 'use strict';
 
-// The "Update available" line on a Manage Plugins row (t741).
+// What a Manage Plugins row SHOWS, over the extracted row builder: the
+// "Update available" line (t741) and the origin glyph before the name (t758).
 //
 // The row builder is EXTRACTED from the shipped renderer.js and RUN against
 // stubs, the idiom test/plugins-dialog-fits.test.js established: renderer.js

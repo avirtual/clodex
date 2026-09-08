@@ -22381,14 +22381,14 @@ ${i3.join("\n")}
         if (row.root === "core") {
           return { kind: "core", glyph: ORIGIN_GLYPHS.core, label: "Built in" };
         }
-        const repo = row.source && row.source.repo ? String(row.source.repo) : "";
+        const repo = row.source && row.source.repo || "";
         if (repo === LIBRARY_REPO) {
           return { kind: "library", glyph: ORIGIN_GLYPHS.library, label: "From the clodex-plugins library" };
         }
         if (repo) {
           return { kind: "remote", glyph: ORIGIN_GLYPHS.remote, label: `From github.com/${repo}` };
         }
-        const linked = row.linkedFrom ? String(row.linkedFrom) : "";
+        const linked = row.linkedFrom || "";
         return {
           kind: "local",
           glyph: ORIGIN_GLYPHS.local,
