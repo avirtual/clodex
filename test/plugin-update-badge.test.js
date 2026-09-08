@@ -26,9 +26,9 @@ const { pluginOrigin } = require('../renderer/lib/plugin-origin');
 function el(tag) {
   const e = {
     tagName: tag, className: '', title: '', type: '', value: '', checked: false, disabled: false,
-    children: [], dataset: {}, style: {},
+    children: [], dataset: {}, style: {}, handlers: {},
     appendChild(c) { e.children.push(c); return c; },
-    addEventListener() {},
+    addEventListener(type, fn) { (e.handlers[type] = e.handlers[type] || []).push(fn); },
     classList: { add() {}, remove() {}, contains: () => false },
   };
   let html_ = '';
@@ -44,7 +44,7 @@ function el(tag) {
 const FREE = ['pluginsList', 'window', 'document', 'sourceLine', 'pluginBar',
   'makePluginSettingsPanel', 'renderPluginsDialog', 'showPluginsRegisterNote',
   'openPluginsSourceUpdate', 'showToast', 'pluginsSourceTarget',
-  'closePluginsSourceSection', 'confirm', 'pluginOrigin'];
+  'closePluginsSourceSection', 'confirm', 'pluginOrigin', 'openPluginReadmePopover'];
 
 function extractRenderPluginsDialog() {
   const start = rendererSrc.indexOf('async function renderPluginsDialog() {');
@@ -58,22 +58,12 @@ function extractRenderPluginsDialog() {
 }
 
 // `plugins` is what plugins.status answers with; `updates` is what
-// plugins.updatesAvailable answers with. `asked` records the methods called.
-async function renderRows(plugins, updates, asked = []) {
-  const pluginsList = el('div');
-  const fn = extractRenderPluginsDialog()(
+// plugins.updatesAvailable answers with. `asked` records the methods called and
+// `opened` what reached the README popover.
+function mount(pluginsList, pluginInvoke, openReadme = () => {}) {
+  return extractRenderPluginsDialog()(
     pluginsList,
-    {
-      api: {
-        pluginInvoke: async (_id, method) => {
-          asked.push(method);
-          if (method === 'plugins.status') return { ok: true, plugins, problems: [], shadowed: [] };
-          if (method === 'plugins.updatesAvailable') return { ok: true, updates };
-          return { ok: true };
-        },
-      },
-      __CLODEX_WEB__: false,
-    },
+    { api: { pluginInvoke }, __CLODEX_WEB__: false },
     { createElement: el },
     (s) => `From github.com/${s.repo}`,
     { settingsSectionOwners: () => [] },
@@ -81,6 +71,22 @@ async function renderRows(plugins, updates, asked = []) {
     async () => {},
     () => {}, () => {}, () => {}, null, () => {}, () => true,
     pluginOrigin,
+    openReadme,
+  );
+}
+
+async function renderRows(plugins, updates, asked = [], opened = [], readme = { ok: true, markdown: '# hi' }) {
+  const pluginsList = el('div');
+  const fn = mount(
+    pluginsList,
+    async (_id, method, args) => {
+      asked.push(method);
+      if (method === 'plugins.status') return { ok: true, plugins, problems: [], shadowed: [] };
+      if (method === 'plugins.updatesAvailable') return { ok: true, updates };
+      if (method === 'plugins.readme') { asked.push(`readme:${args && args[0]}`); return readme; }
+      return { ok: true };
+    },
+    (name, markdown) => opened.push([name, markdown]),
   );
   const got = await fn();
   assert.strictEqual(got.length, plugins.length,
@@ -129,23 +135,9 @@ test('a refusal from the update read leaves the dialog rendering, unbadged', asy
   // blindly: an ok:false, or a missing array, must not throw out of the row loop
   // and leave the operator with an empty dialog.
   const pluginsList = el('div');
-  const fn = extractRenderPluginsDialog()(
-    pluginsList,
-    {
-      api: {
-        pluginInvoke: async (_id, method) => (method === 'plugins.status'
-          ? { ok: true, plugins: [INSTALLED], problems: [], shadowed: [] }
-          : { ok: false, error: 'no such plugin method' }),
-      },
-      __CLODEX_WEB__: false,
-    },
-    { createElement: el },
-    (s) => `From github.com/${s.repo}`,
-    { settingsSectionOwners: () => [] },
-    () => el('div'),
-    async () => {}, () => {}, () => {}, () => {}, null, () => {}, () => true,
-    pluginOrigin,
-  );
+  const fn = mount(pluginsList, async (_id, method) => (method === 'plugins.status'
+    ? { ok: true, plugins: [INSTALLED], problems: [], shadowed: [] }
+    : { ok: false, error: 'no such plugin method' }));
   const got = await fn();
   assert.strictEqual(got.length, 1, 'the row survived the refusal');
   assert.strictEqual(badgeOf(pluginsList.children[0]), null);
@@ -186,6 +178,45 @@ test('each row carries its origin glyph and the label as a tooltip', async () =>
     ['↗', 'From github.com/someone/theirs'],
     ['▪', 'Local, registered from /Users/someone/src/demo'],
   ], 'the four origins must reach the row as four different glyphs');
+});
+
+function helpOf(row) {
+  const actions = row.children.find((c) => c.className === 'plugin-row-actions');
+  assert.ok(actions, 'ENTER: the row has an actions column to hold the button');
+  return actions.children.find((c) => c.textContent === 'Help') || null;
+}
+
+test('only a plugin whose status row says it ships a README gets a Help button', async () => {
+  // The flag is the whole subject: the dir is not reachable from the renderer, so
+  // a build that offered Help on every row would open a popover onto a refusal.
+  const rows = await renderRows(
+    [{ ...INSTALLED, hasReadme: true }, { ...INSTALLED, id: 'bare', name: 'Bare', hasReadme: false }],
+    [],
+  );
+  assert.ok(helpOf(rows[0]), 'the documented plugin must offer its README');
+  assert.strictEqual(helpOf(rows[1]), null, 'and a plugin without one must offer nothing');
+});
+
+test('a status row from before the flag existed offers no Help button', async () => {
+  const rows = await renderRows([INSTALLED], []);
+  assert.strictEqual(helpOf(rows[0]), null,
+    'undefined must read as absent, not as truthy-by-omission');
+});
+
+test('clicking Help reads the README for THAT id and hands the markdown to the popover', async () => {
+  const asked = [];
+  const opened = [];
+  const rows = await renderRows(
+    [{ ...INSTALLED, hasReadme: true }, { ...INSTALLED, id: 'two', name: 'Two', hasReadme: true }],
+    [], asked, opened, { ok: true, markdown: '# Two\n' },
+  );
+  const help = helpOf(rows[1]);
+  assert.ok(help, 'ENTER: the second row has the button the click below is about');
+  await help.handlers.click[0]();
+  assert.ok(asked.includes('readme:two'),
+    'the click must ask for the row it belongs to, not the first row in the list');
+  assert.deepStrictEqual(opened, [['Two', '# Two\n']],
+    'the reply reaches the popover as markdown — the dialog does no rendering of its own');
 });
 
 test('the glyph is the first thing in the name node, ahead of the name', async () => {

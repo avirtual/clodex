@@ -1111,6 +1111,10 @@ function createPluginLoader(deps) {
     return { ok: true, id: rec.id, file };
   }
 
+  function isReadableFile(file) {
+    try { return fs.statSync(file).isFile(); } catch { return false; }
+  }
+
   function sourceOf(rec) {
     if (rec.root !== 'user' || rec.isLink) return null;
     const sidecar = source.readSidecar(rec.dir);
@@ -1150,7 +1154,7 @@ function createPluginLoader(deps) {
           source: sourceOf(rec),
           scope: scopeOf(rec.manifest),
           reads: readsOf(rec.manifest),
-          hasReadme: fs.existsSync(path.join(rec.dir, 'README.md')),
+          hasReadme: isReadableFile(path.join(rec.dir, 'README.md')),
         };
       }),
       problems: discoveryProblems.slice(),
