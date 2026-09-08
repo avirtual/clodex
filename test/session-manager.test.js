@@ -296,6 +296,7 @@ const osReal = require('os');
 const pathReal = require('path');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 const { teamPromptFile } = require('../team-prompt-dir');
+const { createTeamManifest: createTeamManifestReal } = require('../team-manifest');
 
 function mkWithTranscript(sessionId, overrides = {}) {
   const root = mkTmpRoot('clodex-sm-');
@@ -1259,8 +1260,8 @@ test('t170 every bodiless gateable verb is structurally unspillable', () => {
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)
     .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));
-  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'term', 'who'],
-    'the bodiless six — if this list changed, the disposition table needs a deliberate verdict for the new verb');
+  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'team-create', 'term', 'who'],
+    'the bodiless seven — if this list changed, the disposition table needs a deliberate verdict for the new verb');
   for (const type of bodiless) {
     assert.deepStrictEqual(deniedBodyDisposition({ type }), { how: 'none', label: null },
       `${type} carries no body, so it can never reach a spill`);
@@ -10129,6 +10130,175 @@ test('team: a bad watchdog ms is bounced without calling the mutator', () => {
   f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'watchdog', ms: null });
   assert.deepStrictEqual(f.calls, []);
   assert.ok(f.injected.some((t) => /watchdog needs a millisecond number/.test(t)));
+});
+
+// --- [agent:team create] / [agent:team set-lead] (t751) ---------------------
+// The mint front door for agents. Unlike mkTeamMut above, the writer here is the
+// REAL createTeamManifest over a temp clodexHome: the assertion that matters is
+// team.json ON DISK carrying the root and lead, and a stub would let a handler
+// that forwarded nothing still look right.
+function mkTeamCreate({ intents = ['team-create'], refreshThrows = false } = {}) {
+  const home = mkTmpRoot('clodex-t751-');
+  const projectRoot = mkTmpRoot('clodex-t751-proj-');
+  const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
+  const refreshes = [];
+  const { m, injected } = mkPark({
+    fs: fsReal, path: pathReal,
+    REGISTRY_DIR: home,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
+    createTeam: tm.createTeam,
+    teamsDir: tm.teamsDir,
+    resolveTeam: () => null,
+    refreshAppMenu: () => { refreshes.push(1); if (refreshThrows) throw new Error('menu boom'); },
+  });
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  const seat = { name: 'a', type: 'claude', agentType: 'claude', cwd: projectRoot, activityState: 'idle', workspaceId: 'ws1' };
+  m.sessions.set('a', seat);
+  const readTeam = (name) => JSON.parse(fsReal.readFileSync(pathReal.join(home, 'teams', name, 'team.json'), 'utf-8'));
+  const teamExists = (name) => fsReal.existsSync(pathReal.join(home, 'teams', name, 'team.json'));
+  return { m, injected, refreshes, seat, home, projectRoot, readTeam, teamExists, tm };
+}
+
+test('t751 create: a granted seat writes team.json with the root and the default lead', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.teamExists('shop'), 'ENTER: the manifest was written — every assertion below reads it');
+  const raw = f.readTeam('shop');
+  assert.strictEqual(raw.root, pathReal.resolve(f.projectRoot), 'the root the seat named, resolved');
+  assert.strictEqual(raw.lead, 'shop-lead', 'the default lead is <name>-lead');
+  assert.deepStrictEqual(Object.keys(raw.roles).sort(), ['hand', 'lead', 'reviewer'],
+    'the stock roles are seeded, exactly as Create Team… seeds them');
+  assert.strictEqual(f.refreshes.length, 1, 'the app menu is rebuilt once — the Teams menu is a template with no open-time hook');
+  const reply = f.injected.find((t) => /team "shop" created/.test(t));
+  assert.ok(reply, 'the seat is told');
+  assert.match(reply, /root /);
+  assert.match(reply, /lead shop-lead/);
+  assert.match(reply, /dir .*teams\/shop/);
+  assert.match(reply, /Next: spawn the lead in that root/, 'and told what to do next — the lead seat does not exist yet');
+});
+
+test('t751 create: an UNGRANTED seat gets no manifest and no reply at all', async () => {
+  // The gate is intentEnabledForSeat at the top of _handleIntent, not anything in
+  // the handler — so this drives the dispatcher, never _handleTeamCreate directly.
+  // `null` intents is the living all-enabled default, which a privileged verb must
+  // NOT ride: that is the whole inversion, and a seat that has never been edited
+  // is exactly the seat carrying it.
+  for (const intents of [null, [], ['dm', 'who']]) {
+    const f = mkTeamCreate({ intents });
+    await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+    assert.strictEqual(f.teamExists('shop'), false, `intents=${JSON.stringify(intents)}: nothing was written`);
+    assert.deepStrictEqual(f.injected.filter((t) => /team "shop" created/.test(t)), [],
+      'and no success line was injected');
+    assert.strictEqual(f.refreshes.length, 0, 'the menu was never rebuilt');
+  }
+});
+
+test('t751 create: an explicit lead: is recorded verbatim', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: 'boss', body: '' });
+  assert.strictEqual(f.readTeam('shop').lead, 'boss');
+  assert.ok(f.injected.some((t) => /lead boss/.test(t)));
+});
+
+test('t751 create: a root that is not an existing directory is refused, and writes nothing', async () => {
+  const f = mkTeamCreate();
+  const missing = pathReal.join(f.projectRoot, 'nope');
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: missing, lead: null, body: '' });
+  assert.strictEqual(f.teamExists('shop'), false);
+  assert.ok(f.injected.some((t) => /is not an existing directory/.test(t)),
+    'createTeam does not stat the root, so this refusal is owed here');
+  assert.strictEqual(f.refreshes.length, 0);
+  // A FILE is not a directory either — statSync succeeds on it, so a bare
+  // existsSync would wave it through and mint a team rooted at a file.
+  const aFile = pathReal.join(f.projectRoot, 'file.txt');
+  fsReal.writeFileSync(aFile, 'x');
+  f.injected.length = 0;
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop2', root: aFile, lead: null, body: '' });
+  assert.strictEqual(f.teamExists('shop2'), false);
+  assert.ok(f.injected.some((t) => /is not an existing directory/.test(t)));
+});
+
+test('t751 create: missing name and relative root are refused before the writer', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: null, root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.injected.some((t) => /create needs a team name/.test(t)));
+  f.injected.length = 0;
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: 'rel/path', lead: null, body: '' });
+  assert.ok(f.injected.some((t) => /create needs an absolute root/.test(t)));
+  assert.strictEqual(f.teamExists('shop'), false);
+});
+
+test('t751 create: the writer refusals are relayed verbatim (duplicate name, owned root)', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.teamExists('shop'), 'ENTER: the first create landed');
+  f.injected.length = 0;
+  f.refreshes.length = 0;
+
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.injected.some((t) => /already exists/.test(t)), 'a second create of the same name is refused');
+  assert.strictEqual(f.refreshes.length, 0, 'a refused write must not claim a menu rebuild');
+
+  // A DIFFERENT name on the SAME root: createTeam's own root-ownership refusal,
+  // which the name check above cannot reach.
+  f.injected.length = 0;
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop2', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.injected.some((t) => /already owns root/.test(t)));
+  assert.strictEqual(f.teamExists('shop2'), false);
+
+  // The default-lead overflow, minted here rather than by createTeam: 60 + '-lead'
+  // is 65, one over the seat-name limit.
+  f.injected.length = 0;
+  const long = 'a'.repeat(60);
+  const other = mkTmpRoot('clodex-t751-proj2-');
+  await f.m._handleIntent('a', { type: 'team-create', name: long, root: other, lead: null, body: '' });
+  assert.ok(f.injected.some((t) => /is too long/.test(t)), 'the shared defaultLeadSeat refusal reaches the intent path too');
+  assert.strictEqual(f.teamExists(long), false);
+});
+
+test('t751 set-lead: the LEAD rewrites team.json; a non-lead is refused', () => {
+  const home = mkTmpRoot('clodex-t751-sl-');
+  const projectRoot = mkTmpRoot('clodex-t751-slproj-');
+  const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
+  tm.createTeam({ name: 'shop', root: projectRoot, lead: 'shop-lead' });
+  const team = tm.loadManifest('shop');
+  const { m, injected } = mkPark({
+    fs: fsReal, path: pathReal,
+    REGISTRY_DIR: home,
+    resolveTeam: (cwd) => (cwd === projectRoot ? team : null),
+    findProjectRoot: () => projectRoot,
+    setLead: tm.setLead,
+  });
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  const seat = (name) => {
+    m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd: projectRoot, activityState: 'idle' });
+    return m.sessions.get(name);
+  };
+  const leadOnDisk = () => JSON.parse(fsReal.readFileSync(team.file, 'utf-8')).lead;
+
+  // A non-lead first, so the success below cannot be mistaken for "any seat may".
+  m._handleTeam(seat('shop-hand'), { type: 'team', sub: 'set-lead', name: 'shop-hand', body: '' });
+  assert.strictEqual(leadOnDisk(), 'shop-lead', 'the pointer did not move for a non-lead');
+  assert.ok(injected.some((t) => /only the team lead \(shop-lead\) can edit team metadata/.test(t)));
+
+  injected.length = 0;
+  m._handleTeam(seat('shop-lead'), { type: 'team', sub: 'set-lead', name: 'shop-lead-2', body: '' });
+  assert.strictEqual(leadOnDisk(), 'shop-lead-2', 'the lead pointer is rewritten on disk');
+  assert.ok(injected.some((t) => /lead of shop is now "shop-lead-2"/.test(t)));
+
+  // A missing seat name is refused ahead of the writer, and setLead's own charset
+  // refusal is relayed verbatim rather than reworded.
+  injected.length = 0;
+  m._handleTeam(seat('shop-lead'), { type: 'team', sub: 'set-lead', name: null, body: '' });
+  assert.ok(injected.some((t) => /set-lead needs a seat name/.test(t)));
+  assert.strictEqual(leadOnDisk(), 'shop-lead-2', 'still unchanged');
+
+  injected.length = 0;
+  m._handleTeam(seat('shop-lead'), { type: 'team', sub: 'set-lead', name: 'bad name!', body: '' });
+  assert.ok(injected.some((t) => /lead must be a seat name matching/.test(t)));
+  assert.strictEqual(leadOnDisk(), 'shop-lead-2');
 });
 
 test('_roleInUse: matches live + persisted seats and role-addressed open tickets, ignores unrelated', () => {
