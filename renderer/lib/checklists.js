@@ -470,7 +470,9 @@ function collectToolAllowChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
-// A skill that's off in a lower layer (global/project/local
+// Skills mirror tools. The catalog combines a static seed (CLAUDE_SKILLS), the
+// live transcript roster, clodex's own off list, and any skill a LOWER settings
+// layer mentions. A skill that's off in a lower layer (global/project/local
 // settings) or locked by managed policy is rendered unchecked + disabled +
 // labeled with provenance: clodex can't change it from its layer-4 file (a
 // lower-layer off can only be re-enabled if SKILL_REENABLE_CONFIRMED, a managed

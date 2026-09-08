@@ -38,8 +38,8 @@ function registerIpcHandlers(deps) {
     handle, on,
     popupMenu, showMessageBox, showSaveDialog, showOpenDialog,
     openExternal, openPath, showItemInFolder, getAppVersion, getDesktopPath,
-    CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
-    DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR,
+    CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
+    DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR, SKILL_REENABLE_CONFIRMED,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
     claudeProjectDir, collectSystemDiagnostics, createWindow, diagSummary,
     checkTools, invalidateToolCache, diagWarning, fetchFileDiff, fetchFilePeek, writeFilePeek, resolveFilePath, fetchProxyBust,
@@ -48,7 +48,7 @@ function registerIpcHandlers(deps) {
     jsonlToMarkdown, log, manager,
     openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
-    pty, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode, readSessionMeta,
+    pty, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam,
@@ -963,8 +963,12 @@ function registerIpcHandlers(deps) {
       denyBuiltins: Array.isArray(entry.denyBuiltins) ? entry.denyBuiltins : [],
     };
   });
-  handle('session:skillCatalog', (_e, name) => readSkillCatalog({ name }));
-  handle('settings:skillCatalogFor', (_e, cwd) => readSkillCatalog({ cwd: cwd || null }));
+  handle('session:skillCatalog', (_e, name) => readSkillCatalog(name));
+  handle('settings:skillCatalogFor', (_e, cwd) => {
+    const eff = readEffectiveSkillState(cwd || null);
+    const names = [...new Set([...CLAUDE_SKILLS, ...Object.keys(eff.overrides)])].sort();
+    return { ok: true, names, effective: eff.overrides, skillsLocked: eff.skillsLocked, canReenable: SKILL_REENABLE_CONFIRMED };
+  });
   // Box-wide, so it takes no session name: ~/.claude/settings.json is global and
   // every Claude session on this box shares it. Reading it MAIN-side is what lets
   // the browser frontend have this control at all — a renderer-side fs read would

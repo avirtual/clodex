@@ -815,7 +815,7 @@ const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('./ctx-r
 const { bakePrompt, promptCacheDir, readCache } = require('./ipc-prompt-cache');
 const { enqueueNotice, versionNoticeFor, clearNotices } = require('./notice-queue');
 const { buildSkillPlugin, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
-const { classifySkillRoster, emptyRoster, listedRosterNames } = require('./skill-roster');
+const { classifySkillRoster, emptyRoster } = require('./skill-roster');
 const { unionEnabled } = require('./scope-util');
 const { sshRun } = require('./ssh-run');
 const { probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, homeRelativize, resolveDeployFolder } = require('./peer-deploy');
@@ -1593,58 +1593,26 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
-const SKILL_SWEEP_HEAD = 256 * 1024;
-
-function sweepDiscoveredSkills() {
-  let dirs;
-  try { dirs = fs.readdirSync(path.join(REGISTRY_DIR, 'run')); } catch { return []; }
-  const out = new Set();
-  const buf = Buffer.alloc(SKILL_SWEEP_HEAD);
-  for (const seat of dirs) {
-    try {
-      const fd = fs.openSync(pathFor(REGISTRY_DIR, seat, 'transcript'), 'r');
-      let read;
-      try { read = fs.readSync(fd, buf, 0, SKILL_SWEEP_HEAD, 0); }
-      finally { fs.closeSync(fd); }
-      let text = buf.toString('utf8', 0, read);
-      if (read === SKILL_SWEEP_HEAD) text = text.slice(0, text.lastIndexOf('\n') + 1);
-      for (const n of listedRosterNames(text.split('\n'))) out.add(n);
-    } catch {}
-  }
-  return [...out];
-}
-
-function readSkillCatalog({ name = null, cwd = null } = {}) {
-  const entry = name ? persistence.get(name) : null;
+function readSkillCatalog(name) {
+  const entry = persistence.get(name);
   const disabled = entry && Array.isArray(entry.disabledSkills) ? entry.disabledSkills : [];
-  const eff = readEffectiveSkillState(name ? (entry ? entry.cwd : null) : cwd);
-  const scan = name ? parseSkillRoster(name) : emptyRoster();
-  let discovered;
-  if (name) {
-    skillsSeen.record(scan.roster);
-    discovered = scan.roster;
-  } else {
-    discovered = skillsSeen.record(sweepDiscoveredSkills());
-  }
+  const eff = readEffectiveSkillState(entry ? entry.cwd : null);
+  const scan = parseSkillRoster(name);
   const names = [...new Set([
     ...CLAUDE_SKILLS,
-    ...discovered,
+    ...scan.roster,
     ...scan.outOfScope.map((s) => s.name),
     ...disabled,
     ...Object.keys(eff.overrides),
   ])].sort();
-  const base = {
+  return {
     ok: true,
     names,
+    outOfScope: scan.outOfScope,     // reachable only under their own dir; name+dir
+    disabledSkills: disabled,        // the session's own layer-4 off list
     effective: eff.overrides,        // lower-layer state, per skill (value+source)
     skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface
     canReenable: SKILL_REENABLE_CONFIRMED,
-  };
-  if (!name) return base;
-  return {
-    ...base,
-    outOfScope: scan.outOfScope,     // reachable only under their own dir; name+dir
-    disabledSkills: disabled,        // the session's own layer-4 off list
     skillLib: skillLibrary.listFor(sessionScopeCtx(name)), // scope-filtered inject offer list
     injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
   };
@@ -2034,7 +2002,7 @@ const toolCache = createToolCache({ whichBin });
 
   const stores = initStores(userDataPath, { log, registryDir: REGISTRY_DIR });
   const { persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, renameWorkspaceScope } = stores;
 
   try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 

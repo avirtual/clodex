@@ -252,7 +252,7 @@ function createRemoteWiring(deps) {
           log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : '') : ` failed: ${out && out.error}`}`);
           return out;
         },
-        getSkillCatalog: (name) => readSkillCatalog({ name }),
+        getSkillCatalog: (name) => readSkillCatalog(name),
         setSessionSkills: (name, disabledSkills, injectSkills) => {
           name = String(name || '').trim();
           const out = applySessionSkills(name, disabledSkills, injectSkills);
