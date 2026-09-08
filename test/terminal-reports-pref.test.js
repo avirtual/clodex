@@ -333,15 +333,16 @@ async function typeAndWait(ptys, seat, file, command) {
 // OWN BYTES say it reached its end — never when a timer expires. `ended` reads
 // only what arrived after the write, so a previous command cannot satisfy it.
 //
-// The clock this replaced was the defect: a 250ms wait is not long enough on a
-// loaded machine, and a silent command whose ending landed after the caller had
-// flipped the pref to `all` was then disclosed, putting a second row in a queue
-// the caller asserts holds one.
+// Do not put a fixed wait back here, however long. A wait sized in advance is a
+// guess about a loaded machine, and when it loses the silent command's ending
+// lands after the caller has flipped the pref to `all` — so the command IS
+// disclosed, and the queue holds a row the caller asserts is not there. That is
+// a green product failing a test on the clock.
 //
 // Returns false rather than throwing so each caller names what it was proving.
 async function waitForShell(ptys, seat, command, ended) {
-  // spawn() on an open shell is the re-entry snapshot, not a second shell
-  // (drawer-pty.test.js pins that idempotence).
+  // spawn() on an already-open shell returns the existing record: it is the
+  // re-entry replay snapshot, and it starts no second shell.
   const scrollback = () => ptys.spawn('ws-1', seat, {}).scrollback;
   const before = scrollback();
   ptys.write('ws-1', seat, `${command}\n`);
