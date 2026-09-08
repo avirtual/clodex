@@ -103,10 +103,18 @@ function mkHttpsStub(script, commitsUrls) {
   };
 }
 
+// The loader's fetch dir is minted under the injected `os.tmpdir()`, and every
+// loader here gets its OWN root for it. A subject that proves cleanup by
+// listing that root then sees only the dirs it caused: node --test runs test
+// files in parallel processes, and a scan of the shared $TMPDIR attributed
+// another process's live fetch dir to this one (t742).
 function mkSourceLoader({ script, coreIds = [], commitsUrls } = {}) {
   const base = mkTmpRoot('clodex-loader-source-');
   const coreDir = path.join(base, 'core');
   const userDir = path.join(base, 'plugins');
+  const fetchRoot = path.join(base, 'fetch');
+  let fetchRootAsks = 0;
+  fs.mkdirSync(fetchRoot, { recursive: true });
   fs.mkdirSync(coreDir, { recursive: true });
   for (const id of coreIds) {
     const d = path.join(coreDir, id);
@@ -126,8 +134,9 @@ function mkSourceLoader({ script, coreIds = [], commitsUrls } = {}) {
     requireModule: (p) => require(p),
     https: mkHttpsStub(script, commitsUrls),
     execFile: realExecFile,
+    os: { tmpdir: () => { fetchRootAsks++; return fetchRoot; } },
   });
-  return { loader, userDir, coreDir, getUi: () => ui };
+  return { loader, userDir, coreDir, fetchRoot, getUi: () => ui, fetchRootAsks: () => fetchRootAsks };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -307,15 +316,15 @@ test('installFromSource refuses on a candidate that fails validateCandidate, lea
   const tarFile = path.join(stage, 'out.tar.gz');
   require('node:child_process').execFileSync('tar', ['-czf', tarFile, '-C', stage, 'owner-repo-bad0001']);
   const bytes = fs.readFileSync(tarFile);
-  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
-  const before = fs.readdirSync(require('node:os').tmpdir())
-    .filter((n) => n.startsWith('clodex-plugin-fetch-'));
+  const { loader, userDir, fetchRoot, fetchRootAsks } = mkSourceLoader({ script: [{ bytes }] });
   const r = await loader.installFromSource('owner/repo');
   assert.strictEqual(r.ok, false);
   assert.ok(!fs.existsSync(userDir) || fs.readdirSync(userDir).length === 0, 'nothing landed in the user root');
-  const after = fs.readdirSync(require('node:os').tmpdir())
-    .filter((n) => n.startsWith('clodex-plugin-fetch-'));
-  assert.deepStrictEqual(after.filter((n) => !before.includes(n)), [], 'the temp fetch dir was removed on failure');
+  // An empty root proves cleanup only if the fetch dir was minted UNDER it —
+  // otherwise a loader that ignored the injected os would pass this vacuously,
+  // which is the same green-for-nothing the global scan gave.
+  assert.ok(fetchRootAsks() > 0, 'ENTER: the fetch dir was minted under this subject\'s own tmp root');
+  assert.deepStrictEqual(fs.readdirSync(fetchRoot), [], 'the temp fetch dir was removed on failure');
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -546,6 +555,8 @@ test('resolveUpdate treats an abbreviated sha as unchanged against its own full 
   };
   const base = mkTmpRoot('clodex-loader-source-');
   const userDir = path.join(base, 'plugins');
+  const fetchRoot = path.join(base, 'fetch');
+  fs.mkdirSync(fetchRoot, { recursive: true });
   let ui = {};
   const loader = createPluginLoader({
     fs, path,
@@ -553,6 +564,7 @@ test('resolveUpdate treats an abbreviated sha as unchanged against its own full 
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
     log: { info: () => {} },
     requireModule: (p) => require(p),
+    os: { tmpdir: () => fetchRoot },
     https: httpsStub,
     execFile: realExecFile,
   });

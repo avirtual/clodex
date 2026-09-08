@@ -259,14 +259,17 @@ function createPluginLoader(deps) {
     log,
     requireModule,     // seam: node's require, injectable so tests load fakes
     https, execFile,
+    os: osIn,
   } = deps;
+
+  const osApi = osIn || os;
 
   const roots = (Array.isArray(rootsIn) && rootsIn.length
     ? rootsIn
     : [{ id: 'core', dir: pluginsDir, label: 'Built in' }]
   ).filter((r) => r && r.dir);
 
-  const source = createPluginSource({ fs, path, https, execFile, os });
+  const source = createPluginSource({ fs, path, https, execFile, os: osApi });
 
   const logIt = (msg) => { try { log.info('plugin', String(msg)); } catch {} };
 
@@ -765,7 +768,7 @@ function createPluginLoader(deps) {
 
   function nonce() { return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
   function mkFetchDir() {
-    const dir = path.join(os.tmpdir(), `clodex-plugin-fetch-${nonce()}`);
+    const dir = path.join(osApi.tmpdir(), `clodex-plugin-fetch-${nonce()}`);
     fs.mkdirSync(dir, { recursive: true });
     return dir;
   }
