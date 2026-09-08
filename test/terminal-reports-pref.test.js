@@ -329,13 +329,48 @@ async function typeAndWait(ptys, seat, file, command) {
   return false;
 }
 
-// Types a command that is NOT expected to report. Returns once the shell has
-// had a fair chance to run it — a round trip through the pty, which is the same
-// path a reporting command's mark takes.
-async function typeSilently(ptys, seat, command) {
+// Types a command that is NOT expected to report, and returns when the shell's
+// OWN BYTES say it reached its end — never when a timer expires. `ended` reads
+// only what arrived after the write, so a previous command cannot satisfy it.
+//
+// The clock this replaced was the defect: a 250ms wait is not long enough on a
+// loaded machine, and a silent command whose ending landed after the caller had
+// flipped the pref to `all` was then disclosed, putting a second row in a queue
+// the caller asserts holds one.
+//
+// Returns false rather than throwing so each caller names what it was proving.
+async function waitForShell(ptys, seat, command, ended) {
+  // spawn() on an open shell is the re-entry snapshot, not a second shell
+  // (drawer-pty.test.js pins that idempotence).
+  const scrollback = () => ptys.spawn('ws-1', seat, {}).scrollback;
+  const before = scrollback();
   ptys.write('ws-1', seat, `${command}\n`);
-  await new Promise((r) => setTimeout(r, 250));
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const cur = scrollback();
+    // The ring keeps the TAIL, so a slide breaks the prefix; the whole buffer is
+    // the honest fallback there rather than a slice at a stale offset.
+    if (ended(cur.startsWith(before) ? cur.slice(before.length) : cur)) return true;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  return false;
 }
+
+const MARK_RE = /\x1b\]133;([ACD])[^\x07]*\x07/g;
+
+// A SHIMMED shell: the marks frame the command, and a D is the same byte the
+// disclosure decision is made on. drawer-pty feeds the parser BEFORE it appends
+// to the scrollback, so a D visible here has already run onCommand — nothing
+// this returns from can still be in flight.
+const typeSilently = (ptys, seat, command) => waitForShell(ptys, seat, command,
+  (fresh) => /C.*D/.test([...fresh.matchAll(MARK_RE)].map((m) => m[1]).join('')));
+
+// An UNSHIMMED shell frames nothing, so its own output is the only ending it
+// gives. `token` must not appear in the command text: the pty echoes the typed
+// line back, and a token visible in that echo would report a command that has
+// not run yet.
+const typeSilentlyUnshimmed = (ptys, seat, command, token) => waitForShell(
+  ptys, seat, command, (fresh) => fresh.includes(token));
 
 test('a real shell under `all`: the report is queued, tagged, and revocable', shellOpts, async () => {
   const { eng, restore } = bootEngine();
@@ -379,7 +414,8 @@ test('a real shell under `asked`: the command runs, and nothing is disclosed', s
     assert.strictEqual(ptys._execState('ws-1', 'erin').shimmed, true,
       'ENTER: `asked` still builds the shim — the capability survives');
 
-    await typeSilently(ptys, 'erin', 'echo t235');
+    assert.ok(await typeSilently(ptys, 'erin', 'echo t235'),
+      'ENTER: the shell ran the command through to its D mark');
     assert.strictEqual(readRows(file), null, 'the operator was not narrated');
 
     // The positive control for that absence, and the live-shell claim in one:
@@ -414,7 +450,8 @@ test('turning the firehose off bites a LIVE shell, with no reopen', shellOpts, a
     fs.rmSync(file, { force: true });
 
     eng.stores.uiSettings.set({ terminalReports: 'asked' });
-    await typeSilently(ptys, 'frank', 'echo after');
+    assert.ok(await typeSilently(ptys, 'frank', 'echo after'),
+      'ENTER: the shell ran the command through to its D mark');
     assert.strictEqual(readRows(file), null,
       'the SAME shell, still open, stopped reporting immediately');
 
@@ -446,7 +483,10 @@ test('a real shell under `off` has no marks, so the agent is refused', shellOpts
     assert.deepStrictEqual(ptys.exec('ws-1', 'gina', 'echo t235'),
       { ok: false, code: 'no-marks' });
 
-    await typeSilently(ptys, 'gina', 'echo t235');
+    // Waited on the OUTPUT, not on marks: this shell has no shim, so it frames
+    // nothing, and the arithmetic keeps the token out of the echoed line.
+    assert.ok(await typeSilentlyUnshimmed(ptys, 'gina', 'echo t$((100+135))', 't235'),
+      'ENTER: the unshimmed shell really ran the command');
     assert.strictEqual(readRows(file), null, 'and nothing was disclosed either');
 
     // The control, and it has to be a SECOND shell: `off` is the one boundary
