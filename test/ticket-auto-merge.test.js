@@ -331,7 +331,13 @@ test('mkMerge injects every dep team-tickets.js reads', () => {
     // gatherTeam is optional in that same sense: it is reached only from
     // _handleTeam's gather case, which no subject in this file drives — every
     // one here is about the ticket loop.
-    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam'],
+    // The t751 mint/hand-off deps are optional in that same sense: createTeam,
+    // setLead and teamsDir are read only by _handleTeamCreate and _handleTeam's
+    // set-lead case, which no subject here drives. refreshAppMenu is optional in a
+    // STRONGER sense — the call site guards on typeof, because a headless host
+    // wires no Electron menu at all.
+    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
+      'createTeam', 'setLead', 'teamsDir', 'refreshAppMenu'],
   });
 });
 
