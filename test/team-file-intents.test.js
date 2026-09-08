@@ -176,6 +176,18 @@ test('prompt-save refuses a body over the transport cap, naming the size', () =>
   assert.ok(!exists(b.promptFile('system', 'brief')), 'nothing was written');
 });
 
+// The cap is stated in BYTES and a prompt is prose, so it must be measured in
+// bytes: 40000 em-dashes are 40000 string units and 120000 UTF-8 bytes, so a
+// `.length` check would write a file the transport could not have carried.
+test('the cap counts UTF-8 bytes, not string units', () => {
+  const b = mkBox();
+  const body = '—'.repeat(40000);
+  assert.ok(body.length < 65536, 'ENTER: this body is UNDER the cap by string length');
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'prompt-save', kind: 'system', stem: 'brief', body });
+  assert.match(b.last(), /prompt body too long \(120000 > 65536 bytes\)/);
+  assert.ok(!exists(b.promptFile('system', 'brief')), 'nothing was written');
+});
+
 // ── the -rm guard: a stem a role still names ─────────────────────────────────
 
 test('template-rm is refused while a role names the stem, and succeeds once it does not', () => {

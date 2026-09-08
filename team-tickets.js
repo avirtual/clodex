@@ -2211,7 +2211,8 @@ function createTicketMethods(deps, shared) {
             const stem = intent.stem || null;
             if (!stem) { reply('error: template-save needs a stem — [agent:team template-save <stem>] <json>'); return; }
             const raw = String(intent.body == null ? '' : intent.body);
-            if (raw.length > TEAM_FILE_BODY_MAX) { reply(`error: template body too long (${raw.length} > ${TEAM_FILE_BODY_MAX} bytes)`); return; }
+            const bytes = Buffer.byteLength(raw, 'utf-8');
+            if (bytes > TEAM_FILE_BODY_MAX) { reply(`error: template body too long (${bytes} > ${TEAM_FILE_BODY_MAX} bytes)`); return; }
             let parsed;
             try { parsed = JSON.parse(raw); }
             catch (err) { reply(`error: template body is not JSON (${err.message})`); return; }
@@ -2240,7 +2241,8 @@ function createTicketMethods(deps, shared) {
             const stem = intent.stem || null;
             if (!stem) { reply('error: prompt-save needs a kind and a stem — [agent:team prompt-save system|append <stem>] <markdown>'); return; }
             const raw = String(intent.body == null ? '' : intent.body);
-            if (raw.length > TEAM_FILE_BODY_MAX) { reply(`error: prompt body too long (${raw.length} > ${TEAM_FILE_BODY_MAX} bytes)`); return; }
+            const bytes = Buffer.byteLength(raw, 'utf-8');
+            if (bytes > TEAM_FILE_BODY_MAX) { reply(`error: prompt body too long (${bytes} > ${TEAM_FILE_BODY_MAX} bytes)`); return; }
             const res = teamPromptSave(this._teamFileDeps(), team.name, kind, stem, raw);
             if (!res.ok) { reply(`error: ${res.error}`); return; }
             this._refreshAppMenuQuietly();
