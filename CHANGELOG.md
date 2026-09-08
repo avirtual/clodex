@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — your plugins tell you when they've moved on
 
 - Manage plugins tells you when a plugin you installed from the Clodex library has a newer version: the row reads `Update available (1.1.0 → 1.2.0)` and the Plugins menu's `Manage plugins…` carries the count. Nothing updates itself — the row's existing Update… button is still the only way anything is replaced, and the badge and count clear as soon as you click it.
 - Dictation is still marked as voice-originated after you switch to another session and back while the recorder is running — the marker used to go missing on that round trip.
