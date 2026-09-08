@@ -722,7 +722,12 @@ accept teardown removes.
   (sessions/workspaces/templates/prompts/agent+skill libraries/defaults/
   ui-settings/reminders). Paths derive inside the factory, post-whenReady by
   construction; the return object is the list.
-- **clodex-paths.js** — the per-agent runtime path grammar under `~/.clodex`:
+- **clodex-paths.js** — the per-agent runtime path grammar under the registry
+  root (`~/.clodex`, or `CLODEX_HOME` when set — `defaultClodexHome()` here is
+  the one fallback resolver `main.js`, `headless-main.js`, `sandbox.js` and
+  `engine.js`'s `resolveRegistryDir` all share, so one setting moves the whole
+  tree and no subsystem can split off; an injected `registryDir` still outranks
+  it, and a `.app` launched from Finder inherits no shell env):
   `pathFor(root, name, kind)` / `runDirFor(root, name)` over the artifact kinds
   in `KINDS` (`clodex-paths.js`; count them with
   `node -e "console.log(Object.keys(require('./clodex-paths').KINDS).length)"`),
