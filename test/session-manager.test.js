@@ -10125,9 +10125,9 @@ test('t754: role-set patches ONLY the kvs it was given', () => {
 
 // Not validated in _handleTeam: addRole/setRole already refuse a bad dispatch
 // (ROLE_DISPATCH_VALUES) and a reserved role, and a second copy of those rules
-// here would be the copy that drifts. What must hold is that the throw becomes a
-// reply instead of an unhandled error — the real throw TEXT is pinned against the
-// real mutators in test/team-role-kvs.test.js.
+// here would be the copy that drifts. What must hold here is only that the throw
+// becomes a reply instead of an unhandled error; the mutators are stubbed in this
+// fixture, so the throw TEXT below is this test's own invention, not evidence.
 test('t754: a mutator throw on the dispatch/cwd path comes back as an error: reply', () => {
   const f = mkTeamMut({ addRole: () => { throw new Error('role "builder" dispatch must be one of standing, spawn, worktree'); } });
   f.seat('lead');

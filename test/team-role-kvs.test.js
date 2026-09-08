@@ -2,8 +2,8 @@
 // team-role-kvs.test.js — t754: `[agent:team role-add|role-set]` carry
 // `dispatch:` and `cwd:` to the REAL manifest mutators.
 //
-// The stubbed twins in session-manager.test.js pin what _handleTeam PASSES; this
-// file pins what the manifest then DOES with it, because the two halves fail
+// The handler half is exercised against stubbed mutators elsewhere; this file
+// exercises what the manifest then DOES with the def, because the two halves fail
 // differently: a def that reaches addRole intact still lands nothing on disk if
 // the field is dropped by pickRoleKeys, and a validation this ticket declined to
 // duplicate in _handleTeam is only a refusal if the mutator really throws.
