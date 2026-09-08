@@ -373,6 +373,15 @@ per open so a change applies to the next dialog. A template, an adopt prefill or
 `Custom` with Advanced expanded, so `collectFormConfig` and template round-trips
 are unchanged.
 
+Which Advanced rows a type shows — in this dialog and in Edit Session — comes
+from one per-CLI capability table, `renderer/lib/provider-caps.js`: `capsFor(type)`
+answers a whole-object row and an unlisted type reads as all-false. Codex is
+`injectSkills` + `plugins` (both its spawn arm consumes); the roster, subagent,
+tool, strip, auto-compact and wire-off rows are Claude `--settings` mechanisms
+with no Codex target and stay hidden. A third CLI is a row, not a new gate — and
+the offered-skills column may not exceed `createSkillDelivery().providers()`,
+which `test/provider-caps.test.js` pins across the two files.
+
 First launch asks for that preference once, in a **Welcome to Clodex** dialog:
 the two modes as radio cards, plus a Skip that leaves the shipped `optimized`.
 Either button writes `~/.clodex/setup.json` (registry root, so it outlives the

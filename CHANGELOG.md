@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- New-session and Edit dialogs now show a Codex seat the sections Codex actually honours: Custom skills (delivered since 5.39.0) and Plugins (which the seat already consumed but could not be chosen — every shipped plugin was ticked silently). Claude-only settings — skill roster, subagents, tools, wire stripping — stay hidden for Codex rather than pretending to apply. The gates come from one per-CLI capability table, so a third CLI is a row.
+
 ## 5.39.0 — 2026-09-08 — Codex seats get their skills, and a team template is edited where it lives
 
 - Codex seats now get the skills you select for them — the same library and plugin skills a Claude seat gets, listed in the seat's instructions with the path to each and read on demand. Delivery is one adapter per CLI, so a third CLI is an adapter, not another spawn block.

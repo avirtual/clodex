@@ -19,6 +19,7 @@ const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 // on a pathological run, not the usual cost.
 const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
+const { capsFor } = require('./lib/provider-caps');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { createMirrorLatch } = require('./lib/mirror-latch');
@@ -1577,17 +1578,24 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   systemPromptRow.style.display = agentType ? '' : 'none';
   if (appendPromptsRow) appendPromptsRow.style.display = agentType ? '' : 'none';
   if (!agentType) inputSystemPrompt.value = '';
-  const claudeOnly = type === 'claude';
-  for (const sec of [toolsSection, skillsSection]) {
-    if (sec) sec.style.display = claudeOnly ? '' : 'none';
-  }
+  const caps = capsFor(type);
+  if (toolsSection) toolsSection.style.display = caps.tools ? '' : 'none';
+  if (skillsSection) skillsSection.style.display = (caps.injectSkills || caps.skillRoster) ? '' : 'none';
+  if (skillsRow) skillsRow.style.display = caps.skillRoster ? '' : 'none';
+  if (injectSkillsRow) injectSkillsRow.style.display = caps.injectSkills ? '' : 'none';
   if (otherSection) otherSection.style.display = agentType ? '' : 'none';
-  for (const row of [agentsRow, pluginsRow, stripRow, autoCompactRow, noWireRow]) {
-    if (row) row.style.display = claudeOnly ? '' : 'none';
-  }
+  if (agentsRow) agentsRow.style.display = caps.agents ? '' : 'none';
+  if (pluginsRow) pluginsRow.style.display = caps.plugins ? '' : 'none';
+  if (stripRow) stripRow.style.display = caps.strip ? '' : 'none';
+  if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? '' : 'none';
+  if (noWireRow) noWireRow.style.display = caps.noWire ? '' : 'none';
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
-  if (authoring && claudeOnly && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
-  if (claudeOnly && !skipAsyncRefresh) { refreshNewSessionSkills(modeSkillDenySet()); refreshNewSessionInjectSkills(); refreshNewSessionTools(modeToolDenySet()); }
+  if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
+  if (!skipAsyncRefresh) {
+    if (caps.skillRoster) refreshNewSessionSkills(modeSkillDenySet());
+    if (caps.injectSkills) refreshNewSessionInjectSkills();
+    if (caps.tools) refreshNewSessionTools(modeToolDenySet());
+  }
   if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
@@ -1981,17 +1989,17 @@ function setModeSelect(mode) {
 function applyModeFields(mode, { catalogsFresh = false } = {}) {
   if (mode !== 'standard' && mode !== 'optimized') return;
   const optimized = mode === 'optimized';
-  if (inputType.value === 'claude') {
-    if (!catalogsFresh) {
-      refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : new Set());
-      refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : new Set());
-      refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
-    }
-    renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
-    if (inputStripLevel) inputStripLevel.value = optimized ? '2' : '0';
-    if (inputAutoCompact) inputAutoCompact.checked = true;
-    if (inputNoWire) inputNoWire.checked = false;
+  const caps = capsFor(inputType.value);
+  if (!catalogsFresh) {
+    if (caps.tools) refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : new Set());
+    if (caps.skillRoster) refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : new Set());
+    if (caps.injectSkills) refreshNewSessionInjectSkills();
+    if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   }
+  if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
+  if (caps.strip && inputStripLevel) inputStripLevel.value = optimized ? '2' : '0';
+  if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
+  if (caps.noWire && inputNoWire) inputNoWire.checked = false;
   if (newSessionIsAgent()) setProxyControls(inputProxyMode, inputProxyUrl, null, inputProxyUrl.value);
 }
 
@@ -2019,7 +2027,7 @@ function newSessionSeat() {
 }
 
 async function refreshNewSessionInjectSkills(enabledSet = new Set()) {
-  if (inputType.value !== 'claude') return;
+  if (!capsFor(inputType.value).injectSkills) return;
   setSkillLibCache((await window.api.listSkillLib()) || []);
   renderInjectChecklist(inputInjectSkillsList, enabledSet, null, newSessionSeat());
 }
@@ -2029,7 +2037,7 @@ function newSessionIsAgent() {
 }
 
 function newSessionPluginTicks() {
-  return inputType.value === 'claude' ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
+  return capsFor(inputType.value).plugins ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
 }
 
 async function refreshNewSessionExecCommands(enabledSet = new Set()) {
@@ -2042,12 +2050,12 @@ let newSessionPluginsPersisted = null;
 let newSessionPluginsRendered = [];
 
 // Painted BEFORE the intent list, whose catalog is asked about what this ticks.
-// The FETCH stays ABOVE the type guard: a non-claude seat draws no checklist but
-// still SAVES defaultPluginTicks(), which reads this cache — below the guard it
+// The FETCH stays ABOVE the type guard: a seat with no Plugins section still
+// SAVES defaultPluginTicks(), which reads this cache — below the guard it
 // answers [], closing that seat to every plugin with no UI to reopen it.
 async function refreshNewSessionPlugins(pluginsList) {
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
-  if (inputType.value !== 'claude') return;
+  if (!capsFor(inputType.value).plugins) return;
   newSessionPluginsPersisted = Array.isArray(pluginsList) ? pluginsList : null;
   newSessionPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
   renderPluginChecklist(inputPluginList, Array.isArray(pluginsList) ? pluginsList : defaultPluginTicks());
@@ -2055,10 +2063,11 @@ async function refreshNewSessionPlugins(pluginsList) {
 }
 
 function repaintNewSessionBundleRows() {
-  if (inputType.value !== 'claude') return;
+  if (!newSessionIsAgent()) return;
+  const caps = capsFor(inputType.value);
   const seat = newSessionSeat();
-  repaintBundleSections(inputAgentsList, 'agents', seat);
-  repaintBundleSections(inputInjectSkillsList, 'skills', seat);
+  if (caps.agents) repaintBundleSections(inputAgentsList, 'agents', seat);
+  if (caps.injectSkills) repaintBundleSections(inputInjectSkillsList, 'skills', seat);
   repaintBundleSections(inputAppendList, 'prompts/append', seat,
     new Set(collectAppendChecklist(inputAppendList)));
   fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, seat);
@@ -2424,6 +2433,8 @@ inputTemplate.addEventListener('change', async () => {
     await refreshNewSessionPlugins(t.plugins);
     await refreshNewSessionIntents(t.intents);
   }
+  const tplCaps = capsFor(t.type);
+  if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
   if (t.type === 'claude') {
     renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
     fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || '', newSessionSeat());
@@ -2431,7 +2442,6 @@ inputTemplate.addEventListener('change', async () => {
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
     await refreshNewSessionTools(new Set(t.disabledTools || []));
     await refreshNewSessionSkills(new Set(t.disabledSkills || []));
-    await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
     if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
     if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
     if (inputNoWire) inputNoWire.checked = t.noWire === true;
@@ -2491,10 +2501,11 @@ function expandPath(p) {
 function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
+  const caps = capsFor(type);
   const intents = agentType ? collectIntentChecklist(inputIntentList) : null;
   // Written for EVERY type (see the EDITOR_OWNED note below), and a type with no
   // Plugins section gets the globally-enabled set — `[]` would close it for good.
-  const plugins = type === 'claude'
+  const plugins = caps.plugins
     ? mergePlugins(collectPluginChecklist(inputPluginList),
       pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered))
     : defaultPluginTicks();
@@ -2523,7 +2534,7 @@ function collectFormConfig() {
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
     disabledTools: type === 'claude' ? collectToolChecklist(inputToolsList) : [],
     disabledSkills: type === 'claude' ? collectSkillChecklist(inputSkillsList) : [],
-    injectSkills: type === 'claude' ? collectInjectChecklist(inputInjectSkillsList) : [],
+    injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
     stripLevel: type === 'claude' ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
     systemPromptFile: agentType ? (inputSystemPrompt.value || null) : null,
     appendPromptFiles: agentType ? collectAppendChecklist(inputAppendList) : [],
@@ -6921,6 +6932,7 @@ let argsAgentsRendered = [];
 let argsAgentsAuto = [];
 let argsPluginsPersisted = null;
 let argsPluginsRendered = [];
+let argsSkillsDisabledPersisted = [];
 let argsSkillsInjectPersisted = [];
 let argsSkillsInjectRendered = [];
 let argsSkillsInjectAuto = [];
@@ -6967,11 +6979,12 @@ async function openArgsDialog(name, argsSource = null) {
   argsAppendRow.style.display = isAgent ? '' : 'none';
   argsAppendSection.style.display = isAgent ? '' : 'none';
   const isClaude = res.type === 'claude';
-  argsAgentsRow.style.display = isClaude ? '' : 'none';
+  const caps = capsFor(res.type);
+  argsAgentsRow.style.display = caps.agents ? '' : 'none';
   argsOtherSection.style.display = isClaude ? '' : 'none';
   // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section
   // drawn there takes an untick and silently discards it.
-  const isPluginsEditable = isClaude && !argsSource;
+  const isPluginsEditable = caps.plugins && !argsSource;
   argsPluginsSection.style.display = isPluginsEditable ? '' : 'none';
   setPluginCatalogCache((await window.api.pluginCatalog()) || []);
   argsPluginsPersisted = Array.isArray(res.plugins) ? res.plugins : null;
@@ -6985,8 +6998,8 @@ async function openArgsDialog(name, argsSource = null) {
   argsAgentsRendered = (agentLib || []).map((a) => a.name);
   argsAgentsAuto = [...argsAuto];
   renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
-  argsToolsRow.style.display = isClaude ? '' : 'none';
-  argsToolsSection.style.display = isClaude ? '' : 'none';
+  argsToolsRow.style.display = caps.tools ? '' : 'none';
+  argsToolsSection.style.display = caps.tools ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
   renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   argsIntentsSection.style.display = isAgent ? '' : 'none';
@@ -7000,15 +7013,19 @@ async function openArgsDialog(name, argsSource = null) {
     setExecLibCache((await window.api.listExecCommands()) || []);
     renderExecChecklist(argsExecList, new Set(res.execCommands || []));
   }
-  const isSkillsEditable = isClaude && !!argsSource && !!skillCatalog;
+  const isSkillsEditable = (caps.injectSkills || caps.skillRoster) && !!argsSource && !!skillCatalog;
   argsSkillsSection.style.display = isSkillsEditable ? '' : 'none';
+  argsSkillsRow.style.display = (isSkillsEditable && caps.skillRoster) ? '' : 'none';
   if (isSkillsEditable) {
     const sc = skillCatalog;
-    renderSkillChecklist(argsSkillsList, sc.names || [], new Set(sc.disabledSkills || []),
-      sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
+    argsSkillsDisabledPersisted = sc.disabledSkills || [];
+    if (caps.skillRoster) {
+      renderSkillChecklist(argsSkillsList, sc.names || [], new Set(sc.disabledSkills || []),
+        sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
+    }
     setSkillLibCache(sc.skillLib || []);
     const seat = argsSeat();
-    if ((sc.skillLib || []).length || (seat && bundleSectionsOf('skills').length)) {
+    if (caps.injectSkills && ((sc.skillLib || []).length || (seat && bundleSectionsOf('skills').length))) {
       const auto = skillAutoSet(sc.skillLib, name);
       renderInjectChecklist(argsInjectSkillsList, new Set(sc.injectSkills || []), auto, seat);
       argsSkillsInjectPersisted = sc.injectSkills || [];
@@ -7072,7 +7089,16 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     ? undefined
     : parseEnvLines(argsEnv.value || '').env;
   const skillsShown = argsSkillsSection.style.display !== 'none';
-  const disabledSkills = skillsShown ? collectSkillChecklist(argsSkillsList) : undefined;
+  // A codex seat opens the section for its inject checklist alone, leaving the
+  // roster list unpainted — collecting it would send a previous claude edit's
+  // leftovers, or `[]`, as this seat's answer. Echo what was read instead:
+  // `undefined` is not an option here, since the peer save skips the whole skills
+  // call when disabledSkills is absent and injectSkills would never land.
+  const disabledSkills = !skillsShown
+    ? undefined
+    : (argsSkillsRow.style.display === 'none'
+      ? argsSkillsDisabledPersisted
+      : collectSkillChecklist(argsSkillsList));
   const injectSkills = !skillsShown || argsInjectSkillsSection.style.display === 'none'
     ? undefined
     : reconcilePartialSelection(argsSkillsInjectPersisted, argsSkillsInjectRendered,
