@@ -56,7 +56,10 @@ Configuration is by environment:
   has been running the legacy `xvfb-run npm start` path, a bare `node
   headless-main.js` **auto-adopts the existing `~/.config/clodex/sessions.json`
   unchanged** — the sessions carry straight over. Set it explicitly to migrate
-  from a packaged build or to relocate the data dir.
+  from a packaged build or to relocate the data dir. Since this version the
+  desktop app honours it too — it moves `userData` before taking the
+  single-instance lock, so a second Clodex can run beside the first — with the
+  same Finder caveat as `CLODEX_HOME` below.
 - **`CLODEX_HOME`** — the registry root: teams, the library, `run/<name>/`,
   memory, messages, projects and `clodex.log`. Defaults to `~/.clodex`. Every
   host reads it (`main.js`, `headless-main.js`, `sandbox.js` and the engine all

@@ -482,8 +482,11 @@ function workspaceOfSenderStrict(e) {
 }
 
 
-// Prevent two Clodex instances from racing on ~/.clodex sockets and
-// persistence files. If a second instance launches, focus the existing one.
+// Electron derives the single-instance lock from userData, so this setPath must
+// stay ABOVE it or two instances share one lock on the default dir.
+if (typeof process.env.CLODEX_DATA_DIR === 'string' && process.env.CLODEX_DATA_DIR !== '') {
+  app.setPath('userData', path.resolve(process.env.CLODEX_DATA_DIR));
+}
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) {
   app.quit();

@@ -96,7 +96,9 @@ bundle), whose packaged form is the Docker image under
   `before-quit` / `window-all-closed` route to `engine.shutdown()`.
 - **headless-main.js** — the **headless adapter**, `node headless-main.js`. No
   Electron, no Xvfb, no windows/tray/ipc: `userDataPath` from
-  `CLODEX_DATA_DIR` (or the platform default), a pidfile single-instance lock,
+  `CLODEX_DATA_DIR` (or the platform default; the Electron host honours the same
+  variable, via `app.setPath('userData')` before its single-instance lock), a
+  pidfile single-instance lock,
   log-only `openPath`/`notifyOS` seams, `restartHost` that shuts down and exits
   64 for a supervisor to relaunch, and SIGTERM/SIGINT → `engine.shutdown()` →
   exit 0. It restores `DEFAULT_WORKSPACE_ID` (or `CLODEX_WORKSPACES`). Also in

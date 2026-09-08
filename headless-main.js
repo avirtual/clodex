@@ -45,7 +45,9 @@ function defaultUserDataPath() {
   if (process.platform === 'win32') return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'clodex');
   return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'clodex');
 }
-const userDataPath = process.env.CLODEX_DATA_DIR || defaultUserDataPath();
+const userDataPath = process.env.CLODEX_DATA_DIR
+  ? path.resolve(process.env.CLODEX_DATA_DIR)
+  : defaultUserDataPath();
 ensureDir(userDataPath);
 
 // ── Ops log ── clodex.log in the registry root (same file the Electron host
