@@ -274,6 +274,7 @@ const nameFieldLabel = document.getElementById('name-field-label');
 let dialogMode = 'create';
 let editingTemplateId = null;
 let editingTemplateBundle = null;
+let editingTemplateTeam = null;
 let templatesDrawerRefresh = null;
 
 function promptText(title, initial = '') {
@@ -1876,7 +1877,7 @@ async function refreshSystemPromptDropdown() {
 }
 
 async function refreshTemplatesDropdown() {
-  const list = await window.api.listTemplates();
+  const list = (await window.api.listTemplates()).filter((t) => !t.team);
   while (inputTemplate.options.length > 1) inputTemplate.remove(1);
   const byPlugin = new Map();
   for (const t of list) {
@@ -2233,6 +2234,7 @@ async function openDialog(prefill = null) {
   const settingsFetch = window.api.getSettings();
   editingTemplateId = null;
   editingTemplateBundle = null;
+  editingTemplateTeam = null;
   inputName.readOnly = false;
   overlayDismissed = false; // fresh open re-checks: the prominence overlay may re-raise
   if (toolOverlay) toolOverlay.classList.add('hidden');
@@ -2712,12 +2714,13 @@ function setDialogMode(mode) {
   }
 }
 
-async function openTemplateEditor(tpl = null, bundle = null) {
+async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   editingTemplateId = tpl ? tpl.id : null;
   editingTemplateBundle = bundle;
+  editingTemplateTeam = (teamOwner && teamOwner.team) || null;
   inputType.value = (tpl && tpl.type) || 'claude';
   inputName.value = (tpl && tpl.name) || '';
-  inputName.readOnly = !!bundle;
+  inputName.readOnly = !!bundle || !!editingTemplateTeam;
   inputCwd.value = (tpl && tpl.cwd) || homeDir;
   {
     const { model, rest } = splitModelArg((tpl && tpl.extraArgs) || []);
@@ -2773,6 +2776,17 @@ async function saveTemplateFromForm() {
     return;
   }
   const cfg = collectFormConfig();
+  if (editingTemplateTeam) {
+    const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
+    if (res && res.ok === false) {
+      alert(`Could not save into team ${editingTemplateTeam}: ${res.error || 'unknown error'}`);
+      return;
+    }
+    closeDialog();
+    await refreshTemplatesDropdown();
+    if (templatesDrawerRefresh) templatesDrawerRefresh();
+    return;
+  }
   if (editingTemplateBundle) {
     const res = await window.api.writePluginBundleFile(
       editingTemplateBundle.id, 'templates', name, JSON.stringify({ ...cfg, name }, null, 2));
@@ -2786,7 +2800,7 @@ async function saveTemplateFromForm() {
     return;
   }
   if (editingTemplateId) {
-    const list = await window.api.listTemplates();
+    const list = (await window.api.listTemplates()).filter((t) => !t.team);
     const clash = list.find(t => t.id !== editingTemplateId && (t.name || '').toLowerCase() === name.toLowerCase());
     if (clash) { inputName.style.borderColor = '#e94560'; return; }
     await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name }); // rename-in-place

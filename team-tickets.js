@@ -386,7 +386,9 @@ function createTicketMethods(deps, shared) {
     log,
     withoutPrivilegedIntentsFor,
   } = deps;
-  const allTemplates = () => (typeof listAllTemplates === 'function' ? listAllTemplates() : getTemplates().list());
+  const allTemplates = () => (typeof listAllTemplates === 'function'
+    ? listAllTemplates().filter((t) => t && !t.team)
+    : getTemplates().list());
   const {
     // Constructed ONCE, by createSessionManager, and borrowed here. A second
     // instance would work and would still be wrong: core's list() badge and
