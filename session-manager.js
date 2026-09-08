@@ -318,16 +318,16 @@ function keepwarmTokens(n) {
   return `${(n / 1000).toFixed(1)}k`;
 }
 
-function keepwarmPingBody(name, pings, r) {
-  const head = `keep-warm ping #${pings} for ${name}: ${r.cache_hit ? 'warm' : 'COLD'}`;
+function keepwarmPingBody(pings, r) {
+  const head = `keep-warm ping #${pings}`;
   const u = r.usage || {};
-  const parts = [];
+  const parts = [r.cache_hit ? 'warm' : 'COLD'];
   const read = keepwarmTokens(u.cache_read_input_tokens);
   const made = keepwarmTokens(u.cache_creation_input_tokens);
   if (read != null) parts.push(`${read} cached`);
   if (made != null) parts.push(`${made} re-cached`);
   if (r.ttl_s != null) parts.push(`cache slid ${Math.round(r.ttl_s / 60)}m`);
-  return parts.length ? `${head} — ${parts.join(', ')}` : head;
+  return `${head} — ${parts.join(', ')}`;
 }
 
 const { speakable } = require('./speakable');
@@ -924,6 +924,9 @@ function createSessionManager(deps) {
       for (const [name, s] of this.sessions) {
         if (s.sessionId === sid) return name;
       }
+      for (const [name, s] of this.sessions) {
+        if (s._leftSessionIds && s._leftSessionIds.includes(sid)) return name;
+      }
       return null;
     }
 
@@ -1108,25 +1111,25 @@ function createSessionManager(deps) {
           log.info('keepwarm', `disarmed ${name || ev.session} (${ev.cause || 'unknown'}` +
             `${ev.pings != null ? `, ${ev.pings} pings` : ''}` +
             `${ev.lastResult ? `, last ${ev.lastResult}` : ''})`);
-          this._keepwarmRow(name || ev.session,
-            `keep-warm stopped for ${name || ev.session} (${ev.cause || 'unknown'}` +
+          this._keepwarmRow(name, ev.session,
+            `keep-warm stopped (${ev.cause || 'unknown'}` +
             `${ev.pings != null ? `, ${ev.pings} pings` : ''})`);
         } else if (ev.event === 'ping' && ev.result && !ev.result.skipped) {
-          const name = this._nameForWireSession(ev.session) || ev.session;
+          const name = this._nameForWireSession(ev.session);
           const r = ev.result;
           if (r.ok === false) {
             const why = r.reason || r.status_code || 'error';
-            log.warn('keepwarm', `ping FAILED ${name}: ${why}`);
-            this._keepwarmRow(name, `keep-warm ping for ${name} FAILED: ${why}`);
+            log.warn('keepwarm', `ping FAILED ${name || ev.session}: ${why}`);
+            this._keepwarmRow(name, ev.session, `keep-warm ping FAILED: ${why}`);
           } else if (r.ok === true) {
-            this._keepwarmRow(name, keepwarmPingBody(name, ev.pings, r));
+            this._keepwarmRow(name, ev.session, keepwarmPingBody(ev.pings, r));
           }
         }
       } catch { /* reporting must never break the emitter */ }
     }
 
-    _keepwarmRow(who, body) {
-      this._broadcast('ipc-message', { type: 'keepwarm', from: who, to: who, body });
+    _keepwarmRow(name, session, body) {
+      this._broadcast('ipc-message', { type: 'keepwarm', from: name || null, session, body });
     }
 
 

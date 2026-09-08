@@ -11,7 +11,7 @@
 // guarantee for the row/export half that stayed.
 
 const { esc } = require('./lib/format');
-const { MAX_EXPORT_LINES, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');
+const { MAX_EXPORT_LINES, ipcRowParts, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');
 
 function createIpcLog({ host }) {
   let ipcLogBody = null;
@@ -89,9 +89,12 @@ function createIpcLog({ host }) {
     const entry = document.createElement('div');
     entry.className = 'ipc-entry';
 
-    const fromBadge = `<span class="ipc-from">${esc(msg.from)}</span>`;
-    const arrow = `<span class="ipc-arrow">→</span>`;
-    const targetBadge = `<span class="ipc-to">${esc(msg.to)}</span>`;
+    const { name, session, to } = ipcRowParts(msg);
+    const fromBadge = `<span class="ipc-from">${esc(name)}</span>`;
+    const arrow = to === null ? '' : `<span class="ipc-arrow">→</span>`;
+    const targetBadge = to === null
+      ? (session ? `<span class="ipc-session">${esc(session)}</span>` : '')
+      : `<span class="ipc-to">${esc(to)}</span>`;
     const body = `<span class="ipc-body">${esc(msg.body)}</span>`;
 
     entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
