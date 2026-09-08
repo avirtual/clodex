@@ -1912,15 +1912,15 @@ function createSessionManager(deps) {
         if (priorSid && sessionId && priorSid !== sessionId) {
           // The keep-warm handover rides THIS edge. The symlink repoint reports
           // the clear seconds before the new conversation's first upstream
-          // response, so by the time the wire's turn.completed runs the
-          // assignment above has already made its `s.sessionId !== t.sessionId`
-          // test false and _onWireSessionRotated does NOT run on an ordinary
-          // clear. That method keeps the same two lines for the backstop case (a
-          // wiped symlink); it is a second site on purpose, so do not consolidate
-          // the handover into it.
+          // response, so by then the assignment above has made
+          // _onWireSessionRotated's `s.sessionId !== t.sessionId` test false and
+          // it does NOT run on an ordinary clear — it keeps the same lines for
+          // the wiped-symlink backstop, a second site on purpose, so do not
+          // consolidate. noteSessionLeft goes FIRST: endSession emits `hold`
+          // synchronously, and that row resolves the seat name off this list.
+          this._noteSessionLeft(session, priorSid);
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
           session._holdRearmed = false;
-          this._noteSessionLeft(session, priorSid);
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
           // BEFORE the continuation: a clear discarded the conversation, so the
           // prompt-file rewrite has no warm cache left to bust and the fresh
