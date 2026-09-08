@@ -10,9 +10,10 @@ const { nameConflict } = require('./session-manager');
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS } = require('./team-manifest');
 const { teamPreflight } = require('./team-preflight');
-const { teamPromptFile, readTeamJson } = require('./team-prompt-dir');
+const { badStem, teamPromptFile, readTeamJson } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
+const { atomicWriteFileSync } = require('./fs-util');
 const { SETUP_CHOICES } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
@@ -51,7 +52,7 @@ function registerIpcHandlers(deps) {
     pty, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam,
+    setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam, teamsDir,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
@@ -261,7 +262,7 @@ function registerIpcHandlers(deps) {
       let execDefs = null;
       const findings = teamPreflight(team, {
         exists: (abs) => { try { return fs.existsSync(abs); } catch { return false; } },
-        listTemplates: () => (listAllTemplates ? listAllTemplates() : templates.list()),
+        listTemplates: () => (listAllTemplates ? listAllTemplates().filter((t) => !t.team) : templates.list()),
         // execLibrary.list() already parses every def and keeps both `argv` and
         // `cwd` — the two strings the runner expands, so both must survive to
         // the leaf. Reading the one file again by name would be a second parse
@@ -510,6 +511,39 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return templates.list();
   });
+
+  const TEMPLATE_STEM_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+  function teamTemplatePath(team, stem) {
+    if (typeof team !== 'string' || !TEMPLATE_STEM_RE.test(team)) return null;
+    if (badStem(stem) || !TEMPLATE_STEM_RE.test(stem)) return null;
+    let names;
+    try { names = listTeams(); } catch { return null; }
+    if (!Array.isArray(names) || !names.includes(team)) return null;
+    return path.join(teamsDir, team, 'templates', `${stem}.json`);
+  }
+  const teamTemplateList = () => (listAllTemplates ? listAllTemplates() : templates.list());
+
+  handle('templates:saveTeam', (_e, team, stem, body) => {
+    const file = teamTemplatePath(team, stem);
+    if (!file) return { ok: false, error: `no team "${team}" or bad template name "${stem}"`, templates: teamTemplateList() };
+    if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.type !== 'string') {
+      return { ok: false, error: 'a template body must be an object with a string type', templates: teamTemplateList() };
+    }
+    try { atomicWriteFileSync(file, `${JSON.stringify(body, null, 2)}\n`); }
+    catch (err) { return { ok: false, error: err.message, templates: teamTemplateList() }; }
+    refreshAppMenu();
+    return { ok: true, templates: teamTemplateList() };
+  });
+
+  handle('templates:removeTeam', (_e, team, stem) => {
+    const file = teamTemplatePath(team, stem);
+    if (!file) return { ok: false, error: `no team "${team}" or bad template name "${stem}"`, templates: teamTemplateList() };
+    try { fs.unlinkSync(file); }
+    catch (err) { return { ok: false, error: err.message, templates: teamTemplateList() }; }
+    refreshAppMenu();
+    return { ok: true, templates: teamTemplateList() };
+  });
+
   handle('templates:exportFromSession', (_e, name, templateName) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: `no session "${name}"` };

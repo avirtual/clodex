@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Templates the team owns (the copies Gather makes under `~/.clodex/teams/<name>/templates/`) now show in the Templates drawer under their team and are edited and deleted there — that copy is the one a ticket seat is spawned from. The library row it was copied from says which team shadows it, so an edit no longer lands in a file nothing reads.
+
 ## 5.38.0 — 2026-09-08 — copying Polish out of a seat no longer comes out as mojibake
 
 - Keep-warm rows in the IPC log now fit on one line and say which seat they are about: the seat name, then a short session id, then the ping. They used to repeat one 36-character session id three times — twice as a badge with an arrow between a thing and itself, once more in the text — and if the seat had cleared since the hold was armed, the name was missing entirely and only the raw id showed.

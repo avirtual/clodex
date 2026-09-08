@@ -748,14 +748,20 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     return parts.join(' · ') || '(defaults)';
   }
 
+  function openTeamTemplate(tpl) {
+    closeTemplatesDrawer();
+    openTemplateEditor(tpl, null, { team: tpl.team });
+  }
+
   async function refreshTemplatesList() {
     const all = (await window.api.listTemplates()) || [];
-    const items = all.filter((t) => !t.plugin);
+    const items = all.filter((t) => !t.plugin && !t.team);
+    const teamRows = all.filter((t) => !t.plugin && t.team);
     const pluginTemplates = new Map(all.filter((t) => t.plugin).map((t) => [t.id, t]));
     if (refreshPluginCatalog) await refreshPluginCatalog();
     const groups = bundleGroups('templates');
     templatesListEl.innerHTML = '';
-    if (items.length === 0 && !groups.length) {
+    if (items.length === 0 && !teamRows.length && !groups.length) {
       templatesEmpty.style.display = '';
       return { items, pluginTemplates };
     }
@@ -763,9 +769,14 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     for (const t of items) {
       const el = document.createElement('div');
       el.className = 'prompt-item';
+      const shadowedBy = Array.isArray(t.shadowedBy) ? t.shadowedBy : [];
+      const note = shadowedBy.length ? `
+        <div class="prompt-item-scope">Shadowed by team ${shadowedBy
+          .map((n) => `<button data-action="team" data-team="${esc(n)}">${esc(n)}</button>`)
+          .join(', ')} — edits here do not reach that team's seats. Edit the team copy.</div>` : '';
       el.innerHTML = `
         <div class="prompt-item-title">${esc(t.name)} <span class="prompt-kind-badge">${esc(t.type || 'claude')}</span></div>
-        <div class="prompt-item-preview">${esc(templateSummary(t))}</div>
+        <div class="prompt-item-preview">${esc(templateSummary(t))}</div>${note}
         <div class="prompt-item-actions">
           <button data-action="edit">Edit</button>
           <button data-action="delete">Delete</button>
@@ -782,8 +793,49 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
         await window.api.removeTemplate(t.id);
         refreshTemplatesList();
       });
+      for (const btn of (el.querySelectorAll ? el.querySelectorAll('[data-action="team"]') : [])) {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const row = teamRows.find((x) => x.team === btn.dataset.team && x.name === t.name);
+          if (row) openTeamTemplate(row);
+        });
+      }
       el.addEventListener('click', () => { closeTemplatesDrawer(); openTemplateEditor(t); });
       templatesListEl.appendChild(el);
+    }
+    for (const team of [...new Set(teamRows.map((t) => t.team))]) {
+      const head = document.createElement('div');
+      head.className = 'check-group';
+      head.textContent = `Team ${team}`;
+      templatesListEl.appendChild(head);
+      for (const t of teamRows.filter((x) => x.team === team)) {
+        const el = document.createElement('div');
+        el.className = 'prompt-item';
+        const preview = t.unreadable
+          ? 'unreadable JSON — Edit and save replaces the file'
+          : templateSummary(t);
+        el.innerHTML = `
+          <div class="prompt-item-title">${esc(t.name)} <span class="prompt-kind-badge">${esc(t.type || 'claude')}</span></div>
+          <div class="prompt-item-preview">${esc(preview)}</div>
+          <div class="prompt-item-actions">
+            <button data-action="edit">Edit</button>
+            <button data-action="delete">Delete</button>
+          </div>
+        `;
+        el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTeamTemplate(t);
+        });
+        el.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Delete team ${team}'s template "${t.name}"?`)) return;
+          const res = await window.api.removeTeamTemplate(team, t.name);
+          if (res && res.ok === false) alert(`Could not delete it: ${res.error || 'unknown error'}`);
+          refreshTemplatesList();
+        });
+        el.addEventListener('click', () => openTeamTemplate(t));
+        templatesListEl.appendChild(el);
+      }
     }
     appendBundleGroups(templatesListEl, groups, {
       onEdit: (sec, entry) => {

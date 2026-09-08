@@ -15,7 +15,7 @@ const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { confine } = require('./path-confine');
-const { teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
+const { badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
@@ -410,8 +410,42 @@ function readSystemPromptBody(stem, seatPlugins, team) {
   return teamOwnBody(team, 'system', stem) ?? promptLibrary.raw('system', stem);
 }
 
+function teamTemplateStems(team) {
+  let files;
+  try { files = fs.readdirSync(path.join(teamsDir, team, 'templates')); } catch { return []; }
+  return files
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.slice(0, -'.json'.length))
+    .filter((stem) => !badStem(stem))
+    .sort();
+}
+
+function teamTemplateRows() {
+  const rows = [];
+  const shadows = new Map();
+  let names;
+  try { names = listTeams(); } catch { return { rows, shadows }; }
+  for (const team of names) {
+    const dir = path.join(teamsDir, team);
+    for (const stem of teamTemplateStems(team)) {
+      const id = `team:${team}:${stem}`;
+      const body = readTeamJson({ fs, path }, { dir }, 'templates', stem);
+      rows.push(body
+        ? { ...body, name: stem, id, team, teamName: team }
+        : { name: stem, id, team, teamName: team, unreadable: true });
+      if (!shadows.has(stem)) shadows.set(stem, []);
+      shadows.get(stem).push(team);
+    }
+  }
+  return { rows, shadows };
+}
+
 function listAllTemplates() {
-  return [...templates.list(), ...pluginTemplateRows(pluginBundles())];
+  const { rows, shadows } = teamTemplateRows();
+  const library = templates.list().map((t) => (
+    shadows.has(t.name) ? { ...t, shadowedBy: shadows.get(t.name) } : t
+  ));
+  return [...library, ...pluginTemplateRows(pluginBundles()), ...rows];
 }
 
 function gatherSources(team) {
@@ -786,7 +820,7 @@ const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, 
 const { createTeamManifest } = require('./team-manifest');
 const {
   findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
-  setRole, removeRole, renameRole, setTeamWatchdog, setLead,
+  setRole, removeRole, renameRole, setTeamWatchdog, setLead, teamsDir,
   // PASSED, not left to defaultClodexHome(): that reads CLODEX_HOME, which
   // would put teams on a different tree than every other subsystem.
 } = createTeamManifest({ fs, clodexHome: REGISTRY_DIR });
@@ -2243,7 +2277,7 @@ const toolCache = createToolCache({ whichBin });
     listAllTemplates,
     resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam,
+    setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam, teamsDir,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,
     collectSystemDiagnostics, diagSummary, diagWarning,

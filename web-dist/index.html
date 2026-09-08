@@ -7817,6 +7817,8 @@ body {
         { name: "saveTemplate", kind: "invoke", channel: "templates:save" },
         { name: "saveTemplateByName", kind: "invoke", channel: "templates:saveByName" },
         { name: "removeTemplate", kind: "invoke", channel: "templates:remove" },
+        { name: "saveTeamTemplate", kind: "invoke", channel: "templates:saveTeam" },
+        { name: "removeTeamTemplate", kind: "invoke", channel: "templates:removeTeam" },
         { name: "exportTemplate", kind: "invoke", channel: "templates:exportFromSession" },
         { name: "listPrompts", kind: "invoke", channel: "prompts:list" },
         { name: "savePrompt", kind: "invoke", channel: "prompts:save" },
@@ -26803,14 +26805,19 @@ Opening it here and saving would overwrite the file with what this editor could 
           else if (typeof t.proxy === "string") parts.push("proxy custom");
           return parts.join(" \xB7 ") || "(defaults)";
         }
+        function openTeamTemplate(tpl) {
+          closeTemplatesDrawer();
+          openTemplateEditor(tpl, null, { team: tpl.team });
+        }
         async function refreshTemplatesList() {
           const all = await window.api.listTemplates() || [];
-          const items = all.filter((t) => !t.plugin);
+          const items = all.filter((t) => !t.plugin && !t.team);
+          const teamRows = all.filter((t) => !t.plugin && t.team);
           const pluginTemplates = new Map(all.filter((t) => t.plugin).map((t) => [t.id, t]));
           if (refreshPluginCatalog) await refreshPluginCatalog();
           const groups = bundleGroups("templates");
           templatesListEl.innerHTML = "";
-          if (items.length === 0 && !groups.length) {
+          if (items.length === 0 && !teamRows.length && !groups.length) {
             templatesEmpty.style.display = "";
             return { items, pluginTemplates };
           }
@@ -26818,9 +26825,12 @@ Opening it here and saving would overwrite the file with what this editor could 
           for (const t of items) {
             const el = document.createElement("div");
             el.className = "prompt-item";
+            const shadowedBy = Array.isArray(t.shadowedBy) ? t.shadowedBy : [];
+            const note = shadowedBy.length ? `
+        <div class="prompt-item-scope">Shadowed by team ${shadowedBy.map((n) => `<button data-action="team" data-team="${esc(n)}">${esc(n)}</button>`).join(", ")} \u2014 edits here do not reach that team's seats. Edit the team copy.</div>` : "";
             el.innerHTML = `
         <div class="prompt-item-title">${esc(t.name)} <span class="prompt-kind-badge">${esc(t.type || "claude")}</span></div>
-        <div class="prompt-item-preview">${esc(templateSummary(t))}</div>
+        <div class="prompt-item-preview">${esc(templateSummary(t))}</div>${note}
         <div class="prompt-item-actions">
           <button data-action="edit">Edit</button>
           <button data-action="delete">Delete</button>
@@ -26837,11 +26847,50 @@ Opening it here and saving would overwrite the file with what this editor could 
               await window.api.removeTemplate(t.id);
               refreshTemplatesList();
             });
+            for (const btn of el.querySelectorAll ? el.querySelectorAll('[data-action="team"]') : []) {
+              btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const row = teamRows.find((x) => x.team === btn.dataset.team && x.name === t.name);
+                if (row) openTeamTemplate(row);
+              });
+            }
             el.addEventListener("click", () => {
               closeTemplatesDrawer();
               openTemplateEditor(t);
             });
             templatesListEl.appendChild(el);
+          }
+          for (const team of [...new Set(teamRows.map((t) => t.team))]) {
+            const head = document.createElement("div");
+            head.className = "check-group";
+            head.textContent = `Team ${team}`;
+            templatesListEl.appendChild(head);
+            for (const t of teamRows.filter((x) => x.team === team)) {
+              const el = document.createElement("div");
+              el.className = "prompt-item";
+              const preview = t.unreadable ? "unreadable JSON \u2014 Edit and save replaces the file" : templateSummary(t);
+              el.innerHTML = `
+          <div class="prompt-item-title">${esc(t.name)} <span class="prompt-kind-badge">${esc(t.type || "claude")}</span></div>
+          <div class="prompt-item-preview">${esc(preview)}</div>
+          <div class="prompt-item-actions">
+            <button data-action="edit">Edit</button>
+            <button data-action="delete">Delete</button>
+          </div>
+        `;
+              el.querySelector('[data-action="edit"]').addEventListener("click", (e) => {
+                e.stopPropagation();
+                openTeamTemplate(t);
+              });
+              el.querySelector('[data-action="delete"]').addEventListener("click", async (e) => {
+                e.stopPropagation();
+                if (!confirm(`Delete team ${team}'s template "${t.name}"?`)) return;
+                const res = await window.api.removeTeamTemplate(team, t.name);
+                if (res && res.ok === false) alert(`Could not delete it: ${res.error || "unknown error"}`);
+                refreshTemplatesList();
+              });
+              el.addEventListener("click", () => openTeamTemplate(t));
+              templatesListEl.appendChild(el);
+            }
           }
           appendBundleGroups(templatesListEl, groups, {
             onEdit: (sec, entry) => {
@@ -35202,6 +35251,7 @@ ${detail}` });
       var dialogMode = "create";
       var editingTemplateId = null;
       var editingTemplateBundle = null;
+      var editingTemplateTeam = null;
       var templatesDrawerRefresh = null;
       function promptText(title, initial = "") {
         return new Promise((resolve) => {
@@ -36654,7 +36704,7 @@ ${detail}` });
         renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set(), newSessionSeat());
       }
       async function refreshTemplatesDropdown() {
-        const list = await window.api.listTemplates();
+        const list = (await window.api.listTemplates()).filter((t) => !t.team);
         while (inputTemplate.options.length > 1) inputTemplate.remove(1);
         const byPlugin = /* @__PURE__ */ new Map();
         for (const t of list) {
@@ -37003,6 +37053,7 @@ ${detail}` });
         const settingsFetch = window.api.getSettings();
         editingTemplateId = null;
         editingTemplateBundle = null;
+        editingTemplateTeam = null;
         inputName.readOnly = false;
         overlayDismissed = false;
         if (toolOverlay) toolOverlay.classList.add("hidden");
@@ -37427,12 +37478,13 @@ ${detail}` });
           applyNewSessionToolGate({ ok: true, disabled: false, notice: null });
         }
       }
-      async function openTemplateEditor(tpl = null, bundle = null) {
+      async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
         editingTemplateId = tpl ? tpl.id : null;
         editingTemplateBundle = bundle;
+        editingTemplateTeam = teamOwner && teamOwner.team || null;
         inputType.value = tpl && tpl.type || "claude";
         inputName.value = tpl && tpl.name || "";
-        inputName.readOnly = !!bundle;
+        inputName.readOnly = !!bundle || !!editingTemplateTeam;
         inputCwd.value = tpl && tpl.cwd || homeDir;
         {
           const { model, rest } = splitModelArg(tpl && tpl.extraArgs || []);
@@ -37485,6 +37537,17 @@ ${detail}` });
           return;
         }
         const cfg = collectFormConfig();
+        if (editingTemplateTeam) {
+          const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
+          if (res && res.ok === false) {
+            alert(`Could not save into team ${editingTemplateTeam}: ${res.error || "unknown error"}`);
+            return;
+          }
+          closeDialog();
+          await refreshTemplatesDropdown();
+          if (templatesDrawerRefresh) templatesDrawerRefresh();
+          return;
+        }
         if (editingTemplateBundle) {
           const res = await window.api.writePluginBundleFile(
             editingTemplateBundle.id,
@@ -37502,7 +37565,7 @@ ${detail}` });
           return;
         }
         if (editingTemplateId) {
-          const list = await window.api.listTemplates();
+          const list = (await window.api.listTemplates()).filter((t) => !t.team);
           const clash = list.find((t) => t.id !== editingTemplateId && (t.name || "").toLowerCase() === name.toLowerCase());
           if (clash) {
             inputName.style.borderColor = "#e94560";

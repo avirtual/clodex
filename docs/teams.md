@@ -112,6 +112,14 @@ Three ways to run it, all the same plan:
   to see the plan without writing;
 - the `team:gather` IPC, for anything driving Clodex.
 
+After Gather, the team's copy is the one to edit. The Templates drawer lists
+every gathered template under a **Team &lt;name&gt;** heading, below the library
+rows and above the plugin ones; Edit and Delete there write back into
+`~/.clodex/teams/<name>/templates/`, and that copy is what the next spawn reads.
+The library row it was copied from now says **Shadowed by team &lt;name&gt;** with
+a button that opens the team copy — because editing the library row after a
+Gather changes a file the team's seats no longer look at.
+
 The same plan is also what the roles popover renders under each role, whether or
 not you press Gather: every role row lists the pieces it uses — its system
 prompt, its template, the template's own prompt, each append stem, each exec

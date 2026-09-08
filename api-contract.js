@@ -89,6 +89,8 @@ const API_CONTRACT = [
   { name: 'saveTemplate', kind: 'invoke', channel: 'templates:save' },
   { name: 'saveTemplateByName', kind: 'invoke', channel: 'templates:saveByName' },
   { name: 'removeTemplate', kind: 'invoke', channel: 'templates:remove' },
+  { name: 'saveTeamTemplate', kind: 'invoke', channel: 'templates:saveTeam' },
+  { name: 'removeTeamTemplate', kind: 'invoke', channel: 'templates:removeTeam' },
   { name: 'exportTemplate', kind: 'invoke', channel: 'templates:exportFromSession' },
   { name: 'listPrompts', kind: 'invoke', channel: 'prompts:list' },
   { name: 'savePrompt', kind: 'invoke', channel: 'prompts:save' },
