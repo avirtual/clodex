@@ -24,6 +24,7 @@ const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { readVoiceMode, writeVoiceMode, readVoiceTrigger } = require('./voice-settings');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
+const { validOrigin } = require('./peer-outbox');
 const { materializeExecScripts } = require('./bin-materialize');
 // Module-level, unlike the rest of pending-store's surface (required inside
 // createEngine): sweepSpilledMessages below is module-level so its exemption is
@@ -132,6 +133,29 @@ function resolveRegistryDir(seams) {
       + 'pass seams.registryDir (see t359)');
   }
   return defaultClodexHome();
+}
+
+// This box's name on the peer wire, resolved as a pure function so the four
+// cases can be pinned without constructing an engine.
+//
+// The guard is peer-outbox's own validOrigin, reused by symbol rather than
+// copied: SELF_LABEL becomes the `@origin` suffix on a relay sender tag AND a
+// single path segment under the outbox root, so a value this box chooses must
+// clear the same gate a wire-supplied one does. A rejected or blank value falls
+// through to the hostname — an instance that cannot be named is still reachable
+// under its old name, where a throw would strand it.
+function resolveSelfLabel(env, hostname, log) {
+  const fallback = String(hostname || '').replace(/\.local$/, '');
+  const raw = env ? env.CLODEX_LABEL : undefined;
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  if (!trimmed) return fallback;
+  if (!validOrigin(trimmed)) {
+    if (log && typeof log.warn === 'function') {
+      log.warn('peer', `CLODEX_LABEL ${JSON.stringify(trimmed)} is not a usable wire label; using ${fallback}`);
+    }
+    return fallback;
+  }
+  return trimmed;
 }
 
 function createEngine({ userDataPath, seams = {}, log }) {
@@ -290,7 +314,7 @@ function logStartupDiagnostics() {
 const MSG_DIR = path.join(REGISTRY_DIR, 'messages');
 const PENDING_DIR = path.join(REGISTRY_DIR, 'pending');
 const OUTBOX_DIR = path.join(REGISTRY_DIR, 'peer-outbox');
-const SELF_LABEL = os.hostname().replace(/\.local$/, '');
+const SELF_LABEL = resolveSelfLabel(process.env, os.hostname(), log);
 const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
 const MSG_MAX_AGE = 1800;
@@ -2267,4 +2291,4 @@ const toolCache = createToolCache({ whichBin });
   };
 }
 
-module.exports = { createEngine, resolveRegistryDir, diagWarning, sweepSpilledMessages };
+module.exports = { createEngine, resolveRegistryDir, resolveSelfLabel, diagWarning, sweepSpilledMessages };
