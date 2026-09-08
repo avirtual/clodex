@@ -14,6 +14,8 @@ const {
 } = require('./plugin-api');
 const { registerIntent, unregisterSource } = require('./intent-registry');
 
+const README_MAX = 64 * 1024;
+
 function createPluginHostEngine(deps) {
   const {
     manager,          // SessionManager — reached ONLY through the facade below
@@ -670,6 +672,20 @@ function createPluginHostEngine(deps) {
     // it — NOT `catalog()`, which lists only what successfully registered and so
     // would hide the exact plugin the section exists to let you fix.
     'plugins.status': () => ({ ok: true, ...pluginsStatus() }),
+    'plugins.readme': (pluginId) => {
+      const loader = getLoader && getLoader();
+      if (!loader) return errorEnvelope('no plugin loader');
+      const id = String(pluginId || '');
+      const rec = (loader.discover() || []).find((r) => r && r.id === id);
+      if (!rec || !rec.dir) return errorEnvelope('no such plugin');
+      const file = path.join(rec.dir, 'README.md');
+      let st;
+      try { st = fs.statSync(file); } catch { return errorEnvelope('no README.md'); }
+      if (!st.isFile()) return errorEnvelope('no README.md');
+      try {
+        return { ok: true, markdown: fs.readFileSync(file, 'utf8').slice(0, README_MAX) };
+      } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+    },
     'plugins.userRoot': () => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');
