@@ -193,8 +193,8 @@ test('main.js moves userData to CLODEX_DATA_DIR before the single-instance lock'
   assert.ok(lockAt > -1, 'main.js must still take the single-instance lock');
   assert.ok(setPathAt < lockAt,
     'the setPath must precede the lock, or both instances lock the default userData dir');
-  assert.ok(/CLODEX_DATA_DIR/.test(src.slice(0, setPathAt)),
-    'the move must be gated on CLODEX_DATA_DIR');
+  assert.ok(/CLODEX_DATA_DIR/.test(src.slice(Math.max(0, setPathAt - 200), setPathAt)),
+    'the move must be gated on CLODEX_DATA_DIR, not taken unconditionally');
   assert.ok(/app\.setPath\('userData', path\.resolve\(process\.env\.CLODEX_DATA_DIR\)\)/.test(src),
     'the desktop host must resolve the override, not pass a relative string through');
 
