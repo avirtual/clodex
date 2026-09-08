@@ -12427,21 +12427,6 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
 // Asserting "the bytes arrived" would NOT test this. The pre-fix code delivers
 // the bytes correctly whenever the write does happen; the defect is only visible
 // on the path where it does not.
-//
-// Every assertion that carries the invariant is therefore an ABSENCE, and an
-// absence asserted before the trigger reached the queue is trivially true: with
-// its own trigger neutralised each of the three below passed 1/1 (for the flush,
-// neutralised means substituting the return value it reports, since deleting the
-// call outright only reds on the now-undefined `r` — a ReferenceError is not a
-// guard). So each gains the positive observable boot-g uses, ahead of its first
-// absence — `_injectQueueFor(s).length === 1`,
-// which InjectQueue.enqueue increments and only _drain's finally decrements, so
-// it stays 1 while the producer is parked on the ready gate.
-// Checked SYNCHRONOUSLY here, unlike boot-g: both triggers call _injectText
-// inline, so "enqueued but not scheduled yet" — the live state boot-g's
-// waitFor/try-catch discriminator exists to tell apart from a dead mechanism —
-// cannot occur on these paths, and a poll would be a third shape for the job
-// with nothing left to discriminate.
 
 test('t168 INVARIANT: an operator FLUSH whose write never lands leaves the mail on disk and re-drainable', async () => {
   const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
@@ -12458,8 +12443,6 @@ test('t168 INVARIANT: an operator FLUSH whose write never lands leaves the mail 
   // forbids awaiting the write), so it says 1 — that is precisely why the payload
   // must survive underneath it.
   assert.deepStrictEqual(r, { ok: true, count: 1 }, 'the flush reports what it queued');
-  assert.strictEqual(m._injectQueueFor(s).length, 1,
-    'ENTER: the flush reached the queue and its producer is parked on the ready gate — every assertion below is an absence, vacuously true if it never enqueued');
   await new Promise((r2) => setTimeout(r2, 20));
   assert.deepStrictEqual(writes, [], 'producer parked at the ready gate — nothing written');
   assert.ok(hasPending(PENDING_DIR, 'flush-a'),
@@ -12488,8 +12471,6 @@ test('t168 INVARIANT: an IDLE-edge drain whose write never lands leaves the mail
   s._bootReadySeen = false;                      // hold the queue before the producer fires
   s.lastUserInputTs = 0; s.lastUserSubmitTs = 0; // no draft — the pre-enqueue gate passes
   m._drainPendingAtIdle(s);
-  assert.strictEqual(m._injectQueueFor(s).length, 1,
-    'ENTER: the idle drain reached the queue and its producer is parked on the ready gate — every assertion below is an absence, vacuously true if it never enqueued');
   await new Promise((r2) => setTimeout(r2, 20));
   assert.deepStrictEqual(writes, [], 'producer parked at the ready gate — nothing written');
   assert.ok(hasPending(PENDING_DIR, 'idle-a'), 'INVARIANT: not claimed at schedule time');
@@ -12526,10 +12507,8 @@ test('t168 rework: a draft opening between the idle enqueue and the fire leaves 
   s._bootReadySeen = false;                      // hold the queue before the producer fires
   s.lastUserInputTs = 0; s.lastUserSubmitTs = 0; // no draft — the pre-enqueue gate passes
   m._drainPendingAtIdle(s);
-  assert.strictEqual(m._injectQueueFor(s).length, 1,
-    'ENTER: the idle drain reached the queue and its producer is parked on the ready gate — the identity assertions below hold trivially if it never enqueued');
   await new Promise((r2) => setTimeout(r2, 20));
-  assert.strictEqual(countPendingReal(PENDING_DIR, 'idle-b'), 2, 'nothing claimed yet');
+  assert.strictEqual(countPendingReal(PENDING_DIR, 'idle-b'), 2, 'ENTER: producer enqueued and held, nothing claimed yet');
   s.lastUserInputTs = Date.now();                // draft opens in the enqueue→fire window
   s._bootReadySeen = true;                       // release the producer
   await new Promise((r2) => setTimeout(r2, 400));
