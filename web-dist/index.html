@@ -5435,6 +5435,11 @@ body {
 .ipc-to {
   color: #4ade80;
 }
+.ipc-session {
+  font-weight: 400;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
 .ipc-body {
   color: var(--text);
   white-space: pre-wrap;
@@ -23818,12 +23823,32 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/lib/ipc-export.js"(exports, module) {
       "use strict";
       var MAX_EXPORT_LINES = 5e3;
+      var SHORT_SESSION_LEN = 8;
+      function shortSessionId(sid) {
+        if (sid == null) return null;
+        const s = String(sid);
+        if (!s) return null;
+        return s.length > SHORT_SESSION_LEN ? s.slice(0, SHORT_SESSION_LEN) : s;
+      }
+      function ipcRowParts(msg) {
+        const m = msg || {};
+        if (m.type === "keepwarm") {
+          const short = shortSessionId(m.session);
+          const name = m.from != null && m.from !== "" ? String(m.from) : short || "?";
+          return { name, session: short && short !== name ? short : null, to: null };
+        }
+        return {
+          name: m.from != null ? String(m.from) : "?",
+          session: null,
+          to: m.to != null ? String(m.to) : "?"
+        };
+      }
       function formatIpcLine(msg, date) {
         const ts = (date instanceof Date ? date : /* @__PURE__ */ new Date()).toISOString();
-        const from = msg && msg.from != null ? String(msg.from) : "?";
-        const to = msg && msg.to != null ? String(msg.to) : "?";
+        const { name, session, to } = ipcRowParts(msg);
         const body = msg && msg.body != null ? String(msg.body) : "";
-        return `${ts} ${from} -> ${to} ${body.replace(/\r\n|\r|\n/g, "\\n")}`;
+        const head = to === null ? `${name}${session ? ` (${session})` : ""}` : `${name} -> ${to}`;
+        return `${ts} ${head} ${body.replace(/\r\n|\r|\n/g, "\\n")}`;
       }
       function buildExportText(lines) {
         const list = (lines || []).filter(Boolean);
@@ -23835,7 +23860,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const p = (n, w) => String(n).padStart(w || 2, "0");
         return `clodex-ipc-log-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.txt`;
       }
-      module.exports = { MAX_EXPORT_LINES, formatIpcLine, buildExportText, exportFilename };
+      module.exports = { MAX_EXPORT_LINES, shortSessionId, ipcRowParts, formatIpcLine, buildExportText, exportFilename };
     }
   });
 
@@ -23843,7 +23868,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_ipc_log = __commonJS({
     "renderer/ipc-log.js"(exports, module) {
       var { esc } = require_format();
-      var { MAX_EXPORT_LINES, formatIpcLine, buildExportText, exportFilename } = require_ipc_export();
+      var { MAX_EXPORT_LINES, ipcRowParts, formatIpcLine, buildExportText, exportFilename } = require_ipc_export();
       function createIpcLog({ host }) {
         let ipcLogBody = null;
         let ipcEmpty = null;
@@ -23907,9 +23932,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const time = (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
           const entry = document.createElement("div");
           entry.className = "ipc-entry";
-          const fromBadge = `<span class="ipc-from">${esc(msg.from)}</span>`;
-          const arrow = `<span class="ipc-arrow">\u2192</span>`;
-          const targetBadge = `<span class="ipc-to">${esc(msg.to)}</span>`;
+          const { name, session, to } = ipcRowParts(msg);
+          const fromBadge = `<span class="ipc-from">${esc(name)}</span>`;
+          const arrow = to === null ? "" : `<span class="ipc-arrow">\u2192</span>`;
+          const targetBadge = to === null ? session ? `<span class="ipc-session">${esc(session)}</span>` : "" : `<span class="ipc-to">${esc(to)}</span>`;
           const body = `<span class="ipc-body">${esc(msg.body)}</span>`;
           entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
           ipcLogBody.appendChild(entry);

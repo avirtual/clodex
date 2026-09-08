@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Keep-warm rows in the IPC log now fit on one line and say which seat they are about: the seat name, then a short session id, then the ping. They used to repeat one 36-character session id three times — twice as a badge with an arrow between a thing and itself, once more in the text — and if the seat had cleared since the hold was armed, the name was missing entirely and only the raw id showed.
+
 ## 5.37.0 — 2026-09-08 — your plugins tell you when they've moved on
 
 - Manage plugins tells you when a plugin you installed from the Clodex library has a newer version: the row reads `Update available (1.1.0 → 1.2.0)` and the Plugins menu's `Manage plugins…` carries the count. Nothing updates itself — the row's existing Update… button is still the only way anything is replaced, and the badge and count clear as soon as you click it.

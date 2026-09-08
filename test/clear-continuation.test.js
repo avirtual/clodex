@@ -219,8 +219,18 @@ test('clear continuation: a clear ends the OLD conversation keep-warm hold and r
   try {
     const { s, w } = await spawned(h);
     const ended = [];
+    const rows = [];
+    h.m._broadcast = (channel, msg) => rows.push([channel, msg]);
+    // The real HoldKeeper.endSession emits `hold` SYNCHRONOUSLY (wire/hold.js)
+    // and the manager's listener is a plain EventEmitter handler, so the disarm
+    // row is built inside this call — before anything written after it. A stub
+    // that only records the id cannot see the ordering that depends on.
     h.m._holdKeeper = {
-      endSession: (sid) => { ended.push(sid); return { session: sid, holdDisarmed: true }; },
+      endSession: (sid) => {
+        ended.push(sid);
+        h.m._onHoldLifecycle({ session: sid, event: 'disarmed', cause: 'session-ended', pings: 3 });
+        return { session: sid, holdDisarmed: true };
+      },
     };
     // The gate as _maybeRearmHold leaves it after the seat's first main-line
     // turn: latched true in every case, including "nothing persisted". Only a
@@ -241,6 +251,18 @@ test('clear continuation: a clear ends the OLD conversation keep-warm hold and r
     assert.strictEqual(s.sessionId, 'conv-2');
     assert.strictEqual(s._holdRearmed, false,
       'gate reopened, so the next main-line turn re-arms the new conversation');
+
+    // The operator-facing half of the same edge, and the reason the ordering in
+    // onSessionId is load-bearing: `session.sessionId` is already 'conv-2' when
+    // the disarm fires, so the ONLY way this row can name the seat is if
+    // _noteSessionLeft('conv-1') ran before endSession. Recording the left id
+    // after the call — which is what it did — leaves `from: null` and puts a bare
+    // uuid where the seat name belongs, on every clear of a keep-warm seat.
+    const disarms = rows.filter(([, msg]) => msg && msg.type === 'keepwarm');
+    assert.strictEqual(disarms.length, 1,
+      'ENTER: the clear broadcast exactly one keepwarm row — the shape assertion below is vacuous otherwise');
+    assert.deepStrictEqual(disarms[0], ['ipc-message', { type: 'keepwarm', from: 'a', session: 'conv-1',
+      body: 'keep-warm stopped (session-ended, 3 pings)' }]);
   } finally { h.stop('a'); }
 });
 

@@ -589,8 +589,8 @@ test('_onHoldLifecycle: every non-skipped ping and the disarm broadcast a keepwa
     result: { ok: true, cache_hit: true, ttl_s: 3600,
       usage: { input_tokens: 4, output_tokens: 1,
         cache_read_input_tokens: 184_200, cache_creation_input_tokens: 0 } } });
-  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', to: 'a',
-    body: 'keep-warm ping #7 for a: warm — 184.2k cached, 0 re-cached, cache slid 60m' }]],
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', session: 'sid-1',
+    body: 'keep-warm ping #7 — warm, 184.2k cached, 0 re-cached, cache slid 60m' }]],
     'ENTER: the warm ping broadcast one row — the skipped assertion below is vacuous otherwise');
 
   // A skipped tick is the every-60s poll DECLINING (no credential, prefix not
@@ -603,23 +603,58 @@ test('_onHoldLifecycle: every non-skipped ping and the disarm broadcast a keepwa
   rows.length = 0;
   m._onHoldLifecycle({ session: 'sid-1', event: 'ping', pings: 8,
     result: { ok: false, status_code: 401, reason: 'rejected: 401 unauthorized' } });
-  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', to: 'a',
-    body: 'keep-warm ping for a FAILED: rejected: 401 unauthorized' }]]);
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', session: 'sid-1',
+    body: 'keep-warm ping FAILED: rejected: 401 unauthorized' }]]);
 
   rows.length = 0;
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
-  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', to: 'a',
-    body: 'keep-warm stopped for a (max-pings, 24 pings)' }]]);
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'a', session: 'sid-1',
+    body: 'keep-warm stopped (max-pings, 24 pings)' }]]);
 
-  // An unmapped wire session (a child claude, or an id that rotated under a
-  // /clear) still gets a row under the raw sid: the ping happened and the tokens
-  // were spent whether or not a seat name can be resolved for it.
+  // An unmapped wire session (a child claude, or an id belonging to no seat at
+  // all) still gets a row: the ping happened and the tokens were spent whether or
+  // not a seat name resolves. `from` is null, which is how the renderer knows to
+  // put the short id in the name position instead of showing two of the same.
   rows.length = 0;
   m._onHoldLifecycle({ session: 'sid-stray', event: 'ping', pings: 1,
     result: { ok: true, cache_hit: false, ttl_s: 3600,
       usage: { cache_read_input_tokens: 0, cache_creation_input_tokens: 184_200 } } });
-  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'sid-stray', to: 'sid-stray',
-    body: 'keep-warm ping #1 for sid-stray: COLD — 0 cached, 184.2k re-cached, cache slid 60m' }]]);
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: null, session: 'sid-stray',
+    body: 'keep-warm ping #1 — COLD, 0 cached, 184.2k re-cached, cache slid 60m' }]]);
+});
+
+// The bug's core. A keep-warm hold is anchored on ONE conversation while the seat
+// /clears onto another, so by the time a ping lands the held id is a LEFT id, not
+// the seat's current `sessionId` — and matching only the current one reported the
+// raw uuid where the seat name belongs. That is the common case for a held
+// conversation, not an edge, and a refactor that drops the second lookup pass
+// reintroduces it silently: every assertion here stays green on the body text.
+test('_onHoldLifecycle: a ping against a conversation the seat has LEFT still names the seat', () => {
+  const rows = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: () => null, setHoldUntil: () => {}, setKeepWarmAlways: () => {} }),
+    log: { info: () => {}, warn: () => {} },
+  });
+  m._broadcast = (channel, msg) => rows.push([channel, msg]);
+
+  // The seat cleared: it is live on sid-new, and sid-old — the id the hold is
+  // still anchored on — is in its bounded left-list.
+  const s = { name: 'clodex', sessionId: 'sid-new' };
+  m.sessions.set('clodex', s);
+  m._noteSessionLeft(s, 'sid-old');
+  assert.deepStrictEqual(s._leftSessionIds, ['sid-old'],
+    'ENTER: the left-id was recorded — otherwise the lookup below has nothing to find and this proves nothing');
+
+  m._onHoldLifecycle({ session: 'sid-old', event: 'ping', pings: 3,
+    result: { ok: true, cache_hit: true, ttl_s: 3600,
+      usage: { cache_read_input_tokens: 142_200, cache_creation_input_tokens: 0 } } });
+  assert.deepStrictEqual(rows, [['ipc-message', { type: 'keepwarm', from: 'clodex', session: 'sid-old',
+    body: 'keep-warm ping #3 — warm, 142.2k cached, 0 re-cached, cache slid 60m' }]]);
+
+  // The provenance the operator needs: the row names the seat AND says which
+  // conversation was pinged, and those are two different ids.
+  assert.strictEqual(rows[0][1].session, 'sid-old');
+  assert.notStrictEqual(rows[0][1].session, s.sessionId);
 });
 
 // The end-to-end claim the ticket is about, driven through the real seams rather

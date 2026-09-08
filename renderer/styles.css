@@ -4014,6 +4014,12 @@ html, body {
   color: #4ade80;
 }
 
+.ipc-session {
+  font-weight: 400;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
 .ipc-body {
   color: var(--text);
   white-space: pre-wrap;
