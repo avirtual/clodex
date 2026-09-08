@@ -52,7 +52,24 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   into `{name}-instructions.md` (`model_instructions_file`); shared
   `codex-session-hook.sh` routed by `WB_WRAP_NAME`; resume/fork is a
   *subcommand* placed after top-level flags (clap). Proxy rides
-  `openai_base_url`.
+  `openai_base_url`. Selected skills arrive as a `# Clodex skills` catalog
+  appended to the merged instructions, above the team block.
+
+**Skill delivery is per provider (skill-delivery.js, t747).** One
+provider-keyed module owns both halves: `deliver(provider, name, records)`
+returns `{ args, instructions }` or null, `cleanup(provider, name)` reaps the
+seat dir on teardown, `providers()` is the list with an adapter. The claude
+adapter is the `--plugin-dir` scaffold described above. The codex adapter
+materializes each SKILL.md under the seat's own `skill-plugins/<name>/skills/`
+and lists name, description and absolute path in the instructions — Codex
+0.153.4 has no per-process skill root to point at (`-c skills.config` only
+re-toggles skills it already knows, `<cwd>/.agents/skills` writes into the
+user's repo and leaks between seats sharing a cwd, and a private `CODEX_HOME`
+needs auth.json copied), so an instruction-layer catalog read on demand is the
+delivery. A third CLI is one more adapter entry, not another spawn block.
+Records are `[{ name, content }]`: library skills for claude (its plugin
+bundles ride their own `--plugin-dir` each), library plus `bundle:skill`
+records for codex, which has no plugin dir to ride.
 - **bash** — `$SHELL` with extraArgs verbatim; no hooks, no transport,
   private (invisible to `[agent:who]`, not DM-able — but peer-visible for
   attach/control).

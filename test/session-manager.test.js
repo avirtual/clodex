@@ -2825,7 +2825,7 @@ test('park→drain carries the stamp end to end: a successor is refused, the add
 test('_cleanup does NOT delete the pending store — a restart must not destroy parked DMs', () => {
   const { m, PENDING_DIR } = mkPark({
     registry: { unregister: () => {} },
-    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
     // `path` and a real `fs` are REQUIRED here, not decoration. The rm this test
     // pins the absence of was `fs.rmSync(path.join(PENDING_DIR, name), …)` inside
     // a bare `try {} catch {}`. The default harness injects no `path`, so a
@@ -2856,7 +2856,7 @@ test('_cleanup does NOT delete the pending store — a restart must not destroy 
 test('_cleanup disarms every timer the session owns (a fired timer on a dead seat re-enters the manager)', () => {
   const { m } = mkPark({
     registry: { unregister: () => {} },
-    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
     path: pathReal, fs: fsReal,
   });
   const TIMER_FIELDS = [
@@ -4271,7 +4271,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     getAgentLibrary: () => ({ list: () => [] }),
     unionEnabled: () => [],
     writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
-    writeSkillPlugin: () => null,
+    deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     effectiveInjectedSkills: () => [],
     getPersistence: () => ({ list: () => [], get: () => null, upsert: (e) => upserts.push(e), setSessionId: () => {} }),
     getUiSettings: () => ({ get: () => ({}) }),
@@ -12933,7 +12933,22 @@ function mkAgentCreateProbe(opts = {}) {
   const REGISTRY_DIR = mkTmpRoot('clodex-t57-');
   const { isAlive, registry, Transport } = require('../agent-transport')
     .createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536 });
+  // The REAL delivery (t747), on this probe's temp root: the codex arm calls it
+  // unconditionally, so a stub here would make every skill assertion below a
+  // statement about the stub. `skills` is the library the seat resolves against.
+  const SKILL_PLUGINS_DIR = pathReal.join(REGISTRY_DIR, 'skill-plugins');
+  const skillDelivery = require('../skill-delivery').createSkillDelivery({
+    fs: fsReal, path: pathReal, confine: require('../path-confine').confine,
+    ensureDir: require('../fs-util').ensureDir, SKILL_PLUGINS_DIR,
+    SKILL_PLUGIN_NAME: 'clodex-skills',
+    ...require('../skills-util'),
+  });
   const m = mk({
+    effectiveInjectedSkills: (_n, wanted) => (opts.skills || [])
+      .filter((s) => (wanted || []).includes(s.name)),
+    deliverSkills: (p, n, recs) => skillDelivery.deliver(p, n, recs),
+    cleanupSkills: (p, n) => skillDelivery.cleanup(p, n),
+    skillDeliveryProviders: () => skillDelivery.providers(),
     REGISTRY_DIR, registry, isAlive,   // the real registry + transport, on a temp dir
     Transport: opts.wrapTransport ? opts.wrapTransport(Transport) : Transport,
     fs: fsReal, os: osReal, path: pathReal,
@@ -12958,6 +12973,7 @@ function mkAgentCreateProbe(opts = {}) {
     // setupCodexHook's real job here is just making run/<name>/ exist before the
     // instructions file is written into it.
     setupCodexHook: (n) => require('../fs-util').ensureDir(runDirForReal(REGISTRY_DIR, n)),
+    cleanupCodexHook: () => {},
     getEnvScopes: () => ({ get: () => ({}) }),
     getPluginHooks: () => ({ emit: () => {} }),
     getUserDataPath: () => REGISTRY_DIR,
@@ -12965,9 +12981,9 @@ function mkAgentCreateProbe(opts = {}) {
   });
   m._sendToSession = () => {};
   m._broadcast = () => {};
-  const agentCreate = (name) => m.create(
+  const agentCreate = (name, injectSkills = []) => m.create(
     name, 'codex', osReal.tmpdir(), [], null, 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null,
+    [], [], [], [], injectSkills, null, [], [], null,
   );
   // A created agent session owns a REAL listening net.Server. Left running it
   // holds the event loop open and `node --test` never exits — the whole file
@@ -12976,8 +12992,64 @@ function mkAgentCreateProbe(opts = {}) {
   const closeAll = async () => {
     for (const s of m.sessions.values()) if (s.transport) await s.transport.stop();
   };
-  return { m, REGISTRY_DIR, registry, Transport, agentCreate, closeAll };
+  return { m, REGISTRY_DIR, SKILL_PLUGINS_DIR, registry, Transport, agentCreate, closeAll };
 }
+
+// t747 — the codex arm's skill delivery. Codex 0.153.4 has no per-process skill
+// root, so "delivered" means the SKILL.md is on disk under the seat's own dir
+// AND the instructions file the seat is launched with names its path. Both
+// halves are asserted: the files alone are a directory nothing reads, and the
+// block alone is a catalog of paths that do not exist.
+const DEPLOY_SKILL = { name: 'deploy', content: '---\ndescription: Ships the DMG.\n---\nRun the script.\n' };
+const AUDIT_SKILL = { name: 'audit', content: '---\ndescription: Reads the ledger.\n---\nCount it.\n' };
+const instructionsOf = (REGISTRY_DIR, name) =>
+  fsReal.readFileSync(pathForReal(REGISTRY_DIR, name, 'instructions'), 'utf-8');
+
+test('t747: a codex seat with skills gets the catalog block and the files it points at', async () => {
+  const probe = mkAgentCreateProbe({ skills: [DEPLOY_SKILL, AUDIT_SKILL] });
+  await probe.agentCreate('cx', ['deploy', 'audit']);
+  try {
+    const body = instructionsOf(probe.REGISTRY_DIR, 'cx');
+    const fileFor = (n) => pathReal.join(probe.SKILL_PLUGINS_DIR, 'cx', 'skills', n, 'SKILL.md');
+    assert.ok(body.includes('# Clodex skills'), 'ENTER: the block reached the instructions file');
+    assert.ok(body.includes(`- audit: Reads the ledger. — ${fileFor('audit')}`), 'audit is catalogued by absolute path');
+    assert.ok(body.includes(`- deploy: Ships the DMG. — ${fileFor('deploy')}`), 'and so is deploy');
+    assert.match(fsReal.readFileSync(fileFor('deploy'), 'utf-8'), /Run the script\./,
+      'the path in the catalog really holds the skill');
+
+    // The merged prompt has to survive the append, or the seat trades its
+    // system prompt for a skills list.
+    assert.ok(body.startsWith('instructions\n\n# Clodex skills'),
+      'the block is APPENDED to the merged instructions, not written over them');
+  } finally { await probe.closeAll(); }
+});
+
+test('t747: a codex seat with no skills selected gets no block and no dir', async () => {
+  const probe = mkAgentCreateProbe({ skills: [DEPLOY_SKILL] });
+  await probe.agentCreate('cx', []);
+  try {
+    assert.strictEqual(instructionsOf(probe.REGISTRY_DIR, 'cx'), 'instructions',
+      'nothing is appended, so a seat with no skills reads exactly what it read before t747');
+    assert.strictEqual(fsReal.existsSync(pathReal.join(probe.SKILL_PLUGINS_DIR, 'cx')), false,
+      'and no empty seat dir is left under the skills root');
+  } finally { await probe.closeAll(); }
+});
+
+test('t747: tearing down a codex seat removes its materialized skills', async () => {
+  const probe = mkAgentCreateProbe({ skills: [DEPLOY_SKILL] });
+  await probe.agentCreate('cx', ['deploy']);
+  const dir = pathReal.join(probe.SKILL_PLUGINS_DIR, 'cx');
+  try {
+    assert.strictEqual(fsReal.existsSync(pathReal.join(dir, 'skills', 'deploy', 'SKILL.md')), true,
+      'ENTER: the skill is on disk before teardown — a teardown over an absent dir proves nothing');
+  } finally { await probe.closeAll(); }
+  // _cleanup directly, not kill(): the stub pty never fires onExit, which is
+  // what calls it in production, so kill() would return with the seat still in
+  // the map and this subject would assert nothing.
+  probe.m._cleanup('cx');
+  assert.strictEqual(fsReal.existsSync(dir), false,
+    'the codex seat dir is reaped on teardown, exactly as the claude one is');
+});
 
 // Seed a blocking agent.json whose pid is LIVE and is NOT ours, which is what an
 // OS pid recycle leaves behind. isStaleRegistration says "not stale" for this, so

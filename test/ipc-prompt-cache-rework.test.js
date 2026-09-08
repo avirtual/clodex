@@ -96,7 +96,7 @@ function reuseArgFor({ resumeId = null, mint = false, extraArgs = [] } = {}) {
     pluginGrammarLines: () => [],
     mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
     cleanupClaudeHook: () => {},
-    cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
     MSG_DIR: path.join(root, 'messages'),
     runDirFor,
@@ -106,7 +106,7 @@ function reuseArgFor({ resumeId = null, mint = false, extraArgs = [] } = {}) {
     getAgentLibrary: () => ({ list: () => [] }),
     unionEnabled: () => [],
     writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
-    writeSkillPlugin: () => null,
+    deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     effectiveInjectedSkills: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
@@ -177,7 +177,7 @@ function mkManager(root) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     registry: { unregister: () => {} },
     cleanupClaudeHook: (name) => fs.rmSync(runDirFor(root, name), { recursive: true, force: true }),
-    cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
   });
   return new SessionManager();
 }

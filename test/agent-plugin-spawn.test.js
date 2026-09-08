@@ -26,7 +26,8 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { confine } = require('../path-confine');
 const { buildAgentPlugin, qualifiedAgentName, DROPPED_AGENT_FIELDS, BUILTIN_AGENTS } = require('../agents-util');
-const { buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
+const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('../skills-util');
+const { createSkillDelivery } = require('../skill-delivery');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The library every arm resolves against. `meta` mirrors what stores.js hands
@@ -45,8 +46,13 @@ function mkManager({ library = LIB, skills = [], enabledAgents = [], injectSkill
   let spawnArgs = null;
   const warnings = [];
 
-  // Faithful re-creations of the engine's two private scaffolders: same compose
-  // (buildX + confine + rebuild-from-scratch), over a temp root.
+  const delivery = createSkillDelivery({
+    fs, path, confine, ensureDir, SKILL_PLUGINS_DIR,
+    SKILL_PLUGIN_NAME: 'clodex-skills', buildSkillPlugin, skillMd, parseSkillFrontmatter,
+  });
+
+  // A faithful re-creation of the engine's private agent scaffolder: same
+  // compose (buildAgentPlugin + confine + rebuild-from-scratch), over a temp root.
   const scaffold = (rootDir, name, plugin, write) => {
     const dir = confine(rootDir, name);
     if (dir === null) throw new Error(`invalid session name: ${name}`);
@@ -96,7 +102,7 @@ function mkManager({ library = LIB, skills = [], enabledAgents = [], injectSkill
     },
     setupCodexHook: () => {},
     cleanupClaudeHook: () => {}, cleanupCodexHook: () => {},
-    cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
+    cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
     buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
     teeBlindBackend: () => null,
     readEffectiveClaudeEnv: () => ({}),
@@ -129,15 +135,10 @@ function mkManager({ library = LIB, skills = [], enabledAgents = [], injectSkill
         for (const a of p.agents) fs.writeFileSync(path.join(dir, 'agents', `${a.name}.md`), a.md);
       });
     },
-    writeSkillPlugin: (name) => {
-      const plugin = buildSkillPlugin(skills.map((s) => s.name), skills);
-      return scaffold(SKILL_PLUGINS_DIR, name, plugin, (dir, p) => {
-        for (const s of p.skills) {
-          ensureDir(path.join(dir, 'skills', s.name));
-          fs.writeFileSync(path.join(dir, 'skills', s.name, 'SKILL.md'), s.skillMd);
-        }
-      });
-    },
+    // The REAL delivery over the temp root, not a re-creation: the two dirs
+    // this file asserts are siblings are written by the same code the app runs.
+    deliverSkills: (provider, name, records) => delivery.deliver(provider, name, records),
+    skillDeliveryProviders: () => delivery.providers(),
     bakePrompt: () => '',
     nextIncarnation: () => 1,
     memLoad: { noteDigest: () => {}, noteSession: () => {} },

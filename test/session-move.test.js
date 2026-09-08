@@ -628,7 +628,7 @@ function mkExitProbe() {
     unionEnabled: () => [],
     writeAgentPlugin: () => null,
     effectiveInjectedAgents: () => [],
-    writeSkillPlugin: () => null,
+    deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     effectiveInjectedSkills: () => [],
     getPersistence: () => ({
       list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {},
@@ -669,7 +669,7 @@ function mkExitProbe() {
     // unstubbed it throws there and the fire() call never returns.
     cleanupClaudeHook: () => {},
     cleanupCodexHook: () => {},
-    cleanupSkillPlugin: () => {},
+    cleanupSkills: () => {},
     cleanupAgentPlugin: () => {},
     log: { info() {}, warn() {}, error() {} },
     DEFAULT_WORKSPACE_ID: 'default',

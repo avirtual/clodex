@@ -402,7 +402,8 @@ test('create() hands the birth stamp to setupClaudeHook, so the generated drain 
   const { m, persistence, stop } = mkManagerWithStore({
     setupClaudeHook: (...args) => { seen.push(args); return path.join(os.tmpdir(), 'settings.json'); },
     setupCodexHook: () => {},
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkills: () => {},
+    deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
     // The claude arm reaches further than the bash arm the other tests use.
     // These stub only what stands between create()'s entry and the

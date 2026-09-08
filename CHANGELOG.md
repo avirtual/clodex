@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Codex seats now get the skills you select for them — the same library and plugin skills a Claude seat gets, listed in the seat's instructions with the path to each and read on demand. Delivery is one adapter per CLI, so a third CLI is an adapter, not another spawn block.
+
 ## 5.38.0 — 2026-09-08 — copying Polish out of a seat no longer comes out as mojibake
 
 - Keep-warm rows in the IPC log now fit on one line and say which seat they are about: the seat name, then a short session id, then the ping. They used to repeat one 36-character session id three times — twice as a badge with an arrow between a thing and itself, once more in the text — and if the seat had cleared since the hold was armed, the name was missing entirely and only the raw id showed.

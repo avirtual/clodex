@@ -1,20 +1,19 @@
 'use strict';
 // skill-plugin-confine.test.js — t114, the highest-consequence join in the app.
 //
-// writeSkillPlugin/cleanupSkillPlugin do `fs.rmSync(dir, {recursive:true})` on
-// a dir built by joining the SESSION NAME onto ~/.clodex/skill-plugins. A name
-// of `..` resolves that to ~/.clodex; `../..` resolves it to $HOME. The rmSync
-// sits ABOVE the no-skills bail, so it fires on every claude spawn regardless
+// The skill-delivery adapters do `fs.rmSync(dir, {recursive:true})` on a dir
+// built by joining the SESSION NAME onto ~/.clodex/skill-plugins. A name of
+// `..` resolves that to ~/.clodex; `../..` resolves it to $HOME. The rmSync
+// sits ABOVE the no-skills bail, so it fires on every agent spawn regardless
 // of whether any skill is injected.
 //
 // WHY THE TRAVERSAL CASES ARE SOURCE-LEVEL AND NOT BEHAVIOURAL.
 //
-// Both functions are module-private in engine.js and reachable only through
-// createSessionManager's deps object — there is no exported seam to call. A
-// behavioural test of the traversal cases would be safe ONLY while the guard
+// A behavioural test of the traversal cases would be safe ONLY while the guard
 // works: the first time someone reverted the product to check the test fails,
 // the rmSync would land on whatever `..` resolves to. That is not a test worth
-// having at any strength, and no seam changes it.
+// having at any strength, and no seam changes it — skill-delivery.js exports a
+// factory, and calling it with `name: '..'` is exactly the delete this forbids.
 //
 // So: confine() itself is proven behaviourally against a temp root in
 // test/path-confine.test.js, and the subjects below pin the two properties that
@@ -43,33 +42,42 @@ sessionManagerModule.createSessionManager = (deps) => {
 };
 const { createEngine } = require('../engine');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf-8');
+const srcCache = new Map();
+function srcOf(file) {
+  if (!srcCache.has(file)) srcCache.set(file, fs.readFileSync(path.join(__dirname, '..', file), 'utf-8'));
+  return srcCache.get(file);
+}
+const SRC = srcOf('engine.js');
 
 // The body of a top-level `function name(` up to its closing brace at column 0.
-function bodyOf(fn) {
-  const start = SRC.indexOf(`function ${fn}(`);
-  assert.ok(start !== -1, `${fn} not found in engine.js`);
-  const rest = SRC.slice(start);
+function bodyOf(fn, file = 'engine.js') {
+  const src = srcOf(file);
+  const start = src.indexOf(`function ${fn}(`);
+  assert.ok(start !== -1, `${fn} not found in ${file}`);
+  const rest = src.slice(start);
   const end = rest.indexOf('\n}\n');
   assert.ok(end !== -1, `${fn} body not delimited`);
   return rest.slice(0, end);
 }
 
-// Both scaffolders are the same hazard over a different root, so the pins are
-// one table: <function, the root it must confine against>. A new plugin
+// Every scaffolder is the same hazard over a different root, so the pins are
+// one table: <file, function, the root it must confine against>. A new plugin
 // scaffolder that forgets its row here is the case this shape exists to make
-// hard to reach — the row is the only place the root is named.
+// hard to reach — the row is the only place the root is named. Two files
+// because the skill half moved to a provider-keyed module (t747) while the
+// agent and bundle halves stayed: a row's file is as load-bearing as its root.
 const CONFINED = [
-  ['writeSkillPlugin', 'SKILL_PLUGINS_DIR'],
-  ['cleanupSkillPlugin', 'SKILL_PLUGINS_DIR'],
-  ['writeAgentPlugin', 'AGENT_PLUGINS_DIR'],
-  ['cleanupAgentPlugin', 'AGENT_PLUGINS_DIR'],
-  ['writeBundlePlugins', 'SKILL_PLUGINS_DIR'],
+  ['skill-delivery.js', 'deliverClaude', 'SKILL_PLUGINS_DIR'],
+  ['skill-delivery.js', 'deliverCodex', 'SKILL_PLUGINS_DIR'],
+  ['skill-delivery.js', 'cleanupSeatDir', 'SKILL_PLUGINS_DIR'],
+  ['engine.js', 'writeAgentPlugin', 'AGENT_PLUGINS_DIR'],
+  ['engine.js', 'cleanupAgentPlugin', 'AGENT_PLUGINS_DIR'],
+  ['engine.js', 'writeBundlePlugins', 'SKILL_PLUGINS_DIR'],
 ];
 
 test('every recursive delete of a plugin-scaffold dir is confined first', () => {
-  for (const [fn, root] of CONFINED) {
-    const body = bodyOf(fn);
+  for (const [file, fn, root] of CONFINED) {
+    const body = bodyOf(fn, file);
     const guard = body.indexOf(`confine(${root}`);
     const del = body.indexOf('fs.rmSync');
 
@@ -127,27 +135,27 @@ test('t672: a bundle dir is confined TWICE, and has no cleanup of its own', () =
     'and 0700 appears once — only the scripts/ arm may hand a seat an executable');
 
   // Deliberately NO cleanupBundlePlugins: bundles/ lives INSIDE
-  // skill-plugins/<seat>, which cleanupSkillPlugin already rm -rf's on exit. A
-  // second deleter would be a second unconfined join for no new coverage.
+  // skill-plugins/<seat>, which skill-delivery's cleanup already rm -rf's on
+  // exit. A second deleter would be a second unconfined join for no coverage.
   assert.ok(!SRC.includes('function cleanupBundlePlugins'),
     'bundles die with the seat dir; a separate teardown would be a redundant delete');
   const bundlesDecl = SRC.match(/^const BUNDLES_SUBDIR = .*$/m);
   assert.ok(bundlesDecl, 'the bundles subdir name is declared at module scope');
   assert.doesNotMatch(bundlesDecl[0], /path\.join|REGISTRY_DIR/,
-    'and it is a bare segment under the seat dir, not a root of its own — that nesting is what makes cleanupSkillPlugin reap it');
+    'and it is a bare segment under the seat dir, not a root of its own — that nesting is what makes the seat-dir cleanup reap it');
 });
 
 test('the write/cleanup call sites fail DIFFERENTLY, and deliberately so', () => {
   // The write path throws: a spawn under a name that cannot be confined must
   // abort rather than continue with a half-built plugin dir.
-  for (const fn of ['writeSkillPlugin', 'writeAgentPlugin']) {
-    assert.match(bodyOf(fn), /throw new Error\(`invalid session name/,
+  for (const [file, fn] of [['skill-delivery.js', 'deliverClaude'], ['skill-delivery.js', 'deliverCodex'], ['engine.js', 'writeAgentPlugin']]) {
+    assert.match(bodyOf(fn, file), /throw new Error\(`invalid session name/,
       `${fn} aborts the spawn on a refused name`);
   }
   // The cleanup path returns: it runs on exit, where throwing would break
   // teardown for an unrelated session.
-  for (const fn of ['cleanupSkillPlugin', 'cleanupAgentPlugin']) {
-    assert.match(bodyOf(fn), /if \(dir === null\) return;/,
+  for (const [file, fn] of [['skill-delivery.js', 'cleanupSeatDir'], ['engine.js', 'cleanupAgentPlugin']]) {
+    assert.match(bodyOf(fn, file), /if \(dir === null\) return;/,
       `${fn} refuses silently on the teardown path`);
   }
 });

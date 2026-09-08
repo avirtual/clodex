@@ -758,6 +758,15 @@ worktree, which is why membership is by repo.
   `unionEnabled` / `reconcilePartialSelection` — the `workspace:`/`sessions:`
   frontmatter scope predicate + spawn-union + scoped-checklist save semantics.
 - **agents-util.js**, **skills-util.js** — the agent and skill library layers.
+- **skill-delivery.js** — `createSkillDelivery(deps)`: how a seat's selected
+  skills REACH it, one adapter per CLI. `deliver(provider, name, records)` →
+  `{ args, instructions }` or null; `cleanup(provider, name)` reaps the seat
+  dir; `providers()` lists the CLIs with an adapter. Claude = the
+  `--plugin-dir` scaffold; codex = SKILL.md files under the seat dir plus a
+  `# Clodex skills` catalog appended to the instructions, because Codex has no
+  per-process skill root (docs/notes/skill-delivery.md). Every path it writes
+  and every builder it uses arrives injected, so the app's most destructive
+  `rmSync` can be aimed at a temp root by a test. A third CLI is one entry.
 - **skill-roster.js** — `classifySkillRoster`: splits a transcript's
   `skill_listing` attachments into the session's roster (`isInitial: true`,
   last one wins) and the DIRECTORY-SCOPED sets (`isInitial: false`, keyed by
