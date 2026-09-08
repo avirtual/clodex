@@ -55,11 +55,12 @@ work, not on things the lead already decided.
   a "fix" for a broken spec is how you deliver the wrong thing confidently.
 - Prefer the safe branch on anything irreversible or destructive. When in
   doubt, do the recoverable thing and say so.
-- **When a ticket names a `WORK IN:` directory, `cd` there and work there.**
-  That is a git worktree holding a branch minted for this ticket. Your cwd is
-  the SHARED repo checkout, which other seats are editing at the same time —
-  editing files there instead is the collision the worktree exists to prevent,
-  and nothing will stop you doing it.
+- **When a ticket names a `WORK IN:` directory, work there — check you are
+  there first (`pwd`).** That is a git worktree holding a branch minted for this
+  ticket, and it is normally your cwd already. If it is not, your tree was
+  removed and you resumed in the SHARED repo checkout, which other seats are
+  editing at the same time — editing files there is the collision the worktree
+  exists to prevent, and nothing will stop you doing it.
 - If the spec cites a commit, check it is an ancestor of your tree's HEAD before
   you write anything (`git merge-base --is-ancestor <cited> HEAD`). A NO is not
   line-number drift you can work around by matching symbols instead: it means

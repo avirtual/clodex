@@ -141,8 +141,13 @@ behind — and delete a copy to fall back to the library version.
 ### 1. Where the seats run — handled, but know why
 
 A seat needs a working directory. Ticket seats never had a problem here: the
-loop boots them at the team's `root` (or in a worktree off it) and ignores what
-the template says.
+loop boots them itself and ignores what the template says. A worktree dispatch
+boots the seat **inside its own tree** — its shell starts where it works, and it
+does not load the shared checkout's gitignored `.claude/CLAUDE.md`; a role `cwd`
+rides along, re-rooted onto the tree. A spawn dispatch has no tree, so its seat
+boots at the team's `root` (or the role's area under it). The seat's record
+remembers the shared checkout in `worktree.main`, so a seat whose tree is removed
+by hand resumes there instead of failing.
 
 The trap is the *other* spawn paths — the lead's
 `[agent:spawn name:X template:Z]` with no explicit `cwd:`, which the lead is

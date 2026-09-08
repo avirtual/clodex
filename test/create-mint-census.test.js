@@ -215,7 +215,7 @@ function census() {
 // by regenerating the table from the code.
 //
 // A `mint: false` row is ALSO a row of `RESUME_SITES` in
-// test/resume-cwd-not-worktree.test.js — add it there in the same commit. Only
+// test/resume-cwd-tree-fallback.test.js — add it there in the same commit. Only
 // this file fails on a count, so nothing else will tell you: that table's own
 // per-site proof mutates the sites it lists and is structurally blind to a site
 // it does not, which is how it shipped covering four of five.

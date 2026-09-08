@@ -335,16 +335,21 @@ from content that parses, and a missing or unparseable file writes nothing and
 leaves any existing `.bak` alone. Load falls back to it only when
 sessions.json itself does not parse.
 
-A `worktree` pointer naming a tree that no longer exists is EXPECTED and is not
-swept. Three supported routes produce one: team-retire with archive on a dirty
-tree, the same on a tree it could not inspect, and the merge gate's
-not-merged arm followed by a later accept. Nothing reads the pointer in a way a
-missing tree breaks — all five respawn-from-record paths (retrySpawn, restore-on-
-launch, `restartSession`, `applySessionArgs`, the `[agent:context reload]`
-intent) spawn in the shared checkout the record names — `entry.cwd`, or
-`beforeKill.cwd` at applySessionArgs — never in `worktree.path` (pinned as a
-source-shape property by `test/resume-cwd-not-worktree.test.js`, whose row set
-is kept in step with `test/create-mint-census.test.js`);
+A ticket seat's `cwd` IS its worktree, and its record carries `worktree.main` —
+the shared checkout the tree was cut from. A `worktree` pointer naming a tree
+that no longer exists is EXPECTED and is not swept: team-retire with discard
+removes the tree, an operator can remove one by hand, and team-retire with
+archive on a dirty or uninspectable tree keeps a record whose pointer outlives
+the checkout. Every respawn-from-record path (retrySpawn, restore-on-launch,
+`restartSession`, `applySessionArgs`, `rename`, the `[agent:context reload]`
+intent) resolves its cwd through the ONE helper
+`SessionManager.resumeCwdOf(entry)`: the `cwd` when it is on disk, else
+`worktree.main` when THAT is on disk — logging one line and dropping the record's
+now-unusable `worktree` pointer — else the `cwd` unchanged, which is a pre-t752
+record with nowhere better to go and lands in the failed-tab retry/forget UI.
+Both halves are pinned by `test/resume-cwd-tree-fallback.test.js` (a source-shape
+pin that every site asks the helper, and a runtime pin of what it answers), whose
+row set is kept in step with `test/create-mint-census.test.js`.
 `_ticketTreeHolder` only scans live sessions; the ticket-dispatch mint's
 `claimTree` (team-tickets.js) clears any other record naming a path it mints —
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent

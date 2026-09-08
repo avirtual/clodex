@@ -14291,14 +14291,12 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   // which is trivially true of a dispatch that never spawned anything.
   assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
   assert.strictEqual(createdName, 'team-hand-1', 'seat name carries the ticket number');
-  // The seat boots in the SHARED repo and is TOLD where its tree is. Booting it in
-  // the worktree would bind its transcript, project root and team block to a
-  // checkout that is removed when the ticket's session is deleted.
-  assert.strictEqual(createdCwd, repo, 'the seat boots in the repo, not in the worktree');
-
-  // The worktree still exists, on its branch, beside the repo — the seat just is
-  // not living in it.
   const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  // The seat LIVES in its tree: its shell starts where it works, and it does not
+  // load the shared checkout's gitignored .claude/CLAUDE.md on every turn.
+  assert.strictEqual(createdCwd, wtPath, 'the seat boots in the worktree, not in the shared repo');
+  assert.notStrictEqual(createdCwd, repo, 'ENTER: the two really are different directories');
+
   assert.ok(wtPath && fsReal.lstatSync(pathReal.join(wtPath, '.git')).isFile(),
     'ENTER: a linked worktree (a .git FILE) must have been created, or the rest asserts nothing');
   const head = require('node:child_process')
@@ -14316,16 +14314,25 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   // merge-base fallback, which answers differently on a merged branch.
   assert.deepStrictEqual(
     f.worktreeSet.map((w) => ({ ...w, wt: { ...w.wt, baseSha: typeof w.wt.baseSha } })),
-    [{ name: 'team-hand-1', wt: { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string' } }],
+    [{ name: 'team-hand-1', wt: { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string', main: repo } }],
     'the worktree is recorded (with its fork point), or Delete Session… cannot remove it');
-  assert.strictEqual(t.worktree.path, wtPath, 'the ticket carries the tree, so a REPLAY can re-tell a respawned seat');
+  // `main` is the SEAT's copy only. The ticket's is read by claimTree, the suite
+  // runner and the merge, none of which has any use for it — and a whole-object
+  // compare is what catches it leaking there through a shared reference.
+  assert.deepStrictEqual(
+    { ...t.worktree, baseSha: typeof t.worktree.baseSha },
+    { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string' },
+    'the ticket carries the tree, so a REPLAY can re-tell a respawned seat — and nothing more');
 
-  // The seat cannot find a tree it is not told about: git puts it BESIDE the repo,
-  // which is nowhere the seat would look from its cwd.
+  // Rides the spec even though the seat is already standing in the tree: a replay
+  // can reach a seat whose tree went and which resumed in the shared checkout, and
+  // the branch was never derivable from a cwd.
   assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
   assert.strictEqual(f.gated[0].target, 'team-hand-1');
   assert.match(f.gated[0].body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
-    'the spec must name the worktree path — the seat boots in the repo and would otherwise edit the shared tree');
+    'the spec must name the worktree path');
+  assert.match(f.gated[0].body, new RegExp(`The shared checkout is ${repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}; do not edit`),
+    'and the shared checkout it must NOT edit — which is no longer its cwd, so nothing else tells it');
   assert.match(f.gated[0].body, /branch t1-build-the-widget/, 'and its branch');
   // t353: the worktree branch of the head is the one a hand actually gets, so the
   // close verb has to survive it too — a line that rides only the plain dispatch
@@ -14366,8 +14373,14 @@ test('task start: a role cwd adds an AREA line under an UNCHANGED WORK IN:, and 
   const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
   assert.ok(wtPath, 'ENTER: a worktree must have been minted');
 
-  assert.strictEqual(createdCwd, pathReal.join(repo, 'api'),
-    'the seat boots in the role subdirectory of the SHARED repo, not in the worktree');
+  // The role area RE-ROOTED onto the tree. The resolver stats it under team.root
+  // (the tree does not exist when the shape is built), so only the relative part
+  // carries over — and joining onto the repo instead would put the seat in the
+  // shared checkout, which is the collision the tree exists to prevent.
+  assert.strictEqual(createdCwd, pathReal.join(wtPath, 'api'),
+    'the seat boots in the role subdirectory OF ITS WORKTREE');
+  assert.notStrictEqual(createdCwd, pathReal.join(repo, 'api'),
+    'ENTER: the same subdirectory exists under the shared repo, so the two are really distinguished');
   const body = f.gated[0].body;
   assert.match(body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(git worktree`),
     'WORK IN: still names the tree ROOT — every git command in the spec is relative to it');
@@ -14402,7 +14415,9 @@ test('task start: a role with NO cwd gets no AREA line at all', async () => {
   assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
   assert.match(f.gated[0].body, /WORK IN: /, 'ENTER: the worktree dispatch shape is the one under test');
 
-  assert.strictEqual(createdCwd, repo, 'no cwd means the team root');
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath, 'ENTER: a worktree must have been minted');
+  assert.strictEqual(createdCwd, wtPath, 'no cwd means the tree ROOT');
   assert.doesNotMatch(f.gated[0].body, /YOUR AREA/, 'no role cwd, no AREA line');
 
   fsReal.rmSync(root, { recursive: true, force: true });
@@ -14434,7 +14449,9 @@ test('task start: a hand-edited escaping cwd yields NO area line, and the lead i
   const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
   assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(replies)}`);
 
-  assert.strictEqual(createdCwd, repo, 'the seat falls back to the team root');
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath, 'ENTER: a worktree must have been minted');
+  assert.strictEqual(createdCwd, wtPath, 'the seat falls back to the root of its tree');
   assert.doesNotMatch(f.gated[0].body, /YOUR AREA/,
     'the AREA line must be suppressed by the SAME neutralization the spawn applied');
   assert.doesNotMatch(f.gated[0].body, /elsewhere/, 'and the bad value must not reach the seat in any form');
@@ -14474,7 +14491,9 @@ test('task start: a cwd the RESOLVER refuses (not the lexical check) yields no A
   assert.ok(!fsReal.existsSync(pathReal.join(repo, 'api')),
     'ENTER: and the directory must be absent, which is the resolver-only refusal being driven');
 
-  assert.strictEqual(createdCwd, repo, 'the seat falls back to the team root, as the resolver decided');
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath, 'ENTER: a worktree must have been minted');
+  assert.strictEqual(createdCwd, wtPath, 'the seat falls back to the root of its tree, as the resolver decided');
   assert.doesNotMatch(f.gated[0].body, /YOUR AREA/,
     'and the AREA line is gone with it — a refused cwd names no honorable area, whatever refused it');
   const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
@@ -15139,10 +15158,11 @@ test('task assign: releasing a parked ticket mints the worktree and seat too', a
 
   assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: the release must have reached create()');
   assert.strictEqual(createdName, 'team-hand-1', 'the released ticket gets its own seat');
-  assert.strictEqual(createdCwd, repo, 'the seat boots in the repo, like every other ticket seat');
   const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
   assert.ok(wtPath && fsReal.lstatSync(pathReal.join(wtPath, '.git')).isFile(),
     'a linked worktree must exist, or the release opted the role out of its branch');
+  assert.strictEqual(createdCwd, wtPath, 'the seat boots in its tree, like every other worktree ticket seat');
+  assert.notStrictEqual(createdCwd, repo, 'ENTER: not the shared checkout, which is what a missed mint would give it');
   const t = f.one('t1');
   assert.strictEqual(t.assignee, 'team-hand-1', 'ticket pins to the seat on release, not the role');
   assert.strictEqual(t.role, 'hand', 'the originating role is preserved');
@@ -15258,7 +15278,8 @@ test('task assign: a ticket whose seat died respawns onto its EXISTING tree', as
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
   await until(() => createdCwd || f.removed.length);
 
-  assert.strictEqual(createdCwd, repo, 'ENTER: a replacement seat must have been spawned');
+  assert.strictEqual(createdCwd, tree.path,
+    'ENTER: a replacement seat must have been spawned — in the EXISTING tree, which is the whole point');
   const t = f.one('t1');
   assert.strictEqual(t.assignee, 'team-hand-1', 'the replacement takes the ticket back');
   assert.deepStrictEqual(t.worktree, tree, 'on the SAME tree — its commits are the work that survived');
