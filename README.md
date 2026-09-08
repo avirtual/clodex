@@ -147,14 +147,9 @@ Every deployed node also serves the **full Clodex GUI in a browser** — sidebar
 
 ### Plugins: install one, or write your own
 
-**[clodex-plugins](https://github.com/avirtual/clodex-plugins)** is the public library, one plugin per folder, and the app installs from it directly: **Plugins ▸ Manage Plugins… ▸ Install from GitHub…**, paste `avirtual/clodex-plugins:<id>` (or the folder's URL as copied from the browser), done. Installed plugins get an update badge when the library moves on, and update in place. What is there today:
+**[clodex-plugins](https://github.com/avirtual/clodex-plugins)** is the public library, one plugin per folder, and the app installs from it directly: **Plugins ▸ Manage Plugins… ▸ Install from GitHub…**, paste `avirtual/clodex-plugins:<id>` (or the folder's URL as copied from the browser), done. Installed plugins get an update badge when the library moves on, and update in place.
 
-- **ntfy** — subscribes to an [ntfy](https://ntfy.sh) topic and turns each message into an inbox note and, optionally, a DM to one seat. Point a GitHub webhook at a topic and your lead agent hears about new issues.
-- **github** — one read-only agent verb, `[agent:gh]`, answering repo, PR, CI and review state in a single call. It shells out to your own authenticated `gh` CLI, holds no credentials, never pushes and never opens a PR.
-- **review-kit** — one skill that fans a change out to three focused reviewer subagents and consolidates their findings into a single ranked report.
-- **intent-log** — a live feed of every `[agent:…]` intent your seats emit, across windows.
-- **clodex-plugin-builder** — a skill that scaffolds a plugin, wires the surfaces you ask for and verifies it, without reading the whole contract first.
-- **crypto-research** and **stock-assessments** — sidebar buttons over dated research runs: tickers on the left, runs in the middle, the document on the right.
+Two of them are about building with Clodex itself: **clodex-plugin-builder**, a skill that scaffolds a plugin, wires the surfaces you ask for and verifies it; and **team-bootstrap**, a skill that stands up a whole team from a sentence about your project (see [docs/teams.md](docs/teams.md)). The library's own README lists the rest, and grows faster than this page does.
 
 Clodex loads plugins in process, and the API is **frozen at `hostApi "1"`** — a directory with a manifest and up to two halves: an engine half (plain Node, filesystem and session access, can contribute an `[agent:…]` verb) and a renderer half (DOM, one per window, seven named UI slots — status-bar actions and segments, a sidebar footer button, a session row badge, a session-menu provider, a settings panel on its Manage Plugins row, a full-window overlay). The shipped plugins are written against the same contract you get: a git-branch badge, the Workbench (Files, Source Control, Worktrees), and read-only viewers for memories and tickets.
 

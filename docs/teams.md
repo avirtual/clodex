@@ -407,14 +407,20 @@ An agent can do step 1 instead of you, if you granted it the privileged
 `team-create` intent (Settings ▸ the seat's intent checklist — off by default):
 `[agent:team create <name> root:<abs-path> [lead:<seat>]]` writes the same
 manifest `Create Team…` does. The root must already exist and belong to no other
-team; the lead defaults to `<name>-lead` and names a seat that does not exist yet,
-so the next step is still to spawn it there and run `[agent:team gather]` and
-`[agent:team role-add …]` from it. `[agent:team set-lead <seat>]` re-points the
-lead afterwards, and only the current lead may do it.
+team; the lead defaults to `<name>-lead` and names a seat that does not exist yet.
+The manifest it writes is not an empty one: `lead`, `hand` and `reviewer` are
+already in it, all three standing. So the next step is to spawn the lead seat with
+its cwd at the root — after the create, never before, because a seat resolves its
+team from its cwd at boot and carries that roster for the rest of its life, so one
+spawned first never learns it leads — and then to make the hand per-ticket with
+`[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
+not exist yet; on one that already does it refuses.
+`[agent:team set-lead <seat>]` re-points the lead afterwards, and only the current
+lead may do it.
 
-Step 2 is reachable from the lead too, so the intent path runs from an empty team
-to a working role — create, gather, `role-add`, then write the files the role
-names:
+Step 2 is reachable from the lead too, so the whole path runs on intents — create,
+spawn the lead, `role-set` the hand, then the file verbs below and
+`[agent:team role-add …]` for any role the stock three do not already cover:
 
 - `[agent:team template-save <stem>]` + a JSON body writes
   `~/.clodex/teams/<name>/templates/<stem>.json` — the seat template a role's
@@ -438,3 +444,17 @@ as do the `exec/` defs of step 4 — no intent writes either.
 `dispatch:worktree` is the one that makes a hand role mint a branch, tree and
 seat per ticket, and without it an agent-built team can only ever add a standing
 role. `cwd:` is relative to the team root, as everywhere else.
+
+`lead` and `reviewer` are operator-owned topology: every role verb refuses them,
+so a team you meant to run solo still carries a reviewer definition — harmless,
+and the roster renders it as not addressable until a seat exists. `cwd:` names a
+directory that must already exist under the root; Clodex never creates it.
+
+The whole sequence is packaged as the **team-bootstrap** skill in the public
+plugin library (`avirtual/clodex-plugins:team-bootstrap`, via Plugins ▸ Manage
+Plugins… ▸ Install from GitHub…). Install it on the seat you talk to and tell that
+seat you want a project that does X and need a team for it: it interviews you for
+the name, the lead seat, the shape of the team, how tests run and what the project
+is, then emits the create and the spawn and briefs the lead with the rest. It
+needs the privileged `team-create` intent on that seat, and says so before it asks
+you anything.

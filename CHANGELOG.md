@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **docs:** the teams checklist now matches what `team create` writes (lead, hand and reviewer are seeded; the hand becomes per-ticket with `role-set`, not `role-add`) and points at the team-bootstrap skill in the plugin library; the README's plugin list defers to the library instead of enumerating it.
+
 ## 5.44.0 — 2026-09-09 — Two Clodexes on one box: CLODEX_HOME, CLODEX_DATA_DIR and CLODEX_LABEL
 
 - CLODEX_LABEL names an instance on the peer wire, and docs/recipes/two-instances.md is the recipe for running two Clodexes on one box.
