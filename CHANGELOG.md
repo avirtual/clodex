@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- A team lead can now write its team's templates and prompts from intents (`[agent:team template-save <stem>]`, `[agent:team prompt-save system|append <stem>]`, plus the matching `-rm` verbs, which refuse to remove a file a role still names), completing the intent path from `[agent:team create]` to a working role without the drawers.
 - A ticket seat now boots inside its own worktree instead of the shared checkout, so its shell starts where it works and it no longer loads the repo's local `.claude/CLAUDE.md` on every turn; a seat whose tree was removed by hand resumes in the shared checkout it came from instead of failing.
 - A seat granted the new privileged "Create teams" intent can mint a team from `[agent:team create <name> root:<dir>]` and a lead can hand off with `[agent:team set-lead <seat>]`, so an agent can bootstrap a team for another project end to end (create, gather, add roles) without the operator clicking through Create Team….
 

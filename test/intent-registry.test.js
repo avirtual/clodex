@@ -137,7 +137,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -154,6 +154,12 @@ function parseIntentLegacy(rawLine) {
     // lockstep rule the task copy above states, and the reason it is stated:
     // a sub-verb in only one copy is a sub-verb the differential stops covering.
     if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };
+    // t753's four file verbs, mirrored here in the same commit as parseTeam's —
+    // same lockstep rule as gather above.
+    if (sub === 'template-save') return { type: 'team', sub, stem: positional[0] || null, body };
+    if (sub === 'template-rm') return { type: 'team', sub, stem: positional[0] || null, body: '' };
+    if (sub === 'prompt-save') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body };
+    if (sub === 'prompt-rm') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body: '' };
     const ms = positional[0] != null ? Number(positional[0]) : null;
     return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
   }
@@ -347,6 +353,11 @@ const ADVERSARIAL = [
   '[agent:team gather]', '[agent:team gather dry]', '[agent:team gather junk]',
   '[agent:team gatherx]',
   '[agent:team set-lead bob]', '[agent:team set-lead]', '[agent:team set-lead a b]',
+  '[agent:team template-save hand-seat] {"type":"claude"}', '[agent:team template-save]',
+  '[agent:team template-rm hand-seat]', '[agent:team template-rmx hand-seat]',
+  '[agent:team prompt-save system lead] body text', '[agent:team prompt-save append lead] body',
+  '[agent:team prompt-save lead] body', '[agent:team prompt-save]',
+  '[agent:team prompt-rm system lead]', '[agent:team prompt-rm append lead]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
@@ -421,7 +432,7 @@ const CLOSED_SUB_VERB_FAMILIES = ['task', 'team'];
 // pinned, so shrinking the grammar trips this rather than quietly shrinking
 // what the loop below iterates. A single shared floor would have to be the
 // smaller of the two and would stop measuring the larger family.
-const MIN_SUBS = { task: 9, team: 7 };
+const MIN_SUBS = { task: 9, team: 11 };
 
 function corpusCovers(family, sub) {
   return CORPUS.some((line) => {
@@ -641,6 +652,10 @@ test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-rm lead]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-rename a b]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team watchdog 500]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team template-save seat] {"type":"claude"}')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team prompt-save system lead] md')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team template-rm seat]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team prompt-rm system lead]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory remember] x')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory list]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory recall] q')), 'none');
@@ -692,7 +707,11 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // t339 `task respec`: post-legacy, and greedy because its body IS the
   // replacement spec — the one body on the board whose truncation would be
   // silently dispatched as the work itself.
-  const newSinceLegacy = (i) => i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec');
+  //
+  // t753 `team template-save` / `team prompt-save`: post-legacy, and greedy
+  // because the body IS the file — a truncated one is written to disk as if whole.
+  const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
+    || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'));
   let sawTerm = 0;
   for (const line of CORPUS) {
     const i = parseIntent(line);
@@ -748,7 +767,7 @@ function bodyModeSubsFromSource(row) {
 
 // The pair count the predicates named when this was pinned. An arm deleted from a
 // predicate shrinks the loop below rather than failing it, so the count is floored.
-const MIN_BODYMODE_SUBS = 11;
+const MIN_BODYMODE_SUBS = 13;
 
 test('t341: every sub-verb a bodyMode predicate names is reachable in the corpus', () => {
   let pairs = 0;

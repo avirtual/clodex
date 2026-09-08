@@ -410,3 +410,20 @@ team; the lead defaults to `<name>-lead` and names a seat that does not exist ye
 so the next step is still to spawn it there and run `[agent:team gather]` and
 `[agent:team role-add …]` from it. `[agent:team set-lead <seat>]` re-points the
 lead afterwards, and only the current lead may do it.
+
+Steps 2 and 4 are reachable from the lead too, so the intent path now runs end to
+end — create the team, gather, add the role, then write the files the role needs:
+
+- `[agent:team template-save <stem>]` + a JSON body writes
+  `~/.clodex/teams/<name>/templates/<stem>.json` — the seat template a role's
+  `template:` names.
+- `[agent:team prompt-save system|append <stem>]` + a markdown body writes
+  `prompts/system/<stem>.md` or `prompts/append/<stem>.md` — the role prompt and
+  the project knowledge of step 2.
+- `[agent:team template-rm <stem>]` and `[agent:team prompt-rm system|append
+  <stem>]` delete one, and refuse while a role in `team.json` still names it. The
+  drawers have no such guard: a person deleting a template can see the roles
+  popover, an agent cannot.
+
+All four are lead-only, like every other `[agent:team …]` verb, and write only
+inside the team's own directory. The library at `~/.clodex/library/` stays yours.
