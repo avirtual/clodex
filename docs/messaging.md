@@ -290,18 +290,18 @@ the two directions use different transports (full wire detail in
   origin string) so the reply trailer routes back through our own config.
 - `SELF_LABEL` = `CLODEX_LABEL` if set and it clears peer-outbox's
   `validOrigin` gate, else the hostname minus `.local` (the fallback also
-  covers a blank or rejected value, which logs one warning). It is what this
-  box calls ITSELF: the hello `host` field, the `origin` it hands a peer to
-  key our reply outbox, and the `@origin` half of the relay sender tag — NOT
-  the suffix in a who-line or a dm target, which is our own configured label
-  for that peer per the bullet above. Two instances on one box share a
-  hostname, so `CLODEX_LABEL` is how a hub's spokes tell them apart — see
+  covers a blank or rejected value, which logs one warning). It is the origin
+  we present when we DIAL: the dialed box tags our agents `name@<our label>`,
+  records that origin, keys our reply outbox by it, and its agents reply to
+  that address. It is also the hello `host` it displays for us. On the dialing
+  side the suffix is our own configured label for that peer instead, per the
+  bullet above. Two instances on one box that both dial the same peer would
+  otherwise present one hostname origin and be conflated there — see
   `docs/recipes/two-instances.md`.
-- `[agent:who]` appends federated
-  addresses for online dm-cap peers. It also lists ALL local agent sessions
-  regardless of workspace (not just the sender's) — parity with that
-  cross-workspace federated listing, and every listed name is a valid dm
-  handle since the session map is globally keyed.
+- `[agent:who]` appends federated addresses for online dm-cap peers. It also
+  lists ALL local agent sessions regardless of workspace (not just the
+  sender's) — parity with that cross-workspace federated listing, and every
+  listed name is a valid dm handle since the session map is globally keyed.
 - Accepted asymmetries: a park on the mailbox leg sends the remote sender
   no notice; the claim endpoint is origin-unauthenticated (tunnel-trust,
   same posture as control acquisition).

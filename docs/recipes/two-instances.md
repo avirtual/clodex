@@ -15,7 +15,7 @@ edit, no build flag.
 |---|---|---|
 | `CLODEX_HOME` | the registry root — teams, library, `run/<name>/`, memory, messages, projects, tickets, `clodex.log`. Read by `main.js`, `headless-main.js`, `sandbox.js` and the engine, and handed to every agent's `[agent:exec]` children | `~/.clodex` |
 | `CLODEX_DATA_DIR` | the persistence dir — `sessions.json` and the settings stores (peers, ports, workspaces). The desktop app moves `userData` here before taking its single-instance lock | platform userData: `~/Library/Application Support/clodex` (macOS), `$XDG_CONFIG_HOME`/`~/.config/clodex` (Linux), `%APPDATA%/clodex` (Windows) |
-| `CLODEX_LABEL` | what this instance calls itself on the peer wire — the hello `host` field a peer displays, and the `@origin` half of the sender tag on relayed DMs. Not the address other boxes dm it by (see step 3). Must match the outbox origin charset (`[A-Za-z0-9._-]`, 1–64, not `.`/`..`); a value that does not is ignored with a warning in `clodex.log` | the box's hostname, minus a `.local` suffix |
+| `CLODEX_LABEL` | the origin this instance announces to the peers it **dials** — the address their agents reach ours at, and the hello `host` field they display. Must match the outbox origin charset (`[A-Za-z0-9._-]`, 1–64, not `.`/`..`); a value that does not is ignored with a warning in `clodex.log` | the box's hostname, minus a `.local` suffix |
 | `CLODEX_WEB_PORT` | the browser frontend's port (headless only) | unset — no web host is started |
 | `CLODEX_WEB_HOST` | the interface the web host binds | unset — all interfaces |
 | `CLODEX_WEB_TOKEN` | the web frontend's bearer token | unset — localhost trust |
@@ -74,17 +74,28 @@ your message
 [agent:end]
 ```
 
-The suffix there is **A's own peer label for B**, set in A's Settings — not
-B's `CLODEX_LABEL`. A dm target is matched against A's peer list, so renaming
-the peer in A renames the address A's agents type, and B never learns of it.
+The two directions use **different** labels, because only A has a peer row here:
 
-What `CLODEX_LABEL` changes is what B calls *itself*: the host name A's peers
-panel shows for B, and the `@origin` half of the sender tag on DMs relayed
-through a hub. That is why two instances on one box want it — left at the
-default they both self-label as the hostname, and a hub's spokes cannot tell
-which of the two a relayed message came from. Keeping the peer label and
-`CLODEX_LABEL` the same word means the address you type and the name on the
-screen agree.
+- **A → B.** The suffix A's agents type is A's own peer label for B, from A's
+  Settings. It is matched against A's peer list, so renaming the peer in A
+  changes the address A's agents type and B is not consulted.
+- **B → A.** When A dials, it presents its `CLODEX_LABEL` as the origin. B tags
+  the inbound message `worker@box-a` and remembers that origin, so B's agents
+  reply with `[agent:dm worker@box-a]` — **A's `CLODEX_LABEL`**, not a peer
+  label, since B has no peer row for A. The reply waits in an outbox B keys by
+  that same origin, which A collects on its hello cadence. Note B's
+  `[agent:who]` will not list A's agents: that listing walks configured peers
+  only, so on the dialed side the address arrives in the sender tag.
+
+`CLODEX_LABEL` also sets the host name A's peers panel displays for B.
+
+That is why two instances on one box want distinct labels. Left at the default
+both present the *same* hostname origin to every peer they dial, so that peer
+sees both instances' agents under one suffix and lands their replies in one
+shared outbox. Distinct labels keep them apart on every box they dial.
+
+Give the peer label A uses for B the same word B exports as `CLODEX_LABEL`, and
+the address A's agents type matches the one B's agents reply to.
 
 ## 4. Caveats
 
@@ -98,6 +109,8 @@ screen agree.
   instances headless.
 - **Agent names are global per root, not per workspace.** Two instances with
   different `CLODEX_HOME`s therefore have fully independent namespaces: both may
-  have a `worker`, and the two are different seats — reached from the other
-  instance by the peer label it was given there. Two instances sharing a root
-  would not be two instances.
+  have a `worker`, and the two are different seats. Which suffix distinguishes
+  them depends on the side: on a box they **dial**, an instance's agents are
+  addressed by that instance's `CLODEX_LABEL`; on the **dialing** side, by the
+  peer label given there. Two instances sharing a root would not be two
+  instances.
