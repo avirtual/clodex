@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — The github plugin moves to the library, and a template keeps its gates wherever it boots
 
 - The built-in github plugin is removed from core; it now installs from the clodex-plugins library (Settings, Plugins, Library, github). Seats that list it keep the id and pick the library copy up once installed.
 - `[agent:team role-add]` and `[agent:team role-set]` now take `dispatch:standing|spawn|worktree` and `cwd:<rel>` beside `prompt:` and `template:`, so a team bootstrapped entirely from intents can mint a worktree hand without the roles popover — previously a role added by intent could only ever be standing.
