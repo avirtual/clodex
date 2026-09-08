@@ -451,15 +451,26 @@ test('fetchLibraryCatalog fetches ONE tarball and leaves no fetch directory behi
   const urls = [];
   const https = mkLibraryHttps(bytes);
   const counting = { get(url, opts, cb) { urls.push(url); return https.get(url, opts, cb); } };
-  const before = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('clodex-plugin-library-'));
-  const source = createPluginSource({ fs, path, os, execFile: realExecFile, https: counting });
+  // Its OWN tmp root, not the shared one: node --test runs test files in
+  // parallel processes, so a scan of $TMPDIR for the library prefix attributes
+  // another process's live fetch dir to this subject (t742, seen on the
+  // identical scan in test/plugin-loader-source.test.js).
+  const fetchRoot = mkTmpRoot('clodex-plugin-source-library-');
+  let fetchRootAsks = 0;
+  const source = createPluginSource({
+    fs, path, execFile: realExecFile, https: counting,
+    os: { tmpdir: () => { fetchRootAsks++; return fetchRoot; } },
+  });
   const r = await source.fetchLibraryCatalog({});
   assert.strictEqual(r.ok, true, JSON.stringify(r));
   assert.strictEqual(r.plugins.length, 2, 'ENTER: two plugins were enumerated off the ONE fetch below');
   assert.deepStrictEqual(urls, ['https://api.github.com/repos/avirtual/clodex-plugins/tarball'],
     'one tarball for the whole catalog — a per-plugin request would be N calls against an unauthenticated rate limit');
-  assert.deepStrictEqual(
-    fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('clodex-plugin-library-')), before,
+  // An empty root proves cleanup only if the fetch dir was minted UNDER it —
+  // without this the assertion below passes vacuously against a source that
+  // never asked, which is the same green-for-nothing the global scan gave.
+  assert.ok(fetchRootAsks > 0, 'ENTER: the fetch dir was minted under this subject\'s own tmp root');
+  assert.deepStrictEqual(fs.readdirSync(fetchRoot), [],
     'the fetch dir holds a copy of every plugin in the library and must not outlive the call');
 });
 
