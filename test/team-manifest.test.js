@@ -16,7 +16,8 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
-  formatCompositionDelta, STOCK_ROLE_DEFS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, MANIFEST_VERSION,
+  formatCompositionDelta, defaultLeadSeat, SEAT_NAME_MAX, STOCK_ROLE_DEFS, CUT_ROLE_FIELDS,
+  HONORED_CUT_FIELDS, MANIFEST_VERSION,
 } = require('../team-manifest');
 
 // A fresh fake ~/.clodex per helper call, so tests don't cross-contaminate.
@@ -2086,4 +2087,28 @@ test('role cwd: a hand-edited bad cwd LOADS rather than breaking the whole team'
   assert.strictEqual(m.roles.hand.cwd, '/etc', 'carried through the load as written');
   assert.strictEqual(tm.resolveTeam(root).name, 'shop',
     'ENTER: the team still resolves — this is the property the load-path leniency buys');
+});
+
+// t751. The `<team>-lead` default is minted by two front doors that never meet —
+// team:createBare (ipc-handlers) and _handleTeamCreate (team-tickets) — and
+// createTeam refuses neither: it sees only the finished seat name, so an
+// overflowing default surfaces as a refusal of a `lead` field the caller never
+// supplied. Both boundaries are pinned as literals rather than computed from
+// SEAT_NAME_MAX, so a change to the limit fails here instead of agreeing with
+// itself.
+test('t751 defaultLeadSeat: <name>-lead by default, an explicit lead verbatim', () => {
+  assert.strictEqual(defaultLeadSeat('shop', null), 'shop-lead');
+  assert.strictEqual(defaultLeadSeat('shop', undefined), 'shop-lead');
+  assert.strictEqual(defaultLeadSeat('shop', 'boss'), 'boss');
+  // An over-long EXPLICIT lead passes through to the writer, whose refusal names
+  // the field the caller actually supplied.
+  assert.strictEqual(defaultLeadSeat('shop', 'b'.repeat(65)), 'b'.repeat(65));
+});
+
+test('t751 defaultLeadSeat: the 64-char seat limit binds on the MINTED default, both sides', () => {
+  assert.strictEqual(SEAT_NAME_MAX, 64, 'the limit the session-name grammar sets');
+  // 59 + '-lead' = exactly 64: the last team name that can mint its own lead.
+  assert.strictEqual(defaultLeadSeat('a'.repeat(59), null), `${'a'.repeat(59)}-lead`);
+  assert.throws(() => defaultLeadSeat('a'.repeat(60), null), /is too long/,
+    'one character more and the seat name is 65');
 });
