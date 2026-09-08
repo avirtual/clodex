@@ -185,5 +185,23 @@ for (const host of ['main.js', 'headless-main.js']) {
   });
 }
 
+test('main.js moves userData to CLODEX_DATA_DIR before the single-instance lock', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const setPathAt = src.indexOf("app.setPath('userData'");
+  const lockAt = src.indexOf('app.requestSingleInstanceLock()');
+  assert.ok(setPathAt > -1, 'main.js must move userData when CLODEX_DATA_DIR is set');
+  assert.ok(lockAt > -1, 'main.js must still take the single-instance lock');
+  assert.ok(setPathAt < lockAt,
+    'the setPath must precede the lock, or both instances lock the default userData dir');
+  assert.ok(/CLODEX_DATA_DIR/.test(src.slice(0, setPathAt)),
+    'the move must be gated on CLODEX_DATA_DIR');
+  assert.ok(/app\.setPath\('userData', path\.resolve\(process\.env\.CLODEX_DATA_DIR\)\)/.test(src),
+    'the desktop host must resolve the override, not pass a relative string through');
+
+  const headless = fs.readFileSync(path.join(__dirname, '..', 'headless-main.js'), 'utf8');
+  assert.ok(/path\.resolve\(process\.env\.CLODEX_DATA_DIR\)/.test(headless),
+    'the headless host must resolve it too, or the two hosts disagree on a relative value');
+});
+
 // createEngine starts background timers that keep the loop alive.
 after(() => { setImmediate(() => process.exit(0)); });
