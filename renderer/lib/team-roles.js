@@ -308,9 +308,6 @@ function reviewerNote(rev, now) {
 const TICKET_TITLE_MAX = 60;
 const LANDED_WORD = { accepted: 'merged', 'merge-failed': 'merge FAILED', cancelled: 'cancelled' };
 
-// One ticket's whole line, as a string — the popover only appends it as
-// textContent. Built here rather than in the popover so a pin is a string
-// compare against the sentence an operator reads, not a walk of built nodes.
 function ticketLine(t, now) {
   const id = t && t.id != null ? String(t.id) : '?';
   const rawTitle = t && t.title != null ? String(t.title) : '';
@@ -393,10 +390,6 @@ function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
       && dispatch !== DEFAULT_DISPATCH
       && act.roles
       && Object.prototype.hasOwnProperty.call(act.roles, key);
-    // On a per-ticket row the seat counts come from the CHANNEL, not from the
-    // window's session rows: a worktree hand runs in its own window and counts
-    // zero here, so the workspace-scoped numbers would colour the dot `none` and
-    // title it `0 seat(s)` beside a note naming the seat that is working.
     const liveSeats = perTicket && Array.isArray(act.roles[key].live) ? act.roles[key].live : null;
     const seats = liveSeats
       ? {

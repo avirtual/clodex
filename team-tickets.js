@@ -41,8 +41,6 @@ const { CLAUDE_TOOLS } = require('./catalogs');
 
 const TEAM_FILE_BODY_MAX = 64 * 1024;
 
-// How many landings `teamActivity` carries. The popover shows a recent-history
-// strip, not an archive, and this is the wire bound on it.
 const LANDED_TICKET_LIMIT = 5;
 
 // How long a queued ticket waits for another run to release the shared lock.
@@ -848,9 +846,6 @@ function createTicketMethods(deps, shared) {
       openRows.sort((a, b) => a.sort - b.sort);
       const open = openRows.map((e) => e.row);
       const landed = landedRows.sort((a, b) => b.at - a.at);
-      // Capped HERE rather than in the renderer: this is an IPC payload, and a
-      // board with a thousand landings would ship every one of them across the
-      // wire for a list that shows five.
       landed.length = Math.min(landed.length, LANDED_TICKET_LIMIT);
 
       const dayAgo = Date.now() - 24 * 60 * 60 * 1000;

@@ -56,9 +56,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const addPanel = document.getElementById('team-roles-newrole-panel');
   const addCancel = document.getElementById('team-roles-newrole-cancel');
   const addDispatchHelp = document.getElementById('team-roles-dispatch-help');
-  // The two whole sections `setup` hides. Wrappers rather than per-control
-  // toggles: the subhead and hint belong to the section, and hiding the inputs
-  // alone would leave two headings standing over nothing.
+  // The whole sections `setup` hides. Wrappers rather than per-control toggles:
+  // the subhead and hint belong to the section, and hiding the inputs alone would
+  // leave a heading standing over nothing.
   const addSection = document.getElementById('team-roles-add-section');
   const ticketsSection = document.getElementById('team-roles-tickets-section');
   const watchdogSection = document.getElementById('team-roles-watchdog-section');
@@ -489,13 +489,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     return head;
   }
 
-  // The board, below the roles: what is open and what last landed. Every string
-  // lands as textContent — ticket TITLES are agent-written and must never reach
-  // an attribute or an innerHTML in this nodeIntegration renderer.
-  //
-  // Renders its empty states rather than nothing when `activity` is absent: the
-  // web host does not shim `team:activity`, and a section that vanished there
-  // would read as a team with no board rather than a host that cannot see one.
   function buildTicketsSection(act) {
     const frag = document.createDocumentFragment();
     const head = document.createElement('div');
@@ -619,9 +612,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // team that cannot dispatch anything yet. `repair` keeps them — an operator
     // repairing a pointer still needs to see what the team was configured to do.
     addSection.classList.toggle('hidden', stage === 'setup');
-    // Suppressed in `setup` for the same reason as the Add Role block: a team
-    // with no lead cannot dispatch anything, so a board there is a list of work
-    // that nothing can pick up.
     ticketsSection.classList.toggle('hidden', stage === 'setup');
     ticketsSection.innerHTML = '';
     if (stage !== 'setup') ticketsSection.appendChild(buildTicketsSection(activity));
