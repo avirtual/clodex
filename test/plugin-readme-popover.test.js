@@ -146,6 +146,21 @@ test('the × in the title closes the popover', () => {
   assert.strictEqual(m.nodes['plugin-readme-popover'].hidden, true);
 });
 
+test('the popover markup sits outside #main, ahead of the plugins overlay', () => {
+  // #main is position:fixed, so it is its own stacking context: a popover
+  // inside it cannot outrank #plugins-overlay whatever its z-index, and the
+  // click that should hit it lands on the overlay backdrop instead, closing
+  // the dialog. Only body-level placement makes the z-index 110 mean anything.
+  const html = fs.readFileSync(path.join(ROOT, 'renderer/index.html'), 'utf-8');
+  const POP = html.indexOf('id="plugin-readme-popover"');
+  const TERM = html.lastIndexOf('id="tool-overlay-dismiss"');
+  const OVL = html.indexOf('<div id="plugins-overlay"');
+  assert.ok(POP >= 0 && TERM >= 0 && OVL >= 0,
+    'ENTER: all three landmarks are present, so the ordering below is a verdict');
+  assert.ok(POP > TERM, 'the popover must sit after the last element inside #main');
+  assert.ok(POP < OVL, 'and before the plugins overlay it has to paint above');
+});
+
 test('closing Manage Plugins closes the README popover with it', () => {
   // The popover is a body-level sibling of the overlay, not a child: left open,
   // it survives the dialog it was opened from and floats over the app.
