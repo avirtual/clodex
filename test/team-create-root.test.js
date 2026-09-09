@@ -22,8 +22,13 @@ function gitAvailable() {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
-const create = (f, root, body = '') =>
-  f.m._handleIntent('a', { type: 'team-create', name: 'shop', root, lead: null, body });
+// The trailing tick is not decoration (t782): with a brief the success line is
+// composed by the internal lead spawn's callback, which runs in a setImmediate,
+// so awaiting only the dispatcher sees the reply not yet injected.
+const create = async (f, root, body = '') => {
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root, lead: null, body });
+  await new Promise((r) => setTimeout(r, 10));
+};
 
 // Sorted and RECURSIVE, and it deliberately includes `.git`: the takeover claim
 // is that create writes nothing under the root, and a listing that skipped the

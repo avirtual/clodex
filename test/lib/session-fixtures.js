@@ -125,9 +125,13 @@ function mkPark(overrides = {}) {
 // makeRepo (t780): the root starts as a repo with one commit, i.e. the TAKEOVER
 // case. Without it the root is an empty directory, which create now git-inits —
 // so a test asserting the reply's root clause has to say which case it wants.
+// created (t782): create now spawns the lead itself, so the fixture stubs
+// m.create and captures its argv the way mkLeadSpawn does — with the real
+// library lead template on listAllTemplates and a resolveTeam that answers the
+// team create just wrote, since that resolution is what picks the template up.
 function mkTeamCreate({
   intents = ['team-create'], refreshThrows = false, noRefreshDep = false, wrapFs = null,
-  makeRepo = false,
+  makeRepo = false, createThrows = null, noLeadTemplate = false,
 } = {}) {
   const home = mkTmpRoot('clodex-t751-');
   const projectRoot = mkTmpRoot('clodex-t751-proj-');
@@ -140,11 +144,22 @@ function mkTeamCreate({
   }
   const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
   const refreshes = [];
+  const created = [];
+  const shippedLead = JSON.parse(fsReal.readFileSync(
+    pathReal.join(__dirname, '..', '..', 'resources', 'library', 'templates', 'clodex-team-lead.json'), 'utf-8'));
   const { m, injected } = mkPark({
     fs: wrapFs ? wrapFs(fsReal, home) : fsReal,
     path: pathReal,
+    os: require('os'),
     REGISTRY_DIR: home,
-    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
+    AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    DEFAULT_WORKSPACE_ID: 'default',
+    ensureDir: () => {},
+    listAllTemplates: () => (noLeadTemplate ? [] : [{ ...shippedLead, id: 'clodex-team-lead' }]),
+    getPersistence: () => ({
+      list: () => [], get: (n) => (n === 'a' ? { intents } : null),
+      setStripLevel() {}, setAutoCompact() {}, setPlugins() {}, setWorktree() {},
+    }),
     createTeam: tm.createTeam,
     teamsDir: tm.teamsDir,
     // teamPromptPath refuses any team listTeams does not name, so the brief has
@@ -155,16 +170,46 @@ function mkTeamCreate({
     // handler never meets — and an unwired seam is a TypeError the dispatcher's
     // .catch swallows, leaving every create silently doing nothing.
     gitWorktree: require('../../git-worktree'),
-    resolveTeam: () => null,
+    // The REAL resolver over the fixture's home (t782): the internal lead spawn
+    // picks up clodex-team-lead only by resolving the team that owns the spawn's
+    // cwd, so a `() => null` stub would silently spawn every lead bare and the
+    // template pin would assert about a resolution that never ran.
+    resolveTeam: tm.resolveTeam,
     refreshAppMenu: noRefreshDep ? undefined : () => { refreshes.push(1); if (refreshThrows) throw new Error('menu boom'); },
   });
   m._broadcast = () => {};
   m._sendToSession = () => {};
+  // Which SEAT each injection went to. mkPark's stub records the text only, and
+  // the whole point after t782 is that the caller's line and the new lead's
+  // opener are two injections to two different seats.
+  const perSeat = [];
+  const injectBase = m._injectText;
+  m._injectText = (s, text, opts) => {
+    const before = injected.length;
+    injectBase(s, text, opts);
+    if (injected.length > before) perSeat.push({ seat: s && s.name, text: injected[injected.length - 1] });
+  };
+  // The opener goes out ACTIVE-PARKED, never as a spawn-time PTY write: the new
+  // lead is still booting and the boot re-render wipes an injected draft. Captured
+  // rather than run because the real one needs a PENDING_DIR and a live seat.
+  const openers = [];
+  m._deliverParkedActive = (to, from, body, mtype) => { openers.push({ to, from, body, mtype }); };
+  // Mints a session entry as the real create() does: the opener is addressed to
+  // the seat looked up from the map, so a stub that only recorded argv would make
+  // every opener assertion vacuous.
+  m.create = async (...args) => {
+    if (createThrows) throw new Error(createThrows);
+    created.push(args);
+    m.sessions.set(args[0], {
+      name: args[0], type: args[1], agentType: args[1], cwd: args[2], activityState: 'idle',
+    });
+  };
   const seat = { name: 'a', type: 'claude', agentType: 'claude', cwd: projectRoot, activityState: 'idle', workspaceId: 'ws1' };
   m.sessions.set('a', seat);
   const readTeam = (name) => JSON.parse(fsReal.readFileSync(pathReal.join(home, 'teams', name, 'team.json'), 'utf-8'));
   const teamExists = (name) => fsReal.existsSync(pathReal.join(home, 'teams', name, 'team.json'));
-  return { m, injected, refreshes, seat, home, projectRoot, readTeam, teamExists, tm };
+  const toSeat = (name) => perSeat.filter((e) => e.seat === name).map((e) => e.text);
+  return { m, injected, toSeat, openers, created, refreshes, seat, home, projectRoot, readTeam, teamExists, tm };
 }
 
 module.exports = { mk, mkPark, mkTeamCreate };

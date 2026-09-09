@@ -464,18 +464,24 @@ function createTicketMethods(deps, shared) {
       return swept;
     },
 
-    _handleSpawnIntent(spawner, intent) {
-      const reply = (msg) => this._injectText(spawner, `[agent:spawn] ${msg}`, { parkable: true });
-      const name = (intent.name || '').trim();
-      if (!name) { reply('error: usage [agent:spawn name:X cwd:Y [template:Z]]'); return; }
+    _validateSeatName(name) {
+      if (!name) return { ok: false, error: 'usage [agent:spawn name:X cwd:Y [template:Z]]' };
       if (!AGENT_NAME_RE.test(name)) {
-        reply(`error: invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
-        return;
+        return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
       }
       if (this.sessions.has(name) || getPersistence().get(name)) {
-        reply(`error: name taken "${name}"`);
-        return;
+        return { ok: false, error: `name taken "${name}"` };
       }
+      return { ok: true };
+    },
+
+    _handleSpawnIntent(spawner, intent, opts = {}) {
+      const reply = typeof opts.onReply === 'function'
+        ? (msg) => opts.onReply(msg)
+        : (msg) => this._injectText(spawner, `[agent:spawn] ${msg}`, { parkable: true });
+      const name = (intent.name || '').trim();
+      const seatName = this._validateSeatName(name);
+      if (!seatName.ok) { reply(`error: ${seatName.error}`); return; }
 
       let spawnerTeam = null;
       try { spawnerTeam = resolveTeam(spawner.cwd); } catch { spawnerTeam = null; }
@@ -2167,7 +2173,7 @@ function createTicketMethods(deps, shared) {
         reply(refusals[cls.error]);
         return;
       }
-      const brief = String(intent.body == null ? '' : intent.body);
+      const brief = String(intent.body == null ? '' : intent.body).replace(/^\n/, '');
       const hasBrief = brief.trim().length > 0;
       if (hasBrief) {
         const bytes = Buffer.byteLength(brief, 'utf-8');
@@ -2180,6 +2186,13 @@ function createTicketMethods(deps, shared) {
       try { lead = defaultLeadSeat(name, intent.lead || null); } catch (err) {
         reply(`error: ${err.message}`);
         return;
+      }
+      if (hasBrief) {
+        const seatName = this._validateSeatName(lead);
+        if (!seatName.ok) {
+          reply(`error: lead seat ${lead}: ${seatName.error} — no team was created`);
+          return;
+        }
       }
       if (cls.kind !== 'takeover') {
         if (cls.kind === 'new-absent') {
@@ -2217,15 +2230,38 @@ function createTicketMethods(deps, shared) {
           try { fs.rmdirSync(dir); } catch {}
           this._refreshAppMenuQuietly();
           reply(`error: could not save the brief (${res.error}) — no team was created; `
-            + `re-fire [agent:team create ${name} root:${root}] with the brief`);
+            + `re-fire [agent:team create ${name} root:${root}${intent.lead ? ` lead:${intent.lead}` : ''}] with the brief`);
           return;
         }
       }
       try { if (typeof refreshAppMenu === 'function') refreshAppMenu(); } catch {}
       if (hasBrief) {
-        reply(`team "${team.name}" created — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
-          + 'hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md. '
-          + 'Next: spawn the lead in that root — it composes the brief at boot.');
+        const head = `team "${team.name}" created — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
+          + 'hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md';
+        const opener = cls.kind === 'takeover'
+          ? `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is an EXISTING `
+            + 'project you are taking over — Clodex touched none of its files. Follow "First turn on a fresh team" '
+            + 'in your prompt.'
+          : `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is a NEW project — `
+            + 'Clodex created and git-init\'d it, and it is empty apart from one empty commit. Follow '
+            + '"First turn on a fresh team" in your prompt.';
+        const onReply = (msg) => {
+          if (/^ok: spawned/.test(msg)) {
+            const bare = msg.match(/lead role template "[^"]*" not installed, spawned with no template/);
+            if (bare) {
+              reply(`${head}; ${team.lead} spawned in the root WITHOUT its template (${bare[0]}) `
+                + '— NOT briefed: the brief composes only through that template; install it and respawn.');
+              return;
+            }
+            reply(`${head}; ${team.lead} spawned in the root on template clodex-team-lead and briefed. `
+              + `Ask ${team.lead} for your first ticket.`);
+            this._deliverParkedActive(team.lead, session.name, opener, 'dm');
+            return;
+          }
+          reply(`${head}; ${team.lead} could NOT be spawned (${msg.replace(/^error: /, '')}) — the team is on disk; `
+            + `re-fire [agent:spawn name:${team.lead} cwd:${team.root}] yourself.`);
+        };
+        this._handleSpawnIntent(session, { name: team.lead, cwd: team.root }, { onReply });
         return;
       }
       reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}. `

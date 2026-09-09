@@ -6765,8 +6765,8 @@ function createSessionManager(deps) {
     // hasActivePending() sees it and the boot-ready rising edge (or any idle edge)
     // drains it. Passive parks never earn a turn by design; a fresh reviewer seat
     // has no other traffic, so passive stalled the scope until a human ✉-click.
-    // Used ONLY for the team-review scope. Claude-only (pending is a Claude-hook
-    // store); park failure falls back to a normal delivery.
+    // Used for the team-review scope and a briefed team create's first-turn opener,
+    // both aimed at a booting seat. Claude-only; park failure delivers normally.
     _deliverParkedActive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
       if (!target) return;
