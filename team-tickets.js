@@ -1844,12 +1844,12 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    // Did the merged range touch CHANGELOG.md? THREE answers, and `known:false`
-    // is the DEFAULT rather than an error arm — every path that cannot prove
-    // the answer lands there, so a failure mode added later cannot arrive as a
-    // claim. A failed probe reported as "an entry landed" is how a release
-    // ships with no notes; reported as "one is owed" it retrains the lead to
-    // ignore the line. Neither collapse is available from here.
+    // Did the merged range touch CHANGELOG.md, and does the root file exist at
+    // all? `known:false` is the DEFAULT rather than an error arm — every path
+    // that cannot prove the answer lands there, so a failure mode added later
+    // cannot arrive as a claim. A failed probe reported as "an entry landed" is
+    // how a release ships with no notes; reported as "one is owed" it retrains
+    // the lead to ignore the line. Neither collapse is available from here.
     //
     // Whole-range diff TEXT for a one-filename question, deliberately: it is the
     // only range-diff git-worktree.js exports, and its `ok:false`-on-overflow
@@ -1904,7 +1904,9 @@ function createTicketMethods(deps, shared) {
         //
         // `^` stays load-bearing: every hunk-body line carries a `+`, `-` or
         // space, so a file whose CONTENT quotes a diff header cannot spoof it.
-        return { known: true, touched: /^diff --git (?:[^\s/]+\/)?CHANGELOG\.md (?:[^\s/]+\/)?CHANGELOG\.md$/m.test(d.text) };
+        let present = false;
+        try { present = fs.statSync(path.join(team.root, 'CHANGELOG.md')).isFile(); } catch { present = false; }
+        return { known: true, touched: /^diff --git (?:[^\s/]+\/)?CHANGELOG\.md (?:[^\s/]+\/)?CHANGELOG\.md$/m.test(d.text), present };
       } catch (e) {
         return { known: false, error: e && e.message ? e.message : String(e) };
       }
@@ -1917,7 +1919,7 @@ function createTicketMethods(deps, shared) {
     // stated over an entry that landed is a duplicate entry and, repeated, a
     // line the lead stops reading.
     //
-    // `changelog` is _mergeTouchedChangelog's three-valued result. A missing one
+    // `changelog` is _mergeTouchedChangelog's result. A missing one
     // reads as unknown, and so does a malformed one: `known` alone is not enough,
     // because `{known:true}` with no `touched` would fall through to the OWED
     // claim — an absent measurement rendered as a measured answer. Both are the
@@ -1938,9 +1940,6 @@ function createTicketMethods(deps, shared) {
         // each carrying a prose prefix. A multi-line interpolation breaks that
         // silently.
         const oneLine = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300);
-        // `touched` must be a BOOLEAN, not merely present: see the note above the
-        // method — a truthy `known` over an absent measurement is the one way an
-        // unmeasured state could reach a measured claim.
         const measured = !!(changelog && changelog.known === true && typeof changelog.touched === 'boolean');
         const changelogLine = measured
           ? (changelog.touched
@@ -1949,7 +1948,12 @@ function createTicketMethods(deps, shared) {
             // CHANGELOG.md trips the same header, so the claim stops where the
             // evidence does and the lead is told to look rather than told not to.
             ? `CHANGELOG.md was CHANGED by this merge — the branch touched it, so an entry may already be on ${MERGE_TARGET_BRANCH}. Look before adding one, or you will write a duplicate.`
-            : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never authors one itself).`)
+            // A repo with no root CHANGELOG.md owes nothing; billing it on every
+            // merge is how a lead learns to skip the line on the day it is true.
+            // `=== false`: a result carrying no `present` is not a measured absence.
+            : changelog.present === false
+              ? `This repo has no CHANGELOG.md at its root — no entry is owed.`
+              : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never authors one itself).`)
           // `diff --stat <sha>^1 <sha>` rather than `show --stat <sha>`: it NAMES
           // the comparison — first parent against the merge, i.e. what the merge
           // brought to master — instead of relying on how `git show` chooses to
