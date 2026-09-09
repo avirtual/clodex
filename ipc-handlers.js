@@ -377,10 +377,10 @@ function registerIpcHandlers(deps) {
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
-  // `prompts` is the picker's offering (append-rail only); `all` is every system
-  // prompt on disk. The popover needs both to tell a stored prompt that is ABSENT
-  // from one that is present but off the rail — one message for both facts sent
-  // the operator looking for a file that was there all along.
+  // `prompts` is the offering (append-rail only); `all` is every system prompt this
+  // team could resolve; `teamOwned` is the subset in the team's dir, which wins at
+  // spawn time. The popover needs all three to tell ABSENT from off-the-rail from
+  // team-owned — one wording for several facts sent the operator on a hunt.
   handle('team:rolePrompts', (_e, team) => {
     try {
       const rows = promptLibrary.list('system');

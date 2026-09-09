@@ -899,10 +899,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     await refresh(teamName());
   }
 
-  // Populate the add-role prompt picker from the same rail-filtered source the
-  // New Session dialog's join flow uses. The list is cached module-side so
-  // renderRows (also hit on post-mutation refresh) can build per-row pickers
-  // without re-fetching.
+  // Populate the add-role prompt picker, rail-filtered and scoped to THIS team
+  // (the New Session join flow asks the same channel for the library alone). The
+  // list is cached module-side so renderRows — also hit on post-mutation refresh
+  // — can build per-row pickers without re-fetching.
   let promptNames = [];
   // Every system prompt on disk, rail or not — the second fact renderRows needs
   // to tell "not installed" from "installed but off the append rail".

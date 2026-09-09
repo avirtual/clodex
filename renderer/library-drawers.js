@@ -1,5 +1,5 @@
-// library-drawers.js — the prompts / agents / skills CRUD drawers (list +
-// editor for each library under ~/.clodex/{prompts,agents,skills}).
+// library-drawers.js — the prompts / agents / skills CRUD drawers (list + editor
+// for each). Prompts and templates also list the copies a TEAM owns.
 //
 // MOVED AS-IS, NOT DE-DUPED (R2 judgment call). The plan floated collapsing the
 // three into one factory, but they are not parallel enough to do so without
