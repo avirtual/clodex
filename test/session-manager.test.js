@@ -2598,18 +2598,20 @@ test('t770: a spawner on NO team spawning a team\'s lead by name boots it on clo
   assert.match(f.replies.at(-1), /ok: spawned "acme-lead".*via template "clodex-team-lead" \(lead of team acme\)/);
 });
 
-test('t770: the template\'s ${TEAM_ROOT} cwd never overrides the spawn\'s cwd:', async () => {
-  // team-manifest refuses a `cwd` on the lead role BECAUSE the lead's directory
-  // comes from the spawn. A template cwd reaching the rawCwd fallback would make
-  // that refusal a lie — and ${TEAM_ROOT} expands against the SPAWNER's team,
-  // which here is none, so it would also refuse the spawn outright.
+test('t770: a lead spawned into a SUBDIRECTORY of the team root still resolves its team', async () => {
+  // The resolution runs on the RESOLVED cwd, so containment does the work — a
+  // lead pointed at a subdirectory is still that team's lead. The seat keeps the
+  // directory the spawn named: team-manifest refuses a `cwd` on the lead role
+  // precisely because the lead's directory comes from the spawn, and a template
+  // cwd winning here would make that refusal a lie.
   const f = mkLeadSpawn();
   const deep = pathReal.join(f.projectRoot, 'sub');
   fsReal.mkdirSync(deep, { recursive: true });
   f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: deep });
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
-  assert.strictEqual(f.created[0][2], pathReal.resolve(deep), 'the spawn\'s cwd wins');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5'], 'the lead template still applied');
+  assert.strictEqual(f.created[0][2], pathReal.resolve(deep), 'and the spawn\'s cwd is what the seat gets');
 });
 
 test('t770: an explicit template: still wins, with no lead parenthetical', async () => {
