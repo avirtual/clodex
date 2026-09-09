@@ -36,10 +36,3 @@ is reaped seconds later.
 
 `ticket.reviewerTemplate` is written above BOTH save arms — the one-shot arm
 returns before the second save, so a write below it survives only on the standing-seat path.
-
-## _handleTeamCreate
-
-The kickstart path sets `dispatch: 'worktree'` on the hand role it passes to
-`createTeam`, not on `STOCK_ROLE_DEFS.hand` itself: a global worktree default
-would make the standing seat `team:join` looks for (ipc-handlers.js, the
-`join` handler) ineligible on every team.

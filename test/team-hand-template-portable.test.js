@@ -191,6 +191,15 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
     // different definition". Pinned in ipc-handlers-team.test.js, 'team:addRole
     // leaves an EXISTING role alone'.
     'ipc-handlers.js': 4,
+    // t773: import + the three role defaults _handleTeamCreate hands to createTeam
+    // when the intent carries a kickstart brief (the hand's copy gains
+    // `dispatch: 'worktree'`, the def itself is untouched).
+    //
+    // Checked against the question this message asks: createTeam is the MINT, and
+    // it throws "already exists" on a team.json it can read, so this site is
+    // reachable only for a team that does not exist yet. It never sees a live
+    // team's role, so it can neither rewrite nor refuse one.
+    'team-tickets.js': 4,
   }, 'a NEW read site means the stock def stopped being seed-only — verify it cannot rewrite '
     + 'or refuse a live team\'s role (addRole is exact-match-or-throw), then update this set.');
 });
