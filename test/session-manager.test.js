@@ -10616,6 +10616,14 @@ test('t751 create: the writer refusals are relayed verbatim (duplicate name, own
   await f.m._handleIntent('a', { type: 'team-create', name: long, root: other, lead: null, body: '' });
   assert.ok(f.injected.some((t) => /is too long/.test(t)), 'the shared defaultLeadSeat refusal reaches the intent path too');
   assert.strictEqual(f.teamExists(long), false);
+  // ORDERING, not just the verdict: `other` is an EMPTY dir, which t780 made a
+  // NEW root — create mkdirs and git-inits one of those. So this refusal has to
+  // be reached BEFORE the materialise block, or a refused create leaves a repo
+  // and a commit behind in a directory the operator only named.
+  assert.strictEqual(await require('../git-worktree').hasCommit(other), false,
+    'a refusal committed nothing');
+  assert.strictEqual(fsReal.existsSync(pathReal.join(other, '.git')), false,
+    'and git-init\'d nothing — REFUSED means nothing created');
 });
 
 // --- t773: the kickstart brief on [agent:team create] ----------------------

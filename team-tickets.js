@@ -2176,6 +2176,14 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
+      // ABOVE the materialise block: this throws on a team name whose derived lead
+      // seat overflows, and a refusal that has already mkdir'd and git-init'd the
+      // root is the one thing the classification exists to rule out.
+      let lead;
+      try { lead = defaultLeadSeat(name, intent.lead || null); } catch (err) {
+        reply(`error: ${err.message}`);
+        return;
+      }
       if (cls.kind !== 'takeover') {
         if (cls.kind === 'new-absent') {
           try { fs.mkdirSync(root); } catch (err) {
@@ -2197,7 +2205,7 @@ function createTicketMethods(deps, shared) {
       } : undefined;
       let team;
       try {
-        team = createTeam({ name, root, lead: defaultLeadSeat(name, intent.lead || null), roles });
+        team = createTeam({ name, root, lead, roles });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
