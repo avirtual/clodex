@@ -2601,11 +2601,13 @@ test('t770: a spawner on NO team spawning a team\'s lead by name boots it on clo
   assert.match(f.replies.at(-1), /ok: spawned "acme-lead".*via template "clodex-team-lead" \(lead of team acme\)/);
 });
 
-test('t770: a team created WITH the seeded lead.template resolves through the field, not the constant', async () => {
-  // Two live paths, not one: teams made from now on carry
-  // roles.lead.template === 'clodex-team-lead' (STOCK_ROLE_DEFS), while teams
-  // made before it reach the same file through DEFAULT_LEAD_TEMPLATE — which is
-  // what every other fixture here exercises, since they strip the key.
+test('t770: a team created WITH the seeded lead.template boots the same lead as one without', async () => {
+  // Teams made from now on carry roles.lead.template === 'clodex-team-lead'
+  // (STOCK_ROLE_DEFS); teams made before it reach the same file through
+  // DEFAULT_LEAD_TEMPLATE, which is what every other fixture here exercises
+  // since they strip the key. This cannot tell the two apart — they name the
+  // same stem — so it pins only that the seeded field is not a regression. The
+  // field is actually READ is pinned by the uninstalled-stem test below.
   const f = mkLeadSpawn({ leadTemplate: 'clodex-team-lead' });
   f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
   await tick();
