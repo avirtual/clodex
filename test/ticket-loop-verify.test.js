@@ -514,11 +514,12 @@ test('mkLoop injects every dep team-tickets.js reads', () => {
     // The team-metadata deps are optional in that same sense: createTeam
     // and setLead are read only by _handleTeamCreate and _handleTeam's set-lead
     // case, teamsDir and listTeams only by its four template/prompt file verbs,
+    // loadManifest only by the read-only teamActivity channel (t785),
     // and no subject here drives any of them. refreshAppMenu is optional in a
     // STRONGER sense — the call site guards on typeof, because a headless host
     // wires no Electron menu at all.
     optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
-      'createTeam', 'setLead', 'teamsDir', 'listTeams', 'refreshAppMenu'],
+      'createTeam', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu'],
   });
 });
 

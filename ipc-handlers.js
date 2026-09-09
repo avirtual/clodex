@@ -332,6 +332,11 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
 
+  handle('team:activity', (_e, name) => {
+    try { return manager.teamActivity(name); }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+
   // Same opt-in as team:removeRole, and it only changes one case: re-minting a
   // reserved key the operator had removed. addRole then writes the STOCK def and
   // ignores `def` entirely, so this channel cannot author a reviewer either.

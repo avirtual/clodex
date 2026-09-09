@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Teams:** a read-only `team:activity` channel reports, per role, the seats a ticket minted and which ticket each is on, the open tickets, the last one that landed and how, and for the reviewer the review rounds in flight and the last verdict. Groundwork for the roles popover; nothing visible changes yet.
+
 ## 5.50.0 — 2026-09-09 — Delete Team… from the Teams menu, and a rotated-away conversation is no longer kept warm
 
 - **Keep-warm:** a perpetual hold is restored at startup only for a seat's current conversation. Before, an id left in a seat's /clear history kept re-arming after a rotation, so a dead conversation was pinged hourly at full context price on every launch; such a record is now dropped and the file rewritten without it.

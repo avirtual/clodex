@@ -1168,6 +1168,7 @@ const SessionManager = createSessionManager({
     createTeam,
     addRole,
     listTeams,
+    loadManifest,
     setRole,
     removeRole,
     renameRole,

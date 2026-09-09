@@ -29,6 +29,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
   matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
+  DEFAULT_ROLE_DISPATCH,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -407,6 +408,7 @@ function createTicketMethods(deps, shared) {
     gitWorktree,
     isAlive,
     listTeams,
+    loadManifest,
     log,
     withoutPrivilegedIntentsFor,
   } = deps;
@@ -717,6 +719,99 @@ function createTicketMethods(deps, shared) {
         saved = names.size;
       } catch { saved = null; }
       return { seats: [...seats], tickets, saved };
+    },
+
+    teamActivity(teamName) {
+      const team = loadManifest(teamName);
+      const tickets = ticketsStore.load(team.root).filter((t) => t && t.id);
+
+      const roles = {};
+      for (const [key, def] of Object.entries(team.roles || {})) {
+        if (key === 'reviewer') continue;
+        roles[key] = {
+          dispatch: (def && def.dispatch) || DEFAULT_ROLE_DISPATCH,
+          live: [],
+          open: [],
+          last: null,
+        };
+      }
+
+      const seatTicket = (seatName) => {
+        for (const t of tickets) {
+          if (t.assignee !== seatName) continue;
+          if (t.state === 'open') return { ticket: t.id, step: 'working' };
+          if (t.state === 'done' && t.loopStep === 'verify') return { ticket: t.id, step: 'verify' };
+        }
+        return { ticket: null, step: null };
+      };
+
+      for (const s of this.sessions.values()) {
+        if (!s || !s.agentType || s._dead) continue;
+        const role = matchSeatRole(team, s.name);
+        if (role === null || !Object.prototype.hasOwnProperty.call(roles, role)) continue;
+        const { ticket, step } = seatTicket(s.name);
+        roles[role].live.push({ seat: s.name, ticket, step });
+      }
+
+      for (const t of tickets) {
+        const bucket = (typeof t.role === 'string' && Object.prototype.hasOwnProperty.call(roles, t.role))
+          ? roles[t.role] : null;
+        if (!bucket) continue;
+        if (t.state === 'open') {
+          bucket.open.push({
+            id: t.id,
+            title: t.title == null ? null : t.title,
+            assignee: t.assignee == null ? null : t.assignee,
+            step: t.parked ? 'parked' : (t.undeliveredAt ? 'undelivered' : 'working'),
+          });
+          continue;
+        }
+        const landed = (t.state === 'done' && t.closedOut) || t.state === 'cancelled';
+        if (!landed) continue;
+        const at = t.acceptedAt != null ? t.acceptedAt : (t.closedAt != null ? t.closedAt : null);
+        if (at == null) continue;
+        if (bucket.last && bucket.last.at >= at) continue;
+        bucket.last = {
+          id: t.id,
+          title: t.title == null ? null : t.title,
+          at,
+          outcome: t.mergeError ? 'merge-failed' : (t.state === 'cancelled' ? 'cancelled' : 'accepted'),
+        };
+      }
+
+      const reviewer = { live: [], last: null };
+      for (const t of tickets) {
+        if (t.loopStep !== 'verify' || t.verifyHold) continue;
+        const landedRounds = Number(t.reviewRound) || 0;
+        const round = landedRounds + 1;
+        const num = /^t?(\d+)$/.exec(String(t.id));
+        const scoped = num ? `${team.name}-reviewer-${num[1]}-r${round}` : null;
+        const live = scoped ? this.sessions.get(scoped) : null;
+        reviewer.live.push({
+          ticket: t.id,
+          round,
+          seat: (live && live.agentType && !live._dead) ? scoped : null,
+        });
+      }
+      for (const t of tickets) {
+        if (t.reviewedAt == null) continue;
+        if (reviewer.last && reviewer.last.at >= t.reviewedAt) continue;
+        reviewer.last = {
+          ticket: t.id,
+          round: Number(t.reviewRound) || 0,
+          verdict: t.verdict == null ? null : t.verdict,
+          at: t.reviewedAt,
+        };
+      }
+
+      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      const counts = {
+        open: tickets.filter((t) => t.state === 'open').length,
+        verify: tickets.filter((t) => t.loopStep === 'verify').length,
+        done24h: tickets.filter((t) => t.closedAt != null && t.closedAt >= dayAgo).length,
+      };
+
+      return { ok: true, team: team.name, roles, reviewer, counts };
     },
 
     _forgetTeam(teamName, root) {

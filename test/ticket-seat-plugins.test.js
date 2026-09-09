@@ -244,11 +244,12 @@ function mkWorld({ tplPlugins } = {}) {
   };
   // The team-metadata deps: createTeam and setLead are read only by
   // _handleTeamCreate and _handleTeam's set-lead case, teamsDir and listTeams
-  // only by its four template/prompt file verbs, none of which a
+  // only by its four template/prompt file verbs, loadManifest only by the
+  // read-only teamActivity channel (t785), none of which a
   // plugin-inheritance subject drives. refreshAppMenu is optional in a stronger
   // sense — the call site guards on typeof for the headless host.
   assertTicketDepsCovered(assert, deps, {
-    optional: ['ticketSuiteTimeoutMs', 'createTeam', 'setLead', 'teamsDir', 'listTeams', 'refreshAppMenu'],
+    optional: ['ticketSuiteTimeoutMs', 'createTeam', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu'],
   });
 
   const SessionManager = createSessionManager(deps);
