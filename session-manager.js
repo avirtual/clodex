@@ -561,6 +561,8 @@ function createSessionManager(deps) {
   // the wall-clock defer can. Long enough to let the readline loop come up.
   // Injectable for tests (driven at 0); ~750ms in production.
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
+  const BOOT_NUDGE_MS = Number.isFinite(deps.bootNudgeMs) ? deps.bootNudgeMs : 4000;
+  const BOOT_NUDGE_QUIET_MS = Number.isFinite(deps.bootNudgeQuietMs) ? deps.bootNudgeQuietMs : 1000;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
   // How long an INJECTED unit has to produce a turn edge before the write is
@@ -2078,6 +2080,7 @@ function createSessionManager(deps) {
       }
 
       ptyProc.onData((data) => {
+        session._lastPtyDataAt = Date.now();
         session.scrollback = ((session.scrollback || '') + data);
         if (session.scrollback.length > SCROLLBACK_MAX) {
           session.scrollback = session.scrollback.slice(-SCROLLBACK_MAX);
@@ -2092,6 +2095,7 @@ function createSessionManager(deps) {
             clearTimeout(session._bootDrainTimer);
             session._bootDrainTimer = setTimeout(() => {
               session._bootDrainTimer = null;
+              session._bootDrainAt = Date.now();
               this._drainPendingAtBootReady(session);
               // Same margin, same reason: a ticket spec written before the readline
               // loop is up is wiped by the boot re-render, and the replay stamps it
@@ -3654,6 +3658,7 @@ function createSessionManager(deps) {
       clearTimeout(s._parkCapTimer);
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
+      clearTimeout(s._bootNudgeTimer);
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
       clearTimeout(s._rebootNoticeRetryTimer);
@@ -3855,6 +3860,10 @@ function createSessionManager(deps) {
       if (s && state !== 'idle' && s._reviewStartTimer) {
         clearTimeout(s._reviewStartTimer);
         s._reviewStartTimer = null;
+      }
+      if (s && state !== 'idle' && s._bootNudgeTimer) {
+        clearTimeout(s._bootNudgeTimer);
+        s._bootNudgeTimer = null;
       }
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
@@ -4142,6 +4151,27 @@ function createSessionManager(deps) {
         return texts.join('\n\n');
       };
       this._injectQueueFor(session).enqueue('', { produce });
+    }
+
+    _armBootNudge(session) {
+      if (!session || session.agentType !== 'claude' || session._dead) return;
+      if (session._bootNudgeArmed) return;
+      const drainAt = session._bootDrainAt;
+      if (!drainAt || Date.now() - drainAt > INJECT_BOOT_MAXWAIT) return;
+      session._bootNudgeArmed = true;
+      const wroteAt = Date.now();
+      const fire = () => {
+        session._bootNudgeTimer = null;
+        if (session._dead) return;
+        if (Date.now() - (session._lastPtyDataAt || 0) < BOOT_NUDGE_QUIET_MS) {
+          if (Date.now() - wroteAt >= INJECT_BOOT_MAXWAIT) return;
+          session._bootNudgeTimer = setTimeout(fire, BOOT_NUDGE_QUIET_MS);
+          return;
+        }
+        try { session.pty.write('\r'); } catch {}
+        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after the boot drain, sent Enter`);
+      };
+      session._bootNudgeTimer = setTimeout(fire, BOOT_NUDGE_MS);
     }
 
 
@@ -6599,7 +6629,7 @@ function createSessionManager(deps) {
         // boot-settle machinery and must not be coupled to this.
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
-          write: (bytes) => { try { session.pty.write(bytes); } catch {} },
+          write: (bytes) => { try { session.pty.write(bytes); } catch {} this._armBootNudge(session); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
           maxWaitMs: INJECT_QUIET_MAXWAIT,
