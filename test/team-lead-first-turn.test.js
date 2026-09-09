@@ -22,8 +22,8 @@ function section(text) {
 }
 
 test('the lead prompt carries exactly one "First turn on a fresh team" heading', () => {
-  // k2's two first-turn openers quote this heading string verbatim, so a
-  // rename or a duplicate breaks the pairing the openers depend on.
+  // The two first-turn openers a fresh lead receives quote this heading string
+  // verbatim, so a rename or a duplicate breaks the pairing they depend on.
   const matches = read().match(/^## First turn on a fresh team$/gm) || [];
   assert.strictEqual(matches.length, 1);
 });
