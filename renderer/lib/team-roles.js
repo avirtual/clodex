@@ -1,8 +1,6 @@
 // lib/team-roles.js — pure helpers for the team-management popover (T29 Layer A
 // Slice 3). The popover's DOM wiring is imperative + untested (like the checklist
-// popovers); these three side-effect-free helpers hold the logic that IS worth a
-// unit test: the row-model derived from a manifest, the client-side add-role
-// pre-validation, and the C5 block → inline-message formatter.
+// popovers), so every decision worth a unit test is split out to here.
 //
 // Pure leaf: no DOM, no window, no requires. Mirrors renderer/lib/checklists.js's
 // testable-split convention.
@@ -100,6 +98,39 @@ function buildSavePatch(formValues) {
   // there with the reason, so no mirror of that check belongs in this leaf.
   patch.cwd = trim(formValues && formValues.cwd);
   return patch;
+}
+
+function promptOptionGroups(names, teamOwned, team) {
+  const owned = new Set(team ? (teamOwned || []) : []);
+  const ownedNames = (names || []).filter((n) => owned.has(n));
+  const library = (names || []).filter((n) => !owned.has(n));
+  const groups = [];
+  if (ownedNames.length) groups.push({ label: `Team ${team}`, names: ownedNames });
+  if (library.length) groups.push({ label: null, names: library });
+  return groups;
+}
+
+// The branch ORDER is the meaning: a team-owned stem is on disk and resolves first,
+// so it is answered BEFORE the branches that accuse a stem of being absent or off the rail.
+function storedPromptNote(prompt, opts = {}) {
+  const { offered = [], all = [], teamOwned = [], listingOk = true, team = '' } = opts;
+  if (!prompt || offered.includes(prompt)) return null;
+  if (teamOwned.includes(prompt)) {
+    return { label: prompt, title: `this team's own prompt (teams/${team}/prompts/system/${prompt}.md)` };
+  }
+  if (!listingOk) {
+    return { label: prompt, title: 'library listing unavailable' };
+  }
+  if (all.includes(prompt)) {
+    return {
+      label: `${prompt} (not an append-rail prompt)`,
+      title: 'this prompt exists but does not declare "rail: append", so it can\'t compose onto a role',
+    };
+  }
+  return {
+    label: `${prompt} (missing from library)`,
+    title: 'no system prompt by this name is installed',
+  };
 }
 
 // One-line, newcomer-facing explanation of WHY a reserved (Clodex-managed) role is
@@ -585,6 +616,7 @@ function usesByRole(planItems, roleKeys) {
 
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole, usesByRole,
+  promptOptionGroups, storedPromptNote,
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,

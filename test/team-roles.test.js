@@ -1109,3 +1109,63 @@ test('formatBlockedBy: names blocking seats + open tickets, empty when nothing b
     'seat(s): shop-runner-1, shop-runner-2; open ticket(s): t3',
   );
 });
+
+// --- t790: the role prompt picker's two team-aware helpers -------------------
+// Both are pure and live in this leaf for the reason the header states — the
+// popover's DOM wiring is untested, so the branch that decides WHICH sentence a
+// stored prompt gets has to be reachable without a DOM.
+const { promptOptionGroups, storedPromptNote } = require('../renderer/lib/team-roles');
+
+test('promptOptionGroups: the team\'s own stems lead, in a group of their own', () => {
+  const groups = promptOptionGroups(['t-one', 'lib-a', 't-two', 'lib-b'], ['t-one', 't-two'], 'shop');
+  assert.deepStrictEqual(groups, [
+    { label: 'Team shop', names: ['t-one', 't-two'] },
+    { label: null, names: ['lib-a', 'lib-b'] },
+  ], 'team group first, then the ungrouped library remainder');
+});
+
+test('promptOptionGroups: no team-owned stems means no group at all', () => {
+  assert.deepStrictEqual(promptOptionGroups(['lib-a'], [], 'shop'),
+    [{ label: null, names: ['lib-a'] }], 'a lone library list is ungrouped, not wrapped in an empty optgroup');
+  // ENTER: the same names DO group when the team owns them, so the assertion
+  // above is about the ownership, not about the function returning one group.
+  assert.strictEqual(promptOptionGroups(['lib-a'], ['lib-a'], 'shop')[0].label, 'Team shop');
+});
+
+test('promptOptionGroups: without a team name there is nothing to label a group with', () => {
+  assert.deepStrictEqual(promptOptionGroups(['a'], ['a'], ''),
+    [{ label: null, names: ['a'] }], 'the New Session flow passes no team; every stem is ungrouped');
+});
+
+test('storedPromptNote: an OFFERED prompt needs no extra option', () => {
+  assert.strictEqual(storedPromptNote('p', { offered: ['p'], all: ['p'] }), null);
+  assert.strictEqual(storedPromptNote('', { offered: [] }), null, 'no stored prompt, no note');
+});
+
+test('storedPromptNote: a team-owned stem is named plainly — neither warning is true of it', () => {
+  const note = storedPromptNote('house-style', {
+    offered: [], all: [], teamOwned: ['house-style'], team: 'shop',
+  });
+  assert.strictEqual(note.label, 'house-style',
+    'no "(missing from library)" and no rail warning: the file is on disk and is what the seat reads');
+  assert.match(note.title, /teams\/shop\/prompts\/system\/house-style\.md/,
+    'the title names the file it resolves to, which is the fact the stem alone hides');
+});
+
+test('storedPromptNote: team-owned wins over the library-shaped verdicts', () => {
+  // The same stem, off the rail and absent from `all`, WOULD read "missing from
+  // library" — so this pins the precedence, not merely the wording.
+  const asLibrary = storedPromptNote('house-style', { offered: [], all: [] });
+  assert.match(asLibrary.label, /missing from library/, 'ENTER: without team ownership it is accused');
+  const asTeam = storedPromptNote('house-style', { offered: [], all: [], teamOwned: ['house-style'], team: 'shop' });
+  assert.ok(!/missing/.test(asTeam.label), 'ownership silences the accusation');
+});
+
+test('storedPromptNote: the three library verdicts are unchanged', () => {
+  assert.match(storedPromptNote('p', { offered: [], all: [], listingOk: false }).title,
+    /listing unavailable/, 'a failed listing accuses the prompt of nothing');
+  assert.match(storedPromptNote('p', { offered: [], all: ['p'] }).label,
+    /not an append-rail prompt/, 'present on disk but off the rail');
+  assert.match(storedPromptNote('p', { offered: [], all: [] }).label,
+    /missing from library/, 'absent from disk entirely');
+});

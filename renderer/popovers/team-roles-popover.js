@@ -30,6 +30,7 @@ const {
   teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
+  promptOptionGroups, storedPromptNote,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -702,41 +703,29 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<button type="button" data-act="remove" class="secondary">Remove</button>` +
           `</div>`;
         body.querySelector('input[data-f="brief"]').value = row.brief;
-        // Prompt is a picker (must be a library prompt name — free text just
-        // fails at spawn time; matches the Add Role form). Options come from the
-        // same rail-filtered list; a stored prompt missing from the library still
-        // has to display, so it's appended as a marked option rather than
-        // silently blanking. Values/labels set by PROPERTY (agent-writable).
+        // Prompt is a picker (a stem the resolver can find — free text just fails
+        // at spawn time; matches the Add Role form). Options come from the same
+        // rail-filtered list; a stored prompt the list does not offer still has
+        // to display, so storedPromptNote appends it as a marked option rather
+        // than silently blanking. Values/labels set by PROPERTY (agent-writable).
         const sel = body.querySelector('select[data-f="prompt"]');
         {
           const none = document.createElement('option');
           none.value = ''; none.textContent = '(no prompt)';
           sel.appendChild(none);
           appendPromptOptions(sel, promptNames, manifest && manifest.name);
-          if (row.prompt && !promptNames.includes(row.prompt)) {
+          const note = storedPromptNote(row.prompt, {
+            offered: promptNames,
+            all: allPromptNames,
+            teamOwned: teamOwnedPrompts,
+            listingOk: promptsListingOk,
+            team: (manifest && manifest.name) || '',
+          });
+          if (note) {
             const missing = document.createElement('option');
             missing.value = row.prompt;
-            // One message per distinct fact. They have different fixes, and one
-            // wording for all of them sent the operator hunting for a file that
-            // was on disk the whole time. All set by PROPERTY (agent-writable).
-            if (teamOwnedPrompts.includes(row.prompt)) {
-              missing.textContent = row.prompt;
-              missing.title = `this team's own prompt (teams/${manifest && manifest.name}/prompts/system/${row.prompt}.md)`;
-            } else if (!promptsListingOk) {
-              // The listing failed — an empty list is indistinguishable from a
-              // genuinely empty library by count, so accuse the prompt of nothing.
-              missing.textContent = row.prompt;
-              missing.title = 'library listing unavailable';
-            } else if (allPromptNames.includes(row.prompt)) {
-              // Present on disk, but not an append-rail prompt: the picker won't
-              // offer it and the seat won't compose it. The fix is `rail: append`
-              // in its front matter, not writing the file.
-              missing.textContent = `${row.prompt} (not an append-rail prompt)`;
-              missing.title = 'this prompt exists but does not declare "rail: append", so it can\'t compose onto a role';
-            } else {
-              missing.textContent = `${row.prompt} (missing from library)`;
-              missing.title = 'no system prompt by this name is installed';
-            }
+            missing.textContent = note.label;
+            missing.title = note.title;
             sel.appendChild(missing);
           }
           sel.value = row.prompt;
@@ -937,21 +926,22 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     appendPromptOptions(addPrompt, prompts, team);
   }
 
+  // Labels/values set by PROPERTY throughout (agent-writable strings must never
+  // reach an attribute in this nodeIntegration renderer).
   function appendPromptOptions(sel, names, team) {
-    const owned = names.filter((n) => teamOwnedPrompts.includes(n));
-    const library = names.filter((n) => !teamOwnedPrompts.includes(n));
-    const mkOpt = (parent, n) => {
-      const opt = document.createElement('option');
-      opt.value = n; opt.textContent = n;
-      parent.appendChild(opt);
-    };
-    if (owned.length && team) {
-      const group = document.createElement('optgroup');
-      group.label = `Team ${team}`;
-      for (const n of owned) mkOpt(group, n);
-      sel.appendChild(group);
+    for (const group of promptOptionGroups(names, teamOwnedPrompts, team)) {
+      let parent = sel;
+      if (group.label !== null) {
+        parent = document.createElement('optgroup');
+        parent.label = group.label;
+        sel.appendChild(parent);
+      }
+      for (const n of group.names) {
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n;
+        parent.appendChild(opt);
+      }
     }
-    for (const n of library) mkOpt(sel, n);
   }
 
   async function openTeamRolesPopover(name, anchorEl) {
