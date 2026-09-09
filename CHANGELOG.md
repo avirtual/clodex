@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Teams:** the roles popover now says what each role is doing. A per-ticket role shows the seat a ticket minted and which ticket it is on, or the open tickets waiting, or the last ticket that landed and when; the reviewer row says it is spawned per review round and shows the round in flight or the last verdict; the header explains standing versus per-ticket roles. Before, a per-ticket role read "no seat in this window" while its hand was mid-ticket, and the reviewer showed a dispatch mode it never reads.
 - **Teams:** a read-only `team:activity` channel reports, per role, the seats a ticket minted and which ticket each is on, the open tickets, the last one that landed and how, and for the reviewer the review rounds in flight and the last verdict. Groundwork for the roles popover; nothing visible changes yet.
 
 ## 5.50.0 — 2026-09-09 — Delete Team… from the Teams menu, and a rotated-away conversation is no longer kept warm

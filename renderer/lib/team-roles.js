@@ -260,6 +260,51 @@ function teamStage(leadRes) {
   return 'repair';
 }
 
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function activityTime(ms, now) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '';
+  const at = new Date(ms);
+  if (Number.isNaN(at.getTime())) return '';
+  const ref = new Date(typeof now === 'number' && Number.isFinite(now) ? now : Date.now());
+  const sameDay = at.getFullYear() === ref.getFullYear()
+    && at.getMonth() === ref.getMonth()
+    && at.getDate() === ref.getDate();
+  if (sameDay) return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  return `${MONTH_ABBR[at.getMonth()]} ${at.getDate()}`;
+}
+
+const OUTCOME_WORD = { accepted: 'landed', 'merge-failed': 'merge FAILED', cancelled: 'cancelled' };
+
+function ticketRoleNote(info, now) {
+  const live = (info && Array.isArray(info.live)) ? info.live : [];
+  const onTicket = (s) => (s.ticket ? `${s.seat} on ${s.ticket}` : String(s.seat));
+  if (live.length === 1) {
+    const s = live[0];
+    if (!s.ticket) return String(s.seat);
+    return `${onTicket(s)} (${s.step === 'verify' ? 'in review' : 'working'})`;
+  }
+  if (live.length > 1) return `${live.length} seats: ${live.map(onTicket).join(', ')}`;
+  const open = (info && Array.isArray(info.open)) ? info.open : [];
+  if (open.length) {
+    const parts = open.map((t) => (t.step === 'working' ? String(t.id) : `${t.id} ${t.step}`));
+    return `no seat now · ${parts.join(', ')}`;
+  }
+  const last = info && info.last;
+  if (!last || !last.id) return 'one seat per ticket · none running';
+  const word = OUTCOME_WORD[last.outcome] || String(last.outcome);
+  const when = activityTime(last.at, now);
+  return `one seat per ticket · none running · last ${last.id} ${word}${when ? ` ${when}` : ''}`;
+}
+
+function reviewerNote(rev, now) {
+  const live = (rev && Array.isArray(rev.live)) ? rev.live : [];
+  if (live.length) return `reviewing ${live.map((r) => `${r.ticket} (round ${r.round})`).join(', ')}`;
+  const last = rev && rev.last;
+  if (!last || !last.ticket) return 'spawned per review round · none now';
+  const when = activityTime(last.at, now);
+  return `spawned per review round · none now · last ${last.ticket} ${last.verdict || '?'} r${last.round}${when ? ` ${when}` : ''}`;
+}
+
 // One SUMMARY row per role, in manifest key order — the collapsed line the
 // popover leads with. Deliberately a separate function from teamRoleRows rather
 // than a widening of it: that model's keys are pinned against the manifest schema
@@ -276,7 +321,8 @@ function teamStage(leadRes) {
 // The team filter is not decoration: session rows are workspace-scoped, not
 // team-scoped, so two teams open in one window both have a `hand` and matching on
 // the role key alone would count each other's seats.
-function roleSummaries(manifest, sessions, { lead } = {}) {
+function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
+  const act = activity && activity.ok ? activity : null;
   const roles = (manifest && manifest.roles) || {};
   const teamName = (manifest && manifest.name) || '';
   const rows = (Array.isArray(sessions) ? sessions : []).filter((s) => s && typeof s.name === 'string' && s.name);
@@ -307,12 +353,22 @@ function roleSummaries(manifest, sessions, { lead } = {}) {
     // team.json must not get a made-up dispatch mode rendered as if the app
     // honoured it. What it actually behaves as is the default.
     const raw = (def && def.dispatch) || DEFAULT_DISPATCH;
+    const dispatch = DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH;
+    const readOnly = RESERVED_ROLE_KEYS.has(key);
+    const seats = { total, working, names };
+    if (act && key === 'reviewer') {
+      return { key, readOnly, seats, reviewer: true, note: reviewerNote(act.reviewer, now) };
+    }
+    const perTicket = act
+      && dispatch !== DEFAULT_DISPATCH
+      && act.roles
+      && Object.prototype.hasOwnProperty.call(act.roles, key);
     return {
       key,
-      dispatch: DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH,
-      readOnly: RESERVED_ROLE_KEYS.has(key),
-      seats: { total, working, names },
-      note,
+      dispatch,
+      readOnly,
+      seats,
+      note: perTicket ? ticketRoleNote(act.roles[key], now) : note,
     };
   });
 }
@@ -497,7 +553,7 @@ module.exports = {
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
-  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  teamStage, roleSummaries, activityTime, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   DISPATCH_VALUES, DEFAULT_DISPATCH, REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS,
 };
