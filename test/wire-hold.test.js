@@ -177,7 +177,7 @@ test('holdDecision: a perpetual hold bypasses the deadline and the ping budget, 
 
 // The failure stop is what ends a perpetual hold against a DEAD credential; it
 // never fires against a live one, so a perpetual hold on a short-TTL prefix has
-// no self-bound at all — the skip below is the only thing between it and pinging
+// no self-bound at all — the TTL skip is the only thing between it and pinging
 // once a minute for as long as the seat lives. This is the shape that cost 152
 // pings overnight after an autocompact stashed a request with 5-minute markers.
 test('holdDecision: a perpetual hold on a prefix with a margin-length TTL skips on every tick', () => {
@@ -185,11 +185,12 @@ test('holdDecision: a perpetual hold on a prefix with a margin-length TTL skips 
   const shortTtl = { found: true, warm: true, remaining_s: 299, ttl_s: 300 };
   const SKIP = ['skip', 'prefix ttl not longer than the ping margin'];
 
-  // ENTER: the fixture must actually sit inside the default margin, or every
-  // assertion below passes for the wrong reason. 300 is DEFAULTS.marginSeconds;
-  // if that default grows, this line reds before the subject goes vacuous.
+  // ENTER: the fixture is pinned on both sides of the default margin (300 is
+  // DEFAULTS.marginSeconds, which this module does not export) — ttl_s at it, so
+  // the TTL guard is reached, and remaining_s under it, so 'not yet due' is not
+  // what skips. Shrink that default and the loop below reds on 'not yet due'
+  // rather than quietly asserting a skip the guard did not produce.
   assert.ok(shortTtl.ttl_s <= 300, 'fixture ttl_s must be <= the default ping margin');
-  // And it must be past the due threshold, so 'not yet due' cannot be what skips.
   assert.ok(shortTtl.remaining_s < 300, 'fixture must be due, so the TTL guard is what skips');
 
   for (let tick = 0; tick < 5; tick += 1) {
