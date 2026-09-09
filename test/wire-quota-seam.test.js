@@ -47,6 +47,7 @@ const tick = () => new Promise((r) => setImmediate(r));
 function mkManager() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t418-seam-'));
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs,
     path,

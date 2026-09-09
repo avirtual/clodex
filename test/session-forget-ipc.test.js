@@ -32,6 +32,7 @@ function fixture(entries = []) {
     },
   };
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getPersistence: () => persistence,
     getUiSettings: () => ({ get: () => ({ proxyEnabled: true, proxyUrl: 'http://127.0.0.1:7811' }) }),
     resolveProxyBase,
@@ -106,6 +107,7 @@ test('a hint failure never fails the forget (sync throw and rejected promise bot
       remove: (n) => { const i = store.findIndex((e) => e.name === n); if (i >= 0) store.splice(i, 1); },
     };
     const SessionManager = createSessionManager({
+      knownSkillNames: () => [],
       getPersistence: () => persistence,
       getUiSettings: () => ({ get: () => ({ proxyEnabled: true, proxyUrl: 'http://127.0.0.1:7811' }) }),
       resolveProxyBase,

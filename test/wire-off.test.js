@@ -54,6 +54,7 @@ function mkManager({ proxyBase = null, wireShadow = true } = {}) {
   // flag's other half, and the one that keeps `wireRouted` false.
   const registered = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor, runDirFor,
     PENDING_DIR: path.join(root, 'pending'),

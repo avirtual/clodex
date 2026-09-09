@@ -289,6 +289,7 @@ test('a disposed watcher writes nothing', () => {
 function mk(overrides = {}) {
   const { createSessionManager } = require('../session-manager');
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),

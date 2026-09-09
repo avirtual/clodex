@@ -192,6 +192,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   const broadcasts = [];
   const logs = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

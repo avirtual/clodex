@@ -160,6 +160,7 @@ function mkFixture() {
   const injected = [];
   const broadcasts = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

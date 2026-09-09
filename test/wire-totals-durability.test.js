@@ -39,6 +39,7 @@ function mkPersist(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-totals-'));
   if (t) t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root, fs, path, getUserDataPath: () => root,
   });
   const file = path.join(root, 'wire-totals.json');

@@ -177,6 +177,7 @@ test('t700: readTeamJson returns the object, and null for every unusable file', 
 
 function shapeManager({ templatesList = [], resolveTeam = () => null, fsImpl = fs } = {}) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os,
     fs: fsImpl,
     path,
@@ -272,6 +273,7 @@ function spawnHarness({ listAllTemplates = () => [], resolveTeam = () => null } 
   const calls = [];
   const replies = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os,
     fs,
     path,
@@ -343,6 +345,7 @@ test('t700 GUARD: the same spawn from a seat in NO team takes the library copy',
 
 function execManager({ home, resolveTeam = () => null }) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: home,
     isFilenameToken,
     parseAndValidate,

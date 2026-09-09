@@ -91,6 +91,7 @@ function mkMove({ entries = [], teamHome = null, createThrows = null } = {}) {
   };
   const tm = teamHome ? createTeamManifest({ fs: fsReal, clodexHome: teamHome }) : null;
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getPersistence: () => persistence,
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
@@ -603,6 +604,7 @@ function mkExitProbe() {
   const sent = [];
   let onExit = null;
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),

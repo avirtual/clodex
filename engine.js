@@ -1179,6 +1179,11 @@ const SessionManager = createSessionManager({
     bodyModeFor,
     intentEnabledFor,
     intentEnabledForSeat,
+    knownSkillNames: () => [...new Set([
+      ...CLAUDE_SKILLS,
+      ...skillsSeen.list(),
+      ...Object.keys(readEffectiveSkillState(null).overrides),
+    ])],
     pluginGrammarLines,
     pluginRowFor,
     validIntentNames,
@@ -1653,10 +1658,11 @@ function readSkillCatalog({ name = null, cwd = null } = {}) {
     ...scan.outOfScope.map((s) => s.name),
     ...disabled,
     ...Object.keys(eff.overrides),
-  ])].sort();
+  ])].filter((n) => n !== '*').sort();
   const base = {
     ok: true,
     names,
+    allOff: disabled.includes('*'),  // the sentinel: every name below is off at spawn
     effective: eff.overrides,        // lower-layer state, per skill (value+source)
     skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface
     canReenable: SKILL_REENABLE_CONFIRMED,

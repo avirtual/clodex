@@ -71,6 +71,7 @@ function reuseArgFor({ resumeId = null, mint = false, extraArgs = [] } = {}) {
   const root = tmp();
   const seen = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor,
     promptCacheDir,
@@ -165,6 +166,7 @@ async function decidedReuse(opts, why) {
 // my reading of the source; this runs the method that shipped the bug.
 function mkManager(root) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path,
     pathFor,

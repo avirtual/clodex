@@ -358,6 +358,7 @@ test('an intent handler is called handler(SessionHandle, intent) — argument OR
   void off;
   try {
     const SessionManager = createSessionManager({
+      knownSkillNames: () => [],
       getRemoteServer: () => null,
       getUiSettings: () => ({ get: () => ({}) }),
       // The verb is FORCED privileged (§7), so it fires only for a seat that was

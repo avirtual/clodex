@@ -55,6 +55,7 @@ function mkManager(scopes, { breakScopes = false } = {}) {
   const userData = mkTmpRoot('clx-idle-ud-'); // no env-override.env inside
   const spawns = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor, runDirFor,
     PENDING_DIR: path.join(root, 'pending'),

@@ -19,6 +19,7 @@ const { mkTmpRoot, trackTmpRoot } = require('./lib/tmp-roots');
 // undefined, which the destructure tolerates (those methods aren't reached).
 function mk(overrides = {}) {
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),
@@ -4298,6 +4299,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
   // WITHOUT a session (forget, reviewer sweep) read the hint flag back out of.
   const upserts = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),

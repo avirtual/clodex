@@ -125,6 +125,7 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   const replies = [];
   const logs = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

@@ -25,6 +25,7 @@ function harness(tpl) {
   const calls = [];
   const replies = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os,
     fs,
     path,

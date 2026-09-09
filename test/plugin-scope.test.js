@@ -839,6 +839,7 @@ test('a plugin\'s grammar line reaches only a seat that HAS it', () => withReset
   intentRegistry.registerIntent(mkRow('promptverb'), 'prompt-plug', { scope: 'session', shipped: true });
 
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     buildIpcPrompt: require('../ipc-prompt').buildIpcPrompt,
     mergeClaudeSystemPrompt: require('../argv-merge').mergeClaudeSystemPrompt,
     readAppendBodies: () => [],
@@ -913,6 +914,7 @@ test('REWORK MF1: a grant survives the restart the popover itself offers', () =>
     },
   };
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

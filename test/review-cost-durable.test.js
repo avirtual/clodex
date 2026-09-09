@@ -80,6 +80,7 @@ function mkFixture(extra = {}) {
   const gated = [];
   const logs = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

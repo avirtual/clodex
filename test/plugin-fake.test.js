@@ -1026,6 +1026,7 @@ function makeWiredPair({ intents = ['fake-note'], noHost = false } = {}) {
   const injected = [];
   let engine = null;
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => ({ intents }) }),

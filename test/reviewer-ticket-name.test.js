@@ -75,6 +75,7 @@ function mkFixture() {
   const injected = [];
   const gated = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

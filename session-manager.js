@@ -341,6 +341,7 @@ function keepwarmPingBody(pings, r) {
 }
 
 const { speakable } = require('./speakable');
+const { expandSkillsOff } = require('./skills-off');
 
 function createSessionManager(deps) {
   const {
@@ -424,6 +425,7 @@ function createSessionManager(deps) {
     bodyModeFor,
     intentEnabledFor,
     intentEnabledForSeat,
+    knownSkillNames,
     pluginGrammarLines,
     pluginRowFor,
     validIntentNames,
@@ -1466,7 +1468,15 @@ function createSessionManager(deps) {
           // the frozen prompt below, not just cosmetic.
           let hookInstalled = false;
           if (!args.includes('--settings')) {
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : []);
+            if (Array.isArray(disabledSkills) && disabledSkills.includes('*')
+                && typeof knownSkillNames !== 'function') {
+              throw new Error('disabledSkills "*" needs the knownSkillNames dep');
+            }
+            const skillsOff = expandSkillsOff(disabledSkills, {
+              known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
+              injectSkills,
+            });
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : []);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }

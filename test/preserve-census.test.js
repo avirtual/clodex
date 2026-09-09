@@ -392,6 +392,7 @@ test('BEHAVIOUR: a perpetual hold survives the real preserve path', () => {
     },
   };
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

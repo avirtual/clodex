@@ -60,6 +60,7 @@ function boot(opts = {}) {
   };
   const PENDING_DIR = path.join(root, 'pending');
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor, runDirFor,
     PENDING_DIR,

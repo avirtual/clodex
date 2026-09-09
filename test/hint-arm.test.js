@@ -1130,6 +1130,7 @@ function mkManager({ hintArm = null, extraDeps = {} } = {}) {
   const written = [];
 
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor, runDirFor,
     PENDING_DIR: path.join(root, 'pending'),

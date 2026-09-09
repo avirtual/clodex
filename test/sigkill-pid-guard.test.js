@@ -92,6 +92,7 @@ function mkManager() {
     setArchived: () => {},
   };
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

@@ -165,7 +165,11 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const caps = capsFor(skillsTypeOf(name, source));
     skillsDisabledPersisted = res.disabledSkills || [];
     if (caps.skillRoster) {
-      renderSkillChecklist(popoverSkillsList, res.names || [], new Set(skillsDisabledPersisted),
+      // `allOff` is the `*` sentinel, which names no skill: show what it actually
+      // does on this box — every row off. Apply below then writes that explicit
+      // list, so the sentinel does not survive a save.
+      const offSet = res.allOff ? new Set(res.names || []) : new Set(skillsDisabledPersisted);
+      renderSkillChecklist(popoverSkillsList, res.names || [], offSet,
         res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope });
     }
     popoverSkillsRoster.style.display = caps.skillRoster ? '' : 'none';

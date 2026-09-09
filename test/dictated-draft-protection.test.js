@@ -46,6 +46,7 @@ const DRAFT_STALE_MS = 150;
 function boot({ draftStale = DRAFT_STALE_MS, recorderStale = 0 } = {}) {
   const PENDING_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-vdraft-'));
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     InjectQueue,
     PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen,
     countPending: require('../pending-store').countPending,

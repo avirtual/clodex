@@ -33,6 +33,7 @@ const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 // team.json anywhere), not a reason to fall back.
 function managerWith(templatesList, { leadArgs = [], resolveTeam = () => null, listAllTemplates } = {}) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os,
     fs,
     path,

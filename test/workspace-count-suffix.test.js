@@ -69,6 +69,7 @@ function realStores() {
 
 function realManager(persistence) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     log: { info: () => {}, warn: () => {}, error: () => {} },
     getUiSettings: () => ({ get: () => ({}) }),
