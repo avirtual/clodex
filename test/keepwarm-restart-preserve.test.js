@@ -44,19 +44,24 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('../engine');
+const { HoldKeeper } = require('../wire/hold');
+const { HoldEntryStore } = require('../wire/hold-store');
+const { WarmthStore } = require('../wire/warmth');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A fixed past deadline, not an offset: a preserved value and a re-minted one
 // must not be able to coincide by accident.
 const DEADLINE = 1700000000000; // 2023-11-14T22:13:20Z
 
-function mkEngine() {
+// `info` collects every log.info(tag, msg) the engine makes, so a test can read
+// the startup keep-warm line as the product wrote it rather than restate it.
+function mkEngine(info) {
   const tmp = mkTmpRoot('clx-keepwarm-');
   // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { registryDir: path.join(tmp, 'clodex-home') },
-    log: { info() {}, warn() {}, error() {} },
+    log: { info(tag, msg) { if (info) info.push(`${tag}: ${msg}`); }, warn() {}, error() {} },
   });
 }
 
@@ -342,6 +347,96 @@ test('PART 3: without it, the same first turn latches the gate shut having armed
     + 're-checking for the whole spawn, so nothing the SEAT does can recover the setting. The latch is not an '
     + 'independent defect — it reads the record faithfully, and the record was what the restart erased — so '
     + 'preserving the field is the whole fix. This pins that reading instead of asserting it in a comment.');
+});
+
+// ------------------------------------ the startup restore's accept predicate
+
+// t784. The restore reads persistence to decide which conversation ids may be
+// pinged. Only a seat's CURRENT id qualifies: a record for an id the seat has
+// rotated away from is a leak, and accepting it re-armed a dead conversation on
+// every launch — measured live at 49 pings of 152k cached reads, unbounded,
+// because nothing else ever takes such a record off disk.
+//
+// A real HoldKeeper over a real HoldEntryStore, not a stub: the drop and the
+// file rewrite are one mechanism (restorePerpetual flushes what re-armed), and
+// a stubbed keeper would let the predicate be right while the leak stayed on
+// disk.
+const OBJ_A = { model: 'claude-opus-4-8', system: [{ type: 'text', text: 'seat w' }],
+  messages: [{ role: 'user', content: 'old conversation' }, { role: 'assistant', content: 'ok' }] };
+const OBJ_B = { model: 'claude-opus-4-8', system: [{ type: 'text', text: 'seat w' }],
+  messages: [{ role: 'user', content: 'live conversation' }, { role: 'assistant', content: 'ok' }] };
+
+// A keeper whose warmth answers WARM for both ids, so arm() cannot decline for
+// a reason this test is not about — every id that fails to re-arm below failed
+// the accept predicate and nothing else.
+function keeperOverBoth() {
+  const dir = mkTmpRoot('clx-hold-restore-');
+  const file = path.join(dir, 'wire-hold-entries.json');
+  const now = () => 1_000_000;
+  const warmth = new WarmthStore({ now });
+  const usage = { cache_creation_input_tokens: 100, cache_read_input_tokens: 0 };
+  warmth.record(OBJ_A, usage, 'A');
+  warmth.record(OBJ_B, usage, 'B');
+  const store = new HoldEntryStore({ path: file });
+  store.save([
+    { sessionId: 'A', obj: OBJ_A, headers: { authorization: 'Bearer tok' }, url: 'http://up/v1/messages', ts: 1_000_000 },
+    { sessionId: 'B', obj: OBJ_B, headers: { authorization: 'Bearer tok' }, url: 'http://up/v1/messages', ts: 1_000_000 },
+  ]);
+  const keeper = new HoldKeeper({ warmth, now, request: async () => { throw new Error('no ping in this test'); },
+    entryStore: new HoldEntryStore({ path: file }) });
+  return { keeper, store };
+}
+
+test('a rotated-away id is DROPPED at startup, and the file is rewritten without it', () => {
+  const info = [];
+  const eng = mkEngine(info);
+  const p = eng.stores.persistence;
+  p.upsert({ name: 'w', type: 'claude', cwd: '/tmp', workspaceId: 'default' });
+  // Driven through the real setter twice, which is what a /clear does: the
+  // history is what setSessionId appends, not something this test stamps.
+  p.setSessionId('w', 'A');
+  p.setSessionId('w', 'B');
+  p.setKeepWarmAlways('w', true);
+  const rec = p.get('w');
+  assert.strictEqual(rec.sessionId, 'B', 'ENTER: B is the seat\'s current conversation');
+  assert.deepStrictEqual(rec.sessionIds, ['A', 'B'], 'ENTER: and A is in the /clear history');
+
+  const { keeper, store } = keeperOverBoth();
+  assert.deepStrictEqual(store.load().map((r) => r.sessionId), ['A', 'B'],
+    'ENTER: both ids carry a replayable record on disk — this IS the leaked state');
+  assert.deepStrictEqual(keeper.holds(), {}, 'ENTER: the restarted keeper starts with nothing armed');
+
+  eng.manager._restorePerpetualHolds(keeper);
+
+  const holds = keeper.holds();
+  assert.deepStrictEqual(Object.keys(holds), ['B'],
+    'only the current conversation re-arms; A is no seat\'s current id, so its bytes are not pingable');
+  assert.strictEqual(holds.B.always, true, 'and B came back PERPETUAL, not on a deadline');
+  assert.deepStrictEqual(store.load().map((r) => r.sessionId), ['B'],
+    'the rewrite is the self-heal: A stops carrying a token on disk within one launch, so the leak does not '
+    + 'come back at the next startup');
+  assert.ok(info.includes('keepwarm: restored 1 perpetual hold(s) at startup (0 declined, 1 no longer armed)'),
+    `the drop is already reported by the existing counts — no new log line. Saw: ${JSON.stringify(info)}`);
+});
+
+test('an ARCHIVED seat re-arms nothing, current id included', () => {
+  const eng = mkEngine();
+  const p = eng.stores.persistence;
+  p.upsert({ name: 'w', type: 'claude', cwd: '/tmp', workspaceId: 'default' });
+  p.setSessionId('w', 'A');
+  p.setSessionId('w', 'B');
+  p.setKeepWarmAlways('w', true);
+  p.upsert({ name: 'w', archivedAt: Date.now() });
+  assert.strictEqual(p.get('w').keepWarmAlways, true,
+    'ENTER: the flag is still on the record — the archive filter, not a missing flag, is what decides below');
+
+  const { keeper, store } = keeperOverBoth();
+  eng.manager._restorePerpetualHolds(keeper);
+
+  assert.deepStrictEqual(keeper.holds(), {},
+    'an archived seat is nobody\'s live conversation: its current id is dropped alongside its history');
+  assert.deepStrictEqual(store.load(), [],
+    'and the file goes empty — HoldEntryStore removes it rather than writing an empty list');
 });
 
 after(() => { setImmediate(() => process.exit(0)); });

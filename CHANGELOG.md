@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Keep-warm:** a perpetual hold is restored at startup only for a seat's current conversation. Before, an id left in a seat's /clear history kept re-arming after a rotation, so a dead conversation was pinged hourly at full context price on every launch; such a record is now dropped and the file rewritten without it.
+
 ## 5.49.0 — 2026-09-09 — One intent stands up a team: create classifies the root, spawns and briefs the lead
 
 - **Teams:** `[agent:team create]` with a brief now spawns the team's lead itself, in the root, on the stock lead template, and tells it in its first turn whether the root is a new project or one it is taking over, pointing it at "First turn on a fresh team" in its prompt. The caller sees one line ending "Ask <lead> for your first ticket." and needs no spawn grant of its own. A lead name already in use is refused before anything is written; a spawn that fails leaves the team on disk and says how to retry.
