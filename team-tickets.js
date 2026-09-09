@@ -6636,10 +6636,10 @@ function createTicketMethods(deps, shared) {
         return;
       }
       // Through the SAME renderer the hand's dispatch uses. The reviewer's cwd is
-      // team.root — the repo the stale `tasks/` decoy lives in — so a raw
-      // relative pointer here lands it in the wrong tree exactly as it did the
-      // hand. buildReviewScope has no `t.taskDir` fallback by design, so a
-      // refusal here means the scope names no task dir — never the raw one.
+      // a checkout of this repo — the ticket's worktree, or team.root without one —
+      // and the stale `tasks/` decoy is in both, so a raw relative pointer here
+      // lands in the wrong tree exactly as it did the hand. buildReviewScope has no
+      // `t.taskDir` fallback by design: a refusal names no task dir, never the raw one.
       const taskDirRender = this._ticketTaskDirRender(team, ticket);
       const scope = buildReviewScope({ ticket, diffPath, taskDir: taskDirRender.dir, taskDirRule: taskDirRender.rule });
       // onReply diverts _handleTeamReview's reply away from the lead's terminal.
