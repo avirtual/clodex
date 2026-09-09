@@ -329,9 +329,10 @@ const NOW = Date.now();
 const A_BOARD = [
   { id: 't1', state: 'open', role: 'hand', assignee: 'shop-hand-1', title: 'one' },
   { id: 't2', state: 'done', role: 'hand', assignee: 'shop-hand-2', title: 'two',
-    loopStep: 'verify', reviewRound: 2, reviewedAt: NOW - 500, verdict: 'reject' },
+    loopStep: 'verify' },
   { id: 't3', state: 'done', role: 'hand', title: 'three', closedOut: true,
-    acceptedAt: NOW - 1000, closedAt: NOW - 1000 },
+    acceptedAt: NOW - 1000, closedAt: NOW - 1000,
+    reviewRound: 1, reviewedAt: NOW - 500, verdict: 'ACCEPT' },
   { id: 't5', state: 'done', role: 'hand', title: 'five', closedOut: true, mergeError: 'merge',
     acceptedAt: NOW - 2000, closedAt: NOW - 30 * 60 * 60 * 1000 },
   { id: 't4', state: 'cancelled', role: 'hand', title: 'four', closedAt: NOW - 3000 },
@@ -339,7 +340,7 @@ const A_BOARD = [
 const A_SESSIONS = [
   { name: 'shop-hand-1', agentType: 'claude' },
   { name: 'shop-hand-2', agentType: 'claude' },
-  { name: 'shop-reviewer-2-r2', agentType: 'claude' },
+  { name: 'shop-reviewer-2-r1', agentType: 'claude' },
   { name: 'shop-hand-9', agentType: 'claude', _dead: true },
   { name: 'shop-lead' },
 ];
@@ -368,8 +369,8 @@ test('team:activity reports every role\'s seats, open tickets and last landing, 
         },
       },
       reviewer: {
-        live: [{ ticket: 't2', round: 2, seat: 'shop-reviewer-2-r2' }],
-        last: { ticket: 't2', round: 2, verdict: 'reject', at: NOW - 500 },
+        live: [{ ticket: 't2', round: 1, seat: 'shop-reviewer-2-r1' }],
+        last: { ticket: 't3', round: 1, verdict: 'ACCEPT', at: NOW - 500 },
       },
       counts: { open: 1, verify: 1, done24h: 2 },
     });
@@ -424,6 +425,28 @@ test('team:activity never keys roles by "reviewer", and never by a role the mani
   } finally { d.cleanup(); }
 });
 
+// The round a ticket at `verify` is IN is one ahead of the field: the mint reads
+// `reviewRound + 1` and the bump happens when the verdict lands. A row that read
+// the field as stored would name a seat one round behind the one on the box —
+// null forever on the first round, and the PREVIOUS round's seat after that.
+test('team:activity reports a REWORK round as one ahead of the landed count, and finds that seat', () => {
+  const d = mkActivityDoor({
+    tickets: [{ id: 't7', state: 'done', role: 'hand', title: 'round two',
+      loopStep: 'verify', reviewRound: 1, reviewedAt: NOW - 900, verdict: 'REJECT' }],
+    sessions: [
+      { name: 'shop-reviewer-7-r2', agentType: 'claude' },
+      { name: 'shop-reviewer-7-r1', agentType: 'claude', _dead: true },
+    ],
+  });
+  try {
+    const res = d.activity();
+    assert.deepStrictEqual(res.reviewer.live, [{ ticket: 't7', round: 2, seat: 'shop-reviewer-7-r2' }],
+      'one landed verdict means the round in flight is the second, and its seat is -r2');
+    assert.deepStrictEqual(res.reviewer.last, { ticket: 't7', round: 1, verdict: 'REJECT', at: NOW - 900 },
+      'the LAST round reads the field as stored — it was bumped when that verdict landed');
+  } finally { d.cleanup(); }
+});
+
 test('team:activity reports a HELD verify as no reviewer round, and a round with no live seat as null', () => {
   const d = mkActivityDoor({
     tickets: [
@@ -434,7 +457,7 @@ test('team:activity reports a HELD verify as no reviewer round, and a round with
   });
   try {
     const res = d.activity();
-    assert.deepStrictEqual(res.reviewer.live, [{ ticket: 't2', round: 3, seat: null }],
+    assert.deepStrictEqual(res.reviewer.live, [{ ticket: 't2', round: 4, seat: null }],
       'a held ticket is at verify and is NOT going to produce a reviewer');
     assert.strictEqual(res.counts.verify, 2, 'both are still counted as sitting in verify');
   } finally { d.cleanup(); }

@@ -782,9 +782,14 @@ function createTicketMethods(deps, shared) {
       const reviewer = { live: [], last: null };
       for (const t of tickets) {
         if (t.loopStep !== 'verify' || t.verifyHold) continue;
-        const round = Number(t.reviewRound) || 0;
+        // `reviewRound` counts LANDED verdicts: _handleTeamReview mints the seat
+        // at `reviewRound + 1` and _landVerdictOnTicket bumps the field only when
+        // the verdict arrives, so the round a ticket at `verify` is IN is always
+        // one ahead of what the board records. `last.round` below reads the field
+        // as stored, which is the same number after its bump.
+        const round = (Number(t.reviewRound) || 0) + 1;
         const num = /^t?(\d+)$/.exec(String(t.id));
-        const scoped = (round > 0 && num) ? `${team.name}-reviewer-${num[1]}-r${round}` : null;
+        const scoped = num ? `${team.name}-reviewer-${num[1]}-r${round}` : null;
         const live = scoped ? this.sessions.get(scoped) : null;
         reviewer.live.push({
           ticket: t.id,
