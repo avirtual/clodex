@@ -1,12 +1,4 @@
 'use strict';
-// team-delete.js — the in-use check and the gated delete behind Delete Team….
-//
-// A leaf on the ENGINE rather than a pair built in main.js, because both callers
-// must run the same body: the Teams menu reaches it through getTeams() (the main
-// process has no IPC to itself) and the renderer reaches it through
-// `team:delete`, which web-host serves from the same registration. Built in
-// main.js it would be absent from the web host's deps and that channel would
-// throw there while working on the desktop.
 
 function createTeamDelete({ loadManifest, deleteTeam, getManager }) {
   function deleteCheck(name) {

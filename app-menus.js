@@ -69,19 +69,13 @@ function tildePath(p) {
   return home && p.startsWith(home + '/') ? `~${p.slice(home.length)}` : p;
 }
 
-// The delete confirm's copy, in three arms. The KEEPS half is the load-bearing
-// one: everything a team accumulates except the manifest directory lives
-// elsewhere and survives, and an operator who cannot tell that from the dialog
-// keeps a dead team rather than risk its ticket history.
-function deleteTeamDetail(name, dir, check) {
+function deleteTeamDetail(dir, check) {
   if (!check.loaded) {
     return `The manifest under ${tildePath(dir)} does not load (${check.error}), so seats and tickets cannot be checked. `
       + 'Removes the directory; nothing else is touched.';
   }
   const base = `Removes ${tildePath(dir)} (its manifest, prompts and templates). Keeps: the project at ${check.root}, `
     + "its ticket history and task artifacts under ~/.clodex/projects, and every seat's session record";
-  // Omitted when the count is 0 AND when it is unknown: `saved` is null on an
-  // unreadable persistence, and a clause that guesses would understate a loss.
   if (!check.saved) return `${base}.`;
   return check.saved === 1
     ? `${base} — 1 saved seat on this team becomes a plain session.`
@@ -92,8 +86,6 @@ function teamInUseDetail(check) {
   const parts = [];
   if (check.seats.length) parts.push(`Live seats: ${check.seats.join(', ')}.`);
   if (check.tickets.length) parts.push(`Open tickets: ${check.tickets.join(', ')}.`);
-  // The instruction names only the half that is actually blocking: telling an
-  // operator to retire seats when none are live reads as a bug in the check.
   const fix = check.seats.length && check.tickets.length
     ? 'Retire the seats and close or cancel the tickets, then delete.'
     : (check.seats.length ? 'Retire the seats, then delete.' : 'Close or cancel the tickets, then delete.');
@@ -113,8 +105,6 @@ function createAppMenus(deps) {
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
-    // The team manifest readers (t288), lazy for the same reason as the rest:
-    // they live on the engine, which is assigned after this factory runs.
     getTeams,
   } = deps;
 
@@ -525,10 +515,6 @@ function createAppMenus(deps) {
   // because a packaged build always ships plugins/workbench; that hole is masked
   // by luck (renderer/web/menubar.js documents it), and copying it here would
   // make an empty box a dead end.
-  //
-  // Clicking a team asks the RENDERER to open the roles popover: the popover is
-  // renderer-side DOM the main process cannot reach, so the menu can only send
-  // the request — the same shape as "Manage Plugins…".
   function buildTeamsMenu() {
     const teams = getTeams ? getTeams() : null;
     let names = [];
@@ -553,8 +539,6 @@ function createAppMenus(deps) {
     return { label: 'Teams', submenu };
   }
 
-  // Unlike the listing above, a broken team is ENABLED here: it is the one an
-  // operator most wants gone, and deleteTeam does not load the manifest.
   function buildDeleteTeamRow(teams, names) {
     if (!names.length) return { label: 'Delete Team…', enabled: false };
     const submenu = names.map((name) => {
@@ -566,9 +550,6 @@ function createAppMenus(deps) {
   }
 
   async function confirmDeleteTeam(teams, name) {
-    // Checked at CLICK time, for the reason the Delete Workspace… confirm states:
-    // a menu template can sit built for minutes, and these are the numbers the
-    // sentence above a destructive button asserts.
     const check = teams.deleteCheck(name);
     if (!check.ok) { dialog.showErrorBox('Delete team failed', check.error); return; }
     const dir = path.join(teams.teamsDir, name);
@@ -587,7 +568,7 @@ function createAppMenus(deps) {
       defaultId: 1,
       cancelId: 1,
       message: `Delete team "${name}"?`,
-      detail: deleteTeamDetail(name, dir, check),
+      detail: deleteTeamDetail(dir, check),
     });
     if (result.response !== 0) return;
     const r = teams.deleteTeam(name);

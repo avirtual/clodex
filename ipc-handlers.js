@@ -196,9 +196,6 @@ function registerIpcHandlers(deps) {
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
-  // Both bodies live on the engine, not here: the Teams menu runs the same two
-  // in-process (main.js has no IPC to itself), and a copy would let the menu's
-  // confirm describe a delete the channel does not perform.
   handle('team:deleteCheck', (_e, team) => {
     try { return teamDeleteCheck(team); }
     catch (err) { return { ok: false, error: err.message }; }

@@ -442,8 +442,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return team ? team.root : null;
   }
 
-  // NAME_RE rejects a separator, so a checked name can only ever join to a
-  // direct child of teamsDir — which is what makes deleteTeam's rmSync safe.
   function assertTeamName(name) {
     if (typeof name !== 'string' || !NAME_RE.test(name)) {
       throw new Error(`team name "${name}" must match ${NAME_RE}`);
@@ -638,9 +636,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
-  // Deliberately does NOT loadManifest: a team whose manifest no longer parses
-  // is the one an operator most wants gone, and requiring a load would strand it
-  // with no route out of the box.
   function deleteTeam(teamName) {
     assertTeamName(teamName);
     const dir = path.join(teamsDir, teamName);

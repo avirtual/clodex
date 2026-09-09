@@ -698,11 +698,6 @@ function createTicketMethods(deps, shared) {
       return { seats: [...seats], tickets };
     },
 
-    // Whole-team version of _roleInUse, for deletion. `seats` and `tickets` block;
-    // `saved` only describes what survives, so an unreadable persistence returns
-    // null there rather than _roleInUse's blocking sentinel — a sentinel would
-    // both block on a number that gates nothing and let the refusal render with
-    // no seats and no tickets named.
     _teamInUse(team) {
       const seats = new Set();
       for (const s of this.sessions.values()) {
@@ -710,11 +705,6 @@ function createTicketMethods(deps, shared) {
         if (matchSeatRole(team, s.name) !== null) seats.add(s.name);
       }
       const tickets = [];
-      // No try/catch around this one, unlike _roleInUse: ticketsStore.load
-      // swallows its own errors and returns [], so a catch here could never fire
-      // and would read as a fail-close that does not exist. An unreadable board
-      // therefore reads as EMPTY and does not block — survivable only because the
-      // board itself lives under ~/.clodex/projects, which the delete keeps.
       for (const tk of ticketsStore.load(team.root)) {
         if (tk && tk.state !== 'done' && tk.state !== 'cancelled') tickets.push(tk.id);
       }
@@ -729,11 +719,6 @@ function createTicketMethods(deps, shared) {
       return { seats: [...seats], tickets, saved };
     },
 
-    // The only per-team in-memory state a delete can strand: _ticketWatch outlives
-    // the seat it names (nothing removes an entry at teardown — _reconcileTickets
-    // only walks LIVE seats), so a team whose seat died before the delete leaves a
-    // watch pointing at a manifest that is gone. Matched by ROOT, which is exact
-    // here because createTeam refuses a root another team already owns.
     _forgetTeam(teamName, root) {
       let dropped = 0;
       for (const [name, w] of this._ticketWatch) {
