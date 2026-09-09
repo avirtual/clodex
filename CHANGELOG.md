@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **New seats:** a Claude seat spawned into a folder the CLI has never seen no longer stops at the "trust this folder?" prompt; Clodex marks the seat's cwd trusted before the spawn, the same way the docker image already does for the whole container.
+
 ## 5.44.2 — 2026-09-09 — Bundled wirescope v0.6.64: no more unmarked first thinking rounds
 
 - **Cache busts:** the bundled wirescope proxy is now v0.6.64, which keeps a message-level cache marker on a turn's first thinking round when the settled pin is at full budget; before this, such rounds re-read the whole history uncached (measured: 134 rounds, 13M uncached tokens over three days, almost all on hand seats).

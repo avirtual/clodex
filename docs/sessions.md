@@ -47,6 +47,12 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   library items assigned to this session (`scope-util.unionEnabled`) —
   assignment is intent, computed each spawn and NEVER written back to the
   persisted record.
+  Before the spawn, `preseedClaudeOnboarding` merges into `~/.claude.json` both
+  the onboarding flags and `projects[<seat cwd>].hasTrustDialogAccepted`, so a
+  seat never sits at the wizard or the "trust this folder?" prompt inside a PTY
+  nobody is watching. Marking the cwd trusted is sound because that cwd was
+  chosen either by the operator in the dialog or by a seat holding the gateable
+  spawn intent — the same trust the prompt asks for.
 - **codex** — `mergeCodexInstructions` merges system + the per-seat IPC prompt
   (`buildIpcPrompt(intents)`) + appends
   into `{name}-instructions.md` (`model_instructions_file`); shared
