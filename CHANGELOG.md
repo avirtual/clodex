@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — The reviewer boots in the ticket's worktree, a cut-off intent is never fired, and dependency-free repos pass the suite gate
+## Unreleased
+
+## 5.48.0 — 2026-09-09 — The reviewer boots in the ticket's worktree, a cut-off intent is never fired, and dependency-free repos pass the suite gate
 
 - **Teams:** a team reviewer now boots with every skill off, as the hand and lead already do; a reviewer template can still name its own list. Before, the reviewer seat inherited the box's whole skill roster.
 - **Messaging:** an intent whose body was cut short by a turn interrupt (`[Request interrupted by user]` landing mid-body) is no longer fired on the fragment: the seat gets one note naming the verb and asking for a re-emit. Before, a `prompt-save` cut mid-word saved the fragment and reported success.
