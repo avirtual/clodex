@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Stock team templates (`clodex-team-lead`, `clodex-team-hand`) no longer pin `--model claude-opus-5` and no longer keep the ListAgents tool: a new team seat runs the box's default model with eight tools. `[agent:team role-set <role> model:<alias>]` still derives a pinned team-local copy when a team wants a specific model.
+
 ## 5.51.0 — 2026-09-10 — The team popover says what is happening: per-ticket seats, the reviewer loop, and the tickets board
 
 - **Teams:** the roles popover gains a Tickets section: the open board (seat, step, since when) and the last five landings (merged, merge failed or cancelled, with the review round count), refreshed with the popover. Before, the board was visible only as the text reply to [agent:task list].

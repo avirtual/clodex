@@ -46,12 +46,12 @@ the shared checkout, `worktree` mints a one-shot seat on its own branch in its
 own git worktree).
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead on
-the lead role's template, stock `clodex-team-lead` — Opus, every skill off,
-`clodex-team` + `clodex-monitor` + `clodex-run-tests` granted, `spawn` on and the
-privileged intents off. A team created before that stem was recorded on the role
-has no `lead.template` line and reaches the same file by default. Want another
-shape: set `lead.template` in the app's team editor, or pass an explicit
-`template:` on the spawn, which always wins.
+the lead role's template, stock `clodex-team-lead` — the box's default model,
+every skill off, `clodex-team` + `clodex-monitor` + `clodex-run-tests` granted,
+`spawn` on and the privileged intents off. A team created before that stem was
+recorded on the role has no `lead.template` line and reaches the same file by
+default. Want another shape: set `lead.template` in the app's team editor, or
+pass an explicit `template:` on the spawn, which always wins.
 
 With that file alone you have a working loop: the lead writes a ticket with
 `[agent:task add hand] <spec>`, `[agent:task start <id>]` mints a branch and a
@@ -212,17 +212,17 @@ The shipped hand template grants all three, because all three work on a fresh
 team: a default that fails on first use teaches an operator to distrust the
 whole grants list.
 
-**What a stock hand is.** `clodex-team-hand` boots Opus (`--model
-claude-opus-5`) with **every skill off**, the trimmed tools list, and those three
-exec grants. It is lean on purpose: the first team stood up from the bootstrap
-skill came up with Fable-class hands carrying every installed skill, and was
-stopped on cost. `[agent:team role-set hand model:<alias>]` changes the model
-(`opus`, `sonnet`, `haiku`, `fable`).
+**What a stock hand is.** `clodex-team-hand` boots the box's default model with
+**every skill off**, the trimmed tools list, and those three exec grants. It is
+lean on purpose: the first team stood up from the bootstrap skill came up with
+Fable-class hands carrying every installed skill, and was stopped on cost.
+`[agent:team role-set hand model:<alias>]` changes the model (`opus`, `sonnet`,
+`haiku`, `fable`).
 
-The stock hand and lead templates keep nine tools — Read, Edit, Write, Glob,
-Grep, Bash, Agent, SendMessage, ListAgents — and deny the rest of the catalog;
-the list is pinned against the catalog, so a tool Claude Code adds is denied on
-ticket seats until someone decides otherwise.
+The stock hand and lead templates keep eight tools — Read, Edit, Write, Glob,
+Grep, Bash, Agent, SendMessage — and deny the rest of the catalog; the list is
+pinned against the catalog, so a tool Claude Code adds is denied on ticket seats
+until someone decides otherwise.
 
 The "every skill off" default ships as the sentinel `"disabledSkills": ["*"]`,
 which is resolved against this box's skill catalog at spawn. Every surface that
@@ -429,9 +429,9 @@ so you do not have to teach it the vocabulary.
    using `${TEAM_ROOT}` so they travel.
 5. Start the lead seat and open a ticket. `[agent:spawn name:<name>-lead
    cwd:<root>]` with no `template:` boots it on the lead role's template, stock
-   `clodex-team-lead` (Opus, every skill off, the team, monitor and run-tests
-   execs granted, `spawn` on, privileged intents off); set `lead.template` in the
-   team editor or pass `template:` for another shape.
+   `clodex-team-lead` (the box's default model, every skill off, the team,
+   monitor and run-tests execs granted, `spawn` on, privileged intents off); set
+   `lead.template` in the team editor or pass `template:` for another shape.
 
 Steps 1 and 5 are the team. Steps 2–4 are the content — yours to decide, though
 a lead granted the intents below can write step 2 for you.
