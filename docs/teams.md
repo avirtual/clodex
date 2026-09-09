@@ -442,10 +442,16 @@ An agent can do step 1 instead of you, if you granted it the privileged
 manifest `Create Team…` does. The root must already exist and belong to no other
 team; the lead defaults to `<name>-lead` and names a seat that does not exist yet.
 The manifest it writes is not an empty one: `lead`, `hand` and `reviewer` are
-already in it, all three standing. So the next step is to spawn the lead seat with
+already in it, all three standing. Give the intent a body — the kickstart brief,
+closed by `[agent:end]` — and the hand is instead born per-ticket, with the brief
+saved as `prompts/append/team-project.md`, the stem the stock lead and hand
+templates compose at boot: step 2 and the `role-set` below are then already done,
+and a brief that cannot be saved leaves no team behind. So the next step is to
+spawn the lead seat with
 its cwd at the root — after the create, never before, because a seat resolves its
 team from its cwd at boot and carries that roster for the rest of its life, so one
-spawned first never learns it leads — and then to make the hand per-ticket with
+spawned first never learns it leads — and then, after a bodyless create, to make
+the hand per-ticket with
 `[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
 not exist yet; on one that already does it refuses.
 `[agent:team set-lead <seat>]` re-points the lead afterwards, and only the current

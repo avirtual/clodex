@@ -122,7 +122,7 @@ function parseIntentLegacy(rawLine) {
   // this copy must sit ahead of the team match too, or the two chains disagree
   // about which arm claims `[agent:team create …]`. The same lockstep rule the
   // task and team copies above state.
-  const teamCreateMatch = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*$/);
+  const teamCreateMatch = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*(.*)/s);
   if (teamCreateMatch) {
     const argStr = teamCreateMatch[1];
     const rootM = argStr.match(/\broot:(\S+)/);
@@ -133,7 +133,7 @@ function parseIntentLegacy(rawLine) {
       name: positional[0] || null,
       root: rootM ? rootM[1] : null,
       lead: leadM ? leadM[1] : null,
-      body: '',
+      body: teamCreateMatch[2],
     };
   }
 
@@ -368,6 +368,8 @@ const ADVERSARIAL = [
   '[agent:team create shop]', '[agent:team create root:/proj/shop]',
   '[agent:team create shop root:rel/path]', '[agent:team create]',
   '[agent:team create shop root:/proj/shop] trailing',
+  '[agent:team create shop root:/proj/shop] first line of the brief',
+  '[agent:team create shop root:/proj/shop lead:boss] first line of the brief',
   '[agent:team created shop root:/p]',
   '[agent:team watchdog abc]', '[agent:team watchdog]', '[agent:team foo]',
   '[agent:team]', '[agent:team-reviewer]',
@@ -650,7 +652,8 @@ test('bodyMode is decided per PARSED intent: task add captures, task assign does
 
 test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team set-lead bob]')), 'none');
-  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team create shop root:/proj/shop]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team create shop root:/proj/shop]')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor({ type: 'team-create' }), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-add lead] brief')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-set lead] brief')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-rm lead]')), 'none');
@@ -714,8 +717,13 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   //
   // t753 `team template-save` / `team prompt-save`: post-legacy, and greedy
   // because the body IS the file — a truncated one is written to disk as if whole.
+  //
+  // t773 `team-create`: post-legacy (t751 shipped it bodiless), and greedy
+  // because its body is the kickstart brief, written to the new team's
+  // prompts/append/team-project.md.
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
-    || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'));
+    || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
+    || i.type === 'team-create';
   let sawTerm = 0;
   for (const line of CORPUS) {
     const i = parseIntent(line);

@@ -1261,8 +1261,14 @@ test('t170 every bodiless gateable verb is structurally unspillable', () => {
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)
     .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));
-  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'team-create', 'term', 'who'],
-    'the bodiless seven — if this list changed, the disposition table needs a deliberate verdict for the new verb');
+  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'term', 'who'],
+    'the bodiless six — if this list changed, the disposition table needs a deliberate verdict for the new verb');
+  // t773 took team-create off that list: its body is the kickstart brief. The
+  // deliberate verdict is the default `note` arm — the brief is lost with the
+  // denied intent, but the sender still holds the prose it just composed, so
+  // there is nothing to hand back on disk.
+  assert.deepStrictEqual(deniedBodyDisposition({ type: 'team-create', body: 'x' }),
+    { how: 'note', label: 'team-create' });
   for (const type of bodiless) {
     assert.deepStrictEqual(deniedBodyDisposition({ type }), { how: 'none', label: null },
       `${type} carries no body, so it can never reach a spill`);
@@ -10496,17 +10502,23 @@ test('team: a bad watchdog ms is bounced without calling the mutator', () => {
 // REAL createTeamManifest over a temp clodexHome: the assertion that matters is
 // team.json ON DISK carrying the root and lead, and a stub would let a handler
 // that forwarded nothing still look right.
-function mkTeamCreate({ intents = ['team-create'], refreshThrows = false, noRefreshDep = false } = {}) {
+function mkTeamCreate({
+  intents = ['team-create'], refreshThrows = false, noRefreshDep = false, wrapFs = null,
+} = {}) {
   const home = mkTmpRoot('clodex-t751-');
   const projectRoot = mkTmpRoot('clodex-t751-proj-');
   const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
   const refreshes = [];
   const { m, injected } = mkPark({
-    fs: fsReal, path: pathReal,
+    fs: wrapFs ? wrapFs(fsReal, home) : fsReal,
+    path: pathReal,
     REGISTRY_DIR: home,
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
     createTeam: tm.createTeam,
     teamsDir: tm.teamsDir,
+    // teamPromptPath refuses any team listTeams does not name, so the brief has
+    // nowhere to go without this — a stub would make every kickstart create fail.
+    listTeams: tm.listTeams,
     resolveTeam: () => null,
     refreshAppMenu: noRefreshDep ? undefined : () => { refreshes.push(1); if (refreshThrows) throw new Error('menu boom'); },
   });
@@ -10637,6 +10649,89 @@ test('t751 create: the writer refusals are relayed verbatim (duplicate name, own
   await f.m._handleIntent('a', { type: 'team-create', name: long, root: other, lead: null, body: '' });
   assert.ok(f.injected.some((t) => /is too long/.test(t)), 'the shared defaultLeadSeat refusal reaches the intent path too');
   assert.strictEqual(f.teamExists(long), false);
+});
+
+// --- t773: the kickstart brief on [agent:team create] ----------------------
+const { STOCK_ROLE_DEFS } = require('../team-manifest');
+
+test('t773 create: a brief makes the hand per-ticket and lands on disk byte for byte', async () => {
+  const f = mkTeamCreate();
+  // A backtick and a `#` heading: the brief is prose written for a prompt file,
+  // and a handler that fed it through a shell or a markdown pass would eat both.
+  const brief = 'Ship the thing.\n\n# Rules\n\nRun `npm test` before every report.\n';
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: brief,
+  });
+  const raw = f.readTeam('shop');
+  assert.strictEqual(raw.roles.hand.dispatch, 'worktree', 'the hand is born per-ticket');
+  assert.deepStrictEqual(Object.keys(raw.roles.lead), ['prompt', 'brief', 'template'],
+    'lead carries no dispatch: a reserved role with dispatch:worktree is refused by the writer');
+  assert.deepStrictEqual(Object.keys(raw.roles.reviewer), ['prompt', 'brief'],
+    'reviewer likewise untouched');
+  const promptFile = pathReal.join(f.home, 'teams', 'shop', 'prompts', 'append', 'team-project.md');
+  assert.strictEqual(fsReal.readFileSync(promptFile, 'utf-8'), brief,
+    'the brief is written verbatim — the bytes, not a shape');
+  assert.deepStrictEqual(f.injected, [
+    `[agent:team] team "shop" created — root ${pathReal.resolve(f.projectRoot)}, lead shop-lead, `
+    + `dir ${pathReal.join(f.home, 'teams', 'shop')}; hand takes a branch + worktree + seat per ticket; `
+    + 'brief saved to prompts/append/team-project.md. '
+    + 'Next: spawn the lead in that root — it composes the brief at boot.',
+  ]);
+});
+
+test('t773 create: bodyless is byte-identical to before — stock hand, old reply', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.deepStrictEqual(f.readTeam('shop').roles.hand, STOCK_ROLE_DEFS.hand,
+    'no dispatch key at all: the stock def as it stands');
+  assert.strictEqual(fsReal.existsSync(pathReal.join(f.home, 'teams', 'shop', 'prompts')), false,
+    'and no prompts directory was made');
+  assert.deepStrictEqual(f.injected, [
+    `[agent:team] team "shop" created — root ${pathReal.resolve(f.projectRoot)}, lead shop-lead, `
+    + `dir ${pathReal.join(f.home, 'teams', 'shop')}. `
+    + 'Next: spawn the lead in that root, then [agent:team gather] and [agent:team role-add …] from it.',
+  ]);
+});
+
+test('t773 create: a whitespace-only body is no brief at all', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '  \n\t\n' });
+  assert.deepStrictEqual(f.readTeam('shop').roles.hand, STOCK_ROLE_DEFS.hand);
+  assert.strictEqual(fsReal.existsSync(pathReal.join(f.home, 'teams', 'shop', 'prompts')), false);
+  assert.ok(f.injected.some((t) => /Next: spawn the lead in that root, then/.test(t)),
+    'the bodyless reply, not the kickstart one');
+});
+
+test('t773 create: a brief that cannot be saved leaves NO team behind', async () => {
+  // The prompt file's path pre-made as a DIRECTORY: teamPromptSave's atomic
+  // rename onto it is EISDIR. No team.json is planted, so createTeam still
+  // accepts the name — the failure lands strictly between the two writes.
+  const unlinked = [];
+  const f = mkTeamCreate({
+    wrapFs: (real, home) => ({
+      ...real,
+      unlinkSync: (p) => {
+        unlinked.push({ p, existedAtCall: real.existsSync(p) });
+        return real.unlinkSync(p);
+      },
+      __home: home,
+    }),
+  });
+  fsReal.mkdirSync(pathReal.join(f.home, 'teams', 'shop', 'prompts', 'append', 'team-project.md'),
+    { recursive: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'the brief',
+  });
+  const teamJson = pathReal.join(f.home, 'teams', 'shop', 'team.json');
+  assert.deepStrictEqual(unlinked.map((u) => u.p), [teamJson], 'the undo unlinked exactly the manifest');
+  assert.strictEqual(unlinked[0].existedAtCall, true,
+    'ENTER: the team really existed between the two writes — this is the window the undo closes');
+  assert.strictEqual(f.teamExists('shop'), false, 'and it does not exist afterwards');
+  assert.strictEqual(f.injected.length, 1);
+  assert.ok(f.injected[0].startsWith('[agent:team] error: could not save the brief'), f.injected[0]);
+  assert.ok(f.injected[0].includes('no team was created'), f.injected[0]);
+  assert.ok(f.injected[0].includes(`re-fire [agent:team create shop root:${f.projectRoot}] with the brief`),
+    'the seat is told how to retry, with the arguments it used');
 });
 
 test('t751 set-lead: the LEAD rewrites team.json; a non-lead is refused', () => {

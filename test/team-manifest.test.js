@@ -1263,6 +1263,10 @@ test('the stock lead def names the shipped lead template, and createTeam records
   // Fixed key order: addRole's no-op check compares JSON.stringify of two
   // normalized defs, so a reordering here would break equality.
   assert.deepStrictEqual(Object.keys(STOCK_ROLE_DEFS.lead), ['prompt', 'brief', 'template']);
+  // t773: the kickstart create spreads this def and adds `dispatch: 'worktree'`
+  // for that one team. A `dispatch` key HERE would make it every team's default,
+  // and team:join's standing-seat lookup has no worktree hand to find.
+  assert.deepStrictEqual(Object.keys(STOCK_ROLE_DEFS.hand), ['prompt', 'brief', 'template']);
 
   const home = mkHome();
   const root = mkTmpRoot('proj-');
