@@ -455,8 +455,8 @@ the reply. If `clodex-team-lead` is not installed the seat still boots, but bare
 the brief composes only through that template — and the reply says it was NOT
 briefed rather than claiming otherwise. After a BODYLESS create two steps are
 still yours: spawn the lead with its cwd at the root — after the create, never
-before, because a seat resolves its team from its cwd at boot and carries that
-roster for the rest of its life, so one spawned first never learns it leads — and
+before, because a seat resolves its team from its cwd at boot, and one spawned
+first boots teamless and misses the roster message a team seat gets at boot — and
 make the hand per-ticket with `[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
 not exist yet; on one that already does it refuses.
 `[agent:team set-lead <seat>]` re-points the lead afterwards, and only the current
