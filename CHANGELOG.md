@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - **Teams:** `[agent:team role-set <role> model:<id>]` (and `role-add`) derives the role's seat template with that `--model` and points the role at it, so a lead never writes template JSON to change a hand's model. Aliases: `opus`, `sonnet`, `haiku`, `fable`; a new role with no template derives from the shipped `clodex-team-hand`.
+- **Teams:** `clodex-run-tests` is now a shipped bin that runs the project's own `scripts/run-tests.js` (the merge gate's runner) and prints the one-line digest, so it works on any team, and the stock hand template grants it together with `clodex-monitor`. The clodex repo's team-local def is unchanged.
 
 ## 5.45.0 — 2026-09-09 — Keep-warm no longer pings a 5-minute prefix, and new seats skip the trust prompt
 

@@ -6,7 +6,9 @@
   "proxy": null,
   "agents": [],
   "execCommands": [
-    "clodex-team"
+    "clodex-team",
+    "clodex-monitor",
+    "clodex-run-tests"
   ],
   "intents": [
     "dm",

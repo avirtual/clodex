@@ -58,6 +58,7 @@
       "*.js",
       "scripts/clodex-team.js",
       "scripts/clodex-monitor.js",
+      "scripts/clodex-run-tests.js",
       "wire/**/*",
       "renderer/**/*",
       "plugins/**/*",

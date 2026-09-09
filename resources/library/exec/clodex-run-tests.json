@@ -1,10 +1,11 @@
 {
   "argv": [
-    "/bin/sh",
-    "${TEAM_ROOT}/scripts/test-digest.sh"
+    "/usr/bin/env",
+    "node",
+    "${CLODEX_BIN}/clodex-run-tests.js"
   ],
   "cwd": "${TEAM_ROOT}",
-  "description": "Suite digest, one line. Measures the TEAM ROOT unless `tree` names one of this repo's worktrees (absolute path) — from a worktree, pass it or the number is about master, not your branch.",
+  "description": "Suite digest, one line: runs ${TEAM_ROOT}/scripts/run-tests.js, the merge gate's runner. Measures the TEAM ROOT unless `tree` names a worktree of this repo — pass it or you measure master.",
   "timeoutMs": 420000,
   "maxBytes": 1024,
   "replyStderr": true,

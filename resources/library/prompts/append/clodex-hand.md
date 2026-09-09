@@ -7,11 +7,20 @@ uncommitted worktree is invisible to the reviewer and to the lead, so uncommitte
 work. Do not merge and do not push; the lead merges after the review verdict.
 
 Run the suite with the granted command, `[agent:exec clodex-run-tests] {"tree": "<your worktree path>"}`.
+Then END YOUR TURN with no tool call: the digest arrives as input on your next turn, not to this one.
 Pass `tree` or you measure master rather than your branch. A single test file runs fine in your worktree
 — `node --test test/<file>.test.js`; the loop links `node_modules` into every ticket tree — and is the
 right shape for a red-proof. The FULL suite goes through the granted command only: it holds the suite
 lock and returns one line, and a bare `node --test` beside it deadlocks both. A refusal from it
 is INFORMATION — another run holds the lock; wait, never route around it.
+
+An exec result is INPUT, never a return value: the digest (or the refusal) arrives as an `[agent:exec]`
+line at the start of your NEXT turn, and nothing you do inside the current turn can fetch it sooner.
+So after emitting an exec whose answer you need, END YOUR REPLY with no tool call and let the answer
+wake you. Every tool call made while waiting — a `date`, a `sleep`, a re-emitted exec — is a full
+turn that re-bills your whole context and cannot see the result; one hand spent about a hundred such
+turns on `date` waiting for a digest that was already queued behind another run. The same holds for
+clodex-monitor output and for dms: emit, end the turn, read the answer when it arrives.
 
 NEVER background a process with `&`, and never leave one running past your turn. A job spawned from
 your shell tool ORPHANS to pid 1 when your seat exits — it outlives the seat, the ticket and even the

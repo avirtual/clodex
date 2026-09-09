@@ -27,16 +27,25 @@ test('the shipped hand template writes ${TEAM_ROOT}, never an absolute path', ()
 });
 
 test('the shipped hand template grants no exec command that assumes OUR scripts', () => {
-  // clodex-run-tests / clodex-check-syntax / clodex-repo-state all run
-  // ${TEAM_ROOT}/scripts/<name>.sh, which exists only in this repo: TEAM_ROOT
-  // follows a new team correctly and the script is still missing, so the grant
-  // bounces on every call. A default that is broken out of the box teaches the
-  // operator to distrust the grants list.
-  const REPO_SCOPED = ['clodex-run-tests', 'clodex-check-syntax', 'clodex-repo-state'];
+  // clodex-check-syntax / clodex-repo-state run ${TEAM_ROOT}/scripts/<name>.sh,
+  // which exists only in this repo: TEAM_ROOT follows a new team correctly and
+  // the script is still missing, so the grant bounces on every call. A default
+  // that is broken out of the box teaches the operator to distrust the grants
+  // list. clodex-run-tests is NOT in this set: it runs a bin Clodex ships, and
+  // the only project file it needs is scripts/run-tests.js — which the merge
+  // gate already requires of every team.
+  const REPO_SCOPED = ['clodex-check-syntax', 'clodex-repo-state'];
   for (const cmd of REPO_SCOPED) {
     assert.ok(!(tpl.execCommands || []).includes(cmd),
       `${cmd} needs a script only this repo ships — it cannot be a portable default`);
   }
+});
+
+test('it grants the three portable commands a fresh team\'s hand needs', () => {
+  // The grant is the capability: a def seeded into the library does nothing for
+  // a seat whose template does not name it, so a new team's hand was born with
+  // no way to run its own suite and hand-wrote a def per team.
+  assert.deepStrictEqual(tpl.execCommands, ['clodex-team', 'clodex-monitor', 'clodex-run-tests']);
 });
 
 test('every exec grant it DOES carry is one a fresh project can satisfy', () => {
@@ -99,9 +108,9 @@ test('it seeds into a fresh registry byte-exact and surfaces through the templat
     const seeded = stores.templates.list().find((t) => t.name === 'clodex-team-hand');
     assert.ok(seeded, 'the seeded hand template is listed');
     assert.strictEqual(seeded.cwd, '${TEAM_ROOT}', 'the token survives the store round-trip unexpanded');
-    assert.deepStrictEqual(seeded.execCommands, ['clodex-team']);
+    assert.deepStrictEqual(seeded.execCommands, ['clodex-team', 'clodex-monitor', 'clodex-run-tests']);
     assert.deepStrictEqual(seeded.appendPromptFiles, ['team-project']);
-    // Its one grant must be seeded too, or the default template ships a grant
+    // Its grants must be seeded too, or the default template ships a grant
     // that cannot resolve on a fresh install.
     for (const cmd of seeded.execCommands) {
       assert.ok(fs.existsSync(path.join(registryDir, 'library', 'exec', `${cmd}.json`)),

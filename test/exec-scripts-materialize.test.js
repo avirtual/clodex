@@ -78,6 +78,30 @@ test('clodex-monitor: the described per-action fields match the script\'s guards
     'stop requires an id; this exact claim shipped false once');
 });
 
+// Same rule as clodex-monitor above, against the guard the script actually
+// carries: `tree` is a refusal path, so a description that omits it sends a seat
+// into a bounce it cannot diagnose, and one that promises a fallback would be
+// read as "no tree means my worktree" — the false green the refusal exists to
+// prevent.
+test('clodex-run-tests: the described `tree` field matches the script\'s guard', () => {
+  const def = JSON.parse(fs.readFileSync(path.join(ROOT, 'resources', 'library', 'exec', 'clodex-run-tests.json'), 'utf8'));
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'clodex-run-tests.js'), 'utf8');
+  const desc = String(def.description || '');
+  assert.ok(desc, 'the def carries a description at all');
+
+  assert.match(src, /hasOwnProperty\.call\(payload, 'tree'\)/,
+    'ENTER: the script still branches on the PRESENCE of `tree` — the assertions below describe that guard');
+  assert.match(desc, /`tree`/, 'the optional field must be named, or the reader cannot act on it');
+  assert.match(desc, /TEAM ROOT/,
+    'and the default must be stated: with no `tree` this measures the root, not the caller\'s worktree');
+
+  // The runner it drives is the project's own, and naming it is what makes the
+  // grant portable in the reader's head rather than only on disk.
+  assert.match(src, /path\.join\(measure, 'scripts', 'run-tests\.js'\)/,
+    'ENTER: the script still drives scripts/run-tests.js');
+  assert.match(desc, /scripts\/run-tests\.js/, 'the description names the file the project must supply');
+});
+
 test('the seeded exec-defs carry the ${CLODEX_BIN} placeholder, not an absolute path', () => {
   for (const name of ['clodex-team', 'clodex-monitor']) {
     const def = JSON.parse(fs.readFileSync(path.join(ROOT, 'resources', 'library', 'exec', `${name}.json`), 'utf8'));
