@@ -1,8 +1,8 @@
 'use strict';
 
-// The README popover's own three properties, over the shipped source: the body
-// is BUILT (renderMarkdown's nodes), the popover carries the plugin's name, and
-// closing the Manage Plugins dialog closes it too.
+// The README popover's own properties, over the shipped source: the body
+// is BUILT (renderMarkdown's nodes), the popover carries the plugin's name, it
+// sits outside #main, and closing the Manage Plugins dialog closes it too.
 //
 // The functions are EXTRACTED from renderer.js and RUN, the idiom
 // test/plugin-update-badge.test.js established: renderer.js cannot be required
