@@ -10136,6 +10136,119 @@ test('t754: a mutator throw on the dispatch/cwd path comes back as an error: rep
     'the mutator text is surfaced verbatim, not swallowed or reworded');
 });
 
+// t767 model: — a REAL teams dir, because the whole point of the kv is a file
+// written under templates/ and a team.json pointing at it; the stubbed mutators
+// of mkTeamMut above can show neither.
+function mkTeamModel({ roles = { hand: { brief: 'the hand', template: 'clodex-team-hand' } } } = {}) {
+  const home = mkTmpRoot('clodex-t767-');
+  const projectRoot = mkTmpRoot('clodex-t767-proj-');
+  const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
+  tm.createTeam({ name: 'team', root: projectRoot, lead: 'lead' });
+  for (const [roleName, def] of Object.entries(roles)) tm.setRole('team', roleName, def);
+  const shippedHand = JSON.parse(fsReal.readFileSync(
+    pathReal.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-hand.json'), 'utf-8'));
+  const { m, injected } = mkPark({
+    fs: fsReal, path: pathReal,
+    REGISTRY_DIR: home,
+    teamsDir: tm.teamsDir,
+    listTeams: tm.listTeams,
+    addRole: tm.addRole,
+    setRole: tm.setRole,
+    listAllTemplates: () => [{ ...shippedHand, id: 'clodex-team-hand', shadowedBy: ['other-team'] }],
+    resolveTeam: () => tm.loadManifest('team'),
+    findProjectRoot: () => projectRoot,
+  });
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  const seat = { name: 'lead', type: 'claude', agentType: 'claude', cwd: projectRoot, activityState: 'idle' };
+  m.sessions.set('lead', seat);
+  const teamDir = pathReal.join(home, 'teams', 'team');
+  const tplFile = (stem) => pathReal.join(teamDir, 'templates', `${stem}.json`);
+  return {
+    m, injected, seat, home, shippedHand, tm, teamDir, tplFile,
+    readTpl: (stem) => JSON.parse(fsReal.readFileSync(tplFile(stem), 'utf-8')),
+    teamJsonBytes: () => fsReal.readFileSync(pathReal.join(teamDir, 'team.json')),
+    last: () => injected[injected.length - 1],
+  };
+}
+
+test('t767: role-set hand model:opus derives templates/hand.json from the library base and repoints the role', () => {
+  const f = mkTeamModel();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand'), { ...f.shippedHand, name: 'hand', extraArgs: ['--model', 'claude-opus-5'] },
+    'the whole derived object landed on disk, not a hand-edited subset');
+  assert.strictEqual(f.tm.loadManifest('team').roles.hand.template, 'hand', 'the role now points at its own derived copy');
+  assert.ok(/derived from clodex-team-hand with --model claude-opus-5/.test(f.last()), f.last());
+
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'],
+    're-deriving from the own copy leaves exactly one --model pair, not two');
+  assert.ok(/derived from hand with --model claude-sonnet-5/.test(f.last()), f.last());
+});
+
+test('t767: role-add worker model:haiku with no template derives from the shipped clodex-team-hand', () => {
+  const f = mkTeamModel();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-add', name: 'worker', model: 'haiku', body: 'does things' });
+  assert.deepStrictEqual(f.readTpl('worker').extraArgs, ['--model', 'claude-haiku-4-5-20251001']);
+  assert.strictEqual(f.readTpl('worker').name, 'worker');
+  assert.strictEqual(f.tm.loadManifest('team').roles.worker.template, 'worker');
+});
+
+// Every row must leave NOTHING behind, and the mutator-refusal rows are the
+// reason the pre-checks exist: teamTemplateSave is not inside the transaction
+// addRole/setRole roll back, so a refusal reached after the write mints a
+// template for a role that was never added or changed.
+test('t767: a bad alias, a missing base, and every refusal the mutator would raise each write nothing at all', () => {
+  for (const [intentPatch, want] of [
+    [{ sub: 'role-set', name: 'hand', model: 'claude-opus-5[1m]' }, /error: model "claude-opus-5\[1m\]" is not a model id or alias \(opus, sonnet, haiku, fable\)/],
+    [{ sub: 'role-set', name: 'hand', model: 'opus', template: 'nope' }, /error: no template "nope" to derive from/],
+    [{ sub: 'role-set', name: 'reviewer', model: 'opus' }, /error: the "reviewer" role is operator-owned topology/],
+    [{ sub: 'role-set', name: 'ghost', model: 'opus' }, /error: role "ghost" not found on team "team"/],
+    [{ sub: 'role-add', name: 'hand', model: 'opus' }, /error: role "hand" already exists on team "team"/],
+    [{ sub: 'role-add', name: 'x'.repeat(40), model: 'opus' }, /error: role name "x{40}" must match/],
+    // The two that pre-checks can never cover: the refusal rides ANOTHER kv, so
+    // it is raised inside the mutator, after the template file is already written.
+    [{ sub: 'role-set', name: 'hand', model: 'opus', dispatch: 'wortree' }, /error: role "hand" dispatch must be one of/],
+    [{ sub: 'role-add', name: 'worker', model: 'opus', cwd: '../out' }, /error:/],
+  ]) {
+    const f = mkTeamModel();
+    const before = f.teamJsonBytes();
+    f.m._handleTeam(f.seat, { type: 'team', body: '', ...intentPatch });
+    assert.match(f.last(), want);
+    assert.strictEqual(fsReal.existsSync(pathReal.join(f.teamDir, 'templates')), false,
+      `no templates dir for ${intentPatch.sub} ${intentPatch.name}`);
+    assert.deepStrictEqual(f.teamJsonBytes(), before, 'team.json is byte-identical — the role write is skipped too');
+  }
+});
+
+// The rollback's real subject: not an absent file but a LIVE one. Enumerating
+// mutator refusals cannot reach this — the throw rides dispatch:, so the derived
+// file is already overwritten when it fires, and without the undo the hand spawns
+// on opus while the lead is told the edit failed.
+test('t767: a mutator throw on a role that already owns its derived template restores the prior bytes', () => {
+  const f = mkTeamModel();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'], 'setup: hand owns its own derived template');
+  const before = fsReal.readFileSync(f.tplFile('hand'));
+  const teamBefore = f.teamJsonBytes();
+
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', dispatch: 'wortree', body: '' });
+  assert.match(f.last(), /error: role "hand" dispatch must be one of/);
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'],
+    'the live template still runs sonnet — an error: reply must not leave the role on a different model');
+  assert.deepStrictEqual(fsReal.readFileSync(f.tplFile('hand')), before, 'byte-identical, not merely equivalent');
+  assert.deepStrictEqual(f.teamJsonBytes(), teamBefore);
+});
+
+test('t767: a role-set WITHOUT model: writes no template at all (every path byte-identical to pre-t767)', () => {
+  const f = mkTeamModel();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', dispatch: 'worktree', body: 'new brief' });
+  assert.strictEqual(fsReal.existsSync(pathReal.join(f.teamDir, 'templates')), false,
+    'the templates dir does not exist: no model: kv, no derivation');
+  assert.strictEqual(f.tm.loadManifest('team').roles.hand.template, 'clodex-team-hand', 'the role keeps its own template');
+  assert.strictEqual(f.last(), '[agent:team] role "hand" updated on team', 'and the reply gains no clause');
+});
+
 test('team: a NON-lead is bounced for every verb (D2 lead-gate)', () => {
   const f = mkTeamMut();
   f.seat('team-hand');

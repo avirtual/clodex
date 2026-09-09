@@ -833,4 +833,5 @@ module.exports = {
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
   ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
+  ROLE_RE, RESERVED_ROLE_KEYS,
 };
