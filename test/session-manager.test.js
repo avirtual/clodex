@@ -11927,6 +11927,109 @@ test('[agent:end]: without it a task report swallows the trailing prose (greedy)
   assert.strictEqual(out[0].body, 'the report\nNow I talk to my operator.');
 });
 
+// --- bodyOpen: did the body CLOSE, or did the text just run out? ---
+// Invisible in the captured body — both shapes yield the same string — and the
+// distinction is the whole input to the interrupt guard downstream. An intent
+// whose body ran off the end of a turn the human stopped was never finished
+// being written; one closed by [agent:end] or a following intent was.
+test('bodyOpen: a greedy body that runs off the end of the text is marked open', () => {
+  const m = mkExtract();
+  const [dm] = m._extractIntents('[agent:dm bob] a\nb');
+  assert.strictEqual(dm.body, 'a\nb', 'ENTER: the same body a finished turn would produce');
+  assert.strictEqual(dm.bodyOpen, true);
+  // The commonest fragment shape: cut before even the first newline.
+  assert.strictEqual(m._extractIntents('[agent:dm bob] hell')[0].bodyOpen, true);
+});
+
+test('bodyOpen: a body closed by [agent:end] or a following intent carries no key', () => {
+  const m = mkExtract();
+  const [dm] = m._extractIntents('[agent:dm bob] a\nb\n[agent:end]\nprose');
+  assert.strictEqual(dm.body, 'a\nb');
+  assert.ok(!('bodyOpen' in dm), 'the key is ABSENT, not false — nothing downstream may read it as open');
+
+  const two = m._extractIntents('[agent:dm bob] a\n[agent:who]');
+  assert.deepStrictEqual(two.map((x) => x.type), ['dm', 'who']);
+  assert.ok(!('bodyOpen' in two[0]), 'the following intent closed the dm body');
+  assert.ok(!('bodyOpen' in two[1]), 'and a bodiless intent has no body to leave open');
+});
+
+test('bodyOpen: a bodiless intent never carries the key', () => {
+  const m = mkExtract();
+  const [who] = m._extractIntents('[agent:who]');
+  assert.ok(!('bodyOpen' in who));
+});
+
+test('bodyOpen: a json body is open only when it never terminated', () => {
+  const m = mkExtract();
+  const done = m._extractIntents('[agent:exec bridge-reply] {"id":"r1.json"}')[0];
+  assert.ok(!('bodyOpen' in done), 'a value complete on its own line closed itself');
+
+  const cut = m._extractIntents('[agent:exec bridge-reply] {"id":')[0];
+  assert.strictEqual(cut.bodyOpen, true, 'unterminated JSON at the end of the text is a fragment');
+});
+
+// --- the interrupt guard at the jsonl junction ---
+// The live incident: a lead's `[agent:team prompt-save …]` was stopped mid-word
+// at "No d", the CLI wrote `[Request interrupted by user]` 28ms later, and
+// Clodex saved the fragment as the team's project prompt and answered "saved".
+// The fragment parses as a perfectly well-formed intent, so nothing downstream
+// of the scan can tell; only the flush meta can.
+function mkScan() {
+  const m = mkExtract();
+  m.sessions.set('seat', { name: 'seat' });
+  const handled = [];
+  const injected = [];
+  m._handleIntent = (name, intent) => handled.push({ name, intent });
+  m._injectText = (s, text) => injected.push({ session: s, text });
+  return { m, handled, injected };
+}
+
+test('interrupt guard: an intent whose body was cut is not fired, and the seat is told', () => {
+  const { m, handled, injected } = mkScan();
+  m._scanJsonlText('[agent:dm bob] hello\nsecond li', 'seat', [], { interrupted: true });
+  assert.deepStrictEqual(handled, [], 'the fragment must not be dispatched');
+  assert.strictEqual(injected.length, 1, 'and exactly one note goes back');
+  assert.match(injected[0].text, /interrupted while the body of \[agent:dm\] was still open/);
+  assert.match(injected[0].text, /NOT applied/);
+});
+
+test('interrupt guard: the SAME text on a normal flush still fires (the guard, not a ban)', () => {
+  const { m, handled, injected } = mkScan();
+  m._scanJsonlText('[agent:dm bob] hello\nsecond li', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(handled.map((h) => h.intent.type), ['dm'],
+    'CONTROL: an unclosed body is ordinary on every non-interrupted flush');
+  assert.deepStrictEqual(injected, []);
+});
+
+test('interrupt guard: a body the seat CLOSED is finished text and still fires', () => {
+  const { m, handled, injected } = mkScan();
+  m._scanJsonlText('[agent:dm bob] hello\n[agent:end]', 'seat', [], { interrupted: true });
+  assert.deepStrictEqual(handled.map((h) => h.intent.type), ['dm'],
+    'the interrupt landed after the body was closed — the intent was fully written');
+  assert.deepStrictEqual(injected, []);
+});
+
+test('interrupt guard: a bodiless intent fires even on an interrupted flush', () => {
+  const { m, handled, injected } = mkScan();
+  m._scanJsonlText('[agent:who]', 'seat', [], { interrupted: true });
+  assert.deepStrictEqual(handled.map((h) => h.intent.type), ['who']);
+  assert.deepStrictEqual(injected, []);
+});
+
+test('interrupt guard: the note names the sub-verb, so the seat knows what to re-emit', () => {
+  const { m, handled, injected } = mkScan();
+  m._scanJsonlText('[agent:team prompt-save append x] body', 'seat', [], { interrupted: true });
+  assert.deepStrictEqual(handled, [], 'the incident shape: this is the save that must not happen');
+  assert.match(injected[0].text, /\[agent:team prompt-save\]/);
+});
+
+test('interrupt guard: a flush with no meta at all is untouched', () => {
+  const { m, handled } = mkScan();
+  m._scanJsonlText('[agent:dm bob] hello\nsecond li', 'seat', []);
+  assert.deepStrictEqual(handled.map((h) => h.intent.type), ['dm'],
+    'every caller that passes no meta keeps behaving exactly as before');
+});
+
 // --- term exec is LINE-SCOPED (t233) ---
 // The live incident: a seat emitted the correct `[agent:term exec] <cmd>` form
 // and kept writing prose underneath. Greedy capture pulled the prose into the

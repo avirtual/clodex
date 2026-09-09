@@ -4236,12 +4236,14 @@ function createSessionManager(deps) {
         const bodyMode = bodyModeFor(intent);
         if (bodyMode === 'greedy' || bodyMode === 'json') {
           const body = [];
+          let closed = false;
           while (i < lines.length) {
             const next = fenced[i] ? null : parseIntent(lines[i]);
-            if (next && next.type !== 'escape') break;
+            if (next && next.type !== 'escape') { closed = true; break; }
             body.push(lines[i]);
             i++;
           }
+          if (!closed) intent.bodyOpen = true;
           while (body.length && !body[body.length - 1].trim()) body.pop();
           if (body.length) {
             const firstBody = intent.body || '';
@@ -4281,6 +4283,13 @@ function createSessionManager(deps) {
         });
       }
       for (const intent of this._extractIntents(text)) {
+        if (meta && meta.interrupted && intent.bodyOpen) {
+          this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
+            + `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] was still open — `
+            + 'the partial body was NOT applied; re-emit the whole intent and close it with [agent:end]',
+          { parkable: true });
+          continue;
+        }
         if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl') {
           try {
             this._shadow.record('jsonl', shadowIntentKey(senderName, intent), {

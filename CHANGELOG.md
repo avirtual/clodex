@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - **Teams:** a team reviewer now boots with every skill off, as the hand and lead already do; a reviewer template can still name its own list. Before, the reviewer seat inherited the box's whole skill roster.
+- **Messaging:** an intent whose body was cut short by a turn interrupt (`[Request interrupted by user]` landing mid-body) is no longer fired on the fragment: the seat gets one note naming the verb and asking for a re-emit. Before, a `prompt-save` cut mid-word saved the fragment and reported success.
 - **Messaging:** clicking a seat's ✉ badge while that seat is mid-turn or compacting now keeps the badge, shows a tip saying why, and logs it, instead of clearing the badge and queueing a flush that the seat's next prompt usually pre-empted — the click that appeared to do nothing.
 
 - **Teams:** a project that declares no dependencies no longer needs a `node_modules` directory to pass the ticket loop's suite step — the gate that linked the root's dependencies into a worktree refused every ticket on a dependency-free repo, and warned on every seat spawn.

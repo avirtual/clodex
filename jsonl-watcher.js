@@ -4,8 +4,8 @@
 // Codex event_msg/agent_message and response_item message), buffers it, and
 // flushes on a new requestId (or ANY text entry carrying no id, which cannot be
 // grouped by one) / a non-telemetry textless entry / 1s silence — emitting
-// onText (intent scan, with a per-flush { turnEnd } that is true only when the
-// pending text is the agent's own REPLY and its turn ended), onSessionId
+// onText (intent scan, with a per-flush { turnEnd, interrupted } — the turn ended
+// on the agent's own REPLY; a user interrupt triggered the flush), onSessionId
 // (persistence), onActivity (UI), onCompactSummary, onFileTouches.
 //
 // The flush rule is stated precisely because a header that mis-states it is
@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { extractText, isTurnEndEntry, isCodexReply } = require('./transcript');
+const { extractText, isTurnEndEntry, isInterruptEntry, isCodexReply } = require('./transcript');
 const { extractFileTouches } = require('./file-touch');
 const { pathFor } = require('./clodex-paths');
 
@@ -68,6 +68,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       // than re-derived there: by flush time the entry is gone, and the
       // 1s-silence flush has no entry at all.
       this._pendingTurnEnd = false;
+      this._pendingInterrupted = false;
       // Whether the pending text is the agent's own reply rather than a tool's
       // output. Only a reply may end a turn audibly.
       this._pendingIsReply = false;
@@ -225,6 +226,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           // flag that ships is the one computed at the reply, which is false by
           // construction and leaves a Codex reply permanently unspoken.
           if (this._pendingIsReply && isTurnEndEntry(obj)) this._pendingTurnEnd = true;
+          if (isInterruptEntry(obj)) this._pendingInterrupted = true;
           if (this._pendingText) this._flushPending();
         }
       }
@@ -232,7 +234,11 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
 
     _flushPending() {
       if (this._pendingText) {
-        try { this._onText(this._pendingText, this._pendingTouches, { turnEnd: this._pendingTurnEnd }); } catch {}
+        try {
+          this._onText(this._pendingText, this._pendingTouches, {
+            turnEnd: this._pendingTurnEnd, interrupted: this._pendingInterrupted,
+          });
+        } catch {}
         this._setActivity('idle');
       }
       this._pendingRid = null;
@@ -241,6 +247,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       // writer of _pendingText to reassign it — true today, and not an invariant
       // the next reader should have to rediscover.
       this._pendingTurnEnd = false;
+      this._pendingInterrupted = false;
       this._pendingIsReply = false;
       // Cleared unconditionally, including on a no-text flush: touches held past
       // their own turn would attach to a LATER turn's text, which is a worse

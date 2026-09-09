@@ -14,7 +14,7 @@ const {
   createSpeaker, createVoiceCatalog, listVoices,
   DEFAULT_VOICE, DEFAULT_RATE, MIN_RATE, MAX_RATE, SAY_BIN,
 } = require('../speaker');
-const { isTurnEndEntry } = require('../transcript');
+const { isTurnEndEntry, isInterruptEntry } = require('../transcript');
 
 // --- the discriminator ------------------------------------------------------
 
@@ -39,6 +39,37 @@ test('isTurnEndEntry separates a finished turn from an inter-tool flush', () => 
   ];
   for (const [label, obj, want] of rows) {
     assert.strictEqual(isTurnEndEntry(obj), want, `${label}: expected ${want}`);
+  }
+});
+
+// The sibling discriminator: which entry says the turn was STOPPED rather than
+// finished. The assistant fragment it truncates carries `stop_reason: null`,
+// which is what a chunk still streaming carries too — so this entry is the only
+// evidence, and a row that matched loosely (a prefix, any user text mentioning
+// the phrase) would suppress real intents.
+test('isInterruptEntry recognises the CLI interrupt entry and nothing else', () => {
+  const rows = [
+    ['the observed interrupt entry',
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } }, true],
+    ['the for-tool-use variant',
+      { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } }, true],
+    ['a user entry with other text',
+      { type: 'user', message: { content: [{ type: 'text', text: 'carry on please' }] } }, false],
+    ['a user entry that merely mentions it',
+      { type: 'user', message: { content: [{ type: 'text', text: 'why did I see [Request interrupted by user] there?' }] } }, false],
+    ['an assistant entry with that text',
+      { type: 'assistant', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } }, false],
+    ['a sidechain interrupt (a subagent, not the seat)',
+      { type: 'user', isSidechain: true, message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } }, false],
+    ['a meta interrupt',
+      { type: 'user', isMeta: true, message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } }, false],
+    ['a tool_result user entry', { type: 'user', message: { content: [{ type: 'tool_result' }] } }, false],
+    ['a string-content user entry', { type: 'user', message: { content: '[Request interrupted by user]' } }, false],
+    ['garbage', {}, false],
+    ['null', null, false],
+  ];
+  for (const [label, obj, want] of rows) {
+    assert.strictEqual(isInterruptEntry(obj), want, `${label}: expected ${want}`);
   }
 });
 
@@ -107,6 +138,40 @@ test('a Claude turn reaches onText with turnEnd true only at end_turn', () => {
     [['working on it', false], ['all done', true]],
     'the inter-tool flush must arrive false and only the end_turn text true',
   );
+});
+
+// The interrupt half of the same seam, and the same reason it is driven through
+// the real line handler: the interrupt entry carries no text, so it reaches only
+// the textless branch, and a flag read anywhere else never reaches onText at
+// all. The fragment below is the observed shape — an assistant entry with
+// `stop_reason: null` whose bodied intent ends mid-word.
+test('a user interrupt reaches onText as interrupted on the fragment it cut', () => {
+  const seen = runWatcher([
+    { type: 'assistant', requestId: 'r1', message: { stop_reason: null, content: [{ type: 'text', text: '[agent:dm bob] hello\nsecond li' }] } },
+    { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
+  ]);
+  assert.strictEqual(seen.length, 1);
+  assert.deepStrictEqual(seen[0].meta, { turnEnd: false, interrupted: true },
+    'the flag must ride the flush the interrupt triggered, not a later one');
+});
+
+test('an ordinary user entry after the same fragment carries interrupted false', () => {
+  const seen = runWatcher([
+    { type: 'assistant', requestId: 'r1', message: { stop_reason: null, content: [{ type: 'text', text: '[agent:dm bob] hello\nsecond li' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result' }] } },
+  ]);
+  assert.strictEqual(seen.length, 1);
+  assert.deepStrictEqual(seen[0].meta, { turnEnd: false, interrupted: false },
+    'CONTROL: the same fragment, flushed by anything else, must fire as it always did');
+});
+
+test('a finished turn carries turnEnd true and interrupted false', () => {
+  const seen = runWatcher([
+    { type: 'assistant', requestId: 'r1', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:dm bob] hello' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result' }] } },
+  ]);
+  assert.strictEqual(seen.length, 1);
+  assert.deepStrictEqual(seen[0].meta, { turnEnd: true, interrupted: false });
 });
 
 // The exact four-entry rollout shape, in order, from real Codex sessions. Before
