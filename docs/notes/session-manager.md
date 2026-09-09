@@ -37,38 +37,3 @@ The open-ticket refusal reads the board directly instead of relying on
 ticket — assigned to the seat by name, never started — passes it, and the rename
 strands the ticket naming an assignee nothing answers to. The direct read is
 unioned with the helper so the role-resolved and started cases it covers are kept.
-
-## _armBootNudge
-
-The defect it repairs, measured twice on 2026-09-09 (13:19 and 14:50 reboots):
-the reboot notice parked for the `clodex` seat was drained at boot and sat in
-the composer with its Enter rendered as a newline. On a `--resume` replaying a
-large transcript the readline loop comes up AFTER BOOT_DRAIN_SETTLE_MS, so the
-whole write is read as one paste chunk and the trailing `\r` lands as content.
-`inject-queue.js` names this race for a virgin seat; a resumed seat is the
-common case, and nothing downstream detects it — the operator pressed Enter by
-hand.
-
-Armed from the inject queue's WRITE, not from `_drainPendingAtBootReady`'s
-enqueue. That is what makes ONE timer cover both boot writers: the drain and
-the `_replayTicketsOnce` that follows it in the same deferred callback go
-through this one queue, and a producer that claimed nothing writes nothing —
-so "something reached the pane" is the exact condition, with no second hook in
-`team-tickets.js`. `_bootNudgeArmed` makes it one-shot per boot per seat,
-whichever wrote first.
-
-`_bootDrainAt` bounds it to the boot window: past `INJECT_BOOT_MAXWAIT` an
-ordinary dm is being written into a seat whose input loop has long been up, and
-its Enter needs no help.
-
-The fire path writes the raw pty rather than `enqueue`, because the queue's
-quiet gate would defer this write for up to `INJECT_QUIET_MAXWAIT` — which is
-the one thing it must not do. Pty output inside `BOOT_NUDGE_QUIET_MS` means the
-resume render is still painting and an Enter into that is the same race one
-layer on, so it re-arms instead, capped from the write so a seat that never
-goes quiet gives up silently. On an empty composer a bare `\r` is a no-op in
-Claude Code, so an over-fire (the unit DID submit and its turn already ended)
-costs nothing; the log line is what lets the rate be measured.
-
-Not gated on `--resume`: a virgin seat gets the same cover and there is no
-second branch.
