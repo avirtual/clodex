@@ -402,8 +402,8 @@ test('a backtick in the ticket title survives into the merge message verbatim', 
   assert.match(body, /fix the `loopStep` guard/, 'the backticked title is in the message, unexpanded');
 });
 
-test('the lead is told the merge landed, and that a CHANGELOG entry is owed', async () => {
-  const repo = mkRepo();
+test('the lead is told the merge landed, and that a repo with NO changelog owes nothing', async () => {
+  const repo = mkRepo();                       // mkRepo has no CHANGELOG.md at any point
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkMerge({ repo });
 
@@ -415,14 +415,18 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   assert.match(notes[0].body, /\bt1\b/, 'naming the ticket');
   assert.match(notes[0].body, /tl-1/, 'and the branch');
   assert.match(notes[0].body, new RegExp(f.masterHead().slice(0, 12)), 'and the merge sha, so it can be undone');
-  // The merge never AUTHORS a CHANGELOG.md entry, so the debt must be STATED or
-  // the release ships without it.
-  // MEASURED, not asserted: this fixture's branch carries work.txt and nothing
-  // else, so the true answer is that none landed. A bare /CHANGELOG/ match was
-  // true of all three arms and stayed green through the nine merges where the
-  // claim was false — the wording is the claim, so the wording is what is pinned.
-  assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/,
-    'the debt is stated when the merge really carried no entry');
+  // ENTER: the root file really is absent from the tree the lead would open, or
+  // the sentence below is right for the wrong reason.
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'CHANGELOG.md')),
+    'ENTER: master carries no CHANGELOG.md after the merge');
+  // A debt the lead cannot pay, restated on every merge, is how a lead learns to
+  // skip the line on the day it is true. MEASURED, not asserted: the branch
+  // carries work.txt and nothing else, and the repo has no root file to owe an
+  // entry to. Both other arms are denied by name — an absence assertion alone is
+  // true of a notice that was never sent, and the three above establish one was.
+  assert.match(notes[0].body, /This repo has no CHANGELOG\.md at its root — no entry is owed\./,
+    'the notice says the repo carries no changelog');
+  assert.ok(!/entry is OWED/.test(notes[0].body), 'and bills no debt the repo cannot pay');
   assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and it does not claim the merge changed it');
 
   // The body carries a complete, ready-to-fire `[agent:task accept t1]`, inert
@@ -466,17 +470,18 @@ test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and nev
   assert.ok(f.m.sessions.has('team-hand'), 'the hand seat survives the merge');
 });
 
-// ── the CHANGELOG claim is MEASURED: three outcomes, none collapsible ───────
+// ── the CHANGELOG claim is MEASURED: four outcomes, none collapsible ────────
 // Unconditional before t472, and wrong on nine consecutive merges (t470, t471):
 // both branches wrote their `## Unreleased` entry in round 1, so every merge
 // carried it to master and every notice still asked the lead for one. The cost
 // is desensitization — a lead who learns to skip the line skips it on the day
-// it is true — so each of the three answers is pinned by its WORDING and each
-// is paired against the other two, an absence assertion alone being true of a
-// notice that was never sent.
+// it is true — so each answer is pinned by its WORDING and each is paired
+// against the others, an absence assertion alone being true of a notice that
+// was never sent. The fourth, added when a repo with no root file was still
+// billed a debt it could not pay, is the same failure through a different door.
 
 // A repo whose master already has a CHANGELOG.md, with tl-1 cut from that
-// commit. Returns the fixture args the two branch-side subjects share.
+// commit. Returns the fixture args the branch-side subjects share.
 function mkRepoWithChangelog() {
   const repo = mkRepo();
   fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n');
@@ -489,6 +494,55 @@ function mkRepoWithChangelog() {
     ticketOver: { worktree: { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha } },
   };
 }
+
+test('a repo that HAS a CHANGELOG.md is still told the entry is owed, verbatim', async () => {
+  // The sibling of the no-changelog subject above, and the only place the debt
+  // sentence survives as a literal. Same shape — a branch carrying work.txt and
+  // nothing else — so the ONE difference between them is whether the root file
+  // exists, which is what the absent arm reads.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge happened');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification');
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'CHANGELOG.md')),
+    'ENTER: the root file really is there, or this is the other subject');
+
+  assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/,
+    'the debt is stated where the repo can actually pay it');
+  assert.ok(!/no entry is owed/.test(notes[0].body),
+    'and the absent arm does not swallow a repo that has the file');
+  assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and no change is claimed');
+});
+
+test('a branch that ADDS the first CHANGELOG.md gets CHANGED, not the absent sentence', async () => {
+  // The order the two arms are read in, pinned. `present` is measured on the
+  // shared checkout AFTER the merge, so a branch that creates the file makes it
+  // present and touched at once; an absent arm tested first, or measured on the
+  // pre-merge tree, would tell the lead nothing is owed about the very entry the
+  // merge just carried.
+  const repo = mkRepo();                       // no CHANGELOG.md at the base
+  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', '# Changelog\n\n## Unreleased\n\n- the widget is reentrant\n');
+  const f = mkMerge({ repo });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge happened');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification');
+  assert.match(fsReal.readFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), 'utf8'), /the widget is reentrant/,
+    'ENTER: the merge really created the file on master');
+
+  assert.match(notes[0].body, /CHANGELOG\.md was CHANGED by this merge/,
+    'the merge that carried the first entry says so');
+  assert.ok(!/no entry is owed/.test(notes[0].body),
+    'and does not report the repo as changelog-less over the entry it just landed');
+  assert.ok(!/entry is OWED/.test(notes[0].body), 'nor ask for a duplicate');
+});
 
 test('a branch that WROTE a CHANGELOG entry is told the entry landed, not that one is owed', async () => {
   const { repo, ticketOver } = mkRepoWithChangelog();
