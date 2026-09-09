@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — A new team's lead boots lean: the stock lead template
+## Unreleased
+
+## 5.47.0 — 2026-09-09 — A new team's lead boots lean: the stock lead template
 
 - **Teams:** spawning a team's lead by name with no `template:` now boots it on the lead role's template, stock `clodex-team-lead` by default: Opus, every skill off, the team, monitor and run-tests execs granted, `spawn` on and the privileged intents off. Before, a bare spawn gave the lead the spawner's box default (on a Fable box: Fable 1M with every skill and plugin and no exec grants), which is the most expensive seat a team can have carrying its whole context. An explicit `template:` still wins, and `team create` now records `clodex-team-lead` on the lead role, so the roster shows it.
 
