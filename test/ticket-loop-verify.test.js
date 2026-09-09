@@ -1803,8 +1803,8 @@ test('a node_modules the spawn cannot link WARNS on the reply and spawns anyway'
   const f = mkLoop({ repo });
   // See the sibling above: without it the gate skips the link entirely and all
   // four assertions below go vacuous while staying green. It must DECLARE a
-  // dependency too — a root that declares none has nothing to link and is
-  // resolvable as it stands, which is the sibling subject below.
+  // dependency too: a root declaring none has nothing to link, so it resolves
+  // as it stands and there is no warning left for these four to see.
   fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'), '{"name":"t","dependencies":{"a":"1"}}\n');
   f.team.roles.hand.dispatch = 'worktree';
   // The root's tree removed: the source the link would point at is gone, which
