@@ -27,7 +27,7 @@ const {
 const { isDraftOpen } = require('./proxy-util');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
-const { matchSeatRole, defaultLeadSeat } = require('./team-manifest');
+const { matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS } = require('./team-manifest');
 const {
   readTeamJson, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
 } = require('./team-prompt-dir');
@@ -2299,6 +2299,14 @@ function createTicketMethods(deps, shared) {
       const id = resolveModelId(intent.model);
       if (!id) return { ok: false, error: `model "${intent.model}" is not a model id or alias (opus, sonnet, haiku, fable)` };
       const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
+      // Everything the mutator would throw on, checked BEFORE the write: the
+      // template file is not part of the transaction the mutator rolls back, so a
+      // refusal reached after teamTemplateSave leaves a derived file behind for a
+      // role that was never added or changed.
+      if (!ROLE_RE.test(name)) return { ok: false, error: `role name "${name}" must match ${ROLE_RE} (${team.file})` };
+      if (RESERVED_ROLE_KEYS.has(name)) return { ok: false, error: `the "${name}" role is operator-owned topology; edit it via the app, not an intent/mutator (${team.file})` };
+      if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use addRole (${team.file})` };
+      if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" with a different definition` };
       const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
       const stem = intent.template || current || 'clodex-team-hand';
       let base = readTeamJson({ fs, path }, team, 'templates', stem);

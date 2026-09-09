@@ -27,12 +27,14 @@ function stripModelArgs(extraArgs) {
   return rest;
 }
 
+const LISTING_KEYS = ['id', 'shadowedBy', 'plugin', 'pluginName'];
+
 function deriveModelTemplate(base, roleName, modelId) {
   const out = { ...base };
-  delete out.id;
+  for (const k of LISTING_KEYS) delete out[k];
   out.name = roleName;
   out.extraArgs = ['--model', modelId, ...stripModelArgs(base && base.extraArgs)];
   return out;
 }
 
-module.exports = { resolveModelId, deriveModelTemplate, MODEL_ALIASES };
+module.exports = { resolveModelId, deriveModelTemplate };

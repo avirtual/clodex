@@ -10154,7 +10154,7 @@ function mkTeamModel({ roles = { hand: { brief: 'the hand', template: 'clodex-te
     listTeams: tm.listTeams,
     addRole: tm.addRole,
     setRole: tm.setRole,
-    listAllTemplates: () => [shippedHand],
+    listAllTemplates: () => [{ ...shippedHand, id: 'clodex-team-hand', shadowedBy: ['other-team'] }],
     resolveTeam: () => tm.loadManifest('team'),
     findProjectRoot: () => projectRoot,
   });
@@ -10194,16 +10194,25 @@ test('t767: role-add worker model:haiku with no template derives from the shippe
   assert.strictEqual(f.tm.loadManifest('team').roles.worker.template, 'worker');
 });
 
-test('t767: a bad alias and a missing base each reply error: and write nothing at all', () => {
+// Every row must leave NOTHING behind, and the mutator-refusal rows are the
+// reason the pre-checks exist: teamTemplateSave is not inside the transaction
+// addRole/setRole roll back, so a refusal reached after the write mints a
+// template for a role that was never added or changed.
+test('t767: a bad alias, a missing base, and every refusal the mutator would raise each write nothing at all', () => {
   for (const [intentPatch, want] of [
-    [{ model: 'claude-opus-5[1m]' }, /error: model "claude-opus-5\[1m\]" is not a model id or alias \(opus, sonnet, haiku, fable\)/],
-    [{ model: 'opus', template: 'nope' }, /error: no template "nope" to derive from/],
+    [{ sub: 'role-set', name: 'hand', model: 'claude-opus-5[1m]' }, /error: model "claude-opus-5\[1m\]" is not a model id or alias \(opus, sonnet, haiku, fable\)/],
+    [{ sub: 'role-set', name: 'hand', model: 'opus', template: 'nope' }, /error: no template "nope" to derive from/],
+    [{ sub: 'role-set', name: 'reviewer', model: 'opus' }, /error: the "reviewer" role is operator-owned topology/],
+    [{ sub: 'role-set', name: 'ghost', model: 'opus' }, /error: role "ghost" not found on team "team"/],
+    [{ sub: 'role-add', name: 'hand', model: 'opus' }, /error: role "hand" already exists on team "team"/],
+    [{ sub: 'role-add', name: 'x'.repeat(40), model: 'opus' }, /error: role name "x{40}" must match/],
   ]) {
     const f = mkTeamModel();
     const before = f.teamJsonBytes();
-    f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', body: '', ...intentPatch });
+    f.m._handleTeam(f.seat, { type: 'team', body: '', ...intentPatch });
     assert.match(f.last(), want);
-    assert.strictEqual(fsReal.existsSync(pathReal.join(f.teamDir, 'templates')), false, 'no templates dir was created');
+    assert.strictEqual(fsReal.existsSync(pathReal.join(f.teamDir, 'templates')), false,
+      `no templates dir for ${intentPatch.sub} ${intentPatch.name}`);
     assert.deepStrictEqual(f.teamJsonBytes(), before, 'team.json is byte-identical — the role write is skipped too');
   }
 });

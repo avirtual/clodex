@@ -833,4 +833,9 @@ module.exports = {
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
   ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
+  // Exported for the `model:` derive path (team-tickets.js), which must refuse
+  // exactly what addRole/setRole would refuse BEFORE it writes a template file —
+  // a mirrored copy of either rule there is the copy that drifts, and the drift
+  // shows up as a derived file left behind by a role write that never happened.
+  ROLE_RE, RESERVED_ROLE_KEYS,
 };
