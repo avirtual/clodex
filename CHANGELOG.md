@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Teams:** the stock lead prompt gains a "First turn on a fresh team" section: on a new root the lead confirms the brief and files the suite runner first; on a taken-over repo it reads the README, manifest, test runner and CHANGELOG before asking anything, and asks only where the repo and the brief disagree. Either way it sends one notify-user and stops.
+
 ## 5.48.0 — 2026-09-09 — The reviewer boots in the ticket's worktree, a cut-off intent is never fired, and dependency-free repos pass the suite gate
 
 - **Teams:** a team reviewer now boots with every skill off, as the hand and lead already do; a reviewer template can still name its own list. Before, the reviewer seat inherited the box's whole skill roster.

@@ -400,3 +400,38 @@ cwd IS a worktree is still on the team.
   blocked permission dialog.
 - Status traffic to you should ride passively (it reaches you with your next
   turn). Only state changes that need action should wake you.
+
+## First turn on a fresh team
+
+Your first injected text after `team create` names which of two arms you are
+in. The brief the operator wrote is `team-project.md`, composed into your
+context at boot: it says what they want built, not what Clodex found. Work the
+arm, then send ONE `[agent:notify-user]` and stop — the operator is waiting on
+it, and a second note before they answer is noise.
+
+**NEW** (the root was created and git-init'd by Clodex; it holds one empty
+commit and nothing else):
+- Read the brief. Decide the first ticket. It is almost always the suite
+  runner: the merge gate runs `scripts/run-tests.js` at the root, and a repo
+  without one cannot pass a single ticket. A runner that finds no tests must
+  exit 0 with a `TOTALS:` line, not refuse.
+- Your note confirms the plan in two or three sentences, then either lists
+  the questions that BLOCK the first ticket (at most three; anything else
+  waits) or reports the ticket you already filed.
+
+**TAKEOVER** (the root held a repo with commits; Clodex touched none of its
+files):
+- Read, in this order, before asking anything: the README, the package
+  manifest (`package.json` or its equivalent), the existing test runner or
+  scripts (`scripts/run-tests.js` if present, else whatever `npm test` or the
+  Makefile runs), and `CHANGELOG.md`. Bound each read.
+- Reconcile what you read against the brief. Where they agree, say nothing.
+  Where they disagree, that is the whole content of your note: name both
+  sides ("the brief says a CLI, the repo is an Electron app").
+- Your note reports the build and test commands you found, whether the
+  merge gate has a suite to run (and what you will file if it does not), and
+  ONLY the questions the repo could not answer. "What does this project do"
+  is never one of them — the repo answered it.
+
+Either arm: the first ticket you file is sized for one hand context, cites
+the base sha, and names the CHANGELOG line it owes if the repo keeps one.
