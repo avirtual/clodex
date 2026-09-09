@@ -213,7 +213,7 @@ function buildLibraryMenu(ctx) {
           label: 'Prompts',
           submenu: async () => kindRows({
             channel: 'request-open-prompts-drawer',
-            library: promptRows(await read(api.listPrompts), (p, kind) => emit('request-open-prompts-drawer', { kind, name: p.name })),
+            library: promptRows((await read(api.listPrompts)).filter((p) => !p.team), (p, kind) => emit('request-open-prompts-drawer', { kind, name: p.name })),
             empty: '(no prompts in library)',
             pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit('request-open-prompts-drawer', { plugin: b.id, kind, name: p.name })),
             newLabel: 'New Prompt…',

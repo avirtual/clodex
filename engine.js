@@ -16,7 +16,7 @@ const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor, defaultClodexHome } = require('./clodex-paths');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
-const { badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
+const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
@@ -458,6 +458,52 @@ function listAllTemplates() {
     shadows.has(t.name) ? { ...t, shadowedBy: shadows.get(t.name) } : t
   ));
   return [...library, ...pluginTemplateRows(pluginBundles()), ...rows];
+}
+
+function teamPromptStems(team, kind) {
+  let files;
+  try { files = fs.readdirSync(path.join(teamsDir, team, 'prompts', kind)); } catch { return []; }
+  return files
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => f.slice(0, -'.md'.length))
+    .filter((stem) => !badStem(stem))
+    .sort();
+}
+
+function teamPromptRows(kind) {
+  const kinds = kind ? [kind] : PROMPT_KINDS;
+  const rows = [];
+  const shadows = new Map();
+  let names;
+  try { names = listTeams(); } catch { return { rows, shadows }; }
+  for (const team of names) {
+    for (const k of kinds) {
+      for (const stem of teamPromptStems(team, k)) {
+        const id = `team:${team}:${k}:${stem}`;
+        const file = teamPromptFile({ fs, path }, { dir: path.join(teamsDir, team) }, k, stem);
+        let body = null;
+        if (file) {
+          try { body = fs.readFileSync(file, 'utf-8'); } catch { body = null; }
+        }
+        rows.push(body == null
+          ? { name: stem, kind: k, body: '', id, team, teamName: team, unreadable: true }
+          : { name: stem, kind: k, body, file: `${stem}.md`, id, team, teamName: team });
+        const key = `${k}:${stem}`;
+        if (!shadows.has(key)) shadows.set(key, []);
+        shadows.get(key).push(team);
+      }
+    }
+  }
+  return { rows, shadows };
+}
+
+function listAllPrompts(kind) {
+  const { rows, shadows } = teamPromptRows(kind);
+  const library = promptLibrary.list(kind).map((p) => {
+    const teams = shadows.get(`${p.kind}:${p.name}`);
+    return teams ? { ...p, shadowedBy: teams } : p;
+  });
+  return [...library, ...rows];
 }
 
 function gatherSources(team) {
@@ -1257,6 +1303,7 @@ const SessionManager = createSessionManager({
     writeBundlePlugins,
     readSystemPromptBody,
     listAllTemplates,
+    listAllPrompts,
     getPluginBundles: () => (pluginHost ? pluginHost.bundles() : []),
   getPersistence: () => persistence,
   getTemplates: () => templates,
@@ -2273,6 +2320,7 @@ const toolCache = createToolCache({ whichBin });
     getPluginLoader: () => pluginLoader,
     getPluginUpdates: () => (pluginUpdateWatch ? pluginUpdateWatch.list() : []),
     listAllTemplates,
+    listAllPrompts,
     resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam, teamsDir,

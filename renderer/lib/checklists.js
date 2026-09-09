@@ -56,6 +56,14 @@ let defaultToolDenyCache = [];
 let defaultSkillDenyCache = [];
 let defaultBuiltinDenyCache = [];
 
+function libraryPromptCache(rows) {
+  const library = (rows || []).filter((p) => p && !p.team);
+  return {
+    system: library.filter((p) => p.kind === 'system'),
+    append: library.filter((p) => p.kind === 'append'),
+  };
+}
+
 // Setters — every renderer.js reassignment routes through these.
 function setPromptLibCache(v) { promptLibCache = v; }
 function setAgentLibCache(v) { agentLibCache = v; }
@@ -542,6 +550,7 @@ module.exports = {
   renderToolAllowChecklist, collectToolAllowChecklist,
   renderSkillChecklist, collectSkillChecklist,
   setChecklistAll, wireBulkToggles,
+  libraryPromptCache,
   setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache,
   setIntentCatalogCache,
   setPluginCatalogCache,

@@ -432,7 +432,8 @@ not by size:
   `teamPromptRemove`, each returning `{ok, file}` or `{ok:false, error}` rather
   than throwing. These take the team NAME plus `{fs, path, teamsDir, listTeams}`
   and refuse a name `listTeams()` does not carry, so an unknown team is a
-  refusal and never an mkdir. Both `templates:saveTeam`/`removeTeam`
+  refusal and never an mkdir. Both `templates:saveTeam`/`removeTeam` +
+  `prompts:saveTeam`/`removeTeam`
   (ipc-handlers.js) and the four `[agent:team template-save|prompt-save|…]`
   verbs (team-tickets.js) go through them — one writer, so the drawer and the
   intent cannot drift into producing different bytes.

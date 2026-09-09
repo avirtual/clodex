@@ -30,6 +30,7 @@ const {
   teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
+  promptOptionGroups, storedPromptNote,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -702,42 +703,29 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<button type="button" data-act="remove" class="secondary">Remove</button>` +
           `</div>`;
         body.querySelector('input[data-f="brief"]').value = row.brief;
-        // Prompt is a picker (must be a library prompt name — free text just
-        // fails at spawn time; matches the Add Role form). Options come from the
-        // same rail-filtered list; a stored prompt missing from the library still
-        // has to display, so it's appended as a marked option rather than
-        // silently blanking. Values/labels set by PROPERTY (agent-writable).
+        // Prompt is a picker (a stem the resolver can find — free text just fails
+        // at spawn time; matches the Add Role form). Options come from the same
+        // rail-filtered list; a stored prompt the list does not offer still has
+        // to display, so storedPromptNote appends it as a marked option rather
+        // than silently blanking. Values/labels set by PROPERTY (agent-writable).
         const sel = body.querySelector('select[data-f="prompt"]');
         {
           const none = document.createElement('option');
           none.value = ''; none.textContent = '(no prompt)';
           sel.appendChild(none);
-          for (const p of promptNames) {
-            const opt = document.createElement('option');
-            opt.value = p; opt.textContent = p;
-            sel.appendChild(opt);
-          }
-          if (row.prompt && !promptNames.includes(row.prompt)) {
+          appendPromptOptions(sel, promptNames, manifest && manifest.name);
+          const note = storedPromptNote(row.prompt, {
+            offered: promptNames,
+            all: allPromptNames,
+            teamOwned: teamOwnedPrompts,
+            listingOk: promptsListingOk,
+            team: (manifest && manifest.name) || '',
+          });
+          if (note) {
             const missing = document.createElement('option');
             missing.value = row.prompt;
-            // THREE distinct facts, three messages. They have different fixes, and
-            // one wording for all of them sent the operator hunting for a file that
-            // was on disk the whole time. All set by PROPERTY (agent-writable).
-            if (!promptsListingOk) {
-              // The listing failed — an empty list is indistinguishable from a
-              // genuinely empty library by count, so accuse the prompt of nothing.
-              missing.textContent = row.prompt;
-              missing.title = 'library listing unavailable';
-            } else if (allPromptNames.includes(row.prompt)) {
-              // Present on disk, but not an append-rail prompt: the picker won't
-              // offer it and the seat won't compose it. The fix is `rail: append`
-              // in its front matter, not writing the file.
-              missing.textContent = `${row.prompt} (not an append-rail prompt)`;
-              missing.title = 'this prompt exists but does not declare "rail: append", so it can\'t compose onto a role';
-            } else {
-              missing.textContent = `${row.prompt} (missing from library)`;
-              missing.title = 'no system prompt by this name is installed';
-            }
+            missing.textContent = note.label;
+            missing.title = note.title;
             sel.appendChild(missing);
           }
           sel.value = row.prompt;
@@ -911,10 +899,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     await refresh(teamName());
   }
 
-  // Populate the add-role prompt picker from the same rail-filtered source the
-  // New Session dialog's join flow uses. The list is cached module-side so
-  // renderRows (also hit on post-mutation refresh) can build per-row pickers
-  // without re-fetching.
+  // Populate the add-role prompt picker, rail-filtered and scoped to THIS team
+  // (the New Session join flow asks the same channel for the library alone). The
+  // list is cached module-side so renderRows — also hit on post-mutation refresh
+  // — can build per-row pickers without re-fetching.
   let promptNames = [];
   // Every system prompt on disk, rail or not — the second fact renderRows needs
   // to tell "not installed" from "installed but off the append rail".
@@ -925,18 +913,34 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   // renderRows uses this to avoid accusing a present-but-unlistable stored prompt
   // of being "missing from library". No retry loop — one shot per open/refresh.
   let promptsListingOk = true;
-  async function populatePromptOptions() {
+  let teamOwnedPrompts = [];
+  async function populatePromptOptions(team) {
     let res;
-    try { res = await window.api.teamRolePrompts(); } catch { res = null; }
+    try { res = await window.api.teamRolePrompts(team); } catch { res = null; }
     promptsListingOk = !!(res && res.ok);
     const prompts = (res && res.prompts) || [];
     promptNames = prompts;
     allPromptNames = (res && res.all) || [];
+    teamOwnedPrompts = (res && res.teamOwned) || [];
     addPrompt.innerHTML = '<option value="">(no prompt)</option>';
-    for (const p of prompts) {
-      const opt = document.createElement('option');
-      opt.value = p; opt.textContent = p;
-      addPrompt.appendChild(opt);
+    appendPromptOptions(addPrompt, prompts, team);
+  }
+
+  // Labels/values set by PROPERTY throughout (agent-writable strings must never
+  // reach an attribute in this nodeIntegration renderer).
+  function appendPromptOptions(sel, names, team) {
+    for (const group of promptOptionGroups(names, teamOwnedPrompts, team)) {
+      let parent = sel;
+      if (group.label !== null) {
+        parent = document.createElement('optgroup');
+        parent.label = group.label;
+        sel.appendChild(parent);
+      }
+      for (const n of group.names) {
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n;
+        parent.appendChild(opt);
+      }
     }
   }
 
@@ -944,7 +948,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     setStatus('');
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
-    await populatePromptOptions();
+    await populatePromptOptions(name);
     // Every open starts fully collapsed — the acceptance test (lead + hand +
     // reviewer + one custom role fitting without scrolling) is measured in this
     // state, so it must be the state an open lands in, not one the operator has

@@ -46,7 +46,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -1821,10 +1821,7 @@ function populateChecklistsFromCatalogs(cat) {
   renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
-  setPromptLibCache({
-    system: (cat.prompts || []).filter((p) => p.kind === 'system'),
-    append: (cat.prompts || []).filter((p) => p.kind === 'append'),
-  });
+  setPromptLibCache(libraryPromptCache(cat.prompts));
   fillSystemPromptSelect(inputSystemPrompt, '', newSessionSeat());
   renderAppendChecklist(inputAppendList, new Set(), newSessionSeat());
   setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
@@ -1848,11 +1845,7 @@ async function restoreHostCatalogs() {
 }
 
 async function loadPromptLib() {
-  const all = await window.api.listPrompts();
-  setPromptLibCache({
-    system: all.filter(p => p.kind === 'system'),
-    append: all.filter(p => p.kind === 'append'),
-  });
+  setPromptLibCache(libraryPromptCache(await window.api.listPrompts()));
 }
 
 function fillSystemPromptSelect(selectEl, current, seat = null) {
@@ -7041,10 +7034,7 @@ async function openArgsDialog(name, argsSource = null) {
   }
   argsEditingSource = argsSource;
   setAgentLibCache(agentLib || []);
-  setPromptLibCache({
-    system: (promptLib || []).filter(p => p.kind === 'system'),
-    append: (promptLib || []).filter(p => p.kind === 'append'),
-  });
+  setPromptLibCache(libraryPromptCache(promptLib));
   argsEditingName = name;
   argsTarget.textContent = `${name} (${res.type}) — new settings apply on next spawn.`;
   {
