@@ -64,11 +64,11 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._pendingTime = 0;
       this._readBuf = '';
       this._activityState = 'idle';
+      this._pendingInterrupted = false;
       // Whether the pending text's turn is over. Carried to the flush rather
       // than re-derived there: by flush time the entry is gone, and the
       // 1s-silence flush has no entry at all.
       this._pendingTurnEnd = false;
-      this._pendingInterrupted = false;
       // Whether the pending text is the agent's own reply rather than a tool's
       // output. Only a reply may end a turn audibly.
       this._pendingIsReply = false;

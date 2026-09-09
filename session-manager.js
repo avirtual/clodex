@@ -4284,7 +4284,7 @@ function createSessionManager(deps) {
       }
       for (const intent of this._extractIntents(text)) {
         if (meta && meta.interrupted && intent.bodyOpen) {
-          this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
+          if (s) this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
             + `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] was still open — `
             + 'the partial body was NOT applied; re-emit the whole intent and close it with [agent:end]',
           { parkable: true });
