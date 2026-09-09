@@ -155,6 +155,28 @@ test('t780 create: a MISSING PARENT is refused, and the path is not minted',
     assert.strictEqual(fs.existsSync(parent), false, 'a mkdir -p would have minted this');
   });
 
+// The parent check and the non-recursive mkdir are TWO guards, and the first
+// hides the second: with classification intact, swapping in
+// `mkdirSync(root, {recursive:true})` changes no observable behaviour, because
+// nothing ever reaches the mkdir with an absent parent. This drives the
+// materialise step alone — the TOCTOU state where the parent goes away between
+// the classify and the mkdir — so the second guard is pinned on its own.
+test('t780 create: the materialise mkdir is NOT recursive — an absent parent mints no chain',
+  { skip: !gitAvailable() }, async () => {
+    const f = mkTeamCreate();
+    const parent = path.join(f.projectRoot, 'vanished');
+    const root = path.join(parent, 'shop');
+    f.m._classifyTeamRoot = async () => ({ kind: 'new-absent' });
+
+    await create(f, root);
+
+    assert.strictEqual(fs.existsSync(parent), false,
+      'a recursive mkdir would have minted the whole chain here');
+    assert.strictEqual(f.teamExists('shop'), false, 'and no team was written on top of it');
+    assert.ok(f.injected.some((t) => t.includes(`error: could not create ${root} (`)
+      && t.includes('— no team was created')), f.injected.join(' | '));
+  });
+
 test('t780 create: a FILE is refused, and its bytes are unchanged',
   { skip: !gitAvailable() }, async () => {
     const f = mkTeamCreate();
