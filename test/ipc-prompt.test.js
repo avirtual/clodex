@@ -173,13 +173,29 @@ test('task grammar lives in BOTH the literal and GRAMMAR_LINES, byte-identical',
 // for the kvs is pinned on its own, on both copies: a lead that cannot read
 // `dispatch:worktree` here has no other way to learn the verb exists.
 test('t754: the role-add row documents dispatch:/cwd:, in the literal AND in GRAMMAR_LINES', () => {
-  const ROW = /^ {2}\[agent:team role-add <role>.*\[dispatch:standing\|spawn\|worktree\].*\[cwd:<rel>\]\]/m;
+  const ROW = /^ {2}\[agent:team role-add <role>.*\[dispatch:standing\|spawn\|worktree\].*\[cwd:<rel>\]/m;
   assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the role-add kvs row');
   assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
     assert.ok(/dispatch:worktree gives every ticket to that role its own branch, tree and seat/.test(src),
       'the row says what worktree DOES — the reason the ticket exists');
     assert.ok(/role-set <role> …\] takes the same kvs/.test(src), 'and that role-set takes them too');
+  }
+});
+
+// The `]]` that t754 above used to guard rides the LAST kv, and t767 appended
+// model: after cwd:. Pinned here rather than there so the closing bracket still
+// has exactly one owner: a row whose kv list runs past the intent's `]` renders
+// a grammar no parse accepts.
+test('t767: the role-add row documents model:, closes the intent, and names the bracketed-id limit', () => {
+  const ROW = /^ {2}\[agent:team role-add <role>.*\[model:<id\|opus\|sonnet\|haiku\|fable>\]\]/m;
+  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the model: kv as the last one in the row');
+  assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
+  for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
+    assert.ok(/model: derives templates\/<role>\.json from the role's template \(or clodex-team-hand\) with that --model and points the role at it/.test(src),
+      'the row says what model: DOES');
+    assert.ok(/a bracketed id such as claude-opus-5\[1m\] cannot be written here, use the alias/.test(src),
+      'and that the family regex stops at the first ] — the reason the aliases exist');
   }
 });
 
