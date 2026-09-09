@@ -12,12 +12,12 @@
 const fs = require('fs');
 const path = require('path');
 
-// The exec-intent helper scripts (clodex-team roster, clodex-monitor). These are
+// The exec-intent helper scripts. These are
 // dependency-free (node builtins only), so a flat copy by relative path is
-// sufficient — there is no require-closure to walk. test/exec-scripts-materialize.js
+// sufficient — there is no require-closure to walk. test/exec-scripts-materialize.test.js
 // pins that property: add a local require() to one of them and the test fails
 // rather than the flat copy silently stranding it at runtime.
-const EXEC_SCRIPTS = ['scripts/clodex-team.js', 'scripts/clodex-monitor.js'];
+const EXEC_SCRIPTS = ['scripts/clodex-team.js', 'scripts/clodex-monitor.js', 'scripts/clodex-run-tests.js'];
 
 // Materialize the exec helper scripts into <root>/bin/, overwriting every launch.
 // Copied by BASENAME into bin/ (flat, matching the ${CLODEX_BIN} argv the defs

@@ -192,17 +192,17 @@ Clodex ships three definitions and seeds them on first run:
 |---|---|
 | `clodex-team` | **Yes** — runs a script Clodex itself ships (`${CLODEX_BIN}`). Roster, ticket list, retire. |
 | `clodex-monitor` | **Yes** — same. Runs a long command in the background and DMs the seat its output. |
-| `clodex-run-tests` | **No** — runs `${TEAM_ROOT}/scripts/test-digest.sh`, which is a script *this repo* happens to have. |
+| `clodex-run-tests` | **Yes** — runs `${CLODEX_BIN}/clodex-run-tests.js`, which runs your `scripts/run-tests.js` (the merge gate's runner) and prints a one-line digest. |
 
-`clodex-run-tests` is the shape to learn from. `${TEAM_ROOT}` expands correctly
-for your team — so the grant *follows* your root faithfully and then bounces,
-because there is no `scripts/test-digest.sh` there. A def written against a
-token is portable; whether the thing it points at exists is your project's
-business.
+`clodex-run-tests` is the shape to learn from. The one file it needs from you is
+`${TEAM_ROOT}/scripts/run-tests.js` — the same runner the merge gate below
+already requires, so a project that can merge a ticket can already get a digest.
+A def written against a token is portable; the project supplies the one thing
+only it can.
 
-The shipped hand template grants only `clodex-team` for exactly this reason: a
-default that fails on first use teaches an operator to distrust the whole
-grants list.
+The shipped hand template grants all three, because all three work on a fresh
+team: a default that fails on first use teaches an operator to distrust the
+whole grants list.
 
 **To add your own:** drop a JSON def in `~/.clodex/teams/<name>/exec/` — or in
 `~/.clodex/library/exec/` when you want every team to share it — write the
