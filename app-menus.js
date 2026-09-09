@@ -16,6 +16,7 @@
 // moves into the factory closure — same module-private lifetime it had before.
 
 const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('electron');
+const os = require('os');
 
 const CLODEX_REPO_URL = 'https://github.com/avirtual/clodex';
 const CLODEX_PLUGINS_REPO_URL = 'https://github.com/avirtual/clodex-plugins';
@@ -61,6 +62,43 @@ function deleteWorkspaceDetail(running, saved) {
       + 'Conversation transcripts on disk are preserved and can be resumed in a new workspace.';
   }
   return 'This removes the empty workspace record. No sessions will be affected.';
+}
+
+function tildePath(p) {
+  const home = os.homedir();
+  return home && p.startsWith(home + '/') ? `~${p.slice(home.length)}` : p;
+}
+
+// The delete confirm's copy, in three arms. The KEEPS half is the load-bearing
+// one: everything a team accumulates except the manifest directory lives
+// elsewhere and survives, and an operator who cannot tell that from the dialog
+// keeps a dead team rather than risk its ticket history.
+function deleteTeamDetail(name, dir, check) {
+  if (!check.loaded) {
+    return `The manifest under ${tildePath(dir)} does not load (${check.error}), so seats and tickets cannot be checked. `
+      + 'Removes the directory; nothing else is touched.';
+  }
+  const base = `Removes ${tildePath(dir)} (its manifest, prompts and templates). Keeps: the project at ${check.root}, `
+    + "its ticket history and task artifacts under ~/.clodex/projects, and every seat's session record";
+  // Omitted when the count is 0 AND when it is unknown: `saved` is null on an
+  // unreadable persistence, and a clause that guesses would understate a loss.
+  if (!check.saved) return `${base}.`;
+  return check.saved === 1
+    ? `${base} — 1 saved seat on this team becomes a plain session.`
+    : `${base} — ${check.saved} saved seats on this team become plain sessions.`;
+}
+
+function teamInUseDetail(check) {
+  const parts = [];
+  if (check.seats.length) parts.push(`Live seats: ${check.seats.join(', ')}.`);
+  if (check.tickets.length) parts.push(`Open tickets: ${check.tickets.join(', ')}.`);
+  // The instruction names only the half that is actually blocking: telling an
+  // operator to retire seats when none are live reads as a bug in the check.
+  const fix = check.seats.length && check.tickets.length
+    ? 'Retire the seats and close or cancel the tickets, then delete.'
+    : (check.seats.length ? 'Retire the seats, then delete.' : 'Close or cancel the tickets, then delete.');
+  parts.push(fix);
+  return parts.join(' ');
 }
 
 function createAppMenus(deps) {
@@ -509,9 +547,53 @@ function createAppMenus(deps) {
     if (!names.length) submenu.push({ label: '(no teams)', enabled: false });
     submenu.push(
       { type: 'separator' },
-      { label: 'Create Team…', click: () => sendToFocused('request-open-team-create') }
+      { label: 'Create Team…', click: () => sendToFocused('request-open-team-create') },
+      buildDeleteTeamRow(teams, names)
     );
     return { label: 'Teams', submenu };
+  }
+
+  // Unlike the listing above, a broken team is ENABLED here: it is the one an
+  // operator most wants gone, and deleteTeam does not load the manifest.
+  function buildDeleteTeamRow(teams, names) {
+    if (!names.length) return { label: 'Delete Team…', enabled: false };
+    const submenu = names.map((name) => {
+      let ok = false;
+      try { teams.loadManifest(name); ok = true; } catch {}
+      return { label: ok ? name : `${name} — not loaded`, click: () => confirmDeleteTeam(teams, name) };
+    });
+    return { label: 'Delete Team…', submenu };
+  }
+
+  async function confirmDeleteTeam(teams, name) {
+    // Checked at CLICK time, for the reason the Delete Workspace… confirm states:
+    // a menu template can sit built for minutes, and these are the numbers the
+    // sentence above a destructive button asserts.
+    const check = teams.deleteCheck(name);
+    if (!check.ok) { dialog.showErrorBox('Delete team failed', check.error); return; }
+    const dir = path.join(teams.teamsDir, name);
+    if (check.loaded && (check.seats.length || check.tickets.length)) {
+      await dialog.showMessageBox({
+        type: 'error',
+        buttons: ['OK'],
+        message: `Team "${name}" is in use`,
+        detail: teamInUseDetail(check),
+      });
+      return;
+    }
+    const result = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Delete', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Delete team "${name}"?`,
+      detail: deleteTeamDetail(name, dir, check),
+    });
+    if (result.response !== 0) return;
+    const r = teams.deleteTeam(name);
+    if (!r.ok) { dialog.showErrorBox('Delete team failed', r.error); return; }
+    refreshAppMenu();
+    refreshTrayMenu();
   }
 
   // Theme change from anywhere (View menu or a renderer's Preferences picker):

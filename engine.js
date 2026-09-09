@@ -793,10 +793,11 @@ const { createSubagentStore, noteSubagentTurn, feedSince } = require('./subagent
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById } = require('./pending-store');
+const { createTeamDelete } = require('./team-delete');
 const { createTeamManifest } = require('./team-manifest');
 const {
   findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
-  setRole, removeRole, renameRole, setTeamWatchdog, setLead, teamsDir,
+  setRole, removeRole, renameRole, setTeamWatchdog, setLead, teamsDir, deleteTeam,
   // PASSED, not left to defaultClodexHome(): that reads CLODEX_HOME, which
   // would put teams on a different tree than every other subsystem.
 } = createTeamManifest({ fs, clodexHome: REGISTRY_DIR });
@@ -1274,6 +1275,9 @@ const SessionManager = createSessionManager({
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
 const manager = new SessionManager();
+const { deleteCheck: teamDeleteCheck, deleteGated: teamDeleteGated } = createTeamDelete({
+  loadManifest, deleteTeam, getManager: () => manager,
+});
 speakerBusyBroadcast = (busy) => { try { manager._broadcast('speaker-busy', busy); } catch {} };
 const proxyPoller = new ProxyPoller(manager);
 manager._proxyPoller = proxyPoller;
@@ -2271,6 +2275,7 @@ const toolCache = createToolCache({ whichBin });
     resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam, teamsDir,
+    teamDeleteCheck, teamDeleteGated,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,
     collectSystemDiagnostics, diagSummary, diagWarning,

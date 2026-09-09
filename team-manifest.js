@@ -442,7 +442,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return team ? team.root : null;
   }
 
-  function createTeam({ name, root, lead, roles } = {}) {
+  // NAME_RE rejects a separator, so a checked name can only ever join to a
+  // direct child of teamsDir — which is what makes deleteTeam's rmSync safe.
+  function assertTeamName(name) {
     if (typeof name !== 'string' || !NAME_RE.test(name)) {
       throw new Error(`team name "${name}" must match ${NAME_RE}`);
     }
@@ -452,6 +454,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (name.startsWith('.')) {
       throw new Error(`team name "${name}" must not start with "." — listTeams skips dot-directories, so the team would be invisible`);
     }
+  }
+
+  function createTeam({ name, root, lead, roles } = {}) {
+    assertTeamName(name);
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
       throw new Error(`team "${name}" root must be an absolute path`);
     }
@@ -632,6 +638,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
+  // Deliberately does NOT loadManifest: a team whose manifest no longer parses
+  // is the one an operator most wants gone, and requiring a load would strand it
+  // with no route out of the box.
+  function deleteTeam(teamName) {
+    assertTeamName(teamName);
+    const dir = path.join(teamsDir, teamName);
+    let isDir = false;
+    try { isDir = fs.statSync(dir).isDirectory(); } catch {}
+    if (!isDir) throw new Error(`team "${teamName}" does not exist`);
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { name: teamName, dir };
+  }
+
   function renameRole(teamName, fromName, toName) {
     const team = loadManifest(teamName);
     if (RESERVED_ROLE_KEYS.has(fromName) || RESERVED_ROLE_KEYS.has(toName)) {
@@ -682,7 +701,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 
   return {
     resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
-    createTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setLead,
+    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setLead,
     teamsDir, TEAM_FILE,
   };
 }

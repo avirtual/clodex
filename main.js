@@ -259,7 +259,13 @@ const {
   getEnvScopes: () => envScopes,
   getPluginHost: () => (engine ? engine.getPluginHost() : null),
   getPluginUpdates: () => (engine ? engine.getPluginUpdates() : []),
-  getTeams: () => (engine ? { listTeams: engine.listTeams, loadManifest: engine.loadManifest } : null),
+  getTeams: () => (engine ? {
+    listTeams: engine.listTeams,
+    loadManifest: engine.loadManifest,
+    teamsDir: engine.teamsDir,
+    deleteCheck: engine.teamDeleteCheck,
+    deleteTeam: engine.teamDeleteGated,
+  } : null),
 });
 
 

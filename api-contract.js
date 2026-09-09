@@ -46,6 +46,10 @@ const API_CONTRACT = [
   { name: 'teamSetRole', kind: 'invoke', channel: 'team:setRole' },
   { name: 'teamRemoveRole', kind: 'invoke', channel: 'team:removeRole' },
   { name: 'teamRenameRole', kind: 'invoke', channel: 'team:renameRole' },
+  // t783: Delete Team… — the check reports what blocks and what a delete would
+  // keep, the delete re-runs it and refuses on a live seat or an open ticket.
+  { name: 'teamDeleteCheck', kind: 'invoke', channel: 'team:deleteCheck' },
+  { name: 'teamDelete', kind: 'invoke', channel: 'team:delete' },
   { name: 'teamSetWatchdog', kind: 'invoke', channel: 'team:setWatchdog' },
   { name: 'teamGather', kind: 'invoke', channel: 'team:gather' },
   // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
