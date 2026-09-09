@@ -260,6 +260,12 @@ const ticketTaskDirLine = (dir, raw) => {
   return `TASK DIR: ${dir}${rule}${rule ? taskDirCreateClause : ''}\n`;
 };
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
+// A constant, never a field written into team.json: `role-set lead` is refused
+// (the lead's topology is the operator's), so a default persisted into the
+// manifest could never be corrected from a seat. An operator who wants another
+// shape sets `lead.template` in the app's team editor, which normalizeRoleDef
+// already accepts.
+const DEFAULT_LEAD_TEMPLATE = 'clodex-team-lead';
 const REVIEWER_PROMPT_PREFIX = 'clodex-team-reviewer';
 
 const REVIEWER_FALLBACK = {
@@ -518,7 +524,7 @@ function createTicketMethods(deps, shared) {
           }
         }
       }
-      const tplLabel = tpl ? (tpl.name || intent.template) : null;
+      let tplLabel = tpl ? (tpl.name || intent.template) : null;
 
       const rawCwd = (intent.cwd || (tpl && tpl.cwd) || '').trim();
       if (!rawCwd) {
@@ -538,6 +544,33 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
+
+      // A bare spawn of a team's LEAD boots on the lead role's template. Resolved
+      // from the TARGET cwd's team, not the spawner's: the seat that opens a new
+      // team is usually on no team itself (the contact agent in the bootstrap
+      // skill is exactly that), and the team being joined is the one whose lead
+      // this is. Runs AFTER cwd so `tpl.cwd` cannot reach the `rawCwd` fallback —
+      // the lead's directory comes from the spawn, which is what
+      // team-manifest.js's "lead cannot take a cwd" refusal relies on.
+      let leadNote = '';
+      if (!tpl) {
+        let targetTeam = null;
+        try { targetTeam = resolveTeam(cwd); } catch { targetTeam = null; }
+        if (targetTeam && name === targetTeam.lead) {
+          const stem = (targetTeam.roles && targetTeam.roles.lead && targetTeam.roles.lead.template)
+            || DEFAULT_LEAD_TEMPLATE;
+          const shape = this._templateShape(stem, targetTeam);
+          if (shape && shape.tpl) {
+            tpl = shape.tpl;
+            tplLabel = tpl.name || stem;
+            leadNote = ` (lead of team ${targetTeam.name})`;
+          } else {
+            // Never a refusal: an operator whose library file was deleted must
+            // still get a lead, just an unshaped one they can see is unshaped.
+            leadNote = ` — lead role template "${stem}" not installed, spawned with no template`;
+          }
+        }
+      }
       // The branch name is validated inside createWorktree (it reaches git argv),
       // so this only rejects the empty form — a bare `worktree:` that parsed to
       // nothing must not spawn a NORMAL seat silently, which is the isolation the
@@ -634,6 +667,7 @@ function createTicketMethods(deps, shared) {
           // booted unbriefed. Never blocks: the seat is already up by here.
           const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
           reply(`ok: spawned "${name}" (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : '')
+            + leadNote
             + promptWarn
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
