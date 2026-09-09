@@ -305,6 +305,34 @@ function reviewerNote(rev, now) {
   return `spawned per review round · none now · last ${last.ticket} ${last.verdict || '?'} r${last.round}${when ? ` ${when}` : ''}`;
 }
 
+const TICKET_TITLE_MAX = 60;
+const LANDED_WORD = { accepted: 'merged', 'merge-failed': 'merge FAILED', cancelled: 'cancelled' };
+
+function ticketLine(t, now) {
+  const id = t && t.id != null ? String(t.id) : '?';
+  const rawTitle = t && t.title != null ? String(t.title) : '';
+  const title = rawTitle
+    ? (rawTitle.length > TICKET_TITLE_MAX ? `${rawTitle.slice(0, TICKET_TITLE_MAX)}…` : rawTitle)
+    : 'untitled';
+  const parts = [id, title];
+  if (t && t.outcome != null) {
+    const when = activityTime(t.at, now);
+    const word = LANDED_WORD[t.outcome] || String(t.outcome);
+    parts.push(when ? `${word} ${when}` : word);
+    const rounds = Number(t.rounds) || 0;
+    if (rounds > 0) parts.push(`${rounds} round${rounds === 1 ? '' : 's'}`);
+    return parts.join(' · ');
+  }
+  parts.push(t && t.assignee ? String(t.assignee) : 'unassigned');
+  const step = t && t.step != null ? String(t.step) : '';
+  if (step === 'review') parts.push(`in review (round ${Number(t.round) || 1})`);
+  else if (step === 'working') {
+    const when = activityTime(t.since, now);
+    parts.push(when ? `working since ${when}` : 'working');
+  } else parts.push(step || 'working');
+  return parts.join(' · ');
+}
+
 // One SUMMARY row per role, in manifest key order — the collapsed line the
 // popover leads with. Deliberately a separate function from teamRoleRows rather
 // than a widening of it: that model's keys are pinned against the manifest schema
@@ -355,14 +383,21 @@ function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
     const raw = (def && def.dispatch) || DEFAULT_DISPATCH;
     const dispatch = DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH;
     const readOnly = RESERVED_ROLE_KEYS.has(key);
-    const seats = { total, working, names };
     if (act && key === 'reviewer') {
-      return { key, readOnly, seats, reviewer: true, note: reviewerNote(act.reviewer, now) };
+      return { key, readOnly, seats: { total, working, names }, reviewer: true, note: reviewerNote(act.reviewer, now) };
     }
     const perTicket = act
       && dispatch !== DEFAULT_DISPATCH
       && act.roles
       && Object.prototype.hasOwnProperty.call(act.roles, key);
+    const liveSeats = perTicket && Array.isArray(act.roles[key].live) ? act.roles[key].live : null;
+    const seats = liveSeats
+      ? {
+        total: liveSeats.length,
+        working: liveSeats.filter((s) => s && s.step === 'working').length,
+        names: liveSeats.map((s) => String(s && s.seat == null ? '' : s.seat)),
+      }
+      : { total, working, names };
     return {
       key,
       dispatch,
@@ -553,7 +588,7 @@ module.exports = {
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
-  teamStage, roleSummaries, activityTime, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  teamStage, roleSummaries, activityTime, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   DISPATCH_VALUES, DEFAULT_DISPATCH, REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS,
 };

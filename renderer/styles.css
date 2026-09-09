@@ -1293,7 +1293,7 @@ html, body {
    problem to fix, so it carries the warn border; `setup` is a normal first step
    and must not read as an error. */
 .team-role-row.team-lead-card.repair { border-color: var(--warn); }
-#team-roles-add-section.hidden, #team-roles-watchdog-section.hidden { display: none; }
+#team-roles-add-section.hidden, #team-roles-watchdog-section.hidden, #team-roles-tickets-section.hidden { display: none; }
 .team-role-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .team-role-key { font-weight: 600; }
 .team-role-badge {

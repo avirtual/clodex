@@ -27,7 +27,7 @@ const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
   leadSeatCandidates, leadResolution,
-  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
 } = require('../lib/team-roles');
@@ -56,10 +56,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const addPanel = document.getElementById('team-roles-newrole-panel');
   const addCancel = document.getElementById('team-roles-newrole-cancel');
   const addDispatchHelp = document.getElementById('team-roles-dispatch-help');
-  // The two whole sections `setup` hides. Wrappers rather than per-control
-  // toggles: the subhead and hint belong to the section, and hiding the inputs
-  // alone would leave two headings standing over nothing.
+  // The whole sections `setup` hides. Wrappers rather than per-control toggles:
+  // the subhead and hint belong to the section, and hiding the inputs alone would
+  // leave a heading standing over nothing.
   const addSection = document.getElementById('team-roles-add-section');
+  const ticketsSection = document.getElementById('team-roles-tickets-section');
   const watchdogSection = document.getElementById('team-roles-watchdog-section');
   const watchdogInput = document.getElementById('team-roles-watchdog-ms');
   const watchdogSet = document.getElementById('team-roles-watchdog-set');
@@ -488,6 +489,45 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     return head;
   }
 
+  function buildTicketsSection(act) {
+    const frag = document.createDocumentFragment();
+    const head = document.createElement('div');
+    head.className = 'popover-subhead';
+    head.textContent = 'Tickets';
+    frag.appendChild(head);
+    const hint = document.createElement('div');
+    hint.className = 'hint-text team-roles-hint';
+    hint.textContent = 'Filed with [agent:task add], worked on their own branch, reviewed by a cold seat, merged by the loop.';
+    frag.appendChild(hint);
+    const tickets = act && act.tickets ? act.tickets : null;
+    const now = Date.now();
+    const list = (caption, rows, empty) => {
+      const cap = document.createElement('div');
+      cap.className = 'team-role-head';
+      const k = document.createElement('span');
+      k.className = 'team-role-key';
+      k.textContent = caption;
+      cap.appendChild(k);
+      frag.appendChild(cap);
+      if (!rows || !rows.length) {
+        const none = document.createElement('div');
+        none.className = 'team-role-note';
+        none.textContent = empty;
+        frag.appendChild(none);
+        return;
+      }
+      for (const t of rows) {
+        const line = document.createElement('div');
+        line.className = 'team-role-note';
+        line.textContent = ticketLine(t, now);
+        frag.appendChild(line);
+      }
+    };
+    list('Open', tickets && Array.isArray(tickets.open) ? tickets.open : null, 'No open tickets.');
+    list('Landed', tickets && Array.isArray(tickets.landed) ? tickets.landed : null, 'Nothing landed yet.');
+    return frag;
+  }
+
   // One absent stock role, offered back (R3). ONE component for every stock key
   // rather than a wizard mode, so a lead-only team looks like a setup screen
   // without being a second code path. Fixed strings only — the key comes from a
@@ -572,6 +612,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // team that cannot dispatch anything yet. `repair` keeps them — an operator
     // repairing a pointer still needs to see what the team was configured to do.
     addSection.classList.toggle('hidden', stage === 'setup');
+    ticketsSection.classList.toggle('hidden', stage === 'setup');
+    ticketsSection.innerHTML = '';
+    if (stage !== 'setup') ticketsSection.appendChild(buildTicketsSection(activity));
     // The watchdog's visibility belongs to the GEAR now (B2), not to the stage:
     // renderRows runs on every post-mutation refresh, so a `toggle(…, stage ===
     // 'setup')` here would re-SHOW the section every time the operator saved
