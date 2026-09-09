@@ -219,6 +219,11 @@ skill came up with Fable-class hands carrying every installed skill, and was
 stopped on cost. `[agent:team role-set hand model:<alias>]` changes the model
 (`opus`, `sonnet`, `haiku`, `fable`).
 
+The stock hand and lead templates keep nine tools — Read, Edit, Write, Glob,
+Grep, Bash, Agent, SendMessage, ListAgents — and deny the rest of the catalog;
+the list is pinned against the catalog, so a tool Claude Code adds is denied on
+ticket seats until someone decides otherwise.
+
 The "every skill off" default ships as the sentinel `"disabledSkills": ["*"]`,
 which is resolved against this box's skill catalog at spawn. Every surface that
 edits a skill list — the template editor, the New Session dialog, a session's
