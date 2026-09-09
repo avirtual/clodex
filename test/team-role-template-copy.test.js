@@ -227,3 +227,21 @@ test('t789 createTeam: a copy that cannot be written throws, and unwinds the cop
   assert.strictEqual(fs.statSync(path.join(tplDir(home, 'x'), 'hand.json')).isDirectory(), true,
     'ENTER: the obstruction is the directory this test planted, so the write really was refused');
 });
+
+test('t789 createTeam: a team.json that cannot be written unwinds the copies made for that call', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t789-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  // The copies succeed and the MANIFEST write is what fails — the other side of
+  // the ordering. Without the unwind the team dir is left holding two templates
+  // for a team that does not exist, which the next create of the same name then
+  // adopts as "already owned" copies it never made.
+  fs.mkdirSync(path.join(teamDir(home, 'x'), 'team.json'), { recursive: true });
+
+  assert.throws(() => tm.createTeam({ name: 'x', root, lead: 'x-lead' }));
+
+  assert.deepStrictEqual(fs.readdirSync(teamDir(home, 'x')).sort(), ['team.json'],
+    'both copies AND the templates/ directory are gone — only the fixture\'s obstruction is left');
+  assert.strictEqual(fs.statSync(path.join(teamDir(home, 'x'), 'team.json')).isDirectory(), true,
+    'ENTER: the obstruction is the directory this test planted, so the manifest write really was refused');
+});

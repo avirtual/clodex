@@ -157,6 +157,13 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     atomicWriteFileSync(file, data);
   }
 
+  function unwindTemplateCopies(teamName, roleNames) {
+    for (const r of roleNames) {
+      try { fs.unlinkSync(path.join(teamsDir, teamName, 'templates', `${r}.json`)); } catch {}
+    }
+    try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
+  }
+
   function copyRoleTemplates(teamName, roles, opts) {
     const repointOnly = !!(opts && opts.repointOnly === true);
     const copied = [];
@@ -187,8 +194,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         copied.push(roleName);
       }
     } catch (err) {
-      for (const f of written) { try { fs.unlinkSync(f); } catch {} }
-      try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
+      unwindTemplateCopies(teamName, copied);
       throw err;
     }
     return copied;
@@ -537,7 +543,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       root: resolvedRoot,
       roles: seedRoles,
     };
-    atomicWrite(file, JSON.stringify(manifest, null, 2));
+    try {
+      atomicWrite(file, JSON.stringify(manifest, null, 2));
+    } catch (err) {
+      unwindTemplateCopies(name, templatesCopied);
+      throw err;
+    }
     return { ...loadManifest(name), templatesCopied };
   }
 
@@ -580,11 +591,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (normalized.template != null && !NAME_RE.test(normalized.template)) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
-    // Repoint-only, so the comparison below is against the role as the copy left
-    // it: the def a re-ride carries still names the LIBRARY stem, and comparing
-    // that to a role already pointing at its own copy turns team:join's
-    // unconditional re-ride into "already exists with a different definition".
-    // Writes nothing — the mint arm below is the only path that copies.
     copyRoleTemplates(teamName, { [roleName]: normalized }, { repointOnly: true });
     const existing = team.roles[roleName];
     // Never mint an absent reserved key from a def: loadManifest only requires
@@ -608,10 +614,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     try {
       atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     } catch (err) {
-      for (const r of templatesCopied) {
-        try { fs.unlinkSync(path.join(teamsDir, teamName, 'templates', `${r}.json`)); } catch {}
-      }
-      try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
+      unwindTemplateCopies(teamName, templatesCopied);
       throw err;
     }
     return { ...loadManifest(teamName), templatesCopied };

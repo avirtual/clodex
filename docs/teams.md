@@ -95,11 +95,12 @@ a reviewer template: name it in the reviewer role, since the reviewer's
 prefix-based discovery reads the library only.
 
 The one thing seeded for you under `teams/` is the template copy above: creating
-a team writes `team.json` and a `templates/<role>.json` per role whose stock
-template is installed, and stops. Every other piece its manifest names — prompts,
-exec defs, a template for a role you add by hand — is served by the shared
-library until you ask otherwise. What fills the rest of the directory is
-**Gather**, and only when you ask for it.
+a team writes `team.json` and a `templates/<role>.json` per role whose named
+template is installed in the library, and stops. Every other piece its manifest
+names — role prompts, append prompts, exec defs — is served by the shared library
+until you ask otherwise, and so is a template whose stem the library does not
+carry: the copy is skipped and the role keeps naming the stem. What fills the
+rest of the directory is **Gather**, and only when you ask for it.
 
 ### Gather — make the team own what it uses
 
@@ -491,12 +492,12 @@ as do the `exec/` defs of step 4 — no intent writes either.
 `dispatch:worktree` is the one that makes a hand role mint a branch, tree and
 seat per ticket, and without it an agent-built team can only ever add a standing
 role. `cwd:` is relative to the team root, as everywhere else. `model:` derives
-`templates/<role>.json` from the role's template with that `--model` and points
-the role at it — and since create and role-add already gave the role the team's
-own copy, that base is normally the team's file rather than the library one, so a
-model change keeps whatever else was edited into it. A bracketed id such as
-`claude-opus-5[1m]` cannot be written here, use the alias — `opus`, `sonnet`,
-`haiku`, `fable`.
+`templates/<role>.json` from the role's template (or `clodex-team-hand`) with that
+`--model` and points the role at it — and since create and role-add already gave
+the role the team's own copy, that base is normally the team's own file rather
+than the library one, so a model change keeps whatever else was edited into it. A
+bracketed id such as `claude-opus-5[1m]` cannot be written here, use the alias —
+`opus`, `sonnet`, `haiku`, `fable`.
 
 `lead` and `reviewer` are operator-owned topology: every role verb refuses them,
 so a team you meant to run solo still carries a reviewer definition — harmless,
