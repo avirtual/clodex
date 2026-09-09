@@ -2092,7 +2092,9 @@ async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = 
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getSkillCatalogFor(cwd);
   if (!res || !res.ok) { renderSkillChecklist(inputSkillsList, [], disabledSet); return; }
-  renderSkillChecklist(inputSkillsList, res.names || [], disabledSet,
+  const names = res.names || [];
+  const offSet = disabledSet.has('*') ? new Set(names) : disabledSet;
+  renderSkillChecklist(inputSkillsList, names, offSet,
     advisoryEffective(res.effective, forTemplate),
     { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
 }
@@ -7096,7 +7098,8 @@ async function openArgsDialog(name, argsSource = null) {
     const sc = skillCatalog;
     argsSkillsDisabledPersisted = sc.disabledSkills || [];
     if (caps.skillRoster) {
-      renderSkillChecklist(argsSkillsList, sc.names || [], new Set(sc.disabledSkills || []),
+      const offSet = sc.allOff ? new Set(sc.names || []) : new Set(sc.disabledSkills || []);
+      renderSkillChecklist(argsSkillsList, sc.names || [], offSet,
         sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
     }
     setSkillLibCache(sc.skillLib || []);

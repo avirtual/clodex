@@ -209,10 +209,16 @@ claude-opus-5`) with **every skill off**, the trimmed tools list, and those thre
 exec grants. It is lean on purpose: the first team stood up from the bootstrap
 skill came up with Fable-class hands carrying every installed skill, and was
 stopped on cost. `[agent:team role-set hand model:<alias>]` changes the model
-(`opus`, `sonnet`, `haiku`, `fable`). The template editor's skills popover turns
-skills back on — the "every skill off" default ships as the sentinel
-`"disabledSkills": ["*"]`, which a save from that popover replaces with the
-explicit list of names it is showing.
+(`opus`, `sonnet`, `haiku`, `fable`).
+
+The "every skill off" default ships as the sentinel `"disabledSkills": ["*"]`,
+which is resolved against this box's skill catalog at spawn. Every surface that
+edits a skill list — the template editor, the New Session dialog, a session's
+Skills popover, a peer's Edit settings — renders that sentinel as **every row
+unticked**, which is what the seat actually runs with, and re-ticking rows there
+turns skills back on. A save from any of them writes the explicit list of names
+it was showing, so the sentinel does not survive one: the template then carries
+that box's names rather than "whatever this box knows".
 
 **To add your own:** drop a JSON def in `~/.clodex/teams/<name>/exec/` — or in
 `~/.clodex/library/exec/` when you want every team to share it — write the

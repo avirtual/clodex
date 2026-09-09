@@ -163,3 +163,57 @@ test('omitting outOfScope leaves every row toggleable', () => withDom(() => {
   assert.ok(rowsOf(c).every((r) => !r.disabled && r.checked), 'ENTER: no row may be read-only here');
   assert.deepStrictEqual(collectSkillChecklist(c), []);
 }));
+
+// t769 r2: the peer Edit-settings dialog (renderer.js openArgsDialog). A peer
+// seat carrying the `*` sentinel serves `allOff: true` with `*` stripped out of
+// `names`, so an off-set built from `disabledSkills` matches no row: every skill
+// drew ON, and the save at btn-args-save then wrote `[]` TO THE PEER — turning
+// the remote seat's whole roster back on from a dialog the operator only opened.
+//
+// The shipped statement is RUN, not grepped: what can break is which names the
+// off-set holds, and a source-shape match cannot see it. The block is sliced out
+// of openArgsDialog, which no test can require.
+const fsReal = require('node:fs');
+const pathReal = require('node:path');
+
+function peerSkillBlock() {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('  const isSkillsEditable = (caps.injectSkills || caps.skillRoster)');
+  assert.ok(at > 0, 'ENTER: the args dialog\'s skills gate was located — a moved anchor makes this vacuous');
+  const from = src.indexOf('    if (caps.skillRoster) {', at);
+  const to = src.indexOf('    setSkillLibCache(sc.skillLib', at);
+  assert.ok(from > 0 && to > from, 'ENTER: the roster render block was located inside it');
+  return src.slice(from, to);
+}
+
+function drawPeerRoster(sc) {
+  return withDom(() => {
+    const argsSkillsList = el('div');
+    const env = {
+      caps: { skillRoster: true },
+      sc,
+      argsSkillsList,
+      renderSkillChecklist,
+    };
+    const names = Object.keys(env);
+    new Function(...names, peerSkillBlock())(...names.map((n) => env[n]));
+    return argsSkillsList;
+  });
+}
+
+test('t769: a peer seat reporting allOff draws every row off and collects the explicit list', () => withDom(() => {
+  const c = drawPeerRoster({ ok: true, names: [...NAMES], effective: {}, allOff: true, disabledSkills: ['*'] });
+  assert.deepStrictEqual(rowsOf(c).map((r) => r.name), NAMES,
+    'ENTER: the peer catalog painted its rows — with none the collect below is vacuously []');
+  assert.deepStrictEqual(rowsOf(c).filter((r) => r.checked).map((r) => r.name), [],
+    'the sentinel means the remote seat boots with every skill off; a ticked row states the opposite');
+  assert.deepStrictEqual(collectSkillChecklist(c), NAMES,
+    'and the save must carry the explicit full-off list, never `[]` — `[]` re-enables the peer\'s roster');
+}));
+
+test('t769: a peer seat with an ordinary off-list is unaffected', () => withDom(() => {
+  // The anti-degenerate half: "always draw everything off" passes the subject above.
+  const c = drawPeerRoster({ ok: true, names: [...NAMES], effective: {}, disabledSkills: ['loop'] });
+  assert.deepStrictEqual(rowsOf(c).filter((r) => !r.checked).map((r) => r.name), ['loop']);
+  assert.deepStrictEqual(collectSkillChecklist(c), ['loop']);
+}));
