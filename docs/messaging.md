@@ -204,6 +204,16 @@ dictated draft through, `drainPending` claimed the directory destructively, and
 the divert re-parked the joined text as one ACTIVE entry: no message lost, but a
 `.passive.` park came back active, and a passive park never earns a turn.
 
+A unit the boot-ready drain writes that produces no turn within `BOOT_NUDGE_MS`
+(4s) gets ONE `\r` written to the pty, once the seat has been quiet
+`BOOT_NUDGE_QUIET_MS` (1s) and no draft is open — a `--resume` replaying a long
+transcript brings its readline loop up after `BOOT_DRAIN_SETTLE_MS`, so the
+drain's own Enter is read as pasted content and the message sits in the composer
+unsubmitted. Pty output or an open draft re-arms it for another
+`BOOT_NUDGE_QUIET_MS` rather than firing, so a half-typed line is never submitted
+for the operator. The nudge is cleared by the turn edge and by kill, gives up at
+`INJECT_BOOT_MAXWAIT`, and logs `boot-drain nudge for <seat>` when it fires.
+
 ### Parking & resend (pending-store.js)
 
 - One directory per agent under the pending root; one file per message.

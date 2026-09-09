@@ -13070,6 +13070,250 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'INVARIANT (fire-time claim path): scope NOT claimed off disk — stays recoverable');
 });
 
+// --- t771: the boot-drain NUDGE ------------------------------------------------
+// The defect: on a `--resume` replaying a large transcript the readline loop comes
+// up AFTER BOOT_DRAIN_SETTLE_MS, so the drain's whole write is read as one paste
+// chunk and its trailing \r lands as CONTENT. The unit sits in the composer
+// unsubmitted and nothing detects it (measured twice on 2026-09-09). The repair is
+// one Enter, BOOT_NUDGE_MS after the drain's write, if no turn edge arrived, the
+// pty has been quiet and the operator has no draft of his own open.
+//
+// mkOnDataProbe drives the REAL onData handler, the REAL InjectQueue and the real
+// arm site (the queue's `write` callback), so these subjects compose the whole
+// mechanism end-to-end rather than calling _armBootNudge by hand — a hand-called
+// arm would stay green with the arm site deleted, which is exactly the pin that
+// buys nothing.
+//
+// TIMER DISCIPLINE (r1 rework, and it is the reason the subjects are split the way
+// they are). No assertion here may depend on a poll winning a race against a real
+// timer. The r1 shape ran the "not yet" phase with bootNudgeMs at 40ms and asserted
+// the recorder held no nudge after a POLLED wait for the drain — under a loaded
+// suite the nudge fired before the poll observed the drain and the second `\r` was
+// already recorded. That failed master.
+//
+// So every subject picks its window by what it needs to observe:
+//   UNREACHABLE (seconds) for anything asserting a nudge has NOT happened yet. The
+//   test cannot reach the fire, so the assertion is about ARMED STATE — the timer
+//   object and the byte count — never about wall-clock not having elapsed. These use
+//   `drainAndArm`, whose poll for the armed timer is only sound here.
+//   SHORT (tens of ms) for anything asserting a nudge HAS happened, or that must
+//   change the seat's state before the window elapses. These use `drainOnly` and do
+//   that work in its `onDrained` callback, then wait for the FIRE. Polling for the
+//   arm would be the same defect one layer on: a reachable timer nulls itself when
+//   it fires, so the poll can miss it and time out on a mechanism that worked.
+// "Assert on observed state, never on 'not yet' against wall-clock."
+const NUDGE_UNREACHABLE_MS = 30_000;   // no subject below waits anywhere near this
+
+function mkNudgeProbe(overrides = {}) {
+  const logged = [];
+  const p = mkOnDataProbe({
+    bootNudgeMs: NUDGE_UNREACHABLE_MS,
+    bootNudgeQuietMs: 60,
+    log: { info: (t, m) => logged.push(`${t}: ${m}`), warn: () => {}, error: () => {}, debug: () => {} },
+    ...overrides,
+  });
+  return { ...p, logged };
+}
+
+// Seat a claude-labelled pty capture on a booted probe seat and park one active
+// scope for the boot edge to drain. The relabel is mkOnDataProbe's own test
+// artifact (the queue reads agentType at build time); everything else is production.
+async function nudgeSeat(p, name) {
+  await bashCreate(p.m, name, null);
+  const s = p.getSession(name);
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  parkDelivery(p.PENDING_DIR, name, '[agent:from clodex] the box rebooted', '1');
+  return { s, writes };
+}
+
+// The drain's OWN three bytes, in order. Named once so every subject below can say
+// which rows are the drain and which row is the nudge.
+const DRAINED = ['\x15', '[agent:from clodex] the box rebooted', '\r'];
+
+// Boot the seat, fire the real rising edge, and return once the drain's three bytes
+// are on the pane. A POSITIVE observable, so a subject that reduces to "the drain
+// never ran" fails here rather than passing an absence vacuously.
+//
+// `onDrained` runs the instant those bytes land, INSIDE the helper, for the two
+// subjects that must act before the nudge window elapses.
+async function drainOnly(p, name, onDrained = null) {
+  const { s, writes } = await nudgeSeat(p, name);
+  p.fireData('\x1b[?2004h');                    // the real rising edge → deferred drain
+  await waitFor(() => writes.length >= 3);
+  if (onDrained) onDrained(s, writes);
+  return { s, writes };
+}
+
+// The same, plus a wait for the ARM to be observable. Only safe on an UNREACHABLE
+// window: with a reachable one the nudge can fire before the poll looks, and this
+// wait then times out on a mechanism that worked perfectly. That is the r1 defect
+// in helper form, so the two are kept as separate functions rather than a flag.
+async function drainAndArm(p, name) {
+  const { s, writes } = await drainOnly(p, name);
+  await waitFor(() => !!s._bootNudgeTimer);
+  return { s, writes };
+}
+
+test('t771: the boot drain leaves the nudge ARMED and has written nothing extra', async () => {
+  // The "not yet" phase, and it asserts ARMED STATE rather than elapsed time: the
+  // window here is unreachable (30s) so the fire cannot race the assertions at all.
+  // ENTER-ANCHORED on the drain write itself — rows 0-2 are the Ctrl-U, the payload
+  // and the drain's own Enter, the one the CLI swallowed as text. That the recorder
+  // holds EXACTLY those three is what says the arm has not written anything, and it
+  // is a statement about the recorder, not about the clock.
+  const p = mkNudgeProbe();
+  const { s, writes } = await drainAndArm(p, 'nudge-a');
+  assert.deepStrictEqual(writes, DRAINED,
+    'the drain wrote its three bytes and the arm added none of its own');
+  assert.ok(s._bootNudgeTimer, 'and the nudge is armed, watching for the turn that never comes');
+  assert.strictEqual(p.logged.some((l) => l.includes('boot-drain nudge for nudge-a')), false,
+    'nothing logged — arming is not firing');
+});
+
+test('t771: with no turn edge the armed nudge fires exactly ONE Enter, and no second follows', async () => {
+  // The "fires once" phase, its own subject with a short window. Every assertion
+  // runs AFTER the fire is observed (the poll waits for the 4th byte), so nothing
+  // here races a timer. The settle afterwards is what makes "exactly one" a claim
+  // about the mechanism rather than about when the assertion happened to run.
+  // No wait on the ARM here: the window is reachable, so the nudge may already have
+  // fired by the time a poll could look. The only thing waited for is the FIRE.
+  const p = mkNudgeProbe({ bootNudgeMs: 40, bootNudgeQuietMs: 10 });
+  const { s, writes } = await drainOnly(p, 'nudge-b');
+  await waitFor(() => writes.length >= 4);       // the fire, observed
+  assert.deepStrictEqual(writes, [...DRAINED, '\r'],
+    'ONE \\r appended — the drain\'s three bytes untouched, row 3 is the nudge');
+  assert.strictEqual(s._bootNudgeTimer, null, 'the timer is spent, not re-armed');
+  assert.ok(p.logged.some((l) => l.includes('boot-drain nudge for nudge-b')),
+    'and it says so in the log — the marker is how the fire rate gets measured in production');
+  await new Promise((r) => setTimeout(r, 150));  // several fire windows' worth
+  assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'and it stays exactly one');
+});
+
+test('t771: an activity edge before the timer means the unit DID submit — no Enter, timer cleared', async () => {
+  // The turn edge is the receipt: a seat that started a turn consumed the drain's
+  // Enter as an Enter, so there is nothing to repair and a nudge here would be a
+  // stray keystroke into a live turn. Same edge that clears the dm latch.
+  // Unreachable window: the clear is asserted as OBSERVED STATE (the field is null
+  // immediately after the edge), so this never depends on beating a timer.
+  const p = mkNudgeProbe();
+  const { s, writes } = await drainAndArm(p, 'nudge-c');
+  p.m._emitActivity('nudge-c', 'thinking', false);
+  assert.strictEqual(s._bootNudgeTimer, null, 'the turn edge cleared the armed timer');
+  assert.deepStrictEqual(writes, DRAINED, 'and no Enter was ever written');
+});
+
+test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat goes quiet', async () => {
+  // Output means the resume render is still painting. An Enter into that is the same
+  // race one layer on, so the timer re-arms for BOOT_NUDGE_QUIET_MS rather than
+  // firing. The stamp is written by the production onData handler, so feeding real
+  // chunks is what drives it.
+  //
+  // The re-arm is asserted as observed state, not as "not yet": what proves the hold
+  // is that the timer is a LIVE object with the recorder still at three bytes — a
+  // reading that stays true however long the box takes to get here. The paint starts
+  // the INSTANT those bytes land, inside the helper before any await, so the quiet
+  // gate is already shut when the first (30ms) fire window elapses; starting it
+  // after a second poll would race that window.
+  const p = mkNudgeProbe({ bootNudgeMs: 30 });
+  let paint = null;
+  const { s, writes } = await drainOnly(p, 'nudge-d', () => {
+    paint = setInterval(() => p.fireData('.'), 5);
+  });
+  await new Promise((r) => setTimeout(r, 120));  // several fire windows, all re-armed
+  assert.deepStrictEqual(writes, DRAINED, 'held while output flowed — no Enter into a live repaint');
+  assert.ok(s._bootNudgeTimer, 're-armed rather than spent');
+  clearInterval(paint);                          // the seat finally goes quiet
+  await waitFor(() => writes.length >= 4);       // and only now is the fire observed
+  assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the nudge lands on the quiet seat');
+});
+
+test('t771: an OPEN DRAFT at fire time re-arms too, and the nudge waits for the operator', async () => {
+  // A partial line typed into the boot window and paused: the seat is quiet, so the
+  // output gate alone would submit whatever he had half-written. The draft check is
+  // what stops the nudge pressing Enter on his behalf, and it re-arms on the same
+  // BOOT_NUDGE_QUIET_MS as the paint hold rather than giving up — the message still
+  // needs its Enter once he is done.
+  // Draft opened the instant the drain lands, before any await, for the same reason
+  // the paint is: it must be true when the first fire window elapses.
+  const p = mkNudgeProbe({ bootNudgeMs: 30 });
+  const { s, writes } = await drainOnly(p, 'nudge-e', (sess) => {
+    sess.lastUserInputTs = Date.now(); sess.lastUserSubmitTs = 0;   // isDraftOpen → true
+  });
+  await new Promise((r) => setTimeout(r, 120));             // several fire windows
+  assert.deepStrictEqual(writes, DRAINED, 'his half-typed line was not submitted for him');
+  assert.ok(s._bootNudgeTimer, 'and the nudge is still armed, not abandoned');
+  s.lastUserSubmitTs = Date.now();                          // he submits → draft closed
+  await waitFor(() => writes.length >= 4);
+  assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the next fire writes it');
+});
+
+test('t771: a seat that NEVER goes quiet gives up silently at INJECT_BOOT_MAXWAIT', async () => {
+  // The other end of the re-arm: an unbounded re-arm would nudge minutes later into
+  // a seat that has plainly been alive the whole time. The cap is measured from the
+  // WRITE, and expiry is silent — there is no fault to report, only a nudge that was
+  // never warranted. The give-up is polled as a POSITIVE observable (the field goes
+  // null and stays null), so this asserts an outcome, never elapsed time.
+  const p = mkNudgeProbe({ bootNudgeMs: 30, INJECT_BOOT_MAXWAIT: 200 });
+  let paint = null;
+  const { s, writes } = await drainOnly(p, 'nudge-f', () => {
+    paint = setInterval(() => p.fireData('.'), 5);         // shut the quiet gate at once
+  });
+  await waitFor(() => s._bootNudgeTimer === null, 4000);   // the give-up ran
+  clearInterval(paint);
+  assert.deepStrictEqual(writes, DRAINED, 'gave up without writing — the cap, not a nudge');
+  assert.strictEqual(p.logged.some((l) => l.includes('boot-drain nudge for nudge-f')), false,
+    'and silently: no marker for a nudge that never fired');
+});
+
+test('t771: a boot drain that CLAIMED NOTHING arms no timer (nothing reached the pane to owe a turn)', async () => {
+  // The producer is the discriminator, not the enqueue: a drain whose fire-time
+  // re-check bails claims nothing and writes nothing, so there is no unsubmitted
+  // unit in the composer and a nudge would be a keystroke the operator never asked
+  // for. Driven through boot-g's lever — the draft opens in the enqueue→fire window,
+  // so `produce` really runs and really returns null, which is the exact shape the
+  // spec names.
+  const p = mkNudgeProbe();
+  const { s, writes } = await nudgeSeat(p, 'nudge-g');
+  s.lastUserInputTs = 0; s.lastUserSubmitTs = 0;   // draft closed at the pre-enqueue gate
+  p.fireData('\x1b[?2004h');
+  s._bootReadySeen = false;                        // re-hold the ready gate: producer parks
+  await waitFor(() => p.m._injectQueueFor(s).length === 1);
+  s.lastUserInputTs = Date.now();                  // draft opens before the producer fires
+  s._bootReadySeen = true;                         // release it
+  // POSITIVE: length returns to 0 only in _drain's `finally`, so the producer ran to
+  // completion. An absence asserted before that would be vacuous.
+  await waitFor(() => p.m._injectQueueFor(s).length === 0);
+  assert.deepStrictEqual(writes, [], 'the producer claimed nothing and wrote nothing');
+  assert.strictEqual(s._bootNudgeTimer, undefined, 'so no timer was ever armed');
+});
+
+test('t771: a seat killed before the timer fires writes no Enter into a dead pty', async () => {
+  // Pins the _cleanup clear specifically. `_dead` is deliberately NOT set: the
+  // fire-time `_dead` guard would carry this subject on its own and the clearTimeout
+  // beside _bootDrainTimer could be deleted with the suite still green. What must
+  // survive a reduction here is the clear in the cleanup path — asserted as the
+  // nulled field, observed right after _cleanup returns.
+  const p = mkNudgeProbe({
+    bootNudgeMs: 30,
+    registry: { unregister: () => {} },
+    cleanupClaudeHook: () => {}, cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
+  });
+  // The kill lands the instant the drain does, inside the helper: the window is
+  // reachable (it must be, or the clear could be deleted with this still green), so
+  // the cleanup has to happen before it elapses rather than after a second poll.
+  // The arm is synchronous in the queue's write callback, so the timer is already
+  // live when the drain's third byte is recorded.
+  const { s, writes } = await drainOnly(p, 'nudge-h', (sess) => {
+    assert.ok(sess._bootNudgeTimer, 'armed before the kill — else the clear is asserted against nothing');
+    p.m._cleanup('nudge-h');
+  });
+  await new Promise((r) => setTimeout(r, 120));    // several fire windows
+  assert.deepStrictEqual(writes, DRAINED, 'the retired seat took no keystroke after death');
+});
+
+
 // t168: the same invariant, for the two OTHER drains that reach the store. T54
 // fixed only the boot edge; _flushParkedNow and _drainPendingAtIdle kept the
 // eager claim (drainPending, THEN a fire-and-forget inject), so a write that
