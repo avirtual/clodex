@@ -443,7 +443,10 @@ as do the `exec/` defs of step 4 — no intent writes either.
 `template:`, so the intent path reaches every field the roles popover edits —
 `dispatch:worktree` is the one that makes a hand role mint a branch, tree and
 seat per ticket, and without it an agent-built team can only ever add a standing
-role. `cwd:` is relative to the team root, as everywhere else.
+role. `cwd:` is relative to the team root, as everywhere else. `model:` derives
+`templates/<role>.json` from the role's template (or `clodex-team-hand`) with that
+`--model` and points the role at it; a bracketed id such as `claude-opus-5[1m]`
+cannot be written here, use the alias — `opus`, `sonnet`, `haiku`, `fable`.
 
 `lead` and `reviewer` are operator-owned topology: every role verb refuses them,
 so a team you meant to run solo still carries a reviewer definition — harmless,

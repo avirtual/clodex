@@ -31,6 +31,7 @@ const { matchSeatRole, defaultLeadSeat } = require('./team-manifest');
 const {
   readTeamJson, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
 } = require('./team-prompt-dir');
+const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
@@ -2141,8 +2142,15 @@ function createTicketMethods(deps, shared) {
             };
             if (intent.dispatch) def.dispatch = intent.dispatch;
             if (intent.cwd) def.cwd = intent.cwd;
+            let addClause = '';
+            if (intent.model) {
+              const derived = this._deriveRoleModelTemplate(team, name, intent);
+              if (!derived.ok) { reply(`error: ${derived.error}`); return; }
+              def.template = name;
+              addClause = derived.clause;
+            }
             addRole(team.name, name, def);
-            reply(`role "${name}" added to ${team.name}`);
+            reply(`role "${name}" added to ${team.name}${addClause}`);
             return;
           }
           case 'role-set': {
@@ -2155,8 +2163,15 @@ function createTicketMethods(deps, shared) {
             if (intent.template) patch.template = intent.template;
             if (intent.dispatch) patch.dispatch = intent.dispatch;
             if (intent.cwd) patch.cwd = intent.cwd;
+            let setClause = '';
+            if (intent.model) {
+              const derived = this._deriveRoleModelTemplate(team, name, intent);
+              if (!derived.ok) { reply(`error: ${derived.error}`); return; }
+              patch.template = name;
+              setClause = derived.clause;
+            }
             setRole(team.name, name, patch);
-            reply(`role "${name}" updated on ${team.name}`);
+            reply(`role "${name}" updated on ${team.name}${setClause}`);
             return;
           }
           case 'role-rm': {
@@ -2278,6 +2293,24 @@ function createTicketMethods(deps, shared) {
 
     _teamFileDeps() {
       return { fs, path, teamsDir, listTeams };
+    },
+
+    _deriveRoleModelTemplate(team, name, intent) {
+      const id = resolveModelId(intent.model);
+      if (!id) return { ok: false, error: `model "${intent.model}" is not a model id or alias (opus, sonnet, haiku, fable)` };
+      const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
+      const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
+      const stem = intent.template || current || 'clodex-team-hand';
+      let base = readTeamJson({ fs, path }, team, 'templates', stem);
+      if (!base) {
+        try { base = allTemplates().find((t) => t && t.name === stem) || null; }
+        catch { base = null; }
+      }
+      if (!base) return { ok: false, error: `no template "${stem}" to derive from` };
+      const res = teamTemplateSave(this._teamFileDeps(), team.name, name, deriveModelTemplate(base, name, id));
+      if (!res.ok) return { ok: false, error: res.error };
+      this._refreshAppMenuQuietly();
+      return { ok: true, clause: ` — template "${name}" derived from ${stem} with --model ${id} (${res.file})` };
     },
 
     _refreshAppMenuQuietly() {
