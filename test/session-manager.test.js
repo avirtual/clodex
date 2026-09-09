@@ -16821,8 +16821,11 @@ test('t769: the sentinel without the knownSkillNames dep throws rather than spaw
   } catch (e) { err = e; }
   finally { rig.stop('nodep'); }
   assert.ok(err, 'the spawn must fail');
-  assert.match(String(err && err.message), /knownSkillNames/,
-    'and say which dep is missing');
+  // The EXACT sentence, not just the dep name in it: without the guard the same
+  // spawn dies on `knownSkillNames is not a function` a line later, which names
+  // the dep too — so a looser match here would hold with the guard deleted and
+  // report a wiring bug as an internal type error.
+  assert.strictEqual(err.message, 'disabledSkills "*" needs the knownSkillNames dep');
   assert.ok(!fs.existsSync(pathForReal(rig.root, 'nodep', 'settings')),
     'and it must throw BEFORE writing settings — a file with `*` in skillOverrides is a full-roster seat');
 });
