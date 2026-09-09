@@ -7871,6 +7871,8 @@ body {
         { name: "listPrompts", kind: "invoke", channel: "prompts:list" },
         { name: "savePrompt", kind: "invoke", channel: "prompts:save" },
         { name: "removePrompt", kind: "invoke", channel: "prompts:remove" },
+        { name: "saveTeamPrompt", kind: "invoke", channel: "prompts:saveTeam" },
+        { name: "removeTeamPrompt", kind: "invoke", channel: "prompts:removeTeam" },
         { name: "injectPrompt", kind: "invoke", channel: "prompts:inject" },
         { name: "listAgents", kind: "invoke", channel: "agents:list" },
         { name: "getAgent", kind: "invoke", channel: "agents:get" },
@@ -26674,15 +26676,21 @@ Opening it here and saving would overwrite the file with what this editor could 
         const promptsClose = document.getElementById("prompts-close");
         let editingPrompt = null;
         let editingPromptBundle = null;
+        let editingPromptTeam = null;
+        function openTeamPrompt(p) {
+          openPromptEditor(p, null, { team: p.team });
+        }
         async function refreshPromptsList() {
-          const items = await window.api.listPrompts();
+          const all = await window.api.listPrompts() || [];
+          const items = all.filter((p) => !p.team);
+          const teamRows = all.filter((p) => p.team);
           if (refreshPluginCatalog) await refreshPluginCatalog();
           const groups = [
             ...bundleGroups("prompts/system").map((g) => ({ ...g, kind: "system" })),
             ...bundleGroups("prompts/append").map((g) => ({ ...g, kind: "append" }))
           ];
           promptsList.innerHTML = "";
-          if (items.length === 0 && !groups.length) {
+          if (items.length === 0 && !teamRows.length && !groups.length) {
             promptsEmpty.style.display = "";
             return items;
           }
@@ -26691,9 +26699,12 @@ Opening it here and saving would overwrite the file with what this editor could 
             const el = document.createElement("div");
             el.className = "prompt-item";
             const preview = p.body.split("\n")[0].slice(0, 80) + (p.body.length > 80 ? "\u2026" : "");
+            const shadowedBy = Array.isArray(p.shadowedBy) ? p.shadowedBy : [];
+            const note = shadowedBy.length ? `
+        <div class="prompt-item-scope">Shadowed by team ${shadowedBy.map((n) => `<button data-action="team" data-team="${esc(n)}">${esc(n)}</button>`).join(", ")} \u2014 edits here do not reach that team's seats. Edit the team copy.</div>` : "";
             el.innerHTML = `
         <div class="prompt-item-title">${esc(p.name)} <span class="prompt-kind-badge">${esc(p.kind)}</span></div>
-        <div class="prompt-item-preview">${esc(preview)}</div>
+        <div class="prompt-item-preview">${esc(preview)}</div>${note}
         <div class="prompt-item-actions">
           <button class="primary" data-action="inject">Inject</button>
           <button data-action="edit">Edit</button>
@@ -26711,6 +26722,13 @@ Opening it here and saving would overwrite the file with what this editor could 
               e.stopPropagation();
               openPromptEditor(p);
             });
+            for (const btn of el.querySelectorAll('[data-action="team"]')) {
+              btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const row = teamRows.find((x) => x.team === btn.dataset.team && x.kind === p.kind && x.name === p.name);
+                if (row) openTeamPrompt(row);
+              });
+            }
             el.addEventListener("click", async () => {
               if (!getActiveSession()) {
                 alert("No active session. Select one first.");
@@ -26719,6 +26737,38 @@ Opening it here and saving would overwrite the file with what this editor could 
               await window.api.injectPrompt(getActiveSession(), p.body);
             });
             promptsList.appendChild(el);
+          }
+          for (const team of [...new Set(teamRows.map((p) => p.team))]) {
+            const head = document.createElement("div");
+            head.className = "check-group";
+            head.textContent = `Team ${team}`;
+            promptsList.appendChild(head);
+            for (const p of teamRows.filter((x) => x.team === team)) {
+              const el = document.createElement("div");
+              el.className = "prompt-item";
+              const preview = p.unreadable ? "unreadable \u2014 Edit and save replaces the file" : p.body.split("\n")[0].slice(0, 80) + (p.body.length > 80 ? "\u2026" : "");
+              el.innerHTML = `
+          <div class="prompt-item-title">${esc(p.name)} <span class="prompt-kind-badge">${esc(p.kind)}</span></div>
+          <div class="prompt-item-preview">${esc(preview)}</div>
+          <div class="prompt-item-actions">
+            <button data-action="edit">Edit</button>
+            <button data-action="delete">Delete</button>
+          </div>
+        `;
+              el.querySelector('[data-action="edit"]').addEventListener("click", (e) => {
+                e.stopPropagation();
+                openTeamPrompt(p);
+              });
+              el.querySelector('[data-action="delete"]').addEventListener("click", async (e) => {
+                e.stopPropagation();
+                if (!confirm(`Delete team ${team}'s prompt "${p.name}"?`)) return;
+                const res = await window.api.removeTeamPrompt(team, p.kind, p.name);
+                if (res && res.ok === false) alert(`Could not delete it: ${res.error || "unknown error"}`);
+                refreshPromptsList();
+              });
+              el.addEventListener("click", () => openTeamPrompt(p));
+              promptsList.appendChild(el);
+            }
           }
           appendBundleGroups(promptsList, groups, {
             onEdit: async (sec, entry) => {
@@ -26748,11 +26798,13 @@ Opening it here and saving would overwrite the file with what this editor could 
         function closePromptsDrawer() {
           promptsDrawer.classList.add("hidden");
         }
-        function openPromptEditor(prompt2 = null, bundle = null) {
+        function openPromptEditor(prompt2 = null, bundle = null, teamOwner = null) {
           editingPromptBundle = bundle;
+          editingPromptTeam = teamOwner && teamOwner.team || null;
           if (prompt2) {
             editingPrompt = { kind: prompt2.kind, name: prompt2.name };
-            promptEditorTitle.textContent = bundle ? `Edit Prompt \u2014 ${bundle.name} plugin` : "Edit Prompt";
+            if (editingPromptTeam) promptEditorTitle.textContent = `Edit Prompt \u2014 team ${editingPromptTeam}`;
+            else promptEditorTitle.textContent = bundle ? `Edit Prompt \u2014 ${bundle.name} plugin` : "Edit Prompt";
             promptKind.value = prompt2.kind;
             promptKind.disabled = true;
             promptName.value = prompt2.name;
@@ -26776,6 +26828,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           promptEditor.classList.add("hidden");
           editingPrompt = null;
           editingPromptBundle = null;
+          editingPromptTeam = null;
         }
         promptsClose.addEventListener("click", closePromptsDrawer);
         promptsNew.addEventListener("click", () => openPromptEditor(null));
@@ -26789,6 +26842,16 @@ Opening it here and saving would overwrite the file with what this editor could 
             return;
           }
           promptName.style.borderColor = "";
+          if (editingPromptTeam) {
+            const res2 = await window.api.saveTeamPrompt(editingPromptTeam, kind, name, body);
+            if (res2 && res2.ok === false) {
+              alert(`Could not save into team ${editingPromptTeam}: ${res2.error || "unknown error"}`);
+              return;
+            }
+            closePromptEditor();
+            refreshPromptsList();
+            return;
+          }
           if (editingPromptBundle) {
             if (await writeBundle(editingPromptBundle, `prompts/${kind}`, name, body)) {
               closePromptEditor();
@@ -26808,7 +26871,12 @@ Opening it here and saving would overwrite the file with what this editor could 
         promptDelete.addEventListener("click", async () => {
           if (!editingPrompt) return;
           if (!confirm(`Delete prompt "${editingPrompt.name}"?`)) return;
-          await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+          if (editingPromptTeam) {
+            const res = await window.api.removeTeamPrompt(editingPromptTeam, editingPrompt.kind, editingPrompt.name);
+            if (res && res.ok === false) alert(`Could not delete it: ${res.error || "unknown error"}`);
+          } else {
+            await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+          }
           closePromptEditor();
           refreshPromptsList();
         });
@@ -30985,6 +31053,35 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         patch.cwd = trim(formValues && formValues.cwd);
         return patch;
       }
+      function promptOptionGroups(names, teamOwned, team) {
+        const owned = new Set(team ? teamOwned || [] : []);
+        const ownedNames = (names || []).filter((n) => owned.has(n));
+        const library = (names || []).filter((n) => !owned.has(n));
+        const groups = [];
+        if (ownedNames.length) groups.push({ label: `Team ${team}`, names: ownedNames });
+        if (library.length) groups.push({ label: null, names: library });
+        return groups;
+      }
+      function storedPromptNote(prompt2, opts = {}) {
+        const { offered = [], all = [], teamOwned = [], listingOk = true, team = "" } = opts;
+        if (!prompt2 || offered.includes(prompt2)) return null;
+        if (teamOwned.includes(prompt2)) {
+          return { label: prompt2, title: `this team's own prompt (teams/${team}/prompts/system/${prompt2}.md)` };
+        }
+        if (!listingOk) {
+          return { label: prompt2, title: "library listing unavailable" };
+        }
+        if (all.includes(prompt2)) {
+          return {
+            label: `${prompt2} (not an append-rail prompt)`,
+            title: `this prompt exists but does not declare "rail: append", so it can't compose onto a role`
+          };
+        }
+        return {
+          label: `${prompt2} (missing from library)`,
+          title: "no system prompt by this name is installed"
+        };
+      }
       function reservedRoleNote(key) {
         if (key === "lead") return "Runs the team. Its role is fixed so the team always has one.";
         if (key === "reviewer") return "Independently checks the lead's work \u2014 locked so a lead can never rewrite its own reviewer.";
@@ -31230,6 +31327,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         reservedRoleNote,
         preflightByRole,
         usesByRole,
+        promptOptionGroups,
+        storedPromptNote,
         reservedRemovalWarning,
         parseDuration,
         formatDuration,
@@ -31282,7 +31381,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         clearableFields,
         reservedRemovalWarning,
         REMOVABLE_RESERVED_ROLE_KEYS,
-        usesByRole
+        usesByRole,
+        promptOptionGroups,
+        storedPromptNote
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
@@ -31734,25 +31835,19 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 none.value = "";
                 none.textContent = "(no prompt)";
                 sel.appendChild(none);
-                for (const p of promptNames) {
-                  const opt = document.createElement("option");
-                  opt.value = p;
-                  opt.textContent = p;
-                  sel.appendChild(opt);
-                }
-                if (row.prompt && !promptNames.includes(row.prompt)) {
+                appendPromptOptions(sel, promptNames, manifest && manifest.name);
+                const note = storedPromptNote(row.prompt, {
+                  offered: promptNames,
+                  all: allPromptNames,
+                  teamOwned: teamOwnedPrompts,
+                  listingOk: promptsListingOk,
+                  team: manifest && manifest.name || ""
+                });
+                if (note) {
                   const missing = document.createElement("option");
                   missing.value = row.prompt;
-                  if (!promptsListingOk) {
-                    missing.textContent = row.prompt;
-                    missing.title = "library listing unavailable";
-                  } else if (allPromptNames.includes(row.prompt)) {
-                    missing.textContent = `${row.prompt} (not an append-rail prompt)`;
-                    missing.title = `this prompt exists but does not declare "rail: append", so it can't compose onto a role`;
-                  } else {
-                    missing.textContent = `${row.prompt} (missing from library)`;
-                    missing.title = "no system prompt by this name is installed";
-                  }
+                  missing.textContent = note.label;
+                  missing.title = note.title;
                   sel.appendChild(missing);
                 }
                 sel.value = row.prompt;
@@ -31867,10 +31962,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         let promptNames = [];
         let allPromptNames = [];
         let promptsListingOk = true;
-        async function populatePromptOptions() {
+        let teamOwnedPrompts = [];
+        async function populatePromptOptions(team) {
           let res;
           try {
-            res = await window.api.teamRolePrompts();
+            res = await window.api.teamRolePrompts(team);
           } catch {
             res = null;
           }
@@ -31878,19 +31974,31 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const prompts = res && res.prompts || [];
           promptNames = prompts;
           allPromptNames = res && res.all || [];
+          teamOwnedPrompts = res && res.teamOwned || [];
           addPrompt.innerHTML = '<option value="">(no prompt)</option>';
-          for (const p of prompts) {
-            const opt = document.createElement("option");
-            opt.value = p;
-            opt.textContent = p;
-            addPrompt.appendChild(opt);
+          appendPromptOptions(addPrompt, prompts, team);
+        }
+        function appendPromptOptions(sel, names, team) {
+          for (const group of promptOptionGroups(names, teamOwnedPrompts, team)) {
+            let parent = sel;
+            if (group.label !== null) {
+              parent = document.createElement("optgroup");
+              parent.label = group.label;
+              sel.appendChild(parent);
+            }
+            for (const n of group.names) {
+              const opt = document.createElement("option");
+              opt.value = n;
+              opt.textContent = n;
+              parent.appendChild(opt);
+            }
           }
         }
         async function openTeamRolesPopover(name, anchorEl) {
           setStatus("");
           helpPanel.classList.add("hidden");
           resetDrag(popover);
-          await populatePromptOptions();
+          await populatePromptOptions(name);
           expandedRole = null;
           setAddPanel(false);
           closeGatherPanel();

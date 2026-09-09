@@ -123,11 +123,13 @@ test('team:names reaches listTeams; team:rolePrompts filters the library', () =>
   // `prompts` is the picker's rail-filtered offering; `all` is everything on
   // disk. The popover needs both to tell "not installed" from "installed but off
   // the append rail" — one message for both facts sent the operator looking for
-  // a file that was there the whole time (R3).
+  // a file that was there the whole time (R3). Called with NO team, so `teamOwned`
+  // is empty: this is the New Session join flow's library-only answer (t790).
   assert.deepStrictEqual(handlers['team:rolePrompts']({}), {
     ok: true,
     prompts: ['clodex-team-hand'],
     all: ['clodex-team-hand', 'clodex-team-lead', 'clodex-team-reviewer', 'house'],
+    teamOwned: [],
   });
 });
 
