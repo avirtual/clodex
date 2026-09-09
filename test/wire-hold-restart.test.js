@@ -62,7 +62,7 @@ function machine(t) {
     };
   };
   const boot = () => new HoldKeeper({
-    warmth, now, request,
+    warmth, now, request, marginSeconds: 100,
     entryStore: new HoldEntryStore({ path: file, onError: (m) => errors.push(m) }),
   });
   return { dir, file, clock, warmth, sent, errors, responder, boot, request,
@@ -97,7 +97,7 @@ test('THE BUG: a perpetual hold pings after a restart with no intervening turn',
 
   // And the thing the operator actually paid for: it PINGS. Drive the clock to
   // inside the margin so the tick is due, exactly as it would be on an idle seat.
-  m.clock.t += 300 - 60; // ttl 300, margin 300 → due once remaining < 300 and > 0
+  m.clock.t += 300 - 60; // ttl 300, margin 100 → due once remaining < 100 and > 0
   await after.tick();
   assert.strictEqual(m.sent.length, 1, 'the restored hold pinged with no turn taken');
   assert.strictEqual(m.sent[0].body.max_tokens, 1, 'and it is the minimal warming replay');
@@ -299,7 +299,7 @@ test('an armed-perpetual entry is exempt from the entry-cap eviction', async (t)
   const obj = makeObj();
   // maxEntries 2: the same shape as 2000-session churn, minus the zeros.
   const k = new HoldKeeper({
-    warmth: m.warmth, now: () => m.clock.t, request: m.request, maxEntries: 2,
+    warmth: m.warmth, now: () => m.clock.t, request: m.request, maxEntries: 2, marginSeconds: 100,
     entryStore: new HoldEntryStore({ path: m.file, onError: (e) => m.errors.push(e) }),
   });
 

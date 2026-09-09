@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Keep-warm:** a hold no longer pings a prefix whose cache TTL is not longer than the ping margin. After an autocompact the replayable request carries 5-minute markers, and a perpetual hold pinged that pre-compact prefix every minute until the next real turn (measured: 152 pings, about $21, on one seat overnight).
+
 ## 5.44.2 — 2026-09-09 — Bundled wirescope v0.6.64: no more unmarked first thinking rounds
 
 - **Cache busts:** the bundled wirescope proxy is now v0.6.64, which keeps a message-level cache marker on a turn's first thinking round when the settled pin is at full budget; before this, such rounds re-read the whole history uncached (measured: 134 rounds, 13M uncached tokens over three days, almost all on hand seats).
