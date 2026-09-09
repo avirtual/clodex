@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - **Teams:** the stock hand and lead templates now deny every tool a ticket seat cannot use (scheduling, push, remote trigger, plan mode, worktree switching, AskUserQuestion, EndConversation, SendFeedback, the task list, and the rest), keeping only Read, Edit, Write, Glob, Grep, Bash, Agent, SendMessage and ListAgents. The list is pinned against the tool catalog, so a tool added to Claude Code stays off on ticket seats until it is deliberately allowed. Before, tools added since the list was written came up on. Both templates also declare an empty plugin list, so a ticket seat no longer inherits every shipped plugin's bundle (clodex-plugin-builder rode on every hand and lead).
+- **Sessions:** a message drained into a seat at boot that lands as pasted text instead of submitting (a `--resume` replaying a long transcript brings its input loop up after the drain) now gets one Enter nudge a few seconds later, once the seat is quiet, no turn has started and you have no draft of your own open, so the reboot notice no longer sits in the composer waiting for you to press Enter — and a line you were half-way through typing is never submitted for you. Logged as `boot-drain nudge for <seat>`.
 
 ## 5.47.0 — 2026-09-09 — A new team's lead boots lean: the stock lead template
 
