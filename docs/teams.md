@@ -448,14 +448,16 @@ saved as `prompts/append/team-project.md`, the stem the stock lead and hand
 templates compose at boot: step 2 and the `role-set` below are then already done,
 and a brief that cannot be saved leaves no team behind. With a brief the create
 also spawns the lead itself, in the root, on `clodex-team-lead`, needing no
-`spawn` grant of its own, and tells it in its first injected text whether the root
-is new or one it is taking over; a lead name already in use is refused before
-anything is written, and a spawn that fails leaves the team on disk with the retry
-command in the reply. After a BODYLESS create the lead is still yours to spawn,
-with its cwd at the root — after the create, never before, because a seat resolves
-its team from its cwd at boot and carries that roster for the rest of its life, so
-one spawned first never learns it leads — and so is making the hand per-ticket with
-`[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
+`spawn` grant of its own, and tells it on its first turn whether the root is new
+or one it is taking over; a lead name already in use is refused before anything is
+written, and a spawn that fails leaves the team on disk with the retry command in
+the reply. If `clodex-team-lead` is not installed the seat still boots, but bare —
+the brief composes only through that template — and the reply says it was NOT
+briefed rather than claiming otherwise. After a BODYLESS create two steps are
+still yours: spawn the lead with its cwd at the root — after the create, never
+before, because a seat resolves its team from its cwd at boot and carries that
+roster for the rest of its life, so one spawned first never learns it leads — and
+make the hand per-ticket with `[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
 not exist yet; on one that already does it refuses.
 `[agent:team set-lead <seat>]` re-points the lead afterwards, and only the current
 lead may do it.

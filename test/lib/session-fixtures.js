@@ -189,7 +189,12 @@ function mkTeamCreate({
     injectBase(s, text, opts);
     if (injected.length > before) perSeat.push({ seat: s && s.name, text: injected[injected.length - 1] });
   };
-  // Mints a session entry as the real create() does: the opener is injected into
+  // The opener goes out ACTIVE-PARKED, never as a spawn-time PTY write: the new
+  // lead is still booting and the boot re-render wipes an injected draft. Captured
+  // rather than run because the real one needs a PENDING_DIR and a live seat.
+  const openers = [];
+  m._deliverParkedActive = (to, from, body, mtype) => { openers.push({ to, from, body, mtype }); };
+  // Mints a session entry as the real create() does: the opener is addressed to
   // the seat looked up from the map, so a stub that only recorded argv would make
   // every opener assertion vacuous.
   m.create = async (...args) => {
@@ -204,7 +209,7 @@ function mkTeamCreate({
   const readTeam = (name) => JSON.parse(fsReal.readFileSync(pathReal.join(home, 'teams', name, 'team.json'), 'utf-8'));
   const teamExists = (name) => fsReal.existsSync(pathReal.join(home, 'teams', name, 'team.json'));
   const toSeat = (name) => perSeat.filter((e) => e.seat === name).map((e) => e.text);
-  return { m, injected, toSeat, created, refreshes, seat, home, projectRoot, readTeam, teamExists, tm };
+  return { m, injected, toSeat, openers, created, refreshes, seat, home, projectRoot, readTeam, teamExists, tm };
 }
 
 module.exports = { mk, mkPark, mkTeamCreate };

@@ -2248,11 +2248,14 @@ function createTicketMethods(deps, shared) {
         const onReply = (msg) => {
           if (/^ok: spawned/.test(msg)) {
             const bare = msg.match(/lead role template "[^"]*" not installed, spawned with no template/);
-            const how = bare ? `WITHOUT its template (${bare[0]})` : 'on template clodex-team-lead';
-            reply(`${head}; ${team.lead} spawned in the root ${how} and briefed. `
+            if (bare) {
+              reply(`${head}; ${team.lead} spawned in the root WITHOUT its template (${bare[0]}) `
+                + '— NOT briefed: the brief composes only through that template; install it and respawn.');
+              return;
+            }
+            reply(`${head}; ${team.lead} spawned in the root on template clodex-team-lead and briefed. `
               + `Ask ${team.lead} for your first ticket.`);
-            const leadSeat = this.sessions.get(team.lead);
-            if (leadSeat) this._injectText(leadSeat, opener, { parkable: true });
+            this._deliverParkedActive(team.lead, session.name, opener, 'dm');
             return;
           }
           reply(`${head}; ${team.lead} could NOT be spawned (${msg.replace(/^error: /, '')}) — the team is on disk; `

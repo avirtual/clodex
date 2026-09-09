@@ -10810,11 +10810,11 @@ test('t782 create: the caller sees ONE [agent:team] line and ZERO [agent:spawn] 
   ]);
 });
 
-test('t782 create: an UNINSTALLED lead template is said so, never claimed as applied', async () => {
-  // The template label in the line is the literal `clodex-team-lead`, so this is
-  // the arm where that literal would be a lie: the library file is gone, the
-  // spawn says it booted bare, and the create's line must carry that through
-  // rather than name a template nothing resolved.
+test('t782 create: an UNINSTALLED lead template says NOT briefed, and sends no opener', async () => {
+  // The brief reaches a seat ONLY through the lead template's
+  // appendPromptFiles:["team-project"], and a bare spawn passes []. So this arm
+  // may claim neither the template nor the briefing — and the opener, which tells
+  // the lead to follow a section of a prompt it never composed, must not go at all.
   const f = mkTeamCreate({ makeRepo: true, noLeadTemplate: true });
   await f.m._handleIntent('a', {
     type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'Ship the thing.',
@@ -10824,9 +10824,14 @@ test('t782 create: an UNINSTALLED lead template is said so, never claimed as app
   assert.deepStrictEqual(f.created[0][3], [], 'bare — no template config reached create()');
   const line = f.toSeat('a')[0];
   assert.ok(line.includes('shop-lead spawned in the root WITHOUT its template '
-    + '(lead role template "clodex-team-lead" not installed, spawned with no template) and briefed.'), line);
+    + '(lead role template "clodex-team-lead" not installed, spawned with no template) '
+    + '— NOT briefed: the brief composes only through that template; install it and respawn.'), line);
+  assert.ok(!/and briefed/.test(line), 'it must not claim a briefing that cannot have happened');
   assert.ok(!/on template clodex-team-lead/.test(line),
-    'and it must not claim the template was applied');
+    'nor claim the template was applied');
+  assert.ok(!/Ask shop-lead for your first ticket/.test(line),
+    'and it must not send the operator to a lead that booted unbriefed');
+  assert.deepStrictEqual(f.openers, [], 'no opener: there is no "First turn" section for it to follow');
 });
 
 test('t782 create: a NEW root injects the NEW opener into the lead seat', async () => {
@@ -10840,11 +10845,15 @@ test('t782 create: a NEW root injects the NEW opener into the lead seat', async 
   });
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: the lead was spawned — the opener goes to that seat');
-  assert.deepStrictEqual(f.toSeat('shop-lead'), [
+  assert.strictEqual(f.openers.length, 1, 'exactly one opener, ACTIVE-PARKED rather than injected');
+  assert.strictEqual(f.openers[0].to, 'shop-lead');
+  assert.strictEqual(f.openers[0].mtype, 'dm');
+  assert.ok(f.openers[0].body.includes(
     `You are the lead of team shop. This is your first turn. Root ${pathReal.resolve(root)} is a NEW project — `
     + 'Clodex created and git-init\'d it, and it is empty apart from one empty commit. '
-    + 'Follow "First turn on a fresh team" in your prompt.',
-  ]);
+    + 'Follow "First turn on a fresh team" in your prompt.'), f.openers[0].body);
+  assert.deepStrictEqual(f.toSeat('shop-lead'), [],
+    'and NOTHING was PTY-injected into the booting seat — the boot re-render would wipe it');
 });
 
 test('t782 create: a TAKEOVER root injects the takeover opener instead', async () => {
@@ -10854,11 +10863,14 @@ test('t782 create: a TAKEOVER root injects the takeover opener instead', async (
   });
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: the lead was spawned');
-  assert.deepStrictEqual(f.toSeat('shop-lead'), [
+  assert.strictEqual(f.openers.length, 1, 'exactly one opener, ACTIVE-PARKED rather than injected');
+  assert.strictEqual(f.openers[0].to, 'shop-lead');
+  assert.ok(f.openers[0].body.includes(
     `You are the lead of team shop. This is your first turn. Root ${pathReal.resolve(f.projectRoot)} is an EXISTING `
     + 'project you are taking over — Clodex touched none of its files. '
-    + 'Follow "First turn on a fresh team" in your prompt.',
-  ]);
+    + 'Follow "First turn on a fresh team" in your prompt.'), f.openers[0].body);
+  assert.deepStrictEqual(f.toSeat('shop-lead'), [],
+    'and NOTHING was PTY-injected into the booting seat');
 });
 
 test('t782 create: a TAKEN lead name is refused BEFORE anything is written', async () => {
@@ -10897,7 +10909,7 @@ test('t782 create: a spawn that FAILS leaves the team on disk and says how to re
     + 'shop-lead could NOT be spawned (boom) — the team is on disk; '
     + `re-fire [agent:spawn name:shop-lead cwd:${pathReal.resolve(f.projectRoot)}] yourself.`,
   ]);
-  assert.deepStrictEqual(f.toSeat('shop-lead'), [], 'and no opener was injected anywhere');
+  assert.deepStrictEqual(f.openers, [], 'and no opener was sent anywhere — there is no seat to send it to');
 });
 
 test('t751 set-lead: the LEAD rewrites team.json; a non-lead is refused', () => {
