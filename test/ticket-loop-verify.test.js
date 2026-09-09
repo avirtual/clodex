@@ -1802,8 +1802,10 @@ test('a node_modules the spawn cannot link WARNS on the reply and spawns anyway'
   const repo = mkRepo();
   const f = mkLoop({ repo });
   // See the sibling above: without it the gate skips the link entirely and all
-  // four assertions below go vacuous while staying green.
-  fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'), '{"name":"t"}\n');
+  // four assertions below go vacuous while staying green. It must DECLARE a
+  // dependency too: a root declaring none has nothing to link, so it resolves
+  // as it stands and there is no warning left for these four to see.
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'), '{"name":"t","dependencies":{"a":"1"}}\n');
   f.team.roles.hand.dispatch = 'worktree';
   // The root's tree removed: the source the link would point at is gone, which
   // is the state a box that never ran `npm install` is in.
@@ -2249,6 +2251,50 @@ test('a DANGLING node_modules link names the dangle, not "could not link"', asyn
   assert.ok(!/could not link node_modules/.test(esc[0].body),
     'and does not blame the link step, which never ran and is not the fix');
 });
+
+// A root that declares NO dependencies has nothing to link, so the absence of a
+// node_modules anywhere is not a failure to report — it is the correct state.
+// Observed on team teamlab, a dependency-free node project: every ticket failed
+// at the suite step until the lead made an empty node_modules by hand.
+//
+// Real temp dirs, and the method directly: the verdict IS the return value, and
+// routing through the loop would test the two callers' dispositions instead.
+// Each row states its own verdict as a literal rather than recomputing it.
+const DEPLESS_ROWS = [
+  ['no package.json at all', null, null],
+  ['a package.json declaring neither', '{"name":"x"}', null],
+  ['an empty dependencies', '{"dependencies":{}}', null],
+  ['an empty devDependencies', '{"devDependencies":{}}', null],
+  ['a REAL dependency', '{"dependencies":{"a":"1"}}', 'error'],
+  ['a REAL devDependency', '{"devDependencies":{"a":"1"}}', 'error'],
+  ['a malformed package.json', '{"dependencies":', 'error'],
+];
+
+for (const [label, manifest, verdict] of DEPLESS_ROWS) {
+  test(`a root with ${label} and no node_modules → ${verdict === null ? 'nothing to link' : "today's error"}`, () => {
+    const root = mkTmpRoot('clodex-depless-root-');
+    const tree = mkTmpRoot('clodex-depless-tree-');
+    if (manifest !== null) fsReal.writeFileSync(pathReal.join(root, 'package.json'), `${manifest}\n`);
+    assert.ok(!fsReal.existsSync(pathReal.join(root, 'node_modules')),
+      'ENTER: the root has no installed tree, which is the case under test');
+    const f = mkLoop({ repo: mkRepo() });
+
+    const got = f.m._linkWorktreeNodeModules(root, tree);
+
+    const link = pathReal.join(tree, 'node_modules');
+    if (verdict === null) {
+      assert.strictEqual(got, null, 'nothing to link is not an error');
+      // lstat, not existsSync: an absent link and a link to an absent target
+      // both read as false through existsSync, and only the first is this claim.
+      assert.throws(() => fsReal.lstatSync(link), { code: 'ENOENT' },
+        'and no link was created — there was no source to point one at');
+    } else {
+      assert.strictEqual(got,
+        `neither ${link} nor ${pathReal.join(root, 'node_modules')} exists — the suite cannot resolve its dependencies`,
+        'a root that declares dependencies it has not installed keeps the error verbatim');
+    }
+  });
+}
 
 // ── t362: the lead can SEE a loop rejection, and can add to one ─────────────
 //

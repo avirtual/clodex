@@ -5676,8 +5676,8 @@ function createTicketMethods(deps, shared) {
     // dirties the tree nor blocks worktree removal), and is left in place —
     // recreating it per run would race a concurrent read of it.
     //
-    // Returns null on success, an error SENTENCE on failure; the two callers
-    // dispose of that sentence differently (the suite aborts, the spawn warns).
+    // Returns null when the tree resolves (linked, or the root declares no deps
+    // to link), else an error SENTENCE; the suite aborts on it, the spawn warns.
     _linkWorktreeNodeModules(rootDir, treeDir) {
       const link = path.join(treeDir, 'node_modules');
       // EXISTENCE is lstat, VALIDITY is existsSync, and conflating them names
@@ -5691,6 +5691,15 @@ function createTicketMethods(deps, shared) {
       if (!entry(link)) {
         const src = path.join(rootDir, 'node_modules');
         if (!fs.existsSync(src)) {
+          let manifest = null;
+          try { manifest = fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'); } catch { return null; }
+          let declares = true;
+          try {
+            const pkg = JSON.parse(manifest);
+            const any = (d) => !!d && typeof d === 'object' && Object.keys(d).length > 0;
+            declares = any(pkg && pkg.dependencies) || any(pkg && pkg.devDependencies);
+          } catch { declares = true; }
+          if (!declares) return null;
           return `neither ${link} nor ${src} exists — the suite cannot resolve its dependencies`;
         }
         try { fs.symlinkSync(src, link); } catch (e) {
