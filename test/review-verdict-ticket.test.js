@@ -1488,13 +1488,31 @@ test('the reviewer scope names the RESOLVED task dir, never the raw relative poi
   const want = f.m._ticketDiffDest(f.team, t).dir;
   assert.ok(scope.includes(`TASK DIR: ${want}`),
     `the scope must name the resolved artifact dir; got: ${scope.slice(0, 400)}`);
-  // The decoy is the hazard: the reviewer's cwd IS team.root, so a raw relative
-  // pointer resolves against precisely this path. Asserting the wrong answer is
-  // absent as well as the right one present — the two are different claims.
+  // The decoy is the hazard: the reviewer's cwd is a checkout of this same repo
+  // (t776: the ticket's worktree, or team.root when there is none), so a raw
+  // relative pointer resolves against a stale `tasks/` either way. Asserting the
+  // wrong answer is absent as well as the right one present — two different claims.
   assert.ok(!scope.includes(pathReal.join(f.team.root, 'tasks', 'verdict-routing')),
     'and never the repo-relative resolution, which is the stale tree the reviewer would otherwise read');
   assert.ok(!/TASK DIR: tasks\//.test(scope),
     'nor the raw pointer, which is what the reviewer resolved against its own cwd');
+});
+
+// A reviewer that cannot READ the task dir cannot read the spec or the diff it
+// was spawned for, and without permission bypass the CLI stops it on a directory
+// prompt with no operator awake to answer. The dir is computed by the loop, so
+// only the loop can pass it; a reviewer template must never be able to.
+test('the ticket review spawn hands _handleTeamReview the task dir as addDirs', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+
+  let opts = null;
+  f.m._handleTeamReview = (_s, _body, o) => { opts = o; };
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/round/d.diff');
+
+  assert.ok(opts, 'ENTER: the review spawn must have been handed an options object');
+  assert.deepStrictEqual(opts.addDirs, ['/tmp/round'],
+    'the diff\'s own directory — where the spec and review-<id>-r<n>.diff both live');
 });
 
 test('the reviewer scope carries the SAME rule clause the hand is given, from the same renderer', async () => {

@@ -146,7 +146,9 @@ test('create() mints from the record label, and both spawn paths seed it before 
     // Re-anchored THROUGH it rather than gap-matched: the property is that the
     // seed rides the reviewFor upsert specifically, and a `[\s\S]*?` bridge would
     // also accept a wireLabel seeded on some other nearby object.
-    ['reviewer', /reviewFor: session\.name,\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.\(reviewTicket \? \{ reviewTicket \} : \{\}\),\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, shape\.extraArgs, null, shape\.workspaceId,/],
+    // t776 appended the loop's --add-dir argv to the reviewer's create() call,
+    // re-anchored here on the new literal rather than gap-matched through it.
+    ['reviewer', /reviewFor: session\.name,\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.\(reviewTicket \? \{ reviewTicket \} : \{\}\),\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, \[\.\.\.shape\.extraArgs, \.\.\.addDirs\.flatMap\(\(d\) => \['--add-dir', d\]\)\], null, shape\.workspaceId,/],
     ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, seatCwd,/],
   ]) {
     const seedAt = ticketSrc.search(seedRe);
