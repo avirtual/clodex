@@ -153,7 +153,7 @@ test('the popover markup sits outside #main, ahead of the plugins overlay', () =
   // the dialog. Only body-level placement makes the z-index 110 mean anything.
   const html = fs.readFileSync(path.join(ROOT, 'renderer/index.html'), 'utf-8');
   const POP = html.indexOf('id="plugin-readme-popover"');
-  const TERM = html.lastIndexOf('id="tool-overlay-dismiss"');
+  const TERM = html.lastIndexOf('id="drawer-panes"');
   const OVL = html.indexOf('<div id="plugins-overlay"');
   assert.ok(POP >= 0 && TERM >= 0 && OVL >= 0,
     'ENTER: all three landmarks are present, so the ordering below is a verdict');
