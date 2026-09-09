@@ -69,7 +69,9 @@ function createPluginHostEngine(deps) {
 // has checked out — the tree every seat's branch is cut from. `currentBranch` is
 // lent, being read-only metadata of exactly the kind the rest of the lent set
 // returns.
-  const LIB_GIT_WITHHELD = new Set(['deleteBranch', 'isMerged', 'diffText', 'mergeNoFf', 'revertCommit']);
+  const LIB_GIT_WITHHELD = new Set([
+    'deleteBranch', 'isMerged', 'diffText', 'mergeNoFf', 'revertCommit', 'initRepo', 'hasCommit',
+  ]);
   const libGitWorktree = Object.freeze(Object.fromEntries(
     Object.keys(gitWorktree || {})
       .filter((k) => typeof gitWorktree[k] === 'function' && !LIB_GIT_WITHHELD.has(k))
