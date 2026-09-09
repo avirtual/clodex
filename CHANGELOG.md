@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Delete Team… from the Teams menu, and a rotated-away conversation is no longer kept warm
+## Unreleased
+
+## 5.50.0 — 2026-09-09 — Delete Team… from the Teams menu, and a rotated-away conversation is no longer kept warm
 
 - **Keep-warm:** a perpetual hold is restored at startup only for a seat's current conversation. Before, an id left in a seat's /clear history kept re-arming after a rotation, so a dead conversation was pinged hourly at full context price on every launch; such a record is now dropped and the file rewritten without it.
 - **Teams:** the Teams menu gains Delete Team…, listing every team, including one whose manifest no longer loads. The confirm says what goes (the team's directory under ~/.clodex/teams: manifest, prompts, templates) and what stays (the project, its ticket history and task artifacts, every seat's session record). A team with a live seat or an open ticket is refused with both listed. Before, the only way to remove a team was to delete its directory by hand.
