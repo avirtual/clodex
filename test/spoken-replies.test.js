@@ -165,6 +165,21 @@ test('an ordinary user entry after the same fragment carries interrupted false',
     'CONTROL: the same fragment, flushed by anything else, must fire as it always did');
 });
 
+// The flag is per-flush, and nothing recomputes it: an interrupt one turn ago
+// that stayed set would suppress every bodied intent the seat writes afterwards.
+test('the interrupt flag does not survive its own flush', () => {
+  const seen = runWatcher([
+    { type: 'assistant', requestId: 'r1', message: { stop_reason: null, content: [{ type: 'text', text: '[agent:dm bob] cut' }] } },
+    { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
+    { type: 'assistant', requestId: 'r2', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:dm bob] re-sent' }] } },
+  ]);
+  assert.deepStrictEqual(
+    seen.map((s) => [s.text, s.meta.interrupted]),
+    [['[agent:dm bob] cut', true], ['[agent:dm bob] re-sent', false]],
+    'the re-emitted intent must fire on the very next turn',
+  );
+});
+
 test('a finished turn carries turnEnd true and interrupted false', () => {
   const seen = runWatcher([
     { type: 'assistant', requestId: 'r1', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:dm bob] hello' }] } },
