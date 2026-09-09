@@ -12325,8 +12325,7 @@ test('_buildDeliveryText: a system sender gets no trailer even when a REAL sessi
 
 // --- flushPending / _flushParkedNow (operator parked-DM flush) ----------------
 // PTY-free: drainPending is a spy (records the claim tag), _injectText is stubbed
-// so we don't build a real InjectQueue. Covers the three flushPending verdicts
-// and the claim-tag / dialog-guard invariants from the spec.
+// so we don't build a real InjectQueue.
 
 function mkFlush(overrides = {}) {
   const drained = [];
