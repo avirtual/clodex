@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Cache busts:** the bundled wirescope proxy is now v0.6.64, which keeps a message-level cache marker on a turn's first thinking round when the settled pin is at full budget; before this, such rounds re-read the whole history uncached (measured: 134 rounds, 13M uncached tokens over three days, almost all on hand seats).
+
 ## 5.44.1 — 2026-09-09 — Manage Plugins Help popover fixed, and the teams checklist matches `team create`
 
 - **Manage Plugins:** the Help popover now opens above the dialog and stays open when clicked; it used to paint behind the plugin list, and a click on it closed both.

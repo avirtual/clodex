@@ -2759,6 +2759,23 @@ def _midturn_marker_gate(obj, agent_id=None):
     if halt <= boundary:
         # first round of the turn: the boundary anchor (settled pin, advanced)
         # already covers the stable prefix — dropping the tail is the whole job.
+        # UNLESS nothing anchors the messages region at all once the tail is
+        # gone (the pin declined at full budget with no donor, so the only
+        # message markers WERE the rolling tail pair): then the read collapses
+        # to the system floor and the whole history re-ships at 1x (measured
+        # 2026-09-09: 134 rounds / 13M uncached tok / $62 in 3 days, every one
+        # `pin: budget_full_no_donor` + `gate: dropped`). Re-mark the boundary
+        # message instead: it is settled and byte-final, so caching it is safe,
+        # and it is exactly where the pin would have sat.
+        remaining = [i for r, i, b in _cache_markers(obj) if r == "messages"]
+        if not remaining and 0 <= boundary < len(msgs):
+            ok, info = _plant_fallback_marker(obj, msgs, boundary, boundary)
+            if ok:
+                log["mode"], log["ttl"] = "dropped_rebased", info.get("ttl")
+                log["rebased_idx"] = boundary
+                log["converted_string"] = info.get("converted_string", False)
+                return log
+            log["rebase_declined"] = info.get("reason")
         log["mode"] = "dropped"
         return log
     tgt = msgs[halt]

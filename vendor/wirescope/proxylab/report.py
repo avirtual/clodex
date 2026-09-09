@@ -1024,15 +1024,58 @@ def _series(pairs):
 _BUST_SNIP = 40                      # chars of context each side of a divergence
 
 
+_SERVER_TOOL_TYPES = ("web_search", "web_fetch")
+
+
+def _is_seat_request(p):
+    """A request the seat's cache LINEAGE passes through, as opposed to a one-shot
+    side-call that only shares its capture dir. The CLI issues WebSearch (one
+    `web_search_*` server tool) and WebFetch-summarize / title (no tools) on the
+    parent line, so they capture as role=parent; pairing them with the seat's
+    next turn reads the seat's own warm read as a "bust" of the side-call's tiny
+    window (measured 2026-09-09: 116 of 517 busts in 3 days, $7). The tell is the
+    tool KIND: a seat always carries at least one client tool with a name that is
+    not a server-tool type. Reads the cheap sidecar `tool_names`; a record with no
+    summary (no dict body) is kept and breaks the chain downstream as before."""
+    summ = p.get("summary")
+    if summ is None:
+        return True
+    names = [n for n in (summ.get("tool_names") or []) if isinstance(n, str)]
+    if names:
+        return any(not n.startswith(_SERVER_TOOL_TYPES) for n in names)
+    # no tool names at all: every tool-less parent request in the live corpus
+    # is a single-message one-shot (title, WebFetch-summarize, a reviewer's
+    # verdict brief) — 346 of 358 in a 3-day sample, the rest 2-message. A seat
+    # that genuinely runs with tools=[] still carries its history, so message
+    # count is the separator, not system size (the one-shots carry 3-13k of it).
+    return not (summ.get("n_tools") == 0 and (summ.get("n_messages") or 0) <= 2)
+
+
 def _bust_canon(node):
     """cache_control-stripped, key-sorted JSON of a node — the shape the prompt
-    cache compares (a moved cache_control marker must NOT read as a change)."""
+    cache compares (a moved cache_control marker must NOT read as a change).
+    A single text block and its bare string form canonicalize IDENTICALLY: the
+    CLI rewrites a settled message from `[{type:text,text}]` to `"text"` one turn
+    after it lands (wire-proven equal for cache identity, see CLAUDE.md), so a
+    byte diff there is a false locus — it filed 169 busts in 3 days as
+    `conversation`/self-inflicted when the receipt showed no write at all."""
     def strip(n):
         if isinstance(n, dict):
             return {k: strip(v) for k, v in n.items() if k != "cache_control"}
         if isinstance(n, list):
             return [strip(v) for v in n]
         return n
+    content = node.get("content") if isinstance(node, dict) else None
+    if isinstance(content, list) and content and isinstance(content[0], dict) \
+            and content[0].get("type") == "text" \
+            and set(content[0]) <= {"type", "text", "cache_control"}:
+        if len(content) == 1:
+            node = {**node, "content": content[0].get("text", "")}
+        elif node.get("role") == "system":
+            # a trailing role:system message is the CLI's notice plus, on this
+            # wire, the proxy's own uncached tail hint appended as a 2nd block
+            # (hints module, SYSTEM_TAIL_FALLBACK); only the notice persists
+            node = {**node, "content": content[0].get("text", "")}
     return json.dumps(strip(node), sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False)
 
@@ -1182,6 +1225,11 @@ BUST_MIN_LOST_TOKENS = 1024
 # (p25 0.08, p50 0.44, p75 0.88), so this is a stated reporting convention: at
 # >=0.9 essentially nothing survived.
 BUST_FULL_REWRITE_FRAC = 0.9
+# `unanchored` bust: the history re-read UNCACHED (input) with essentially no
+# cache write — no marker covered it. Measured 2026-09-09 on 134 such rounds:
+# input 50k-210k, write 0 in 166/169; a genuine lapse re-writes what it re-reads.
+UNANCHORED_MIN_INPUT = 20_000
+UNANCHORED_MAX_WRITE_FRAC = 0.05
 # Only for the COLD-WRITE baseline (see _prefix_loss): how much of a just-written
 # prefix must fail to come back before it counts as lost. Needed because that
 # baseline cannot separate the deferred tail from a real loss the way the warm
@@ -1290,7 +1338,7 @@ def _first_divergence(a, b):
     return None
 
 
-def _transition_class(bust, loc, prev_msgs, cur_msgs, ratio):
+def _transition_class(bust, loc, prev_msgs, cur_msgs, ratio, unanchored=False):
     """Derive the bust CLASS (warmth._BUST_CLASSES vocabulary) for a /_bust
     transition from its byte-diff locus, mirroring warmth._classify_bust's
     precedence (tools -> system -> preamble -> compact -> lapse -> conversation)
@@ -1305,24 +1353,39 @@ def _transition_class(bust, loc, prev_msgs, cur_msgs, ratio):
     (`appended:False`) is our transform flapping = `conversation`, whereas a
     high-write transition whose only byte change is a new tail (`appended:True`,
     or no diff at all) is the cache having lapsed and re-shipped the prefix
-    unchanged = `lapse`."""
+    unchanged = `lapse`.
+
+    `unanchored` (2026-09-09) splits the clean-extension case by the RECEIPT: a
+    lapse re-WRITES the prefix (write >> 0), while a request that shipped with no
+    message-level cache marker re-READS it at 1x with write ~ 0. Same bytes, same
+    "nothing changed" locus, different cause — the second is ours (a marker
+    transform left the history unanchored) and was filing as `lapse` with a p50
+    idle gap of 17 s."""
     if not bust:
         return None
-    contraction = bool(prev_msgs and cur_msgs is not None
-                       and cur_msgs <= prev_msgs * ratio)
+    # a SHORTER history is a compact or clear whatever the locus says — after a
+    # compact msg[0] IS the continuation summary, so the index-0 rule below
+    # filed 110 of 120 "preamble" busts in 3 days as content faults ("peel the
+    # volatile line") that were compacts; and a history that is a pure PREFIX
+    # of the previous one (clear + partial replay) has no locus at all
+    shorter = bool(prev_msgs and cur_msgs is not None and cur_msgs < prev_msgs)
     if loc is None:                    # receipt flagged a rewrite but the bytes
-        return "compact" if contraction else "lapse"   # are a clean extension
+        if shorter:                    # are a clean extension
+            return "compact"
+        return "unanchored" if unanchored else "lapse"
     seg = loc.get("segment")
     if seg == "tools":
         return "tools"
     if seg == "system":
         return "system"
     if seg == "messages":
+        if shorter:
+            return "compact"
         if loc.get("index") == 0:
             return "preamble"          # msg[0] = the claudeMd/userEmail bundle
-        if contraction:
-            return "compact"
-        return "lapse" if loc.get("appended") else "conversation"
+        if loc.get("appended"):
+            return "unanchored" if unanchored else "lapse"
+        return "conversation"
     return None
 
 
@@ -1359,7 +1422,7 @@ def _bust_scan(session):
     whole corpus: 0 violations in 124,026 records. So a tail-read that finds a
     summary proves a dict body, and the fallback parse establishes it directly.
 
-    Yields dicts shaped {stem, path, ts, line, tokens, ok, n_messages, has_body,
+    Yields dicts shaped {stem, path, ts, line, summary, tokens, ok, n_messages, has_body,
     body} where `body` is None until _bust_body fills it in for the pairs that need
     one."""
     d = core_mod._session_dir(session)
@@ -1389,6 +1452,7 @@ def _bust_scan(session):
             "path": rf,
             "ts": ts,
             "line": _line_key(summ),
+            "summary": summ if summ else None,
             "tokens": billing.get("tokens") or {},
             "ok": resp.get("status_code") == 200,
             "n_messages": summ.get("n_messages") or 0,
@@ -1429,7 +1493,8 @@ def bust_series(session, detail=True):
     vs the previous forwarded turn — the human-readable WHAT changed: a model swap,
     a date rollover, a transform toggle)."""
     from . import warmth as warmth_mod          # lazy: fault map + compact ratio
-    pairs = [p for p in _bust_scan(session) if p["line"] == "main" and p["ok"]]
+    pairs = [p for p in _bust_scan(session) if p["line"] == "main" and p["ok"]
+             and _is_seat_request(p)]
     transitions = []
     prev = None
     for idx, p in enumerate(pairs):
@@ -1485,8 +1550,10 @@ def bust_series(session, detail=True):
         # to a lower value between the two turns = the proxy restarted) marks the
         # benign deploy/restart case — a content bust that is a one-time tax and
         # self-heals next turn, so the consumer can label it instead of alarming.
+        unanchored = bool(bust and inp > UNANCHORED_MIN_INPUT
+                          and write < inp * UNANCHORED_MAX_WRITE_FRAC)
         cls = _transition_class(bust, loc, prev_msgs, cur_msgs,
-                                warmth_mod.BUST_COMPACT_MSG_RATIO)
+                                warmth_mod.BUST_COMPACT_MSG_RATIO, unanchored)
         fault, fix_hint = (warmth_mod._BUST_FAULT.get(cls) or (None, None)
                            if cls else (None, None))
         cur_seq, from_seq = _seq_of(p["stem"]), _seq_of(prev["stem"])

@@ -296,6 +296,11 @@ _BUST_FAULT = {
                                 "no per-turn fix"),
     "lapse":        ("environment", "the cache lapsed (idle > TTL) and re-wrote the whole "
                                 "prefix — arm a keep-warm hold or ping to hold it"),
+    # offline-only class (report._transition_class); the live head classifier
+    # cannot see markers, so session_bust keeps the six columns above
+    "unanchored":   ("self",    "the history shipped with no message-level cache marker "
+                                "and re-read at 1x — a marker transform (gate / compact "
+                                "strip / pin at full budget) left it unanchored"),
 }
 
 
