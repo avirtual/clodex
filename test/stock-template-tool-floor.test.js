@@ -35,9 +35,9 @@ const { buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A literal, not derived from either template: deriving it would make the
-// partition below a tautology. These nine are what a ticket seat actually uses
-// — read/write files, search, shell, and the subagent/teammate trio.
-const KEEP = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', 'Agent', 'SendMessage', 'ListAgents'];
+// partition below a tautology. These eight are what a ticket seat actually uses
+// — read/write files, search, shell, and the subagent/teammate pair.
+const KEEP = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', 'Agent', 'SendMessage'];
 
 const TPL_DIR = path.join(__dirname, '..', 'resources', 'library', 'templates');
 const readTpl = (stem) => JSON.parse(fs.readFileSync(path.join(TPL_DIR, `${stem}.json`), 'utf-8'));

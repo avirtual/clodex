@@ -32,11 +32,8 @@ test('its name matches its filename stem — a role naming it must resolve', () 
   assert.strictEqual(path.basename(LEAD_PATH, '.json'), tpl.name);
 });
 
-test('the stock lead is lean by default: Opus once, every skill off', () => {
-  // Exactly once: deriveModelTemplate rewrites extraArgs in place, and a second
-  // --model pair would leave the argv's winner up to the CLI's own precedence.
-  assert.deepStrictEqual(tpl.extraArgs, ['--model', 'claude-opus-5']);
-  assert.strictEqual(tpl.extraArgs.filter((a) => a === '--model').length, 1);
+test('the stock lead is lean by default: no model pin, every skill off', () => {
+  assert.strictEqual(tpl.extraArgs, undefined, 'no model pin: seats follow the box default');
   assert.deepStrictEqual(tpl.disabledSkills, ['*']);
 });
 
