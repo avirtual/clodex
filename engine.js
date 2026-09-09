@@ -1662,7 +1662,6 @@ function readSkillCatalog({ name = null, cwd = null } = {}) {
   const base = {
     ok: true,
     names,
-    allOff: disabled.includes('*'),  // the sentinel: every name below is off at spawn
     effective: eff.overrides,        // lower-layer state, per skill (value+source)
     skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface
     canReenable: SKILL_REENABLE_CONFIRMED,
@@ -1672,6 +1671,10 @@ function readSkillCatalog({ name = null, cwd = null } = {}) {
     ...base,
     outOfScope: scan.outOfScope,     // reachable only under their own dir; name+dir
     disabledSkills: disabled,        // the session's own layer-4 off list
+    // The `*` sentinel names no skill, so it is stripped from `names` above and
+    // reported here instead: the popover renders every row off, and its save
+    // writes that explicit list back (the sentinel does not survive a save).
+    allOff: disabled.includes('*'),
     skillLib: skillLibrary.listFor(sessionScopeCtx(name)), // scope-filtered inject offer list
     injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
   };

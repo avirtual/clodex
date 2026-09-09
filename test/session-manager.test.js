@@ -16666,3 +16666,163 @@ test('task accept: a STANDING seat on the same arm is left exactly as it is', as
   assert.match(said[0], /nothing was torn down/, 'and the reply still says so truthfully');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
+
+// t769: the `*` disabledSkills sentinel. It names no skill — it means "every one
+// this box knows" — so only create() can expand it, against the catalog dep the
+// engine wires. These drive the real create() through the REAL setupClaudeHook,
+// so what is pinned is the settings file the CLI actually reads.
+const { createCliHooks } = require('../cli-hooks');
+
+function mkSkillsOffRig(extraDeps = {}) {
+  const root = mkTmpRoot('clx-skillsoff-');
+  const store = new Map();
+  const persistence = {
+    list: () => [...store.values()],
+    get: (n) => store.get(n) || null,
+    upsert: (e) => store.set(e.name, { ...(store.get(e.name) || {}), ...e }),
+    remove: (n) => store.delete(n),
+    setSessionId: () => {},
+  };
+  const hooks = createCliHooks({
+    REGISTRY_DIR: root,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+  });
+  const SessionManager = createSessionManager({
+    REGISTRY_DIR: root,
+    fs, path, os, pathFor: pathForReal, runDirFor: runDirForReal,
+    PENDING_DIR: path.join(root, 'pending'),
+    MSG_DIR: path.join(root, 'messages'),
+    ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
+    getPersistence: () => persistence,
+    getRemoteServer: () => null,
+    getUiSettings: () => ({ get: () => ({}) }),
+    resolveProxyBase: () => null,
+    lastTranscriptWrite: () => null,
+    memoryStore: { list: () => [] },
+    composeDigest: () => null,
+    registry: { register: () => {}, unregister: () => {} },
+    Transport: class { start() {} stop() {} },
+    JsonlWatcher: class { start() {} stop() {} },
+    pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
+    notifyOS: () => {},
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    setupClaudeHook: hooks.setupClaudeHook,
+    setupCodexHook: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkills: () => {},
+    deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
+    buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
+    resolveProxyAgentId: () => null,
+    normalizeProxyBase: (v) => v,
+    teeBlindBackend: () => null,
+    readEffectiveClaudeEnv: () => ({}),
+    mergeSessionEnv: () => ({ ...process.env }),
+    getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
+    getUserDataPath: () => os.tmpdir(),
+    resolveTeam: () => null,
+    strictMcpReason: () => null,
+    scrubInheritedClaudeMarkers: (e) => e,
+    resolveSystemPromptFile: () => null,
+    mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
+    readAppendBodies: () => [],
+    pluginGrammarLines: () => [],
+    // Past the hook and as far as the persistence upsert, which is where the
+    // sentinel's OTHER half lives: an expansion that also rewrote the record
+    // would pass every settings assertion above and still be the defect.
+    effectiveInjectedAgents: () => [],
+    effectiveInjectedSkills: () => [],
+    unresolvedSubagentRefs: () => [],
+    codexStatusLineArg: () => [],
+    writeAgentPlugin: () => null,
+    cleanupAgentPlugin: () => {},
+    qualifiedAgentName: (n) => n,
+    getPromptLibrary: () => ({ list: () => [] }),
+    readSystemPromptBody: () => null,
+    seatBundles: () => [],
+    bundleSkills: () => [],
+    writeBundles: () => null,
+    bakePrompt: () => '',
+    versionNoticeFor: () => null,
+    enqueueNotice: () => {},
+    clearNotices: () => {},
+    mergeCodexInstructions: (a) => a,
+    ...extraDeps,
+  });
+  const m = new SessionManager();
+  m._sendToSession = () => {};
+  m._broadcast = () => {};
+  const stop = (name) => {
+    const s = m.sessions.get(name);
+    if (!s) return;
+    try { if (s.sentinel) s.sentinel.stop(); } catch {}
+    try { if (s.watcher) s.watcher.stop(); } catch {}
+    try { if (s.ctxWatcher) s.ctxWatcher.close(); } catch {}
+    clearTimeout(s._bootDrainTimer);
+  };
+  return { m, persistence, stop, root };
+}
+
+async function spawnWithSkills(rig, name, disabledSkills) {
+  try {
+    await rig.m.create(name, 'claude', os.tmpdir(), [], null, 'ws', null, false, null,
+      [], [], [], disabledSkills, []);
+  } catch (e) { rig.spawnError = e; }
+  finally { rig.stop(name); }
+}
+
+test('t769: disabledSkills ["*"] spawns with every known skill off, and persists the raw sentinel', async () => {
+  // The expansion happens at SPAWN, not at persist: the record keeps `*` so a
+  // restart re-expands against a catalog that has grown a skill since.
+  const rig = mkSkillsOffRig({ knownSkillNames: () => ['p', 'q'] });
+  await spawnWithSkills(rig, 'star', ['*']);
+
+  const settingsPath = pathForReal(rig.root, 'star', 'settings');
+  assert.ok(fs.existsSync(settingsPath),
+    'ENTER: create() must have reached setupClaudeHook — no settings file means the assertions below inspect nothing');
+  const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  assert.deepStrictEqual(settings.skillOverrides, { p: 'off', q: 'off' },
+    'the sentinel must reach the CLI as the box\'s actual skill names: `*` written through verbatim is not a '
+    + 'skill name and turns off nothing, which is silent — the seat boots with its full roster');
+
+  assert.ok(rig.persistence.get('star'),
+    `ENTER: the session must reach the persistence upsert (spawn error: ${rig.spawnError && rig.spawnError.stack})`);
+  assert.deepStrictEqual(rig.persistence.get('star').disabledSkills, ['*'],
+    'the persisted entry keeps the sentinel: an expanded list frozen onto the record would pin the catalog as it '
+    + 'was at first spawn, so a skill installed afterwards would come back ON at every restart');
+});
+
+test('t769: without the sentinel the list passes through byte-identical and the catalog is never read', async () => {
+  // Reading the catalog costs a settings-chain walk and a registry sweep on every
+  // spawn. Only `*` needs it, so the ordinary path must not pay it.
+  let calls = 0;
+  const rig = mkSkillsOffRig({ knownSkillNames: () => { calls++; return ['p', 'q']; } });
+  await spawnWithSkills(rig, 'plain', ['b', 'a']);
+
+  const settingsPath = pathForReal(rig.root, 'plain', 'settings');
+  assert.ok(fs.existsSync(settingsPath), 'ENTER: create() reached setupClaudeHook');
+  const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  assert.deepStrictEqual(settings.skillOverrides, { b: 'off', a: 'off' });
+  assert.strictEqual(calls, 0,
+    'knownSkillNames must not be called for a list with no `*` — nothing in it depends on the box catalog');
+  assert.deepStrictEqual(rig.persistence.get('plain').disabledSkills, ['b', 'a'],
+    'and an ordinary list persists exactly as given, unsorted and unexpanded');
+});
+
+test('t769: the sentinel without the knownSkillNames dep throws rather than spawning a full-roster seat', async () => {
+  // A host that forgets to wire the dep must fail loudly here. The alternative is
+  // a seat that silently boots with every skill on — the exact cost this ticket
+  // exists to remove, and invisible in the UI.
+  const rig = mkSkillsOffRig({ knownSkillNames: undefined });
+  let err = null;
+  try {
+    await rig.m.create('nodep', 'claude', os.tmpdir(), [], null, 'ws', null, false, null,
+      [], [], [], ['*'], []);
+  } catch (e) { err = e; }
+  finally { rig.stop('nodep'); }
+  assert.ok(err, 'the spawn must fail');
+  assert.match(String(err && err.message), /knownSkillNames/,
+    'and say which dep is missing');
+  assert.ok(!fs.existsSync(pathForReal(rig.root, 'nodep', 'settings')),
+    'and it must throw BEFORE writing settings — a file with `*` in skillOverrides is a full-roster seat');
+});

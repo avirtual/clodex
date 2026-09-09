@@ -204,6 +204,16 @@ The shipped hand template grants all three, because all three work on a fresh
 team: a default that fails on first use teaches an operator to distrust the
 whole grants list.
 
+**What a stock hand is.** `clodex-team-hand` boots Opus (`--model
+claude-opus-5`) with **every skill off**, the trimmed tools list, and those three
+exec grants. It is lean on purpose: the first team stood up from the bootstrap
+skill came up with Fable-class hands carrying every installed skill, and was
+stopped on cost. `[agent:team role-set hand model:<alias>]` changes the model
+(`opus`, `sonnet`, `haiku`, `fable`). The template editor's skills popover turns
+skills back on — the "every skill off" default ships as the sentinel
+`"disabledSkills": ["*"]`, which a save from that popover replaces with the
+explicit list of names it is showing.
+
 **To add your own:** drop a JSON def in `~/.clodex/teams/<name>/exec/` — or in
 `~/.clodex/library/exec/` when you want every team to share it — write the
 script it names under your project root, and add the command's name to your

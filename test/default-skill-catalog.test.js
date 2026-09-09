@@ -141,10 +141,28 @@ test('the seat path keeps the fields its popover renders', () => {
   const res = box.seat(ROSTER_SEAT.name);
   assert.deepStrictEqual(
     Object.keys(res).sort(),
-    ['canReenable', 'disabledSkills', 'effective', 'injectSkills', 'names',
+    ['allOff', 'canReenable', 'disabledSkills', 'effective', 'injectSkills', 'names',
       'ok', 'outOfScope', 'skillLib', 'skillsLocked'],
   );
   assert.deepStrictEqual(res.outOfScope, SCOPED.map((name) => ({ name, dir: 'app/' })));
+  assert.strictEqual(res.allOff, false, 'an ordinary seat carries no sentinel');
+});
+
+test('t769: a seat carrying the `*` sentinel reports allOff, and never `*` as a skill name', () => {
+  // `*` is not a skill. Left in `names` it renders as a checkbox row the operator
+  // can tick, and the save would then write it back as an ordinary name — the
+  // sentinel silently demoted to a skill nothing on the box is called.
+  const box = mkBox({ seats: [ROSTER_SEAT] });
+  box.engine.stores.persistence.upsert({
+    name: ROSTER_SEAT.name, type: 'claude', cwd: box.tmp, workspaceId: 'default',
+    disabledSkills: ['*'],
+  });
+  const res = box.seat(ROSTER_SEAT.name);
+  assert.strictEqual(res.allOff, true);
+  assert.ok(!res.names.includes('*'), `'*' must not be offered as a skill: ${res.names.join(',')}`);
+  assert.ok(res.names.length > 0, 'ENTER: there are real names to have been filtered from');
+  assert.deepStrictEqual(res.disabledSkills, ['*'],
+    'the raw list still reaches the popover — the sentinel is what the record holds');
 });
 
 test('names discovered once survive the run dir going away', () => {
