@@ -375,6 +375,14 @@ not by size:
   rather than shelling out to git — `resolveTeam` runs on every roster render and
   ticket resolution, and a subprocess there would make membership a latency
   problem.
+- **team-delete.js** — the in-use check and the gated delete behind `Delete Team…`.
+  One body, two callers: the Teams menu reaches it through `getTeams()` (the main
+  process has no IPC to itself) and the renderer through `team:delete`, which
+  web-host serves from the same registration — built in main.js the channel would
+  be absent from the web host's deps and throw there while working on the desktop.
+  The gate is `_teamInUse` on the manager (live role seats, non-terminal tickets);
+  a team whose manifest will not load skips it and is deletable, because that is
+  the team an operator most wants gone.
 - **team-measure.js** — what can be PROVEN about a project directory, as five
   findings (suite, packageManager, vcs, worktreeSupport, generatedPaths), each
   `{ id, claim, status, evidence }`. The measured half of the team helper; the
