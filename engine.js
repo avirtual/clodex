@@ -1671,9 +1671,6 @@ function readSkillCatalog({ name = null, cwd = null } = {}) {
     ...base,
     outOfScope: scan.outOfScope,     // reachable only under their own dir; name+dir
     disabledSkills: disabled,        // the session's own layer-4 off list
-    // The `*` sentinel names no skill, so it is stripped from `names` above and
-    // reported here instead: the popover renders every row off, and its save
-    // writes that explicit list back (the sentinel does not survive a save).
     allOff: disabled.includes('*'),
     skillLib: skillLibrary.listFor(sessionScopeCtx(name)), // scope-filtered inject offer list
     injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
