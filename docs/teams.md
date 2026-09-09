@@ -84,7 +84,9 @@ One rule covers all four kinds: a name written without a colon — a role's
 resolves against this directory first and the shared library second. A name
 *with* a colon is a plugin ref (`<plugin>:<stem>`) and never looks here. Team
 preflight (the roles popover) says which names resolved to the team's own
-copies.
+copies. Create and role-add copy the role's stock template to
+`templates/<role>.json` in the team dir and point the role at it, so a team edits
+its own file; the library copy is what the NEXT team starts from.
 
 A team's own template is reachable by naming it — from a role's `template`, from
 `[agent:spawn … template:<stem>]` by a seat inside the team — and is not listed
@@ -92,11 +94,13 @@ machine-wide in the New Session dialog or the library drawers. The same goes for
 a reviewer template: name it in the reviewer role, since the reviewer's
 prefix-based discovery reads the library only.
 
-Nothing under `teams/` is seeded for you. `Create Team…` writes `team.json` and
-stops, so a directory holding only that file behaves exactly as it did before
-any of this existed, and every piece its manifest names is served by the shared
-library. The one thing that fills the rest of the directory is **Gather**, and
-only when you ask for it.
+The one thing seeded for you under `teams/` is the template copy above: creating
+a team writes `team.json` and a `templates/<role>.json` per role whose named
+template is installed in the library, and stops. Every other piece its manifest
+names — role prompts, append prompts, exec defs — is served by the shared library
+until you ask otherwise, and so is a template whose stem the library does not
+carry: the copy is skipped and the role keeps naming the stem. What fills the
+rest of the directory is **Gather**, and only when you ask for it.
 
 ### Gather — make the team own what it uses
 
@@ -489,8 +493,11 @@ as do the `exec/` defs of step 4 — no intent writes either.
 seat per ticket, and without it an agent-built team can only ever add a standing
 role. `cwd:` is relative to the team root, as everywhere else. `model:` derives
 `templates/<role>.json` from the role's template (or `clodex-team-hand`) with that
-`--model` and points the role at it; a bracketed id such as `claude-opus-5[1m]`
-cannot be written here, use the alias — `opus`, `sonnet`, `haiku`, `fable`.
+`--model` and points the role at it — and since create and role-add already gave
+the role the team's own copy, that base is normally the team's own file rather
+than the library one, so a model change keeps whatever else was edited into it. A
+bracketed id such as `claude-opus-5[1m]` cannot be written here, use the alias —
+`opus`, `sonnet`, `haiku`, `fable`.
 
 `lead` and `reviewer` are operator-owned topology: every role verb refuses them,
 so a team you meant to run solo still carries a reviewer definition — harmless,

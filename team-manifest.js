@@ -5,6 +5,8 @@
 const path = require('path');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
+const { badStem, TEAM_STEM_RE } = require('./team-prompt-dir');
+const { LISTING_KEYS } = require('./team-template-derive');
 
 const TEAM_FILE = 'team.json';
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
@@ -153,6 +155,47 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   function atomicWrite(file, data) {
     ensureDir(path.dirname(file));
     atomicWriteFileSync(file, data);
+  }
+
+  function unwindTemplateCopies(teamName, roleNames) {
+    for (const r of roleNames) {
+      try { fs.unlinkSync(path.join(teamsDir, teamName, 'templates', `${r}.json`)); } catch {}
+    }
+    try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
+  }
+
+  function copyRoleTemplates(teamName, roles, opts) {
+    const repointOnly = !!(opts && opts.repointOnly === true);
+    const copied = [];
+    if (typeof teamName !== 'string' || !TEAM_STEM_RE.test(teamName)) return copied;
+    try {
+      for (const [roleName, def] of Object.entries(roles)) {
+        if (!def || typeof def !== 'object' || Array.isArray(def)) continue;
+        const stem = def.template;
+        if (typeof stem !== 'string' || !stem) continue;
+        if (badStem(stem) || !TEAM_STEM_RE.test(stem)) continue;
+        if (badStem(roleName) || !TEAM_STEM_RE.test(roleName)) continue;
+        const target = path.join(teamsDir, teamName, 'templates', `${roleName}.json`);
+        let own = false;
+        try { fs.readFileSync(target, 'utf-8'); own = true; } catch {}
+        if (own) { def.template = roleName; continue; }
+        if (repointOnly) continue;
+        let base;
+        try { base = JSON.parse(fs.readFileSync(path.join(home, 'library', 'templates', `${stem}.json`), 'utf-8')); }
+        catch { continue; }
+        if (!base || typeof base !== 'object' || Array.isArray(base)) continue;
+        const body = { ...base };
+        for (const k of LISTING_KEYS) delete body[k];
+        body.name = roleName;
+        atomicWrite(target, `${JSON.stringify(body, null, 2)}\n`);
+        def.template = roleName;
+        copied.push(roleName);
+      }
+    } catch (err) {
+      unwindTemplateCopies(teamName, copied);
+      throw err;
+    }
+    return copied;
   }
 
   // Run on EVERY mutator write, not conditionally: a conditional stamp could
@@ -491,14 +534,20 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       assertDispatchAllowed(k, seedRoles[k], file);
       assertRoleCwd(k, seedRoles[k], resolvedRoot, file);
     }
+    const templatesCopied = copyRoleTemplates(name, seedRoles);
     const manifest = {
       version: MANIFEST_VERSION,
       lead,
       root: resolvedRoot,
       roles: seedRoles,
     };
-    atomicWrite(file, JSON.stringify(manifest, null, 2));
-    return loadManifest(name);
+    try {
+      atomicWrite(file, JSON.stringify(manifest, null, 2));
+    } catch (err) {
+      unwindTemplateCopies(name, templatesCopied);
+      throw err;
+    }
+    return { ...loadManifest(name), templatesCopied };
   }
 
   function addRole(teamName, roleName, def, opts) {
@@ -524,8 +573,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       // `dispatch: "worktree"`.
       assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
       assertRoleCwd(roleName, rawMint.roles[roleName], team.root, team.file);
-      atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
-      return loadManifest(teamName);
+      const mintCopied = copyRoleTemplates(teamName, { [roleName]: rawMint.roles[roleName] });
+      try {
+        atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
+      } catch (err) {
+        unwindTemplateCopies(teamName, mintCopied);
+        throw err;
+      }
+      return { ...loadManifest(teamName), templatesCopied: mintCopied };
     }
     // Read on the load path, but must never enter through a WRITE: pickRoleKeys
     // drops it and emits no `dispatch`, so an addRole carrying `worktree: true`
@@ -539,6 +594,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (normalized.template != null && !NAME_RE.test(normalized.template)) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
+    copyRoleTemplates(teamName, { [roleName]: normalized }, { repointOnly: true });
     const existing = team.roles[roleName];
     // Never mint an absent reserved key from a def: loadManifest only requires
     // `lead`, so a hand-deleted `reviewer` could otherwise be re-added with an
@@ -547,7 +603,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`the "${roleName}" role is operator-owned topology; add it via the app, not an intent/mutator (${team.file})`);
     }
     if (existing) {
-      if (JSON.stringify(existing) === JSON.stringify(normalized)) return team; // no-op
+      if (JSON.stringify(existing) === JSON.stringify(normalized)) return { ...team, templatesCopied: [] }; // no-op
       throw new Error(`role "${roleName}" already exists on team "${teamName}" with a different definition`);
     }
     // Re-read raw to preserve hand-authored fields on the OTHER roles. The new
@@ -557,8 +613,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
-    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
-    return loadManifest(teamName);
+    const templatesCopied = copyRoleTemplates(teamName, { [roleName]: raw.roles[roleName] });
+    try {
+      atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    } catch (err) {
+      unwindTemplateCopies(teamName, templatesCopied);
+      throw err;
+    }
+    return { ...loadManifest(teamName), templatesCopied };
   }
 
   function setRole(teamName, roleName, patch) {

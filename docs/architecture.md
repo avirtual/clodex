@@ -369,6 +369,11 @@ not by size:
   `ticket-mixin-surface.test.js` is what guards it, and its `this.*` inventory
   is the starting spec if the boundary is ever made real.
 - **team-manifest.js** — the team roster and its membership predicate.
+  `createTeam` and `addRole` also give each role the team's OWN copy of its stock
+  template at `templates/<role>.json` and repoint the role's `template` at
+  `<role>`, so a team edits its own file rather than the library's, which is
+  re-seeded on boot; `docs/notes/team-manifest.md` carries the ordering and unwind
+  constraints that copy runs under.
   Team membership is a REPO, not a path: `cwdInProject`
   accepts a worktree of the root as a member, so seats in sibling worktrees stay
   on the roster and stay ticket-addressable. It reads the worktree's `.git` FILE

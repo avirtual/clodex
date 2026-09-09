@@ -37,4 +37,4 @@ function deriveModelTemplate(base, roleName, modelId) {
   return out;
 }
 
-module.exports = { resolveModelId, deriveModelTemplate };
+module.exports = { resolveModelId, deriveModelTemplate, LISTING_KEYS };

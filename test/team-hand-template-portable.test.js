@@ -96,6 +96,35 @@ test('STOCK_ROLE_DEFS.hand points at the shipped template by its FILE name', () 
   assert.strictEqual(path.basename(TPL_PATH, '.json'), tpl.name);
 });
 
+test('t789: a team created against the SHIPPED library owns a copy of this template', () => {
+  // The stem above is what a new team STARTS from; the copy is what it edits.
+  // Driven from resources/ rather than a fixture body, so a change to the shipped
+  // template that the copy path cannot carry fails here.
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const { createTeamManifest } = require('../team-manifest');
+  const home = mkTmpRoot('t789-portable-');
+  const libDir = path.join(home, 'library', 'templates');
+  fs.mkdirSync(libDir, { recursive: true });
+  fs.copyFileSync(TPL_PATH, path.join(libDir, 'clodex-team-hand.json'));
+  const root = mkTmpRoot('t789-portable-proj-');
+
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'x', root, lead: 'x-lead' });
+
+  const own = path.join(home, 'teams', 'x', 'templates', 'hand.json');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(own, 'utf-8')), { ...tpl, name: 'hand' },
+    'the whole shipped body, with `name` swapped to the role — a key the copy dropped would show here');
+  assert.strictEqual(tm.loadManifest('x').roles.hand.template, 'hand',
+    'and the role names its own file, not the library stem');
+  // The library original is never touched: the next team starts from it.
+  assert.strictEqual(fs.readFileSync(path.join(libDir, 'clodex-team-hand.json'), 'utf-8'),
+    fs.readFileSync(TPL_PATH, 'utf-8'), 'the library copy is byte-identical still');
+  // The `${TEAM_ROOT}` token is the reason this file exists: a copy that expanded
+  // it would pin the new team's hand to whatever root created it.
+  assert.strictEqual(JSON.parse(fs.readFileSync(own, 'utf-8')).cwd, '${TEAM_ROOT}',
+    'unexpanded in the copy — expanding here would hardcode a root into the team\'s own file');
+});
+
 test('the stock hand def stays inside the role schema (template/prompt/brief only)', () => {
   // A role field no resolver reads is how the five cut fields were born.
   assert.deepStrictEqual(Object.keys(STOCK_ROLE_DEFS.hand).sort(), ['brief', 'prompt', 'template']);
