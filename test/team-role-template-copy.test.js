@@ -20,13 +20,20 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { createTeamManifest, STOCK_ROLE_DEFS } = require('../team-manifest');
 const { mkPark, mkTeamCreate } = require('./lib/session-fixtures');
 
+// `id` is LISTING decoration, not a template key. It has no business in a file on
+// disk, but a hand-authored library template can carry one — and the copy strips
+// the same set deriveModelTemplate strips, so the deepStrictEqual below measures
+// that strip only because this key is here to be dropped.
 const LIB_HAND = {
   name: 'clodex-team-hand',
   type: 'claude',
   cwd: '${TEAM_ROOT}',
   execCommands: ['clodex-run-tests'],
   env: { A: '1' },
+  id: 'clodex-team-hand',
 };
+const LIB_HAND_COPIED = { ...LIB_HAND };
+delete LIB_HAND_COPIED.id;
 const LIB_LEAD = { name: 'clodex-team-lead', type: 'claude', cwd: '${TEAM_ROOT}', stripLevel: 2 };
 
 // A clodex home whose `library/templates/` holds whatever the caller names. With
@@ -62,7 +69,7 @@ test('t789 createTeam: every role with a stock template gets the team\'s own cop
 
   // The copies exist and are the library body with `name` swapped to the ROLE —
   // the same shape deriveModelTemplate produces, minus the --model splice.
-  assert.deepStrictEqual(readTpl(home, 'x', 'hand'), { ...LIB_HAND, name: 'hand' });
+  assert.deepStrictEqual(readTpl(home, 'x', 'hand'), { ...LIB_HAND_COPIED, name: 'hand' });
   assert.deepStrictEqual(readTpl(home, 'x', 'lead'), { ...LIB_LEAD, name: 'lead' });
   // The copy COUNT, anchored: the reviewer ships no `template` in STOCK_ROLE_DEFS,
   // so exactly two roles can be copied for. A third file here means a role gained
@@ -108,14 +115,14 @@ test('t789 addRole: a new role gets its own copy; a re-add over an existing copy
   tm.createTeam({ name: 'x', root, lead: 'x-lead' });
 
   const added = tm.addRole('x', 'scribe', { template: 'clodex-team-hand', brief: 'writes things' });
-  assert.deepStrictEqual(readTpl(home, 'x', 'scribe'), { ...LIB_HAND, name: 'scribe' });
+  assert.deepStrictEqual(readTpl(home, 'x', 'scribe'), { ...LIB_HAND_COPIED, name: 'scribe' });
   assert.strictEqual(added.roles.scribe.template, 'scribe');
   assert.deepStrictEqual(added.templatesCopied, ['scribe']);
 
   // The operator's edit. A re-add that overwrote the copy would silently discard
   // it — this is the whole reason the team gets a file of its own.
   const own = path.join(tplDir(home, 'x'), 'scribe.json');
-  fs.writeFileSync(own, `${JSON.stringify({ ...LIB_HAND, name: 'scribe', env: { A: 'edited' } }, null, 2)}\n`);
+  fs.writeFileSync(own, `${JSON.stringify({ ...LIB_HAND_COPIED, name: 'scribe', env: { A: 'edited' } }, null, 2)}\n`);
   const edited = fs.readFileSync(own);
 
   tm.removeRole('x', 'scribe');
@@ -157,17 +164,22 @@ test('t789 addRole: re-riding the same stock def stays a no-op after the copy re
     'and the no-op left the role pointing at its own copy');
 });
 
-// The intent replies. The clause is how a lead learns the team owns files now —
-// without it the copy is invisible until someone lists the directory.
-test('t789 [agent:team create]: the reply names the roles that got a copy, and omits the clause when none did', async () => {
-  const f = mkTeamCreate();
-  // The fixture's home has no library, which is the bare case. Seeded HERE, after
-  // construction and before the intent, so both halves run against one fixture.
-  const dir = path.join(f.home, 'library', 'templates');
+// mkTeamCreate's home ships no library, so a create through it copies nothing —
+// which is exactly the case the shipped box is NOT in. Seeding it is what makes
+// the handler tests below run against the on-disk layout a real create produces.
+function seedLibrary(home) {
+  const dir = path.join(home, 'library', 'templates');
   fs.mkdirSync(dir, { recursive: true });
   for (const [stem, body] of [['clodex-team-hand', LIB_HAND], ['clodex-team-lead', LIB_LEAD]]) {
     fs.writeFileSync(path.join(dir, `${stem}.json`), `${JSON.stringify(body, null, 2)}\n`);
   }
+}
+
+// The intent replies. The clause is how a lead learns the team owns files now —
+// without it the copy is invisible until someone lists the directory.
+test('t789 [agent:team create]: the reply names the roles that got a copy, and omits the clause when none did', async () => {
+  const f = mkTeamCreate();
+  seedLibrary(f.home);
 
   await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
   assert.ok(f.injected.some((t) => t.includes('templates copied to templates/<role>.json for lead, hand')),
@@ -202,7 +214,7 @@ test('t789 [agent:team role-add]: the reply names the copy, over the REAL mutato
 
   m._handleTeam(seat, { type: 'team', sub: 'role-add', name: 'scribe', template: 'clodex-team-hand', body: 'writes' });
 
-  assert.deepStrictEqual(readTpl(home, 'shop', 'scribe'), { ...LIB_HAND, name: 'scribe' },
+  assert.deepStrictEqual(readTpl(home, 'shop', 'scribe'), { ...LIB_HAND_COPIED, name: 'scribe' },
     'ENTER: the role-add really did write the copy — the clause below is about this file');
   assert.ok(injected.some((t) => t.includes('role "scribe" added to shop; templates copied to templates/<role>.json for scribe')),
     `the role-add reply carries the clause — got: ${JSON.stringify(injected)}`);
@@ -244,4 +256,60 @@ test('t789 createTeam: a team.json that cannot be written unwinds the copies mad
     'both copies AND the templates/ directory are gone — only the fixture\'s obstruction is left');
   assert.strictEqual(fs.statSync(path.join(teamDir(home, 'x'), 'team.json')).isDirectory(), true,
     'ENTER: the obstruction is the directory this test planted, so the manifest write really was refused');
+});
+
+// The kickstart create's OTHER unwind, the one that runs after createTeam already
+// succeeded. The pre-t789 pin for this (session-manager.test.js, 'a brief that
+// cannot be saved leaves NO team behind') stays green over a home with no
+// library, so it never sees a copy — and `rmdir` refuses a non-empty directory,
+// which is how a fully-unwound-looking cleanup started leaving a team dir with
+// no manifest for listTeams to report as a broken team.
+//
+// A READ-ONLY prompts/ rather than the older pin's directory-shaped prompt file:
+// that obstruction lives INSIDE teams/<name>, so it keeps the directory alive on
+// its own and no unwind could ever empty it. This one makes teamPromptSave's
+// mkdir fail while leaving nothing of the caller's behind, so "the team directory
+// is gone" is a claim about the unwind rather than about the fixture.
+function mkFailedBriefCreate() {
+  const f = mkTeamCreate();
+  seedLibrary(f.home);
+  const dir = path.join(f.home, 'teams', 'shop');
+  fs.mkdirSync(path.join(dir, 'prompts'), { recursive: true });
+  fs.chmodSync(path.join(dir, 'prompts'), 0o500);
+  return { f, dir };
+}
+
+test('t789 create: a brief that cannot be saved unwinds the template copies too, on a box that HAS a library', async () => {
+  const { f, dir } = mkFailedBriefCreate();
+
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'the brief',
+  });
+
+  assert.ok(f.injected[0] && f.injected[0].includes('no team was created'),
+    `ENTER: the brief save really failed — got: ${f.injected[0]}`);
+  assert.strictEqual(fs.existsSync(dir), false,
+    'the whole team directory is gone: a surviving templates/ would make rmdir(dir) fail and leave a manifest-less team listTeams still reports');
+});
+
+test('t789 create: the re-fire after that failure copies again, and says so', async () => {
+  // The reply above tells the seat to re-fire. If the copies had survived the
+  // unwind, the retry would treat them as already owned: repointed silently, with
+  // `templatesCopied` empty and no clause — the operator never told the team owns
+  // files it did not write.
+  const { f, dir } = mkFailedBriefCreate();
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'the brief',
+  });
+  assert.strictEqual(fs.existsSync(dir), false, 'ENTER: the failed create left nothing');
+
+  f.injected.length = 0;
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '',
+  });
+
+  assert.ok(f.injected.some((t) => t.includes('templates copied to templates/<role>.json for lead, hand')),
+    `the retry reports both copies — got: ${JSON.stringify(f.injected)}`);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'templates')).sort(), ['hand.json', 'lead.json'],
+    'and the files are really there, written by THIS create');
 });

@@ -18,6 +18,12 @@ a team, so a refused create is visible in the listing until something removes it
 — unchanged from before this, where the same directory was created by the
 manifest write's own `ensureDir`.
 
+The kickstart create's brief-save cleanup (team-tickets.js `_handleTeamCreate`)
+unwinds the same copies by hand, over `team.templatesCopied`, and must delete
+them before its own `rmdir` of the team directory — that `rmdir` refuses a
+non-empty directory, so a copy left behind leaves a team dir with no manifest
+that `listTeams` still reports while the reply says no team was created.
+
 `repointOnly` is the `addRole` pre-check arm. It repoints a def whose copy is
 already on disk and writes nothing, so the exact-match comparison downstream runs
 against a def shaped the way a stored one is. Without it `team:join`'s

@@ -167,7 +167,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   function copyRoleTemplates(teamName, roles, opts) {
     const repointOnly = !!(opts && opts.repointOnly === true);
     const copied = [];
-    const written = [];
     if (typeof teamName !== 'string' || !TEAM_STEM_RE.test(teamName)) return copied;
     try {
       for (const [roleName, def] of Object.entries(roles)) {
@@ -189,7 +188,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         for (const k of LISTING_KEYS) delete body[k];
         body.name = roleName;
         atomicWrite(target, `${JSON.stringify(body, null, 2)}\n`);
-        written.push(target);
         def.template = roleName;
         copied.push(roleName);
       }
@@ -576,7 +574,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
       assertRoleCwd(roleName, rawMint.roles[roleName], team.root, team.file);
       const mintCopied = copyRoleTemplates(teamName, { [roleName]: rawMint.roles[roleName] });
-      atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
+      try {
+        atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
+      } catch (err) {
+        unwindTemplateCopies(teamName, mintCopied);
+        throw err;
+      }
       return { ...loadManifest(teamName), templatesCopied: mintCopied };
     }
     // Read on the load path, but must never enter through a WRITE: pickRoleKeys

@@ -2399,6 +2399,10 @@ function createTicketMethods(deps, shared) {
           try { fs.unlinkSync(nodePath.join(dir, 'team.json')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'append')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts')); } catch {}
+          for (const r of (Array.isArray(team.templatesCopied) ? team.templatesCopied : [])) {
+            try { fs.unlinkSync(nodePath.join(dir, 'templates', `${r}.json`)); } catch {}
+          }
+          try { fs.rmdirSync(nodePath.join(dir, 'templates')); } catch {}
           try { fs.rmdirSync(dir); } catch {}
           this._refreshAppMenuQuietly();
           reply(`error: could not save the brief (${res.error}) — no team was created; `

@@ -372,14 +372,8 @@ not by size:
   `createTeam` and `addRole` also give each role the team's OWN copy of its stock
   template at `templates/<role>.json` and repoint the role's `template` at
   `<role>`, so a team edits its own file rather than the library's, which is
-  re-seeded on boot. That copy writes through this module's own `atomicWrite`
-  rather than team-prompt-dir's `teamTemplateSave`, and not by preference: the
-  saver refuses a team `listTeams()` does not yet carry, which during a create is
-  every team. It runs BEFORE `team.json` (a manifest naming a copy that is not
-  there is worse than no team) and unwinds the copies it made if one throws. On
-  `addRole` the copy is minted only for a role the team does not have — the
-  repoint alone runs first, so re-riding a stock def still compares equal and
-  `team:join` stays a no-op.
+  re-seeded on boot; `docs/notes/team-manifest.md` carries the ordering and unwind
+  constraints that copy runs under.
   Team membership is a REPO, not a path: `cwdInProject`
   accepts a worktree of the root as a member, so seats in sibling worktrees stay
   on the roster and stay ticket-addressable. It reads the worktree's `.git` FILE
