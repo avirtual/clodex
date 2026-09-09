@@ -180,6 +180,22 @@ test('the interrupt flag does not survive its own flush', () => {
   );
 });
 
+// An interrupt with NOTHING pending — Esc mid-thought or mid tool call, the
+// common way a turn is stopped. Only _flushPending clears the flag and only
+// pending text calls it, so a flag set here would survive into the NEXT turn and
+// drop that turn's bodied intents with a bogus interrupted note. The fragment
+// entry always precedes the interrupt entry, so an interrupt that cut text has
+// it pending at this moment; one that does not, cut nothing.
+test('an interrupt with nothing pending does not arm the flag for a later turn', () => {
+  const seen = runWatcher([
+    { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
+    { type: 'assistant', requestId: 'r1', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:dm bob] my real report' }] } },
+  ]);
+  assert.strictEqual(seen.length, 1);
+  assert.deepStrictEqual(seen[0].meta, { turnEnd: true, interrupted: false },
+    'the next turn is a whole turn: its intents must fire');
+});
+
 test('a finished turn carries turnEnd true and interrupted false', () => {
   const seen = runWatcher([
     { type: 'assistant', requestId: 'r1', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:dm bob] hello' }] } },

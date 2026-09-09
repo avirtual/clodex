@@ -226,7 +226,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           // flag that ships is the one computed at the reply, which is false by
           // construction and leaves a Codex reply permanently unspoken.
           if (this._pendingIsReply && isTurnEndEntry(obj)) this._pendingTurnEnd = true;
-          if (isInterruptEntry(obj)) this._pendingInterrupted = true;
+          if (this._pendingText && isInterruptEntry(obj)) this._pendingInterrupted = true;
           if (this._pendingText) this._flushPending();
         }
       }
