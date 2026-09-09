@@ -95,6 +95,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     preflight = preflightByRole(res && res.ok ? res.findings : []);
   }
 
+  let activity = null;
+  async function loadActivity(name) {
+    if (typeof window.api.teamActivity !== 'function') { activity = null; return; }
+    let res;
+    try { res = await window.api.teamActivity(name); } catch { res = null; }
+    activity = res && res.ok ? res : null;
+  }
+
   let uses = null;
   async function loadUses(name, roleKeys) {
     let res;
@@ -421,7 +429,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     return summary.seats.working ? 'ok' : 'idle';
   }
 
-  // The collapsed line: dot, key, one-line note, dispatch chip, disclosure.
   // Built imperatively — `key` is charset-gated by ROLE_RE but the note carries
   // SEAT NAMES, and neither may reach an attribute in this nodeIntegration
   // renderer. Every string below lands as textContent.
@@ -450,12 +457,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     note.textContent = summary.key === 'lead' && res ? (res.name || 'no seat') : summary.note;
     head.appendChild(note);
 
-    // R2: the dispatch CONCEPT stays on screen even when the field is collapsed.
-    const chip = document.createElement('span');
-    chip.className = 'team-role-chip';
-    chip.textContent = summary.dispatch;
-    chip.title = 'What dispatching a ticket to this role does';
-    head.appendChild(chip);
+    if (!summary.reviewer) {
+      const chip = document.createElement('span');
+      chip.className = 'team-role-chip';
+      chip.textContent = summary.dispatch;
+      chip.title = 'What dispatching a ticket to this role does';
+      head.appendChild(chip);
+    }
 
     // A collapsed row must not swallow an unresolved reference. The checklist
     // itself lives in the body; this is the marker that says there is one.
@@ -577,7 +585,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     settingsBtn.classList.toggle('hidden', stage === 'setup');
     if (stage !== 'normal') listEl.appendChild(buildLeadBlockCard(manifest, res, stage));
     if (stage === 'setup') return;
-    const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead });
+    const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead, activity });
     const summaryByKey = new Map(summaries.map((s) => [s.key, s]));
     for (const row of teamRoleRows(manifest)) {
       const el = document.createElement('div');
@@ -833,6 +841,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // whose prompt was just re-pointed by a Save must re-badge against the new
     // name, and a stale checklist accusing the previous value is worse than none.
     await loadPreflight(res.team.name);
+    await loadActivity(res.team.name);
     await loadUses(res.team.name, Object.keys((res.team && res.team.roles) || {}));
     // Before renderRows, same reason as the preflight above: the lead row's
     // status line is rendered FROM these listings, so a stale one would state a

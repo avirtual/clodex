@@ -14,7 +14,7 @@ const {
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
   reservedRemovalWarning,
-  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  teamStage, roleSummaries, activityTime, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS, DISPATCH_VALUES,
 } = require('../renderer/lib/team-roles');
@@ -745,6 +745,152 @@ test('roleSummaries: keys are EXACTLY the summary shape — it must not grow int
   // that gate; asserting the whole key set is what keeps the two from converging.
   const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], {});
   assert.deepStrictEqual(Object.keys(out[0]).sort(), ['dispatch', 'key', 'note', 'readOnly', 'seats']);
+});
+
+// ── B: the note says what the role is DOING, from team:activity ───────────────
+// A per-ticket role read "no seat in this window" while its hand was mid-ticket,
+// because the seat counts are workspace-scoped and its seat lives in a worktree.
+// These notes come from the board instead. Every one is a literal: the whole
+// value of the row is the sentence an operator reads off it.
+
+// Local-time constructions on purpose — activityTime formats in the viewer's zone,
+// so a UTC epoch literal would render differently per machine and pin nothing.
+const NOW = new Date(2026, 8, 9, 23, 30).getTime();
+const TODAY_2116 = new Date(2026, 8, 9, 21, 16).getTime();
+const YESTERDAY_2116 = new Date(2026, 8, 8, 21, 16).getTime();
+
+const ACT_ROLES = (hand) => ({ ok: true, team: 'shop', roles: { hand }, reviewer: { live: [], last: null }, counts: {} });
+const WT = { name: 'shop', roles: { hand: { dispatch: 'worktree' } } };
+
+test('roleSummaries: one live per-ticket seat names its seat AND its ticket, with the step', () => {
+  const act = ACT_ROLES({ dispatch: 'worktree', live: [{ seat: 'shop-hand-783', ticket: 't783', step: 'working' }], open: [], last: null });
+  const out = roleSummaries(WT, [], { activity: act, now: NOW });
+  assert.strictEqual(out[0].note, 'shop-hand-783 on t783 (working)');
+});
+
+test('roleSummaries: a live seat at the review step reads "in review", not "working"', () => {
+  // The two steps have different answers to "should I wait for it": a seat in
+  // verify is done and being checked, and calling that "working" invites a nudge.
+  const act = ACT_ROLES({ dispatch: 'worktree', live: [{ seat: 'shop-hand-783', ticket: 't783', step: 'verify' }], open: [], last: null });
+  const out = roleSummaries(WT, [], { activity: act, now: NOW });
+  assert.strictEqual(out[0].note, 'shop-hand-783 on t783 (in review)');
+});
+
+test('roleSummaries: two live per-ticket seats list both seats with their tickets', () => {
+  const act = ACT_ROLES({
+    dispatch: 'worktree',
+    live: [{ seat: 'shop-hand-783', ticket: 't783', step: 'working' }, { seat: 'shop-hand-784', ticket: 't784', step: 'working' }],
+    open: [],
+    last: null,
+  });
+  const out = roleSummaries(WT, [], { activity: act, now: NOW });
+  assert.strictEqual(out[0].note, '2 seats: shop-hand-783 on t783, shop-hand-784 on t784');
+});
+
+test('roleSummaries: no seat but an open ticket names the ticket, and its step only when not working', () => {
+  // A parked ticket is waiting on the OPERATOR, an ordinary open one on the loop.
+  // Naming the step unconditionally would put "(working)" beside every id and
+  // bury the one word that means something.
+  const parked = ACT_ROLES({ dispatch: 'worktree', live: [], open: [{ id: 't790', title: null, assignee: null, step: 'parked' }], last: null });
+  assert.strictEqual(roleSummaries(WT, [], { activity: parked, now: NOW })[0].note, 'no seat now · t790 parked');
+  const working = ACT_ROLES({ dispatch: 'worktree', live: [], open: [{ id: 't790', title: null, assignee: null, step: 'working' }], last: null });
+  assert.strictEqual(roleSummaries(WT, [], { activity: working, now: NOW })[0].note, 'no seat now · t790');
+});
+
+test('roleSummaries: nothing live and nothing open says the role is per-ticket, not that it is broken', () => {
+  // "no seat in this window" reads as a misconfiguration. A per-ticket role with
+  // no ticket is idle and correct, and this is the sentence that says so.
+  const act = ACT_ROLES({ dispatch: 'worktree', live: [], open: [], last: null });
+  assert.strictEqual(roleSummaries(WT, [], { activity: act, now: NOW })[0].note, 'one seat per ticket · none running');
+});
+
+test('roleSummaries: the last landed ticket carries its outcome word and time', () => {
+  const mk = (outcome, at) => ACT_ROLES({ dispatch: 'worktree', live: [], open: [], last: { id: 't783', title: 'x', at, outcome } });
+  const note = (outcome, at) => roleSummaries(WT, [], { activity: mk(outcome, at), now: NOW })[0].note;
+  assert.strictEqual(note('accepted', TODAY_2116), 'one seat per ticket · none running · last t783 landed 21:16');
+  // A merge that failed is NOT a landing: the branch is still unmerged and
+  // someone has to act, so it must not read with the same word as a success.
+  assert.strictEqual(note('merge-failed', TODAY_2116), 'one seat per ticket · none running · last t783 merge FAILED 21:16');
+  assert.strictEqual(note('cancelled', TODAY_2116), 'one seat per ticket · none running · last t783 cancelled 21:16');
+  assert.strictEqual(note('accepted', YESTERDAY_2116), 'one seat per ticket · none running · last t783 landed Sep 8');
+});
+
+test('roleSummaries: a STANDING role keeps its seat-count note even with activity present', () => {
+  // The seat counts are the truth for a standing role — its seat is the operator's
+  // own, long-lived, and not minted by any ticket. Byte-identical to the no-activity
+  // row: the whole object, so a note swapped in there cannot hide behind a field.
+  const act = ACT_ROLES({ dispatch: 'standing', live: [], open: [], last: { id: 't783', title: 'x', at: TODAY_2116, outcome: 'accepted' } });
+  const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], { lead: 'shop-lead', activity: act, now: NOW });
+  assert.deepStrictEqual(out, [{
+    key: 'hand',
+    dispatch: 'standing',
+    readOnly: false,
+    seats: { total: 0, working: 0, names: [] },
+    note: 'no seat in this window',
+  }]);
+});
+
+test('roleSummaries: the reviewer row states it is spawned per round and drops the dispatch key', () => {
+  // team-manifest.js does not read the reviewer's `dispatch` — the loop reaches it
+  // through [agent:team-review] and spawns one per round. Omitting the key is what
+  // makes buildSummaryLine drop the chip; a chip there names a mode nothing honours.
+  const rev = (reviewer) => ({ ok: true, team: 'shop', roles: {}, reviewer, counts: {} });
+  const manifest = { name: 'shop', roles: { reviewer: { dispatch: 'worktree' } } };
+  const live = roleSummaries(manifest, [], { activity: rev({ live: [{ ticket: 't783', round: 1, seat: 'shop-reviewer-783-r1' }], last: null }), now: NOW });
+  assert.deepStrictEqual(live, [{
+    key: 'reviewer',
+    readOnly: true,
+    seats: { total: 0, working: 0, names: [] },
+    reviewer: true,
+    note: 'reviewing t783 (round 1)',
+  }]);
+  const idle = roleSummaries(manifest, [], { activity: rev({ live: [], last: null }), now: NOW });
+  assert.strictEqual(idle[0].note, 'spawned per review round · none now');
+  const last = roleSummaries(manifest, [], { activity: rev({ live: [], last: { ticket: 't783', round: 1, verdict: 'ACCEPT', at: TODAY_2116 } }), now: NOW });
+  assert.strictEqual(last[0].note, 'spawned per review round · none now · last t783 ACCEPT r1 21:16');
+});
+
+test('roleSummaries: activity ABSENT or ok:false leaves every row exactly as it was', () => {
+  // The channel can fail (manifest unreadable) and the web host has no such api at
+  // all. A blank or stale line on a row whose job is to state the truth is worse
+  // than the seat-count note it replaced, so the fallback is the OLD row entire.
+  const manifest = { name: 'shop', roles: { reviewer: {}, hand: { dispatch: 'worktree' } } };
+  const sessions = [{ name: 'shop-hand', role: 'hand', team: 'shop', activity: 'working' }];
+  const expected = [
+    { key: 'reviewer', dispatch: 'standing', readOnly: true, seats: { total: 0, working: 0, names: [] }, note: 'no seat in this window' },
+    { key: 'hand', dispatch: 'worktree', readOnly: false, seats: { total: 1, working: 1, names: ['shop-hand'] }, note: 'shop-hand' },
+  ];
+  assert.deepStrictEqual(roleSummaries(manifest, sessions, {}), expected, 'no activity option at all');
+  assert.deepStrictEqual(roleSummaries(manifest, sessions, { activity: { ok: false, error: 'boom' } }), expected, 'a failed read');
+});
+
+test('roleSummaries: a per-ticket role the activity does not carry falls back to its seat note', () => {
+  // `roles` is keyed off the manifest the BACKEND loaded, which can be a moment
+  // behind the one rendered here — a role added since is absent, and inventing
+  // "one seat per ticket · none running" for it would state a board fact nobody read.
+  const act = { ok: true, team: 'shop', roles: {}, reviewer: { live: [], last: null }, counts: {} };
+  const out = roleSummaries(WT, [], { activity: act, now: NOW });
+  assert.strictEqual(out[0].note, 'no seat in this window');
+});
+
+test('activityTime: HH:MM today, "Mon D" any other day, blank for a non-number', () => {
+  assert.strictEqual(activityTime(TODAY_2116, NOW), '21:16');
+  assert.strictEqual(activityTime(new Date(2026, 8, 9, 9, 5).getTime(), NOW), '09:05', 'zero-padded both halves');
+  assert.strictEqual(activityTime(YESTERDAY_2116, NOW), 'Sep 8');
+  // Same clock time, a year apart: a day comparison on hours/minutes alone would
+  // call this today and print 21:16 for something twelve months old.
+  assert.strictEqual(activityTime(new Date(2025, 8, 9, 21, 16).getTime(), NOW), 'Sep 9');
+  assert.strictEqual(activityTime(null, NOW), '');
+  assert.strictEqual(activityTime(undefined, NOW), '');
+});
+
+test('the roles popover header explains the two kinds of role', () => {
+  // The chips say `standing` and `worktree` with nothing on screen saying what
+  // either does; this sentence is the only place the distinction is stated.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf-8');
+  assert.ok(html.includes("A standing role is one live seat you sit yourself; a per-ticket role gets a fresh seat, branch and checkout for every ticket, torn down when it lands."),
+    'ENTER: the intro line carries the standing-vs-per-ticket sentence');
+  assert.ok(html.includes('no config files needed'), 'the original reassurance survives');
 });
 
 test('parseDuration: friendly units → ms; bare number = minutes; rejects junk/zero/blank', () => {

@@ -6785,7 +6785,7 @@ body {
     </div>
     <div id="team-roles-popover" class="hidden">
       <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="secondary" id="team-roles-gather-btn" title="Copy every library piece this team uses into the team's own directory">Gather</button><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
-      <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
+      <div class="popover-intro">Your team's roles. A standing role is one live seat you sit yourself; a per-ticket role gets a fresh seat, branch and checkout for every ticket, torn down when it lands. Edit them here; no config files needed.</div>
       <div class="popover-help hidden" id="team-roles-help" data-help>
         <p><strong>What this is.</strong> A team is a group of AI teammates that work together. Each <em>role</em> below is one kind of teammate — what it's for and how it behaves.</p>
         <p><strong>Editing a role.</strong> Change its short description ("brief"), its behavior ("prompt"), or an optional spawn template, then press Save. Add a new kind of teammate with the Add Role form.</p>
@@ -31053,7 +31053,47 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         if (state === "stopped" || state === "live") return "normal";
         return "repair";
       }
-      function roleSummaries(manifest, sessions, { lead } = {}) {
+      var MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      function activityTime(ms, now) {
+        if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
+        const at = new Date(ms);
+        if (Number.isNaN(at.getTime())) return "";
+        const ref = new Date(typeof now === "number" && Number.isFinite(now) ? now : Date.now());
+        const sameDay = at.getFullYear() === ref.getFullYear() && at.getMonth() === ref.getMonth() && at.getDate() === ref.getDate();
+        if (sameDay) return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+        return `${MONTH_ABBR[at.getMonth()]} ${at.getDate()}`;
+      }
+      var OUTCOME_WORD = { accepted: "landed", "merge-failed": "merge FAILED", cancelled: "cancelled" };
+      function ticketRoleNote(info, now) {
+        const live = info && Array.isArray(info.live) ? info.live : [];
+        const onTicket = (s) => s.ticket ? `${s.seat} on ${s.ticket}` : String(s.seat);
+        if (live.length === 1) {
+          const s = live[0];
+          if (!s.ticket) return String(s.seat);
+          return `${onTicket(s)} (${s.step === "verify" ? "in review" : "working"})`;
+        }
+        if (live.length > 1) return `${live.length} seats: ${live.map(onTicket).join(", ")}`;
+        const open = info && Array.isArray(info.open) ? info.open : [];
+        if (open.length) {
+          const parts = open.map((t) => t.step === "working" ? String(t.id) : `${t.id} ${t.step}`);
+          return `no seat now \xB7 ${parts.join(", ")}`;
+        }
+        const last = info && info.last;
+        if (!last || !last.id) return "one seat per ticket \xB7 none running";
+        const word = OUTCOME_WORD[last.outcome] || String(last.outcome);
+        const when = activityTime(last.at, now);
+        return `one seat per ticket \xB7 none running \xB7 last ${last.id} ${word}${when ? ` ${when}` : ""}`;
+      }
+      function reviewerNote(rev, now) {
+        const live = rev && Array.isArray(rev.live) ? rev.live : [];
+        if (live.length) return `reviewing ${live.map((r) => `${r.ticket} (round ${r.round})`).join(", ")}`;
+        const last = rev && rev.last;
+        if (!last || !last.ticket) return "spawned per review round \xB7 none now";
+        const when = activityTime(last.at, now);
+        return `spawned per review round \xB7 none now \xB7 last ${last.ticket} ${last.verdict || "?"} r${last.round}${when ? ` ${when}` : ""}`;
+      }
+      function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
+        const act = activity && activity.ok ? activity : null;
         const roles = manifest && manifest.roles || {};
         const teamName = manifest && manifest.name || "";
         const rows = (Array.isArray(sessions) ? sessions : []).filter((s) => s && typeof s.name === "string" && s.name);
@@ -31068,12 +31108,19 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           else if (total === 1) note = names[0];
           else note = `${total} seats \xB7 ${working} working`;
           const raw = def && def.dispatch || DEFAULT_DISPATCH;
+          const dispatch = DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH;
+          const readOnly = RESERVED_ROLE_KEYS.has(key);
+          const seats = { total, working, names };
+          if (act && key === "reviewer") {
+            return { key, readOnly, seats, reviewer: true, note: reviewerNote(act.reviewer, now) };
+          }
+          const perTicket = act && dispatch !== DEFAULT_DISPATCH && act.roles && Object.prototype.hasOwnProperty.call(act.roles, key);
           return {
             key,
-            dispatch: DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH,
-            readOnly: RESERVED_ROLE_KEYS.has(key),
-            seats: { total, working, names },
-            note
+            dispatch,
+            readOnly,
+            seats,
+            note: perTicket ? ticketRoleNote(act.roles[key], now) : note
           };
         });
       }
@@ -31160,6 +31207,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         leadResolution,
         teamStage,
         roleSummaries,
+        activityTime,
         absentStockRoles,
         absentStockNote,
         offerDispatchLine,
@@ -31247,6 +31295,20 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             res = null;
           }
           preflight = preflightByRole(res && res.ok ? res.findings : []);
+        }
+        let activity = null;
+        async function loadActivity(name) {
+          if (typeof window.api.teamActivity !== "function") {
+            activity = null;
+            return;
+          }
+          let res;
+          try {
+            res = await window.api.teamActivity(name);
+          } catch {
+            res = null;
+          }
+          activity = res && res.ok ? res : null;
         }
         let uses = null;
         async function loadUses(name, roleKeys) {
@@ -31464,11 +31526,13 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           note.className = "team-role-note";
           note.textContent = summary.key === "lead" && res ? res.name || "no seat" : summary.note;
           head.appendChild(note);
-          const chip = document.createElement("span");
-          chip.className = "team-role-chip";
-          chip.textContent = summary.dispatch;
-          chip.title = "What dispatching a ticket to this role does";
-          head.appendChild(chip);
+          if (!summary.reviewer) {
+            const chip = document.createElement("span");
+            chip.className = "team-role-chip";
+            chip.textContent = summary.dispatch;
+            chip.title = "What dispatching a ticket to this role does";
+            head.appendChild(chip);
+          }
           if (owed && owed.length) {
             const warns = owed.filter((f) => f.level === "warn").length;
             const mark = document.createElement("span");
@@ -31557,7 +31621,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           settingsBtn.classList.toggle("hidden", stage === "setup");
           if (stage !== "normal") listEl.appendChild(buildLeadBlockCard(manifest, res, stage));
           if (stage === "setup") return;
-          const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead });
+          const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead, activity });
           const summaryByKey = new Map(summaries.map((s) => [s.key, s]));
           for (const row of teamRoleRows(manifest)) {
             const el = document.createElement("div");
@@ -31708,6 +31772,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           nameEl.textContent = res.team.name;
           currentRoot = res.team.root || "";
           await loadPreflight(res.team.name);
+          await loadActivity(res.team.name);
           await loadUses(res.team.name, Object.keys(res.team && res.team.roles || {}));
           await loadLeadSeats();
           renderRows(res.team);
