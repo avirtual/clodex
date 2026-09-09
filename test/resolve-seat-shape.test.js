@@ -113,7 +113,7 @@ test('review purpose: the whole shape, with no template', () => {
     agents: [],
     denyBuiltins: [],
     disabledTools: CLAUDE_TOOLS.filter((t) => !REVIEWER_CAP.includes(t)),
-    disabledSkills: [],
+    disabledSkills: ['*'],
     injectSkills: [],
     effectiveTools: REVIEWER_CAP,
     // null, not the cap: the no-template fallback asked for nothing, which is
@@ -143,6 +143,22 @@ test('review purpose: the whole shape, with no template', () => {
   });
 });
 
+test('t777: a reviewer template naming its own disabledSkills is honored', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude', disabledSkills: ['x'] }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.disabledSkills, ['x']);
+  assert.notStrictEqual(shape.disabledSkills, shape.tpl.disabledSkills,
+    'a copy: the caller mutating the shape must not edit the cached template');
+});
+
+test('t777: a reviewer template WITHOUT the key still denies every skill', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude' }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).disabledSkills, ['*']);
+});
+
 test('review purpose: the whole shape, WITH a template (the production config)', () => {
   // Both pins above use the no-template fallback, which is the recovery path.
   // The shipped reviewer template exists, so this is the shape that actually
@@ -155,7 +171,8 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     env: { CLODEX_DISABLE_IPC_PROMPT: '1' },
     systemPromptFile: 'rv-brief',
     // Every one of these must be IGNORED on the review path: the reviewer's
-    // shape is a code-level ceiling, not a template's wish list.
+    // shape is a code-level ceiling, not a template's wish list. disabledSkills
+    // is the exception — it can only subtract from what the seat may run.
     agents: ['a'], denyBuiltins: ['d'], disabledSkills: ['s'], injectSkills: ['i'],
     appendPromptFiles: ['ap'], execCommands: ['ec'], extraArgs: ['--foo'],
   }], { leadArgs: ['--dangerously-skip-permissions'] });
@@ -170,7 +187,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     agents: [],
     denyBuiltins: [],
     disabledTools: CLAUDE_TOOLS.filter((t) => !['Read', 'Grep'].includes(t)),
-    disabledSkills: [],
+    disabledSkills: ['s'],
     injectSkills: [],
     effectiveTools: ['Read', 'Grep'],
     requestedTools: ['Read', 'Grep'],
@@ -534,6 +551,18 @@ test('the reviewer arm takes the template system prompt over the role prompt', (
   const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', systemPromptFile: 'rv-tpl' }]);
   const team = teamWith({ reviewer: { template: 'rv', prompt: 'rv-role' } });
   assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).systemPromptFile, 'rv-tpl');
+});
+
+test('t777: the SHIPPED reviewer template denies every skill, and resolves that way', () => {
+  // The JSON key and the resolver both, because either alone passes while the
+  // seat still boots with skills: a template carrying the key that the review
+  // arm ignored is exactly the state before t777.
+  const tplDir = path.join(__dirname, '..', 'resources', 'library', 'templates');
+  const tpl = JSON.parse(fs.readFileSync(path.join(tplDir, 'clodex-team-reviewer.json'), 'utf-8'));
+  assert.deepStrictEqual(tpl.disabledSkills, ['*']);
+  const shape = managerWith([tpl]).resolveSeatShape(
+    teamWith({ reviewer: { template: 'clodex-team-reviewer' } }), 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.disabledSkills, ['*']);
 });
 
 test('the STOCK team and templates resolve to exactly the stems they did before t703', () => {
@@ -946,7 +975,7 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     agents: [],
     denyBuiltins: [],
     disabledTools: CLAUDE_TOOLS.filter((t) => !REVIEWER_CAP.includes(t)),
-    disabledSkills: [],
+    disabledSkills: ['*'],
     injectSkills: [],
     effectiveTools: REVIEWER_CAP,
     requestedTools: null,

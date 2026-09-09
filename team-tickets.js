@@ -4318,7 +4318,7 @@ function createTicketMethods(deps, shared) {
         agents: [],
         denyBuiltins: [],
         disabledTools: CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
-        disabledSkills: [],
+        disabledSkills: (tpl && Array.isArray(tpl.disabledSkills)) ? tpl.disabledSkills.slice() : ['*'],
         injectSkills: [],
         // Carried, not recomputed from disabledTools: the warning below prints it
         // in REVIEWER_TOOL_CAP order, and inverting the denylist would print it in
