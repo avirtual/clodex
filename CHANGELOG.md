@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Messaging:** clicking a seat's ✉ badge while that seat is mid-turn or compacting now keeps the badge, shows a tip saying why, and logs it, instead of clearing the badge and queueing a flush that the seat's next prompt usually pre-empted — the click that appeared to do nothing.
+
 - **Teams:** the stock hand and lead templates now deny every tool a ticket seat cannot use (scheduling, push, remote trigger, plan mode, worktree switching, AskUserQuestion, EndConversation, SendFeedback, the task list, and the rest), keeping only Read, Edit, Write, Glob, Grep, Bash, Agent, SendMessage and ListAgents. The list is pinned against the tool catalog, so a tool added to Claude Code stays off on ticket seats until it is deliberately allowed. Before, tools added since the list was written came up on. Both templates also declare an empty plugin list, so a ticket seat no longer inherits every shipped plugin's bundle (clodex-plugin-builder rode on every hand and lead).
 
 ## 5.47.0 — 2026-09-09 — A new team's lead boots lean: the stock lead template

@@ -12387,10 +12387,53 @@ test('flushPending: unknown / non-claude / dead target → refused, nothing drai
 test('flushPending: dialog-blocked target refuses WITHOUT draining (leaves durable store intact)', () => {
   const m = mkFlush({ _texts: ['[agent:from bob] hi'] });
   m.sessions.set('a', { name: 'a', agentType: 'claude', needsAttention: { kind: 'permission' } });
-  assert.deepStrictEqual(m.flushPending('a'), { ok: false, reason: 'dialog-blocked' });
+  assert.deepStrictEqual(m.flushPending('a'), { ok: false, reason: 'dialog-blocked', count: 1 });
   assert.strictEqual(m._drained.length, 0, 'dialog guard returns before the claim');
   assert.strictEqual(m._injected.length, 0);
 });
+
+// A held flush used to return ok and clear the badge while the entries stayed on
+// disk behind the inject hold, where the seat's next prompt claimed them first —
+// four clicks on a thinking seat looked like they did nothing. The verdict now
+// carries the reason and the seat keeps its badge from the 1s poll.
+for (const [label, seatState, reason] of [
+  ['thinking', { activityState: 'thinking' }, 'busy'],
+  ['compacting', { _compactGuard: true }, 'compact-window'],
+]) {
+  test(`flushPending: a ${label} seat refuses with reason ${reason} — nothing claimed, badge untouched, one log line`, () => {
+    const infos = [];
+    const broadcasts = [];
+    const recorder = (channel, msg) => broadcasts.push({ channel, msg });
+    const mk1 = (extra) => {
+      const m = mkFlush({
+        _texts: ['[agent:from bob] hi'],
+        log: { warn() {}, error() {}, debug() {}, info: (_scope, msg) => infos.push(msg) },
+      });
+      m._broadcast = recorder;
+      m.sessions.set('a', { name: 'a', agentType: 'claude', ...extra });
+      return m;
+    };
+
+    // ENTER: the very same recorder DOES capture the badge-clearing broadcast on
+    // the idle path, so the empty array below is a real absence, not a dead stub.
+    const idle = mk1({ activityState: 'idle' });
+    idle.flushPending('a');
+    assert.deepStrictEqual(broadcasts.filter(b => b.channel === 'pending-count'),
+      [{ channel: 'pending-count', msg: { name: 'a', count: 0 } }],
+      'ENTER: an idle flush clears the badge through this recorder');
+    broadcasts.length = 0;
+    infos.length = 0;
+
+    const m = mk1(seatState);
+    assert.deepStrictEqual(m.flushPending('a'), { ok: false, reason, count: 1 });
+    assert.deepStrictEqual(m._drained, [], 'a held flush claims nothing — the entries stay on disk');
+    assert.strictEqual(m._injected.length, 0);
+    assert.deepStrictEqual(broadcasts.filter(b => b.channel === 'pending-count'), [],
+      'no count:0 delta, so the 1s poll keeps the badge true');
+    assert.strictEqual(infos.length, 1, 'the refusal is logged exactly once');
+    assert.match(infos[0], new RegExp(`^park-flush for a held \\(${reason}\\) — 1 parked entry stays on disk$`));
+  });
+}
 
 test('flushPending: happy path claims with a flush.<pid> tag and injects the parked pile as ONE batched message', () => {
   const m = mkFlush({ _texts: ['m1', 'm2'] });
