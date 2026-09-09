@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Manage Plugins Help popover fixed, and the teams checklist matches `team create`
 
 - **Manage Plugins:** the Help popover now opens above the dialog and stays open when clicked; it used to paint behind the plugin list, and a click on it closed both.
 - **docs:** the teams checklist now matches what `team create` writes (lead, hand and reviewer are seeded; the hand becomes per-ticket with `role-set`, not `role-add`) and points at the team-bootstrap skill in the plugin library; the README's plugin list defers to the library instead of enumerating it.
