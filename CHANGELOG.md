@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- **Teams:** spawning a team's lead by name with no `template:` now boots it on the lead role's template, stock `clodex-team-lead` by default: Opus, every skill off, the team, monitor and run-tests execs granted, `spawn` on and the privileged intents off. Before, a bare spawn gave the lead the spawner's box default (on a Fable box: Fable 1M with every skill and plugin and no exec grants), which is the most expensive seat a team can have carrying its whole context. An explicit `template:` still wins.
+- **Teams:** spawning a team's lead by name with no `template:` now boots it on the lead role's template, stock `clodex-team-lead` by default: Opus, every skill off, the team, monitor and run-tests execs granted, `spawn` on and the privileged intents off. Before, a bare spawn gave the lead the spawner's box default (on a Fable box: Fable 1M with every skill and plugin and no exec grants), which is the most expensive seat a team can have carrying its whole context. An explicit `template:` still wins, and `team create` now records `clodex-team-lead` on the lead role, so the roster shows it.
 
 ## 5.46.0 — 2026-09-09 — A new team costs nothing to set up: role model by alias, a portable suite digest, lean hands
 

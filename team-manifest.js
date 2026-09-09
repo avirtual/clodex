@@ -55,7 +55,7 @@ const WATCHDOG_MIN_MS = 5 * 60 * 1000;
 const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOCK_ROLE_DEFS = {
-  lead: { prompt: 'clodex-team-lead', brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.' },
+  lead: { prompt: 'clodex-team-lead', brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.', template: 'clodex-team-lead' },
   // The template is what gives the hand's seat a working directory: the shipped
   // clodex-team-hand.json writes "${TEAM_ROOT}", so a new team's hand boots in
   // its own root, not the project the template was authored against.

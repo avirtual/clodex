@@ -2539,17 +2539,20 @@ test('spawn template (t297): a template whose env is entirely well-typed and all
 // every skill and plugin, zero exec grants. The resolution is off the TARGET
 // cwd's team (the seat opening a new team is usually on no team itself), so
 // these fixtures give the manager a real teams dir and a real library.
-function mkLeadSpawn({ leadTemplate, ownCopy = null, spawnerCwd = null } = {}) {
+function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null } = {}) {
   const home = mkTmpRoot('t770-home-');
   const projectRoot = mkTmpRoot('t770-proj-');
   const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
   tm.createTeam({ name: 'acme', root: projectRoot, lead: 'acme-lead' });
-  if (leadTemplate) {
-    // Written straight to team.json: setRole refuses the lead (operator-owned
-    // topology), which is exactly why the DEFAULT is a constant and not a field.
+  // Written straight to team.json: setRole refuses the lead (operator-owned
+  // topology), which is why the DEFAULT is a constant and not a field. `null`
+  // strips the key createTeam now seeds, reproducing a team made BEFORE the
+  // stock def carried one — the state the constant fallback exists for.
+  {
     const file = pathReal.join(home, 'teams', 'acme', 'team.json');
     const raw = JSON.parse(fsReal.readFileSync(file, 'utf-8'));
-    raw.roles.lead.template = leadTemplate;
+    if (leadTemplate) raw.roles.lead.template = leadTemplate;
+    else delete raw.roles.lead.template;
     fsReal.writeFileSync(file, JSON.stringify(raw, null, 2));
   }
   if (ownCopy) {
@@ -2596,6 +2599,19 @@ test('t770: a spawner on NO team spawning a team\'s lead by name boots it on clo
     'the grants without which the lead cannot run its own roster or suite');
   assert.ok(a[17].includes('spawn'), 'and the intent that lets it open seats');
   assert.match(f.replies.at(-1), /ok: spawned "acme-lead".*via template "clodex-team-lead" \(lead of team acme\)/);
+});
+
+test('t770: a team created WITH the seeded lead.template resolves through the field, not the constant', async () => {
+  // Two live paths, not one: teams made from now on carry
+  // roles.lead.template === 'clodex-team-lead' (STOCK_ROLE_DEFS), while teams
+  // made before it reach the same file through DEFAULT_LEAD_TEMPLATE — which is
+  // what every other fixture here exercises, since they strip the key.
+  const f = mkLeadSpawn({ leadTemplate: 'clodex-team-lead' });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5']);
+  assert.match(f.replies.at(-1), /via template "clodex-team-lead" \(lead of team acme\)/);
 });
 
 test('t770: a lead spawned into a SUBDIRECTORY of the team root still resolves its team', async () => {
