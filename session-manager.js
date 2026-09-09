@@ -127,23 +127,33 @@ function nextIncarnation() {
 
 // First claude spawn on a fresh box (deployed node, sandbox container) hits
 // the CLI's interactive onboarding wizard — theme picker etc. — inside a PTY
-// nobody on a headless node is watching. Pre-seed the global ~/.claude.json
-// so sessions start ready. Merge-only: a file that already completed
-// onboarding is left byte-untouched, unparseable JSON is never clobbered, and
-// any failure degrades to the wizard (never blocks a spawn). Credentials are
-// NOT touched here — the token rides the service env
-// (deploy --claude-token-file).
-function preseedClaudeOnboarding({ fs, path, homeDir }) {
+// nobody on a headless node is watching; a spawn into a folder the CLI has
+// never seen hits the "trust this folder?" prompt the same way. Pre-seed both
+// in ~/.claude.json. Merge-only: nothing to change is a no-write false,
+// unparseable JSON is never clobbered, any failure degrades to the prompt
+// (never blocks a spawn). Credentials are NOT touched here — the token rides
+// the service env (deploy --claude-token-file).
+function preseedClaudeOnboarding({ fs, path, homeDir, cwd }) {
   try {
     const p = path.join(homeDir, '.claude.json');
     let j = {};
     if (fs.existsSync(p)) {
       j = JSON.parse(fs.readFileSync(p, 'utf8'));
       if (!j || typeof j !== 'object' || Array.isArray(j)) return false;
-      if (j.hasCompletedOnboarding) return false;
     }
-    j.hasCompletedOnboarding = true;
-    if (!j.theme) j.theme = 'dark';
+    const wantOnboarding = !j.hasCompletedOnboarding;
+    const trustKey = typeof cwd === 'string' && cwd ? cwd : null;
+    const wantTrust = !!trustKey
+      && ((j.projects || {})[trustKey] || {}).hasTrustDialogAccepted !== true;
+    if (!wantOnboarding && !wantTrust) return false;
+    if (wantOnboarding) {
+      j.hasCompletedOnboarding = true;
+      if (!j.theme) j.theme = 'dark';
+    }
+    if (wantTrust) {
+      j.projects = j.projects || {};
+      j.projects[trustKey] = { ...(j.projects[trustKey] || {}), hasTrustDialogAccepted: true };
+    }
     const tmp = `${p}.tmp-${process.pid}`;
     fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n', { mode: 0o600 });
     fs.renameSync(tmp, p);
@@ -1389,7 +1399,7 @@ function createSessionManager(deps) {
       switch (type) {
         case 'claude': {
           cmd = 'claude';
-          if (preseedClaudeOnboarding({ fs, path, homeDir: os.homedir() })) {
+          if (preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), cwd })) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
           const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);

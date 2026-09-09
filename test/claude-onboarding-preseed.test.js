@@ -1,8 +1,8 @@
-// preseedClaudeOnboarding: first claude spawn on a fresh box seeds
-// ~/.claude.json (hasCompletedOnboarding + theme) so headless nodes never
-// show the interactive wizard inside an unwatched PTY. Merge-only contract:
-// completed files untouched, unparseable files untouched, failures degrade
-// to the wizard.
+// preseedClaudeOnboarding: a claude spawn seeds ~/.claude.json with
+// hasCompletedOnboarding + theme and with projects[cwd].hasTrustDialogAccepted,
+// so neither the wizard nor the "trust this folder?" prompt appears inside an
+// unwatched PTY. Merge-only contract: nothing-to-change writes nothing,
+// unparseable files untouched, failures degrade to the prompt.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -65,4 +65,65 @@ test('non-object JSON (array) is left alone', () => {
 test('fs failure degrades to false, never throws', () => {
   const brokenFs = { ...fs, existsSync: () => { throw new Error('boom'); } };
   assert.strictEqual(preseedClaudeOnboarding({ fs: brokenFs, path, homeDir: '/nope' }), false);
+});
+
+test('fresh home + cwd: seeds onboarding and marks the cwd trusted', () => {
+  const home = tmpHome();
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1' }), true);
+  const j = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+  assert.strictEqual(j.hasCompletedOnboarding, true);
+  assert.strictEqual(j.projects['/tmp/p1'].hasTrustDialogAccepted, true);
+});
+
+test('already-onboarded file gains only the new project entry', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  fs.writeFileSync(p, JSON.stringify({
+    hasCompletedOnboarding: true,
+    theme: 'light',
+    userID: 'u1',
+    projects: { '/tmp/other': { hasTrustDialogAccepted: true, allowedTools: ['x'] } },
+  }));
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1' }), true);
+  const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.strictEqual(j.hasCompletedOnboarding, true);
+  assert.strictEqual(j.theme, 'light');
+  assert.strictEqual(j.userID, 'u1');
+  assert.deepStrictEqual(j.projects, {
+    '/tmp/other': { hasTrustDialogAccepted: true, allowedTools: ['x'] },
+    '/tmp/p1': { hasTrustDialogAccepted: true },
+  });
+});
+
+test('onboarded and cwd already trusted is left byte-untouched', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  const orig = '{"hasCompletedOnboarding":true,"projects":{"/tmp/p1":{"hasTrustDialogAccepted":true,"allowedTools":["x"]}}}';
+  fs.writeFileSync(p, orig);
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1' }), false);
+  assert.strictEqual(fs.readFileSync(p, 'utf8'), orig);
+});
+
+test('hasTrustDialogAccepted:false is flipped to true, sibling keys kept', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  fs.writeFileSync(p, JSON.stringify({
+    hasCompletedOnboarding: true,
+    projects: { '/tmp/p1': { hasTrustDialogAccepted: false, allowedTools: ['x'], mcpServers: {} } },
+  }));
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1' }), true);
+  const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.deepStrictEqual(j.projects['/tmp/p1'], {
+    hasTrustDialogAccepted: true, allowedTools: ['x'], mcpServers: {},
+  });
+});
+
+test('no cwd passed: onboarding seeded, no projects key created', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  fs.writeFileSync(p, '{"theme":"light"}');
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home }), true);
+  const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.strictEqual(j.hasCompletedOnboarding, true);
+  assert.strictEqual(j.projects, undefined);
 });

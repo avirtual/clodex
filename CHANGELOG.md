@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - **Keep-warm:** a hold no longer pings a prefix whose cache TTL is not longer than the ping margin. After an autocompact the replayable request carries 5-minute markers, and a perpetual hold pinged that pre-compact prefix every minute until the next real turn (measured: 152 pings, about $21, on one seat overnight).
+- **New seats:** a Claude seat spawned into a folder the CLI has never seen no longer stops at the "trust this folder?" prompt; Clodex marks the seat's cwd trusted before the spawn, the same way the docker image already does for the whole container.
 
 ## 5.44.2 — 2026-09-09 — Bundled wirescope v0.6.64: no more unmarked first thinking rounds
 
