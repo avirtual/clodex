@@ -270,3 +270,181 @@ test('team:delete forgets the deleted team\'s ticket watches', () => {
       "the deleted team's watch is dropped and another team's is not");
   } finally { d.cleanup(); }
 });
+
+// --- t785: team:activity ----------------------------------------------------
+//
+// Through the registered handler against the REAL team-manifest, the REAL
+// tickets store and the REAL teamActivity, for the reason at the top of this
+// file: the channel's whole value is that the board and the live session map
+// agree, and a stub of either lets one half assert a truth the other denies.
+
+function mkActivityDoor({ manifest = 'ok', roles = null, tickets = [], sessions = [] } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-act-home-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-act-root-'));
+  const dir = path.join(home, 'teams', 'shop');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'team.json'), manifest === 'ok'
+    ? JSON.stringify({
+      root,
+      lead: 'shop-lead',
+      roles: roles || { lead: {}, hand: { dispatch: 'worktree' }, reviewer: {} },
+    }, null, 2)
+    : manifest);
+
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const tstore = createTicketsStore({ fs, path, clodexHome: home });
+  if (tickets.length) tstore.save(root, tickets);
+
+  const { createTicketMethods } = require('../team-tickets');
+  const methods = createTicketMethods(
+    { fs, os, path, log: { info() {}, error() {}, warn() {} }, loadManifest: tm.loadManifest },
+    { ticketsStore: tstore, nameConflict: () => null, SPEC_CONFIRM_MS: 1000 },
+  );
+  const manager = {
+    sessions: new Map(sessions.map((x) => [x.name, x])),
+    teamActivity: methods.teamActivity,
+  };
+
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    log: { info() {}, error() {}, warn() {} },
+    manager,
+    loadManifest: tm.loadManifest,
+  });
+  return {
+    root,
+    activity: () => handlers.get('team:activity')(null, 'shop'),
+    cleanup: () => {
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+// One board and one session map, shared by the rows below so the whole-object
+// assertion and its reductions describe the SAME world.
+const NOW = Date.now();
+const A_BOARD = [
+  { id: 't1', state: 'open', role: 'hand', assignee: 'shop-hand-1', title: 'one' },
+  { id: 't2', state: 'done', role: 'hand', assignee: 'shop-hand-2', title: 'two',
+    loopStep: 'verify', reviewRound: 2, reviewedAt: NOW - 500, verdict: 'reject' },
+  { id: 't3', state: 'done', role: 'hand', title: 'three', closedOut: true,
+    acceptedAt: NOW - 1000, closedAt: NOW - 1000 },
+  { id: 't5', state: 'done', role: 'hand', title: 'five', closedOut: true, mergeError: 'merge',
+    acceptedAt: NOW - 2000, closedAt: NOW - 30 * 60 * 60 * 1000 },
+  { id: 't4', state: 'cancelled', role: 'hand', title: 'four', closedAt: NOW - 3000 },
+];
+const A_SESSIONS = [
+  { name: 'shop-hand-1', agentType: 'claude' },
+  { name: 'shop-hand-2', agentType: 'claude' },
+  { name: 'shop-reviewer-2-r2', agentType: 'claude' },
+  { name: 'shop-hand-9', agentType: 'claude', _dead: true },
+  { name: 'shop-lead' },
+];
+
+test('team:activity reports every role\'s seats, open tickets and last landing, plus the reviewer rounds', () => {
+  const d = mkActivityDoor({ tickets: A_BOARD, sessions: A_SESSIONS });
+  try {
+    const res = d.activity();
+    // ENTER: both live hand seats are in, so the row below is a discrimination
+    // between them and not an empty list that would pass any filter.
+    assert.strictEqual(res.roles.hand.live.length, 2,
+      'the two live hand seats — the dead one and the lead (no agentType) are out');
+    assert.deepStrictEqual(res, {
+      ok: true,
+      team: 'shop',
+      roles: {
+        lead: { dispatch: 'standing', live: [], open: [], last: null },
+        hand: {
+          dispatch: 'worktree',
+          live: [
+            { seat: 'shop-hand-1', ticket: 't1', step: 'working' },
+            { seat: 'shop-hand-2', ticket: 't2', step: 'verify' },
+          ],
+          open: [{ id: 't1', title: 'one', assignee: 'shop-hand-1', step: 'working' }],
+          last: { id: 't3', title: 'three', at: NOW - 1000, outcome: 'accepted' },
+        },
+      },
+      reviewer: {
+        live: [{ ticket: 't2', round: 2, seat: 'shop-reviewer-2-r2' }],
+        last: { ticket: 't2', round: 2, verdict: 'reject', at: NOW - 500 },
+      },
+      counts: { open: 1, verify: 1, done24h: 2 },
+    });
+  } finally { d.cleanup(); }
+});
+
+test('team:activity picks the LAST landing by timestamp, and names a failed merge as its outcome', () => {
+  const withT3 = mkActivityDoor({ tickets: A_BOARD, sessions: [] });
+  try {
+    assert.strictEqual(withT3.activity().roles.hand.last.id, 't3',
+      't3 is the newest acceptedAt, ahead of t5 and of cancelled t4');
+  } finally { withT3.cleanup(); }
+
+  const noT3 = mkActivityDoor({ tickets: A_BOARD.filter((t) => t.id !== 't3'), sessions: [] });
+  try {
+    assert.deepStrictEqual(noT3.activity().roles.hand.last,
+      { id: 't5', title: 'five', at: NOW - 2000, outcome: 'merge-failed' },
+      'with t3 gone the next-newest landing wins, and its mergeError is the outcome');
+  } finally { noT3.cleanup(); }
+});
+
+test('team:activity on an empty board reports the roles with nothing in them', () => {
+  const d = mkActivityDoor({ tickets: [], sessions: [] });
+  try {
+    assert.deepStrictEqual(d.activity(), {
+      ok: true,
+      team: 'shop',
+      roles: {
+        lead: { dispatch: 'standing', live: [], open: [], last: null },
+        hand: { dispatch: 'worktree', live: [], open: [], last: null },
+      },
+      reviewer: { live: [], last: null },
+      counts: { open: 0, verify: 0, done24h: 0 },
+    });
+  } finally { d.cleanup(); }
+});
+
+test('team:activity never keys roles by "reviewer", and never by a role the manifest does not define', () => {
+  const d = mkActivityDoor({
+    tickets: [
+      { id: 't1', state: 'open', role: 'reviewer', assignee: 'shop-reviewer-1', title: 'r' },
+      { id: 't2', state: 'open', role: 'ghost', assignee: 'shop-ghost-1', title: 'g' },
+    ],
+    sessions: [{ name: 'shop-reviewer-1', agentType: 'claude' }],
+  });
+  try {
+    const res = d.activity();
+    assert.deepStrictEqual(Object.keys(res.roles), ['lead', 'hand'],
+      'reviewer has its own top-level section — a roles key would make the popover render it twice');
+    assert.deepStrictEqual(res.roles.hand.open, [], 'a ticket pinned to no defined role lands nowhere');
+    assert.strictEqual(res.counts.open, 2, 'both are still open tickets, whatever they are pinned to');
+  } finally { d.cleanup(); }
+});
+
+test('team:activity reports a HELD verify as no reviewer round, and a round with no live seat as null', () => {
+  const d = mkActivityDoor({
+    tickets: [
+      { id: 't1', state: 'done', role: 'hand', title: 'held', loopStep: 'verify', reviewRound: 1, verifyHold: 'suite red' },
+      { id: 't2', state: 'done', role: 'hand', title: 'cold', loopStep: 'verify', reviewRound: 3 },
+    ],
+    sessions: [],
+  });
+  try {
+    const res = d.activity();
+    assert.deepStrictEqual(res.reviewer.live, [{ ticket: 't2', round: 3, seat: null }],
+      'a held ticket is at verify and is NOT going to produce a reviewer');
+    assert.strictEqual(res.counts.verify, 2, 'both are still counted as sitting in verify');
+  } finally { d.cleanup(); }
+});
+
+test('team:activity returns the loadManifest message when the team does not load', () => {
+  const d = mkActivityDoor({ manifest: 'not json at all' });
+  try {
+    const res = d.activity();
+    assert.strictEqual(res.ok, false);
+    assert.match(res.error, /team\.json is not valid JSON/);
+  } finally { d.cleanup(); }
+});

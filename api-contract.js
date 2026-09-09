@@ -42,6 +42,7 @@ const API_CONTRACT = [
   // metadata mutators the management popover drives. addRole owns the C1/C4
   // guards; set/remove/rename/watchdog are the Slice-2 backend handlers.
   { name: 'teamGet', kind: 'invoke', channel: 'team:get' },
+  { name: 'teamActivity', kind: 'invoke', channel: 'team:activity' },
   { name: 'teamAddRole', kind: 'invoke', channel: 'team:addRole' },
   { name: 'teamSetRole', kind: 'invoke', channel: 'team:setRole' },
   { name: 'teamRemoveRole', kind: 'invoke', channel: 'team:removeRole' },
