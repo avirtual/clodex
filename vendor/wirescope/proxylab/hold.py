@@ -542,6 +542,18 @@ def _hold_decision(hold, has_last_request, warmth_row, now, has_auth=True):
         return ("skip", "restored without credentials; awaiting live traffic")
     if not warmth_row:
         return ("skip", "prefix not in ledger")
+    # A TTL no longer than the margin is "due" on every tick from the moment it
+    # is stamped, and each ping re-stamps the same short TTL: the hold degenerates
+    # into one ping per tick until the next organic turn. At 5m that is 12 reads
+    # an hour against a re-write worth 12.5 reads, so it never pays even before
+    # the prefix is worthless (measured 2026-09-09: an autocompact request, which
+    # the CLI marks 5m on an otherwise 1h seat, became the stash and drew 152
+    # pings / $7.53 overnight keeping a PRE-compact history warm). Skipping
+    # leaves the stash in place; the next real turn replaces it.
+    ttl = warmth_row[1] or 0
+    if ttl <= WARMTH_HOLD_MARGIN:
+        return ("skip", f"ttl {ttl}s not longer than ping margin "
+                        f"{WARMTH_HOLD_MARGIN}s; a hold would ping every tick")
     remaining = warmth_row[2] - now
     if remaining <= 0:
         return ("skip", "prefix already cold")

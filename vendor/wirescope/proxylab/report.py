@@ -868,10 +868,17 @@ def _scope(pairs):
     models = set()
     first = last = None
     lines = {}                           # key -> {line, role, agent_id, model, requests}
+    keepwarm = {"requests": 0, "est_usd": 0.0, "write_tokens": 0}
     for p in pairs:
         reqs += 1
         if p["billing"].get("billable"):
             billed += 1
+        if is_keepwarm_pair(p):
+            t = p["tokens"]
+            keepwarm["requests"] += 1
+            keepwarm["est_usd"] += p["billing"].get("est_usd") or 0
+            keepwarm["write_tokens"] += ((t.get("cache_write_5m_tokens") or 0)
+                                         + (t.get("cache_write_1h_tokens") or 0))
         if p["model"]:
             models.add(p["model"])
         if p["ts"]:
@@ -891,11 +898,27 @@ def _scope(pairs):
         e["est_usd"] += p["billing"].get("est_usd") or 0
     for e in lines.values():
         e["est_usd"] = round(e["est_usd"], 6)
+    keepwarm["est_usd"] = round(keepwarm["est_usd"], 6)
     return {"requests": reqs,             # wire requests (the carriage multiplier)
             "billed_requests": billed,
             "turns": _user_turns(pairs),  # user prompts = conversation turns (human)
             "first_ts": first, "last_ts": last, "models": sorted(models),
+            # keep-warm pings inside `requests`, priced apart (the offline twin
+            # of /_status cost.keepwarm); write_tokens > 0 = a ping re-wrote
+            "keepwarm": keepwarm,
             "agents": list(lines.values())}
+
+
+def is_keepwarm_pair(p):
+    """A keep-warm ping among _iter_pairs entries: the summary flag when the
+    capture has one (v0.6.65+), else the wire shape off the body — a seat
+    request (tools present) with `max_tokens: 1`."""
+    summ = p.get("summ") or {}
+    if "keepwarm" in summ:
+        return bool(summ["keepwarm"])
+    body = (p.get("req") or {}).get("body")
+    return (isinstance(body, dict) and bool(body.get("tools"))
+            and body.get("max_tokens") == 1)
 
 
 def _totals(pairs):
@@ -1040,6 +1063,11 @@ def _is_seat_request(p):
     summ = p.get("summary")
     if summ is None:
         return True
+    # a keep-warm ping replays the seat's request byte-for-byte: it is not a
+    # transition, and pairing the next real turn against it hides nothing
+    # (same prefix) but pairing IT against a stale stash reads as a bust
+    if summ.get("keepwarm"):
+        return False
     names = [n for n in (summ.get("tool_names") or []) if isinstance(n, str)]
     if names:
         return any(not n.startswith(_SERVER_TOOL_TYPES) for n in names)

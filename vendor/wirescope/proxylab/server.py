@@ -1216,6 +1216,7 @@ async def handler(request: Request) -> Response:
     session_id = account_uuid = None
     title_call = False
     side_call = False
+    keepwarm = False    # a seat's own request replayed at max_tokens:1 (a ping)
     obj = None      # stays None on an unparseable body -> every transform/gate is
                     # skipped and the ORIGINAL bytes forward verbatim (fail-open:
                     # a parse failure must degrade to passthrough, never to a 500)
@@ -1672,7 +1673,12 @@ async def handler(request: Request) -> Response:
         sys_chars = len(writer_mod._sys_text(obj))
         msgs = obj.get("messages", []) or []
         msg_chars = len(json.dumps(msgs))
+        keepwarm = meta_mod._is_keepwarm_ping(obj)
         record["summary"] = {
+            # a keep-warm ping (max_tokens:1 replay of a seat request): priced
+            # like a request, excluded from turns / replay stash / hold anchor /
+            # bust lineage; the offline tools read it off this cheap sidecar
+            "keepwarm": keepwarm,
             "model": model,
             "session_id": session_id,
             "account_uuid": account_uuid,
@@ -1710,8 +1716,9 @@ async def handler(request: Request) -> Response:
                                            agent_id=agent_id,
                                            display_name=ws_display_name)
             # heaviness snapshot from the model-visible history (main line
-            # only: a subagent's small history must not clobber the parent's)
-            if session_id and not side_call and role in ("parent", "unknown"):
+            # only: a subagent's small history must not clobber the parent's;
+            # a keep-warm ping carries the same history and changes nothing)
+            if session_id and not side_call and not keepwarm and role in ("parent", "unknown"):
                 _ts = meta_mod._turn_stats(obj)
                 # since-compact baseline: turns_in_context is monotonic within a
                 # window; a DECREASE = /compact boundary. Stamp BEFORE overwriting
@@ -1818,8 +1825,12 @@ async def handler(request: Request) -> Response:
     # but is transient — it must not replace what /_ping replays nor re-anchor the
     # keep-warm hold (else we'd keep a finished subagent's context warm instead
     # of the main agent's, or pin a one-token probe as the replayable body).
+    # A keep-warm ping (a consumer's replay of the stash through this proxy) is
+    # neither: stashing it would replace the seat's request with its 1-token
+    # non-streaming copy, and re-anchoring the hold would reset the ping budget
+    # on every ping, which is how a 60 s ping loop stays alive indefinitely.
     if upstream_path.split("?")[0].endswith("/v1/messages"):
-        if not side_call and not writer_mod._is_subagent_role(role):
+        if not side_call and not keepwarm and not writer_mod._is_subagent_role(role):
             pinger_mod._cache_last_request(session_id, obj, fwd_headers, upstream_path,
                                 account_uuid)
             if "hold_echo" not in record:      # the arming turn itself isn't
@@ -1881,7 +1892,7 @@ async def handler(request: Request) -> Response:
                 receipts_mod.anthropic(
                     blob, n=n, ts=ts, agent=agent, role=role, model=model,
                     session_id=session_id, session_key=session_key, obj=obj,
-                    agent_header_id=agent_id,
+                    agent_header_id=agent_id, keepwarm=keepwarm,
                     title_call=title_call, side_call=side_call, is_messages=is_messages,
                     routed=(m is not None), out_dir=out_dir, stem=stem,
                     status_code=up.status_code, resp_headers=dict(up.headers),

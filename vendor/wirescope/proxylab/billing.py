@@ -245,7 +245,13 @@ def _new_totals():
             # title side-calls and subagent traffic excluded at the call site
             # (stop["is_turn"]). CLI retries dedupe for free — a failed
             # request never produces a terminal response.
-            "turns": 0}
+            "turns": 0,
+            # Keep-warm pings, priced apart (they are INSIDE requests/est_usd
+            # above; this is a decomposition, never a second count). A ping is
+            # a full cache read with no write; `write_tokens` here should stay
+            # 0 and a nonzero value means a ping re-wrote a prefix (dirty).
+            "keepwarm": {"requests": 0, "est_usd": 0.0, "cache_read_tokens": 0,
+                         "input_tokens": 0, "write_tokens": 0}}
 
 
 _TOTALS = _new_totals()              # LOG_DIR-lifetime (reloaded at startup)
@@ -454,6 +460,14 @@ def _bump(totals, bill, stop=None):
         w = (t.get("cache_write_5m_tokens") or 0) + (t.get("cache_write_1h_tokens") or 0)
         totals["cache_write_tokens"] += w or (t.get("cache_write_flat_tokens") or 0)
         totals["est_usd"] = round(totals["est_usd"] + (bill.get("est_usd") or 0), 6)
+        if stop and stop.get("keepwarm"):
+            # setdefault: totals restored from a pre-feature _session.json lack it
+            kw = totals.setdefault("keepwarm", _new_totals()["keepwarm"])
+            kw["requests"] += 1
+            kw["est_usd"] = round(kw["est_usd"] + (bill.get("est_usd") or 0), 6)
+            kw["cache_read_tokens"] += t.get("cache_read_input_tokens") or 0
+            kw["input_tokens"] += t.get("input_tokens") or 0
+            kw["write_tokens"] += w or (t.get("cache_write_flat_tokens") or 0)
         if bill.get("unpriced"):
             totals["unpriced_requests"] = totals.get("unpriced_requests", 0) + 1
             m = bill.get("model")

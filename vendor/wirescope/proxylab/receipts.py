@@ -47,7 +47,7 @@ def _stash_view_state(session_id, *, text, truncated, stop_reason, bill):
 def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
               obj, title_call, is_messages, routed, out_dir, stem,
               status_code, resp_headers, tee_text=None, response_injection=None,
-              side_call=None, agent_header_id=None):
+              side_call=None, agent_header_id=None, keepwarm=False):
     """Finalize an anthropic-wire response (messages OR count_tokens).
     `routed` = /agent/<name>/ traffic (the only kind subscribers receive);
     `tee_text` = the subscriber tee's full reassembled turn text, when one ran
@@ -87,7 +87,9 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
                         model_resolved=meta.get("resolved_model") or model,
                         usage_final=meta.get("usage_final"),
                         usage_start=meta.get("usage_start"))
-        if session_id and not side_call and role in ("parent", "unknown"):
+        # a keep-warm ping's 1-token answer is not the seat's last answer, and
+        # its receipt (a full read, no write) is not the last turn's
+        if session_id and not side_call and not keepwarm and role in ("parent", "unknown"):
             _stash_view_state(
                 session_id, text=meta.get("text"),
                 truncated=len(meta.get("text") or "") >= billing_mod._META_TEXT_CAP,
@@ -99,9 +101,12 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
             # is_main gates the session-head advance + real-bust classification to
             # the routed main line (subagents share the parent's session_id and
             # would otherwise clobber the head / manufacture false busts).
+            # A keep-warm ping still STAMPS the ledger (that slide is its whole
+            # point) but must not advance the session head: it is the head.
             writer_mod._enqueue_ledger(
                 (out_dir / f"{stem}.warmth.json") if warmth_mod.WARMTH_LOG_FILE else None,
-                obj, usage, is_main=(not side_call and role in ("parent", "unknown")))
+                obj, usage,
+                is_main=(not side_call and not keepwarm and role in ("parent", "unknown")))
     else:  # count_tokens — plain JSON, not SSE
         try:
             ct = json.loads(blob.decode("utf-8", "replace"))
@@ -117,9 +122,12 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
             # (refusal/max_tokens still END a turn; tool_use is a
             # mid-turn hop). Side-calls + subagents don't count.
             "is_turn": bool(
-                is_messages and not side_call
+                is_messages and not side_call and not keepwarm
                 and role in ("parent", "unknown")
-                and meta.get("stop_reason") not in (None, "tool_use"))}
+                and meta.get("stop_reason") not in (None, "tool_use")),
+            # priced apart in the totals (billing._bump): the keep-warm bill is
+            # the one line item a seat pays while nobody is talking to it
+            "keepwarm": bool(keepwarm)}
     # per-line cost decomposition key — mirror report._line_key so the live
     # by_line buckets and the disk report agree: main line (parent/unknown)
     # collapses to "main" (title/probe side-calls ride the main line too),
@@ -132,6 +140,7 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
          "session_id": session_id,
          "endpoint": "messages" if is_messages else "count_tokens",
          "status_code": status_code,
+         "keepwarm": bool(keepwarm),   # a ping's receipt, not a turn's
          # full headers Anthropic returned — request-id,
          # anthropic-ratelimit-*, billing/tier hints, etc.
          "response_headers": core_mod._safe_headers(resp_headers),
@@ -168,6 +177,7 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
                   f"(session refusals={billing_mod._SESSION_TOTALS[session_key].get('refusals')})",
                   flush=True)
         print(f"[dump] #{n} {agent}/{role} {bill.get('model') or model} "
+              f"{'PING ' if keepwarm else ''}"
               f"-> {status_code} in={t.get('input_tokens')} "
               f"out={t.get('output_tokens')} "
               f"cache_r={t.get('cache_read_input_tokens')} "

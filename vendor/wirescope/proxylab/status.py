@@ -340,7 +340,12 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
                       "unpriced_requests": tot["unpriced_requests"],
                       "main_est_usd": (round(tot["by_line"]["main"]["est_usd"], 6)
                                        if (tot.get("by_line") or {}).get("main")
-                                       else None)}
+                                       else None),
+                      # keep-warm pings INSIDE est_usd/requests, priced apart:
+                      # {requests, est_usd, cache_read_tokens, input_tokens,
+                      # write_tokens}; write_tokens > 0 = a ping re-wrote the
+                      # prefix. None for pre-feature sessions.
+                      "keepwarm": tot.get("keepwarm")}
                      if tot else None),
             # per-window rollup from the last detected /compact boundary (or
             # session start): {turns, requests, est_usd, boundary_ts, compacted}.

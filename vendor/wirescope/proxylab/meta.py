@@ -230,6 +230,22 @@ def _is_probe_call(obj):
     return isinstance(msgs, list) and len(msgs) <= 1
 
 
+# A KEEP-WARM PING: a seat's full request (tools + system + history) replayed
+# with `max_tokens: 1` so the backend serves a cache read and slides the TTL.
+# Both pingers (proxylab.pinger and clodex's wire/hold.js port) build exactly
+# this shape. It is billed like any request but it is not a turn: it must not
+# count as one, become the replayable last request (it already IS a replay),
+# re-anchor the hold (that resets the ping budget the hold exists to spend),
+# or clobber the view state. Measured 2026-09-09: 152 such pings in one night
+# on one seat ($7.53) were invisible because they were filed as turns.
+_KEEPWARM_MAX_TOKENS = 1
+
+def _is_keepwarm_ping(obj):
+    if not isinstance(obj, dict) or not obj.get("tools"):
+        return False
+    return obj.get("max_tokens") == _KEEPWARM_MAX_TOKENS
+
+
 # In-memory per-session subagent activity (Task-spawned subs share the parent's
 # session_id). Keyed sid -> {role -> {model, requests, last_seen}} so /_status //
 # _admin can show the main agent AND every subagent under it WITHOUT either
