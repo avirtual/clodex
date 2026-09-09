@@ -429,7 +429,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     return summary.seats.working ? 'ok' : 'idle';
   }
 
-  // The collapsed line: dot, key, one-line note, dispatch chip, disclosure.
   // Built imperatively — `key` is charset-gated by ROLE_RE but the note carries
   // SEAT NAMES, and neither may reach an attribute in this nodeIntegration
   // renderer. Every string below lands as textContent.
