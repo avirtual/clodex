@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Teams:** the Teams menu gains Delete Team…, listing every team, including one whose manifest no longer loads. The confirm says what goes (the team's directory under ~/.clodex/teams: manifest, prompts, templates) and what stays (the project, its ticket history and task artifacts, every seat's session record). A team with a live seat or an open ticket is refused with both listed. Before, the only way to remove a team was to delete its directory by hand.
+
 ## 5.49.0 — 2026-09-09 — One intent stands up a team: create classifies the root, spawns and briefs the lead
 
 - **Teams:** `[agent:team create]` with a brief now spawns the team's lead itself, in the root, on the stock lead template, and tells it in its first turn whether the root is a new project or one it is taking over, pointing it at "First turn on a fresh team" in its prompt. The caller sees one line ending "Ask <lead> for your first ticket." and needs no spawn grant of its own. A lead name already in use is refused before anything is written; a spawn that fails leaves the team on disk and says how to retry.

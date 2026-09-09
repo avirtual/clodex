@@ -1530,6 +1530,73 @@ test('removeRole: `lead` is refused for EVERYONE, operator included, with its ow
   assert.ok(tm.loadManifest('shop').roles.lead, 'lead survives both attempts');
 });
 
+// --- t783: deleteTeam --------------------------------------------------------
+
+test('deleteTeam removes the whole directory tree, prompts and templates included', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  const dir = path.join(home, 'teams', 'shop');
+  fs.mkdirSync(path.join(dir, 'prompts', 'system'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'templates'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'prompts', 'system', 'lead.md'), '# lead');
+  fs.writeFileSync(path.join(dir, 'templates', 'hand.json'), '{"type":"claude"}');
+  assert.ok(fs.existsSync(path.join(dir, 'templates', 'hand.json')), 'ENTER: the tree really has nested files to remove');
+
+  const out = tm.deleteTeam('shop');
+  assert.deepStrictEqual(out, { name: 'shop', dir }, 'returns the name and the directory it removed');
+  assert.ok(!fs.existsSync(dir), 'the whole tree is gone, not just team.json');
+  assert.deepStrictEqual(tm.listTeams(), [], 'and the team no longer lists');
+});
+
+test('deleteTeam refuses a name failing the create-time validation, removing NOTHING', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  // The escape target: a sibling of teamsDir. `../victim` joined onto teamsDir
+  // resolves here, so an unvalidated rmSync deletes it and the assertion below
+  // is what stands between the validation and a directory outside the teams tree.
+  const victim = path.join(home, 'victim');
+  fs.mkdirSync(victim, { recursive: true });
+  fs.writeFileSync(path.join(victim, 'keep.txt'), 'do not delete me');
+  // A dot-named directory that listTeams would never show, so nothing else
+  // could report its loss.
+  const hidden = path.join(home, 'teams', '.hidden');
+  fs.mkdirSync(hidden, { recursive: true });
+
+  assert.throws(() => tm.deleteTeam('../victim'), /must match/);
+  assert.throws(() => tm.deleteTeam('.hidden'), /must not start with/);
+  assert.throws(() => tm.deleteTeam(''), /must match/);
+  assert.throws(() => tm.deleteTeam(undefined), /must match/);
+
+  assert.ok(fs.existsSync(path.join(victim, 'keep.txt')), 'the sibling outside teamsDir survives');
+  assert.ok(fs.existsSync(hidden), 'and the dot-directory inside it does too');
+  assert.deepStrictEqual(tm.listTeams(), ['shop'], 'the real team is untouched');
+});
+
+test('deleteTeam throws on a name with no directory', () => {
+  const home = mkHome();
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.throws(() => tm.deleteTeam('ghost'), /team "ghost" does not exist/);
+  // A team.json FILE where the directory should be is not a team either.
+  fs.writeFileSync(path.join(home, 'teams', 'afile'), 'x');
+  assert.throws(() => tm.deleteTeam('afile'), /does not exist/);
+});
+
+test('deleteTeam removes a team whose manifest no longer loads', () => {
+  const home = mkHome();
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const dir = mkTeam(home, 'broken', 'not json at all');
+  assert.throws(() => tm.loadManifest('broken'), /./,
+    'ENTER: the manifest genuinely does not load — against a loadable one this row would pass on any implementation');
+
+  const out = tm.deleteTeam('broken');
+  assert.equal(out.name, 'broken');
+  assert.ok(!fs.existsSync(dir), 'the unloadable team is gone');
+});
+
 test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORES the supplied one', () => {
   const home = mkHome();
   const root = mkTmpRoot('proj-');

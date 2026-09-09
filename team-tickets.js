@@ -710,11 +710,14 @@ function createTicketMethods(deps, shared) {
         if (matchSeatRole(team, s.name) !== null) seats.add(s.name);
       }
       const tickets = [];
-      try {
-        for (const tk of ticketsStore.load(team.root)) {
-          if (tk && tk.state !== 'done' && tk.state !== 'cancelled') tickets.push(tk.id);
-        }
-      } catch { tickets.push('<ticket check unavailable>'); }
+      // No try/catch around this one, unlike _roleInUse: ticketsStore.load
+      // swallows its own errors and returns [], so a catch here could never fire
+      // and would read as a fail-close that does not exist. An unreadable board
+      // therefore reads as EMPTY and does not block — survivable only because the
+      // board itself lives under ~/.clodex/projects, which the delete keeps.
+      for (const tk of ticketsStore.load(team.root)) {
+        if (tk && tk.state !== 'done' && tk.state !== 'cancelled') tickets.push(tk.id);
+      }
       let saved = null;
       try {
         const names = new Set();

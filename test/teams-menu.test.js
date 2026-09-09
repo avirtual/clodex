@@ -301,14 +301,17 @@ test('the 64-character seat limit binds at exactly the boundary, both sides', as
 
 // app-menus.js requires('electron') at module scope. Load it with a stub whose
 // focused window RECORDS what the menu sends, so a click is observable.
-function loadAppMenus(sent) {
+function loadAppMenus(sent, dialog = {}) {
   const win = { webContents: { send: (ch, ...a) => sent.push([ch, ...a]) } };
   const stub = {
     app: { getName: () => 'Clodex', getVersion: () => '0.0.0', setAboutPanelOptions: () => {} },
     BrowserWindow: { getFocusedWindow: () => win, getAllWindows: () => [win] },
     Menu: { buildFromTemplate: (t) => t, setApplicationMenu: () => {} },
     Tray: function Tray() {},
-    dialog: {}, shell: {}, nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
+    // app-menus destructures `dialog` at module scope, so this object IS the one
+    // a click handler reaches later — no stub needs to stay installed for the
+    // dialog to be observable at fire time, unlike Module._load itself.
+    dialog, shell: {}, nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
   };
   const origLoad = Module._load;
   Module._load = function (request, ...rest) {
@@ -324,8 +327,8 @@ function loadAppMenus(sent) {
   }
 }
 
-function menusWith(getTeams, sent = []) {
-  const createAppMenus = loadAppMenus(sent);
+function menusWith(getTeams, sent = [], dialog = {}) {
+  const createAppMenus = loadAppMenus(sent, dialog);
   const nothing = () => ({ list: () => [], get: () => ({}), sortedByRecent: () => [], statuses: () => [] });
   const menus = createAppMenus({
     DEFAULT_WORKSPACE_ID: 'default', LOG_FILE: '/dev/null', THEME_KEYS: [], path,
@@ -380,7 +383,7 @@ test('the Teams menu lists a broken team disabled rather than hiding it', () => 
   // ENTER: the reduction below asserts on named rows; if listTeams stopped
   // reaching either team the assertions would go vacuous, so pin both first.
   assert.deepStrictEqual(rows.map((r) => r.label),
-    ['broken — not loaded', 'good', 'Create Team…'],
+    ['broken — not loaded', 'good', 'Create Team…', 'Delete Team…'],
     'both teams reached the menu (listTeams sorts, so broken comes first)');
 
   const bad = rows.find((r) => r.label === 'broken — not loaded');
@@ -404,6 +407,197 @@ test('the Teams menu survives a team reader that is not there yet', () => {
   const { menus } = menusWith(() => null);
   const menu = menus.buildTeamsMenu();
   assert.ok(menu.submenu.some((i) => i.label === 'Create Team…'));
+});
+
+// ── Delete Team… (t783) ─────────────────────────────────────────────────────
+
+// The same on-disk reader as teamsOnDisk, plus the delete pair the menu calls
+// in-process (main.js has no IPC to itself). The check and the delete are the
+// REAL engine leaf over the REAL manifest, so a menu that stopped matching the
+// backend fails here rather than passing against a stub of itself.
+function deletableTeamsOnDisk(spec, { seats = [], tickets = [], saved = 0 } = {}) {
+  const home = mkHome();
+  for (const [name, body] of Object.entries(spec)) {
+    fs.mkdirSync(path.join(home, 'teams', name, 'prompts'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'teams', name, 'prompts', 'lead.md'), '# lead');
+    if (body !== undefined) {
+      fs.writeFileSync(path.join(home, 'teams', name, 'team.json'),
+        typeof body === 'string' ? body : JSON.stringify(body));
+    }
+  }
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const forgotten = [];
+  const manager = {
+    _teamInUse: () => ({ seats, tickets, saved }),
+    _forgetTeam: (name, root) => { forgotten.push([name, root]); },
+  };
+  const { createTeamDelete } = require('../team-delete');
+  const { deleteCheck, deleteGated } = createTeamDelete({
+    loadManifest: tm.loadManifest, deleteTeam: tm.deleteTeam, getManager: () => manager,
+  });
+  const getTeams = () => ({
+    listTeams: tm.listTeams, loadManifest: tm.loadManifest, teamsDir: tm.teamsDir,
+    deleteCheck, deleteTeam: deleteGated,
+  });
+  return { getTeams, home, forgotten, dirOf: (n) => path.join(home, 'teams', n) };
+}
+
+// A dialog that records what it was shown and answers with a scripted response.
+function mkDialog(response = 0) {
+  const shown = [];
+  const errors = [];
+  return {
+    shown,
+    errors,
+    showMessageBox: async (opts) => { shown.push(opts); return { response }; },
+    showErrorBox: (title, body) => errors.push([title, body]),
+  };
+}
+
+test('Delete Team… sits after Create Team… and is DISABLED with no submenu on an empty box', () => {
+  const { menus } = menusWith(teamsOnDisk({}));
+  const rows = menus.buildTeamsMenu().submenu.filter((i) => i.type !== 'separator');
+  const labels = rows.map((r) => r.label);
+  assert.deepStrictEqual(labels, ['(no teams)', 'Create Team…', 'Delete Team…'],
+    'the delete row follows create rather than replacing anything');
+  const del = rows.find((r) => r.label === 'Delete Team…');
+  assert.strictEqual(del.enabled, false, 'nothing to delete, so the row says so rather than opening an empty submenu');
+  assert.strictEqual(typeof del.submenu, 'undefined', 'and carries no submenu at all');
+});
+
+test('the Delete Team… submenu lists a BROKEN team with a click target — unlike the open-roles listing above', () => {
+  const { getTeams } = deletableTeamsOnDisk({
+    good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } },
+    bad: 'not json at all',
+  });
+  const { menus } = menusWith(getTeams);
+  const rows = menus.buildTeamsMenu().submenu.filter((i) => i.type !== 'separator');
+  const del = rows.find((r) => r.label === 'Delete Team…');
+  assert.strictEqual(del.enabled, undefined, 'enabled with teams present');
+  assert.deepStrictEqual(del.submenu.map((r) => r.label), ['bad — not loaded', 'good'],
+    'both teams are offered, the broken one still labelled as such');
+  // The whole point of the arm: an unloadable team is the one an operator most
+  // wants gone, so it must be CLICKABLE here even though the listing above
+  // disables it.
+  for (const r of del.submenu) assert.strictEqual(typeof r.click, 'function', `${r.label} is clickable`);
+});
+
+test('clicking a team shows the confirm naming what goes and what stays; Cancel deletes NOTHING', async () => {
+  const { getTeams, dirOf } = deletableTeamsOnDisk(
+    { good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } } },
+    { saved: 2 },
+  );
+  const dialog = mkDialog(1);
+  const { menus } = menusWith(getTeams, [], dialog);
+  const del = menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…');
+  await del.submenu.find((r) => r.label === 'good').click();
+
+  assert.strictEqual(dialog.shown.length, 1, 'one dialog');
+  const opts = dialog.shown[0];
+  assert.strictEqual(opts.message, 'Delete team "good"?');
+  assert.strictEqual(opts.type, 'warning');
+  assert.deepStrictEqual(opts.buttons, ['Delete', 'Cancel']);
+  assert.strictEqual(opts.defaultId, 1, 'the safe button is the default');
+  assert.strictEqual(opts.cancelId, 1);
+  assert.match(opts.detail, /its manifest, prompts and templates/, 'says what GOES');
+  assert.match(opts.detail, /Keeps: the project at \/proj\/good/, 'and names the project it keeps');
+  assert.match(opts.detail, /ticket history and task artifacts under ~\/\.clodex\/projects/);
+  assert.match(opts.detail, /2 saved seats on this team become plain sessions/);
+
+  assert.ok(fs.existsSync(dirOf('good')), 'response 1 removed nothing');
+});
+
+test('confirming deletes the team for real and refreshes the menus', async () => {
+  const { getTeams, dirOf, forgotten } = deletableTeamsOnDisk(
+    { good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } } },
+  );
+  const dialog = mkDialog(0);
+  const { menus } = menusWith(getTeams, [], dialog);
+  const del = menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…');
+  assert.ok(fs.existsSync(dirOf('good')), 'ENTER: the team is on disk before the click');
+
+  await del.submenu.find((r) => r.label === 'good').click();
+
+  assert.ok(!fs.existsSync(dirOf('good')), 'the directory is gone');
+  assert.deepStrictEqual(forgotten, [['good', '/proj/good']], 'and its in-memory state was dropped');
+  assert.deepStrictEqual(dialog.errors, [], 'no error box on the happy path');
+  // The menu it was invoked from is a rebuilt template with no open-time hook,
+  // so a delete that skipped the refresh leaves the deleted team clickable.
+  assert.deepStrictEqual(menus.buildTeamsMenu().submenu.filter((i) => i.type !== 'separator').map((r) => r.label),
+    ['(no teams)', 'Create Team…', 'Delete Team…'],
+    'the rebuilt menu no longer offers it');
+});
+
+test('a team with a live seat gets the ERROR dialog naming both lists, and is not deleted', async () => {
+  const { getTeams, dirOf } = deletableTeamsOnDisk(
+    { good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } } },
+    { seats: ['a', 'b'], tickets: ['t3', 't7'] },
+  );
+  const dialog = mkDialog(0);
+  const { menus } = menusWith(getTeams, [], dialog);
+  const del = menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…');
+  await del.submenu.find((r) => r.label === 'good').click();
+
+  const opts = dialog.shown[0];
+  assert.strictEqual(opts.type, 'error');
+  assert.deepStrictEqual(opts.buttons, ['OK'], 'no Delete button on this arm at all');
+  assert.strictEqual(opts.message, 'Team "good" is in use');
+  assert.strictEqual(opts.detail,
+    'Live seats: a, b. Open tickets: t3, t7. Retire the seats and close or cancel the tickets, then delete.');
+  // Response 0 IS the confirm response on the other arm; the team surviving it
+  // is what proves this arm never reaches the delete rather than reaching it
+  // with a button the operator did not press.
+  assert.ok(fs.existsSync(dirOf('good')), 'blocked, not deleted');
+});
+
+test('a blocked team names only the half that blocks — the instruction is never about an empty list', async () => {
+  const seatsOnly = deletableTeamsOnDisk(
+    { good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } } }, { seats: ['a'], tickets: [] });
+  const d1 = mkDialog(0);
+  await menusWith(seatsOnly.getTeams, [], d1).menus.buildTeamsMenu()
+    .submenu.find((r) => r.label === 'Delete Team…').submenu[0].click();
+  assert.strictEqual(d1.shown[0].detail, 'Live seats: a. Retire the seats, then delete.');
+
+  const ticketsOnly = deletableTeamsOnDisk(
+    { good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } } }, { seats: [], tickets: ['t3'] });
+  const d2 = mkDialog(0);
+  await menusWith(ticketsOnly.getTeams, [], d2).menus.buildTeamsMenu()
+    .submenu.find((r) => r.label === 'Delete Team…').submenu[0].click();
+  assert.strictEqual(d2.shown[0].detail, 'Open tickets: t3. Close or cancel the tickets, then delete.');
+});
+
+test('a broken team\'s confirm says the manifest could not be read, and deleting it works', async () => {
+  const { getTeams, dirOf } = deletableTeamsOnDisk({ bad: 'not json at all' });
+  const dialog = mkDialog(0);
+  const { menus } = menusWith(getTeams, [], dialog);
+  const del = menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…');
+  await del.submenu[0].click();
+
+  const opts = dialog.shown[0];
+  assert.strictEqual(opts.type, 'warning', 'deletable, so the confirm is the normal one');
+  assert.strictEqual(opts.message, 'Delete team "bad"?');
+  assert.match(opts.detail, /does not load \(/, 'the load error is quoted for the operator');
+  assert.match(opts.detail, /so seats and tickets cannot be checked/);
+  assert.match(opts.detail, /Removes the directory; nothing else is touched\./);
+  // Displayed with ~ rather than the literal home, which is also what proves the
+  // path in the sentence is the team's directory and not the project root.
+  assert.ok(!/Keeps:/.test(opts.detail), 'no keeps-clause it could not have checked');
+  assert.ok(!fs.existsSync(dirOf('bad')), 'and it really deleted');
+});
+
+test('a delete that FAILS shows the error box and refreshes nothing', async () => {
+  const { getTeams, home } = deletableTeamsOnDisk(
+    { good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } } });
+  const dialog = mkDialog(0);
+  const { menus } = menusWith(getTeams, [], dialog);
+  const del = menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…');
+  // Removed out from under the menu between build and click — the stale-template
+  // window the confirm's click-time check exists for.
+  fs.rmSync(path.join(home, 'teams', 'good'), { recursive: true, force: true });
+  await del.submenu[0].click();
+
+  assert.deepStrictEqual(dialog.errors.map((e) => e[0]), ['Delete team failed']);
+  assert.match(dialog.errors[0][1], /does not exist/);
 });
 
 // ── The web Teams menu ──────────────────────────────────────────────────────
