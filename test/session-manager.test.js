@@ -4897,6 +4897,90 @@ test('team-review: a role cwd the resolver refuses is NAMED in the reply, and th
     'and the lead is told the cwd was refused — the alternative is a reviewer working somewhere nobody knows');
 });
 
+// ── t776: the loop's reviewer boots inside the ticket's tree ───────────────
+//
+// The reviewer's subject is a branch in the ticket's WORKTREE and a diff in the
+// ticket's task dir, and it used to boot at the team root with neither reachable.
+// Without --dangerously-skip-permissions the CLI blocked every read and the
+// operator granted access by hand; the spawn now points the seat at both.
+
+test('t776: a ticket review boots in the ticket\'s worktree, with the task dir added as a readable directory', async () => {
+  const treeDir = mkTmpRoot('clodex-t776-tree-');
+  const taskDir = mkTmpRoot('clodex-t776-task-');
+  const { m, created, persistence } = mkReview();
+  m._loadTicket = () => ({ id: 't1', reviewRound: 0, worktree: { path: treeDir, branch: 'tl-1' } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  persistence.upsert({ name: 'lead', extraArgs: ['--dangerously-skip-permissions'] });
+
+  m._handleTeamReview(m.sessions.get('lead'), 'review the diff for t1', { ticketId: 't1', addDirs: [taskDir] });
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, 'ENTER: exactly one reviewer seat spawned');
+  assert.strictEqual(created[0][2], treeDir,
+    'the reviewer boots in the tree the diff was taken from, not at the team root');
+  // The whole array as a literal: the --add-dir pair must come AFTER the posture
+  // args and appear exactly once. A `contains` assertion would pass on a doubled
+  // pair, and on one prepended ahead of the posture flag.
+  assert.deepStrictEqual(created[0][3], ['--dangerously-skip-permissions', '--add-dir', taskDir],
+    'the loop-computed --add-dir is appended to the posture args, once');
+});
+
+test('t776: a recorded worktree that is not a directory falls back to the team root and SAYS so', async () => {
+  const treeDir = mkTmpRoot('clodex-t776-gone-');
+  fsReal.rmSync(treeDir, { recursive: true, force: true });
+  const { m, injected, created } = mkReview();
+  m._loadTicket = () => ({ id: 't1', reviewRound: 0, worktree: { path: treeDir, branch: 'tl-1' } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+
+  m._handleTeamReview(m.sessions.get('lead'), 'review the diff for t1', { ticketId: 't1' });
+  await new Promise((r) => setImmediate(r));
+
+  // A vanished tree is a warn, never a block: the reviewer at the root can still
+  // read the diff, and refusing over a directory strands the ticket.
+  assert.strictEqual(created.length, 1, `ENTER: the review still spawned; replies: ${JSON.stringify(injected)}`);
+  assert.strictEqual(created[0][2], '/proj', 'it falls back to the role cwd — the team root');
+  const reply = injected.find((t) => /spawned team-reviewer/.test(t));
+  assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(injected)}`);
+  assert.match(reply, /records worktree .* but it is not a directory; reviewer spawned at /,
+    'and the lead is told, or the reviewer reads the wrong tree with nothing saying so');
+});
+
+test('t776: a MANUAL team-review (no ticket) is unchanged — team-root cwd, no --add-dir', async () => {
+  const { m, created } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+
+  m._handleTeamReview(m.sessions.get('lead'), 'check the thing');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created[0][2], '/proj', 'the manual path still takes its cwd from the role resolver');
+  assert.ok(!created[0][3].includes('--add-dir'),
+    'and gets no --add-dir: there is no ticket, so there is no task dir to add');
+});
+
+test('t776: a reviewer role cwd lands in the SAME subdirectory of the ticket tree', async () => {
+  const root = mkTmpRoot('clodex-t776-root-');
+  const treeDir = mkTmpRoot('clodex-t776-sub-');
+  fsReal.mkdirSync(pathReal.join(root, 'sub'), { recursive: true });
+  fsReal.mkdirSync(pathReal.join(treeDir, 'sub'), { recursive: true });
+  const reviewerRole = { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+    tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false, cwd: 'sub' };
+  const team = { name: 'team', root, lead: 'lead', file: pathReal.join(root, 'team.json'), dir: root,
+    roles: { lead: { instantiate: 'session', brief: 'the lead' }, reviewer: reviewerRole } };
+  const { m, created, injected } = mkReview({
+    resolveTeam: (cwd) => (cwd && cwd.startsWith(root) ? team : null),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith(root) ? root : null),
+  });
+  m._loadTicket = () => ({ id: 't1', reviewRound: 0, worktree: { path: treeDir, branch: 'tl-1' } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: root, workspaceId: 'default' });
+
+  m._handleTeamReview(m.sessions.get('lead'), 'review the diff for t1', { ticketId: 't1' });
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, `ENTER: one seat spawned; replies: ${JSON.stringify(injected)}`);
+  assert.strictEqual(created[0][2], pathReal.join(treeDir, 'sub'),
+    'the role cwd is re-rooted under the tree, not resolved against the main checkout');
+});
+
 test('team-review: a teamless sender is bounced', async () => {
   const { m, injected, created } = mkReview();
   m.sessions.set('solo', { name: 'solo', agentType: 'claude', cwd: '/elsewhere', workspaceId: 'default' });

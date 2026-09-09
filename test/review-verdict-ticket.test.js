@@ -1497,6 +1497,23 @@ test('the reviewer scope names the RESOLVED task dir, never the raw relative poi
     'nor the raw pointer, which is what the reviewer resolved against its own cwd');
 });
 
+// A reviewer that cannot READ the task dir cannot read the spec or the diff it
+// was spawned for, and without permission bypass the CLI stops it on a directory
+// prompt with no operator awake to answer. The dir is computed by the loop, so
+// only the loop can pass it; a reviewer template must never be able to.
+test('the ticket review spawn hands _handleTeamReview the task dir as addDirs', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+
+  let opts = null;
+  f.m._handleTeamReview = (_s, _body, o) => { opts = o; };
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/round/d.diff');
+
+  assert.ok(opts, 'ENTER: the review spawn must have been handed an options object');
+  assert.deepStrictEqual(opts.addDirs, ['/tmp/round'],
+    'the diff\'s own directory — where the spec and review-<id>-r<n>.diff both live');
+});
+
 test('the reviewer scope carries the SAME rule clause the hand is given, from the same renderer', async () => {
   const f = mkVerdict();
   openTicket(f, 'tasks/verdict-routing — fix the route');
