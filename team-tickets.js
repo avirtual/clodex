@@ -706,6 +706,7 @@ function createTicketMethods(deps, shared) {
       const onReply = (opts && typeof opts.onReply === 'function') ? opts.onReply : null;
       const reply = onReply || ((msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true }));
       const reviewTicket = (opts && opts.ticketId) || null;
+      const addDirs = (opts && Array.isArray(opts.addDirs)) ? opts.addDirs.filter((d) => typeof d === 'string' && d) : [];
       const scope = String(body == null ? '' : body).trim();
       if (!scope) { reply('error: a review scope is required — [agent:team-review] <what to review>'); return; }
 
@@ -775,7 +776,22 @@ function createTicketMethods(deps, shared) {
       }
       const reviewTpl = shape.tpl;
       const type = shape.type;
-      const cwd = shape.cwd;
+      const roundTicket = reviewTicket ? this._loadTicket(team, reviewTicket) : null;
+      // _loadTicket returns null for a missing ticket AND for an unreadable
+      // board. Silent, that degrades a ticket review to the counter name and to
+      // `reviewRound = n - 1` — the round collapse this mint exists to
+      // prevent, reintroduced with no signal. Logged so it is auditable.
+      if (reviewTicket && !roundTicket) {
+        log.warn('intent', `team-review for ticket ${reviewTicket}: ticket not readable from the board — falling back to the counter name and a seat-index round (rounds may collapse in the cost rollup)`);
+      }
+      const treePath = roundTicket && roundTicket.worktree && typeof roundTicket.worktree.path === 'string'
+        ? roundTicket.worktree.path
+        : null;
+      let treeOk = false;
+      if (treePath) {
+        try { treeOk = fs.statSync(treePath).isDirectory(); } catch { treeOk = false; }
+      }
+      const cwd = treeOk ? seatCwdInTree(team.root, shape.cwd, treePath) : shape.cwd;
       const tplWarn = reviewTpl
         ? ''
         : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
@@ -807,12 +823,14 @@ function createTicketMethods(deps, shared) {
       const argsWarn = shape.modelRefused
         ? ` — reviewer template model "${shape.modelRefused}" is not a usable model name (a value is required and cannot begin with "-") — ignored; spawned on the default model (fix the template's "extraArgs")`
         : '';
-      // A role cwd that could not be honored. Warned, never fatal: the seat is
-      // already useful at the team root, and the alternative — refusing the review
-      // over a directory — blocks the ticket. Silence is what this must not be:
-      // the reviewer would be reading the right repo from the wrong place, and
-      // nothing else in the system would ever say so.
-      const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
+      // Warned, never fatal: the seat is already useful at the team root, and the
+      // alternative — refusing the review over a directory — blocks the ticket.
+      // Silence is what this must not be: the reviewer would be reading the right
+      // repo from the wrong place, and nothing else in the system would ever say so.
+      const cwdWarn = (shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '')
+        + ((treePath && !treeOk)
+          ? ` — NOTE: ticket ${reviewTicket} records worktree ${treePath} but it is not a directory; reviewer spawned at ${cwd}`
+          : '');
 
       // Two refusals, one ruling: a `tools` the cap cannot honor must NOT fall back
       // to the full cap. The only fallback available grants more than the template
@@ -859,14 +877,6 @@ function createTicketMethods(deps, shared) {
       // same name and the same cost label a second time. Bumping at spawn would
       // trade that for a round number counting spawns rather than verdicts, which
       // is the number the loop's rework ladder reads.
-      const roundTicket = reviewTicket ? this._loadTicket(team, reviewTicket) : null;
-      // _loadTicket returns null for a missing ticket AND for an unreadable
-      // board. Silent, that degrades a ticket review to the counter name and to
-      // `reviewRound = n - 1` — the round collapse this mint exists to
-      // prevent, reintroduced with no signal. Logged so it is auditable.
-      if (reviewTicket && !roundTicket) {
-        log.warn('intent', `team-review for ticket ${reviewTicket}: ticket not readable from the board — falling back to the counter name and a seat-index round (rounds may collapse in the cost rollup)`);
-      }
       const ticketRound = roundTicket ? (Number(roundTicket.reviewRound) || 0) + 1 : 0;
       // The ticket number is required to be digits rather than name-checked: it
       // is the only part of this name not already in the counter name below, so
@@ -958,7 +968,7 @@ function createTicketMethods(deps, shared) {
       setImmediate(async () => {
         try {
           const spawned = await this.create(
-            name, type, cwd, shape.extraArgs, null, shape.workspaceId,
+            name, type, cwd, [...shape.extraArgs, ...addDirs.flatMap((d) => ['--add-dir', d])], null, shape.workspaceId,
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
@@ -6640,6 +6650,7 @@ function createTicketMethods(deps, shared) {
       // human. Errors become escalations; a success is logged.
       this._handleTeamReview(leadSession, scope, {
         ticketId,
+        addDirs: [path.dirname(diffPath)],
         template: ticket.reviewerTemplate || null,
         onReply: (msg) => {
           const m = String(msg == null ? '' : msg);
