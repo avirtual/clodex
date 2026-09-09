@@ -1,9 +1,8 @@
 // The shipped portable LEAD template (t770).
 //
-// The lead is the seat that carries a project's whole context on every turn, so
-// it is the worst one to leave at the spawner's box default: a bare
-// [agent:spawn name:X-lead cwd:Y] used to hand it Fable 1M with every skill,
-// every plugin and no exec grants at all. These pins hold the shape the default
+// The lead is the seat that carries a project's whole context on every turn, and
+// a bare [agent:spawn name:X-lead cwd:Y] used to hand it every skill, every
+// plugin and no exec grants at all. These pins hold the shape the default
 // resolution now reaches for, and hold it AGAINST the hand template rather than
 // against a copy of its fields — the two must not drift apart silently.
 
