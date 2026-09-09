@@ -18,18 +18,21 @@
 // just erased. Observed live: the flag went at 13:32 on 2026-08-23 and no
 // `[keepwarm]` line appeared again.
 //
-// WHAT THIS FILE PINS, and what it deliberately does not. This is the
-// PERSISTENCE half — that the flag is on the record after the restart, driven
-// through the real restart entry points. The flag must not be written by the
-// fixture at any point after the restart: a test that stamps it itself passes
-// with the preservation deleted entirely, which is the failure shape this whole
-// bug class is made of. test/wire-hold-restart.test.js pins the other half (the
-// keeper replaying it with no intervening turn) and test/preserve-census.test.js
-// pins that a NEW persisted field cannot reach master without a decision.
+// WHAT THE RESTART ROWS BELOW PIN, and what they deliberately do not. They are
+// the PERSISTENCE half — that the flag is on the record after the restart,
+// driven through the real restart entry points. The flag must not be written by
+// the fixture at any point after the restart: a test that stamps it itself
+// passes with the preservation deleted entirely, which is the failure shape this
+// whole bug class is made of. test/wire-hold-restart.test.js pins the other half
+// (the keeper replaying it with no intervening turn) and
+// test/preserve-census.test.js pins that a NEW persisted field cannot reach
+// master without a decision. The last section of this file is a separate
+// subject: which conversation the startup restore accepts at all.
 //
-// THE ENTER QUESTIONS, same three as test/createdat-restart.test.js, and for the
-// same reason — every assertion here is about a field surviving a window, and a
-// test that never enters the window passes for free:
+// THE ENTER QUESTIONS for those restart rows, same three as
+// test/createdat-restart.test.js, and for the same reason — each of their
+// assertions is about a field surviving a window, and a test that never enters
+// the window passes for free:
 //   (a) kill() actually REMOVED the record. If it survived, create()'s own
 //       read carries the flag and the preserve under test is doing nothing.
 //   (b) create() was actually REACHED.
