@@ -464,7 +464,14 @@ not by size:
   since the intent's family regex stops at the first `]`, which is why the
   aliases exist. Derivation drops every prior `--model <x>` pair and `--model=<x>`
   token before prepending the new one, so re-deriving from the role's own copy
-  cannot accumulate a second pair, and it never mutates `base`.
+  cannot accumulate a second pair, and it never mutates `base`. It also strips
+  the LISTING decoration (`id`, `shadowedBy`, `plugin`, `pluginName`) the library
+  fallback carries: that base is a `templates.list()` row, not the file, and
+  persisting `plugin` into the team's own copy files it under the plugin in the
+  drawers while a stale `shadowedBy` labels it shadowed by an unrelated team.
+  The caller refuses what `addRole`/`setRole` would refuse BEFORE saving —
+  the file is not inside the mutator's transaction, so a later throw would
+  otherwise leave a template for a role that was never written.
 - **team-root-expand.js** — the `${TEAM_ROOT}` token for a TEMPLATE's `cwd`,
   read by the spawn intent (team-tickets.js) and the New Session dialog's
   template dropdown (renderer.js). Pure leaf. An unresolved root REFUSES rather
