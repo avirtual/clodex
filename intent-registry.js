@@ -145,7 +145,7 @@ function parseTask(cleaned) {
 }
 
 function parseTeamCreate(cleaned) {
-  const m = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*$/);
+  const m = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const argStr = m[1];
   const rootM = argStr.match(/\broot:(\S+)/);
@@ -156,7 +156,7 @@ function parseTeamCreate(cleaned) {
     name: positional[0] || null,
     root: rootM ? rootM[1] : null,
     lead: leadM ? leadM[1] : null,
-    body: '',
+    body: m[2],
   };
 }
 
@@ -229,7 +229,7 @@ const CORE_ROWS = [
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },
   { type: 'reboot', parse: parseReboot, bodyMode: NONE },
   { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'respec' || i.sub === 'cancel' || i.sub === 'accept' ? 'greedy' : 'none') },
-  { type: 'team-create', parse: parseTeamCreate, bodyMode: NONE },
+  { type: 'team-create', parse: parseTeamCreate, bodyMode: GREEDY },
   { type: 'team', parse: parseTeam, bodyMode: (i) => (i.sub === 'role-add' || i.sub === 'role-set' || i.sub === 'template-save' || i.sub === 'prompt-save' ? 'greedy' : 'none') },
   { type: 'spawn', parse: parseSpawn, bodyMode: NONE },
 ].map((r) => Object.freeze({

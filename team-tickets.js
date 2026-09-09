@@ -27,7 +27,9 @@ const {
 const { isDraftOpen } = require('./proxy-util');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
-const { matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS } = require('./team-manifest');
+const {
+  matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
+} = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
 } = require('./team-prompt-dir');
@@ -2126,15 +2128,49 @@ function createTicketMethods(deps, shared) {
         reply(`error: root ${root} is not an existing directory — create it first; Clodex never makes it for you`);
         return;
       }
+      const brief = String(intent.body == null ? '' : intent.body);
+      const hasBrief = brief.trim().length > 0;
+      if (hasBrief) {
+        const bytes = Buffer.byteLength(brief, 'utf-8');
+        if (bytes > TEAM_FILE_BODY_MAX) {
+          reply(`error: brief too long (${bytes} > ${TEAM_FILE_BODY_MAX} bytes) — no team was created`);
+          return;
+        }
+      }
+      const roles = hasBrief ? {
+        lead: { ...STOCK_ROLE_DEFS.lead },
+        hand: { ...STOCK_ROLE_DEFS.hand, dispatch: 'worktree' },
+        reviewer: { ...STOCK_ROLE_DEFS.reviewer },
+      } : undefined;
       let team;
       try {
-        team = createTeam({ name, root, lead: defaultLeadSeat(name, intent.lead || null) });
+        team = createTeam({ name, root, lead: defaultLeadSeat(name, intent.lead || null), roles });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
       }
+      const dir = nodePath.join(teamsDir, team.name);
+      if (hasBrief) {
+        const res = teamPromptSave(this._teamFileDeps(), team.name, 'append', 'team-project', brief);
+        if (!res.ok) {
+          try { fs.unlinkSync(nodePath.join(dir, 'team.json')); } catch {}
+          try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'append')); } catch {}
+          try { fs.rmdirSync(nodePath.join(dir, 'prompts')); } catch {}
+          try { fs.rmdirSync(dir); } catch {}
+          this._refreshAppMenuQuietly();
+          reply(`error: could not save the brief (${res.error}) — no team was created; `
+            + `re-fire [agent:team create ${name} root:${root}] with the brief`);
+          return;
+        }
+      }
       try { if (typeof refreshAppMenu === 'function') refreshAppMenu(); } catch {}
-      reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${nodePath.join(teamsDir, team.name)}. `
+      if (hasBrief) {
+        reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}; `
+          + 'hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md. '
+          + 'Next: spawn the lead in that root — it composes the brief at boot.');
+        return;
+      }
+      reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}. `
         + 'Next: spawn the lead in that root, then [agent:team gather] and [agent:team role-add …] from it.');
     },
 
