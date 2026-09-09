@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — A new team costs nothing to set up: role model by alias, a portable suite digest, lean hands
+## Unreleased
+
+## 5.46.0 — 2026-09-09 — A new team costs nothing to set up: role model by alias, a portable suite digest, lean hands
 
 - **Teams:** `[agent:team role-set <role> model:<id>]` (and `role-add`) derives the role's seat template with that `--model` and points the role at it, so a lead never writes template JSON to change a hand's model. Aliases: `opus`, `sonnet`, `haiku`, `fable`; a new role with no template derives from the shipped `clodex-team-hand`.
 - **Teams:** `clodex-run-tests` is now a shipped bin that runs the project's own `scripts/run-tests.js` (the merge gate's runner) and prints the one-line digest, so it works on any team, and the stock hand template grants it together with `clodex-monitor`. The clodex repo's team-local def is unchanged.
