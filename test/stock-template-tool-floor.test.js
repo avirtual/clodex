@@ -97,13 +97,6 @@ for (const stem of STEMS) {
   });
 }
 
-test('the two stock templates deny the same tools', () => {
-  // team-lead-template-portable.test.js already pins lead-equals-hand for this
-  // field; repeated here so a failure in THIS file names the partition it broke
-  // rather than sending the reader to another file first.
-  assert.deepStrictEqual(readTpl('clodex-team-lead').disabledTools, readTpl('clodex-team-hand').disabledTools);
-});
-
 // ---------------------------------------------------------------------------
 // The create()-level pin: [] and absent are different values on argv.
 
