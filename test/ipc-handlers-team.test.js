@@ -373,7 +373,63 @@ test('team:activity reports every role\'s seats, open tickets and last landing, 
         last: { ticket: 't3', round: 1, verdict: 'ACCEPT', at: NOW - 500 },
       },
       counts: { open: 1, verify: 1, done24h: 2 },
+      tickets: {
+        open: [
+          { id: 't1', title: 'one', assignee: 'shop-hand-1', step: 'working', since: null, round: null },
+          { id: 't2', title: 'two', assignee: 'shop-hand-2', step: 'review', since: null, round: 1 },
+        ],
+        landed: [
+          { id: 't3', title: 'three', at: NOW - 1000, outcome: 'accepted', rounds: 1 },
+          { id: 't4', title: 'four', at: NOW - 3000, outcome: 'cancelled', rounds: 0 },
+          { id: 't5', title: 'five', at: NOW - 30 * 60 * 60 * 1000, outcome: 'merge-failed', rounds: 0 },
+        ],
+      },
     });
+  } finally { d.cleanup(); }
+});
+
+// The per-TICKET board, beside the per-ROLE sections above. A ticket pinned to no
+// role reaches no `roles` bucket at all, so without this key the popover could
+// only ever show the tickets that happened to name a defined role.
+test('team:activity caps the landed list at five, newest first, whatever the board holds', () => {
+  const board = [];
+  for (let i = 1; i <= 7; i += 1) {
+    board.push({ id: `t${i}`, state: 'done', role: 'hand', title: `t${i}`, closedOut: true,
+      closedAt: NOW - i * 1000, reviewRound: i });
+  }
+  const d = mkActivityDoor({ tickets: board, sessions: [] });
+  try {
+    const landed = d.activity().tickets.landed;
+    assert.deepStrictEqual(landed.map((t) => t.id), ['t1', 't2', 't3', 't4', 't5'],
+      'the five newest closedAt, newest first — the cap belongs on the WIRE, not in the renderer, '
+      + 'and an uncapped payload ships a whole archive for a list that shows five');
+    assert.deepStrictEqual(landed[0], { id: 't1', title: 't1', at: NOW - 1000, outcome: 'accepted', rounds: 1 });
+  } finally { d.cleanup(); }
+});
+
+test('team:activity reads a never-started ticket as backlog, and a parked or undelivered one by its own word', () => {
+  const d = mkActivityDoor({
+    tickets: [
+      // No `role`, which is what `task add` writes: the key is stamped at
+      // DISPATCH, and `ticketStarted` reads its presence as "already out". A
+      // backlog row is therefore role-less, and this list — unlike `roles` —
+      // carries it, which is the whole reason the section shows the board.
+      { id: 't1', state: 'open', title: 'filed', startedAt: null },
+      { id: 't2', state: 'open', role: 'hand', title: 'held', startedAt: null, parked: true },
+      { id: 't3', state: 'open', role: 'hand', title: 'sent', startedAt: NOW - 60000, undeliveredAt: NOW },
+      { id: 't4', state: 'open', role: 'hand', title: 'live', assignee: 'shop-hand-4', startedAt: NOW - 60000 },
+    ],
+    sessions: [],
+  });
+  try {
+    const open = d.activity().tickets.open;
+    assert.deepStrictEqual(open.map((t) => [t.id, t.step, t.since]), [
+      ['t1', 'backlog', null],
+      ['t2', 'parked', null],
+      ['t3', 'undelivered', null],
+      ['t4', 'working', NOW - 60000],
+    ], 'a ticket nobody dispatched is BACKLOG, not "working since" nothing');
+    assert.strictEqual(open[0].assignee, null, 'and it names no seat');
   } finally { d.cleanup(); }
 });
 
@@ -404,6 +460,7 @@ test('team:activity on an empty board reports the roles with nothing in them', (
       },
       reviewer: { live: [], last: null },
       counts: { open: 0, verify: 0, done24h: 0 },
+      tickets: { open: [], landed: [] },
     });
   } finally { d.cleanup(); }
 });

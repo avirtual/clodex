@@ -21,8 +21,13 @@ already named maps to `[]` and renders as "uses nothing".
 The reviewer row omits `dispatch` rather than carrying it: nothing reads a
 reviewer's `dispatch` value (`team-manifest.js` reserves the role and the loop
 reaches it through `[agent:team-review]`, spawning one seat per review round), so
-a chip showing that value names a mode the loop never honours. Its absence is
-what `buildSummaryLine` branches on.
+a chip showing that value names a mode the loop never honours. What
+`buildSummaryLine` branches on to drop the chip is the row's `reviewer` flag.
+
+A per-ticket row's `seats` counts come from the activity channel's `live`, not
+from the window's session rows: a worktree hand runs in its own window and counts
+zero in this workspace, so the session-scoped numbers would contradict the note
+beside them.
 
 ## activityTime
 

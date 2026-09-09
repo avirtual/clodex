@@ -1598,7 +1598,8 @@ body {
   border-color: var(--warn);
 }
 #team-roles-add-section.hidden,
-#team-roles-watchdog-section.hidden {
+#team-roles-watchdog-section.hidden,
+#team-roles-tickets-section.hidden {
   display: none;
 }
 .team-role-head {
@@ -6814,6 +6815,7 @@ body {
       </div>
       </div>
       </div>
+      <div id="team-roles-tickets-section"></div>
       <div id="team-roles-watchdog-section" class="hidden">
       <div class="popover-subhead" title="How long a teammate can sit idle on an assigned task before the lead gets a nudge">Stall Watchdog</div>
       <div class="hint-text team-roles-hint">How long a teammate can sit idle on an assigned task before the lead gets a nudge. Blank = default (30m).</div>
@@ -31092,6 +31094,30 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const when = activityTime(last.at, now);
         return `spawned per review round \xB7 none now \xB7 last ${last.ticket} ${last.verdict || "?"} r${last.round}${when ? ` ${when}` : ""}`;
       }
+      var TICKET_TITLE_MAX = 60;
+      var LANDED_WORD = { accepted: "merged", "merge-failed": "merge FAILED", cancelled: "cancelled" };
+      function ticketLine(t, now) {
+        const id = t && t.id != null ? String(t.id) : "?";
+        const rawTitle = t && t.title != null ? String(t.title) : "";
+        const title = rawTitle ? rawTitle.length > TICKET_TITLE_MAX ? `${rawTitle.slice(0, TICKET_TITLE_MAX)}\u2026` : rawTitle : "untitled";
+        const parts = [id, title];
+        if (t && t.outcome != null) {
+          const when = activityTime(t.at, now);
+          const word = LANDED_WORD[t.outcome] || String(t.outcome);
+          parts.push(when ? `${word} ${when}` : word);
+          const rounds = Number(t.rounds) || 0;
+          if (rounds > 0) parts.push(`${rounds} round${rounds === 1 ? "" : "s"}`);
+          return parts.join(" \xB7 ");
+        }
+        parts.push(t && t.assignee ? String(t.assignee) : "unassigned");
+        const step = t && t.step != null ? String(t.step) : "";
+        if (step === "review") parts.push(`in review (round ${Number(t.round) || 1})`);
+        else if (step === "working") {
+          const when = activityTime(t.since, now);
+          parts.push(when ? `working since ${when}` : "working");
+        } else parts.push(step || "working");
+        return parts.join(" \xB7 ");
+      }
       function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
         const act = activity && activity.ok ? activity : null;
         const roles = manifest && manifest.roles || {};
@@ -31110,11 +31136,16 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const raw = def && def.dispatch || DEFAULT_DISPATCH;
           const dispatch = DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH;
           const readOnly = RESERVED_ROLE_KEYS.has(key);
-          const seats = { total, working, names };
           if (act && key === "reviewer") {
-            return { key, readOnly, seats, reviewer: true, note: reviewerNote(act.reviewer, now) };
+            return { key, readOnly, seats: { total, working, names }, reviewer: true, note: reviewerNote(act.reviewer, now) };
           }
           const perTicket = act && dispatch !== DEFAULT_DISPATCH && act.roles && Object.prototype.hasOwnProperty.call(act.roles, key);
+          const liveSeats = perTicket && Array.isArray(act.roles[key].live) ? act.roles[key].live : null;
+          const seats = liveSeats ? {
+            total: liveSeats.length,
+            working: liveSeats.filter((s) => s && s.step === "working").length,
+            names: liveSeats.map((s) => String(s && s.seat == null ? "" : s.seat))
+          } : { total, working, names };
           return {
             key,
             dispatch,
@@ -31208,6 +31239,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         teamStage,
         roleSummaries,
         activityTime,
+        ticketLine,
         absentStockRoles,
         absentStockNote,
         offerDispatchLine,
@@ -31241,6 +31273,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         leadResolution,
         teamStage,
         roleSummaries,
+        ticketLine,
         absentStockRoles,
         absentStockNote,
         offerDispatchLine,
@@ -31268,6 +31301,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const addCancel = document.getElementById("team-roles-newrole-cancel");
         const addDispatchHelp = document.getElementById("team-roles-dispatch-help");
         const addSection = document.getElementById("team-roles-add-section");
+        const ticketsSection = document.getElementById("team-roles-tickets-section");
         const watchdogSection = document.getElementById("team-roles-watchdog-section");
         const watchdogInput = document.getElementById("team-roles-watchdog-ms");
         const watchdogSet = document.getElementById("team-roles-watchdog-set");
@@ -31551,6 +31585,44 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           head.appendChild(disclose);
           return head;
         }
+        function buildTicketsSection(act) {
+          const frag = document.createDocumentFragment();
+          const head = document.createElement("div");
+          head.className = "popover-subhead";
+          head.textContent = "Tickets";
+          frag.appendChild(head);
+          const hint = document.createElement("div");
+          hint.className = "hint-text team-roles-hint";
+          hint.textContent = "Filed with [agent:task add], worked on their own branch, reviewed by a cold seat, merged by the loop.";
+          frag.appendChild(hint);
+          const tickets = act && act.tickets ? act.tickets : null;
+          const now = Date.now();
+          const list = (caption, rows, empty) => {
+            const cap = document.createElement("div");
+            cap.className = "team-role-head";
+            const k = document.createElement("span");
+            k.className = "team-role-key";
+            k.textContent = caption;
+            cap.appendChild(k);
+            frag.appendChild(cap);
+            if (!rows || !rows.length) {
+              const none = document.createElement("div");
+              none.className = "team-role-note";
+              none.textContent = empty;
+              frag.appendChild(none);
+              return;
+            }
+            for (const t of rows) {
+              const line = document.createElement("div");
+              line.className = "team-role-note";
+              line.textContent = ticketLine(t, now);
+              frag.appendChild(line);
+            }
+          };
+          list("Open", tickets && Array.isArray(tickets.open) ? tickets.open : null, "No open tickets.");
+          list("Landed", tickets && Array.isArray(tickets.landed) ? tickets.landed : null, "Nothing landed yet.");
+          return frag;
+        }
         function buildOfferCard(key, { note, dispatchLine }) {
           const el = document.createElement("div");
           el.className = "team-role-row read-only absent";
@@ -31614,6 +31686,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const res = leadResolution(manifest && manifest.lead, { sessions: leadSessions, known: leadKnown });
           const stage = teamStage(res);
           addSection.classList.toggle("hidden", stage === "setup");
+          ticketsSection.classList.toggle("hidden", stage === "setup");
+          ticketsSection.innerHTML = "";
+          if (stage !== "setup") ticketsSection.appendChild(buildTicketsSection(activity));
           if (stage === "setup") {
             watchdogSection.classList.add("hidden");
             settingsBtn.setAttribute("aria-expanded", "false");

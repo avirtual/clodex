@@ -41,6 +41,10 @@ const { CLAUDE_TOOLS } = require('./catalogs');
 
 const TEAM_FILE_BODY_MAX = 64 * 1024;
 
+// How many landings `teamActivity` carries. The popover shows a recent-history
+// strip, not an archive, and this is the wire bound on it.
+const LANDED_TICKET_LIMIT = 5;
+
 // How long a queued ticket waits for another run to release the shared lock.
 // Sized to a whole suite run: giving up earlier escalates a ticket whose only
 // fault was closing while the lead's suite was running.
@@ -804,6 +808,51 @@ function createTicketMethods(deps, shared) {
         };
       }
 
+      const openRows = [];
+      const landedRows = [];
+      for (const t of tickets) {
+        const inVerify = t.state === 'done' && t.loopStep === 'verify';
+        if (t.state === 'open' || inVerify) {
+          let step = 'working';
+          let since = null;
+          let round = null;
+          if (inVerify) { step = 'review'; round = (Number(t.reviewRound) || 0) + 1; }
+          else if (t.parked) step = 'parked';
+          else if (t.undeliveredAt) step = 'undelivered';
+          else if (!ticketStarted(t)) step = 'backlog';
+          else since = typeof t.startedAt === 'number' ? t.startedAt : null;
+          openRows.push({
+            sort: typeof t.openedAt === 'number' ? t.openedAt : 0,
+            row: {
+              id: t.id,
+              title: t.title == null ? null : t.title,
+              assignee: t.assignee == null ? null : t.assignee,
+              step,
+              since,
+              round,
+            },
+          });
+          continue;
+        }
+        if (!((t.state === 'done' && t.closedOut) || t.state === 'cancelled')) continue;
+        const at = t.closedAt != null ? t.closedAt : (t.acceptedAt != null ? t.acceptedAt : null);
+        if (at == null) continue;
+        landedRows.push({
+          id: t.id,
+          title: t.title == null ? null : t.title,
+          at,
+          outcome: t.mergeError ? 'merge-failed' : (t.state === 'cancelled' ? 'cancelled' : 'accepted'),
+          rounds: Number(t.reviewRound) || 0,
+        });
+      }
+      openRows.sort((a, b) => a.sort - b.sort);
+      const open = openRows.map((e) => e.row);
+      const landed = landedRows.sort((a, b) => b.at - a.at);
+      // Capped HERE rather than in the renderer: this is an IPC payload, and a
+      // board with a thousand landings would ship every one of them across the
+      // wire for a list that shows five.
+      landed.length = Math.min(landed.length, LANDED_TICKET_LIMIT);
+
       const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
       const counts = {
         open: tickets.filter((t) => t.state === 'open').length,
@@ -811,7 +860,7 @@ function createTicketMethods(deps, shared) {
         done24h: tickets.filter((t) => t.closedAt != null && t.closedAt >= dayAgo).length,
       };
 
-      return { ok: true, team: team.name, roles, reviewer, counts };
+      return { ok: true, team: team.name, roles, reviewer, counts, tickets: { open, landed } };
     },
 
     _forgetTeam(teamName, root) {

@@ -14,7 +14,7 @@ const {
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
   reservedRemovalWarning,
-  teamStage, roleSummaries, activityTime, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  teamStage, roleSummaries, activityTime, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS, DISPATCH_VALUES,
 } = require('../renderer/lib/team-roles');
@@ -765,7 +765,17 @@ const WT = { name: 'shop', roles: { hand: { dispatch: 'worktree' } } };
 test('roleSummaries: one live per-ticket seat names its seat AND its ticket, with the step', () => {
   const act = ACT_ROLES({ dispatch: 'worktree', live: [{ seat: 'shop-hand-783', ticket: 't783', step: 'working' }], open: [], last: null });
   const out = roleSummaries(WT, [], { activity: act, now: NOW });
-  assert.strictEqual(out[0].note, 'shop-hand-783 on t783 (working)');
+  // The WHOLE row, because `seats` is what the dot and its hover title are built
+  // from: the session rows here are EMPTY (a worktree hand runs in its own
+  // window), so counting them colours the dot `none` and titles it "0 seat(s), 0
+  // working" beside a note naming the seat that is working right now.
+  assert.deepStrictEqual(out, [{
+    key: 'hand',
+    dispatch: 'worktree',
+    readOnly: false,
+    seats: { total: 1, working: 1, names: ['shop-hand-783'] },
+    note: 'shop-hand-783 on t783 (working)',
+  }]);
 });
 
 test('roleSummaries: a live seat at the review step reads "in review", not "working"', () => {
@@ -774,6 +784,8 @@ test('roleSummaries: a live seat at the review step reads "in review", not "work
   const act = ACT_ROLES({ dispatch: 'worktree', live: [{ seat: 'shop-hand-783', ticket: 't783', step: 'verify' }], open: [], last: null });
   const out = roleSummaries(WT, [], { activity: act, now: NOW });
   assert.strictEqual(out[0].note, 'shop-hand-783 on t783 (in review)');
+  assert.deepStrictEqual(out[0].seats, { total: 1, working: 0, names: ['shop-hand-783'] },
+    'the seat is live but not working — the dot must read idle, not ok');
 });
 
 test('roleSummaries: two live per-ticket seats list both seats with their tickets', () => {
@@ -832,8 +844,9 @@ test('roleSummaries: a STANDING role keeps its seat-count note even with activit
 
 test('roleSummaries: the reviewer row states it is spawned per round and drops the dispatch key', () => {
   // team-manifest.js does not read the reviewer's `dispatch` — the loop reaches it
-  // through [agent:team-review] and spawns one per round. Omitting the key is what
-  // makes buildSummaryLine drop the chip; a chip there names a mode nothing honours.
+  // through [agent:team-review] and spawns one per round, so a chip showing that
+  // value names a mode nothing honours. What makes buildSummaryLine drop the chip
+  // is the `reviewer: true` flag beside it, not the absent `dispatch`.
   const rev = (reviewer) => ({ ok: true, team: 'shop', roles: {}, reviewer, counts: {} });
   const manifest = { name: 'shop', roles: { reviewer: { dispatch: 'worktree' } } };
   const live = roleSummaries(manifest, [], { activity: rev({ live: [{ ticket: 't783', round: 1, seat: 'shop-reviewer-783-r1' }], last: null }), now: NOW });
@@ -882,6 +895,74 @@ test('activityTime: HH:MM today, "Mon D" any other day, blank for a non-number',
   assert.strictEqual(activityTime(new Date(2025, 8, 9, 21, 16).getTime(), NOW), 'Sep 9');
   assert.strictEqual(activityTime(null, NOW), '');
   assert.strictEqual(activityTime(undefined, NOW), '');
+});
+
+// One ticket, one line, as the operator reads it. Literals throughout: the whole
+// value of building the string in a pure leaf is that the pin is the sentence.
+test('ticketLine: an open ticket names its seat and its step, "working since" carrying the clock', () => {
+  const open = (over) => ticketLine({ id: 't786', title: 'the roles popover', assignee: 'hand-786', step: 'working', since: TODAY_2116, round: null, ...over }, NOW);
+  assert.strictEqual(open(), 't786 · the roles popover · hand-786 · working since 21:16');
+  assert.strictEqual(open({ step: 'review', round: 2 }), 't786 · the roles popover · hand-786 · in review (round 2)');
+  assert.strictEqual(open({ step: 'parked' }), 't786 · the roles popover · hand-786 · parked');
+  assert.strictEqual(open({ step: 'undelivered' }), 't786 · the roles popover · hand-786 · undelivered');
+  // A backlog ticket has no seat and no start: "unassigned" is the honest word,
+  // and a blank there would read as a seat whose name failed to render.
+  assert.strictEqual(open({ step: 'backlog', assignee: null, since: null }),
+    't786 · the roles popover · unassigned · backlog');
+  // Started but with no usable stamp: the word survives, the clock does not —
+  // "working since " with nothing after it states a time that was never read.
+  assert.strictEqual(open({ since: null }), 't786 · the roles popover · hand-786 · working');
+});
+
+test('ticketLine: a landed ticket names its outcome, its time and its review rounds', () => {
+  const landed = (over) => ticketLine({ id: 't785', title: 'team:activity', at: TODAY_2116, outcome: 'accepted', rounds: 2, ...over }, NOW);
+  assert.strictEqual(landed(), 't785 · team:activity · merged 21:16 · 2 rounds');
+  assert.strictEqual(landed({ rounds: 1 }), 't785 · team:activity · merged 21:16 · 1 round');
+  // Zero rounds is not "0 rounds": a ticket that never reached a review has no
+  // round count to state, and printing one invents a review that did not happen.
+  assert.strictEqual(landed({ rounds: 0 }), 't785 · team:activity · merged 21:16');
+  // A failed merge is NOT a landing — the branch is still unmerged and someone
+  // has to act, so it must not read with the same word as a success.
+  assert.strictEqual(landed({ outcome: 'merge-failed', rounds: 0 }), 't785 · team:activity · merge FAILED 21:16');
+  assert.strictEqual(landed({ outcome: 'cancelled', rounds: 0 }), 't785 · team:activity · cancelled 21:16');
+  assert.strictEqual(landed({ at: YESTERDAY_2116, rounds: 0 }), 't785 · team:activity · merged Sep 8');
+});
+
+test('ticketLine: a title longer than 60 chars is truncated with an ellipsis, not wrapped', () => {
+  // The line is one row in a fixed-width popover; an untruncated title pushes the
+  // step — the one part that says what to DO — off the end of the row.
+  const title = 'x'.repeat(70);
+  const out = ticketLine({ id: 't1', title, assignee: null, step: 'parked' }, NOW);
+  assert.strictEqual(out, `t1 · ${'x'.repeat(60)}… · unassigned · parked`);
+  const exact = 'y'.repeat(60);
+  assert.strictEqual(ticketLine({ id: 't1', title: exact, assignee: null, step: 'parked' }, NOW),
+    `t1 · ${exact} · unassigned · parked`, '60 is not over the limit');
+  assert.strictEqual(ticketLine({ id: 't1', title: null, assignee: null, step: 'parked' }, NOW),
+    't1 · untitled · unassigned · parked', 'a title-less ticket says so rather than rendering a gap');
+});
+
+test('the roles popover renders the Tickets section, its header sentence and both empty states', () => {
+  // The section is the only place the loop is stated to the owner, and the empty
+  // states are what the WEB host shows: `team:activity` is not shimmed there, so
+  // `activity` is null and a section that rendered nothing would read as a team
+  // with no board rather than a host that cannot see one.
+  const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
+  const fn = /function buildTicketsSection\([\s\S]*?\n  \}/.exec(pop);
+  assert.ok(fn, 'ENTER: found buildTicketsSection — a rename would reduce every assertion below to nothing');
+  const src = fn[0];
+  assert.ok(src.includes('Filed with [agent:task add], worked on their own branch, reviewed by a cold seat, merged by the loop.'),
+    'the header sentence says what the loop does with a ticket');
+  assert.ok(src.includes("'No open tickets.'") && src.includes("'Nothing landed yet.'"), 'both empty states');
+  assert.ok(src.includes("list('Open'") && src.includes("list('Landed'"), 'Open above Landed');
+  assert.match(src, /const tickets = act && act\.tickets \? act\.tickets : null;/,
+    'the rows come off `activity.tickets`, and an ABSENT activity must fall to the empty states rather than throw');
+  // SECURITY: ticket titles are agent-written strings. Every one of them lands as
+  // textContent in this nodeIntegration renderer — an attribute or an innerHTML
+  // here would make an agent-authored title executable.
+  assert.ok(!/innerHTML|setAttribute|\.title =/.test(src),
+    'agent-written titles must reach the DOM only as textContent');
+  assert.match(pop, /ticketsSection\.appendChild\(buildTicketsSection\(activity\)\)/,
+    'and renderRows must actually append it — a builder nobody calls renders no section');
 });
 
 test('the roles popover header explains the two kinds of role', () => {
