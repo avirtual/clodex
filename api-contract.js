@@ -98,6 +98,8 @@ const API_CONTRACT = [
   { name: 'listPrompts', kind: 'invoke', channel: 'prompts:list' },
   { name: 'savePrompt', kind: 'invoke', channel: 'prompts:save' },
   { name: 'removePrompt', kind: 'invoke', channel: 'prompts:remove' },
+  { name: 'saveTeamPrompt', kind: 'invoke', channel: 'prompts:saveTeam' },
+  { name: 'removeTeamPrompt', kind: 'invoke', channel: 'prompts:removeTeam' },
   { name: 'injectPrompt', kind: 'invoke', channel: 'prompts:inject' },
   { name: 'listAgents', kind: 'invoke', channel: 'agents:list' },
   { name: 'getAgent', kind: 'invoke', channel: 'agents:get' },

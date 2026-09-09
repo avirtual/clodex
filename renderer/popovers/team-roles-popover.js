@@ -712,18 +712,17 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           const none = document.createElement('option');
           none.value = ''; none.textContent = '(no prompt)';
           sel.appendChild(none);
-          for (const p of promptNames) {
-            const opt = document.createElement('option');
-            opt.value = p; opt.textContent = p;
-            sel.appendChild(opt);
-          }
+          appendPromptOptions(sel, promptNames, manifest && manifest.name);
           if (row.prompt && !promptNames.includes(row.prompt)) {
             const missing = document.createElement('option');
             missing.value = row.prompt;
-            // THREE distinct facts, three messages. They have different fixes, and
-            // one wording for all of them sent the operator hunting for a file that
+            // One message per distinct fact. They have different fixes, and one
+            // wording for all of them sent the operator hunting for a file that
             // was on disk the whole time. All set by PROPERTY (agent-writable).
-            if (!promptsListingOk) {
+            if (teamOwnedPrompts.includes(row.prompt)) {
+              missing.textContent = row.prompt;
+              missing.title = `this team's own prompt (teams/${manifest && manifest.name}/prompts/system/${row.prompt}.md)`;
+            } else if (!promptsListingOk) {
               // The listing failed — an empty list is indistinguishable from a
               // genuinely empty library by count, so accuse the prompt of nothing.
               missing.textContent = row.prompt;
@@ -925,26 +924,41 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   // renderRows uses this to avoid accusing a present-but-unlistable stored prompt
   // of being "missing from library". No retry loop — one shot per open/refresh.
   let promptsListingOk = true;
-  async function populatePromptOptions() {
+  let teamOwnedPrompts = [];
+  async function populatePromptOptions(team) {
     let res;
-    try { res = await window.api.teamRolePrompts(); } catch { res = null; }
+    try { res = await window.api.teamRolePrompts(team); } catch { res = null; }
     promptsListingOk = !!(res && res.ok);
     const prompts = (res && res.prompts) || [];
     promptNames = prompts;
     allPromptNames = (res && res.all) || [];
+    teamOwnedPrompts = (res && res.teamOwned) || [];
     addPrompt.innerHTML = '<option value="">(no prompt)</option>';
-    for (const p of prompts) {
+    appendPromptOptions(addPrompt, prompts, team);
+  }
+
+  function appendPromptOptions(sel, names, team) {
+    const owned = names.filter((n) => teamOwnedPrompts.includes(n));
+    const library = names.filter((n) => !teamOwnedPrompts.includes(n));
+    const mkOpt = (parent, n) => {
       const opt = document.createElement('option');
-      opt.value = p; opt.textContent = p;
-      addPrompt.appendChild(opt);
+      opt.value = n; opt.textContent = n;
+      parent.appendChild(opt);
+    };
+    if (owned.length && team) {
+      const group = document.createElement('optgroup');
+      group.label = `Team ${team}`;
+      for (const n of owned) mkOpt(group, n);
+      sel.appendChild(group);
     }
+    for (const n of library) mkOpt(sel, n);
   }
 
   async function openTeamRolesPopover(name, anchorEl) {
     setStatus('');
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
-    await populatePromptOptions();
+    await populatePromptOptions(name);
     // Every open starts fully collapsed — the acceptance test (lead + hand +
     // reviewer + one custom role fitting without scrolling) is measured in this
     // state, so it must be the state an open lands in, not one the operator has

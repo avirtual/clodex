@@ -10,7 +10,10 @@ const { nameConflict } = require('./session-manager');
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS, defaultLeadSeat } = require('./team-manifest');
 const { teamPreflight } = require('./team-preflight');
-const { teamPromptFile, readTeamJson, teamTemplateSave, teamTemplateRemove } = require('./team-prompt-dir');
+const {
+  teamPromptFile, readTeamJson, teamTemplateSave, teamTemplateRemove,
+  teamPromptSave, teamPromptRemove,
+} = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const { SETUP_CHOICES } = require('./stores');
@@ -68,7 +71,7 @@ function registerIpcHandlers(deps) {
     getSandbox, getSandboxManager,
     enableDrawerServices, enableLocalTerminal, enableConsole, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
     syncTerminalReports,
-    getPluginHost, getPluginLoader, listAllTemplates, surfaceOfSender,
+    getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
   } = deps;
 
   async function spawnFromParams(e, p) {
@@ -378,15 +381,22 @@ function registerIpcHandlers(deps) {
   // prompt on disk. The popover needs both to tell a stored prompt that is ABSENT
   // from one that is present but off the rail — one message for both facts sent
   // the operator looking for a file that was there all along.
-  handle('team:rolePrompts', () => {
+  handle('team:rolePrompts', (_e, team) => {
     try {
       const rows = promptLibrary.list('system');
+      const teamRows = (team && listAllPrompts)
+        ? listAllPrompts('system').filter((p) => p && p.team === team)
+        : [];
+      const teamOwned = teamRows.map((p) => p.name);
+      const owned = new Set(teamOwned);
+      const dedupe = (names) => names.filter((n) => !owned.has(n));
       return {
         ok: true,
-        prompts: appendRailPrompts(rows),
-        all: (rows || []).map((p) => p && p.name).filter(Boolean),
+        prompts: [...appendRailPrompts(teamRows), ...dedupe(appendRailPrompts(rows))],
+        all: [...teamOwned, ...dedupe((rows || []).map((p) => p && p.name).filter(Boolean))],
+        teamOwned,
       };
-    } catch (err) { return { ok: false, error: err.message, prompts: [], all: [] }; }
+    } catch (err) { return { ok: false, error: err.message, prompts: [], all: [], teamOwned: [] }; }
   });
 
   handle('worktree:create', async (_e, cwd, branch, opts) =>
@@ -572,7 +582,7 @@ function registerIpcHandlers(deps) {
     return { ok: true, templates: templates.list() };
   });
 
-  handle('prompts:list', (_e, kind) => promptLibrary.list(kind));
+  handle('prompts:list', (_e, kind) => (listAllPrompts ? listAllPrompts(kind) : promptLibrary.list(kind)));
   handle('prompts:save', (_e, kind, name, body) => {
     let prompts;
     try { prompts = promptLibrary.save(kind, name, body); }
@@ -586,6 +596,22 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message, prompts: promptLibrary.list() }; }
     refreshAppMenu();
     return { ok: true, prompts };
+  });
+
+  const teamPromptList = () => (listAllPrompts ? listAllPrompts() : promptLibrary.list());
+
+  handle('prompts:saveTeam', (_e, team, kind, stem, body) => {
+    const res = teamPromptSave(teamFileDeps, team, kind, stem, body);
+    if (!res.ok) return { ok: false, error: res.error, prompts: teamPromptList() };
+    refreshAppMenu();
+    return { ok: true, prompts: teamPromptList() };
+  });
+
+  handle('prompts:removeTeam', (_e, team, kind, stem) => {
+    const res = teamPromptRemove(teamFileDeps, team, kind, stem);
+    if (!res.ok) return { ok: false, error: res.error, prompts: teamPromptList() };
+    refreshAppMenu();
+    return { ok: true, prompts: teamPromptList() };
   });
 
   handle('agents:list', () => agentLibrary.list());

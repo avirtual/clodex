@@ -150,16 +150,23 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   // editing — rename = delete + new), or null when authoring a new one.
   let editingPrompt = null;
   let editingPromptBundle = null;
+  let editingPromptTeam = null;
+
+  function openTeamPrompt(p) {
+    openPromptEditor(p, null, { team: p.team });
+  }
 
   async function refreshPromptsList() {
-    const items = await window.api.listPrompts();
+    const all = (await window.api.listPrompts()) || [];
+    const items = all.filter((p) => !p.team);
+    const teamRows = all.filter((p) => p.team);
     if (refreshPluginCatalog) await refreshPluginCatalog();
     const groups = [
       ...bundleGroups('prompts/system').map((g) => ({ ...g, kind: 'system' })),
       ...bundleGroups('prompts/append').map((g) => ({ ...g, kind: 'append' })),
     ];
     promptsList.innerHTML = '';
-    if (items.length === 0 && !groups.length) {
+    if (items.length === 0 && !teamRows.length && !groups.length) {
       promptsEmpty.style.display = '';
       return items;
     }
@@ -168,9 +175,14 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       const el = document.createElement('div');
       el.className = 'prompt-item';
       const preview = p.body.split('\n')[0].slice(0, 80) + (p.body.length > 80 ? '…' : '');
+      const shadowedBy = Array.isArray(p.shadowedBy) ? p.shadowedBy : [];
+      const note = shadowedBy.length ? `
+        <div class="prompt-item-scope">Shadowed by team ${shadowedBy
+          .map((n) => `<button data-action="team" data-team="${esc(n)}">${esc(n)}</button>`)
+          .join(', ')} — edits here do not reach that team's seats. Edit the team copy.</div>` : '';
       el.innerHTML = `
         <div class="prompt-item-title">${esc(p.name)} <span class="prompt-kind-badge">${esc(p.kind)}</span></div>
-        <div class="prompt-item-preview">${esc(preview)}</div>
+        <div class="prompt-item-preview">${esc(preview)}</div>${note}
         <div class="prompt-item-actions">
           <button class="primary" data-action="inject">Inject</button>
           <button data-action="edit">Edit</button>
@@ -188,12 +200,54 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
         e.stopPropagation();
         openPromptEditor(p);
       });
+      for (const btn of el.querySelectorAll('[data-action="team"]')) {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const row = teamRows.find((x) => x.team === btn.dataset.team
+            && x.kind === p.kind && x.name === p.name);
+          if (row) openTeamPrompt(row);
+        });
+      }
       // Clicking the body (not a button) = inject
       el.addEventListener('click', async () => {
         if (!getActiveSession()) { alert('No active session. Select one first.'); return; }
         await window.api.injectPrompt(getActiveSession(), p.body);
       });
       promptsList.appendChild(el);
+    }
+    for (const team of [...new Set(teamRows.map((p) => p.team))]) {
+      const head = document.createElement('div');
+      head.className = 'check-group';
+      head.textContent = `Team ${team}`;
+      promptsList.appendChild(head);
+      for (const p of teamRows.filter((x) => x.team === team)) {
+        const el = document.createElement('div');
+        el.className = 'prompt-item';
+        const preview = p.unreadable
+          ? 'unreadable — Edit and save replaces the file'
+          : p.body.split('\n')[0].slice(0, 80) + (p.body.length > 80 ? '…' : '');
+        el.innerHTML = `
+          <div class="prompt-item-title">${esc(p.name)} <span class="prompt-kind-badge">${esc(p.kind)}</span></div>
+          <div class="prompt-item-preview">${esc(preview)}</div>
+          <div class="prompt-item-actions">
+            <button data-action="edit">Edit</button>
+            <button data-action="delete">Delete</button>
+          </div>
+        `;
+        el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTeamPrompt(p);
+        });
+        el.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Delete team ${team}'s prompt "${p.name}"?`)) return;
+          const res = await window.api.removeTeamPrompt(team, p.kind, p.name);
+          if (res && res.ok === false) alert(`Could not delete it: ${res.error || 'unknown error'}`);
+          refreshPromptsList();
+        });
+        el.addEventListener('click', () => openTeamPrompt(p));
+        promptsList.appendChild(el);
+      }
     }
     appendBundleGroups(promptsList, groups, {
       onEdit: async (sec, entry) => {
@@ -223,11 +277,13 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     promptsDrawer.classList.add('hidden');
   }
 
-  function openPromptEditor(prompt = null, bundle = null) {
+  function openPromptEditor(prompt = null, bundle = null, teamOwner = null) {
     editingPromptBundle = bundle;
+    editingPromptTeam = (teamOwner && teamOwner.team) || null;
     if (prompt) {
       editingPrompt = { kind: prompt.kind, name: prompt.name };
-      promptEditorTitle.textContent = bundle ? `Edit Prompt — ${bundle.name} plugin` : 'Edit Prompt';
+      if (editingPromptTeam) promptEditorTitle.textContent = `Edit Prompt — team ${editingPromptTeam}`;
+      else promptEditorTitle.textContent = bundle ? `Edit Prompt — ${bundle.name} plugin` : 'Edit Prompt';
       promptKind.value = prompt.kind;
       promptKind.disabled = true; // kind+name = the file identity; locked while editing
       promptName.value = prompt.name;
@@ -252,6 +308,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     promptEditor.classList.add('hidden');
     editingPrompt = null;
     editingPromptBundle = null;
+    editingPromptTeam = null;
   }
 
   promptsClose.addEventListener('click', closePromptsDrawer);
@@ -267,6 +324,16 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       return;
     }
     promptName.style.borderColor = '';
+    if (editingPromptTeam) {
+      const res = await window.api.saveTeamPrompt(editingPromptTeam, kind, name, body);
+      if (res && res.ok === false) {
+        alert(`Could not save into team ${editingPromptTeam}: ${res.error || 'unknown error'}`);
+        return;
+      }
+      closePromptEditor();
+      refreshPromptsList();
+      return;
+    }
     if (editingPromptBundle) {
       if (await writeBundle(editingPromptBundle, `prompts/${kind}`, name, body)) {
         closePromptEditor();
@@ -284,7 +351,12 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   promptDelete.addEventListener('click', async () => {
     if (!editingPrompt) return;
     if (!confirm(`Delete prompt "${editingPrompt.name}"?`)) return;
-    await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+    if (editingPromptTeam) {
+      const res = await window.api.removeTeamPrompt(editingPromptTeam, editingPrompt.kind, editingPrompt.name);
+      if (res && res.ok === false) alert(`Could not delete it: ${res.error || 'unknown error'}`);
+    } else {
+      await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+    }
     closePromptEditor();
     refreshPromptsList();
   });

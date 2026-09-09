@@ -133,6 +133,7 @@ function teamPromptRemove(deps, team, kind, stem) {
 }
 
 module.exports = {
+  KINDS,
   badStem,
   teamPromptFile,
   teamJsonFile,
