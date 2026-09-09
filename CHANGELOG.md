@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — One intent stands up a team: create classifies the root, spawns and briefs the lead
+## Unreleased
+
+## 5.49.0 — 2026-09-09 — One intent stands up a team: create classifies the root, spawns and briefs the lead
 
 - **Teams:** `[agent:team create]` with a brief now spawns the team's lead itself, in the root, on the stock lead template, and tells it in its first turn whether the root is a new project or one it is taking over, pointing it at "First turn on a fresh team" in its prompt. The caller sees one line ending "Ask <lead> for your first ticket." and needs no spawn grant of its own. A lead name already in use is refused before anything is written; a spawn that fails leaves the team on disk and says how to retry.
 - **Teams:** the stock lead prompt gains a "First turn on a fresh team" section: on a new root the lead confirms the brief and files the suite runner first; on a taken-over repo it reads the README, manifest, test runner and CHANGELOG before asking anything, and asks only where the repo and the brief disagree. Either way it sends one notify-user and stops.
