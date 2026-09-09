@@ -2,8 +2,10 @@
 
 // Shared session-manager fixtures. Lifted here from test/session-manager.test.js
 // so test/team-create-root.test.js can drive the REAL _handleTeamCreate over real
-// trees without a second copy of the graph. Move-only: mk, mkPark and mkTeamCreate
-// are byte-for-byte what that file held, and it requires them back.
+// trees without a second copy of the graph; that file requires them back, so the
+// two drive one graph rather than two that can drift apart. mk and mkPark moved
+// unchanged; mkTeamCreate gained the gitWorktree dep and the makeRepo option
+// t780 needs, both noted at their line.
 //
 // Node's test glob opens this file as a test file too (see test/lib/tmp-roots.js),
 // so it reports as one passing point that executed nothing.
@@ -91,7 +93,7 @@ function mkPark(overrides = {}) {
     INJECT_QUIET_MS: 4000, INJECT_QUIET_MAXWAIT: 3_600_000, // maxwait large: park cap won't fire mid-test
     // Same reason as the maxwait above, and NOT decorative: _deliverParkedActive
     // arms the parked-drain fallback with this, so leaving it undefined arms a 1ms
-    // timer against a NaN deadline. Every test here empties the store before it
+    // timer against a NaN deadline. Every caller empties the store before it
     // fires, so today that is invisible — which is exactly why it is pinned by
     // construction rather than by luck.
     INJECT_BOOT_MAXWAIT: 60_000,
@@ -116,10 +118,10 @@ function mkPark(overrides = {}) {
   return { m, PENDING_DIR, injected };
 }
 
-// The mint front door for agents. Unlike mkTeamMut above, the writer here is the
-// REAL createTeamManifest over a temp clodexHome: the assertion that matters is
-// team.json ON DISK carrying the root and lead, and a stub would let a handler
-// that forwarded nothing still look right.
+// The mint front door for agents. The writer is the REAL createTeamManifest over
+// a temp clodexHome: the assertion that matters is team.json ON DISK carrying the
+// root and lead, and a stub would let a handler that forwarded nothing still look
+// right.
 // makeRepo (t780): the root starts as a repo with one commit, i.e. the TAKEOVER
 // case. Without it the root is an empty directory, which create now git-inits —
 // so a test asserting the reply's root clause has to say which case it wants.

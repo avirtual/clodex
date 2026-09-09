@@ -205,8 +205,8 @@ test('t780 create: WITH A BRIEF the reply names the case; bodiless carries neith
     assert.ok(taken.injected.some((t) => t.includes(`root ${repo} (existing repo, untouched), lead shop-lead`)),
       taken.injected.join(' | '));
 
-    // The bodiless reply is byte-frozen by the t773 pin, so the clause must not
-    // reach it at all — not even the correct one.
+    // The bodiless reply stays byte-identical to what it was before the clause
+    // existed, so the clause must not reach it at all — not even the correct one.
     const bare = mkTeamCreate();
     const repo2 = makeRepo('clodex-t780-bare-');
     await create(bare, repo2);

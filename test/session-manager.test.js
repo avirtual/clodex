@@ -12,7 +12,6 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { createSessionManager, deniedBodyDisposition, isStaleRegistration, nameConflict } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
-const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot, trackTmpRoot } = require('./lib/tmp-roots');
 const { mk, mkPark, mkTeamCreate } = require('./lib/session-fixtures');
 
