@@ -226,8 +226,12 @@ test('the greedy assembly stores a following-lines body with a LEADING newline',
     // deepStrictEqual on the whole parsed intent, not a body probe: the leading
     // newline must be the ONLY oddity, and a property match would read around a
     // spec the assembly had eaten.
+    // bodyOpen rides along because TURN ends with the body still open — the
+    // scanner marks that so an interrupted turn's fragment can be told from a
+    // finished one, and it is asserted here rather than filtered out so this
+    // stays a whole-object match.
     const intents = f.m._extractIntents(TURN);
-    assert.deepStrictEqual(intents, [{ type: 'remind', spec: 'in 1m', body: ASSEMBLED }]);
+    assert.deepStrictEqual(intents, [{ type: 'remind', spec: 'in 1m', body: ASSEMBLED, bodyOpen: true }]);
 
     // The body is INTACT — 28 bytes, both lines present. Nothing was dropped;
     // this is the fact the blank preview was misread as contradicting.
