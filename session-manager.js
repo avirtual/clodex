@@ -2095,7 +2095,6 @@ function createSessionManager(deps) {
             clearTimeout(session._bootDrainTimer);
             session._bootDrainTimer = setTimeout(() => {
               session._bootDrainTimer = null;
-              session._bootDrainAt = Date.now();
               this._drainPendingAtBootReady(session);
               // Same margin, same reason: a ticket spec written before the readline
               // loop is up is wiped by the boot re-render, and the replay stamps it
@@ -4133,6 +4132,7 @@ function createSessionManager(deps) {
     // messages.
     _drainPendingAtBootReady(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
+      session._bootDrainAt = Date.now();
       if (this._anyDraftOpen(session)) return;                     // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
       // Every bail here is a park that stays on disk EXCEPT the last one, where the
