@@ -1026,15 +1026,10 @@ function createSessionManager(deps) {
     // pinged, not the source of what to ping.
     _restorePerpetualHolds(hold) {
       try {
-        // A conversation id is pingable iff some seat still claims it
-        // perpetually. sessionIds (the /clear history), not just sessionId: the
-        // persisted entry can predate a rotation, and the record's current id
-        // is not necessarily the one whose bytes we hold.
         const perpetual = new Set();
         for (const rec of getPersistence().list()) {
           if (!rec || !rec.keepWarmAlways || rec.archived || rec.archivedAt) continue;
           if (rec.sessionId) perpetual.add(rec.sessionId);
-          for (const id of Array.isArray(rec.sessionIds) ? rec.sessionIds : []) perpetual.add(id);
         }
         const r = hold.restorePerpetual({ accept: (sid) => perpetual.has(sid) });
         if (r.restored || r.declined || r.dropped) {
