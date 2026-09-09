@@ -2627,6 +2627,35 @@ test('t770: lead.template naming an uninstalled stem spawns bare and SAYS so', a
   assert.ok(!/via template/.test(f.replies.at(-1)), 'and it must not claim a template was applied');
 });
 
+test('t782 _validateSeatName: the five verdicts, with the error strings the spawn reply carries', () => {
+  const m2 = mk({
+    AGENT_NAME_RE: AGENT_NAME_RE_T,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'archived' ? { name: n, archivedAt: 1 } : null) }),
+  });
+  m2.sessions.set('live', { name: 'live', type: 'claude', agentType: 'claude' });
+
+  assert.deepStrictEqual(m2._validateSeatName(''),
+    { ok: false, error: 'usage [agent:spawn name:X cwd:Y [template:Z]]' });
+  assert.deepStrictEqual(m2._validateSeatName('bad name!'),
+    { ok: false, error: 'invalid name "bad name!" — allowed [a-zA-Z0-9._-], 1-64 chars' });
+  assert.deepStrictEqual(m2._validateSeatName('live'), { ok: false, error: 'name taken "live"' });
+  assert.deepStrictEqual(m2._validateSeatName('archived'), { ok: false, error: 'name taken "archived"' },
+    'a PERSISTED (archived) name is taken too — the map alone would wave it through');
+  assert.deepStrictEqual(m2._validateSeatName('shop-lead'), { ok: true });
+});
+
+test('t782 _handleSpawnIntent: opts.onReply diverts the reply, and the spawner is told nothing', async () => {
+  const f = mkLeadSpawn();
+  const diverted = [];
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot },
+    { onReply: (msg) => diverted.push(msg) });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the spawn really ran');
+  assert.strictEqual(diverted.length, 1, 'exactly one reply, and it went to the callback');
+  assert.match(diverted[0], /^ok: spawned "acme-lead"/);
+  assert.deepStrictEqual(f.replies, [], 'and no [agent:spawn] line reached the spawner');
+});
+
 // --- Mid-flight DM delivery: park-on-busy (piece 2) + idle-edge drain (piece 3) -
 // A busy agent's DM parks to the on-disk pending store (where the out-of-process
 // PostToolUse hook can drain it mid-loop) instead of the in-memory _injectQueue;
@@ -10648,12 +10677,29 @@ test('t773 create: a brief makes the hand per-ticket and lands on disk byte for 
   const promptFile = pathReal.join(f.home, 'teams', 'shop', 'prompts', 'append', 'team-project.md');
   assert.strictEqual(fsReal.readFileSync(promptFile, 'utf-8'), brief,
     'the brief is written verbatim — the bytes, not a shape');
-  assert.deepStrictEqual(f.injected, [
+  await tick();
+  assert.deepStrictEqual(f.toSeat('a'), [
     `[agent:team] team "shop" created — root ${pathReal.resolve(f.projectRoot)} (existing repo, untouched), lead shop-lead, `
     + `dir ${pathReal.join(f.home, 'teams', 'shop')}; hand takes a branch + worktree + seat per ticket; `
-    + 'brief saved to prompts/append/team-project.md. '
-    + 'Next: spawn the lead in that root — it composes the brief at boot.',
+    + 'brief saved to prompts/append/team-project.md; '
+    + 'shop-lead spawned in the root on template clodex-team-lead and briefed. '
+    + 'Ask shop-lead for your first ticket.',
   ]);
+});
+
+test('t782 create: the brief loses ONE leading newline the greedy assembler added', async () => {
+  // The assembler prefixes '\n' whenever the intent line carried no inline text,
+  // which is every multi-line brief — so the bytes reaching the prompt file are
+  // not the bytes the operator typed unless create strips exactly that one.
+  const f = mkTeamCreate({ makeRepo: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null,
+    body: '\nShip the thing.\n\nSecond paragraph.\n',
+  });
+  const promptFile = pathReal.join(f.home, 'teams', 'shop', 'prompts', 'append', 'team-project.md');
+  assert.strictEqual(fsReal.readFileSync(promptFile, 'utf-8'), 'Ship the thing.\n\nSecond paragraph.\n',
+    'exactly one newline stripped — the rest of the brief is verbatim');
+  await tick();
 });
 
 test('t773 create: bodyless is byte-identical to before — stock hand, old reply', async () => {
@@ -10663,6 +10709,8 @@ test('t773 create: bodyless is byte-identical to before — stock hand, old repl
     'no dispatch key at all: the stock def as it stands');
   assert.strictEqual(fsReal.existsSync(pathReal.join(f.home, 'teams', 'shop', 'prompts')), false,
     'and no prompts directory was made');
+  await tick();
+  assert.strictEqual(f.created.length, 0, 'and NOTHING was spawned — the spawn is the brief path only');
   assert.deepStrictEqual(f.injected, [
     `[agent:team] team "shop" created — root ${pathReal.resolve(f.projectRoot)}, lead shop-lead, `
     + `dir ${pathReal.join(f.home, 'teams', 'shop')}. `
@@ -10709,6 +10757,146 @@ test('t773 create: a brief that cannot be saved leaves NO team behind', async ()
   assert.ok(f.injected[0].includes('no team was created'), f.injected[0]);
   assert.ok(f.injected[0].includes(`re-fire [agent:team create shop root:${f.projectRoot}] with the brief`),
     'the seat is told how to retry, with the arguments it used');
+});
+
+test('t782 create: the save-failure retry hint carries the lead: the create named', async () => {
+  // "with the arguments it used" was a lie for an explicit lead:, and the retry
+  // it prints would mint a team whose lead is not the one the seat asked for.
+  const f = mkTeamCreate({
+    wrapFs: (real, home) => ({ ...real, __home: home }),
+  });
+  fsReal.mkdirSync(pathReal.join(f.home, 'teams', 'shop', 'prompts', 'append', 'team-project.md'),
+    { recursive: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: 'boss', body: 'the brief',
+  });
+  assert.strictEqual(f.injected.length, 1, 'ENTER: the save really failed — this is the retry hint');
+  assert.ok(f.injected[0].includes(`re-fire [agent:team create shop root:${f.projectRoot} lead:boss] with the brief`),
+    f.injected[0]);
+});
+
+// --- t782: create spawns the lead itself -----------------------------------
+
+test('t782 create: a caller with NO spawn grant still gets the lead spawned, on the lead template', async () => {
+  // The `spawn` gate is intentEnabledForSeat at _handleIntent, and the internal
+  // call never passes through it — that is the design: team-create is strictly
+  // above spawn, and the seat name, cwd and template are all fixed by the create.
+  const f = mkTeamCreate({ intents: ['team-create'] });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() was reached — every assertion below reads its argv');
+  assert.strictEqual(f.created[0][0], 'shop-lead', 'the team\'s lead seat');
+  assert.strictEqual(f.created[0][2], pathReal.resolve(f.projectRoot), 'in the team root');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5'],
+    'the lead template\'s model, not the box default — the resolution really ran');
+  assert.deepStrictEqual(f.created[0][12], ['*'], 'every skill off, as the lead template says');
+});
+
+test('t782 create: the caller sees ONE [agent:team] line and ZERO [agent:spawn] lines', async () => {
+  const f = mkTeamCreate({ makeRepo: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.deepStrictEqual(f.toSeat('a'), [
+    `[agent:team] team "shop" created — root ${pathReal.resolve(f.projectRoot)} (existing repo, untouched), lead shop-lead, `
+    + `dir ${pathReal.join(f.home, 'teams', 'shop')}; hand takes a branch + worktree + seat per ticket; `
+    + 'brief saved to prompts/append/team-project.md; '
+    + 'shop-lead spawned in the root on template clodex-team-lead and briefed. '
+    + 'Ask shop-lead for your first ticket.',
+  ]);
+});
+
+test('t782 create: an UNINSTALLED lead template is said so, never claimed as applied', async () => {
+  // The template label in the line is the literal `clodex-team-lead`, so this is
+  // the arm where that literal would be a lie: the library file is gone, the
+  // spawn says it booted bare, and the create's line must carry that through
+  // rather than name a template nothing resolved.
+  const f = mkTeamCreate({ makeRepo: true, noLeadTemplate: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the lead is spawned anyway — never a refusal');
+  assert.deepStrictEqual(f.created[0][3], [], 'bare — no template config reached create()');
+  const line = f.toSeat('a')[0];
+  assert.ok(line.includes('shop-lead spawned in the root WITHOUT its template '
+    + '(lead role template "clodex-team-lead" not installed, spawned with no template) and briefed.'), line);
+  assert.ok(!/on template clodex-team-lead/.test(line),
+    'and it must not claim the template was applied');
+});
+
+test('t782 create: a NEW root injects the NEW opener into the lead seat', async () => {
+  // The case is a line in the first injected text, never a manifest field: it is
+  // true for one turn, and a durable marker would re-fire the checklist on every
+  // resume.
+  const f = mkTeamCreate();
+  const root = pathReal.join(f.projectRoot, 'leaf');
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root, lead: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the lead was spawned — the opener goes to that seat');
+  assert.deepStrictEqual(f.toSeat('shop-lead'), [
+    `You are the lead of team shop. This is your first turn. Root ${pathReal.resolve(root)} is a NEW project — `
+    + 'Clodex created and git-init\'d it, and it is empty apart from one empty commit. '
+    + 'Follow "First turn on a fresh team" in your prompt.',
+  ]);
+});
+
+test('t782 create: a TAKEOVER root injects the takeover opener instead', async () => {
+  const f = mkTeamCreate({ makeRepo: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the lead was spawned');
+  assert.deepStrictEqual(f.toSeat('shop-lead'), [
+    `You are the lead of team shop. This is your first turn. Root ${pathReal.resolve(f.projectRoot)} is an EXISTING `
+    + 'project you are taking over — Clodex touched none of its files. '
+    + 'Follow "First turn on a fresh team" in your prompt.',
+  ]);
+});
+
+test('t782 create: a TAKEN lead name is refused BEFORE anything is written', async () => {
+  // Pre-write, and that is the whole point: refused after the mkdir, the seat
+  // gets a team.json naming a lead that can never boot, plus a git repo in a
+  // directory it only named.
+  const f = mkTeamCreate();
+  const root = pathReal.join(f.projectRoot, 'leaf');
+  f.m.sessions.set('shop-lead', { name: 'shop-lead', type: 'claude', agentType: 'claude', cwd: root });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root, lead: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.deepStrictEqual(f.injected, [
+    '[agent:team] error: lead seat shop-lead: name taken "shop-lead" — no team was created',
+  ]);
+  assert.strictEqual(f.teamExists('shop'), false, 'no manifest');
+  assert.strictEqual(f.created.length, 0, 'nothing spawned');
+  assert.strictEqual(fsReal.existsSync(root), false,
+    'and the NEW root was never mkdir\'d — the validation runs ahead of the materialise');
+});
+
+test('t782 create: a spawn that FAILS leaves the team on disk and says how to retry', async () => {
+  // Never rolled back: the team on disk is valid and a concurrent seat may
+  // already resolve it, so the caller gets a retry command rather than an undo.
+  const f = mkTeamCreate({ makeRepo: true, createThrows: 'boom' });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.ok(f.teamExists('shop'), 'the team is still on disk');
+  assert.deepStrictEqual(f.toSeat('a'), [
+    `[agent:team] team "shop" created — root ${pathReal.resolve(f.projectRoot)} (existing repo, untouched), lead shop-lead, `
+    + `dir ${pathReal.join(f.home, 'teams', 'shop')}; hand takes a branch + worktree + seat per ticket; `
+    + 'brief saved to prompts/append/team-project.md; '
+    + 'shop-lead could NOT be spawned (boom) — the team is on disk; '
+    + `re-fire [agent:spawn name:shop-lead cwd:${pathReal.resolve(f.projectRoot)}] yourself.`,
+  ]);
+  assert.deepStrictEqual(f.toSeat('shop-lead'), [], 'and no opener was injected anywhere');
 });
 
 test('t751 set-lead: the LEAD rewrites team.json; a non-lead is refused', () => {

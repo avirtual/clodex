@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Teams:** `[agent:team create]` with a brief now spawns the team's lead itself, in the root, on the stock lead template, and tells it in its first turn whether the root is a new project or one it is taking over, pointing it at "First turn on a fresh team" in its prompt. The caller sees one line ending "Ask <lead> for your first ticket." and needs no spawn grant of its own. A lead name already in use is refused before anything is written; a spawn that fails leaves the team on disk and says how to retry.
 - **Teams:** the stock lead prompt gains a "First turn on a fresh team" section: on a new root the lead confirms the brief and files the suite runner first; on a taken-over repo it reads the README, manifest, test runner and CHANGELOG before asking anything, and asks only where the repo and the brief disagree. Either way it sends one notify-user and stops.
 - **Teams:** `[agent:team create <name> root:<path>]` now classifies its root: an absent leaf under an existing parent, or an empty directory, is created and git-init'd with one empty commit so a per-ticket hand can take its first worktree; a repo with commits is taken over with nothing under it written; a directory with files but no repo, a repo with no commits, a file, or a missing parent is refused with nothing created. With a brief, the reply says which — `(new, git init'd)` or `(existing repo, untouched)`. Before, create refused any root it had not been handed as an existing directory, and a worktree hand on a commitless root failed its first ticket.
 
