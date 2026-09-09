@@ -260,11 +260,6 @@ const ticketTaskDirLine = (dir, raw) => {
   return `TASK DIR: ${dir}${rule}${rule ? taskDirCreateClause : ''}\n`;
 };
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
-// A constant, never a field written into team.json: `role-set lead` is refused
-// (the lead's topology is the operator's), so a default persisted into the
-// manifest could never be corrected from a seat. An operator who wants another
-// shape sets `lead.template` in the app's team editor, which normalizeRoleDef
-// already accepts.
 const DEFAULT_LEAD_TEMPLATE = 'clodex-team-lead';
 const REVIEWER_PROMPT_PREFIX = 'clodex-team-reviewer';
 
@@ -545,13 +540,6 @@ function createTicketMethods(deps, shared) {
       }
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
 
-      // A bare spawn of a team's LEAD boots on the lead role's template. Resolved
-      // from the TARGET cwd's team, not the spawner's: the seat that opens a new
-      // team is usually on no team itself (the contact agent in the bootstrap
-      // skill is exactly that), and the team being joined is the one whose lead
-      // this is. Runs AFTER cwd so `tpl.cwd` cannot reach the `rawCwd` fallback —
-      // the lead's directory comes from the spawn, which is what
-      // team-manifest.js's "lead cannot take a cwd" refusal relies on.
       let leadNote = '';
       if (!tpl) {
         let targetTeam = null;
@@ -565,8 +553,6 @@ function createTicketMethods(deps, shared) {
             tplLabel = tpl.name || stem;
             leadNote = ` (lead of team ${targetTeam.name})`;
           } else {
-            // Never a refusal: an operator whose library file was deleted must
-            // still get a lead, just an unshaped one they can see is unshaped.
             leadNote = ` — lead role template "${stem}" not installed, spawned with no template`;
           }
         }
