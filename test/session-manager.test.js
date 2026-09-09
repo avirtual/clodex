@@ -2533,6 +2533,154 @@ test('spawn template (t297): a template whose env is entirely well-typed and all
   assert.ok(!/dropped/.test(replies.at(-1)), `clean env must not warn, got: ${replies.at(-1)}`);
 });
 
+// --- t770: a bare spawn of a team's LEAD boots on the lead role's template ----
+// The bug: [agent:spawn name:X-lead cwd:Y] with no template: gave the seat that
+// carries a whole project's context the SPAWNER's box default — top-tier model,
+// every skill and plugin, zero exec grants. The resolution is off the TARGET
+// cwd's team (the seat opening a new team is usually on no team itself), so
+// these fixtures give the manager a real teams dir and a real library.
+function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null } = {}) {
+  const home = mkTmpRoot('t770-home-');
+  const projectRoot = mkTmpRoot('t770-proj-');
+  const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
+  tm.createTeam({ name: 'acme', root: projectRoot, lead: 'acme-lead' });
+  // Written straight to team.json: setRole refuses the lead (operator-owned
+  // topology), which is why the DEFAULT is a constant and not a field. `null`
+  // strips the key createTeam now seeds, reproducing a team made BEFORE the
+  // stock def carried one — the state the constant fallback exists for.
+  {
+    const file = pathReal.join(home, 'teams', 'acme', 'team.json');
+    const raw = JSON.parse(fsReal.readFileSync(file, 'utf-8'));
+    if (leadTemplate) raw.roles.lead.template = leadTemplate;
+    else delete raw.roles.lead.template;
+    fsReal.writeFileSync(file, JSON.stringify(raw, null, 2));
+  }
+  if (ownCopy) {
+    const dir = pathReal.join(home, 'teams', 'acme', 'templates');
+    fsReal.mkdirSync(dir, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(dir, `${ownCopy.name}.json`), JSON.stringify(ownCopy));
+  }
+  const shippedLead = JSON.parse(fsReal.readFileSync(
+    pathReal.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-lead.json'), 'utf-8'));
+  const created = [], replies = [];
+  const m = mk({
+    AGENT_NAME_RE: AGENT_NAME_RE_T,
+    DEFAULT_WORKSPACE_ID: 'default',
+    getPersistence: () => ({ list: () => [], get: () => null, setStripLevel() {}, setAutoCompact() {}, setPlugins() {} }),
+    getTemplates: () => ({ list: () => [] }),
+    listAllTemplates: () => [{ ...shippedLead, id: 'clodex-team-lead' }],
+    resolveTeam: tm.resolveTeam,
+    listTeams: tm.listTeams,
+    teamsDir: tm.teamsDir,
+    REGISTRY_DIR: home,
+    ensureDir: () => {},
+    fs: fsReal, path: pathReal, os: osReal,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  m._injectText = (_s, text) => replies.push(text);
+  m._sendToSession = () => {};
+  m._broadcast = () => {};
+  m.create = async (...args) => { created.push(args); };
+  // The spawner is on NO team — the bootstrap skill's contact agent is exactly
+  // this seat, and it is the case the resolution must cover.
+  const spawner = { name: 'contact', type: 'claude', workspaceId: 'default', proxy: null, cwd: spawnerCwd || osReal.tmpdir() };
+  return { m, created, replies, spawner, projectRoot, shippedLead };
+}
+
+test('t770: a spawner on NO team spawning a team\'s lead by name boots it on clodex-team-lead', async () => {
+  const f = mkLeadSpawn();
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  const a = f.created[0];
+  assert.deepStrictEqual(a[3], ['--model', 'claude-opus-5'], 'the lead template\'s model, not the box default');
+  assert.deepStrictEqual(a[12], ['*'], 'every skill off');
+  assert.deepStrictEqual(a[16], ['clodex-team', 'clodex-monitor', 'clodex-run-tests'],
+    'the grants without which the lead cannot run its own roster or suite');
+  assert.ok(a[17].includes('spawn'), 'and the intent that lets it open seats');
+  assert.match(f.replies.at(-1), /ok: spawned "acme-lead".*via template "clodex-team-lead" \(lead of team acme\)/);
+});
+
+test('t770: a team created WITH the seeded lead.template boots the same lead as one without', async () => {
+  // Teams made from now on carry roles.lead.template === 'clodex-team-lead'
+  // (STOCK_ROLE_DEFS); teams made before it reach the same file through
+  // DEFAULT_LEAD_TEMPLATE, which is what every other fixture here exercises
+  // since they strip the key. This cannot tell the two apart — they name the
+  // same stem — so it pins only that the seeded field is not a regression. The
+  // field is actually READ is pinned by the uninstalled-stem test below.
+  const f = mkLeadSpawn({ leadTemplate: 'clodex-team-lead' });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5']);
+  assert.match(f.replies.at(-1), /via template "clodex-team-lead" \(lead of team acme\)/);
+});
+
+test('t770: a lead spawned into a SUBDIRECTORY of the team root still resolves its team', async () => {
+  // The resolution runs on the RESOLVED cwd, so containment does the work — a
+  // lead pointed at a subdirectory is still that team's lead. The seat keeps the
+  // directory the spawn named: team-manifest refuses a `cwd` on the lead role
+  // precisely because the lead's directory comes from the spawn, and a template
+  // cwd winning here would make that refusal a lie.
+  const f = mkLeadSpawn();
+  const deep = pathReal.join(f.projectRoot, 'sub');
+  fsReal.mkdirSync(deep, { recursive: true });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: deep });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5'], 'the lead template still applied');
+  assert.strictEqual(f.created[0][2], pathReal.resolve(deep), 'and the spawn\'s cwd is what the seat gets');
+});
+
+test('t770: an explicit template: still wins, with no lead parenthetical', async () => {
+  const f = mkLeadSpawn();
+  const dir = mkTmpRoot('t770-tpl-');
+  const file = pathReal.join(dir, 'mine.json');
+  fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', extraArgs: ['--model', 'claude-haiku-4-5-20251001'] }));
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot, template: file });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-haiku-4-5-20251001'], 'the explicit template\'s model');
+  assert.ok(!/lead of team/.test(f.replies.at(-1)), `no parenthetical when the operator chose, got: ${f.replies.at(-1)}`);
+});
+
+test('t770: a name that is NOT the target team\'s lead spawns bare, reply unchanged', async () => {
+  const f = mkLeadSpawn();
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-hand', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][3], [], 'no template extraArgs — the spawner posture, as before');
+  assert.deepStrictEqual(f.created[0][16], [], 'and no grants');
+  assert.ok(!/via template|lead of team/.test(f.replies.at(-1)), f.replies.at(-1));
+});
+
+test('t770: the team\'s OWN templates/clodex-team-lead.json wins over the library copy', async () => {
+  // Same resolution order as _templateShape everywhere else: a team that has
+  // corrected its own lead shape must not be overruled by the shipped default.
+  const f = mkLeadSpawn({
+    ownCopy: { name: 'clodex-team-lead', type: 'claude', extraArgs: ['--model', 'claude-sonnet-5'] },
+  });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-sonnet-5'],
+    'the own copy, distinguishable only by an extraArg the library copy does not carry');
+  assert.match(f.replies.at(-1), /via template "clodex-team-lead" \(lead of team acme\)/);
+});
+
+test('t770: lead.template naming an uninstalled stem spawns bare and SAYS so', async () => {
+  // Never a refusal: an operator whose library file was deleted must still get a
+  // lead. What they must not get is a silently unshaped one.
+  const f = mkLeadSpawn({ leadTemplate: 'fable-lead' });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'the lead is spawned anyway');
+  assert.deepStrictEqual(f.created[0][3], [], 'bare — no template config reached create()');
+  assert.match(f.replies.at(-1),
+    /lead role template "fable-lead" not installed, spawned with no template/);
+  assert.ok(!/via template/.test(f.replies.at(-1)), 'and it must not claim a template was applied');
+});
+
 // --- Mid-flight DM delivery: park-on-busy (piece 2) + idle-edge drain (piece 3) -
 // A busy agent's DM parks to the on-disk pending store (where the out-of-process
 // PostToolUse hook can drain it mid-loop) instead of the in-memory _injectQueue;

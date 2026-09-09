@@ -1252,6 +1252,29 @@ test('createTeam refuses a duplicate name, a duplicate exact root, and a bad nam
   assert.throws(() => tm.createTeam({ name: 'bad name', root: rootB, lead: 'x' }), /must match/);
 });
 
+test('the stock lead def names the shipped lead template, and createTeam records it', () => {
+  // The spawn path falls back to DEFAULT_LEAD_TEMPLATE when the role has no
+  // template, so the constant alone gives a working lead. Recording it is what
+  // makes the roster and team.json SHOW the shape, the way `hand` already does.
+  assert.strictEqual(STOCK_ROLE_DEFS.lead.template, 'clodex-team-lead');
+  const tplFile = path.join(__dirname, '..', 'resources', 'library', 'templates',
+    `${STOCK_ROLE_DEFS.lead.template}.json`);
+  assert.ok(fs.existsSync(tplFile), 'a stock def naming a template that does not ship is a role pointing at nothing');
+  // Fixed key order: addRole's no-op check compares JSON.stringify of two
+  // normalized defs, so a reordering here would break equality.
+  assert.deepStrictEqual(Object.keys(STOCK_ROLE_DEFS.lead), ['prompt', 'brief', 'template']);
+
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'shop-lead' });
+  const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.strictEqual(onDisk.roles.lead.template, 'clodex-team-lead',
+    'a team created from now on carries the lead template on disk');
+  assert.strictEqual(tm.loadManifest('shop').roles.lead.template, 'clodex-team-lead',
+    'and it survives the load-time normalization');
+});
+
 // --- addRole: the join path (no-op-if-equal / refuse-if-differs) ------------
 test('addRole appends a new role, no-ops on an identical def, refuses a divergent one', () => {
   const home = mkHome();

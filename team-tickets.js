@@ -260,6 +260,7 @@ const ticketTaskDirLine = (dir, raw) => {
   return `TASK DIR: ${dir}${rule}${rule ? taskDirCreateClause : ''}\n`;
 };
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
+const DEFAULT_LEAD_TEMPLATE = 'clodex-team-lead';
 const REVIEWER_PROMPT_PREFIX = 'clodex-team-reviewer';
 
 const REVIEWER_FALLBACK = {
@@ -518,7 +519,7 @@ function createTicketMethods(deps, shared) {
           }
         }
       }
-      const tplLabel = tpl ? (tpl.name || intent.template) : null;
+      let tplLabel = tpl ? (tpl.name || intent.template) : null;
 
       const rawCwd = (intent.cwd || (tpl && tpl.cwd) || '').trim();
       if (!rawCwd) {
@@ -538,6 +539,24 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
+
+      let leadNote = '';
+      if (!tpl) {
+        let targetTeam = null;
+        try { targetTeam = resolveTeam(cwd); } catch { targetTeam = null; }
+        if (targetTeam && name === targetTeam.lead) {
+          const stem = (targetTeam.roles && targetTeam.roles.lead && targetTeam.roles.lead.template)
+            || DEFAULT_LEAD_TEMPLATE;
+          const shape = this._templateShape(stem, targetTeam);
+          if (shape && shape.tpl) {
+            tpl = shape.tpl;
+            tplLabel = tpl.name || stem;
+            leadNote = ` (lead of team ${targetTeam.name})`;
+          } else {
+            leadNote = ` — lead role template "${stem}" not installed, spawned with no template`;
+          }
+        }
+      }
       // The branch name is validated inside createWorktree (it reaches git argv),
       // so this only rejects the empty form — a bare `worktree:` that parsed to
       // nothing must not spawn a NORMAL seat silently, which is the isolation the
@@ -634,6 +653,7 @@ function createTicketMethods(deps, shared) {
           // booted unbriefed. Never blocks: the seat is already up by here.
           const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
           reply(`ok: spawned "${name}" (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : '')
+            + leadNote
             + promptWarn
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));

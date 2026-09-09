@@ -1,0 +1,61 @@
+{
+  "name": "clodex-team-lead",
+  "spawnerHint": "on",
+  "type": "claude",
+  "cwd": "${TEAM_ROOT}",
+  "extraArgs": ["--model", "claude-opus-5"],
+  "proxy": null,
+  "agents": [],
+  "execCommands": [
+    "clodex-team",
+    "clodex-monitor",
+    "clodex-run-tests"
+  ],
+  "intents": [
+    "dm",
+    "who",
+    "context",
+    "memory",
+    "file",
+    "resend",
+    "exec",
+    "remind",
+    "notify-user",
+    "spawn"
+  ],
+  "denyBuiltins": [
+    "claude-code-guide",
+    "statusline-setup"
+  ],
+  "disabledTools": [
+    "LSP",
+    "PowerShell",
+    "Monitor",
+    "WebFetch",
+    "WebSearch",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskUpdate",
+    "TaskStop",
+    "TaskOutput",
+    "TodoWrite",
+    "ShareOnboardingGuide",
+    "Artifact",
+    "ReportFindings",
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    "WaitForMcpServers",
+    "DesignSync"
+  ],
+  "disabledSkills": ["*"],
+  "injectSkills": [],
+  "stripLevel": 2,
+  "systemPromptFile": null,
+  "appendPromptFiles": [
+    "team-project"
+  ],
+  "env": {
+    "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "60000"
+  }
+}

@@ -26,7 +26,7 @@ From the Teams menu, `Create Team…` writes
   "lead": "<name>-lead",
   "root": "/absolute/path/to/your/project",
   "roles": {
-    "lead":     { "prompt": "clodex-team-lead" },
+    "lead":     { "prompt": "clodex-team-lead", "template": "clodex-team-lead" },
     "hand":     { "prompt": "clodex-team-hand", "template": "clodex-team-hand" },
     "reviewer": { "prompt": "clodex-team-reviewer" }
   }
@@ -44,6 +44,14 @@ shapes the seat: model, tools, grants, cwd — resolved against
 does: `standing` delivers to the live seat, `spawn` mints a one-shot seat in
 the shared checkout, `worktree` mints a one-shot seat on its own branch in its
 own git worktree).
+
+`[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead on
+the lead role's template, stock `clodex-team-lead` — Opus, every skill off,
+`clodex-team` + `clodex-monitor` + `clodex-run-tests` granted, `spawn` on and the
+privileged intents off. A team created before that stem was recorded on the role
+has no `lead.template` line and reaches the same file by default. Want another
+shape: set `lead.template` in the app's team editor, or pass an explicit
+`template:` on the spawn, which always wins.
 
 With that file alone you have a working loop: the lead writes a ticket with
 `[agent:task add hand] <spec>`, `[agent:task start <id>]` mints a branch and a
@@ -414,7 +422,11 @@ so you do not have to teach it the vocabulary.
    per-ticket escalation.
 4. Optional: add exec defs for the commands your agents will reach for most,
    using `${TEAM_ROOT}` so they travel.
-5. Start the lead seat and open a ticket.
+5. Start the lead seat and open a ticket. `[agent:spawn name:<name>-lead
+   cwd:<root>]` with no `template:` boots it on the lead role's template, stock
+   `clodex-team-lead` (Opus, every skill off, the team, monitor and run-tests
+   execs granted, `spawn` on, privileged intents off); set `lead.template` in the
+   team editor or pass `template:` for another shape.
 
 Steps 1 and 5 are the team. Steps 2–4 are the content — yours to decide, though
 a lead granted the intents below can write step 2 for you.
