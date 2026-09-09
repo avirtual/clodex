@@ -56,10 +56,6 @@ let defaultToolDenyCache = [];
 let defaultSkillDenyCache = [];
 let defaultBuiltinDenyCache = [];
 
-// The {system, append} cache shape, built from a `listPrompts()` reply. Team-owned
-// rows are DROPPED: these pickers compose onto an arbitrary session, where a bare
-// stem resolves against the library alone — so a team row would offer a name the
-// spawn cannot find, and a shadowed stem would appear twice and compose twice.
 function libraryPromptCache(rows) {
   const library = (rows || []).filter((p) => p && !p.team);
   return {
