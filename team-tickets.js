@@ -2176,9 +2176,6 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
-      // ABOVE the materialise block: this throws on a team name whose derived lead
-      // seat overflows, and a refusal that has already mkdir'd and git-init'd the
-      // root is the one thing the classification exists to rule out.
       let lead;
       try { lead = defaultLeadSeat(name, intent.lead || null); } catch (err) {
         reply(`error: ${err.message}`);
