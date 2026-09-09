@@ -323,8 +323,8 @@ function mkActivityDoor({ manifest = 'ok', roles = null, tickets = [], sessions 
   };
 }
 
-// One board and one session map, shared by the rows below so the whole-object
-// assertion and its reductions describe the SAME world.
+// One board, shared by the whole-object row below and by the reduction that
+// removes t3 from it, so both describe the SAME world.
 const NOW = Date.now();
 const A_BOARD = [
   { id: 't1', state: 'open', role: 'hand', assignee: 'shop-hand-1', title: 'one' },
