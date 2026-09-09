@@ -2390,6 +2390,9 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const dir = nodePath.join(teamsDir, team.name);
+      const copiedClause = Array.isArray(team.templatesCopied) && team.templatesCopied.length
+        ? `; templates copied to templates/<role>.json for ${team.templatesCopied.join(', ')}`
+        : '';
       if (hasBrief) {
         const res = teamPromptSave(this._teamFileDeps(), team.name, 'append', 'team-project', brief);
         if (!res.ok) {
@@ -2406,7 +2409,7 @@ function createTicketMethods(deps, shared) {
       try { if (typeof refreshAppMenu === 'function') refreshAppMenu(); } catch {}
       if (hasBrief) {
         const head = `team "${team.name}" created — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
-          + 'hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md';
+          + `hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md${copiedClause}`;
         const opener = cls.kind === 'takeover'
           ? `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is an EXISTING `
             + 'project you are taking over — Clodex touched none of its files. Follow "First turn on a fresh team" '
@@ -2433,7 +2436,7 @@ function createTicketMethods(deps, shared) {
         this._handleSpawnIntent(session, { name: team.lead, cwd: team.root }, { onReply });
         return;
       }
-      reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}. `
+      reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}${copiedClause}. `
         + 'Next: spawn the lead in that root, then [agent:team gather] and [agent:team role-add …] from it.');
     },
 
@@ -2470,9 +2473,13 @@ function createTicketMethods(deps, shared) {
               addClause = derived.clause;
               addUndo = derived.undo;
             }
-            try { addRole(team.name, name, def); }
+            let added;
+            try { added = addRole(team.name, name, def); }
             catch (err) { if (addUndo) addUndo(); throw err; }
-            reply(`role "${name}" added to ${team.name}${addClause}`);
+            const addCopied = Array.isArray(added && added.templatesCopied) && added.templatesCopied.length
+              ? `; templates copied to templates/<role>.json for ${added.templatesCopied.join(', ')}`
+              : '';
+            reply(`role "${name}" added to ${team.name}${addClause}${addCopied}`);
             return;
           }
           case 'role-set': {
