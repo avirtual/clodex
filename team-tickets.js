@@ -698,6 +698,36 @@ function createTicketMethods(deps, shared) {
       return { seats: [...seats], tickets };
     },
 
+    _teamInUse(team) {
+      const seats = new Set();
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead) continue;
+        if (matchSeatRole(team, s.name) !== null) seats.add(s.name);
+      }
+      const tickets = [];
+      for (const tk of ticketsStore.load(team.root)) {
+        if (tk && tk.state !== 'done' && tk.state !== 'cancelled') tickets.push(tk.id);
+      }
+      let saved = null;
+      try {
+        const names = new Set();
+        for (const e of getPersistence().list()) {
+          if (e && e.name && !seats.has(e.name) && matchSeatRole(team, e.name) !== null) names.add(e.name);
+        }
+        saved = names.size;
+      } catch { saved = null; }
+      return { seats: [...seats], tickets, saved };
+    },
+
+    _forgetTeam(teamName, root) {
+      let dropped = 0;
+      for (const [name, w] of this._ticketWatch) {
+        if (w && w.root === root) { this._ticketWatch.delete(name); dropped += 1; }
+      }
+      if (dropped) log.info('team', `forgot ${dropped} ticket watch(es) for deleted team "${teamName}"`);
+      return dropped;
+    },
+
     // `opts.ticketId` marks this review as a TICKET's, which routes its verdict to
     // the ticket record instead of back to the asker. It is a caller's explicit
     // claim, never derived from the scope text: an ad-hoc review whose prose

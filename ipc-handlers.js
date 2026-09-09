@@ -52,6 +52,7 @@ function registerIpcHandlers(deps) {
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam, teamsDir,
+    teamDeleteCheck, teamDeleteGated,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
@@ -192,6 +193,19 @@ function registerIpcHandlers(deps) {
         return { ok: false, error: `role "${role}" is in use`, blockedBy: blocked };
       }
       return { ok: true, team: removeRole(team, role, { operator: true }) };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:deleteCheck', (_e, team) => {
+    try { return teamDeleteCheck(team); }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:delete', (_e, team) => {
+    try {
+      const r = teamDeleteGated(team);
+      if (r.ok) { refreshAppMenu(); refreshTrayMenu(); }
+      return r;
     } catch (err) { return { ok: false, error: err.message }; }
   });
 

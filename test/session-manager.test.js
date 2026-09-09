@@ -10998,6 +10998,93 @@ test('_roleInUse: a persistence read error FAILS CLOSED — blocks with a reason
   assert.ok(used.seats.length > 0, 'blocked, not waved through');
 });
 
+// --- t783: _teamInUse — the whole-team gate behind Delete Team… -------------
+
+test('_teamInUse: every live role seat blocks, a _dead one does not, the lead counts by its seat name', () => {
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => [], get: () => null }) });
+  f.seat('team-hand-3');
+  f.seat('lead');
+  f.seat('team-reviewer', '/proj', { _dead: true });
+  // Not a seat of this team at all: no `team-` prefix and not the lead name.
+  f.seat('unrelated-hand-1');
+  // A live PANE with no agentType is not an agent seat, so it cannot hold work.
+  f.seat('team-runner-9', '/proj', { agentType: null });
+
+  const used = f.m._teamInUse(f.team);
+  assert.deepStrictEqual(used.seats.sort(), ['lead', 'team-hand-3'],
+    'live role seats block; the dead one, the non-agent one and the outsider do not');
+});
+
+test('_teamInUse: every non-terminal ticket blocks, whatever its role; done and cancelled do not', () => {
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => [], get: () => null }) });
+  f.tstore.save(f.team.root, [
+    { id: 't1', assignee: 'runner', state: 'open' },
+    { id: 't2', assignee: 'hand', state: 'verify' },
+    { id: 't3', assignee: 'hand', state: 'done' },
+    { id: 't4', assignee: 'runner', state: 'cancelled' },
+    // Unassigned, and assigned to a role the manifest does not have: the gate is
+    // about the BOARD, not about which role would answer for it.
+    { id: 't5', state: 'open' },
+  ]);
+  const used = f.m._teamInUse(f.team);
+  assert.deepStrictEqual(used.tickets, ['t1', 't2', 't5'],
+    'open and verify block regardless of assignee; done and cancelled do not');
+});
+
+test('_teamInUse: `saved` counts a persisted-only seat once and a live one not at all', () => {
+  const persisted = [
+    { name: 'team-hand-1', archivedAt: 1 },
+    { name: 'team-runner-2', archivedAt: 2 },
+    // Live too — already in `seats`, so counting it here would double-report the
+    // same seat to an operator reading "N saved seats become plain sessions".
+    { name: 'team-hand-3', archivedAt: 3 },
+    { name: 'stranger-1', archivedAt: 4 },
+  ];
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => persisted, get: () => null }) });
+  f.seat('team-hand-3');
+  const used = f.m._teamInUse(f.team);
+  assert.deepStrictEqual(used.seats, ['team-hand-3'], 'the live seat blocks');
+  assert.equal(used.saved, 2, 'the two persisted-only role seats count; the live one and the outsider do not');
+});
+
+test('_teamInUse: an unreadable persistence reports saved=null, and does NOT invent a blocking seat', () => {
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => { throw new Error('store unreadable'); } }) });
+  const used = f.m._teamInUse(f.team);
+  // The opposite of _roleInUse's fail-close, deliberately: `saved` gates nothing
+  // (a saved seat never blocks a delete), so a sentinel here would both block a
+  // deletable team and render a refusal naming no live seat and no ticket.
+  assert.deepStrictEqual(used.seats, [], 'no sentinel seat');
+  assert.equal(used.saved, null, 'the unknown count is null, not 0 — 0 would claim nothing is saved');
+});
+
+test('_teamInUse: a CORRUPT board reads as empty and does not block — the ticket gate is only as good as the read', () => {
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => [], get: () => null }) });
+  f.tstore.save(f.team.root, [{ id: 't1', assignee: 'hand', state: 'open' }]);
+  assert.deepStrictEqual(f.m._teamInUse(f.team).tickets, ['t1'],
+    'ENTER: the open ticket really blocks while the board parses');
+  fs.writeFileSync(f.tstore.ticketsPath(f.team.root), '{ not json');
+
+  // Documented, not endorsed: ticketsStore.load swallows a parse error and
+  // returns [], so no catch in _teamInUse could fail this closed. Survivable
+  // because the board lives under ~/.clodex/projects, which the delete keeps —
+  // the file is still there to repair after the team is gone.
+  assert.deepStrictEqual(f.m._teamInUse(f.team).tickets, [],
+    'a board that will not parse reads as no tickets at all');
+});
+
+test('_forgetTeam drops the deleted team\'s ticket watches and leaves every other team\'s alone', () => {
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => [], get: () => null }) });
+  f.m._ticketWatch.set('team-hand-1', { root: f.team.root, role: 'hand' });
+  f.m._ticketWatch.set('team-hand-2', { root: f.team.root, role: 'hand' });
+  f.m._ticketWatch.set('other-hand-1', { root: '/elsewhere', role: 'hand' });
+  assert.equal(f.m._ticketWatch.size, 3, 'ENTER: the watches are really there to drop');
+
+  const dropped = f.m._forgetTeam(f.team.name, f.team.root);
+  assert.equal(dropped, 2, 'both watches on the deleted team went');
+  assert.deepStrictEqual([...f.m._ticketWatch.keys()], ['other-hand-1'],
+    "the other team's watch survives — _forgetTeam matches by root, not by clearing the map");
+});
+
 // --- list(): team field (sidebar group-by-project reflects team identity) ---
 // list() rows carry a `team` name (the injected resolveTeam by cwd, or null),
 // which the renderer groups by. A fake session shape is enough — list() only
