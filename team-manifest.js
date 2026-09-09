@@ -157,17 +157,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     atomicWriteFileSync(file, data);
   }
 
-  // Give every role written by createTeam / addRole the team's OWN copy of its
-  // stock template, and repoint the def at it. A role naming a library stem has
-  // nothing of its own to edit, and the library copy is re-seeded on boot.
-  //
-  // MUTATES the defs it is handed and must therefore run before they are
-  // serialized. Returns the roles that gained a NEW file; a copy already on disk
-  // is repointed but not reported, so the reply never claims a write it skipped.
-  //
-  // A missing library template is not an error: it leaves the def naming the
-  // stem, which is exactly what the resolver falls back to.
-  function copyRoleTemplates(teamName, roles) {
+  function copyRoleTemplates(teamName, roles, opts) {
+    const repointOnly = !!(opts && opts.repointOnly === true);
     const copied = [];
     const written = [];
     if (typeof teamName !== 'string' || !TEAM_STEM_RE.test(teamName)) return copied;
@@ -176,23 +167,18 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         if (!def || typeof def !== 'object' || Array.isArray(def)) continue;
         const stem = def.template;
         if (typeof stem !== 'string' || !stem) continue;
-        // Both names reach a path join. The role name is validated by ROLE_RE at
-        // every entry point, but ROLE_RE and TEAM_STEM_RE are separate grammars.
         if (badStem(stem) || !TEAM_STEM_RE.test(stem)) continue;
         if (badStem(roleName) || !TEAM_STEM_RE.test(roleName)) continue;
         const target = path.join(teamsDir, teamName, 'templates', `${roleName}.json`);
         let own = false;
         try { fs.readFileSync(target, 'utf-8'); own = true; } catch {}
         if (own) { def.template = roleName; continue; }
+        if (repointOnly) continue;
         let base;
         try { base = JSON.parse(fs.readFileSync(path.join(home, 'library', 'templates', `${stem}.json`), 'utf-8')); }
         catch { continue; }
         if (!base || typeof base !== 'object' || Array.isArray(base)) continue;
         const body = { ...base };
-        // The same strip deriveModelTemplate does. Reading the FILE rather than a
-        // listing row, these keys should be absent — but a hand-authored library
-        // template carrying `plugin` would file the team's own copy under that
-        // plugin in the drawers.
         for (const k of LISTING_KEYS) delete body[k];
         body.name = roleName;
         atomicWrite(target, `${JSON.stringify(body, null, 2)}\n`);
@@ -544,9 +530,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       assertDispatchAllowed(k, seedRoles[k], file);
       assertRoleCwd(k, seedRoles[k], resolvedRoot, file);
     }
-    // Before team.json, and after the validations above: a copy failure must throw
-    // rather than leave a manifest naming a file that is not there, and a validation
-    // refusal must not leave a templates/ directory in a team that was never created.
     const templatesCopied = copyRoleTemplates(name, seedRoles);
     const manifest = {
       version: MANIFEST_VERSION,
@@ -597,6 +580,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (normalized.template != null && !NAME_RE.test(normalized.template)) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
+    // Repoint-only, so the comparison below is against the role as the copy left
+    // it: the def a re-ride carries still names the LIBRARY stem, and comparing
+    // that to a role already pointing at its own copy turns team:join's
+    // unconditional re-ride into "already exists with a different definition".
+    // Writes nothing — the mint arm below is the only path that copies.
+    copyRoleTemplates(teamName, { [roleName]: normalized }, { repointOnly: true });
     const existing = team.roles[roleName];
     // Never mint an absent reserved key from a def: loadManifest only requires
     // `lead`, so a hand-deleted `reviewer` could otherwise be re-added with an
@@ -615,10 +604,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
-    // MINT ONLY, after the already-exists arm: the copy repoints `template` at the
-    // team's own file, so copying for a role that is already on disk would turn a
-    // no-op re-add of the stock def into "already exists with a different
-    // definition".
     const templatesCopied = copyRoleTemplates(teamName, { [roleName]: raw.roles[roleName] });
     try {
       atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));

@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- A new team gets its own copy of each role's template: create and role-add copy the stock template to `templates/<role>.json` in the team's directory and point the role at it, so what you edit for a team is the team's own file, not the library's. Existing teams are untouched (use `[agent:team role-set <role> model:<alias>]` to derive a copy).
 - Stock team templates (`clodex-team-lead`, `clodex-team-hand`) no longer pin `--model claude-opus-5` and no longer keep the ListAgents tool: a new team seat runs the box's default model with eight tools. `[agent:team role-set <role> model:<alias>]` still derives a pinned team-local copy when a team wants a specific model.
 
 ## 5.51.0 — 2026-09-10 — The team popover says what is happening: per-ticket seats, the reviewer loop, and the tickets board

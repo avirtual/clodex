@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const { createTeamManifest } = require('../team-manifest');
+const { createTeamManifest, STOCK_ROLE_DEFS } = require('../team-manifest');
 const { mkPark, mkTeamCreate } = require('./lib/session-fixtures');
 
 const LIB_HAND = {
@@ -130,6 +130,31 @@ test('t789 addRole: a new role gets its own copy; a re-add over an existing copy
   assert.strictEqual(re.roles.scribe.template, 'scribe', 'and the role points at it again');
   assert.deepStrictEqual(re.templatesCopied, [],
     'nothing was written, so the reply must not claim a copy it skipped');
+});
+
+// The ordering constraint inside addRole: the copy runs on the MINT arm only,
+// after the already-exists check. Copying first would repoint `template` at the
+// role's own file, and addRole is exact-match-or-throw. The comparison therefore
+// runs against the def REPOINTED the same way, or re-riding the stock def (which
+// team:join does unconditionally) would compare `clodex-team-hand` against the
+// `hand` already on disk and throw "already exists with a different definition",
+// breaking every join.
+test('t789 addRole: re-riding the same stock def stays a no-op after the copy repointed the role', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t789-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  // No `roles`, so the scaffold seeds lead+hand+reviewer and hand's copy lands.
+  tm.createTeam({ name: 'x', root, lead: 'x-lead' });
+  // ENTER: the create repointed the role, which is the state that makes the
+  // re-ride below a mismatch if the copy ran on the wrong side of the check.
+  assert.strictEqual(tm.loadManifest('x').roles.hand.template, 'hand',
+    'ENTER: the role already points at its own copy');
+
+  // What team:join re-rides: the STOCK def, still naming the library stem.
+  assert.doesNotThrow(() => tm.addRole('x', 'hand', { ...STOCK_ROLE_DEFS.hand }),
+    'a join onto a role the create already copied for must not read as a redefinition');
+  assert.strictEqual(tm.loadManifest('x').roles.hand.template, 'hand',
+    'and the no-op left the role pointing at its own copy');
 });
 
 // The intent replies. The clause is how a lead learns the team owns files now —
