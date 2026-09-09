@@ -470,17 +470,18 @@ test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and nev
   assert.ok(f.m.sessions.has('team-hand'), 'the hand seat survives the merge');
 });
 
-// ── the CHANGELOG claim is MEASURED: three outcomes, none collapsible ───────
+// ── the CHANGELOG claim is MEASURED: four outcomes, none collapsible ────────
 // Unconditional before t472, and wrong on nine consecutive merges (t470, t471):
 // both branches wrote their `## Unreleased` entry in round 1, so every merge
 // carried it to master and every notice still asked the lead for one. The cost
 // is desensitization — a lead who learns to skip the line skips it on the day
-// it is true — so each of the three answers is pinned by its WORDING and each
-// is paired against the other two, an absence assertion alone being true of a
-// notice that was never sent.
+// it is true — so each answer is pinned by its WORDING and each is paired
+// against the others, an absence assertion alone being true of a notice that
+// was never sent. The fourth, added when a repo with no root file was still
+// billed a debt it could not pay, is the same failure through a different door.
 
 // A repo whose master already has a CHANGELOG.md, with tl-1 cut from that
-// commit. Returns the fixture args the two branch-side subjects share.
+// commit. Returns the fixture args the branch-side subjects share.
 function mkRepoWithChangelog() {
   const repo = mkRepo();
   fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n');

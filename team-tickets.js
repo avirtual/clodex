@@ -1919,8 +1919,8 @@ function createTicketMethods(deps, shared) {
     // stated over an entry that landed is a duplicate entry and, repeated, a
     // line the lead stops reading.
     //
-    // `changelog` is _mergeTouchedChangelog's result. A missing one
-    // reads as unknown, and so does a malformed one: `known` alone is not enough,
+    // `changelog` is _mergeTouchedChangelog's result. A missing one reads as
+    // unknown, and so does a malformed one: `known` alone is not enough,
     // because `{known:true}` with no `touched` would fall through to the OWED
     // claim — an absent measurement rendered as a measured answer. Both are the
     // default arm, which is the only arm a caller can reach by forgetting.
