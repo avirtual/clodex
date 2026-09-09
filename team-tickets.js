@@ -2127,7 +2127,24 @@ function createTicketMethods(deps, shared) {
       this.kill(session.name);
     },
 
-    _handleTeamCreate(session, intent) {
+    async _classifyTeamRoot(root) {
+      let st = null;
+      try { st = fs.statSync(root); } catch { st = null; }
+      if (!st) {
+        let parentIsDir = false;
+        try { parentIsDir = fs.statSync(nodePath.dirname(root)).isDirectory(); } catch { parentIsDir = false; }
+        return parentIsDir ? { kind: 'new-absent' } : { kind: null, error: 'parent-missing' };
+      }
+      if (!st.isDirectory()) return { kind: null, error: 'is-file' };
+      let entries = [];
+      try { entries = fs.readdirSync(root); } catch { entries = []; }
+      if (entries.length === 0) return { kind: 'new-empty' };
+      if (!(await gitWorktree.repoToplevel(root))) return { kind: null, error: 'files-no-repo' };
+      if (!(await gitWorktree.hasCommit(root))) return { kind: null, error: 'repo-no-commits' };
+      return { kind: 'takeover' };
+    },
+
+    async _handleTeamCreate(session, intent) {
       const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
       const name = intent.name || null;
       const root = intent.root || null;
@@ -2136,10 +2153,18 @@ function createTicketMethods(deps, shared) {
         reply(`error: create needs an absolute root — [agent:team create ${name} root:<abs-path>]`);
         return;
       }
-      let isDir = false;
-      try { isDir = fs.statSync(root).isDirectory(); } catch { isDir = false; }
-      if (!isDir) {
-        reply(`error: root ${root} is not an existing directory — create it first; Clodex never makes it for you`);
+      const cls = await this._classifyTeamRoot(root);
+      if (!cls.kind) {
+        const refusals = {
+          'parent-missing': `error: root ${root} — its parent ${nodePath.dirname(root)} does not exist; `
+            + 'Clodex creates the leaf, never the path — no team was created',
+          'is-file': `error: root ${root} is a file, not a directory — no team was created`,
+          'files-no-repo': `error: root ${root} has files but no git repo — run git init there yourself `
+            + '(Clodex will not make a first commit of files it did not create) and re-fire — no team was created',
+          'repo-no-commits': `error: root ${root} is a git repo with no commits — `
+            + 'make one (git commit --allow-empty -m init) and re-fire — no team was created',
+        };
+        reply(refusals[cls.error]);
         return;
       }
       const brief = String(intent.body == null ? '' : intent.body);
@@ -2151,6 +2176,25 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
+      let lead;
+      try { lead = defaultLeadSeat(name, intent.lead || null); } catch (err) {
+        reply(`error: ${err.message}`);
+        return;
+      }
+      if (cls.kind !== 'takeover') {
+        if (cls.kind === 'new-absent') {
+          try { fs.mkdirSync(root); } catch (err) {
+            reply(`error: could not create ${root} (${err.message}) — no team was created`);
+            return;
+          }
+        }
+        const init = await gitWorktree.initRepo(root);
+        if (!init || !init.ok) {
+          reply(`error: could not git init ${root} (${(init && init.error) || 'unknown'}) — no team was created`);
+          return;
+        }
+      }
+      const rootClause = cls.kind === 'takeover' ? '(existing repo, untouched)' : "(new, git init'd)";
       const roles = hasBrief ? {
         lead: { ...STOCK_ROLE_DEFS.lead },
         hand: { ...STOCK_ROLE_DEFS.hand, dispatch: 'worktree' },
@@ -2158,7 +2202,7 @@ function createTicketMethods(deps, shared) {
       } : undefined;
       let team;
       try {
-        team = createTeam({ name, root, lead: defaultLeadSeat(name, intent.lead || null), roles });
+        team = createTeam({ name, root, lead, roles });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
@@ -2179,7 +2223,7 @@ function createTicketMethods(deps, shared) {
       }
       try { if (typeof refreshAppMenu === 'function') refreshAppMenu(); } catch {}
       if (hasBrief) {
-        reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}; `
+        reply(`team "${team.name}" created — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
           + 'hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md. '
           + 'Next: spawn the lead in that root — it composes the brief at boot.');
         return;

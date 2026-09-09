@@ -37,6 +37,29 @@ async function repoToplevel(cwd) {
   return top || null;
 }
 
+async function hasCommit(dir) {
+  if (!dir) return false;
+  const r = await git(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  return r.ok && r.stdout.trim().length > 0;
+}
+
+async function initRepo(dir) {
+  if (!dir) return { ok: false, error: 'no directory given' };
+  if (await repoToplevel(dir)) return { ok: false, error: 'already a git repo' };
+  const init = await git(dir, ['init', '-q']);
+  if (!init.ok) {
+    return { ok: false, error: `${init.stdout || ''}${init.stderr || ''}`.trim() || `git init exited ${init.code}` };
+  }
+  const commit = await git(dir, [
+    '-c', 'user.name=Clodex', '-c', 'user.email=clodex@localhost',
+    'commit', '-q', '--allow-empty', '-m', 'Clodex: team root',
+  ]);
+  if (!commit.ok) {
+    return { ok: false, error: `${commit.stdout || ''}${commit.stderr || ''}`.trim() || `git commit exited ${commit.code}` };
+  }
+  return { ok: true };
+}
+
 // A safe default sibling location for a new worktree: <repo>/../<repo>-<branch>.
 // Branch slashes (feature/x) become dashes so the path stays a single segment.
 function defaultWorktreePath(repoTop, branch) {
@@ -574,5 +597,5 @@ async function revertCommit(cwd, sha) {
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
-  diffText, currentBranch, mergeNoFf, revertCommit,
+  diffText, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
 };

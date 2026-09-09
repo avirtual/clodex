@@ -4621,7 +4621,8 @@ function createSessionManager(deps) {
         }
         case 'team-create': {
           if (!session || !session.agentType) break;
-          this._handleTeamCreate(session, intent);
+          await this._handleTeamCreate(session, intent)
+            .catch((e) => log.error('intent', `team-create: ${e.message}`));
           break;
         }
         case 'reboot': {

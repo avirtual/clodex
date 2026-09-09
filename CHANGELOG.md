@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - **Teams:** the stock lead prompt gains a "First turn on a fresh team" section: on a new root the lead confirms the brief and files the suite runner first; on a taken-over repo it reads the README, manifest, test runner and CHANGELOG before asking anything, and asks only where the repo and the brief disagree. Either way it sends one notify-user and stops.
+- **Teams:** `[agent:team create <name> root:<path>]` now classifies its root: an absent leaf under an existing parent, or an empty directory, is created and git-init'd with one empty commit so a per-ticket hand can take its first worktree; a repo with commits is taken over with nothing under it written; a directory with files but no repo, a repo with no commits, a file, or a missing parent is refused with nothing created. With a brief, the reply says which — `(new, git init'd)` or `(existing repo, untouched)`. Before, create refused any root it had not been handed as an existing directory, and a worktree hand on a commitless root failed its first ticket.
 
 ## 5.48.0 — 2026-09-09 — The reviewer boots in the ticket's worktree, a cut-off intent is never fired, and dependency-free repos pass the suite gate
 

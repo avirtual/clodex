@@ -991,7 +991,7 @@ or fires an IPC is not slow — it is wrong, because a relayout is not an event.
 
 Sanctioned shared core utilities, frozen and named. In `"1"` there is exactly
 one entry, `gitWorktree`, offering the ten functions below (the module
-exports five more, withheld — see the membership rule). All are `async` except
+exports seven more, withheld — see the membership rule). All are `async` except
 `defaultWorktreePath`, and all are best-effort: they return a shaped result or
 `null` rather than throwing.
 
@@ -1032,6 +1032,13 @@ everything lent here returns **metadata** — paths, branches, counts, a dirty
 flag — while it returns **file content**, for any repo path the caller names.
 Core added it for its own ticket loop. A function that reads out the contents of
 a repo is not lent because core happens to call it; ask, with the use case.
+
+`initRepo` and `hasCommit` are the pair `[agent:team create]` classifies a team
+root with. `initRepo` is the mutation rule one step earlier than the others: it
+makes a repo and a first commit inside whatever directory it is handed.
+`hasCommit` returns metadata and would fit the lent set on shape alone — it is
+withheld because the classification is core's end to end and nothing has asked
+for the probe on its own. Ask, with the use case.
 Every function the module exports is either lent or explicitly withheld, and the
 partition is test-pinned — a new export fails the suite until it is classified,
 so it can never arrive here by default.

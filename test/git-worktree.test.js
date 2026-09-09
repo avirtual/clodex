@@ -622,3 +622,43 @@ test('mergeNoFf: a merge that fails without conflicting reports through the old 
     `no conflict existed, so the union has nothing to explain (error: ${r.error})`);
   assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
 });
+
+// --- t780: initRepo / hasCommit, the two probes team create classifies with ---
+
+test('initRepo: a fresh empty dir becomes a repo with one commit', { skip: !gitAvailable() }, async () => {
+  const dir = mkTmpRoot('clodex-init-');
+  assert.strictEqual(await wt.hasCommit(dir), false, 'ENTER: not a repo yet, so no commit');
+
+  const r = await wt.initRepo(dir);
+
+  assert.deepStrictEqual(r, { ok: true });
+  assert.strictEqual(await wt.hasCommit(dir), true);
+  assert.strictEqual(fs.realpathSync(await wt.repoToplevel(dir)), fs.realpathSync(dir));
+});
+
+test('initRepo: an existing repo is refused, and its HEAD does not move', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const before = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  const r = await wt.initRepo(repo);
+
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'already a git repo');
+  assert.strictEqual(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), before,
+    'no second commit was laid on top of the operator\'s history');
+});
+
+// The commitless repo is the state the whole classification exists to keep teams
+// out of: `git worktree add <p> HEAD` there fails `fatal: invalid reference: HEAD`.
+test('hasCommit: false on a freshly init\'d repo, true after one commit', { skip: !gitAvailable() }, async () => {
+  const dir = mkTmpRoot('clodex-hc-');
+  const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  run('init', '-q');
+  assert.strictEqual(await wt.hasCommit(dir), false, 'a repo exists, but HEAD is the unborn branch');
+  assert.ok(await wt.repoToplevel(dir), 'ENTER: repoToplevel already says yes here — so it cannot be the probe');
+
+  run('config', 'user.email', 't@example.com');
+  run('config', 'user.name', 'Test');
+  run('commit', '-q', '--allow-empty', '-m', 'init');
+  assert.strictEqual(await wt.hasCommit(dir), true);
+});
