@@ -6529,8 +6529,11 @@ function createSessionManager(deps) {
       if (!target || target.agentType !== 'claude' || target._dead) {
         return { ok: false, reason: 'no-such-agent' };
       }
-      if (this._injectHoldReason(target) === 'dialog') {
-        return { ok: false, reason: 'dialog-blocked' };
+      const hold = this._injectHoldReason(target);
+      if (hold) {
+        const count = countPending(PENDING_DIR, target.name);
+        log.info('inject', `park-flush for ${target.name} held (${hold}) — ${count} parked entr${count === 1 ? 'y stays' : 'ies stay'} on disk`);
+        return { ok: false, reason: hold === 'dialog' ? 'dialog-blocked' : hold, count };
       }
       const r = this._flushParkedNow(target, `flush.${process.pid}`, 'park-flush');
       if (target._parkCapTimer) { clearTimeout(target._parkCapTimer); target._parkCapTimer = null; }

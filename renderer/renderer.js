@@ -603,12 +603,16 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
 
   const pendingEl = item.querySelector('.session-pending');
   if (pendingEl) {
+    const heldTips = {
+      'dialog-blocked': 'Blocked on a permission dialog — answer it first, then flush',
+      busy: 'Seat is mid-turn — parked messages ride its next prompt; flush again when it is idle',
+      'compact-window': 'Seat is compacting — flush again once it settles',
+    };
     pendingEl.addEventListener('click', async (e) => {
       e.stopPropagation();
       const r = await window.api.flushPending(name);
-      if (r && r.ok === false && r.reason === 'dialog-blocked') {
-        pendingEl.dataset.tip = 'Blocked on a permission dialog — answer it first, then flush';
-      }
+      const tip = r && r.ok === false ? heldTips[r.reason] : null;
+      if (tip) pendingEl.dataset.tip = tip;
     });
   }
 
