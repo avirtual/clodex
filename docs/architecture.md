@@ -469,9 +469,13 @@ not by size:
   fallback carries: that base is a `templates.list()` row, not the file, and
   persisting `plugin` into the team's own copy files it under the plugin in the
   drawers while a stale `shadowedBy` labels it shadowed by an unrelated team.
-  The caller refuses what `addRole`/`setRole` would refuse BEFORE saving —
-  the file is not inside the mutator's transaction, so a later throw would
-  otherwise leave a template for a role that was never written.
+  The file is not inside the mutator's transaction, so the caller makes the write
+  UNDOABLE rather than trying to predict the throw: it captures the target's prior
+  bytes, and if `addRole`/`setRole` throws it rewrites them (or unlinks a file that
+  did not exist) before the error reply. Enumerating refusals cannot work here —
+  a bad `dispatch:` or `cwd:` riding the same intent is raised inside the mutator,
+  and on a role that already owns its derived template that would leave it running
+  a model the lead was told it had not been given.
 - **team-root-expand.js** — the `${TEAM_ROOT}` token for a TEMPLATE's `cwd`,
   read by the spawn intent (team-tickets.js) and the New Session dialog's
   template dropdown (renderer.js). Pure leaf. An unresolved root REFUSES rather

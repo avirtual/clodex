@@ -10206,6 +10206,10 @@ test('t767: a bad alias, a missing base, and every refusal the mutator would rai
     [{ sub: 'role-set', name: 'ghost', model: 'opus' }, /error: role "ghost" not found on team "team"/],
     [{ sub: 'role-add', name: 'hand', model: 'opus' }, /error: role "hand" already exists on team "team"/],
     [{ sub: 'role-add', name: 'x'.repeat(40), model: 'opus' }, /error: role name "x{40}" must match/],
+    // The two that pre-checks can never cover: the refusal rides ANOTHER kv, so
+    // it is raised inside the mutator, after the template file is already written.
+    [{ sub: 'role-set', name: 'hand', model: 'opus', dispatch: 'wortree' }, /error: role "hand" dispatch must be one of/],
+    [{ sub: 'role-add', name: 'worker', model: 'opus', cwd: '../out' }, /error:/],
   ]) {
     const f = mkTeamModel();
     const before = f.teamJsonBytes();
@@ -10215,6 +10219,25 @@ test('t767: a bad alias, a missing base, and every refusal the mutator would rai
       `no templates dir for ${intentPatch.sub} ${intentPatch.name}`);
     assert.deepStrictEqual(f.teamJsonBytes(), before, 'team.json is byte-identical — the role write is skipped too');
   }
+});
+
+// The rollback's real subject: not an absent file but a LIVE one. Enumerating
+// mutator refusals cannot reach this — the throw rides dispatch:, so the derived
+// file is already overwritten when it fires, and without the undo the hand spawns
+// on opus while the lead is told the edit failed.
+test('t767: a mutator throw on a role that already owns its derived template restores the prior bytes', () => {
+  const f = mkTeamModel();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'], 'setup: hand owns its own derived template');
+  const before = fsReal.readFileSync(f.tplFile('hand'));
+  const teamBefore = f.teamJsonBytes();
+
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', dispatch: 'wortree', body: '' });
+  assert.match(f.last(), /error: role "hand" dispatch must be one of/);
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'],
+    'the live template still runs sonnet — an error: reply must not leave the role on a different model');
+  assert.deepStrictEqual(fsReal.readFileSync(f.tplFile('hand')), before, 'byte-identical, not merely equivalent');
+  assert.deepStrictEqual(f.teamJsonBytes(), teamBefore);
 });
 
 test('t767: a role-set WITHOUT model: writes no template at all (every path byte-identical to pre-t767)', () => {

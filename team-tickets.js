@@ -29,7 +29,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS } = require('./team-manifest');
 const {
-  readTeamJson, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
+  readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
 const { formatGatherReport } = require('./team-gather');
@@ -2143,13 +2143,16 @@ function createTicketMethods(deps, shared) {
             if (intent.dispatch) def.dispatch = intent.dispatch;
             if (intent.cwd) def.cwd = intent.cwd;
             let addClause = '';
+            let addUndo = null;
             if (intent.model) {
               const derived = this._deriveRoleModelTemplate(team, name, intent);
               if (!derived.ok) { reply(`error: ${derived.error}`); return; }
               def.template = name;
               addClause = derived.clause;
+              addUndo = derived.undo;
             }
-            addRole(team.name, name, def);
+            try { addRole(team.name, name, def); }
+            catch (err) { if (addUndo) addUndo(); throw err; }
             reply(`role "${name}" added to ${team.name}${addClause}`);
             return;
           }
@@ -2164,13 +2167,16 @@ function createTicketMethods(deps, shared) {
             if (intent.dispatch) patch.dispatch = intent.dispatch;
             if (intent.cwd) patch.cwd = intent.cwd;
             let setClause = '';
+            let setUndo = null;
             if (intent.model) {
               const derived = this._deriveRoleModelTemplate(team, name, intent);
               if (!derived.ok) { reply(`error: ${derived.error}`); return; }
               patch.template = name;
               setClause = derived.clause;
+              setUndo = derived.undo;
             }
-            setRole(team.name, name, patch);
+            try { setRole(team.name, name, patch); }
+            catch (err) { if (setUndo) setUndo(); throw err; }
             reply(`role "${name}" updated on ${team.name}${setClause}`);
             return;
           }
@@ -2300,9 +2306,9 @@ function createTicketMethods(deps, shared) {
       if (!id) return { ok: false, error: `model "${intent.model}" is not a model id or alias (opus, sonnet, haiku, fable)` };
       const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
       if (!ROLE_RE.test(name)) return { ok: false, error: `role name "${name}" must match ${ROLE_RE} (${team.file})` };
-      if (RESERVED_ROLE_KEYS.has(name)) return { ok: false, error: `the "${name}" role is operator-owned topology; edit it via the app, not an intent/mutator (${team.file})` };
-      if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use addRole (${team.file})` };
-      if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" with a different definition` };
+      if (RESERVED_ROLE_KEYS.has(name)) return { ok: false, error: `the "${name}" role is operator-owned topology; ${intent.sub === 'role-add' ? 'add' : 'edit'} it via the app, not an intent/mutator (${team.file})` };
+      if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use role-add (${team.file})` };
+      if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" — use role-set` };
       const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
       const stem = intent.template || current || 'clodex-team-hand';
       let base = readTeamJson({ fs, path }, team, 'templates', stem);
@@ -2311,10 +2317,22 @@ function createTicketMethods(deps, shared) {
         catch { base = null; }
       }
       if (!base) return { ok: false, error: `no template "${stem}" to derive from` };
-      const res = teamTemplateSave(this._teamFileDeps(), team.name, name, deriveModelTemplate(base, name, id));
+      const deps = this._teamFileDeps();
+      const target = teamTemplatePath(deps, team.name, name);
+      let prior = null;
+      try { prior = target ? fs.readFileSync(target) : null; } catch { prior = null; }
+      const res = teamTemplateSave(deps, team.name, name, deriveModelTemplate(base, name, id));
       if (!res.ok) return { ok: false, error: res.error };
       this._refreshAppMenuQuietly();
-      return { ok: true, clause: ` — template "${name}" derived from ${stem} with --model ${id} (${res.file})` };
+      const undo = () => {
+        try {
+          if (prior != null) { fs.writeFileSync(res.file, prior); return; }
+          fs.unlinkSync(res.file);
+          try { fs.rmdirSync(path.dirname(res.file)); } catch {}
+        } catch {}
+        this._refreshAppMenuQuietly();
+      };
+      return { ok: true, undo, clause: ` — template "${name}" derived from ${stem} with --model ${id} (${res.file})` };
     },
 
     _refreshAppMenuQuietly() {
