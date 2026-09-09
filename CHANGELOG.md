@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — The team popover says what is happening: per-ticket seats, the reviewer loop, and the tickets board
 
 - **Teams:** the roles popover gains a Tickets section: the open board (seat, step, since when) and the last five landings (merged, merge failed or cancelled, with the review round count), refreshed with the popover. Before, the board was visible only as the text reply to [agent:task list].
 - **Teams:** the roles popover now says what each role is doing. A per-ticket role shows the seat a ticket minted and which ticket it is on, or the open tickets waiting, or the last ticket that landed and when; the reviewer row says it is spawned per review round and shows the round in flight or the last verdict; the header explains standing versus per-ticket roles. Before, a per-ticket role read "no seat in this window" while its hand was mid-ticket, and the reviewer showed a dispatch mode it never reads.
