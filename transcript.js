@@ -200,6 +200,20 @@ function isTurnEndEntry(obj) {
   return (obj.type || '') === 'event_msg' && (obj.payload || {}).type === 'task_complete';
 }
 
+function isInterruptEntry(obj) {
+  if (!obj || obj.isSidechain === true || obj.isMeta === true) return false;
+  if ((obj.type || '') !== 'user') return false;
+  const content = (obj.message || {}).content;
+  if (!Array.isArray(content)) return false;
+  const text = content
+    .filter(b => b && b.type === 'text' && typeof b.text === 'string')
+    .map(b => b.text)
+    .join('\n')
+    .trim();
+  return text === '[Request interrupted by user]'
+    || text === '[Request interrupted by user for tool use]';
+}
+
 function extractText(obj) {
   const type = obj.type || '';
   // Claude format
@@ -223,4 +237,4 @@ function extractText(obj) {
   return msg && msg.role === 'assistant' ? msg.text : '';
 }
 
-module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText, isTurnEndEntry, isCodexReply };
+module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply };
