@@ -1488,9 +1488,10 @@ test('the reviewer scope names the RESOLVED task dir, never the raw relative poi
   const want = f.m._ticketDiffDest(f.team, t).dir;
   assert.ok(scope.includes(`TASK DIR: ${want}`),
     `the scope must name the resolved artifact dir; got: ${scope.slice(0, 400)}`);
-  // The decoy is the hazard: the reviewer's cwd IS team.root, so a raw relative
-  // pointer resolves against precisely this path. Asserting the wrong answer is
-  // absent as well as the right one present — the two are different claims.
+  // The decoy is the hazard: the reviewer's cwd is a checkout of this same repo
+  // (t776: the ticket's worktree, or team.root when there is none), so a raw
+  // relative pointer resolves against a stale `tasks/` either way. Asserting the
+  // wrong answer is absent as well as the right one present — two different claims.
   assert.ok(!scope.includes(pathReal.join(f.team.root, 'tasks', 'verdict-routing')),
     'and never the repo-relative resolution, which is the stale tree the reviewer would otherwise read');
   assert.ok(!/TASK DIR: tasks\//.test(scope),
