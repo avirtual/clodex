@@ -342,6 +342,7 @@ function mkLoop({
   const broadcasts = [];
   const logs = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

@@ -20,6 +20,7 @@ function harness({ listAllTemplates } = {}) {
   const calls = [];
   const replies = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os,
     fs,
     path,

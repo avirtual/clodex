@@ -39,6 +39,7 @@ function mkPersistence(seed = []) {
 function mkManager(overrides = {}) {
   const persistence = overrides.persistence || mkPersistence();
   const deps = {
+    knownSkillNames: () => [],
     // A temp HOME and registry, never the operator's ~/.clodex: this test drives
     // the code that CREATES a task dir, so a real REGISTRY_DIR would scatter
     // fixture task dirs through the operator's own project artifacts.

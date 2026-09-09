@@ -510,6 +510,7 @@ function bootSpeakingManager({ speakReplies = true, speakRate } = {}) {
   const spoken = [];
   const opts = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     INJECT_SPEAKING_STALE_MS: 3000,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     getUiSettings: () => ({ get: () => ({ speakReplies, speakVoice: 'Daniel', speakRate }) }),

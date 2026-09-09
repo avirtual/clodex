@@ -353,7 +353,7 @@ function mkTicketRegistry(home, projectRoot, tickets) {
 // now reads the board off `team.root` under the manager's REGISTRY_DIR, so both
 // have to be the fixture's.
 function intentListing(home, projectRoot, teamName, filter) {
-  const SM = createSessionManager({ fs, path, REGISTRY_DIR: home });
+  const SM = createSessionManager({ fs, path, REGISTRY_DIR: home, knownSkillNames: () => [] });
   let out = '';
   new SM()._taskList({ name: 'lead' }, { name: teamName, root: projectRoot, lead: 'lead' },
     { filter }, (s) => { out = s; });

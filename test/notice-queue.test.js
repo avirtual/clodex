@@ -290,6 +290,7 @@ function producerHarness({ appVersion, entry = null, resumeId = null, mint = fal
   const upserts = [];
   let record = entry ? { ...entry } : null;
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor,
     promptCacheDir,

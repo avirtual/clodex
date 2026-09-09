@@ -706,6 +706,7 @@ const { createSessionManager } = require('../session-manager');
 // because the engine half is already covered above.
 function mkManager(fired, overrides = {}) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),

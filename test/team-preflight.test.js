@@ -782,6 +782,7 @@ const { createSessionManager } = require('../session-manager');
 function mkManager(root, team) {
   const SessionManager = createSessionManager(new Proxy({
     REGISTRY_DIR: root, fs, path, os,
+    knownSkillNames: () => [],
     resolveTeam: () => team,
     readSystemPromptBody: (stem, _plugins, t) => {
       const own = teamPromptFile({ fs, path }, t, 'system', stem);

@@ -24,6 +24,7 @@ function harness({ teamRoot }) {
   const calls = [];
   const replies = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os,
     fs,
     path,

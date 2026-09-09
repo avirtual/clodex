@@ -70,6 +70,7 @@ function mkManager({ library = LIB, skills = [], enabledAgents = [], injectSkill
   const effectiveInjectedSkills = () => skills;
 
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor, runDirFor, os,
     PENDING_DIR: path.join(root, 'pending'),

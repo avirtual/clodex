@@ -3,6 +3,7 @@
   "spawnerHint": "off",
   "type": "claude",
   "cwd": "${TEAM_ROOT}",
+  "extraArgs": ["--model", "claude-opus-5"],
   "proxy": null,
   "agents": [],
   "execCommands": [
@@ -46,7 +47,7 @@
     "WaitForMcpServers",
     "DesignSync"
   ],
-  "disabledSkills": [],
+  "disabledSkills": ["*"],
   "injectSkills": [],
   "stripLevel": 2,
   "systemPromptFile": null,

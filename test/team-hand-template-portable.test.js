@@ -73,6 +73,16 @@ test('it names the team-project append stem — the file the operator must write
   assert.ok(!fs.existsSync(shipped), 'shipping this file would defeat the named-missing-file mechanism');
 });
 
+test('the stock hand is lean by default: Opus, and every skill off', () => {
+  // The first team stood up from the bootstrap skill came up with Fable-class
+  // hands carrying every installed skill, and was stopped on cost. The model is
+  // pinned rather than inherited from whatever the operator's own CLI defaults
+  // to; the skills sentinel is the only portable "none", because a template
+  // cannot name skills that differ per box.
+  assert.deepStrictEqual(tpl.extraArgs, ['--model', 'claude-opus-5']);
+  assert.deepStrictEqual(tpl.disabledSkills, ['*']);
+});
+
 test('it carries no systemPromptFile — the role prompt arrives via the team block', () => {
   // The hand's system prompt is the role's `prompt` (clodex-team-hand), resolved
   // by _teamBlockFor. A template naming one too would fork that resolution.

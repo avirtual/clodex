@@ -71,6 +71,7 @@ function boot(world, opts = {}) {
   const keepFrom = new Map();
   let pending = null;                // the name create() is currently spawning
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     // The WORLD's home, not this boot's `root`: the board resolves under
     // REGISTRY_DIR, and a per-boot one would give each "second process" a board
     // with no tickets on it — every replay assertion below would then be checking

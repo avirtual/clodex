@@ -116,6 +116,7 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
   };
 
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor, runDirFor, os,
     PENDING_DIR: path.join(root, 'pending'),

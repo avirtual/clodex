@@ -320,6 +320,7 @@ function mkTeamGatherMut({ gather = () => ({ team: 't', items: [], copied: [], k
   const injected = [];
   const team = { name: 't', root: '/proj', lead: 'lead', dir: '/teams/t', roles: {} };
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os: require('node:os'),
     fs,
     path,

@@ -294,6 +294,7 @@ function mkManager(rec) {
   const { createSessionManager } = require('../session-manager');
   const armed = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({

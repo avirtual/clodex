@@ -659,3 +659,63 @@ test('a cwd redraw preserves the template rows the operator unticked', () => {
     { checked: false, disabled: false },
     'after the cwd redraw the row is still unticked and still toggleable');
 });
+
+// t769 r2: the `*` sentinel in a TEMPLATE's disabledSkills. Both dialog paths
+// (openTemplateEditor at :2788, the New Session template picker at :2460) hand
+// the raw list to refreshNewSessionSkills, and `{'*'}` matches no row — so every
+// skill drew ON and the save wrote `[]`, silently turning the whole roster back
+// on for the one template that ships lean. Runs the SHIPPED function against the
+// real checklist, then collects: a source-shape grep would pass over an off-set
+// built from the wrong names.
+const REFRESH_SKILLS_FN = extract(
+  /\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills');
+const SKILL_NAMES = ['alpha', 'beta', 'gamma'];
+
+// withDom cannot wrap this one: it restores `document` in a synchronous finally,
+// which fires before an async body has drawn a single row.
+async function drawSkillsForTemplate(disabledSkills) {
+  const had = global.document;
+  global.document = { createElement: el, addEventListener() {} };
+  try {
+    const inputSkillsList = el('div');
+    const env = {
+      inputType: { value: 'claude' },
+      inputCwd: { value: '/tmp/proj' },
+      expandPath: (p) => p,
+      homeDir: '/home/x',
+      inputSkillsList,
+      renderSkillChecklist: checklists.renderSkillChecklist,
+      advisoryEffective: (e) => e || {},
+      window: { api: { getSkillCatalogFor: async () => ({ ok: true, names: [...SKILL_NAMES], effective: {} }) } },
+    };
+    const names = Object.keys(env);
+    const run = new Function(...names,
+      `${REFRESH_SKILLS_FN}\nreturn refreshNewSessionSkills(new Set(${JSON.stringify(disabledSkills)}), { forTemplate: true });`);
+    await run(...names.map((n) => env[n]));
+    return inputSkillsList;
+  } finally { global.document = had; }
+}
+
+const skillRowsOf = (c) => c.children.map((row) => {
+  const cb = row.children.find((x) => x.tagName === 'input');
+  return { name: cb.value, checked: cb.checked };
+});
+
+test('t769: a template carrying [\'*\'] draws every skill row OFF, and collects the explicit list', async () => {
+  const c = await drawSkillsForTemplate(['*']);
+  assert.deepStrictEqual(skillRowsOf(c).map((r) => r.name), SKILL_NAMES,
+    'ENTER: the catalog rows really drew — with none, the collect below is vacuously []');
+  assert.deepStrictEqual(skillRowsOf(c).filter((r) => r.checked).map((r) => r.name), [],
+    'the sentinel means every skill is off at spawn; a row drawn ON tells the operator the opposite');
+  assert.deepStrictEqual(checklists.collectSkillChecklist(c), SKILL_NAMES,
+    'and a save must write the explicit full-off list — `[]` re-enables the whole roster, which is the '
+    + 'defect: opening the stock hand template and pressing Save undid the ticket');
+});
+
+test('t769: an ordinary template list still drives the ticks by name', async () => {
+  // The anti-degenerate half: "draw everything off" satisfies the subject above.
+  const c = await drawSkillsForTemplate(['beta']);
+  assert.deepStrictEqual(skillRowsOf(c),
+    [{ name: 'alpha', checked: true }, { name: 'beta', checked: false }, { name: 'gamma', checked: true }]);
+  assert.deepStrictEqual(checklists.collectSkillChecklist(c), ['beta']);
+});

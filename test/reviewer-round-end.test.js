@@ -134,6 +134,7 @@ function mkFixture() {
   const contextActions = [];
   const logs = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

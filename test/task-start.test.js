@@ -49,6 +49,7 @@ function mkStart(extra = {}) {
   const urgents = [];
   const broadcasts = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),

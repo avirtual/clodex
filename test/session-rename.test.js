@@ -148,6 +148,7 @@ function mkRename({ entries = [], reminderRows = [], teamHome = null, createThro
   });
   const tm = teamHome ? createTeamManifest({ fs: fsReal, clodexHome: teamHome }) : null;
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR,
     getPersistence: () => persistence,
     getRemoteServer: () => null,

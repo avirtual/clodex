@@ -282,3 +282,48 @@ test('t750: index.html keeps the whole roster block inside the toggled div', () 
   assert.ok(!inject.includes('--plugin-dir'),
     'the inject hint no longer names the claude-only delivery flag');
 });
+
+// t769: the `*` sentinel, rendered. It reaches this popover as `allOff` with the
+// name stripped out of `names`, so the off-set the rows draw from cannot come
+// from `disabledSkills` — that list holds one entry matching no row. Reusing
+// this file's harness rather than copying it: the subject is the same shared DOM
+// and the same Apply, and the wrong version here is the same class of silent
+// wrong answer as the ones above.
+const STAR_CAT = {
+  ok: true,
+  names: ['alpha', 'beta'],
+  effective: {},
+  allOff: true,
+  disabledSkills: ['*'],
+  skillLib: LIB,
+  injectSkills: [],
+  outOfScope: [],
+};
+
+test('t769: an allOff seat draws every row off, though its off-list names no row', async () => {
+  const h = harness({ catalogs: { star_seat: STAR_CAT }, types: { star_seat: 'claude' } });
+  try {
+    await h.api.openSkillsPopover('star_seat', null);
+    const boxes = h.boxes('popover-skills-list');
+    assert.deepStrictEqual(boxes.map((c) => c.value), ['alpha', 'beta'],
+      'ENTER: both rows drew — with none the tick assertion below is vacuous');
+    assert.deepStrictEqual(boxes.filter((c) => c.checked).map((c) => c.value), [],
+      'a seat that boots with every skill off must not render them all ON: the operator reads the popover '
+      + 'as the seat\'s state, and a full set of ticks says the opposite of what the seat runs with');
+  } finally { h.restore(); }
+});
+
+test('t769: saving an allOff popover writes the explicit list, so the sentinel does not survive', async () => {
+  // The sentinel means "whatever this box knows", which a save cannot preserve
+  // and mean: the operator just ticked specific rows. Writing `*` back would
+  // discard those ticks at the next spawn.
+  const h = harness({ catalogs: { star_seat: STAR_CAT }, types: { star_seat: 'claude' } });
+  try {
+    await h.api.openSkillsPopover('star_seat', null);
+    h.boxes('popover-skills-list').find((c) => c.value === 'beta').checked = true;
+    await h.apply();
+    const wrote = h.calls.filter((c) => c[0] === 'setSessionSkills');
+    assert.deepStrictEqual(wrote, [['setSessionSkills', 'star_seat', ['alpha'], []]],
+      'the save carries the rows as ticked, with no `*` in it');
+  } finally { h.restore(); }
+});

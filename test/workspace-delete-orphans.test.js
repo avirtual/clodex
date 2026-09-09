@@ -52,6 +52,7 @@ function realPersistence() {
 // archived, so a correct implementation must find them without it.
 function realManager(persistence) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     // Silent, but WIRED: purgeWorkspace logs what it dropped, and production
     // always passes a logger — an undefined seam here would fail the test for a

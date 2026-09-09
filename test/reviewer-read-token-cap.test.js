@@ -99,6 +99,7 @@ const LEAD = { name: 'lead', type: 'claude', workspaceId: 'ws-1' };
 
 function managerWith(templatesList) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     os,
     fs,
     path,

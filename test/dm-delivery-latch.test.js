@@ -50,6 +50,7 @@ function boot(opts = {}) {
     setArchived: () => {}, setRosterSent: () => {},
   };
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: home,
     fs, path, pathFor, runDirFor,
     PENDING_DIR: path.join(root, 'pending'),

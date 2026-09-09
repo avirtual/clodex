@@ -240,6 +240,7 @@ function mkPersistence() {
 function mkManager(persistence) {
   const { createSessionManager } = require('../session-manager');
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

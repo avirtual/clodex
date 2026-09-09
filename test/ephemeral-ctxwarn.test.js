@@ -56,6 +56,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     rmSync: (p, ...rest) => { closeArm(p); return fs.rmSync(p, ...rest); },
   });
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs: fsSpy, path, pathFor,
     promptCacheDir,

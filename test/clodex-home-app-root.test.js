@@ -107,6 +107,7 @@ test('the exec child is given CLODEX_HOME=REGISTRY_DIR rather than inheriting th
       };
       // createSessionManager returns the CLASS; the manager is an instance of it.
       const SessionManager = createSessionManager({
+        knownSkillNames: () => [],
         REGISTRY_DIR,
         isFilenameToken, parseAndValidate,
         os, fs, path,

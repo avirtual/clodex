@@ -90,6 +90,7 @@ function mkSolo({ team = null, cwdSub = null } = {}) {
   const injected = [];
   const gated = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),

@@ -122,6 +122,7 @@ function mkManager({ units = [], extraDeps = {} } = {}) {
   const watchers = [];
 
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     fs, path, pathFor, runDirFor,
     PENDING_DIR: path.join(root, 'pending'),

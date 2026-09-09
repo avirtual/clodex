@@ -107,6 +107,7 @@ function mkVerdict(extra = {}) {
   const gated = [];
   const broadcasts = [];
   const deps = {
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,

@@ -161,6 +161,7 @@ function mkWorld({ tplPlugins } = {}) {
 
   const spawns = [];
   const deps = {
+    knownSkillNames: () => [],
     REGISTRY_DIR: home,
     fs, path, os, pathFor, runDirFor,
     PENDING_DIR: path.join(home, 'pending'),

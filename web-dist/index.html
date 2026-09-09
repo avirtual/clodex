@@ -30487,10 +30487,11 @@ Opening it here and saving would overwrite the file with what this editor could 
           const caps = capsFor(skillsTypeOf(name, source));
           skillsDisabledPersisted = res.disabledSkills || [];
           if (caps.skillRoster) {
+            const offSet = res.allOff ? new Set(res.names || []) : new Set(skillsDisabledPersisted);
             renderSkillChecklist(
               popoverSkillsList,
               res.names || [],
-              new Set(skillsDisabledPersisted),
+              offSet,
               res.effective || {},
               { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope }
             );
@@ -37048,10 +37049,12 @@ ${detail}` });
           renderSkillChecklist(inputSkillsList, [], disabledSet);
           return;
         }
+        const names = res.names || [];
+        const offSet = disabledSet.has("*") ? new Set(names) : disabledSet;
         renderSkillChecklist(
           inputSkillsList,
-          res.names || [],
-          disabledSet,
+          names,
+          offSet,
           advisoryEffective(res.effective, forTemplate),
           { skillsLocked: res.skillsLocked, canReenable: res.canReenable }
         );
@@ -41714,10 +41717,11 @@ ${res.stderr}` : "");
           const sc = skillCatalog;
           argsSkillsDisabledPersisted = sc.disabledSkills || [];
           if (caps.skillRoster) {
+            const offSet = sc.allOff ? new Set(sc.names || []) : new Set(sc.disabledSkills || []);
             renderSkillChecklist(
               argsSkillsList,
               sc.names || [],
-              new Set(sc.disabledSkills || []),
+              offSet,
               sc.effective || {},
               { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope }
             );

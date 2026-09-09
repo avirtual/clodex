@@ -41,6 +41,7 @@ function harness({ resolveTeam, entry }) {
     return ee;
   };
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR,
     isFilenameToken,
     parseAndValidate,

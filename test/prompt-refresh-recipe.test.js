@@ -40,6 +40,7 @@ function mkManager(root) {
   const persisted = new Map();
   const watchers = [];
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     REGISTRY_DIR: root,
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),

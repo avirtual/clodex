@@ -28,6 +28,7 @@ const TEAM = {
 // this is about list()'s projection, not about spawning.
 function mkRows(seats, { resolveTeam = (cwd) => (cwd === '/proj' ? TEAM : null) } = {}) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),

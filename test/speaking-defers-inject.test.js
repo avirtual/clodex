@@ -170,6 +170,7 @@ const STALE_MS = 120;
 
 function boot({ quietMs = 10, maxWait = 10_000 } = {}) {
   const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
     InjectQueue,
     INJECT_QUIET_MS: quietMs,
     INJECT_QUIET_MAXWAIT: maxWait,
