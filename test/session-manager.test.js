@@ -10700,6 +10700,7 @@ test('t782 create: the brief loses ONE leading newline the greedy assembler adde
   assert.strictEqual(fsReal.readFileSync(promptFile, 'utf-8'), 'Ship the thing.\n\nSecond paragraph.\n',
     'exactly one newline stripped — the rest of the brief is verbatim');
   await tick();
+  assert.strictEqual(f.created.length, 1, 'and a newline-led brief is still a brief: the lead was spawned');
 });
 
 test('t773 create: bodyless is byte-identical to before — stock hand, old reply', async () => {

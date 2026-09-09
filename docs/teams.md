@@ -446,12 +446,15 @@ already in it, all three standing. Give the intent a body — the kickstart brie
 closed by `[agent:end]` — and the hand is instead born per-ticket, with the brief
 saved as `prompts/append/team-project.md`, the stem the stock lead and hand
 templates compose at boot: step 2 and the `role-set` below are then already done,
-and a brief that cannot be saved leaves no team behind. So the next step is to
-spawn the lead seat with
-its cwd at the root — after the create, never before, because a seat resolves its
-team from its cwd at boot and carries that roster for the rest of its life, so one
-spawned first never learns it leads — and then, after a bodyless create, to make
-the hand per-ticket with
+and a brief that cannot be saved leaves no team behind. With a brief the create
+also spawns the lead itself, in the root, on `clodex-team-lead`, needing no
+`spawn` grant of its own, and tells it in its first injected text whether the root
+is new or one it is taking over; a lead name already in use is refused before
+anything is written, and a spawn that fails leaves the team on disk with the retry
+command in the reply. After a BODYLESS create the lead is still yours to spawn,
+with its cwd at the root — after the create, never before, because a seat resolves
+its team from its cwd at boot and carries that roster for the rest of its life, so
+one spawned first never learns it leads — and so is making the hand per-ticket with
 `[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
 not exist yet; on one that already does it refuses.
 `[agent:team set-lead <seat>]` re-points the lead afterwards, and only the current
