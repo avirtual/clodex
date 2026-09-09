@@ -354,7 +354,7 @@ test('PART 3: without it, the same first turn latches the gate shut having armed
 
 // ------------------------------------ the startup restore's accept predicate
 
-// t784. The restore reads persistence to decide which conversation ids may be
+// The restore reads persistence to decide which conversation ids may be
 // pinged. Only a seat's CURRENT id qualifies: a record for an id the seat has
 // rotated away from is a leak, and accepting it re-armed a dead conversation on
 // every launch — measured live at 49 pings of 152k cached reads, unbounded,
