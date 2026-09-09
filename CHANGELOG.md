@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Keep-warm no longer pings a 5-minute prefix, and new seats skip the trust prompt
+## Unreleased
+
+## 5.45.0 — 2026-09-09 — Keep-warm no longer pings a 5-minute prefix, and new seats skip the trust prompt
 
 - **Cache busts:** the bundled wirescope proxy is now v0.6.65: keep-warm pings are a labelled request kind (excluded from turn counts, the replay stash and bust lineage, and shown as their own cost line on the proxy status), and the proxy applies the same no-ping rule for a prefix whose TTL is not longer than the ping margin.
 - **Keep-warm:** a hold no longer pings a prefix whose cache TTL is not longer than the ping margin. After an autocompact the replayable request carries 5-minute markers, and a perpetual hold pinged that pre-compact prefix every minute until the next real turn (measured: 152 pings, about $21, on one seat overnight).
