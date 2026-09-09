@@ -100,6 +100,9 @@ function holdDecision(hold, hasEntry, warmthQ, now, caps = {}) {
   if (!hasEntry) return ['skip', 'no replayable request cached'];
   if (!warmthQ || !warmthQ.found) return ['skip', 'prefix not in ledger'];
   if (warmthQ.remaining_s <= 0) return ['skip', 'prefix already cold'];
+  if (typeof warmthQ.ttl_s === 'number' && warmthQ.ttl_s <= margin) {
+    return ['skip', 'prefix ttl not longer than the ping margin'];
+  }
   if (warmthQ.remaining_s >= margin) return ['skip', 'not yet due'];
   return ['ping', 'due'];
 }

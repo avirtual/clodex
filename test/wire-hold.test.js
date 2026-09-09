@@ -70,9 +70,19 @@ test('holdDecision: full verdict matrix', () => {
   assert.deepEqual(holdDecision(hold, true, { found: true, remaining_s: 0 }, 1000), ['skip', 'prefix already cold']);
   assert.deepEqual(holdDecision(hold, true, { found: true, remaining_s: 300 }, 1000), ['skip', 'not yet due']);
   assert.deepEqual(holdDecision(hold, true, { found: true, remaining_s: 299 }, 1000), ['ping', 'due']);
+  // A prefix whose whole TTL fits inside the margin is due on every tick, and each
+  // ping re-stamps the same short TTL — pinging it never gets ahead of expiry.
+  assert.deepEqual(holdDecision(hold, true, { found: true, remaining_s: 299, ttl_s: 300 }, 1000),
+    ['skip', 'prefix ttl not longer than the ping margin']);
+  assert.deepEqual(holdDecision(hold, true, { found: true, remaining_s: 299, ttl_s: 3600 }, 1000), ['ping', 'due']);
   // caps overridable
   assert.equal(holdDecision({ ...hold, pings: 3 }, true, warm, 1000, { maxPings: 3 })[0], 'disarm');
   assert.equal(holdDecision(hold, true, { found: true, remaining_s: 500 }, 1000, { marginSeconds: 600 })[0], 'ping');
+  // The TTL skip reads the caller's margin, not the default one.
+  assert.deepEqual(holdDecision(hold, true, { found: true, remaining_s: 299, ttl_s: 600 }, 1000, { marginSeconds: 600 }),
+    ['skip', 'prefix ttl not longer than the ping margin']);
+  assert.deepEqual(holdDecision(hold, true, { found: true, remaining_s: 500, ttl_s: 3600 }, 1000, { marginSeconds: 600 }),
+    ['ping', 'due']);
 });
 
 // The failure budget is the ONLY thing that ends a perpetual hold, and its
@@ -163,6 +173,31 @@ test('holdDecision: a perpetual hold bypasses the deadline and the ping budget, 
   assert.deepEqual(holdDecision(perp, false, warm, 1000), ['skip', 'no replayable request cached']);
   assert.deepEqual(holdDecision(perp, true, { found: true, remaining_s: 0 }, 1000), ['skip', 'prefix already cold']);
   assert.deepEqual(holdDecision(perp, true, { found: true, remaining_s: 300 }, 1000), ['skip', 'not yet due']);
+});
+
+// The failure stop is what ends a perpetual hold against a DEAD credential; it
+// never fires against a live one, so a perpetual hold on a short-TTL prefix has
+// no self-bound at all — the TTL skip is the only thing between it and pinging
+// once a minute for as long as the seat lives. This is the shape that cost 152
+// pings overnight after an autocompact stashed a request with 5-minute markers.
+test('holdDecision: a perpetual hold on a prefix with a margin-length TTL skips on every tick', () => {
+  const perp = { until: null, always: true, pings: 0, failures: 0 };
+  const shortTtl = { found: true, warm: true, remaining_s: 299, ttl_s: 300 };
+  const SKIP = ['skip', 'prefix ttl not longer than the ping margin'];
+
+  // ENTER: the fixture is pinned on both sides of the default margin (300 is
+  // DEFAULTS.marginSeconds, which this module does not export) — ttl_s at it, so
+  // the TTL guard is reached, and remaining_s under it, so 'not yet due' is not
+  // what skips. Shrink that default and the loop below reds on 'not yet due'
+  // rather than quietly asserting a skip the guard did not produce.
+  assert.ok(shortTtl.ttl_s <= 300, 'fixture ttl_s must be <= the default ping margin');
+  assert.ok(shortTtl.remaining_s < 300, 'fixture must be due, so the TTL guard is what skips');
+
+  for (let tick = 0; tick < 5; tick += 1) {
+    const now = 1_000_000 + tick * 60_000;
+    assert.deepEqual(holdDecision(perp, true, shortTtl, now), SKIP);
+  }
+  assert.equal(perp.pings, 0, 'a skipping tick spends no ping budget');
 });
 
 test('rearmPlan: a perpetual seat re-arms with no deadline', () => {
@@ -291,13 +326,13 @@ test('arm: cold-gated like a ping; clamps hours; hours<=0 disarms', () => {
 });
 
 test('organic turn re-anchors the window and resets the ping budget', async () => {
-  const { store, keeper, clock } = rig();
+  const { store, keeper, clock } = rig({ marginSeconds: 100 });
   const obj = makeObj();
   keeper.noteRequest(SID, obj, {}, 'http://up/v1/messages');
   stampWarm(store, obj);
   keeper.arm(SID, 1);
 
-  clock.t += 250; // due (300 ttl, 300 margin)
+  clock.t += 250; // due (300s ttl, 100s margin)
   await keeper.tick();
   let h = keeper.holds()[SID];
   assert.equal(h.pings, 1);
@@ -311,7 +346,7 @@ test('organic turn re-anchors the window and resets the ping budget', async () =
 });
 
 test('tick: pings when due, disarms on expiry / max pings / 2 failures', async () => {
-  const { store, keeper, clock, sent, responder } = rig({ maxPings: 2 });
+  const { store, keeper, clock, sent, responder } = rig({ maxPings: 2, marginSeconds: 100 });
   const obj = makeObj();
   const disarms = [];
   keeper.on('hold', (e) => { if (e.event === 'disarmed') disarms.push(e.reason); });
@@ -344,7 +379,7 @@ test('tick: pings when due, disarms on expiry / max pings / 2 failures', async (
 });
 
 test('tick: 2 consecutive ping FAILURES disarm; ping attempts spend budget', async () => {
-  const { store, keeper, clock, responder } = rig();
+  const { store, keeper, clock, responder } = rig({ marginSeconds: 100 });
   const obj = makeObj();
   const disarms = [];
   keeper.on('hold', (e) => { if (e.event === 'disarmed') disarms.push(e.reason); });
@@ -372,7 +407,7 @@ test('tick: 2 consecutive ping FAILURES disarm; ping attempts spend budget', asy
 // cannot see this: the bug it guards was tick() adding a strike for anything
 // that was not `warmed`, which no assertion on the pure function would catch.
 test('tick: declines neither spend the failure budget nor clear a strike already on it', async () => {
-  const { store, keeper, clock, sent, responder } = rig();
+  const { store, keeper, clock, sent, responder } = rig({ marginSeconds: 100 });
   const obj = makeObj();
   const disarms = [];
   keeper.on('hold', (e) => { if (e.event === 'disarmed') disarms.push(e.cause); });
@@ -417,7 +452,7 @@ test('tick: declines neither spend the failure budget nor clear a strike already
 // fully — otherwise strikes accumulate across unrelated outages until any two
 // in a session's lifetime disarm it.
 test('tick: a successful ping resets the failure count to zero', async () => {
-  const { store, keeper, clock, responder } = rig();
+  const { store, keeper, clock, responder } = rig({ marginSeconds: 100 });
   const obj = makeObj();
   keeper.noteRequest(SID, obj, {}, 'http://up/v1/messages');
   stampWarm(store, obj);
@@ -489,7 +524,7 @@ test('organic turn on a perpetual hold resets the budget without inventing a dea
 });
 
 test('tick: a perpetual hold outlives the budget and the deadline, and still dies on 2 failures', async () => {
-  const { store, keeper, clock, sent, responder } = rig({ maxPings: 2 });
+  const { store, keeper, clock, sent, responder } = rig({ maxPings: 2, marginSeconds: 100 });
   const obj = makeObj();
   const disarms = [];
   keeper.on('hold', (e) => { if (e.event === 'disarmed') disarms.push(e.cause); });
@@ -697,7 +732,7 @@ test('a perpetual hold survives an idle-seat token refresh gap and pings again a
   // the shipped bug blew: two ticks inside one margin window used to be enough
   // to disarm, because both replayed the same expired bearer.
   const cred = { accessToken: 'sk-ant-oat01-old', expiresAt: Date.now() - 1000 };
-  const { store, keeper, clock, sent } = rig({ auth: () => ({ ...cred }) });
+  const { store, keeper, clock, sent } = rig({ auth: () => ({ ...cred }), marginSeconds: 100 });
   const obj = makeObj();
   const disarms = [];
   keeper.on('hold', (e) => { if (e.event === 'disarmed') disarms.push(e.cause); });
@@ -705,7 +740,7 @@ test('a perpetual hold survives an idle-seat token refresh gap and pings again a
   stampWarm(store, obj);
   keeper.arm(SID, 0, { always: true });
 
-  clock.t += 250; // inside the 300s margin: due every tick from here
+  clock.t += 250; // inside the ping margin: due every tick from here
   for (let i = 0; i < 5; i++) await keeper.tick();
   assert.equal(sent.length, 0, 'ENTER: every tick declined at the credential gate');
   assert.deepStrictEqual(disarms, [], 'five ticks past a two-strike budget and it is still armed');
