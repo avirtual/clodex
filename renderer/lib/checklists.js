@@ -56,6 +56,18 @@ let defaultToolDenyCache = [];
 let defaultSkillDenyCache = [];
 let defaultBuiltinDenyCache = [];
 
+// The {system, append} cache shape, built from a `listPrompts()` reply. Team-owned
+// rows are DROPPED: these pickers compose onto an arbitrary session, where a bare
+// stem resolves against the library alone — so a team row would offer a name the
+// spawn cannot find, and a shadowed stem would appear twice and compose twice.
+function libraryPromptCache(rows) {
+  const library = (rows || []).filter((p) => p && !p.team);
+  return {
+    system: library.filter((p) => p.kind === 'system'),
+    append: library.filter((p) => p.kind === 'append'),
+  };
+}
+
 // Setters — every renderer.js reassignment routes through these.
 function setPromptLibCache(v) { promptLibCache = v; }
 function setAgentLibCache(v) { agentLibCache = v; }
@@ -542,6 +554,7 @@ module.exports = {
   renderToolAllowChecklist, collectToolAllowChecklist,
   renderSkillChecklist, collectSkillChecklist,
   setChecklistAll, wireBulkToggles,
+  libraryPromptCache,
   setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache,
   setIntentCatalogCache,
   setPluginCatalogCache,

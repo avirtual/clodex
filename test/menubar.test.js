@@ -25,7 +25,16 @@ function recordingCtx() {
   const api = {
     listAgents: async () => [{ name: 'agent-one', description: 'first' }],
     listSkillLib: async () => [{ name: 'skill-one', description: 'a skill' }],
-    listPrompts: async () => [{ name: 'lib-append', kind: 'append', body: 'A' }, { name: 'lib-sys', kind: 'system', body: 'S' }],
+    // The team rows listPrompts now carries (t790) are the Prompts DRAWER's
+    // business, not this menu's: it opens the library editor by bare {kind, name},
+    // which resolves against the library alone. `team-sys` shadows `lib-sys` and
+    // `team-only` exists nowhere else — both must be absent from the submenu below.
+    listPrompts: async () => [
+      { name: 'lib-append', kind: 'append', body: 'A' },
+      { name: 'lib-sys', kind: 'system', body: 'S' },
+      { name: 'lib-sys', kind: 'system', body: 'T', team: 'shop', id: 'team:shop:system:lib-sys' },
+      { name: 'team-only', kind: 'append', body: 'U', team: 'shop', id: 'team:shop:append:team-only' },
+    ],
     listTemplates: async () => [{ id: 'tpl-one', name: 'tpl-one' }, { id: 'rev:audit', name: 'rev:audit', plugin: 'rev' }],
     listExecCommands: async () => [{ name: 'cmd-one' }],
     pluginCatalog: async () => [{
@@ -99,7 +108,7 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
     '[System]', 'lib-sys', '[Append]', 'lib-append',
     '—', '[Reviewer]', '[System]', 'strict', '[Append]', 'rules',
     '—', 'New Prompt…', 'Manage Prompts…',
-  ]);
+  ], 'one lib-sys, not two, and no team-only row: the team copies are fenced out');
   assert.deepStrictEqual(await sub('Templates'),
     ['tpl-one', '—', '[Reviewer]', 'audit', '—', 'New Template…', 'Manage Templates…'],
     'a plugin template shows its stem, not the plugin-id:stem row the flat list carries');

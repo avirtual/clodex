@@ -8960,7 +8960,7 @@ body {
                 label: "Prompts",
                 submenu: async () => kindRows({
                   channel: "request-open-prompts-drawer",
-                  library: promptRows(await read(api.listPrompts), (p, kind) => emit("request-open-prompts-drawer", { kind, name: p.name })),
+                  library: promptRows((await read(api.listPrompts)).filter((p) => !p.team), (p, kind) => emit("request-open-prompts-drawer", { kind, name: p.name })),
                   empty: "(no prompts in library)",
                   pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit("request-open-prompts-drawer", { plugin: b.id, kind, name: p.name })),
                   newLabel: "New Prompt\u2026",
@@ -23154,6 +23154,13 @@ ${String(body || "").trim()}
       var defaultToolDenyCache = [];
       var defaultSkillDenyCache = [];
       var defaultBuiltinDenyCache = [];
+      function libraryPromptCache(rows) {
+        const library = (rows || []).filter((p) => p && !p.team);
+        return {
+          system: library.filter((p) => p.kind === "system"),
+          append: library.filter((p) => p.kind === "append")
+        };
+      }
       function setPromptLibCache(v) {
         promptLibCache = v;
       }
@@ -23591,6 +23598,7 @@ ${String(body || "").trim()}
         collectSkillChecklist,
         setChecklistAll,
         wireBulkToggles,
+        libraryPromptCache,
         setPromptLibCache,
         setAgentLibCache,
         setSkillLibCache,
@@ -35412,7 +35420,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -37063,10 +37071,7 @@ ${detail}` });
         renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
         refreshNewSessionExecCommands();
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
-        setPromptLibCache({
-          system: (cat.prompts || []).filter((p) => p.kind === "system"),
-          append: (cat.prompts || []).filter((p) => p.kind === "append")
-        });
+        setPromptLibCache(libraryPromptCache(cat.prompts));
         fillSystemPromptSelect(inputSystemPrompt, "", newSessionSeat());
         renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set(), newSessionSeat());
         setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
@@ -37077,11 +37082,7 @@ ${detail}` });
         await refreshNewSessionInjectSkills();
       }
       async function loadPromptLib() {
-        const all = await window.api.listPrompts();
-        setPromptLibCache({
-          system: all.filter((p) => p.kind === "system"),
-          append: all.filter((p) => p.kind === "append")
-        });
+        setPromptLibCache(libraryPromptCache(await window.api.listPrompts()));
       }
       function fillSystemPromptSelect(selectEl, current, seat = null) {
         while (selectEl.options.length > 1) selectEl.remove(1);
@@ -41915,10 +41916,7 @@ ${res.stderr}` : "");
         }
         argsEditingSource = argsSource;
         setAgentLibCache(agentLib || []);
-        setPromptLibCache({
-          system: (promptLib || []).filter((p) => p.kind === "system"),
-          append: (promptLib || []).filter((p) => p.kind === "append")
-        });
+        setPromptLibCache(libraryPromptCache(promptLib));
         argsEditingName = name;
         argsTarget.textContent = `${name} (${res.type}) \u2014 new settings apply on next spawn.`;
         {
