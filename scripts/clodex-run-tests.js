@@ -8,8 +8,8 @@ const { spawnSync, execFileSync } = require('child_process');
 const ROOT = process.cwd();
 const LEAF = path.basename(ROOT);
 
-function emit(msg, code) {
-  process.stderr.write(String(msg).slice(0, 180) + '\n');
+function emit(msg, code, cap) {
+  process.stderr.write((cap ? String(msg).slice(0, cap) : String(msg)) + '\n');
   process.exit(code);
 }
 
@@ -63,6 +63,7 @@ function resolveMeasure(payload) {
   const refuse = () => emit(
     `[${LEAF}] refused, nothing measured: not a worktree of this repo — ${want || '(empty)'}`,
     1,
+    180,
   );
   if (!want) refuse();
   const wantAbs = real(want);
@@ -125,4 +126,4 @@ const NAME_RE = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/gm;
 const hay = `${stdout}\n${stderr}`;
 for (let m = NAME_RE.exec(hay); m; m = NAME_RE.exec(hay)) names.push(m[1]);
 
-emit(`[${LEAF}] ${pass}/${tests} green, ${fail} failing: ${names.join('; ')}`, exitCode);
+emit(`[${LEAF}] ${pass}/${tests} green, ${fail} failing: ${names.join('; ')}`, exitCode, 180);

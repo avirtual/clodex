@@ -170,6 +170,25 @@ test('a runner that executed ZERO tests is a failure, not a 0/0 green', () => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a long failing list is CUT, so the digest fits what the dispatcher returns', () => {
+  // replyStderr hands back a bounded slice of the last stderr line. An uncut
+  // list would be truncated by the dispatcher instead, past the point where the
+  // counts at the head are still readable.
+  const root = mkRoot();
+  try {
+    const names = Array.from({ length: 40 }, (_, i) => `console.log(' ✖ failing-test-name-${i} (1.0ms)');`);
+    writeStub(root, {
+      body: [...names, "console.log('TOTALS: 0 pass, 40 fail, 40 tests');"].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.strictEqual(r.code, 1);
+    assert.strictEqual(r.digest.length, 180, `the failing line is cut to 180, got ${r.digest.length}`);
+    assert.ok(r.digest.startsWith(`[${path.basename(root)}] 0/40 green, 40 failing: failing-test-name-0`),
+      'the counts and the first names survive the cut — they are the head of the line');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('the runner\'s stdout is never forwarded — the seat gets one stderr line', () => {
   const root = mkRoot();
   try {

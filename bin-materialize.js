@@ -12,8 +12,8 @@
 const fs = require('fs');
 const path = require('path');
 
-// The exec-intent helper scripts. These are
-// dependency-free (node builtins only), so a flat copy by relative path is
+// The exec-intent helper scripts. These are dependency-free
+// (node builtins only), so a flat copy by relative path is
 // sufficient — there is no require-closure to walk. test/exec-scripts-materialize.test.js
 // pins that property: add a local require() to one of them and the test fails
 // rather than the flat copy silently stranding it at runtime.
