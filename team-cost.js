@@ -1,8 +1,8 @@
 'use strict';
 
-// team-cost.js — per-ticket cost attribution. Pure leaf: no fs, no git, no
-// electron. Callers pass the already-read inputs; every function here is a
-// projection of them.
+// team-cost.js — cost attribution, per ticket and per team. Pure leaf: no fs, no
+// git, no electron — the team ledger's reader takes an injected readFile rather
+// than requiring one. Every function is a projection of what it is handed.
 //
 // Exists because the redesign's governing claim is cost-at-equal-quality, and
 // a claim measured only AFTER the change is narrative. The baseline has to be
