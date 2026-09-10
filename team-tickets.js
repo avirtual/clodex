@@ -33,6 +33,7 @@ const {
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
+  teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
 const { formatGatherReport } = require('./team-gather');
@@ -626,10 +627,10 @@ function createTicketMethods(deps, shared) {
             // `[]` intents (everything gated) is a real value that must apply; an
             // absent key (all-enabled template) passes null → create() omits it →
             // the seat keeps the living all-enabled default. PRIVILEGED intents are
-            // STRIPPED here (Task 27): this is an AGENT-INITIATED mint, so a template
-            // carrying `reboot` (a file path the spawner authored, or a saved
-            // template) can't self-grant the capability — only an operator's local
-            // GUI create/edit may. null passes through untouched.
+            // STRIPPED here: this is an AGENT-INITIATED mint, so a template carrying
+            // `reboot` (a file path the spawner authored, or a saved template) can't
+            // self-grant it — only an operator's local GUI create/edit may. null
+            // passes through untouched.
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
             sessionEnv, true,
             // Wire-off is not an authority grant in the privileged-intent sense —
@@ -2390,14 +2391,21 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const dir = nodePath.join(teamsDir, team.name);
-      const copiedClause = Array.isArray(team.templatesCopied) && team.templatesCopied.length
+      const copiedClause = (Array.isArray(team.templatesCopied) && team.templatesCopied.length
         ? `; templates copied to templates/<role>.json for ${team.templatesCopied.join(', ')}`
-        : '';
+        : '')
+        + (Array.isArray(team.promptsCopied) && team.promptsCopied.length
+          ? `; prompts copied to prompts/system/<role>.md for ${team.promptsCopied.join(', ')}`
+          : '');
       if (hasBrief) {
         const res = teamPromptSave(this._teamFileDeps(), team.name, 'append', 'team-project', brief);
         if (!res.ok) {
           try { fs.unlinkSync(nodePath.join(dir, 'team.json')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'append')); } catch {}
+          for (const r of (Array.isArray(team.promptsCopied) ? team.promptsCopied : [])) {
+            try { fs.unlinkSync(nodePath.join(dir, 'prompts', 'system', `${r}.md`)); } catch {}
+          }
+          try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'system')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts')); } catch {}
           for (const r of (Array.isArray(team.templatesCopied) ? team.templatesCopied : [])) {
             try { fs.unlinkSync(nodePath.join(dir, 'templates', `${r}.json`)); } catch {}
@@ -2480,9 +2488,12 @@ function createTicketMethods(deps, shared) {
             let added;
             try { added = addRole(team.name, name, def); }
             catch (err) { if (addUndo) addUndo(); throw err; }
-            const addCopied = Array.isArray(added && added.templatesCopied) && added.templatesCopied.length
+            const addCopied = (Array.isArray(added && added.templatesCopied) && added.templatesCopied.length
               ? `; templates copied to templates/<role>.json for ${added.templatesCopied.join(', ')}`
-              : '';
+              : '')
+              + (Array.isArray(added && added.promptsCopied) && added.promptsCopied.length
+                ? `; prompts copied to prompts/system/<role>.md for ${added.promptsCopied.join(', ')}`
+                : '');
             reply(`role "${name}" added to ${team.name}${addClause}${addCopied}`);
             return;
           }
@@ -4548,20 +4559,26 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
 
+      // A team file for the role's stem outranks an IMPLIED template's: the stock
+      // reviewer names none, so the default's would shadow the
+      // `prompts/system/reviewer.md` create writes. A NAMED one keeps its own —
+      // `reviewer:clodex-team-reviewer-shell` must not spawn a shell seat briefed
+      // by the team's copy of the no-shell prompt.
+      const explicitTpl = !!(templateOverride || (def && def.template));
+      const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
+        ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
+        : null;
       let systemPromptFile =
-        (tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
-          ? tpl.systemPromptFile
-          : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile);
-      // Defense-in-depth (T52 nit): the template is agent-writable and its
-      // systemPromptFile flows into resolveSystemPromptFile → promptLibrary._file,
-      // a bare path.join with no confinement — a stem like "../../../../etc/x"
-      // escapes library/prompts/system. This is a PRE-EXISTING, non-escalating gap
-      // (def.prompt already flowed through the same resolver, and a system prompt
-      // only INSTRUCTS — it grants no tool/intent/env, all of which stay capped),
-      // but since T52 makes the template the canonical prompt source, reject a
-      // traversing/absolute stem HERE (not in the shared resolver — don't widen the
-      // blast radius) and fall back to the shipped default. The rejected stem rides
-      // back on `promptEscaped` because the caller warns about it loudly.
+        (ownRolePrompt && !explicitTpl)
+          ? def.prompt
+          : ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
+            ? tpl.systemPromptFile
+            : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile));
+      // Defense-in-depth: the template is agent-writable and its systemPromptFile
+      // flows into resolveSystemPromptFile → promptLibrary._file, a bare path.join
+      // with no confinement — a stem like "../../../../etc/x" escapes
+      // library/prompts/system. Rejected HERE, not in the shared resolver, to avoid
+      // widening the blast radius; the stem rides back on `promptEscaped`.
       let promptEscaped = null;
       if (systemPromptFile.includes('/') || systemPromptFile.includes('\\') || systemPromptFile.includes('..')) {
         promptEscaped = systemPromptFile;

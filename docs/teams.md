@@ -86,7 +86,11 @@ resolves against this directory first and the shared library second. A name
 preflight (the roles popover) says which names resolved to the team's own
 copies. Create and role-add copy the role's stock template to
 `templates/<role>.json` in the team dir and point the role at it, so a team edits
-its own file; the library copy is what the NEXT team starts from.
+its own file; the library copy is what the NEXT team starts from. The role's
+stock system prompt is copied the same way, to `prompts/system/<role>.md`. Both
+copies are the team's fork and stop receiving upstream fixes; a team that wants
+the library's current version deletes its copy — from the Prompts drawer's Team
+group for a prompt — so the role's stem falls back to the library.
 
 A team's own template is reachable by naming it — from a role's `template`, from
 `[agent:spawn … template:<stem>]` by a seat inside the team — and is not listed
@@ -94,13 +98,14 @@ machine-wide in the New Session dialog or the library drawers. The same goes for
 a reviewer template: name it in the reviewer role, since the reviewer's
 prefix-based discovery reads the library only.
 
-The one thing seeded for you under `teams/` is the template copy above: creating
-a team writes `team.json` and a `templates/<role>.json` per role whose named
-template is installed in the library, and stops. Every other piece its manifest
-names — role prompts, append prompts, exec defs — is served by the shared library
-until you ask otherwise, and so is a template whose stem the library does not
-carry: the copy is skipped and the role keeps naming the stem. What fills the
-rest of the directory is **Gather**, and only when you ask for it.
+What is seeded for you under `teams/` is the two copies above: creating a team
+writes `team.json`, a `templates/<role>.json` per role whose named template is
+installed in the library, and a `prompts/system/<role>.md` per role whose named
+prompt is, and stops. Every other piece its manifest names — append prompts,
+exec defs — is served by the shared library until you ask otherwise, and so is a
+template or prompt whose stem the library does not carry: the copy is skipped
+and the role keeps naming the stem. What fills the rest of the directory is
+**Gather**, and only when you ask for it.
 
 ### Gather — make the team own what it uses
 

@@ -38,7 +38,19 @@ const LIB_LEAD = { name: 'clodex-team-lead', type: 'claude', cwd: '${TEAM_ROOT}'
 
 // A clodex home whose `library/templates/` holds whatever the caller names. With
 // `library` false the directory is absent entirely — the not-installed case.
-function mkHome({ library = { 'clodex-team-hand': LIB_HAND, 'clodex-team-lead': LIB_LEAD } } = {}) {
+// t791: the prompt bodies, one per stock role. Deliberately distinct strings —
+// a copy that wrote the wrong role's body would satisfy an existsSync check and
+// a length check, but not the byte comparison these feed.
+const LIB_PROMPTS = {
+  'clodex-team-lead': 'you are the lead\n',
+  'clodex-team-hand': 'you are the hand\n',
+  'clodex-team-reviewer': 'you are the reviewer\n',
+};
+
+function mkHome({
+  library = { 'clodex-team-hand': LIB_HAND, 'clodex-team-lead': LIB_LEAD },
+  prompts = LIB_PROMPTS,
+} = {}) {
   const home = mkTmpRoot('t789-home-');
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
   if (library) {
@@ -46,6 +58,13 @@ function mkHome({ library = { 'clodex-team-hand': LIB_HAND, 'clodex-team-lead': 
     fs.mkdirSync(dir, { recursive: true });
     for (const [stem, body] of Object.entries(library)) {
       fs.writeFileSync(path.join(dir, `${stem}.json`), `${JSON.stringify(body, null, 2)}\n`);
+    }
+  }
+  if (prompts) {
+    const dir = path.join(home, 'library', 'prompts', 'system');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [stem, body] of Object.entries(prompts)) {
+      fs.writeFileSync(path.join(dir, `${stem}.md`), body);
     }
   }
   return home;
@@ -90,7 +109,7 @@ test('t789 createTeam: every role with a stock template gets the team\'s own cop
 });
 
 test('t789 createTeam: a library that does not have the template leaves the def naming the stem', () => {
-  const home = mkHome({ library: false });
+  const home = mkHome({ library: false, prompts: false });
   const root = mkTmpRoot('t789-proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
 
@@ -172,6 +191,11 @@ function seedLibrary(home) {
   fs.mkdirSync(dir, { recursive: true });
   for (const [stem, body] of [['clodex-team-hand', LIB_HAND], ['clodex-team-lead', LIB_LEAD]]) {
     fs.writeFileSync(path.join(dir, `${stem}.json`), `${JSON.stringify(body, null, 2)}\n`);
+  }
+  const pdir = path.join(home, 'library', 'prompts', 'system');
+  fs.mkdirSync(pdir, { recursive: true });
+  for (const [stem, body] of Object.entries(LIB_PROMPTS)) {
+    fs.writeFileSync(path.join(pdir, `${stem}.md`), body);
   }
 }
 
@@ -265,17 +289,20 @@ test('t789 createTeam: a team.json that cannot be written unwinds the copies mad
 // which is how a fully-unwound-looking cleanup started leaving a team dir with
 // no manifest for listTeams to report as a broken team.
 //
-// A READ-ONLY prompts/ rather than the older pin's directory-shaped prompt file:
-// that obstruction lives INSIDE teams/<name>, so it keeps the directory alive on
-// its own and no unwind could ever empty it. This one makes teamPromptSave's
-// mkdir fail while leaving nothing of the caller's behind, so "the team directory
-// is gone" is a claim about the unwind rather than about the fixture.
+// A READ-ONLY prompts/append/ rather than the older pin's directory-shaped prompt
+// file: that obstruction lives INSIDE teams/<name>, so it keeps the directory
+// alive on its own and no unwind could ever empty it. This one makes
+// teamPromptSave's write fail while leaving nothing of the caller's behind, so
+// "the team directory is gone" is a claim about the unwind rather than about the
+// fixture. It is `append/` and not `prompts/` itself because t791's prompt copies
+// mkdir `prompts/system` during the create: an unwritable `prompts/` would fail
+// the CREATE, and the brief save under test here would never run.
 function mkFailedBriefCreate() {
   const f = mkTeamCreate();
   seedLibrary(f.home);
   const dir = path.join(f.home, 'teams', 'shop');
-  fs.mkdirSync(path.join(dir, 'prompts'), { recursive: true });
-  fs.chmodSync(path.join(dir, 'prompts'), 0o500);
+  fs.mkdirSync(path.join(dir, 'prompts', 'append'), { recursive: true });
+  fs.chmodSync(path.join(dir, 'prompts', 'append'), 0o500);
   return { f, dir };
 }
 
@@ -312,4 +339,191 @@ test('t789 create: the re-fire after that failure copies again, and says so', as
     `the retry reports both copies — got: ${JSON.stringify(f.injected)}`);
   assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'templates')).sort(), ['hand.json', 'lead.json'],
     'and the files are really there, written by THIS create');
+});
+
+// --- t791: the same, for each role's SYSTEM PROMPT. A role pointing at a library
+// stem has no prompt of its own to edit; create and role-add now copy the stock
+// prompt to `prompts/system/<role>.md` and repoint the role at `<role>`. Unlike a
+// template the bytes are copied verbatim, so every assertion below is byte-exact.
+
+const sysDir = (home, name) => path.join(teamDir(home, name), 'prompts', 'system');
+const readPrompt = (home, name, stem) => fs.readFileSync(path.join(sysDir(home, name), `${stem}.md`), 'utf-8');
+
+test('t791 createTeam: every role with a stock prompt gets the team\'s own copy, byte-equal, and points at it', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+
+  assert.strictEqual(fs.existsSync(teamDir(home, 'x')), false, 'ENTER: no team dir before the create');
+
+  const team = tm.createTeam({ name: 'x', root, lead: 'x-lead' });
+
+  // BYTES, not a JSON compare: the prompt is prose, and the only claim worth
+  // making about a copy of prose is that it is the same prose.
+  assert.strictEqual(readPrompt(home, 'x', 'lead'), LIB_PROMPTS['clodex-team-lead']);
+  assert.strictEqual(readPrompt(home, 'x', 'hand'), LIB_PROMPTS['clodex-team-hand']);
+  assert.strictEqual(readPrompt(home, 'x', 'reviewer'), LIB_PROMPTS['clodex-team-reviewer']);
+  // The count, anchored at THREE: unlike templates, every stock role carries a
+  // prompt — so the reviewer, which has no template, must still be copied for.
+  // A fourth file means a role gained a prompt nobody decided to give it.
+  assert.deepStrictEqual(fs.readdirSync(sysDir(home, 'x')).sort(), ['hand.md', 'lead.md', 'reviewer.md'],
+    'three copies and no more — the reviewer HAS a prompt even without a template');
+  assert.deepStrictEqual(team.promptsCopied, ['lead', 'hand', 'reviewer'],
+    'and the create reports exactly the roles it wrote a file for');
+
+  const m = tm.loadManifest('x');
+  assert.strictEqual(m.roles.lead.prompt, 'lead');
+  assert.strictEqual(m.roles.hand.prompt, 'hand');
+  assert.strictEqual(m.roles.reviewer.prompt, 'reviewer',
+    'the reviewer is repointed too — it is the role whose template could not carry it');
+});
+
+test('t791 createTeam: a library with no prompts leaves every def naming its stem', () => {
+  const home = mkHome({ prompts: false });
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+
+  // ENTER: templates ARE installed here, so a create that copied nothing at all
+  // would pass this test for the wrong reason.
+  assert.strictEqual(fs.existsSync(path.join(home, 'library', 'templates')), true, 'ENTER: templates installed');
+  assert.strictEqual(fs.existsSync(path.join(home, 'library', 'prompts')), false, 'ENTER: no prompts installed');
+
+  const team = tm.createTeam({ name: 'x', root, lead: 'x-lead' });
+
+  const m = tm.loadManifest('x');
+  assert.strictEqual(m.roles.hand.prompt, 'clodex-team-hand', 'the stem survives — the resolver falls back to it');
+  assert.strictEqual(m.roles.reviewer.prompt, 'clodex-team-reviewer');
+  assert.deepStrictEqual(team.promptsCopied, [], 'nothing was copied, and the reply says so');
+  assert.strictEqual(fs.existsSync(path.join(teamDir(home, 'x'), 'prompts')), false,
+    'and no empty prompts/ directory was left behind to look like a team that owns files');
+  assert.deepStrictEqual(team.templatesCopied, ['lead', 'hand'],
+    'ENTER: the template copies still ran — the two copiers are independent');
+});
+
+test('t791 addRole: a new role gets its own prompt copy; a re-add over an existing copy does not rewrite it', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'x', root, lead: 'x-lead' });
+
+  const added = tm.addRole('x', 'scribe', { prompt: 'clodex-team-hand', brief: 'writes things' });
+  assert.strictEqual(readPrompt(home, 'x', 'scribe'), LIB_PROMPTS['clodex-team-hand']);
+  assert.strictEqual(added.roles.scribe.prompt, 'scribe');
+  assert.deepStrictEqual(added.promptsCopied, ['scribe']);
+
+  // The operator's edit — the whole reason the team gets a file of its own.
+  const own = path.join(sysDir(home, 'x'), 'scribe.md');
+  fs.writeFileSync(own, 'the operator rewrote this\n');
+  const edited = fs.readFileSync(own);
+
+  tm.removeRole('x', 'scribe');
+  assert.ok(fs.existsSync(own), 'ENTER: removeRole left the team\'s own copy in place');
+  assert.strictEqual(tm.loadManifest('x').roles.scribe, undefined, 'ENTER: and the role is gone');
+
+  const re = tm.addRole('x', 'scribe', { prompt: 'clodex-team-hand', brief: 'writes things' });
+  assert.deepStrictEqual(fs.readFileSync(own), edited,
+    'BYTES: the operator\'s edited copy is what stayed — a rewrite from the library would restore the stock prose');
+  assert.strictEqual(re.roles.scribe.prompt, 'scribe', 'and the role points at it again');
+  assert.deepStrictEqual(re.promptsCopied, [],
+    'nothing was written, so the reply must not claim a copy it skipped');
+});
+
+test('t791 addRole: re-riding the same stock def stays a no-op after the prompt copy repointed the role', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'x', root, lead: 'x-lead' });
+  assert.strictEqual(tm.loadManifest('x').roles.hand.prompt, 'hand',
+    'ENTER: the role already points at its own prompt copy');
+
+  // What team:join re-rides: the STOCK def, still naming the library stems. The
+  // repointOnly pass has to cover BOTH fields, or the comparison sees a def whose
+  // template matches and whose prompt does not.
+  assert.doesNotThrow(() => tm.addRole('x', 'hand', { ...STOCK_ROLE_DEFS.hand }),
+    'a join onto a role the create already copied for must not read as a redefinition');
+  assert.strictEqual(tm.loadManifest('x').roles.hand.prompt, 'hand',
+    'and the no-op left the role pointing at its own copy');
+});
+
+test('t791 createTeam: a team.json that cannot be written unwinds the prompt copies made for that call', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  fs.mkdirSync(path.join(teamDir(home, 'x'), 'team.json'), { recursive: true });
+
+  assert.throws(() => tm.createTeam({ name: 'x', root, lead: 'x-lead' }));
+
+  assert.deepStrictEqual(fs.readdirSync(teamDir(home, 'x')).sort(), ['team.json'],
+    'the prompt copies, prompts/system and prompts are ALL gone — only the fixture\'s obstruction is left');
+});
+
+test('t791 createTeam: an unwind of the prompt copies leaves a team brief on the append rail untouched', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  // The brief shares `prompts/` with the copies but is not theirs. Both rmdirs
+  // refuse a non-empty directory, which is what has to save it.
+  const brief = path.join(teamDir(home, 'x'), 'prompts', 'append', 'team-project.md');
+  fs.mkdirSync(path.dirname(brief), { recursive: true });
+  fs.writeFileSync(brief, 'the project brief\n');
+  fs.mkdirSync(path.join(teamDir(home, 'x'), 'team.json'), { recursive: true });
+
+  assert.throws(() => tm.createTeam({ name: 'x', root, lead: 'x-lead' }));
+
+  assert.strictEqual(fs.readFileSync(brief, 'utf-8'), 'the project brief\n',
+    'the brief survived: an unwind that rmdir -r\'d prompts/ would have taken a file it never wrote');
+  assert.strictEqual(fs.existsSync(path.join(teamDir(home, 'x'), 'prompts', 'system')), false,
+    'and the copies it DID write are gone, directory included');
+});
+
+test('t791 [agent:team create]: the reply names the roles that got a prompt copy', async () => {
+  const f = mkTeamCreate();
+  seedLibrary(f.home);
+
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.injected.some((t) => t.includes('prompts copied to prompts/system/<role>.md for lead, hand, reviewer')),
+    `the create reply names the copied roles — got: ${JSON.stringify(f.injected)}`);
+
+  const bare = mkTeamCreate();
+  await bare.m._handleIntent('a', { type: 'team-create', name: 'shop', root: bare.projectRoot, lead: null, body: '' });
+  assert.ok(bare.injected.length, 'ENTER: the bare create replied at all');
+  assert.ok(!bare.injected.some((t) => /prompts copied/.test(t)),
+    'no library, no copy, no clause');
+});
+
+test('t791 create: a brief that cannot be saved unwinds the prompt copies too', async () => {
+  const { f, dir } = mkFailedBriefCreate();
+
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'the brief',
+  });
+
+  assert.ok(f.injected[0] && f.injected[0].includes('no team was created'),
+    `ENTER: the brief save really failed — got: ${f.injected[0]}`);
+  assert.strictEqual(fs.existsSync(dir), false,
+    'the whole team directory is gone: a surviving prompts/system would make rmdir(prompts) and then rmdir(dir) fail, leaving a manifest-less team listTeams still reports');
+});
+
+test('t791 [agent:team role-add]: the reply names the prompt copy, over the REAL mutator', async () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'lead' });
+  const { m, injected } = mkPark({
+    fs, path, REGISTRY_DIR: home,
+    resolveTeam: () => tm.loadManifest('shop'),
+    findProjectRoot: () => root,
+    addRole: tm.addRole,
+  });
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  const seat = { name: 'lead', type: 'claude', agentType: 'claude', cwd: root, activityState: 'idle' };
+  m.sessions.set('lead', seat);
+
+  m._handleTeam(seat, { type: 'team', sub: 'role-add', name: 'scribe', prompt: 'clodex-team-hand', body: 'writes' });
+
+  assert.strictEqual(readPrompt(home, 'shop', 'scribe'), LIB_PROMPTS['clodex-team-hand'],
+    'ENTER: the role-add really did write the copy — the clause below is about this file');
+  assert.ok(injected.some((t) => t.includes('role "scribe" added to shop; prompts copied to prompts/system/<role>.md for scribe')),
+    `the role-add reply carries the clause — got: ${JSON.stringify(injected)}`);
 });
