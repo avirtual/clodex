@@ -391,6 +391,8 @@ function createTicketMethods(deps, shared) {
     setTeamWatchdog,
     setLead,
     createTeam,
+    kitCatalog,
+    resolveKit,
     teamsDir,
     refreshAppMenu,
     gatherTeam,
@@ -2334,6 +2336,19 @@ function createTicketMethods(deps, shared) {
         reply(`error: mode "${intent.mode}" is not kickstart or interview — no team was created`);
         return;
       }
+      const kitList = () => {
+        const lines = kitCatalog();
+        return lines.length ? `\n${lines.join('\n')}` : ' none are installed';
+      };
+      let kitDef = null;
+      if (intent.kit === '?') {
+        reply(`kits:${kitList()}`);
+        return;
+      }
+      try { kitDef = resolveKit(intent.kit); } catch (err) {
+        reply(`error: ${err.message} — no team was created. Kits:${kitList()}`);
+        return;
+      }
       const cls = await this._classifyTeamRoot(root);
       if (!cls.kind) {
         const refusals = {
@@ -2387,19 +2402,21 @@ function createTicketMethods(deps, shared) {
         }
       }
       const rootClause = cls.kind === 'takeover' ? '(existing repo, untouched)' : "(new, git init'd)";
+      const kitRoles = (kitDef && Object.keys(kitDef.roles).length) ? kitDef.roles : STOCK_ROLE_DEFS;
       const roles = hasBrief ? {
-        lead: { ...STOCK_ROLE_DEFS.lead },
-        hand: { ...STOCK_ROLE_DEFS.hand, dispatch: 'worktree' },
-        reviewer: { ...STOCK_ROLE_DEFS.reviewer },
+        lead: { ...kitRoles.lead },
+        hand: { ...kitRoles.hand, dispatch: 'worktree' },
+        reviewer: { ...kitRoles.reviewer },
       } : undefined;
       let team;
       try {
-        team = createTeam({ name, root, lead, roles });
+        team = createTeam({ name, root, lead, roles, kit: intent.kit });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
       }
       const dir = nodePath.join(teamsDir, team.name);
+      const kitClause = team.kitSeeded ? ` from kit ${team.kitSeeded}` : '';
       const copiedClause = (Array.isArray(team.templatesCopied) && team.templatesCopied.length
         ? `; templates copied to templates/<role>.json for ${team.templatesCopied.join(', ')}`
         : '')
@@ -2420,17 +2437,21 @@ function createTicketMethods(deps, shared) {
             try { fs.unlinkSync(nodePath.join(dir, 'templates', `${r}.json`)); } catch {}
           }
           try { fs.rmdirSync(nodePath.join(dir, 'templates')); } catch {}
+          for (const c of (Array.isArray(team.execCopied) ? team.execCopied : [])) {
+            try { fs.unlinkSync(nodePath.join(dir, 'exec', `${c}.json`)); } catch {}
+          }
+          try { fs.rmdirSync(nodePath.join(dir, 'exec')); } catch {}
           try { fs.rmdirSync(dir); } catch {}
           this._refreshAppMenuQuietly();
           reply(`error: could not save the brief (${res.error}) — no team was created; `
             + `re-fire [agent:team create ${name} root:${root}${intent.lead ? ` lead:${intent.lead}` : ''}`
-            + `${intent.mode ? ` mode:${intent.mode}` : ''}] with the brief`);
+            + `${intent.mode ? ` mode:${intent.mode}` : ''}${intent.kit ? ` kit:${intent.kit}` : ''}] with the brief`);
           return;
         }
       }
       try { if (typeof refreshAppMenu === 'function') refreshAppMenu(); } catch {}
       if (hasBrief) {
-        const head = `team "${team.name}" created — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
+        const head = `team "${team.name}" created${kitClause} — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
           + `hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md${copiedClause}`;
         const isNew = cls.kind !== 'takeover';
         const rootArm = isNew
@@ -2468,7 +2489,7 @@ function createTicketMethods(deps, shared) {
         this._handleSpawnIntent(session, { name: team.lead, cwd: team.root }, { onReply });
         return;
       }
-      reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}${copiedClause}. `
+      reply(`team "${team.name}" created${kitClause} — root ${team.root}, lead ${team.lead}, dir ${dir}${copiedClause}. `
         + 'Next: spawn the lead in that root, then [agent:team role-add …] from it.');
     },
 

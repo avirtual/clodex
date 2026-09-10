@@ -53,6 +53,10 @@ const EDITABLE_ROLE_FIELDS = ['brief', 'cwd', 'dispatch', 'prompt', 'template'];
 // must never create, destroy or rename them.
 const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
 
+const DEFAULT_KIT = 'default';
+
+const LEGACY_KIT = 'clodex';
+
 const WATCHDOG_MIN_MS = 5 * 60 * 1000;
 const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -146,6 +150,47 @@ const warnedDrops = new Set();
 function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
+  const kitsDir = path.join(home, 'library', 'kits');
+
+  function listKits() {
+    let ents;
+    try { ents = fs.readdirSync(kitsDir, { withFileTypes: true }); } catch { return []; }
+    return ents
+      .filter((e) => e.isDirectory() && TEAM_STEM_RE.test(e.name) && !badStem(e.name))
+      .map((e) => e.name)
+      .filter((n) => { try { return !!fs.readFileSync(path.join(kitsDir, n, 'kit.json'), 'utf-8'); } catch { return false; } })
+      .sort();
+  }
+
+  function readKit(name) {
+    if (badStem(name) || !TEAM_STEM_RE.test(name)) return null;
+    let obj;
+    try { obj = JSON.parse(fs.readFileSync(path.join(kitsDir, name, 'kit.json'), 'utf-8')); }
+    catch { return null; }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+    const roles = (obj.roles && typeof obj.roles === 'object' && !Array.isArray(obj.roles)) ? obj.roles : {};
+    return {
+      name,
+      dir: path.join(kitsDir, name),
+      description: typeof obj.description === 'string' ? obj.description : '',
+      roles,
+    };
+  }
+
+  function kitCatalog() {
+    return listKits().map((n) => {
+      const k = readKit(n);
+      return `${n} — ${(k && k.description) || 'no description'}`;
+    });
+  }
+
+  function resolveKit(kit) {
+    if (kit == null) return readKit(DEFAULT_KIT);
+    const name = String(kit);
+    const found = readKit(name);
+    if (!found) throw new Error(`unknown kit "${name}" (available: ${listKits().join(', ') || 'none'})`);
+    return found;
+  }
 
   // fs-util's atomicWriteFileSync, not a local write+rename: a bare rename is
   // atomic but not durable, and it fsyncs the bytes and the directory entry. Not
@@ -157,11 +202,33 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     atomicWriteFileSync(file, data);
   }
 
+  function sourceDirs(opts, ...segments) {
+    const kitDir = opts && typeof opts.kitDir === 'string' && opts.kitDir ? opts.kitDir : null;
+    return [
+      ...(kitDir ? [path.join(kitDir, ...segments)] : []),
+      path.join(home, 'library', ...segments),
+    ];
+  }
+
+  function readFirst(dirs, file) {
+    for (const d of dirs) {
+      try { return fs.readFileSync(path.join(d, file), 'utf-8'); } catch {}
+    }
+    return null;
+  }
+
   function unwindTemplateCopies(teamName, roleNames) {
     for (const r of roleNames) {
       try { fs.unlinkSync(path.join(teamsDir, teamName, 'templates', `${r}.json`)); } catch {}
     }
     try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
+  }
+
+  function unwindExecCopies(teamName, names) {
+    for (const n of names || []) {
+      try { fs.unlinkSync(path.join(teamsDir, teamName, 'exec', `${n}.json`)); } catch {}
+    }
+    try { fs.rmdirSync(path.join(teamsDir, teamName, 'exec')); } catch {}
   }
 
   function unwindPromptCopies(teamName, roleNames) {
@@ -188,9 +255,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         try { fs.readFileSync(target, 'utf-8'); own = true; } catch {}
         if (own) { def.prompt = roleName; continue; }
         if (repointOnly) continue;
-        let body;
-        try { body = fs.readFileSync(path.join(home, 'library', 'prompts', 'system', `${stem}.md`), 'utf-8'); }
-        catch { continue; }
+        const body = readFirst(sourceDirs(opts, 'prompts', 'system'), `${stem}.md`);
+        if (body == null) continue;
         atomicWrite(target, body);
         def.prompt = roleName;
         copied.push(roleName);
@@ -198,6 +264,26 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     } catch (err) {
       unwindPromptCopies(teamName, copied);
       throw err;
+    }
+    return copied;
+  }
+
+  function copyKitExec(teamName, kitDir) {
+    if (!kitDir) return [];
+    if (typeof teamName !== 'string' || !TEAM_STEM_RE.test(teamName)) return [];
+    let ents;
+    try { ents = fs.readdirSync(path.join(kitDir, 'exec')); } catch { return []; }
+    const copied = [];
+    for (const f of ents) {
+      if (!f.endsWith('.json')) continue;
+      const stem = f.slice(0, -'.json'.length);
+      if (badStem(stem) || !TEAM_STEM_RE.test(stem)) continue;
+      const target = path.join(teamsDir, teamName, 'exec', f);
+      try { fs.readFileSync(target, 'utf-8'); continue; } catch {}
+      let body;
+      try { body = fs.readFileSync(path.join(kitDir, 'exec', f), 'utf-8'); } catch { continue; }
+      atomicWrite(target, body);
+      copied.push(stem);
     }
     return copied;
   }
@@ -218,9 +304,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         try { fs.readFileSync(target, 'utf-8'); own = true; } catch {}
         if (own) { def.template = roleName; continue; }
         if (repointOnly) continue;
+        const raw = readFirst(sourceDirs(opts, 'templates'), `${stem}.json`);
+        if (raw == null) continue;
         let base;
-        try { base = JSON.parse(fs.readFileSync(path.join(home, 'library', 'templates', `${stem}.json`), 'utf-8')); }
-        catch { continue; }
+        try { base = JSON.parse(raw); } catch { continue; }
         if (!base || typeof base !== 'object' || Array.isArray(base)) continue;
         const body = { ...base };
         for (const k of LISTING_KEYS) delete body[k];
@@ -400,7 +487,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
-    return { name, root: path.resolve(root), lead, roles, file, dir: path.dirname(file), watchdogMs, version, droppedFields };
+    const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
+    return { name, root: path.resolve(root), lead, roles, kit, file, dir: path.dirname(file), watchdogMs, version, droppedFields };
   }
 
   function containsPath(root, cwd) {
@@ -535,8 +623,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
   }
 
-  function createTeam({ name, root, lead, roles } = {}) {
+  function createTeam({ name, root, lead, roles, kit } = {}) {
     assertTeamName(name);
+    const resolvedKit = resolveKit(kit);
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
       throw new Error(`team "${name}" root must be an absolute path`);
     }
@@ -555,7 +644,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         throw new Error(`team "${other}" already owns root ${resolvedRoot}`);
       }
     }
-    const defaultRoles = {
+    const kitRoles = resolvedKit && Object.keys(resolvedKit.roles).length ? resolvedKit.roles : null;
+    const defaultRoles = kitRoles || {
       lead: { ...STOCK_ROLE_DEFS.lead },
       hand: { ...STOCK_ROLE_DEFS.hand },
       // No `tools` here: the reviewer's cap is REVIEWER_TOOL_CAP in
@@ -572,18 +662,21 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       assertDispatchAllowed(k, seedRoles[k], file);
       assertRoleCwd(k, seedRoles[k], resolvedRoot, file);
     }
-    const templatesCopied = copyRoleTemplates(name, seedRoles);
+    const kitDir = resolvedKit ? resolvedKit.dir : null;
+    const templatesCopied = copyRoleTemplates(name, seedRoles, { kitDir });
     let promptsCopied;
     try {
-      promptsCopied = copyRolePrompts(name, seedRoles);
+      promptsCopied = copyRolePrompts(name, seedRoles, { kitDir });
     } catch (err) {
       unwindTemplateCopies(name, templatesCopied);
       throw err;
     }
+    const execCopied = copyKitExec(name, kitDir);
     const manifest = {
       version: MANIFEST_VERSION,
       lead,
       root: resolvedRoot,
+      ...(resolvedKit ? { kit: resolvedKit.name } : {}),
       roles: seedRoles,
     };
     try {
@@ -591,14 +684,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     } catch (err) {
       unwindTemplateCopies(name, templatesCopied);
       unwindPromptCopies(name, promptsCopied);
+      unwindExecCopies(name, execCopied);
       throw err;
     }
-    return { ...loadManifest(name), templatesCopied, promptsCopied };
+    return { ...loadManifest(name), templatesCopied, promptsCopied, execCopied, kitSeeded: resolvedKit ? resolvedKit.name : null };
   }
 
   function addRole(teamName, roleName, def, opts) {
     const team = loadManifest(teamName); // throws if the team is missing
     const operator = !!(opts && opts.operator === true);
+    const teamKit = readKit(team.kit);
+    const kitDir = teamKit ? teamKit.dir : null;
     if (!ROLE_RE.test(roleName)) {
       throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${team.file})`);
     }
@@ -607,7 +703,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // hands back the bypass. Ahead of the def validation below, so a def nobody
     // reads cannot refuse the write.
     if (operator && RESERVED_ROLE_KEYS.has(roleName) && !team.roles[roleName]) {
-      const stock = STOCK_ROLE_DEFS[roleName];
+      const kitDef = (teamKit && teamKit.roles[roleName]) || null;
+      const stock = kitDef || STOCK_ROLE_DEFS[roleName];
       if (!stock) {
         throw new Error(`no stock definition ships for the "${roleName}" role (${team.file})`);
       }
@@ -619,10 +716,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       // `dispatch: "worktree"`.
       assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
       assertRoleCwd(roleName, rawMint.roles[roleName], team.root, team.file);
-      const mintCopied = copyRoleTemplates(teamName, { [roleName]: rawMint.roles[roleName] });
+      const mintCopied = copyRoleTemplates(teamName, { [roleName]: rawMint.roles[roleName] }, { kitDir });
       let mintPrompts;
       try {
-        mintPrompts = copyRolePrompts(teamName, { [roleName]: rawMint.roles[roleName] });
+        mintPrompts = copyRolePrompts(teamName, { [roleName]: rawMint.roles[roleName] }, { kitDir });
       } catch (err) {
         unwindTemplateCopies(teamName, mintCopied);
         throw err;
@@ -648,8 +745,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (normalized.template != null && !NAME_RE.test(normalized.template)) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
-    copyRoleTemplates(teamName, { [roleName]: normalized }, { repointOnly: true });
-    copyRolePrompts(teamName, { [roleName]: normalized }, { repointOnly: true });
+    copyRoleTemplates(teamName, { [roleName]: normalized }, { repointOnly: true, kitDir });
+    copyRolePrompts(teamName, { [roleName]: normalized }, { repointOnly: true, kitDir });
     const existing = team.roles[roleName];
     // Never mint an absent reserved key from a def: loadManifest only requires
     // `lead`, so a hand-deleted `reviewer` could otherwise be re-added with an
@@ -668,10 +765,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
-    const templatesCopied = copyRoleTemplates(teamName, { [roleName]: raw.roles[roleName] });
+    const templatesCopied = copyRoleTemplates(teamName, { [roleName]: raw.roles[roleName] }, { kitDir });
     let promptsCopied;
     try {
-      promptsCopied = copyRolePrompts(teamName, { [roleName]: raw.roles[roleName] });
+      promptsCopied = copyRolePrompts(teamName, { [roleName]: raw.roles[roleName] }, { kitDir });
     } catch (err) {
       unwindTemplateCopies(teamName, templatesCopied);
       throw err;
@@ -822,6 +919,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   return {
     resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
     createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setLead,
+    listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE,
   };
 }

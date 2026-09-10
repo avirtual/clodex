@@ -110,6 +110,26 @@ template or prompt whose stem the library does not carry: the copy is skipped
 and the role keeps naming the stem. What fills the rest of the directory is
 **Gather**, and only when you ask for it.
 
+### Kits — which profile a new team is seeded from
+
+A kit is a team directory in miniature, under `~/.clodex/library/kits/<kit>/`:
+`kit.json` (a description and a `roles` map shaped exactly like `team.json`'s),
+plus `templates/`, `prompts/system/`, optionally `prompts/append/` and `exec/`.
+Two ship. `default` builds the team on your own Claude Code — plan mode, skills,
+agents and tools left as you have them. `clodex` is the aggressive ticket-loop
+profile the stock templates used to impose on every team: 36 tools off, every
+skill off, no plan mode. `[agent:team create <name> root:<abs> kit:<name>]`
+picks one, `kit:?` (or an unknown name) lists what is installed, and an unknown
+name creates nothing at all. The create IPC takes the same `kit` field.
+
+The copy source is the kit first and the shared library second, so a kit role may
+name a library-only stem — the `default` kit's reviewer does exactly that, since
+the reviewer's read-only tools are the review's design rather than a restriction
+to lift. `team.json` records the kit it was seeded from, and a later role-add
+copies from that same kit. A manifest with no `kit` key predates kits and is read
+as `clodex`, which is what its roles already name; the key is never written back
+onto it.
+
 ### Gather — make the team own what it uses
 
 Gather walks the manifest, finds every library piece the team references — role

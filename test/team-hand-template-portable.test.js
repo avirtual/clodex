@@ -48,6 +48,30 @@ test('it grants the three portable commands a fresh team\'s hand needs', () => {
   assert.deepStrictEqual(tpl.execCommands, ['clodex-team', 'clodex-monitor', 'clodex-run-tests']);
 });
 
+test('t803: every KIT\'s hand template carries the same portable grants', () => {
+  // Kit-independent: an exec grant that needs a script only this repo ships
+  // bounces on every call whichever profile a team was created from, and the
+  // grant IS the capability — a kit whose hand cannot run its own suite is
+  // broken in the same way the pre-t415 default was.
+  const KIT_DIR = path.join(__dirname, '..', 'resources', 'library', 'kits');
+  const kits = fs.readdirSync(KIT_DIR);
+  assert.ok(kits.length >= 2, 'ENTER: more than one kit ships, or this loop asserts about one file');
+  for (const kit of kits) {
+    const dir = path.join(KIT_DIR, kit, 'templates');
+    const handFile = fs.readdirSync(dir).find((f) => /^(hand|clodex-team-hand)\.json$/.test(f));
+    assert.ok(handFile, `kit ${kit} ships no hand template`);
+    const kitHand = JSON.parse(fs.readFileSync(path.join(dir, handFile), 'utf-8'));
+    assert.deepStrictEqual(kitHand.execCommands, tpl.execCommands,
+      `kit ${kit}'s hand must carry the same three portable grants`);
+    for (const cmd of ['clodex-check-syntax', 'clodex-repo-state']) {
+      assert.ok(!(kitHand.execCommands || []).includes(cmd),
+        `kit ${kit}: ${cmd} needs a script only this repo ships`);
+    }
+    assert.deepStrictEqual(kitHand.appendPromptFiles, tpl.appendPromptFiles,
+      `kit ${kit}'s hand must compose the same team brief`);
+  }
+});
+
 test('every exec grant it DOES carry is one a fresh project can satisfy', () => {
   // The survivors must be ${CLODEX_BIN}-based (shipped with the app) rather than
   // ${TEAM_ROOT}-based (supplied by the project).
@@ -219,15 +243,17 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
     // different definition". Pinned in ipc-handlers-team.test.js, 'team:addRole
     // leaves an EXISTING role alone'.
     'ipc-handlers.js': 4,
-    // t773: import + the three role defaults _handleTeamCreate hands to createTeam
-    // when the intent carries a kickstart brief (the hand's copy gains
-    // `dispatch: 'worktree'`, the def itself is untouched).
+    // t803: import + ONE fallback. _handleTeamCreate still builds the three role
+    // defaults it hands to createTeam on a kickstart brief, but it now reads
+    // them from the named KIT and falls back to this constant only for a home
+    // with no kits seeded. (The hand's copy gains `dispatch: 'worktree'`; the
+    // def itself is untouched, kit or fallback.)
     //
     // Checked against the question this message asks: createTeam is the MINT, and
     // it throws "already exists" on a team.json it can read, so this site is
     // reachable only for a team that does not exist yet. It never sees a live
     // team's role, so it can neither rewrite nor refuse one.
-    'team-tickets.js': 4,
+    'team-tickets.js': 2,
   }, 'a NEW read site means the stock def stopped being seed-only — verify it cannot rewrite '
     + 'or refuse a live team\'s role (addRole is exact-match-or-throw), then update this set.');
 });

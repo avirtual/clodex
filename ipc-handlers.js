@@ -112,7 +112,7 @@ function registerIpcHandlers(deps) {
     let written = false;
     let res;
     try {
-      createTeam({ name: teamName, root: p.cwd, lead: p.name });
+      createTeam({ name: teamName, root: p.cwd, lead: p.name, kit: p.kit });
       written = true;
       res = await spawnFromParams(e, p);
     } catch (err) {
@@ -139,10 +139,10 @@ function registerIpcHandlers(deps) {
   // single gate; resolving it here would silently accept a relative root against
   // whatever cwd the main process happens to have.
   handle('team:createBare', (_e, spec) => {
-    const { name, root, lead } = spec || {};
+    const { name, root, lead, kit } = spec || {};
     let team;
     try {
-      team = createTeam({ name, root, lead: defaultLeadSeat(name, lead) });
+      team = createTeam({ name, root, lead: defaultLeadSeat(name, lead), kit });
     } catch (err) {
       return { ok: false, error: err.message };
     }

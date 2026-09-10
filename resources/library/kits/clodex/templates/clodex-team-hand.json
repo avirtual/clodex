@@ -1,0 +1,77 @@
+{
+  "name": "clodex-team-hand",
+  "spawnerHint": "off",
+  "type": "claude",
+  "cwd": "${TEAM_ROOT}",
+  "proxy": null,
+  "agents": [],
+  "plugins": [],
+  "execCommands": [
+    "clodex-team",
+    "clodex-monitor",
+    "clodex-run-tests"
+  ],
+  "intents": [
+    "dm",
+    "who",
+    "context",
+    "memory",
+    "file",
+    "resend",
+    "exec",
+    "remind",
+    "notify-user"
+  ],
+  "denyBuiltins": [
+    "claude-code-guide",
+    "statusline-setup"
+  ],
+  "disabledTools": [
+    "NotebookEdit",
+    "LSP",
+    "PowerShell",
+    "Monitor",
+    "WebFetch",
+    "WebSearch",
+    "ListAgents",
+    "Skill",
+    "Workflow",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "EnterWorktree",
+    "ExitWorktree",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskUpdate",
+    "TaskStop",
+    "TaskOutput",
+    "TodoWrite",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "ScheduleWakeup",
+    "PushNotification",
+    "RemoteTrigger",
+    "ShareOnboardingGuide",
+    "AskUserQuestion",
+    "EndConversation",
+    "SendFeedback",
+    "Artifact",
+    "ReportFindings",
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    "WaitForMcpServers",
+    "DesignSync"
+  ],
+  "disabledSkills": ["*"],
+  "injectSkills": [],
+  "stripLevel": 2,
+  "systemPromptFile": null,
+  "appendPromptFiles": [
+    "team-project"
+  ],
+  "env": {
+    "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "60000"
+  }
+}

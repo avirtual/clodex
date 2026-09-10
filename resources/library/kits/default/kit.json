@@ -1,0 +1,19 @@
+{
+  "description": "Stock team on your own Claude Code: plan mode, skills, agents and tools left as you have them; costs more per ticket than the clodex kit.",
+  "roles": {
+    "lead": {
+      "prompt": "lead",
+      "brief": "team lead; holds durable context, dispatches specs, verifies and integrates the work.",
+      "template": "lead"
+    },
+    "hand": {
+      "prompt": "hand",
+      "brief": "implementer; executes a spec to done, one distilled report per task.",
+      "template": "hand"
+    },
+    "reviewer": {
+      "prompt": "reviewer",
+      "brief": "reviewer; an independent verification pass, invoked on demand."
+    }
+  }
+}

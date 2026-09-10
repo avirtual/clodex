@@ -161,6 +161,12 @@ function mkTeamCreate({
       setStripLevel() {}, setAutoCompact() {}, setPlugins() {}, setWorktree() {},
     }),
     createTeam: tm.createTeam,
+    // The REAL kit seams over the fixture's home, for the reason resolveTeam
+    // below is real: create resolves the kit BEFORE it classifies the root, so
+    // an unwired seam is a TypeError the dispatcher's .catch swallows and every
+    // create silently does nothing.
+    resolveKit: tm.resolveKit,
+    kitCatalog: tm.kitCatalog,
     teamsDir: tm.teamsDir,
     // teamPromptPath refuses any team listTeams does not name, so the brief has
     // nowhere to go without this — a stub would make every kickstart create fail.

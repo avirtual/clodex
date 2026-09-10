@@ -1,0 +1,19 @@
+{
+  "description": "Clodex's own profile: hands run one spec with plan mode, skills and 36 tools off; cheapest per ticket, unfriendly outside a ticket loop.",
+  "roles": {
+    "lead": {
+      "prompt": "clodex-team-lead",
+      "brief": "team lead; holds durable context, dispatches specs, verifies and integrates the work.",
+      "template": "clodex-team-lead"
+    },
+    "hand": {
+      "prompt": "clodex-team-hand",
+      "brief": "implementer; executes a spec to done, one distilled report per task.",
+      "template": "clodex-team-hand"
+    },
+    "reviewer": {
+      "prompt": "clodex-team-reviewer",
+      "brief": "reviewer; an independent verification pass, invoked on demand."
+    }
+  }
+}
