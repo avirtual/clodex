@@ -1274,6 +1274,19 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       return Date.now().toString(36).slice(-6);
     },
     list() { return this._load(); },
+    page({ limit = 30, before = null } = {}) {
+      const raw = Math.floor(Number(limit));
+      const n = Number.isFinite(raw) ? Math.max(1, Math.min(200, raw)) : 30;
+      const cut = Number.isFinite(before);
+      const kept = [];
+      const all = this._load();
+      for (let i = 0; i < all.length; i++) {
+        if (cut && !(all[i].createdAt < before)) continue;
+        kept.push({ rec: all[i], i });
+      }
+      kept.sort((a, b) => (b.rec.createdAt - a.rec.createdAt) || (b.i - a.i));
+      return { items: kept.slice(0, n).map((e) => e.rec), hasMore: kept.length > n };
+    },
     add({ from, workspaceId = null, body = '' }) {
       const all = this._load();
       const id = this._mintId(all);
