@@ -1922,6 +1922,9 @@ test('tickets-viewer: the engine registers its reads and its writes, and nothing
       'tickets-viewer:editSpec',
       'tickets-viewer:projects',
       'tickets-viewer:sessions',
+      // A READ, and web-open like the other reads: it answers what the team has
+      // already spent, which the board beside it already shows per row.
+      'tickets-viewer:teamCost',
       'tickets-viewer:teams',
     ]);
   } finally { cleanup(); }

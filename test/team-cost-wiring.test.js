@@ -133,12 +133,20 @@ test('create() mints from the record label, and both spawn paths seed it before 
   // point — the property is an ordering in the source that no runnable unit test
   // can observe without spawning a PTY. Re-anchor it on the moved code; do NOT
   // loosen the pattern until it passes, which retires the check silently.
-  const seeds = ticketSrc.match(/wireLabel: \w+ \}/g) || [];
+  //
+  // Two shapes, not one: t805 made the ticket seat's mint stamp its fields
+  // UNCONDITIONALLY (`wireLabel: seatLabel || null`) while the reviewer's stays
+  // conditional (`...(reviewLabel ? { wireLabel: reviewLabel } : {})`), so a
+  // single pattern can no longer count both. Re-anchored on what each site now
+  // writes, per the instruction above — not widened to `wireLabel:` bare, which
+  // would also match this comment's neighbours and any future field.
+  const seeds = (ticketSrc.match(/wireLabel: \w+ \}/g) || [])
+    .concat(ticketSrc.match(/wireLabel: \w+ \|\| null,/g) || []);
   assert.strictEqual(seeds.length, 2,
     `expected exactly 2 wireLabel seeds (reviewer + ticket seat), found ${seeds.length}`);
   // ENTER: and none stayed behind in core, which would mean the move split a
   // spawn path in half rather than carrying it across.
-  assert.strictEqual((src.match(/wireLabel: \w+ \}/g) || []).length, 0,
+  assert.strictEqual((src.match(/wireLabel: \w+( \}| \|\| null,)/g) || []).length, 0,
     'a wireLabel seed is still in session-manager.js — both spawn paths moved to team-tickets.js');
 
   for (const [label, seedRe, createRe] of [
@@ -149,7 +157,7 @@ test('create() mints from the record label, and both spawn paths seed it before 
     // t776 appended the loop's --add-dir argv to the reviewer's create() call,
     // re-anchored here on the new literal rather than gap-matched through it.
     ['reviewer', /reviewFor: session\.name,\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.\(reviewTicket \? \{ reviewTicket \} : \{\}\),\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, \[\.\.\.shape\.extraArgs, \.\.\.addDirs\.flatMap\(\(d\) => \['--add-dir', d\]\)\], null, shape\.workspaceId,/],
-    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, seatCwd,/],
+    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*wireLabel: seatLabel \|\| null,\n\s*ticketId: ticket\.id,/, /seat\.name, shape\.type, seatCwd,/],
   ]) {
     const seedAt = ticketSrc.search(seedRe);
     const createAt = ticketSrc.search(createRe);
@@ -831,4 +839,271 @@ test('a ticket with no taskDir writes nothing, and a broken ledger still records
   fs.rmSync(userData, { recursive: true, force: true });
   fs.rmSync(repo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+// t805 rider: a seat NAME re-minted over a surviving record must not inherit the
+// PREVIOUS ticket's identity from it.
+//
+// `upsert` spread-merges (stores.js), and the persistence double above mirrors
+// that exactly — so a record CAN survive its seat, under archive, under a retire
+// that did not discard, or across any restart that did not remove it, and the
+// ticket loop reuses seat names freely. A field the mint leaves to a conditional
+// takes the stale value, and `_costSeatFor` reads `ticketId === ticket.id` as its
+// whole definition of "minted for this ticket".
+//
+// HONEST SCOPE, because this pin cannot go red against the pre-t805 mint and
+// should not be read as though it had: `ticketId` and `ephemeral` were already
+// written unconditionally there, and the one conditional field, `wireLabel`, is
+// null only when the team name, the ticket id AND the role all sanitize to empty
+// (team-cost wireLabelFor) — not reachable through ROLE_RE and a real ticket id.
+// So this is a REGRESSION guard on a shape, not the proof of a fixed defect. The
+// pin that does bite on the mint's shape is the source census above, which reds
+// on the conditional spread.
+//
+// Driven through the REAL _spawnTicketSeat rather than a rebuilt object literal:
+// the mint is synchronous and lands before the spawn machinery beyond it fails on
+// stub deps, so a mint that stopped writing these fields entirely fails here.
+test('a re-minted seat name reads the NEW ticket, never the record it merged over', async () => {
+  const persistence = mkPersistence([{
+    // The survivor: minted for t1, still carrying t1's identity and label.
+    name: 'team-hand-1', ephemeral: true, ticketId: 't1',
+    wireLabel: 'team.t1.hand', sessionId: 'old-session',
+  }]);
+  const { m } = mkManager({ persistence });
+
+  // ENTER: the stale record really is there and really does name t1, or the
+  // assertions below hold over a record the mint simply created fresh.
+  assert.strictEqual(persistence.get('team-hand-1').ticketId, 't1');
+
+  try {
+    m._spawnTicketSeat(
+      'lead', { name: 'team', root: '/tmp/nope', roles: { hand: {} } },
+      { id: 't2', role: 'hand', assignee: 'hand' }, 'hand', { name: 'team-hand-1' },
+    );
+  } catch { /* the spawn beyond the mint needs a PTY; the mint already landed */ }
+
+  const rec = persistence.get('team-hand-1');
+  assert.strictEqual(rec.ticketId, 't2',
+    'the mint must OVERWRITE ticketId — inheriting t1 bills t2\'s work to t1 as an exact figure');
+  assert.strictEqual(rec.ephemeral, true,
+    'and re-assert ephemeral, which decides whether the seat is torn down with its ticket');
+  assert.strictEqual(rec.wireLabel, 'team.t2.hand',
+    'and re-label the wire, or the proxy keeps billing t2\'s requests to t1\'s route');
+});
+
+// ── the team ledger: cost.jsonl, written by the same call sites ─────────────
+//
+// team-cost.test.js pins the ROW SHAPES and the rollup; nothing there can tell
+// whether a row is ever written. What breaks here is the plumbing: an append
+// that never fires, one that fires into the wrong directory, and — for a
+// standing seat — one that fires AFTER the record it reads has been dropped.
+
+function mkLedgerManager(overrides = {}) {
+  const teamsDir = overrides.teamsDir;
+  const team = { name: 'team', root: overrides.repo || '/proj', roles: { hand: {}, lead: {} }, lead: 'team-lead' };
+  const { m, persistence } = mkManager({
+    ...overrides,
+    deps: {
+      teamsDir,
+      resolveTeam: () => team,
+      ...(overrides.deps || {}),
+    },
+  });
+  return { m, persistence, team, teamsDir };
+}
+
+const readLedger = (teamsDir) => {
+  const file = path.join(teamsDir, 'team', 'cost.jsonl');
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+};
+
+test('closing a ticket appends a ticket row to the TEAM ledger beside COST.json', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify(LEDGER));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+  const { home, registryDir } = mkHome();
+  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+  const taskName = 't7-ledger';
+
+  const persistence = mkPersistence([{
+    name: 'team-hand-7', sessionId: 's1', wireLabel: 'team.t7.hand',
+    ephemeral: true, ticketId: 't7',
+  }]);
+  const { m } = mkLedgerManager({ persistence, userData, home, registryDir, repo, teamsDir });
+  m._teamLiveSeatNames = () => ['team-hand-7'];
+
+  m._writeTicketCost({ name: 'team', root: repo }, {
+    id: 't7', role: 'hand', assignee: 'team-hand-7', state: 'done',
+    taskDir: `tasks/${taskName}`, openedAt: 1000, closedAt: 61000,
+  });
+  await settle();
+
+  const rows = readLedger(teamsDir);
+  assert.strictEqual(rows.length, 1, `exactly one row per close\n--- got ---\n${JSON.stringify(rows)}`);
+  assert.deepStrictEqual(
+    [rows[0].kind, rows[0].ticket, rows[0].role, rows[0].seat, rows[0].attribution, rows[0].usd],
+    ['ticket', 't7', 'hand', 'team-hand-7', 'seat', 3.5],
+    'the row carries t478\'s attribution VERBATIM — a rollup decides what to sum from it');
+
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(repo, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(teamsDir, { recursive: true, force: true });
+});
+
+test('a standing seat books its spend at a boundary, and books the DELTA next time', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
+    version: 1,
+    sessions: { 's1': { cost: 4, requests: 10, turns: 2, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+  }));
+  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+
+  // No ticketId and no reviewFor: a standing seat, which is the whole condition.
+  const persistence = mkPersistence([{ name: 'team-lead', sessionId: 's1', sessionIds: ['s1'] }]);
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir });
+
+  const first = m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: 's1' }, 'clear');
+  assert.strictEqual(first.ok, true, `the first boundary must book: ${first.error}`);
+  const rows = readLedger(teamsDir);
+  assert.deepStrictEqual([rows.length, rows[0].kind, rows[0].seat, rows[0].boundary, rows[0].usd, rows[0].from, rows[0].to],
+    [1, 'seat', 'team-lead', 'clear', 4, 0, 4]);
+
+  // The SECOND boundary with nothing spent in between books nothing at all —
+  // otherwise every exit, clear and compact of an idle seat writes a $0 row.
+  const second = m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: 's1' }, 'exit');
+  assert.strictEqual(second.ok, false);
+  assert.strictEqual(readLedger(teamsDir).length, 1, 'no second row for a seat that spent nothing');
+
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(teamsDir, { recursive: true, force: true });
+});
+
+test('a TICKET seat and a REVIEWER are skipped — their spend is already booked once', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
+    version: 1, sessions: { 's1': { cost: 9, requests: 1, turns: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+  }));
+  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+  const persistence = mkPersistence([
+    { name: 'team-hand-7', sessionId: 's1', sessionIds: ['s1'], ephemeral: true, ticketId: 't7' },
+    { name: 'team-reviewer-1', sessionId: 's1', sessionIds: ['s1'], ephemeral: true, reviewFor: 'team-hand-7' },
+  ]);
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir });
+
+  // ENTER: the same ledger really is reachable for both, so a skip below is the
+  // predicate refusing, not an empty ledger producing nothing either way.
+  assert.strictEqual(m._seatLedger('team-hand-7', persistence.get('team-hand-7')).ledger.usd, 9);
+
+  for (const seat of ['team-hand-7', 'team-reviewer-1']) {
+    const r = m._stampSeatCost({ name: seat, cwd: '/proj', sessionId: 's1' }, 'exit');
+    assert.strictEqual(r.ok, false, `${seat} must not book a seat row — its close already booked one`);
+    assert.match(r.error, /standing/);
+  }
+  assert.strictEqual(readLedger(teamsDir).length, 0, 'and nothing reached the ledger');
+
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(teamsDir, { recursive: true, force: true });
+});
+
+// The three boundaries are ordering properties in session-manager.js that no
+// unit test can observe without a PTY, so they are pinned against the SOURCE,
+// exactly as the wireLabel seeds above are. The ordering half is the one that
+// actually breaks: two of the three sites drop the persistence record on the
+// very next lines, and the ledger is summed FROM that record.
+test('all three standing-seat boundaries are hooked, and stamp BEFORE the record is dropped', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+
+  const boundaries = (src.match(/this\._stampSeatCost\(\w+, '(\w+)'\)/g) || [])
+    .map((s) => /'(\w+)'/.exec(s)[1]).sort();
+  assert.deepStrictEqual(boundaries, ['clear', 'compact', 'exit', 'kill'],
+    'the four call sites: pty exit, an explicit kill, a /clear rotation and a compact');
+
+  // ENTER: the drops this ordering is about are really in the file, or the
+  // matches below would be vacuous.
+  const drops = [...src.matchAll(/getPersistence\(\)\.remove\(name\);/g)].map((mm) => mm.index);
+  assert.ok(drops.length >= 2, 'both record drops must be present');
+
+  // Each stamp is anchored to ITS OWN drop, contiguously — not "some drop appears
+  // later in the file", which is what an earlier version of this assertion said
+  // and which stayed GREEN with the exit stamp moved past its drop: three drops
+  // live in this file, so any one of them satisfied a search for the next.
+  for (const [label, adjacentRe] of [
+    ['exit', /this\._stampSeatCost\(session, 'exit'\); \} catch \{\}\n\s*if \(dropRecord\) \{\n\s*getPersistence\(\)\.remove\(name\);/],
+    ['kill', /this\._stampSeatCost\(s, 'kill'\); \} catch \{\}\n\s*getPersistence\(\)\.remove\(name\);/],
+  ]) {
+    assert.match(src, adjacentRe,
+      `${label}: the stamp must sit immediately BEFORE its own record drop — after it, entrySessionIds finds nothing and every standing seat books $0`);
+  }
+
+  // The /clear stamp must precede the ASSIGNMENT that moves the id, not merely
+  // the drop: the overlay carrying the turn that just ended is keyed on the id
+  // the session still holds.
+  const clearAt = src.search(/this\._stampSeatCost\(session, 'clear'\)/);
+  const assignAt = src.search(/session\.sessionId = sessionId;/);
+  assert.ok(clearAt > 0 && assignAt > 0, 'ENTER: both anchors found');
+  assert.ok(clearAt < assignAt, 'the clear stamp must run before the session id is reassigned');
+});
+
+// t805 r1 must-fix: the REAL retirement lifecycle, in the order the app runs it.
+//
+// `kill()` drops the persistence record synchronously and the pty dies later, so
+// the exit stamp arrives at a seat with no record — and an ABSENT record used to
+// satisfy `standingSeat`, which asks only that a seat is neither ticket-minted
+// nor a reviewer. Both facts are true of `null`. Every reviewer and every ticket
+// seat therefore booked a SECOND row, from a null cursor (so: its whole session
+// again) on top of the `review`/`ticket` row its close had just written, and
+// cost-cursor.json grew an entry per one-shot name that never comes back.
+//
+// Driven through the real `_writeReviewCost` → `_stampSeatCost(kill)` →
+// `_stampSeatCost(exit)` sequence rather than by calling the guard directly: the
+// defect is entirely in WHEN the second call happens relative to the record
+// drop, which a direct call cannot stage.
+test('a retired reviewer books its round ONCE, even though the exit outlives its record', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
+    version: 1,
+    sessions: { 'rev-1': { cost: 6, requests: 12, turns: 3, inputTokens: 40, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+  }));
+  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-reg-'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+
+  const rec = {
+    name: 'team-reviewer-1', sessionId: 'rev-1', sessionIds: ['rev-1'],
+    ephemeral: true, reviewFor: 'team-hand-9', wireLabel: 'team.t9.review-r1',
+  };
+  const persistence = mkPersistence([rec]);
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir, registryDir, repo });
+  const team = { name: 'team', root: repo, roles: { hand: {}, lead: {} }, lead: 'team-lead' };
+  const ticket = { id: 't9', role: 'hand', taskDir: 'tasks/t9-review-once', reviewRound: 1 };
+
+  // 1. The review closes and books its round — the row that must stay alone.
+  const wrote = m._writeReviewCost('team-reviewer-1', team, ticket, rec, 1, 'ACCEPT', 0);
+  assert.strictEqual(wrote.ok, true, `the review row must be written: ${wrote.error}`);
+  assert.strictEqual(readLedger(teamsDir).filter((r) => r.kind === 'review').length, 1);
+
+  // 2. The seat is retired: the record goes FIRST, exactly as kill() does it.
+  const session = { name: 'team-reviewer-1', cwd: repo, sessionId: 'rev-1' };
+  m._stampSeatCost(session, 'kill');
+  persistence.remove('team-reviewer-1');
+  // ENTER: the record really is gone, or the exit below is not the case at all.
+  assert.strictEqual(persistence.get('team-reviewer-1'), null);
+
+  // 3. The pty dies afterwards and the exit stamp fires against nothing.
+  const exit = m._stampSeatCost(session, 'exit');
+  assert.strictEqual(exit.ok, false, 'a seat with no record must not book anything');
+  assert.strictEqual(exit.error, 'no record');
+
+  const rows = readLedger(teamsDir);
+  assert.deepStrictEqual(rows.map((r) => r.kind), ['review'],
+    `exactly one row for this seat — a seat row here double-counts the round\n--- got ---\n${JSON.stringify(rows)}`);
+  assert.ok(!fs.existsSync(path.join(teamsDir, 'team', 'cost-cursor.json')),
+    'and no cursor entry for a one-shot name that will never return to use it');
+
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(teamsDir, { recursive: true, force: true });
+  fs.rmSync(registryDir, { recursive: true, force: true });
+  fs.rmSync(repo, { recursive: true, force: true });
 });

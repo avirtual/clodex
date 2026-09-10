@@ -1932,6 +1932,9 @@ function createSessionManager(deps) {
 
       const onSessionId = (sessionId) => {
         const priorSid = session.sessionId;
+        if (priorSid && sessionId && priorSid !== sessionId) {
+          try { this._stampSeatCost(session, 'clear'); } catch {}
+        }
         session.sessionId = sessionId;
         getPersistence().setSessionId(name, sessionId);
         // A CHANGED id is /clear — whatever was offered is no longer in front of
@@ -2132,6 +2135,7 @@ function createSessionManager(deps) {
           body: `code=${exitCode}${signal ? ` signal=${signal}` : ''}${expected ? '' : ' unexpected'}`,
         });
         if (getRemoteServer()) { try { getRemoteServer().notifyExit(name, exitCode); } catch {} }
+        try { this._stampSeatCost(session, 'exit'); } catch {}
         if (dropRecord) {
           getPersistence().remove(name);
         }
@@ -2681,6 +2685,7 @@ function createSessionManager(deps) {
           log.warn('session', `spawner-hint(clear) skipped: ${e.message}`);
         }
       }
+      try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
       try { s.pty.kill(); } catch {}
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
@@ -3913,6 +3918,7 @@ function createSessionManager(deps) {
     }
 
     _fireCompactContinuation(session) {
+      try { this._stampSeatCost(session, 'compact'); } catch {}
       // The live set resets to EMPTY — no attempt to model what the summarizer
       // kept. "Possibly evicted" resolving to "not loaded" is the correct
       // answer for a dedup consumer, and on the jsonl-intent path this fires for

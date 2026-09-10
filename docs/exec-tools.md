@@ -155,6 +155,14 @@ Teams control plane. `scripts/clodex-team.js`, registry
   `open` (default) / `done` / `cancelled` / `all`. This is the one command
   whose answer does not fit a line, so its def carries `replyMaxBytes`; a
   large enough board still comes back head-clamped with a dropped-lines note.
+- `cost` (query → replies): what this team has spent, read back out of
+  `~/.clodex/teams/<team>/cost.jsonl` (docs/teams.md). One line — the total,
+  since the earliest row, split into tickets, review rounds and standing seats,
+  with a count of the tickets whose spend could not be attributed to one seat.
+  Those are EXCLUDED from the total rather than summed as zero, which is the
+  same doctrine `COST.json` follows: a ticket nobody could price is unknown, not
+  free. With `target:<ticketId>` it answers for one ticket instead — the hand
+  figure, each review round, and their sum.
 - Spawn has no verb on purpose: `[agent:spawn name:X template:Y]` already
   exists; duplicating it here would be ceremony.
 

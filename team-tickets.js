@@ -368,6 +368,16 @@ const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
 const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 
+function mintedForTicket(entry, ticket = null) {
+  if (!entry || entry.ephemeral !== true || !entry.ticketId) return false;
+  if (!ticket) return true;
+  return entry.ticketId === ticket.id;
+}
+
+function standingSeat(entry) {
+  return !mintedForTicket(entry) && !(entry && entry.reviewFor);
+}
+
 // A cwd not inside `root` yields the tree ROOT: joining an escape would put the
 // seat outside the tree, which is the isolation this dispatch exists for.
 function seatCwdInTree(root, seatCwd, treePath) {
@@ -1284,17 +1294,17 @@ function createTicketMethods(deps, shared) {
       return { ok: true, path: file, error: null };
     },
 
-    // The reviewer's own ledger, read while the seat still HAS one.
+    // A seat's own ledger, read while the seat still HAS one.
     //
     // Two independent readers, and neither alone is sufficient:
     //   - the persisted `wire-totals.json` rows for the seat's session history,
     //     which is everything the seat spent across app restarts and /clears;
     //   - `_wireTelemetry.payload()`, the in-process ledger for the CURRENT id.
     // The file lags by up to a second (wire-telemetry `_scheduleSave` debounce)
-    // and this runs inside the intent handler for the reviewer's LAST turn, so
-    // the file is guaranteed to be missing that turn — the biggest one, since a
-    // verdict is the longest thing a reviewer writes. The overlay is not a
-    // refinement here; without it every review is undercounted by its final turn.
+    // and the review caller runs inside the intent handler for the reviewer's
+    // LAST turn, so the file is guaranteed to be missing that turn — the biggest
+    // one, since a verdict is the longest thing a reviewer writes. Every seat
+    // boundary below has the same shape: the turn that ended is the one missing.
     //
     // The overlay is applied ONLY when the wire agrees with the record on the
     // session id AND reports a cost it actually observed. The id half: a
@@ -1302,7 +1312,7 @@ function createTicketMethods(deps, shared) {
     // names across rounds, and _wireTelemetry's per-name map is pruned on poller
     // ticks rather than at kill — so an ungated read can bill a dead round's
     // ledger to a live seat that happens to hold the name.
-    _reviewLedger(seatName, rec) {
+    _seatLedger(seatName, rec) {
       const sessionIds = entrySessionIds(rec);
       let totals = null;
       try {
@@ -1350,6 +1360,92 @@ function createTicketMethods(deps, shared) {
       return { ledger, resolved: ledger.known > 0, model };
     },
 
+    _teamLedgerPath(team) {
+      if (!team || !team.name) return null;
+      try { return path.join(teamsDir, team.name, teamCost.TEAM_LEDGER_FILE); } catch { return null; }
+    },
+
+    _appendTeamLedger(team, row) {
+      const file = this._teamLedgerPath(team);
+      if (!file || !row) return { ok: false, path: null, error: 'no team ledger path' };
+      try {
+        ensureDir(path.dirname(file));
+        fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
+        return { ok: true, path: file, error: null };
+      } catch (e) {
+        return { ok: false, path: null, error: e.message };
+      }
+    },
+
+    _seatCursorPath(team) {
+      if (!team || !team.name) return null;
+      try { return path.join(teamsDir, team.name, 'cost-cursor.json'); } catch { return null; }
+    },
+
+    _readSeatCursors(team) {
+      const file = this._seatCursorPath(team);
+      if (!file) return {};
+      try {
+        const o = JSON.parse(fs.readFileSync(file, 'utf8'));
+        return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+      } catch { return {}; }
+    },
+
+    _writeSeatCursor(team, seat, cursor) {
+      const file = this._seatCursorPath(team);
+      if (!file || !seat) return false;
+      try {
+        const all = this._readSeatCursors(team);
+        all[seat] = cursor;
+        ensureDir(path.dirname(file));
+        fs.writeFileSync(file, JSON.stringify(all, null, 2));
+        return true;
+      } catch { return false; }
+    },
+
+    // Call BEFORE getPersistence().remove(name): no record, no stamp.
+    _stampSeatCost(session, boundary) {
+      try {
+        const name = session && session.name;
+        if (!name) return { ok: false, error: 'no seat' };
+        let team = null;
+        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        if (!team) return { ok: false, error: 'no team' };
+        const entry = getPersistence().get(name) || null;
+        if (!entry) return { ok: false, error: 'no record' };
+        if (!standingSeat(entry)) return { ok: false, error: 'not a standing seat' };
+        const { ledger } = this._seatLedger(name, entry);
+        const cursor = this._readSeatCursors(team)[name] || null;
+        const row = teamCost.seatLedgerRow({
+          seat: name,
+          team: team.name,
+          role: matchSeatRole(team, name),
+          sessionId: (session && session.sessionId) || entry.sessionId || null,
+          boundary,
+          lifetime: {
+            usd: ledger.usd,
+            tokens: ledger.inputTokens + ledger.outputTokens + ledger.cacheReadTokens + ledger.cacheWriteTokens,
+            requests: ledger.requests,
+            turns: ledger.turns,
+          },
+          cursor,
+        });
+        if (!row) return { ok: false, error: 'nothing new since the last stamp' };
+        const w = this._appendTeamLedger(team, row);
+        if (!w.ok) return w;
+        this._writeSeatCursor(team, name, {
+          usd: row.to,
+          tokens: (cursor && Number(cursor.tokens) || 0) + row.tokens,
+          requests: (cursor && Number(cursor.requests) || 0) + row.requests,
+          turns: (cursor && Number(cursor.turns) || 0) + row.turns,
+          at: row.at,
+        });
+        return { ok: true, path: w.path, usd: row.usd, error: null };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
     // Append one review round's spend to the TICKET's artifact, before the seat
     // that spent it is killed.
     //
@@ -1380,7 +1476,7 @@ function createTicketMethods(deps, shared) {
         if (!team || !ticket) return { ok: false, path: null, error: 'no ticket' };
         const dest = this._ticketDiffDest(team, ticket);
         if (!dest.ok) return { ok: false, path: null, error: dest.error };
-        const { ledger, resolved, model } = this._reviewLedger(seatName, rec);
+        const { ledger, resolved, model } = this._seatLedger(seatName, rec);
         const row = teamCost.reviewCostRecord({
           ticket: ticket.id, team: team.name, round, seat: seatName,
           // Off the RECORD, not recomputed from the ticket's round: the label is
@@ -1397,6 +1493,7 @@ function createTicketMethods(deps, shared) {
         const file = path.join(dest.dir, teamCost.REVIEW_COST_FILE);
         ensureDir(dest.dir);
         fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
+        this._appendTeamLedger(team, teamCost.reviewLedgerRow(row));
         return { ok: true, path: file, error: null };
       } catch (e) {
         return { ok: false, path: null, error: e.message };
@@ -4747,7 +4844,7 @@ function createTicketMethods(deps, shared) {
       });
       getPersistence().upsert({
         name: seat.name, ephemeral: true,
-        ...(seatLabel ? { wireLabel: seatLabel } : {}),
+        wireLabel: seatLabel || null,
         ticketId: ticket.id,
       });
       // Un-pin the ticket back to its role. Reloaded from the store rather than
@@ -7102,10 +7199,8 @@ function createTicketMethods(deps, shared) {
     _costSeatFor(team, ticket) {
       // Every resolution below sums the seat's WHOLE ledger, which equals this
       // ticket's cost only for a seat minted for it and torn down with it — so a
-      // standing seat's whole life lands on every ticket it closes ($594.98 on
-      // one row whose 28.7 wall minutes could not buy it at any tier).
-      const mintedFor = (entry) => !!(entry && entry.ephemeral === true
-        && entry.ticketId && ticket && entry.ticketId === ticket.id);
+      // standing seat's whole life lands on every ticket it closes.
+      const mintedFor = (entry) => mintedForTicket(entry, ticket);
       const at = (name, attribution) => {
         const entry = (name && getPersistence().get(name)) || null;
         // The NAME survives a missing record: a seat archived or deleted after
@@ -7255,6 +7350,7 @@ function createTicketMethods(deps, shared) {
           });
           ensureDir(taskDir);
           fs.writeFileSync(path.join(taskDir, teamCost.COST_FILE), JSON.stringify(rec, null, 2));
+          this._appendTeamLedger(team, teamCost.ticketLedgerRow(rec));
         } catch (e) {
           log.info('intent', `COST.json not written for ${ticket && ticket.id}: ${e.message}`);
         }

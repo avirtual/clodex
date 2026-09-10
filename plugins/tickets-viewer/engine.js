@@ -16,10 +16,10 @@ const crypto = require('node:crypto');
 // COMPARED TO CORE, in test/tickets-viewer-path-parity.test.js: projectDirFor,
 // nextTicketId, ticketTitle, extractTaskDir, ticketStarted, ticketTaskDirRefusal,
 // resolveTaskDir, ticketTaskDirLine, ticketTaskDirLineFor, closeLine,
-// atomicWriteFileSync, stallMsFor, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS. Editing one
-// of these to disagree with core fails the suite. A symbol NOT on this list may
-// still be tested here, but never against core — so a green suite is not
-// evidence that it still agrees.
+// atomicWriteFileSync, stallMsFor, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS,
+// parseTeamLedger, rollupTeam, readTeamLedger. Editing one of these to disagree
+// with core fails the suite. A symbol NOT on this list may still be tested here,
+// but never against core — so a green suite is not evidence that it agrees.
 //
 // manifestWarning is a deliberate SUBSET of core's validator, so it must never
 // be made byte-equal to it.
@@ -411,7 +411,142 @@ function num(v) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-function shape(t, now, stallMs) {
+const COST_FILE = 'COST.json';
+const REVIEW_COST_FILE = 'REVIEW-COST.jsonl';
+const TEAM_LEDGER_FILE = 'cost.jsonl';
+
+function round6(v) { return Math.round((Number.isFinite(v) ? v : 0) * 1e6) / 1e6; }
+function finite(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+
+function parseTeamLedger(text) {
+  const rows = [];
+  let malformed = 0;
+  for (const line of String(text == null ? '' : text).split('\n')) {
+    if (!line.trim()) continue;
+    let o = null;
+    try { o = JSON.parse(line); } catch { malformed++; continue; }
+    if (!o || typeof o !== 'object' || Array.isArray(o) || typeof o.kind !== 'string') { malformed++; continue; }
+    rows.push(o);
+  }
+  return { rows, malformed };
+}
+
+function readTeamLedger(teamDir) {
+  if (!teamDir) return { rows: [], malformed: 0, error: 'no team directory' };
+  let text;
+  try {
+    text = fs.readFileSync(path.join(teamDir, TEAM_LEDGER_FILE), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { rows: [], malformed: 0, error: null };
+    return { rows: [], malformed: 0, error: (e && e.message) || 'unreadable' };
+  }
+  return { ...parseTeamLedger(text), error: null };
+}
+
+function rollupTeam(rows) {
+  const usd = { tickets: 0, reviews: 0, standing: 0, total: 0 };
+  const counts = { tickets: 0, reviews: 0, standing: 0, unattributed: 0, unpriced: 0 };
+  const byTicket = new Map();
+  const byRole = new Map();
+  let since = null;
+  const bump = (role, amount) => {
+    const key = role || '(no role)';
+    byRole.set(key, round6((byRole.get(key) || 0) + amount));
+  };
+  const entryFor = (id) => {
+    if (!id) return null;
+    if (!byTicket.has(id)) byTicket.set(id, { hand: null, attribution: null, reviews: [], total: null });
+    return byTicket.get(id);
+  };
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    if (!r || typeof r !== 'object') continue;
+    const at = finite(r.at);
+    if (at !== null && (since === null || at < since)) since = at;
+    const amount = finite(r.usd);
+    if (r.kind === 'ticket') {
+      counts.tickets++;
+      const exact = amount !== null && r.attribution !== 'seat-lifetime';
+      if (exact) { usd.tickets = round6(usd.tickets + amount); bump(r.role, amount); }
+      else counts.unattributed++;
+      const e = entryFor(r.ticket);
+      if (e) {
+        e.hand = exact ? amount : null;
+        e.attribution = r.attribution || 'unknown';
+        e.requests = finite(r.requests);
+        e.seat = r.seat || null;
+      }
+    } else if (r.kind === 'review') {
+      counts.reviews++;
+      if (amount !== null) { usd.reviews = round6(usd.reviews + amount); bump('review', amount); }
+      else counts.unpriced++;
+      const e = entryFor(r.ticket);
+      if (e) e.reviews.push({ round: finite(r.round), usd: amount, verdict: r.verdict || null });
+    } else if (r.kind === 'seat') {
+      counts.standing++;
+      if (amount !== null) { usd.standing = round6(usd.standing + amount); bump(r.role, amount); }
+      else counts.unpriced++;
+    }
+  }
+  usd.total = round6(usd.tickets + usd.reviews + usd.standing);
+  for (const e of byTicket.values()) {
+    const priced = e.reviews.filter((x) => x.usd !== null);
+    if (e.hand === null && !priced.length) { e.total = null; continue; }
+    e.total = round6((e.hand || 0) + priced.reduce((a, x) => a + x.usd, 0));
+  }
+  return { usd, counts, byTicket, byRole, since };
+}
+
+function ticketTaskDir(t, projectRoot) {
+  if (!t || !t.taskDir || typeof projectRoot !== 'string' || !projectRoot) return null;
+  try {
+    return resolveTaskDir({
+      taskDir: t.taskDir,
+      projectDir: projectDirFor(clodexHome(), projectRoot),
+      projectsRoot: projectsRoot(),
+      homedir: os.homedir(),
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
+function ticketCost(t, projectRoot) {
+  const state = str(t && t.state);
+  if (state === 'done' || state === 'cancelled') {
+    const dir = ticketTaskDir(t, projectRoot);
+    if (!dir) return null;
+    let rec = null;
+    try { rec = JSON.parse(fs.readFileSync(path.join(dir, COST_FILE), 'utf8')); } catch (_) { rec = null; }
+    if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return null;
+    let reviewsUsd = null;
+    let rounds = 0;
+    try {
+      const parsed = parseTeamLedger(fs.readFileSync(path.join(dir, REVIEW_COST_FILE), 'utf8'));
+      for (const row of parsed.rows) {
+        rounds++;
+        const v = finite(row.usd);
+        if (v !== null) reviewsUsd = round6((reviewsUsd || 0) + v);
+      }
+    } catch (_) {}
+    const attribution = (rec.sessions && rec.sessions.attribution) || 'unknown';
+    return {
+      usd: attribution === 'seat-lifetime' ? null : finite(rec.usd),
+      reviewsUsd,
+      rounds,
+      attribution,
+      live: false,
+    };
+  }
+  const seat = str(t && t.assignee);
+  if (!seat || !host || !host.telemetry) return null;
+  let snap = null;
+  try { snap = host.telemetry.snapshot(seat); } catch (_) { return null; }
+  const usd = snap && snap.cost ? finite(snap.cost.usd) : null;
+  if (usd === null) return null;
+  return { usd, reviewsUsd: null, rounds: 0, attribution: 'live', live: true };
+}
+
+function shape(t, now, stallMs, projectRoot = null) {
   const openedAt = num(t.openedAt);
   // `??`, not `||`: a timestamp of 0 is not "no timestamp", and num() has already
   // turned every genuinely absent value into null.
@@ -456,6 +591,7 @@ function shape(t, now, stallMs) {
     // wire what core keeps apart on disk.
     mergeWaiting: str(t.mergeWaiting),
     mergeError: str(t.mergeError),
+    cost: ticketCost(t, projectRoot),
   };
 }
 
@@ -566,9 +702,11 @@ function board(projectKey) {
   const stallMs = stallMsFor(known && known.manifest);
   const all = read.tickets;
 
+  const root = projectRootFor(projectKey, known);
+
   const open = all
     .filter((t) => t.state === 'open')
-    .map((t) => shape(t, now, stallMs))
+    .map((t) => shape(t, now, stallMs, root))
     // Newest first, NOT quietest-first: the stall flag, the `tv-stalled` class and
     // the header count already surface stalls wherever the row sits.
     .sort((a, b) => {
@@ -586,12 +724,12 @@ function board(projectKey) {
   const recentAll = doneAll
     .filter((t) => num(t.closedAt) !== null && now - t.closedAt < RECENT_DONE_MS)
     .sort((a, b) => b.closedAt - a.closedAt);
-  const recent = recentAll.slice(0, RECENT_DONE_CAP).map((t) => shape(t, now, stallMs));
+  const recent = recentAll.slice(0, RECENT_DONE_CAP).map((t) => shape(t, now, stallMs, root));
 
   return {
     ok: true,
     project: projectKey,
-    root: projectRootFor(projectKey, known),
+    root,
     team: known ? known.team : '',
     now,
     stallMs,
@@ -609,6 +747,22 @@ function board(projectKey) {
       unknownState: all.length - open.length - doneAll.length - cancelledAll.length,
       malformed: read.malformed,
     },
+  };
+}
+
+function teamCost(projectKey) {
+  const known = teamIndex().get(projectKey);
+  if (!known || !known.team) return { ok: true, team: '', usd: null, counts: null, since: null };
+  const read = readTeamLedger(path.join(teamsRoot(), known.team));
+  if (read.error) return { ok: true, team: known.team, usd: null, counts: null, since: null, warning: read.error };
+  const roll = rollupTeam(read.rows);
+  return {
+    ok: true,
+    team: known.team,
+    usd: read.rows.length ? roll.usd : null,
+    counts: read.rows.length ? roll.counts : null,
+    since: roll.since,
+    malformed: read.malformed,
   };
 }
 
@@ -848,6 +1002,7 @@ module.exports.activate = (h) => {
   host.ipc.handle('projects', () => projects());
   host.ipc.handle('teams', () => teams());
   host.ipc.handle('board', (key) => board(key));
+  host.ipc.handle('teamCost', (key) => teamCost(key));
   host.ipc.handle('sessions', () => sessions());
 
   // Deliberately absent from manifest.json's `surfaces`, which is what keeps these
@@ -869,6 +1024,7 @@ module.exports.deactivate = () => {
 module.exports._internals = {
   confine, readTickets, readTicketsAt, readManifest, stallMsFor, shape,
   board, teams, projects, teamsRoot, projectsRoot, teamIndex, projectRootFor,
+  teamCost, readTeamLedger, rollupTeam, parseTeamLedger, ticketCost, ticketTaskDir,
   clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir, ticketStarted,
   atomicWriteFileSync, resolveProject, ticketTaskDirRefusal,
   confineOrThrow, confineUnder, stripFileTail, resolveTaskDir,

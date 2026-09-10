@@ -1,6 +1,6 @@
 {
   "argv": ["/usr/bin/env", "node", "${CLODEX_BIN}/clodex-team.js"],
-  "description": "Your team: roster (who is live, replies), tickets, or retire a teammate. `agent` is your OWN name.",
+  "description": "Your team: roster (who is live, replies), tickets, cost (what it has spent; `target:<ticketId>` for one ticket), or retire a teammate. `agent` is your OWN name.",
   "timeoutMs": 10000,
   "maxBytes": 4096,
   "replyStderr": true,
@@ -10,7 +10,7 @@
     "additionalProperties": false,
     "required": ["action", "agent"],
     "properties": {
-      "action": { "type": "string", "enum": ["roster", "retire", "tickets"] },
+      "action": { "type": "string", "enum": ["roster", "retire", "tickets", "cost"] },
       "agent": { "type": "string", "maxLength": 64 },
       "target": { "type": "string", "maxLength": 64 },
       "filter": { "type": "string", "enum": ["open", "done", "cancelled", "all"] },

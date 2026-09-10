@@ -199,7 +199,7 @@ function shaped(id, over = {}) {
     // Empty strings, matching what the engine emits for a ticket carrying
     // neither stamp — so the merge cases below are the only rows that differ
     // from an ordinary one, and an accidental mark elsewhere fails there.
-    mergeWaiting: '', mergeError: '', ...over,
+    mergeWaiting: '', mergeError: '', cost: null, ...over,
   };
   // Derived AFTER the overrides, mirroring the engine (`role || assignee`), so a
   // case that overrides `assignee` alone — the unassigned row, every pre-t295
@@ -244,7 +244,13 @@ function withDom(answers, fn) {
       // not care about. A case that DOES care overrides them.
       const a = Object.prototype.hasOwnProperty.call(answers, method)
         ? answers[method]
-        : ({ projects: projectsRes(), sessions: { ok: true, sessions: [] } })[method];
+        : ({
+          projects: projectsRes(),
+          sessions: { ok: true, sessions: [] },
+          // A project with no team: the ordinary case, and the one that must
+          // render no cost line at all rather than a zero.
+          teamCost: { ok: true, team: '', usd: null, counts: null, since: null },
+        })[method];
       return Promise.resolve(typeof a === 'function' ? a(arg) : a);
     },
     log: { info: () => {}, error: (...m) => logged.push(m) },
@@ -1082,5 +1088,124 @@ test('a CLOSED ticket offers no lifecycle action', async () => {
 test('the surface contributes one footer button and no other entry point', async () => {
   await withDom(crudAnswers(), ({ rhost }) => {
     assert.equal(rhost._button.label, 'Tickets');
+  });
+});
+
+// ── what a ticket cost ──────────────────────────────────────────────────────
+//
+// The four rows are the four ANSWERS the engine can give, and the pairs that
+// must not collapse into each other are the point: a done ticket with a figure
+// vs one whose figure is null (`cost unknown`, never `$0` — that ticket burned
+// real money nobody could attribute), and an open ticket the wire can price vs
+// one it cannot (nothing at all, which is the normal case and must not paint as
+// free work).
+
+test('a DONE ticket renders hand + review as one figure, with the split in the tooltip', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 0 })]),
+    board: boardRes({
+      open: [],
+      recent: [shaped('t803', {
+        state: 'done', closedAt: Date.now() - HOUR, closedBy: 'hand',
+        cost: { usd: 21.64, reviewsUsd: 3.10, rounds: 1, attribution: 'seat', live: false },
+      })],
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    assert.ok(text.includes('~$24.74'), `the row must show hand+review summed\n--- got ---\n${text}`);
+    const cell = allByClass(root, 'tv-cost')[0];
+    assert.ok(cell, 'the figure rides a tv-cost span');
+    assert.match(cell.title, /hand \$21\.64/, 'the tooltip splits out the hand');
+    assert.match(cell.title, /review \$3\.10/, 'and the review rounds');
+  });
+});
+
+test('an OPEN ticket the wire can price says the number is LIVE', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t9', { cost: { usd: 8.10, reviewsUsd: null, rounds: 0, attribution: 'live', live: true } })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    // The marker is what stops a lead reading a mid-flight figure as final.
+    assert.ok(text.includes('~$8.10 ·live'), `an open row shows a live figure\n--- got ---\n${text}`);
+    assert.match(classesOf(root).join(' '), /tv-cost-live/);
+  });
+});
+
+test('an open ticket with NO telemetry renders no cost at all, never $0', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t9', { cost: null })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    assert.ok(!/\$/.test(text), `no dollar figure anywhere on a priceless row\n--- got ---\n${text}`);
+    assert.equal(allByClass(root, 'tv-cost').length, 0, 'and no empty cost cell either');
+  });
+});
+
+test('a done ticket nobody could attribute says COST UNKNOWN, not zero', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 0 })]),
+    board: boardRes({
+      open: [],
+      recent: [shaped('t900', {
+        state: 'done', closedAt: Date.now() - HOUR, closedBy: 'lead',
+        cost: { usd: null, reviewsUsd: null, rounds: 0, attribution: 'seat-lifetime', live: false },
+      })],
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    assert.ok(text.includes('cost unknown'), `an unattributable ticket says so\n--- got ---\n${text}`);
+    // ENTER: the assertion above is only worth anything if the alternative it
+    // denies would have been visible — a `$0.00` renders as text like any other.
+    assert.ok(!text.includes('$0'), 'a false zero is the exact thing this row must never show');
+    assert.match(allByClass(root, 'tv-cost')[0].title, /upper bound/,
+      'the tooltip says WHY it is unknown — the seat outlives the ticket');
+  });
+});
+
+test('the board header carries the team total when the ledger has one', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    teamCost: {
+      ok: true, team: 'alpha', since: Date.parse('2026-07-01T00:00:00Z'),
+      usd: { tickets: 3691, reviews: 494, standing: 27, total: 4212 },
+      counts: { tickets: 442, reviews: 262, standing: 3, unattributed: 44, unpriced: 0 },
+    },
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    assert.ok(text.includes('team alpha: ~$4,212'), `the header shows the team total\n--- got ---\n${text}`);
+  });
+});
+
+test('a project with no team gets no cost header rather than a zero one', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    teamCost: { ok: true, team: '', usd: null, counts: null, since: null },
+  }, ({ root }) => {
+    assert.equal(allByClass(root, 'tv-team-cost').length, 0);
+    assert.ok(!/\$/.test(textOf(root).join('\n')), 'no figure at all when there is no ledger');
+  });
+});
+
+test('a teamCost read that FAILED leaves the board intact and silent', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    teamCost: { ok: false, error: 'could not read cost.jsonl' },
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    // The board is the deliverable; a cost line is a garnish and must never
+    // take the rows down with it.
+    assert.ok(text.includes('t1'), 'the rows still render');
+    assert.equal(allByClass(root, 'tv-team-cost').length, 0, 'and the failed total renders nothing');
   });
 });

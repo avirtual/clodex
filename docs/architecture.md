@@ -354,9 +354,11 @@ not by size:
   failure it prevents is measured: a watchdog fired "hand quiet 30m", the lead
   checked the worktree was dirty with real work and dismissed it — the seat had
   been SIGKILLed and the dirt was its corpse.
-- **team-cost.js** — per-ticket cost attribution. Pure leaf: no fs, no git, no
-  electron; callers pass the already-read inputs and every function is a
-  projection of them.
+- **team-cost.js** — cost attribution: the per-ticket records (`COST.json`,
+  `REVIEW-COST.jsonl`) and the per-team ledger rolled up from
+  `~/.clodex/teams/<team>/cost.jsonl`. Pure leaf: no fs, no git, no electron —
+  the ledger reader takes an injected `readFile`, and callers pass every other
+  input already read.
 - **team-tickets.js** — the teams/tickets half of the SessionManager class:
   board verbs, seat shaping/spawn, spec delivery, review/verdict/auto-merge, the
   ticket loop + suite, watchdog/stall sweep, team role editing, retire. It

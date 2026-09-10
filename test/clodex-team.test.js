@@ -687,6 +687,8 @@ test('exec-def schema accepts valid payloads via real parseAndValidate', () => {
     // The rest of this file spends 300 lines exercising the verb the schema
     // under test would have rejected.
     { action: 'tickets', agent: 'clodex' },
+    { action: 'cost', agent: 'clodex' },
+    { action: 'cost', agent: 'clodex', target: 't803' },
   ]) {
     const r = parseAndValidate(EXEC_DEF, JSON.stringify(payload));
     assert.strictEqual(r.ok, true, `should accept ${JSON.stringify(payload)}: ${r.error}`);
@@ -748,8 +750,8 @@ test('exec-def schema accepts every filter the script implements, and no other',
 test('exec-def schema accepts every action the script dispatches, and no other', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
   const actions = [...src.matchAll(/if \(action === '(\w+)'\) return do\w+\(payload\);/g)].map((m) => m[1]);
-  assert.deepStrictEqual(actions.slice().sort(), ['retire', 'roster', 'tickets'],
-    'ENTER: scraped the three dispatched verbs from the main() chain');
+  assert.deepStrictEqual(actions.slice().sort(), ['cost', 'retire', 'roster', 'tickets'],
+    'ENTER: scraped the four dispatched verbs from the main() chain');
 
   assert.deepStrictEqual(enumOf('action').slice().sort(), actions.slice().sort(),
     'the seed\'s action enum and the script\'s dispatch disagree — a verb is gated out, or gated in with nothing behind it');
@@ -765,4 +767,110 @@ test('exec-def schema rejects payloads the script would refuse', () => {
     const r = parseAndValidate(EXEC_DEF, JSON.stringify(payload));
     assert.strictEqual(r.ok, false, `should reject (${why}): ${JSON.stringify(payload)}`);
   }
+});
+
+// ── cost: the team ledger, read back through the real script ────────────────
+//
+// The rollup is a COPY of team-cost.js's, for the flat-copy reason projectDirFor
+// states at the top of the script, so both halves are pinned: that the script
+// prints what the ledger says, and that its copy of the arithmetic still agrees
+// with core's. A drifted copy here does not throw — it prints a wrong total,
+// which reads as authoritative.
+const coreCost = require('../team-cost');
+
+const COST_LEDGER = [
+  { kind: 'ticket', ticket: 't803', team: 'proj', role: 'hand', seat: 'h1', attribution: 'seat', usd: 21.64, requests: 218, at: Date.parse('2026-07-01T00:00:00Z') },
+  { kind: 'review', ticket: 't803', team: 'proj', round: 1, seat: 'r1', verdict: 'ACCEPT', usd: 3.10, at: Date.parse('2026-07-02T00:00:00Z') },
+  { kind: 'ticket', ticket: 't900', team: 'proj', role: 'hand', seat: 'h2', attribution: 'seat-lifetime', usd: 594.98, at: Date.parse('2026-07-03T00:00:00Z') },
+  { kind: 'seat', seat: 'lead', team: 'proj', role: 'lead', usd: 27, tokens: 5, at: Date.parse('2026-07-04T00:00:00Z') },
+];
+
+function mkLedger(home, team, rows, extraLines = []) {
+  const dir = path.join(home, 'teams', team);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'cost.jsonl'),
+    `${[...rows.map((r) => JSON.stringify(r)), ...extraLines].join('\n')}\n`);
+}
+
+test('cost: one line for the team, excluding what it could not attribute', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  reg(home, 'alead', proj);
+  mkLedger(home, 'proj', COST_LEDGER, ['this line is not JSON']);
+
+  const r = await launch(home, { action: 'cost', agent: 'alead' });
+  assert.strictEqual(r.code, 0, `cost exits 0: ${r.err}`);
+  // $21.64 + $3.10 + $27 — and NOT the $594.98 seat-lifetime row, which is the
+  // number t478 stopped publishing as this ticket's.
+  assert.match(r.err, /team proj: \$51\.74 since 2026-07-01/, `the total and its window: ${r.err}`);
+  assert.match(r.err, /tickets \$21\.64 \(2\)/, `both ticket rows are COUNTED: ${r.err}`);
+  assert.match(r.err, /reviews \$3\.10 \(1\)/, r.err);
+  assert.match(r.err, /standing \$27\.00 \(1\)/, r.err);
+  assert.match(r.err, /1 ticket unattributed/, `the excluded row is REPORTED, never silently dropped: ${r.err}`);
+  assert.match(r.err, /1 malformed line/, `and so is a line nobody could parse: ${r.err}`);
+  // ENTER: said outright, because the assertions above would all hold over a
+  // line that ALSO carried the lifetime figure somewhere in it.
+  assert.ok(!r.err.includes('594'), `the lifetime figure must not appear at all: ${r.err}`);
+});
+
+test('cost target: one ticket, its hand and each review round', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  reg(home, 'alead', proj);
+  mkLedger(home, 'proj', COST_LEDGER);
+
+  const hit = await launch(home, { action: 'cost', agent: 'alead', target: 't803' });
+  assert.strictEqual(hit.code, 0, hit.err);
+  assert.strictEqual(hit.err, 't803: $21.64 hand (218 req) + $3.10 review r1 = $24.74');
+
+  // A ticket the ledger could not attribute reports UNKNOWN rather than a total
+  // it cannot stand behind.
+  const lifetime = await launch(home, { action: 'cost', agent: 'alead', target: 't900' });
+  assert.match(lifetime.err, /t900: hand unattributed \(seat-lifetime\) = unknown/, lifetime.err);
+  assert.ok(!lifetime.err.includes('594'), `not even as a parenthetical: ${lifetime.err}`);
+
+  // And one with no rows at all says so, rather than answering $0.00.
+  const missing = await launch(home, { action: 'cost', agent: 'alead', target: 't555' });
+  assert.strictEqual(missing.code, 0, missing.err);
+  assert.match(missing.err, /t555: nothing booked/, missing.err);
+});
+
+test('cost: a team that has spent nothing yet is not an error, and not $0', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+
+  const r = await launch(home, { action: 'cost', agent: 'alead' });
+  assert.strictEqual(r.code, 0, `a missing ledger is a normal state for a new team: ${r.err}`);
+  assert.match(r.err, /nothing in .*cost\.jsonl yet/, r.err);
+  assert.ok(!/\$/.test(r.err), `and it must not print a figure it does not have: ${r.err}`);
+});
+
+test('the script\'s copy of the rollup still agrees with core team-cost', () => {
+  // The parity half. Both are fed the SAME rows and must publish the same money;
+  // the script's copy is reached by scraping and evaluating its two functions,
+  // which is the only way to compare them without requiring a file that may only
+  // require node builtins.
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const round6 = /function round6\([\s\S]*?\n\}/.exec(src);
+  const finite = /function finite\([\s\S]*?\n\}/.exec(src);
+  const rollup = /function rollupTeam\(rows\) \{[\s\S]*?\n\}\n/.exec(src);
+  // ENTER: all three were found. A null here would make the comparison below a
+  // comparison against a function this test wrote itself.
+  assert.ok(round6 && finite && rollup, 'the script must still carry its rollup copy');
+
+  // eslint-disable-next-line no-new-func
+  const scriptRollup = new Function(`${round6[0]}\n${finite[0]}\n${rollup[0]}\nreturn rollupTeam;`)();
+  const mine = scriptRollup(COST_LEDGER);
+  const theirs = coreCost.rollupTeam(COST_LEDGER);
+
+  assert.ok(theirs.usd.total > 0 && theirs.counts.unattributed === 1,
+    'ENTER: the fixture prices something AND excludes something, or agreement is trivial');
+  assert.deepStrictEqual(mine.usd, theirs.usd, 'the script publishes different money than core');
+  assert.deepStrictEqual(mine.counts, theirs.counts);
+  assert.strictEqual(mine.since, theirs.since);
+  assert.deepStrictEqual([...mine.byTicket.entries()].sort(), [...theirs.byTicket.entries()].sort());
 });

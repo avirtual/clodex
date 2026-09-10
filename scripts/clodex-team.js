@@ -339,6 +339,138 @@ function doTickets(payload) {
   say(`${head}:\n${lines.join('\n')}${recentBlock}${stale}${tail}`);
 }
 
+const TEAM_LEDGER_FILE = 'cost.jsonl';
+
+function round6(v) { return Math.round((Number.isFinite(v) ? v : 0) * 1e6) / 1e6; }
+function finite(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+
+function parseTeamLedger(text) {
+  const rows = [];
+  let malformed = 0;
+  for (const line of String(text == null ? '' : text).split('\n')) {
+    if (!line.trim()) continue;
+    let o = null;
+    try { o = JSON.parse(line); } catch { malformed++; continue; }
+    if (!o || typeof o !== 'object' || Array.isArray(o) || typeof o.kind !== 'string') { malformed++; continue; }
+    rows.push(o);
+  }
+  return { rows, malformed };
+}
+
+function readTeamLedger(teamDir) {
+  if (!teamDir) return { rows: [], malformed: 0, error: 'no team directory' };
+  let text;
+  try {
+    text = fs.readFileSync(path.join(teamDir, TEAM_LEDGER_FILE), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { rows: [], malformed: 0, error: null };
+    return { rows: [], malformed: 0, error: (e && e.message) || 'unreadable' };
+  }
+  return { ...parseTeamLedger(text), error: null };
+}
+
+function rollupTeam(rows) {
+  const usd = { tickets: 0, reviews: 0, standing: 0, total: 0 };
+  const counts = { tickets: 0, reviews: 0, standing: 0, unattributed: 0, unpriced: 0 };
+  const byTicket = new Map();
+  const byRole = new Map();
+  let since = null;
+  const bump = (role, amount) => {
+    const key = role || '(no role)';
+    byRole.set(key, round6((byRole.get(key) || 0) + amount));
+  };
+  const entryFor = (id) => {
+    if (!id) return null;
+    if (!byTicket.has(id)) byTicket.set(id, { hand: null, attribution: null, reviews: [], total: null });
+    return byTicket.get(id);
+  };
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    if (!r || typeof r !== 'object') continue;
+    const at = finite(r.at);
+    if (at !== null && (since === null || at < since)) since = at;
+    const amount = finite(r.usd);
+    if (r.kind === 'ticket') {
+      counts.tickets++;
+      const exact = amount !== null && r.attribution !== 'seat-lifetime';
+      if (exact) { usd.tickets = round6(usd.tickets + amount); bump(r.role, amount); }
+      else counts.unattributed++;
+      const e = entryFor(r.ticket);
+      if (e) {
+        e.hand = exact ? amount : null;
+        e.attribution = r.attribution || 'unknown';
+        e.requests = finite(r.requests);
+        e.seat = r.seat || null;
+      }
+    } else if (r.kind === 'review') {
+      counts.reviews++;
+      if (amount !== null) { usd.reviews = round6(usd.reviews + amount); bump('review', amount); }
+      else counts.unpriced++;
+      const e = entryFor(r.ticket);
+      if (e) e.reviews.push({ round: finite(r.round), usd: amount, verdict: r.verdict || null });
+    } else if (r.kind === 'seat') {
+      counts.standing++;
+      if (amount !== null) { usd.standing = round6(usd.standing + amount); bump(r.role, amount); }
+      else counts.unpriced++;
+    }
+  }
+  usd.total = round6(usd.tickets + usd.reviews + usd.standing);
+  for (const e of byTicket.values()) {
+    const priced = e.reviews.filter((x) => x.usd !== null);
+    if (e.hand === null && !priced.length) { e.total = null; continue; }
+    e.total = round6((e.hand || 0) + priced.reduce((a, x) => a + x.usd, 0));
+  }
+  return { usd, counts, byTicket, byRole, since };
+}
+
+function money(v) {
+  if (v === null || v === undefined) return 'unknown';
+  const n = Number(v) || 0;
+  if (n >= 100) return `$${Math.round(n).toLocaleString('en-US')}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function isoDay(ms) {
+  if (!Number.isFinite(ms)) return null;
+  try { return new Date(ms).toISOString().slice(0, 10); } catch { return null; }
+}
+
+function doCost(payload) {
+  const cwd = requesterCwd(payload);
+  if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
+  const team = resolveTeam(cwd);
+  if (!team) say(`no project: no team under ${TEAMS_DIR} has a root containing ${cwd}`);
+  const dir = path.join(TEAMS_DIR, team.name);
+  const read = readTeamLedger(dir);
+  if (read.error) die(`could not read ${path.join(dir, TEAM_LEDGER_FILE)}: ${read.error}`);
+  const roll = rollupTeam(read.rows);
+  const target = payload.target;
+  if (target) {
+    const e = roll.byTicket.get(target);
+    if (!e) say(`${target}: nothing booked in ${team.name}'s ledger yet (it may still be open, or it closed before cost.jsonl existed)`);
+    const reqs = e.requests === null ? '' : ` (${e.requests} req)`;
+    const hand = e.hand === null
+      ? `hand unattributed${e.attribution ? ` (${e.attribution})` : ''}`
+      : `${money(e.hand)} hand${reqs}`;
+    const reviews = e.reviews
+      .slice()
+      .sort((a, b) => (a.round || 0) - (b.round || 0))
+      .map((r) => `${r.usd === null ? 'unknown' : money(r.usd)} review r${r.round === null ? '?' : r.round}`);
+    const parts = [hand, ...reviews].join(' + ');
+    say(`${target}: ${parts} = ${e.total === null ? 'unknown' : money(e.total)}`);
+  }
+  if (!read.rows.length) say(`team ${team.name}: nothing in ${path.join(dir, TEAM_LEDGER_FILE)} yet — cost is booked as tickets close, reviews land and standing seats end a session`);
+  const day = isoDay(roll.since);
+  const malformed = read.malformed ? ` · ${read.malformed} malformed line${read.malformed === 1 ? '' : 's'}` : '';
+  const unattributed = roll.counts.unattributed
+    ? ` · ${roll.counts.unattributed} ticket${roll.counts.unattributed === 1 ? '' : 's'} unattributed`
+    : '';
+  say(`team ${team.name}: ${money(roll.usd.total)}${day ? ` since ${day}` : ''}`
+    + ` · tickets ${money(roll.usd.tickets)} (${roll.counts.tickets})`
+    + ` · reviews ${money(roll.usd.reviews)} (${roll.counts.reviews})`
+    + ` · standing ${money(roll.usd.standing)} (${roll.counts.standing})`
+    + `${unattributed}${malformed}`);
+}
+
 async function doRetire(payload) {
   const target = payload.target;
   if (!target || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(target)) die('retire needs "target": a session name');
@@ -370,6 +502,7 @@ async function doRetire(payload) {
   if (!agent || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(agent)) die('payload needs "agent": your session name');
   if (action === 'roster') return doRoster(payload);
   if (action === 'tickets') return doTickets(payload);
+  if (action === 'cost') return doCost(payload);
   if (action === 'retire') return doRetire(payload);
-  die(`unknown action "${action}" (roster|tickets|retire)`);
+  die(`unknown action "${action}" (roster|tickets|cost|retire)`);
 })().catch((e) => die(e.message));

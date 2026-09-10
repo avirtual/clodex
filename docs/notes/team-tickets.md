@@ -24,13 +24,14 @@ listing Bash gets the full cap plus Bash even when it named fewer read tools.
 `beyondCap` deliberately omits Bash: reporting it would print the "requires
 operator approval" warning about a grant this arm just made on purpose.
 
-## _reviewLedger
+## _seatLedger
 
 The model is taken on the session-ID gate alone, outside the cost check beside
 it. That check exists to avoid overlaying an unobserved spend onto a recorded
 one, which says nothing about which model billed. This is also the only moment
 the model is legible: wire-totals.json rows carry no model field, and the seat
-is reaped seconds later.
+is reaped seconds later. (Named `_reviewLedger` until t805 gave it a second
+caller; the reaping is still the review path's.)
 
 ## _taskStart
 

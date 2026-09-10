@@ -28,6 +28,26 @@ and the host surface exposes no seam a plugin could reach any of them through.
 Records carry `viewer` as their opener or `closedBy` so the registry never
 misattributes one to an agent.
 
+Cost is READ here and never written: a row shows what its ticket cost, from the
+`COST.json` and `REVIEW-COST.jsonl` in its task dir, and the header shows the
+team's total from `cost.jsonl`. `readTeamLedger` / `rollupTeam` / `parseTeamLedger`
+are copied in under §4 and compared against core's in
+test/tickets-viewer-path-parity.test.js — a drifted copy prints a wrong total
+rather than failing, which reads as authoritative.
+
+`engine.ticketCost` answers `null` for the ordinary case and the row renders
+nothing; most tickets predate the ledger, and a marker on each would be noise. A
+record found whose figure is null renders `cost unknown` instead — that ticket
+burned real money nobody could attribute, and a `$0` there is exactly the false
+zero `COST.json` exists to refuse. A `seat-lifetime` attribution reports null for
+the same reason: that number is the seat's whole life, not this ticket's cost.
+`engine.teamCost` answers ok-with-a-null-total for a project with no team, since
+the board is the deliverable and a missing cost line must never fail it.
+
+Every figure the renderer prints is a FLOOR, which is what the `~` says:
+wire-totals.json keeps only the newest 500 sessions, so an old seat's earliest
+spend is genuinely gone rather than zero.
+
 Spec DELIVERY is the one side effect that IS reachable, and it is done:
 `add`-with-an-assignee and `assign` both inject the spec into the live seat and
 stamp the ticket started, because an assignment nobody is told about is the one
