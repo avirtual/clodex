@@ -141,7 +141,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm|sandbox)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -167,6 +167,12 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'template-rm') return { type: 'team', sub, stem: positional[0] || null, body: '' };
     if (sub === 'prompt-save') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body };
     if (sub === 'prompt-rm') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body: '' };
+    // t808's sandbox verb, mirrored here in the same commit as parseTeam's —
+    // same lockstep rule as gather and the four file verbs above.
+    if (sub === 'sandbox') {
+      const refM = argStr.match(/\bref:(\S+)/);
+      return { type: 'team', sub, action: positional[0] || 'up', ref: refM ? refM[1] : 'master', body: '' };
+    }
     const ms = positional[0] != null ? Number(positional[0]) : null;
     return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
   }
@@ -366,6 +372,8 @@ const ADVERSARIAL = [
   '[agent:team prompt-save system lead] body text', '[agent:team prompt-save append lead] body',
   '[agent:team prompt-save lead] body', '[agent:team prompt-save]',
   '[agent:team prompt-rm system lead]', '[agent:team prompt-rm append lead]',
+  '[agent:team sandbox]', '[agent:team sandbox rebuild ref:t9-x]', '[agent:team sandbox down]',
+  '[agent:team sandbox status]', '[agent:team sandbox ref:release/1.2]', '[agent:team sandboxx]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
@@ -655,6 +663,24 @@ test('t795: create carries mode:, and the positional name survives it', () => {
     'omitted stays null — the handler, not the parser, decides what null means');
 });
 
+test('t808: sandbox parses action and ref as LITERALS, with both defaults', () => {
+  // Literal objects, not field probes: the differential above proves the two
+  // parser copies AGREE, and two copies of the same wrong default agree just as
+  // well. These rows are the only place the defaults `up` and `master` are
+  // asserted against a written-out value.
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox]'),
+    { type: 'team', sub: 'sandbox', action: 'up', ref: 'master', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox rebuild ref:t9-x]'),
+    { type: 'team', sub: 'sandbox', action: 'rebuild', ref: 't9-x', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox down]'),
+    { type: 'team', sub: 'sandbox', action: 'down', ref: 'master', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox status]'),
+    { type: 'team', sub: 'sandbox', action: 'status', ref: 'master', body: '' });
+  // ref: is a kv, so it can never be mistaken for the action positional.
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox ref:release/1.2]'),
+    { type: 'team', sub: 'sandbox', action: 'up', ref: 'release/1.2', body: '' });
+});
+
 test('end and escape are NOT rows — the scanner shell owns them', () => {
   assert.strictEqual(registry.rowFor('end'), null);
   assert.strictEqual(registry.rowFor('escape'), null);
@@ -690,6 +716,8 @@ test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team prompt-save system lead] md')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team template-rm seat]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team prompt-rm system lead]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox rebuild ref:t9-x]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory remember] x')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory list]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory recall] q')), 'none');

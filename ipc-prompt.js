@@ -59,6 +59,7 @@ A warm-up no-op tool call first (e.g. Bash(true)) does nothing but bill a full r
   [agent:team prompt-save system|append <stem>] <markdown>   Same for a prompt, into prompts/system/<stem>.md or prompts/append/<stem>.md. A system stem is what a role's prompt:<stem> names; append stems ride a seat's template. Greedy body, close it with [agent:end]. Both verbs refuse a body over 64KB — that is the intent transport's cap, not the file's.
   [agent:team template-rm <stem>]  Delete that template. Refused while any role in team.json still names it: repoint the role with [agent:team role-set …] first, since nothing else tells you the role would break.
   [agent:team prompt-rm system|append <stem>]  Delete that prompt. A system stem a role still names is refused the same way; an append stem is named by no role, so it is not.
+  [agent:team sandbox [up|rebuild|down|status] [ref:<ref>]]  Build or rebuild your OWN team's docker box \`team-<name>\` from that git ref (default action up, default ref master) and write its URLs and peer-wire token to ~/.clodex/teams/<name>/sandbox.json (mode 0600) — that FILE is where your seats read the token; the reply never carries it. down stops the box and deletes the file; status reports state without writing. Lead-only, like every team verb.
 
 Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.
 
@@ -172,7 +173,8 @@ const GRAMMAR_LINES = [
   [agent:team template-save <stem>] <json>   Write a seat template into your OWN team's directory, at templates/<stem>.json (team lead only; every team verb is). The body is the template JSON — an object with a string "type" — and it is GREEDY, so close it with [agent:end]. A role picks it up with [agent:team role-set <role> template:<stem>], and the team's own copy wins over a library one of the same name.
   [agent:team prompt-save system|append <stem>] <markdown>   Same for a prompt, into prompts/system/<stem>.md or prompts/append/<stem>.md. A system stem is what a role's prompt:<stem> names; append stems ride a seat's template. Greedy body, close it with [agent:end]. Both verbs refuse a body over 64KB — that is the intent transport's cap, not the file's.
   [agent:team template-rm <stem>]  Delete that template. Refused while any role in team.json still names it: repoint the role with [agent:team role-set …] first, since nothing else tells you the role would break.
-  [agent:team prompt-rm system|append <stem>]  Delete that prompt. A system stem a role still names is refused the same way; an append stem is named by no role, so it is not.` },
+  [agent:team prompt-rm system|append <stem>]  Delete that prompt. A system stem a role still names is refused the same way; an append stem is named by no role, so it is not.
+  [agent:team sandbox [up|rebuild|down|status] [ref:<ref>]]  Build or rebuild your OWN team's docker box \`team-<name>\` from that git ref (default action up, default ref master) and write its URLs and peer-wire token to ~/.clodex/teams/<name>/sandbox.json (mode 0600) — that FILE is where your seats read the token; the reply never carries it. down stops the box and deletes the file; status reports state without writing. Lead-only, like every team verb.` },
 ];
 
 const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.`;

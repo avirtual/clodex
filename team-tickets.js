@@ -39,6 +39,31 @@ const { resolveModelId, deriveModelTemplate } = require('./team-template-derive'
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
+// The SAME regex box creation is gated on, imported rather than copied: a local
+// copy would drift and let `team sandbox` mint an id manager.create refuses.
+const { BOX_ID_RE } = require('./sandbox');
+// Not the injected `fs`: this is the durable write team-manifest's atomicWrite
+// uses, and its 0600 temp file is what gives sandbox.json its mode — a plain
+// writeFileSync would land the peer-wire token at the umask default.
+const { atomicWriteFileSync } = require('./fs-util');
+
+const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
+
+function sha8(sha) {
+  const s = String(sha == null ? '' : sha);
+  return s ? s.slice(0, 8) : 'unknown';
+}
+
+function sandboxRefClause(st) {
+  return (st && st.ref) ? ` (ref ${st.ref})` : '';
+}
+
+function sandboxPortClause(st) {
+  const ports = (st && st.ports) || {};
+  if (!ports.web && !ports.wire) return '';
+  return ` — web ${ports.web ? `http://127.0.0.1:${ports.web}` : '(no port)'}`
+    + ` · wire ${ports.wire ? `:${ports.wire}` : '(no port)'}`;
+}
 
 const TEAM_FILE_BODY_MAX = 64 * 1024;
 
@@ -417,6 +442,7 @@ function createTicketMethods(deps, shared) {
     pathFor,
     getPersistence,
     getRemindScheduler,
+    getSandboxManager,
     getTemplates,
     listAllTemplates,
     getUserDataPath,
@@ -2769,12 +2795,86 @@ function createTicketMethods(deps, shared) {
             reply(`prompt ${kind}/${stem} removed from ${res.file}`);
             return;
           }
+          case 'sandbox': {
+            this._handleTeamSandbox(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
+            return;
+          }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
       }
+    },
+
+    _teamSandboxFile(team) {
+      return path.join(teamsDir, team.name, 'sandbox.json');
+    },
+
+    // Async, and reached through a `.catch` from the synchronous switch: every
+    // docker step here awaits, while the other team verbs are pure disk edits.
+    async _handleTeamSandbox(team, intent, reply) {
+      const action = intent.action || 'up';
+      if (!SANDBOX_ACTIONS.includes(action)) {
+        reply(`error: sandbox action must be ${SANDBOX_ACTIONS.join(' | ')} (got "${action}")`);
+        return;
+      }
+      const manager = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
+      if (!manager) { reply('error: sandboxes are not enabled on this host'); return; }
+
+      const boxId = `team-${team.name}`;
+      if (!BOX_ID_RE.test(boxId)) {
+        reply(`error: box id "${boxId}" must be lowercase letters, digits, dashes or underscores (no dots, no spaces) — rename the team`);
+        return;
+      }
+      let box = manager.get(boxId);
+      if (!box) {
+        const made = manager.create(boxId, `${team.name} team`);
+        if (made && made.ok === false) { reply(`error: ${made.error}`); return; }
+        box = manager.get(boxId);
+        if (!box) { reply(`error: sandbox ${boxId} could not be created`); return; }
+      }
+
+      // `image` is deliberately absent from the patch: an operator override set in
+      // the GUI still wins, which is the precedence t807 established.
+      const saved = box.setConfig({ ref: intent.ref || null, workDir: team.root });
+      if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
+
+      const file = this._teamSandboxFile(team);
+      if (action === 'down') {
+        const r = await box.down();
+        if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
+        try { fs.unlinkSync(file); } catch {}
+        reply(`sandbox ${boxId} down — ${file} removed`);
+        return;
+      }
+      if (action === 'status') {
+        const st = await box.status();
+        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}`);
+        return;
+      }
+
+      const r = action === 'rebuild' ? await box.rebuild() : await box.up();
+      if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
+      const st = await box.status();
+      const ports = (st && st.ports) || (r && r.ports) || {};
+      const token = typeof box.remoteToken === 'function' ? box.remoteToken() : null;
+      const record = {
+        boxId,
+        ref: (st && st.ref) || intent.ref || null,
+        sha: (st && st.sha) || null,
+        webUrl: ports.web ? `http://127.0.0.1:${ports.web}` : null,
+        wireUrl: ports.wire ? `http://127.0.0.1:${ports.wire}` : null,
+        token,
+        startedAt: new Date().toISOString(),
+      };
+      ensureDir(path.dirname(file));
+      atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+      // The reply names the FILE, never the token: this line lands in the lead's
+      // transcript, its logs and any dm it is quoted into.
+      reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
+        + ` — web ${record.webUrl || '(no port)'} · wire ${record.wireUrl ? `:${ports.wire}` : '(no port)'}`
+        + ` · token in ${file}`);
     },
 
     _teamFileDeps() {

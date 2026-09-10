@@ -165,7 +165,7 @@ function parseTeamCreate(cleaned) {
 }
 
 function parseTeam(cleaned) {
-  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm)\b([^\]]*)\]\s*(.*)/s);
+  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm|sandbox)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const sub = m[1];
   const argStr = m[2];
@@ -186,6 +186,10 @@ function parseTeam(cleaned) {
   if (sub === 'template-rm') return { type: 'team', sub, stem: positional[0] || null, body: '' };
   if (sub === 'prompt-save') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body };
   if (sub === 'prompt-rm') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body: '' };
+  if (sub === 'sandbox') {
+    const refM = argStr.match(/\bref:(\S+)/);
+    return { type: 'team', sub, action: positional[0] || 'up', ref: refM ? refM[1] : 'master', body: '' };
+  }
   const ms = positional[0] != null ? Number(positional[0]) : null;
   return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
 }
