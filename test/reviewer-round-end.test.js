@@ -303,15 +303,15 @@ test('mkFixture injects every dep team-tickets.js reads', () => {
     // gatherTeam is optional in that same sense: it is reached only from
     // _handleTeam's gather case, which no subject in this file drives — every
     // one here is about the ticket loop.
-    // The team-metadata deps are optional in that same sense: createTeam
-    // and setLead are read only by _handleTeamCreate and _handleTeam's set-lead
-    // case, teamsDir and listTeams only by its four template/prompt file verbs,
-    // loadManifest only by the read-only teamActivity channel (t785),
-    // and no subject here drives any of them. refreshAppMenu is optional in a
-    // STRONGER sense — the call site guards on typeof, because a headless host
-    // wires no Electron menu at all.
+    // The team-metadata deps are optional in that same sense: createTeam,
+    // kitCatalog and resolveKit are read only by _handleTeamCreate, setLead only
+    // by _handleTeam's set-lead case, teamsDir and listTeams only by its four
+    // template/prompt file verbs, loadManifest only by the read-only
+    // teamActivity channel (t785), and no subject here drives any of them.
+    // refreshAppMenu is optional in a STRONGER sense — the call site guards on
+    // typeof, because a headless host wires no Electron menu at all.
     optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
-      'createTeam', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu'],
+      'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu'],
   });
 });
 

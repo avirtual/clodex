@@ -241,6 +241,10 @@ test('t699: loadManifest and resolveTeam both carry `dir`, the directory holding
     root: repo,
     lead: 't-lead',
     roles: m.roles,
+    // The fixture seeds the real shipped library, kits included, so this create
+    // took the default kit and recorded it — a bare home records no key and
+    // would load as 'clodex' here instead.
+    kit: 'default',
     file,
     dir: path.dirname(file),
     watchdogMs: null,
