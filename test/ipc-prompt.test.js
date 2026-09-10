@@ -432,6 +432,18 @@ test('team-create line renders ONLY for a seat whose intents explicitly grant it
   assert.ok(granted.includes('[agent:team set-lead <seat>]'), 'the hand-off verb is named where the mint is');
 });
 
+// t798. The line is the ONLY description of the create a granted seat reads, so
+// a step it names that the create already performed sends that seat to redo it.
+test('t798 team-create line: no post-brief spawn/gather/role-add, and mode:interview is named', () => {
+  const granted = buildIpcPrompt(['team-create', ...ALL_GATEABLE]);
+  assert.ok(granted.includes('[agent:team create <name> root:<abs-path> [lead:<seat>]]'),
+    'ENTER: the line is present — the assertions below read it');
+  assert.ok(!granted.includes('[agent:team gather], [agent:team role-add]'),
+    'gather is a no-op on a fresh team and the briefed spawn is Clodex\'s');
+  assert.ok(granted.includes('Add mode:interview when the brief is a few words'),
+    'the mode the create takes is named on the line that documents it');
+});
+
 // ── exec: a synthesized section keyed on the granted command-id allowlist ─────
 
 // A listed command that never says WHEN to use it is dead weight: it renders as

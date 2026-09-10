@@ -2423,7 +2423,8 @@ function createTicketMethods(deps, shared) {
           try { fs.rmdirSync(dir); } catch {}
           this._refreshAppMenuQuietly();
           reply(`error: could not save the brief (${res.error}) — no team was created; `
-            + `re-fire [agent:team create ${name} root:${root}${intent.lead ? ` lead:${intent.lead}` : ''}] with the brief`);
+            + `re-fire [agent:team create ${name} root:${root}${intent.lead ? ` lead:${intent.lead}` : ''}`
+            + `${intent.mode ? ` mode:${intent.mode}` : ''}] with the brief`);
           return;
         }
       }
@@ -2431,13 +2432,14 @@ function createTicketMethods(deps, shared) {
       if (hasBrief) {
         const head = `team "${team.name}" created — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
           + `hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md${copiedClause}`;
-        const rootArm = cls.kind === 'takeover'
-          ? `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is an EXISTING `
-            + 'project you are taking over — Clodex touched none of its files. Follow "First turn on a fresh team" '
-            + 'in your prompt.'
-          : `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is a NEW project — `
+        const isNew = cls.kind !== 'takeover';
+        const rootArm = isNew
+          ? `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is a NEW project — `
             + 'Clodex created and git-init\'d it, and it is empty apart from one empty commit. Follow '
-            + '"First turn on a fresh team" in your prompt.';
+            + '"First turn on a fresh team" in your prompt.'
+          : `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is an EXISTING `
+            + 'project you are taking over — Clodex touched none of its files. Follow "First turn on a fresh team" '
+            + 'in your prompt.';
         const opener = mode === 'interview'
           ? `${rootArm} The brief is a STARTING POINT another agent wrote from a few words of the operator's, `
             + 'not a spec: follow the INTERVIEW arm of "First turn on a fresh team" — ask before you file.'
@@ -2459,7 +2461,9 @@ function createTicketMethods(deps, shared) {
             return;
           }
           reply(`${head}; ${team.lead} could NOT be spawned (${msg.replace(/^error: /, '')}) — the team is on disk; `
-            + `re-fire [agent:spawn name:${team.lead} cwd:${team.root}] yourself.`);
+            + `re-fire [agent:spawn name:${team.lead} cwd:${team.root}] yourself. `
+            + `Then tell it: root is ${isNew ? 'NEW' : 'an EXISTING project (TAKEOVER)'}`
+            + `${mode === 'interview' ? ', interview mode' : ''} — the opener is only delivered on a successful spawn.`);
         };
         this._handleSpawnIntent(session, { name: team.lead, cwd: team.root }, { onReply });
         return;

@@ -15,6 +15,7 @@ blocks a release.
 
 - Library > Prompts: a long team prompt name keeps its system/append suffix, and an empty library kind says "(no library system prompts)" so a plugin's rows beneath it do not read as a contradiction.
 - Small fixes: the Manage Plugins refresh never leaves an unhandled rejection, the inbox page size treats a missing or infinite limit as the default 30, and boundary-check prints its usage instead of a stack trace when run without a file.
+- Team create's replies keep up with it: a failed brief save suggests a retry that keeps mode:interview, a failed lead spawn says which arm to tell the lead it is in, and the create help line no longer sends a briefed team through spawn, gather and role-add.
 
 ## 5.56.0 — 2026-09-10 — The Inbox pages its notes, and Manage Plugins re-checks the library when it opens
 
