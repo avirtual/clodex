@@ -2814,8 +2814,8 @@ function createTicketMethods(deps, shared) {
       return path.join(teamsDir, team.name, 'sandbox.json');
     },
 
-    // Async, and reached through a `.catch` from the synchronous switch: every
-    // docker step here awaits, while the other team verbs are pure disk edits.
+    // Async, so the switch's own try/catch cannot see a rejection here — the
+    // caller attaches the `.catch` that turns one into an `error:` reply.
     async _handleTeamSandbox(team, intent, reply) {
       const action = intent.action || 'up';
       if (!SANDBOX_ACTIONS.includes(action)) {
@@ -2839,7 +2839,7 @@ function createTicketMethods(deps, shared) {
       }
 
       // `image` is deliberately absent from the patch: an operator override set in
-      // the GUI still wins, which is the precedence t807 established.
+      // the GUI still wins over a ref, and adding it here would silently clear it.
       const saved = box.setConfig({ ref: intent.ref || null, workDir: team.root });
       if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
 
@@ -2880,8 +2880,7 @@ function createTicketMethods(deps, shared) {
       // The reply names the FILE, never the token: this line lands in the lead's
       // transcript, its logs and any dm it is quoted into.
       reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
-        + ` — web ${record.webUrl || '(no port)'} · wire ${record.wireUrl ? `:${ports.wire}` : '(no port)'}`
-        + ` · token in ${file}`);
+        + `${sandboxPortClause({ ports })} · token in ${file}`);
     },
 
     _teamFileDeps() {
