@@ -19,7 +19,9 @@ blocks a release.
 - **A team can bind its own sandbox**: `[agent:team sandbox [up|rebuild|down|status] [ref:<ref>]]`
   builds box `team-<name>` from that ref and writes the team's URLs and token to
   `~/.clodex/teams/<name>/sandbox.json` (0600), so a team tests merged code on a
-  box while the desktop keeps running.
+  box while the desktop keeps running. Only `up`/`rebuild` reconfigure the box,
+  and only when you typed `ref:` — a later `status` or `down` leaves the tracked
+  ref alone.
 
 ## 5.59.0 — 2026-09-11 — Cost on every ticket, the Inbox on the phone, and honest standing-seat attribution
 

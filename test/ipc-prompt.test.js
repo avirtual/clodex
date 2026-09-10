@@ -193,8 +193,8 @@ test('t808: the sandbox row is present in the literal AND in GRAMMAR_LINES', () 
   assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the sandbox row');
   assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
-    assert.ok(/docker box `team-<name>` from that git ref \(default action up, default ref master\)/.test(src),
-      'the row names the box it mints and BOTH defaults — the parser has no other documentation');
+    assert.ok(/docker box `team-<name>` from that git ref \(default action up; ref defaults to master only when the box tracks none yet, and status\/down never change it\)/.test(src),
+      'the row names the box it mints, the default, and that status/down leave a tracked ref alone');
     assert.ok(/~\/\.clodex\/teams\/<name>\/sandbox\.json \(mode 0600\)/.test(src),
       'and the file the coordinates land in');
     assert.ok(/that FILE is where your seats read the token; the reply never carries it/.test(src),

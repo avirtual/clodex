@@ -462,12 +462,17 @@ A team's own docker box, so its seats can exercise **merged** code while the
 desktop app keeps running the version you launched.
 
 The lead binds one with `[agent:team sandbox [up|rebuild|down|status]
-[ref:<ref>]]` — action defaults to `up`, `ref:` to `master`. It mints (or
-reuses) the box `team-<name>`, points it at that ref with the team root as its
-work directory, and brings it up. `rebuild` rebuilds the image first; `down`
-stops it; `status` only reports. Lead-only, like every `[agent:team …]` verb,
-and refused with `sandboxes are not enabled on this host` where the host has no
-sandbox support.
+[ref:<ref>]]` — action defaults to `up`. It mints (or reuses) the box
+`team-<name>`, points it at that ref with the team root as its work directory,
+and brings it up. `rebuild` rebuilds the image first; `down` stops it; `status`
+only reports. Lead-only, like every `[agent:team …]` verb, and refused with
+`sandboxes are not enabled on this host` where the host has no sandbox support.
+
+Only `up` and `rebuild` change the box's configuration, and they patch `ref`
+only when you actually typed `ref:`. Omit it and the box keeps the ref it is
+already tracking; `master` is a seed applied only to a box tracking none yet. So
+a `status` or `down` after `sandbox rebuild ref:my-branch` leaves that branch in
+place rather than quietly resetting it to master.
 
 After a successful `up` or `rebuild` the box's coordinates land in
 `~/.clodex/teams/<name>/sandbox.json`, mode 0600:
@@ -481,8 +486,9 @@ After a successful `up` or `rebuild` the box's coordinates land in
 in the reply, not in the logs, not over IPC — so a seat that needs to reach the
 box reads the file. `down` deletes it; `status` never writes it.
 
-An `image` override set on the box in the GUI still wins over `ref:`: the verb
-patches `ref` and `workDir` only.
+`ref` and `sha` are what the box REPORTS, not what you asked for: an `image`
+override set in the GUI wins over `ref:`, and the file then carries `null` for
+both rather than advertising a ref the box is not running.
 
 ## Scaling the team
 

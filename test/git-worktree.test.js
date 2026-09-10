@@ -626,9 +626,7 @@ test('mergeNoFf: a merge that fails without conflicting reports through the old 
 // t808 rider: `checkoutDetached` interpolates the caller's ref straight into a
 // `rev-parse` argv, and its input regex admits a leading dash (`-` is in the
 // class, so `--all` passes it). `--end-of-options` is what makes git read the
-// argument as a ref rather than as an option, whatever it looks like. Both arms
-// here run through the shipped call, so an argv that dropped the flag AND an
-// argv that broke ordinary refs by adding it are each visible.
+// argument as a ref rather than as an option, whatever it looks like.
 test('checkoutDetached: an ordinary ref still resolves through --end-of-options', { skip: !gitAvailable() }, async () => {
   const repo = makeRepo();
   const sha = gitOut(repo, ['rev-parse', 'HEAD']);

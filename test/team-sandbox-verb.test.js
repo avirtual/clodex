@@ -23,18 +23,31 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 
-function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult } = {}) {
+function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, config = {} } = {}) {
   const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
+  // The box's config is REAL state here, not a spy log: the handler reads it back
+  // (to decide whether to seed a default ref) and the "config survives" subjects
+  // assert on it after a later action, which a write-only spy cannot express.
   const makeBox = (id) => ({
     id,
-    setConfig(partial) { calls.setConfig.push(partial); return setConfigResult || { ...partial }; },
+    getConfig() { return { ...config }; },
+    setConfig(partial) {
+      calls.setConfig.push(partial);
+      if (setConfigResult) return setConfigResult;
+      Object.assign(config, partial);
+      return { ...config };
+    },
     async up() { calls.up++; return upResult || { ok: true, ports }; },
     async rebuild() { calls.rebuild++; return upResult || { ok: true, ports }; },
     async down() { calls.down++; return downResult || { ok: true }; },
+    // `ref` is read back off config, exactly as the real status() derives it from
+    // getConfig(). Hardcoding it would make this fake report a ref the box is not
+    // configured with, and the "tracked ref survives" subjects would then be
+    // measuring the fake's constant instead of the handler's behaviour.
     async status() {
       calls.status++;
-      return statusResult || { state: 'running', ref: 'master', sha: 'abcdef1234567890', ports };
+      return statusResult || { state: 'running', ref: config.ref || null, sha: 'abcdef1234567890', ports };
     },
     remoteToken: () => TOKEN,
   });
@@ -89,6 +102,7 @@ function mkBox(opts = {}) {
     lead: { name: 'lead', agentType: 'claude', cwd: '/proj' },
     hand: { name: 'clodex-hand', agentType: 'claude', cwd: '/proj' },
     last: () => injected[injected.length - 1] || '',
+    box: () => fake.manager.get('team-clodex'),
     file: path.join(teamsDir, 'clodex', 'sandbox.json'),
   };
 }
@@ -98,7 +112,7 @@ function mkBox(opts = {}) {
 const settle = () => new Promise((r) => setImmediate(() => setImmediate(r)));
 
 const fire = async (b, session, intent) => {
-  b.m._handleTeam(session, { type: 'team', sub: 'sandbox', action: 'up', ref: 'master', body: '', ...intent });
+  b.m._handleTeam(session, { type: 'team', sub: 'sandbox', action: 'up', ref: null, body: '', ...intent });
   await settle();
 };
 
@@ -106,12 +120,14 @@ const exists = (p) => { try { fs.accessSync(p); return true; } catch { return fa
 
 test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', async () => {
   const b = mkBox();
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
+  await fire(b, b.lead, { action: 'up' });
 
   assert.deepStrictEqual(b.calls.create, [['team-clodex', 'clodex team']]);
   // Whole-object compare: a patch that also carried `image` would silently
   // overwrite the operator's GUI override, which t807 made precedence-bearing.
-  assert.deepStrictEqual(b.calls.setConfig, [{ ref: 'master', workDir: '/proj' }]);
+  // A bare `up` on a box with no ref seeds the default — the LITERAL 'master',
+  // applied here in the handler and no longer by the parser.
+  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 'master' }]);
   assert.strictEqual(b.calls.up, 1);
 
   assert.ok(exists(b.file), 'sandbox.json landed');
@@ -129,13 +145,13 @@ test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', 
 
 test('sandbox.json is written 0600 — the peer-wire token is not group- or world-readable', async () => {
   const b = mkBox();
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
+  await fire(b, b.lead, { action: 'up' });
   assert.strictEqual(fs.statSync(b.file).mode & 0o777, 0o600);
 });
 
 test('the reply names the file, never the token', async () => {
   const b = mkBox();
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
+  await fire(b, b.lead, { action: 'up' });
   const line = b.last();
   assert.ok(!line.includes(TOKEN), `the reply leaked the token: ${line}`);
   assert.match(line, /sandbox team-clodex up @ abcdef12 \(ref master\)/);
@@ -145,8 +161,8 @@ test('the reply names the file, never the token', async () => {
 
 test('a second up does NOT create the box again', async () => {
   const b = mkBox();
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
+  await fire(b, b.lead, { action: 'up' });
+  await fire(b, b.lead, { action: 'up' });
   assert.deepStrictEqual(b.calls.create, [['team-clodex', 'clodex team']]);
   assert.strictEqual(b.calls.up, 2);
 });
@@ -156,30 +172,86 @@ test('rebuild goes through rebuild(), not up(), and still writes the file', asyn
   await fire(b, b.lead, { action: 'rebuild', ref: 't9-x' });
   assert.strictEqual(b.calls.rebuild, 1);
   assert.strictEqual(b.calls.up, 0);
-  assert.deepStrictEqual(b.calls.setConfig, [{ ref: 't9-x', workDir: '/proj' }]);
+  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 't9-x' }]);
   assert.ok(exists(b.file));
 });
 
 test('down stops the box and deletes sandbox.json', async () => {
   const b = mkBox();
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
+  await fire(b, b.lead, { action: 'up' });
   assert.ok(exists(b.file));
-  await fire(b, b.lead, { action: 'down', ref: 'master' });
+  await fire(b, b.lead, { action: 'down' });
   assert.strictEqual(b.calls.down, 1);
   assert.ok(!exists(b.file), 'the token file is gone once the box is down');
   assert.match(b.last(), /sandbox team-clodex down/);
 });
 
 test('status writes nothing and reports the state', async () => {
-  const b = mkBox();
-  await fire(b, b.lead, { action: 'status', ref: 'master' });
+  const b = mkBox({ config: { ref: 'master' } });
+  await fire(b, b.lead, { action: 'status' });
   assert.ok(!exists(b.file), 'status is read-only — no token file appears');
   assert.match(b.last(), /^\[agent:team\] sandbox team-clodex running \(ref master\)/);
 });
 
+// An unconfigured box has no ref to report, and status must not invent one by
+// seeding a default — seeding belongs to up/rebuild alone.
+test('status on a box with no ref reports no ref clause, and still configures nothing', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'status' });
+  assert.strictEqual(b.calls.setConfig.length, 0);
+  assert.match(b.last(), /^\[agent:team\] sandbox team-clodex running/);
+  assert.ok(!/\(ref /.test(b.last()), `no ref was configured, so none is claimed: ${b.last()}`);
+});
+
+// The r1 must-fix, in the order a lead really types it. The parser used to default
+// `ref` to 'master', and setConfig ran for EVERY action — so this exact sequence
+// silently rewrote a box tracking t9-x back to master, and the next rebuild would
+// have built the wrong commit. Both halves are asserted: the call the handler must
+// NOT make, and the config value that must survive it.
+test('status after `rebuild ref:t9-x` does not touch config — the tracked ref survives', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'rebuild', ref: 't9-x' });
+  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 't9-x' }], 'ENTER: rebuild configured the box');
+
+  await fire(b, b.lead, { action: 'status' });
+
+  assert.strictEqual(b.calls.setConfig.length, 1, 'status configured nothing — the rebuild patch is still the only one');
+  assert.strictEqual(b.box().getConfig().ref, 't9-x', 'the box still tracks the ref it was built from');
+  assert.match(b.last(), /\(ref t9-x\)/, 'and the status line reports that ref, not the default');
+});
+
+test('down touches no config either', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'rebuild', ref: 't9-x' });
+  await fire(b, b.lead, { action: 'down' });
+  assert.strictEqual(b.calls.setConfig.length, 1, 'down configured nothing');
+  assert.strictEqual(b.box().getConfig().ref, 't9-x');
+});
+
+// The other half of "seed only when there is no ref": a bare `up` must not reset a
+// box someone already pointed at a branch.
+test('a bare `up` keeps an existing ref rather than reseeding master', async () => {
+  const b = mkBox({ config: { ref: 't9-x' } });
+  await fire(b, b.lead, { action: 'up' });
+  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj' }], 'no ref key at all — the box keeps t9-x');
+  assert.strictEqual(b.box().getConfig().ref, 't9-x');
+});
+
+// sandbox.json carries what status() REPORTS, never what the intent asked for.
+// Under a GUI image override the status rider returns ref/sha null precisely so the
+// box does not advertise a ref it is not running; a fallback to the intent ref would
+// put "master" back into the file beside a null sha.
+test('sandbox.json ref is null when status reports null, even though the intent named a ref', async () => {
+  const b = mkBox({ statusResult: { state: 'running', ref: null, sha: null, ports: { web: 7810, wire: 7820 } } });
+  await fire(b, b.lead, { action: 'up', ref: 't9-x' });
+  const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
+  assert.strictEqual(rec.ref, null, 'the file reports the box, not the request');
+  assert.strictEqual(rec.sha, null);
+});
+
 test('a non-lead gets the same refusal the other team verbs give, and writes nothing', async () => {
   const b = mkBox();
-  await fire(b, b.hand, { action: 'up', ref: 'master' });
+  await fire(b, b.hand, { action: 'up' });
   assert.match(b.last(), /only the team lead \(lead\) can edit team metadata/);
   assert.strictEqual(b.calls.create.length, 0, 'a refused verb touches no box');
   assert.ok(!exists(b.file));
@@ -187,14 +259,14 @@ test('a non-lead gets the same refusal the other team verbs give, and writes not
 
 test('no sandbox manager on this host → the "not enabled" error, and nothing is written', async () => {
   const b = mkBox({ noManager: true });
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
+  await fire(b, b.lead, { action: 'up' });
   assert.match(b.last(), /error: sandboxes are not enabled on this host/);
   assert.ok(!exists(b.file));
 });
 
 test('an unknown action is refused before any box is touched', async () => {
   const b = mkBox();
-  await fire(b, b.lead, { action: 'restart', ref: 'master' });
+  await fire(b, b.lead, { action: 'restart' });
   assert.match(b.last(), /error: sandbox action must be up \| rebuild \| down \| status \(got "restart"\)/);
   assert.strictEqual(b.calls.create.length, 0);
   assert.strictEqual(b.calls.get.length, 0);
@@ -202,7 +274,7 @@ test('an unknown action is refused before any box is touched', async () => {
 
 test('a failed up surfaces the docker message and writes no token file', async () => {
   const b = mkBox({ upResult: { ok: false, error: 'Cannot connect to the Docker daemon' } });
-  await fire(b, b.lead, { action: 'up', ref: 'master' });
+  await fire(b, b.lead, { action: 'up' });
   assert.match(b.last(), /error: Cannot connect to the Docker daemon/);
   assert.ok(!exists(b.file), 'a box that never came up leaves no URLs claiming it did');
 });

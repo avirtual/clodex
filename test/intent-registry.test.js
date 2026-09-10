@@ -171,7 +171,7 @@ function parseIntentLegacy(rawLine) {
     // same lockstep rule as gather and the four file verbs above.
     if (sub === 'sandbox') {
       const refM = argStr.match(/\bref:(\S+)/);
-      return { type: 'team', sub, action: positional[0] || 'up', ref: refM ? refM[1] : 'master', body: '' };
+      return { type: 'team', sub, action: positional[0] || 'up', ref: refM ? refM[1] : null, body: '' };
     }
     const ms = positional[0] != null ? Number(positional[0]) : null;
     return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
@@ -666,16 +666,17 @@ test('t795: create carries mode:, and the positional name survives it', () => {
 test('t808: sandbox parses action and ref as LITERALS, with both defaults', () => {
   // Literal objects, not field probes: the differential above proves the two
   // parser copies AGREE, and two copies of the same wrong default agree just as
-  // well. These rows are the only place the defaults `up` and `master` are
-  // asserted against a written-out value.
+  // well. `ref` stays NULL here on purpose — an absent kv must be distinguishable
+  // from a typed one, or the handler cannot tell "leave the ref alone" from
+  // "set it to master", which is what made `status` rewrite a tracked ref.
   assert.deepStrictEqual(parseIntent('[agent:team sandbox]'),
-    { type: 'team', sub: 'sandbox', action: 'up', ref: 'master', body: '' });
+    { type: 'team', sub: 'sandbox', action: 'up', ref: null, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:team sandbox rebuild ref:t9-x]'),
     { type: 'team', sub: 'sandbox', action: 'rebuild', ref: 't9-x', body: '' });
   assert.deepStrictEqual(parseIntent('[agent:team sandbox down]'),
-    { type: 'team', sub: 'sandbox', action: 'down', ref: 'master', body: '' });
+    { type: 'team', sub: 'sandbox', action: 'down', ref: null, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:team sandbox status]'),
-    { type: 'team', sub: 'sandbox', action: 'status', ref: 'master', body: '' });
+    { type: 'team', sub: 'sandbox', action: 'status', ref: null, body: '' });
   // ref: is a kv, so it can never be mistaken for the action positional.
   assert.deepStrictEqual(parseIntent('[agent:team sandbox ref:release/1.2]'),
     { type: 'team', sub: 'sandbox', action: 'up', ref: 'release/1.2', body: '' });

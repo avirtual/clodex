@@ -43,6 +43,7 @@ const { BOX_ID_RE } = require('./sandbox');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 
 const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
+const SANDBOX_DEFAULT_REF = 'master';
 
 function sha8(sha) {
   const s = String(sha == null ? '' : sha);
@@ -2828,9 +2829,6 @@ function createTicketMethods(deps, shared) {
         if (!box) { reply(`error: sandbox ${boxId} could not be created`); return; }
       }
 
-      const saved = box.setConfig({ ref: intent.ref || null, workDir: team.root });
-      if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
-
       const file = this._teamSandboxFile(team);
       if (action === 'down') {
         const r = await box.down();
@@ -2845,6 +2843,15 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
+      // Only up/rebuild configure the box. `ref` is patched only when the intent
+      // carried the kv, so a bare `up` after `rebuild ref:t9-x` keeps t9-x, and
+      // SANDBOX_DEFAULT_REF seeds only a box that has no ref at all.
+      const patch = { workDir: team.root };
+      if (intent.ref) patch.ref = intent.ref;
+      else if (!box.getConfig().ref) patch.ref = SANDBOX_DEFAULT_REF;
+      const saved = box.setConfig(patch);
+      if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
+
       const r = action === 'rebuild' ? await box.rebuild() : await box.up();
       if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
       const st = await box.status();
@@ -2852,7 +2859,7 @@ function createTicketMethods(deps, shared) {
       const token = box.remoteToken();
       const record = {
         boxId,
-        ref: (st && st.ref) || intent.ref || null,
+        ref: (st && st.ref) || null,
         sha: (st && st.sha) || null,
         webUrl: ports.web ? `http://127.0.0.1:${ports.web}` : null,
         wireUrl: ports.wire ? `http://127.0.0.1:${ports.wire}` : null,
