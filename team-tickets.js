@@ -1403,7 +1403,7 @@ function createTicketMethods(deps, shared) {
       } catch { return false; }
     },
 
-    // Call BEFORE getPersistence().remove(name) — docs/notes/team-tickets.md.
+    // Call BEFORE getPersistence().remove(name): no record, no stamp.
     _stampSeatCost(session, boundary) {
       try {
         const name = session && session.name;
@@ -1420,7 +1420,7 @@ function createTicketMethods(deps, shared) {
           seat: name,
           team: team.name,
           role: matchSeatRole(team, name),
-          sessionId: (session && session.sessionId) || (entry && entry.sessionId) || null,
+          sessionId: (session && session.sessionId) || entry.sessionId || null,
           boundary,
           lifetime: {
             usd: ledger.usd,
