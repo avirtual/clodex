@@ -105,6 +105,76 @@ test('jsonlToMessages: consecutive same-role entries merge into one bubble', () 
     const msgs = jsonlToMessages(p);
     assert.strictEqual(msgs.length, 1);
     assert.strictEqual(msgs[0].text, 'part one\n\npart two');
+    // Neither entry carries a stop_reason and the file ends there, so the turn is
+    // still running: the merged bubble is interim.
+    assert.strictEqual(msgs[0].interim, true);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: interim text before a tool call, final text on end_turn', () => {
+  const p = writeJsonl([
+    { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'let me check the log' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', content: 'log body' }] } },
+    { type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'the log is clean' }] } },
+  ]);
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p).map(m => [m.role, m.text, m.interim]), [
+      ['assistant', 'let me check the log', true],
+      ['assistant', 'the log is clean', false],
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: a running turn — three tool_use texts and no end_turn — is one interim bubble', () => {
+  const p = writeJsonl([
+    { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'one' }] } },
+    { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'two' }] } },
+    { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'three' }] } },
+  ]);
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p).map(m => [m.role, m.text, m.interim]), [
+      ['assistant', 'one\n\ntwo\n\nthree', true],
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: a stop_reason-less tail is final once a genuine user message closes the turn', () => {
+  const p = writeJsonl([
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'no stop reason here' }] } },
+    { type: 'user', message: { content: 'and the next question' } },
+  ]);
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p).map(m => [m.role, m.text, m.interim]), [
+      ['assistant', 'no stop reason here', false],
+      ['user', 'and the next question', false],
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: Codex closes with a text-less task_complete, so only the last agent_message is final', () => {
+  const p = writeJsonl([
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'first note' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'second note' } },
+    { type: 'event_msg', payload: { type: 'task_complete' } },
+  ]);
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p).map(m => [m.role, m.text, m.interim]), [
+      ['assistant', 'first note', true],
+      ['assistant', 'second note', false],
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: a tool_result-only user entry does not open a turn', () => {
+  const p = writeJsonl([
+    { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'before' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', content: 'tool traffic' }] } },
+    { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'after' }] } },
+  ]);
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p).map(m => [m.role, m.text, m.interim]), [
+      ['assistant', 'before\n\nafter', true],
+    ]);
   } finally { fs.unlinkSync(p); }
 });
 
@@ -220,9 +290,11 @@ test('jsonlToMessages: the Codex response_item shape becomes one user + one assi
   const p = writeJsonl(CODEX_ROLLOUT);
   try {
     const msgs = jsonlToMessages(p);
-    assert.deepStrictEqual(msgs.map(m => [m.role, m.text]), [
-      ['user', 'the operator question'],
-      ['assistant', '[agent:dm clodex] the audit\n[agent:end]'],
+    // The rollout carries no `task_complete`, so its tail reply is still interim —
+    // that is the shape a phone hits mid-turn, not a defect in the fixture.
+    assert.deepStrictEqual(msgs.map(m => [m.role, m.text, m.interim]), [
+      ['user', 'the operator question', false],
+      ['assistant', '[agent:dm clodex] the audit\n[agent:end]', true],
     ]);
   } finally { fs.unlinkSync(p); }
 });

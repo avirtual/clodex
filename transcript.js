@@ -124,7 +124,7 @@ function extractClaudeBlocks(content) {
 // remote view never depends on the intent machinery.
 function jsonlToMessages(jsonlPath, limit = 100) {
   const raw = fs.readFileSync(jsonlPath, 'utf-8');
-  const messages = [];
+  const records = [];
 
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
@@ -166,12 +166,39 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       if (msg) { role = msg.role; text = msg.text; }
     }
 
-    if (!role || !text.trim()) continue;
-    const prev = messages[messages.length - 1];
-    // Consecutive same-role entries (multi-block turns interleaved with tool
-    // calls) render as one bubble
-    if (prev && prev.role === role) prev.text += '\n\n' + text.trim();
-    else messages.push({ role, text: text.trim(), ts: obj.timestamp || null });
+    const turnEnd = isTurnEndEntry(obj);
+    if (!role || !text.trim()) {
+      if (turnEnd) records.push({ role: null, text: '', ts: null, turnEnd: true });
+      continue;
+    }
+    records.push({ role, text: text.trim(), ts: obj.timestamp || null, turnEnd });
+  }
+
+  const turns = [];
+  let turn = [];
+  for (const r of records) {
+    if (r.role === 'user' && turn.length) { turns.push(turn); turn = []; }
+    turn.push(r);
+  }
+  if (turn.length) turns.push(turn);
+
+  const messages = [];
+  for (let t = 0; t < turns.length; t++) {
+    const entries = turns[t];
+    let lastAssistant = -1;
+    for (let i = 0; i < entries.length; i++) if (entries[i].role === 'assistant') lastAssistant = i;
+    let tailFinal = t < turns.length - 1;
+    if (!tailFinal && lastAssistant >= 0) {
+      for (let i = lastAssistant; i < entries.length; i++) if (entries[i].turnEnd) tailFinal = true;
+    }
+    for (let i = 0; i < entries.length; i++) {
+      const r = entries[i];
+      if (!r.role) continue;
+      const interim = r.role === 'assistant' && !(i === lastAssistant && tailFinal);
+      const prev = messages[messages.length - 1];
+      if (prev && prev.role === r.role && prev.interim === interim) prev.text += '\n\n' + r.text;
+      else messages.push({ role: r.role, text: r.text, ts: r.ts, interim });
+    }
   }
 
   return messages.slice(-limit);
