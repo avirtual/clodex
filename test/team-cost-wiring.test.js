@@ -1021,19 +1021,20 @@ test('all three standing-seat boundaries are hooked, and stamp BEFORE the record
     'the four call sites: pty exit, an explicit kill, a /clear rotation and a compact');
 
   // ENTER: the drops this ordering is about are really in the file, or the
-  // index comparisons below would be comparing against -1.
+  // matches below would be vacuous.
   const drops = [...src.matchAll(/getPersistence\(\)\.remove\(name\);/g)].map((mm) => mm.index);
   assert.ok(drops.length >= 2, 'both record drops must be present');
 
-  for (const [label, stampRe] of [
-    ['exit', /this\._stampSeatCost\(session, 'exit'\)/],
-    ['kill', /this\._stampSeatCost\(s, 'kill'\)/],
+  // Each stamp is anchored to ITS OWN drop, contiguously — not "some drop appears
+  // later in the file", which is what an earlier version of this assertion said
+  // and which stayed GREEN with the exit stamp moved past its drop: three drops
+  // live in this file, so any one of them satisfied a search for the next.
+  for (const [label, adjacentRe] of [
+    ['exit', /this\._stampSeatCost\(session, 'exit'\); \} catch \{\}\n\s*if \(dropRecord\) \{\n\s*getPersistence\(\)\.remove\(name\);/],
+    ['kill', /this\._stampSeatCost\(s, 'kill'\); \} catch \{\}\n\s*getPersistence\(\)\.remove\(name\);/],
   ]) {
-    const at = src.search(stampRe);
-    assert.ok(at > 0, `${label}: the stamp must be present`);
-    const nextDrop = drops.find((d) => d > at);
-    assert.ok(nextDrop !== undefined,
-      `${label}: the stamp must sit BEFORE a record drop — after it, entrySessionIds finds nothing and every standing seat books $0`);
+    assert.match(src, adjacentRe,
+      `${label}: the stamp must sit immediately BEFORE its own record drop — after it, entrySessionIds finds nothing and every standing seat books $0`);
   }
 
   // The /clear stamp must precede the ASSIGNMENT that moves the id, not merely
