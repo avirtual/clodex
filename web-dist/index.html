@@ -25048,7 +25048,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (sub === "prompt-rm") return { type: "team", sub, kind: positional[0] || null, stem: positional[1] || null, body: "" };
         if (sub === "sandbox") {
           const refM = argStr.match(/\bref:(\S+)/);
-          return { type: "team", sub, action: positional[0] || "up", ref: refM ? refM[1] : "master", body: "" };
+          return { type: "team", sub, action: positional[0] || "up", ref: refM ? refM[1] : null, body: "" };
         }
         const ms = positional[0] != null ? Number(positional[0]) : null;
         return { type: "team", sub, ms: Number.isFinite(ms) ? ms : null, body: "" };
