@@ -62,7 +62,8 @@ function extractRenderPluginsDialog() {
 // `plugins` is what plugins.status answers with; `updates` is what
 // plugins.updatesAvailable answers with. `asked` records the methods called and
 // `opened` what reached the README popover.
-function mount(pluginsList, pluginInvoke, openReadme = () => {}, refreshToken = null) {
+function mount(pluginsList, pluginInvoke, openReadme = () => {}, refreshToken = null,
+  renderAgain = async () => {}) {
   return extractRenderPluginsDialog()(
     pluginsList,
     { api: { pluginInvoke }, __CLODEX_WEB__: false },
@@ -70,7 +71,7 @@ function mount(pluginsList, pluginInvoke, openReadme = () => {}, refreshToken = 
     (s) => `From github.com/${s.repo}`,
     { settingsSectionOwners: () => [] },
     () => el('div'),
-    async () => {},
+    renderAgain,
     () => {}, () => {}, () => {}, null, () => {}, () => true,
     pluginOrigin,
     openReadme,
@@ -242,7 +243,7 @@ test('the glyph is the first thing in the name node, ahead of the name', async (
 // sees the fresh list. A stub whose cached read stayed stale would pass a
 // renderer that painted the refresh reply directly AND one that repainted, which
 // is the distinction this fixture must not blur.
-function mountRefresh(calls, replies) {
+function mountRefresh(calls, replies, renderAgain = async () => {}) {
   const pluginsList = el('div');
   let cached = replies.cached;
   const fn = mount(
@@ -258,6 +259,7 @@ function mountRefresh(calls, replies) {
     },
     () => {},
     {},
+    renderAgain,
   );
   return { fn, pluginsList };
 }
@@ -306,4 +308,30 @@ test('with no refresh token the dialog makes the cached read only', async () => 
   assert.deepStrictEqual(calls.map(([m, a]) => [m, a]),
     [['plugins.status', undefined], ['plugins.updatesAvailable', undefined]],
     'a repaint that re-checked the library would make the 6 h sweep run once per row toggle');
+});
+
+test('a repaint that throws is swallowed, not left as an unhandled rejection', async () => {
+  const saved = process.listeners('unhandledRejection');
+  for (const l of saved) process.off('unhandledRejection', l);
+  const escaped = [];
+  const capture = (r) => escaped.push(r);
+  process.on('unhandledRejection', capture);
+  try {
+    const calls = [];
+    const { fn, pluginsList } = mountRefresh(calls, {
+      cached: [],
+      fresh: [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }],
+    }, async () => { throw new Error('repaint blew up'); });
+    await fn();
+    await settle();
+    assert.strictEqual(calls.filter(([m, a]) => m === 'plugins.updatesAvailable' && a && a[0] && a[0].refresh === true).length, 1,
+      'ENTER: the refresh fired, so the repaint below was actually reached');
+    assert.strictEqual(pluginsList.children.length, 1,
+      'ENTER: the first paint stands — the throw is the repaint, not the paint under test');
+    assert.deepStrictEqual(escaped.map((e) => e && e.message), [],
+      'the fire-and-forget IIFE must terminate its own chain: an unhandled rejection here takes the whole renderer down under Electron');
+  } finally {
+    process.off('unhandledRejection', capture);
+    for (const l of saved) process.on('unhandledRejection', l);
+  }
 });

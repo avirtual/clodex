@@ -72,3 +72,40 @@ test('page: no options gives the newest 30 of 40', () => {
     assert.strictEqual(p.hasMore, true);
   } finally { cleanup(); }
 });
+
+test('page: limit null falls back to the default 30, not to the clamp floor', () => {
+  const forty = [];
+  for (let i = 1; i <= 40; i++) forty.push(note(i));
+  const { notifications, cleanup } = freshNotifications(forty);
+  try {
+    const p = notifications.page({ limit: null });
+    assert.strictEqual(p.items.length, 30);
+    assert.strictEqual(p.items[0].createdAt, 40);
+    assert.strictEqual(p.items[29].createdAt, 11);
+    assert.strictEqual(p.hasMore, true);
+  } finally { cleanup(); }
+});
+
+test('page: limit Infinity falls back to the default 30, not to the clamp ceiling', () => {
+  const forty = [];
+  for (let i = 1; i <= 40; i++) forty.push(note(i));
+  const { notifications, cleanup } = freshNotifications(forty);
+  try {
+    const p = notifications.page({ limit: Infinity });
+    assert.strictEqual(p.items.length, 30);
+    assert.strictEqual(p.items[0].createdAt, 40);
+    assert.strictEqual(p.items[29].createdAt, 11);
+    assert.strictEqual(p.hasMore, true);
+  } finally { cleanup(); }
+});
+
+test('page: a numeric string limit is honoured as that number', () => {
+  const forty = [];
+  for (let i = 1; i <= 40; i++) forty.push(note(i));
+  const { notifications, cleanup } = freshNotifications(forty);
+  try {
+    const p = notifications.page({ limit: '7' });
+    assert.deepStrictEqual(p.items.map((n) => n.createdAt), [40, 39, 38, 37, 36, 35, 34]);
+    assert.strictEqual(p.hasMore, true);
+  } finally { cleanup(); }
+});

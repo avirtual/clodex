@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Small fixes: the Manage Plugins refresh never leaves an unhandled rejection, the inbox page size treats a missing or infinite limit as the default 30, and boundary-check prints its usage instead of a stack trace when run without a file.
+
 ## 5.56.0 — 2026-09-10 — The Inbox pages its notes, and Manage Plugins re-checks the library when it opens
 
 - The Inbox drawer loads the newest 30 notes and offers a "Load older" row for the rest, instead of rendering every note ever raised on each open.

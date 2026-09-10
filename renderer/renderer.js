@@ -5451,7 +5451,7 @@ async function renderPluginsDialog() {
       if (pluginsUpdateRefresh !== refreshToken) return;
       if (updateSig((fresh && fresh.ok && fresh.updates) || []) === painted) return;
       await renderPluginsDialog();
-    })();
+    })().catch(() => {});
   }
   const plugins = (status && status.ok && status.plugins) || [];
   const problems = (status && status.ok && status.problems) || [];
