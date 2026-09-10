@@ -17727,3 +17727,52 @@ test('t769: the sentinel without the knownSkillNames dep throws rather than spaw
   assert.ok(!fs.existsSync(pathForReal(rig.root, 'nodep', 'settings')),
     'and it must throw BEFORE writing settings — a file with `*` in skillOverrides is a full-roster seat');
 });
+
+// t791: create now writes the reviewer a `prompts/system/reviewer.md` of its own
+// and repoints the role at `reviewer`. The stock reviewer names NO template, so
+// the review path falls back to DEFAULT_REVIEWER_TEMPLATE, whose own
+// `systemPromptFile` ('clodex-team-reviewer') used to outrank `def.prompt` — the
+// team's fresh copy would never have been read, and a team could not edit its
+// reviewer's briefing at all. The role's prompt now wins when the TEAM owns a
+// file for it.
+test('team-review (t791): the team\'s own prompts/system/<role>.md outranks the default template\'s stem', async () => {
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-t791-');
+  const teamDir = pathReal.join(REGISTRY_DIR, 'teams', 'team');
+  const sysDir = pathReal.join(teamDir, 'prompts', 'system');
+  fsReal.mkdirSync(sysDir, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(sysDir, 'reviewer.md'), 'the team wrote this one');
+
+  const { m, created } = mkReview({
+    REGISTRY_DIR, fs: fsReal, path: pathReal, teamDir,
+    // What a t791 create leaves behind: the role points at its own copy, and
+    // still names no template.
+    reviewerRole: { instantiate: 'subagent', prompt: 'reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false },
+    resolveSystemPromptFile: (stem, _plugins, t) => teamPromptFile({ fs: fsReal, path: pathReal }, t, 'system', stem),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  const systemPromptFile = created[0][14];
+  assert.strictEqual(systemPromptFile, 'reviewer',
+    'the ROLE\'s stem rides, not the default template\'s — otherwise the team\'s copy is unreachable');
+});
+
+test('team-review (t791): with no team copy for the role\'s stem, the template\'s systemPromptFile still wins', async () => {
+  // The other side of the precedence, and the reason it is conditional: an
+  // ordinary team whose reviewer names a stem it does NOT own must keep taking
+  // the template's prompt, exactly as before t791.
+  const { m, created } = mkReview({
+    reviewerRole: { instantiate: 'subagent', prompt: 'reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  assert.strictEqual(created[0][14], 'clodex-team-reviewer',
+    'no team file for "reviewer", so the template\'s stem is unchanged');
+});
