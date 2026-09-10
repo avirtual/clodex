@@ -1708,10 +1708,12 @@ body {
 .team-role-field.hidden {
   display: none;
 }
-.team-role-field.stale input {
+.team-role-field.stale input,
+.team-role-field.stale select {
   opacity: 0.55;
 }
-.team-role-field input:disabled {
+.team-role-field input:disabled,
+.team-role-field select:disabled {
   opacity: 0.55;
 }
 .team-role-stale-note {
@@ -1719,6 +1721,10 @@ body {
   font-size: 10px;
 }
 .team-role-stale-clear {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.team-role-template-open {
   align-self: flex-start;
   margin-top: 2px;
 }
@@ -27422,7 +27428,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           openTemplateEditor(null);
         });
         window.api.onRequestOpenTemplatesDrawer((arg) => openTemplatesDrawer(arg));
-        return { refreshTemplatesList };
+        return { refreshTemplatesList, openTeamTemplate };
       }
       module.exports = { initLibraryDrawers };
     }
@@ -31070,6 +31076,35 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         if (library.length) groups.push({ label: null, names: library });
         return groups;
       }
+      var PLUGIN_OPTION_TITLE = `a plugin template cannot be a role template: the role field takes a plain name, and a plugin's is "<plugin>:<stem>"`;
+      function templateOptionGroups(rows, team, stored) {
+        const list = Array.isArray(rows) ? rows.filter((t) => t && typeof t.name === "string" && t.name) : [];
+        const opt = (t) => ({ value: t.name, label: t.name });
+        const groups = [{ label: null, options: [{ value: "", label: "(none)" }] }];
+        const own = team ? list.filter((t) => t.team === team) : [];
+        const library = list.filter((t) => !t.team && !t.plugin);
+        const plugins = list.filter((t) => t.plugin);
+        if (own.length) groups.push({ label: `Team ${team}`, options: own.map(opt) });
+        if (library.length) groups.push({ label: "Library", options: library.map(opt) });
+        if (plugins.length) {
+          groups.push({
+            label: "Plugins",
+            options: plugins.map((t) => ({ ...opt(t), disabled: true, title: PLUGIN_OPTION_TITLE }))
+          });
+        }
+        const kept = typeof stored === "string" ? stored : "";
+        if (kept && !groups.some((g) => g.options.some((o) => o.value === kept))) {
+          groups.push({
+            label: null,
+            options: [{
+              value: kept,
+              label: `${kept} (missing)`,
+              title: `no template named "${kept}" is installed for this team, in the library or in a plugin`
+            }]
+          });
+        }
+        return groups;
+      }
       function storedPromptNote(prompt2, opts = {}) {
         const { offered = [], all = [], teamOwned = [], listingOk = true, team = "" } = opts;
         if (!prompt2 || offered.includes(prompt2)) return null;
@@ -31337,6 +31372,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         usesByRole,
         promptOptionGroups,
         storedPromptNote,
+        templateOptionGroups,
         reservedRemovalWarning,
         parseDuration,
         formatDuration,
@@ -31391,10 +31427,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         REMOVABLE_RESERVED_ROLE_KEYS,
         usesByRole,
         promptOptionGroups,
-        storedPromptNote
+        storedPromptNote,
+        templateOptionGroups
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
-      function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
+      function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = {}) {
         const popover = document.getElementById("team-roles-popover");
         const nameEl = document.getElementById("team-roles-popover-name");
         const listEl = document.getElementById("team-roles-list");
@@ -31599,6 +31636,45 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           return group;
         }
+        function buildTemplateControl(stored) {
+          const select = document.createElement("select");
+          select.dataset.f = "template";
+          for (const group of templateOptionGroups(templateRows, teamName(), stored)) {
+            let parent = select;
+            if (group.label !== null) {
+              parent = document.createElement("optgroup");
+              parent.label = group.label;
+              select.appendChild(parent);
+            }
+            for (const o of group.options) {
+              const opt = document.createElement("option");
+              opt.value = o.value;
+              opt.textContent = o.label;
+              if (o.title) opt.title = o.title;
+              if (o.disabled) opt.disabled = true;
+              parent.appendChild(opt);
+            }
+          }
+          select.value = stored;
+          const open = document.createElement("button");
+          open.type = "button";
+          open.className = "secondary team-role-template-open";
+          open.textContent = "Open";
+          open.title = "Edit this template \u2014 its model, tools and prompts \u2014 in the template editor.";
+          const rowFor = () => templateRows.find((t) => t && !t.plugin && t.name === select.value) || null;
+          const syncOpen = () => {
+            open.disabled = !rowFor();
+          };
+          syncOpen();
+          select.addEventListener("change", syncOpen);
+          open.addEventListener("click", () => {
+            const row = rowFor();
+            if (!row) return;
+            closeTeamRolesPopover();
+            if (typeof openTemplate === "function") openTemplate(row);
+          });
+          return { select, open };
+        }
         function renderRevealedFields(box, reveal, values, onClear) {
           box.innerHTML = "";
           for (const f of ["template", "cwd"]) {
@@ -31609,13 +31685,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             field.dataset.field = f;
             const label = document.createElement("span");
             label.textContent = f;
-            const input = document.createElement("input");
-            input.type = "text";
-            input.dataset.f = f;
-            input.placeholder = f === "cwd" ? "optional: subdirectory (e.g. api)" : "optional: spawn template name";
-            input.value = values && values[f] || "";
+            const stored = values && values[f] || "";
+            let input;
+            let open = null;
+            if (f === "template") {
+              ({ select: input, open } = buildTemplateControl(stored));
+            } else {
+              input = document.createElement("input");
+              input.type = "text";
+              input.dataset.f = f;
+              input.placeholder = "optional: subdirectory (e.g. api)";
+              input.value = stored;
+            }
             field.appendChild(label);
             field.appendChild(input);
+            if (open) field.appendChild(open);
             if (state === "stale") {
               input.disabled = true;
               const why = document.createElement("span");
@@ -31864,7 +31948,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               const revealBox = body.querySelector("[data-reveal]");
               const liveValues = () => {
                 const read = (f) => {
-                  const el2 = revealBox.querySelector(`input[data-f="${f}"]`);
+                  const el2 = revealBox.querySelector(`[data-f="${f}"]`);
                   return el2 ? el2.value : "";
                 };
                 return { cwd: read("cwd"), template: read("template") };
@@ -32002,11 +32086,22 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             }
           }
         }
+        let templateRows = [];
+        async function populateTemplateOptions() {
+          let rows;
+          try {
+            rows = await window.api.listTemplates();
+          } catch {
+            rows = null;
+          }
+          templateRows = Array.isArray(rows) ? rows : [];
+        }
         async function openTeamRolesPopover(name, anchorEl) {
           setStatus("");
           helpPanel.classList.add("hidden");
           resetDrag(popover);
           await populatePromptOptions(name);
+          await populateTemplateOptions();
           expandedRole = null;
           setAddPanel(false);
           closeGatherPanel();
@@ -35668,6 +35763,7 @@ ${detail}` });
       var editingTemplateBundle = null;
       var editingTemplateTeam = null;
       var templatesDrawerRefresh = null;
+      var templatesDrawerOpenTeam = null;
       function promptText(title, initial = "") {
         return new Promise((resolve) => {
           const overlay = document.createElement("div");
@@ -38814,7 +38910,18 @@ Click for live activity`;
         seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
         getSessionType: sessionTypeOf
       });
-      var { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
+      var { openTeamRolesPopover } = initTeamRolesPopover({
+        promptText,
+        openSessionDialog: openDialog,
+        openTemplate: (row) => {
+          if (!row) return;
+          if (row.team) {
+            if (templatesDrawerOpenTeam) templatesDrawerOpenTeam(row);
+            return;
+          }
+          openTemplateEditor(row);
+        }
+      });
       function openCreateTeamDialog() {
         const live = document.querySelector(".team-create-overlay");
         if (live) {
@@ -42087,7 +42194,7 @@ ${res.stderr}` : "");
           }
         }
       });
-      ({ refreshTemplatesList: templatesDrawerRefresh } = initLibraryDrawers({
+      ({ refreshTemplatesList: templatesDrawerRefresh, openTeamTemplate: templatesDrawerOpenTeam } = initLibraryDrawers({
         getActiveSession: () => activeSession,
         setAgentLibCache,
         setSkillLibCache,
