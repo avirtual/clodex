@@ -775,6 +775,40 @@ test('_publishAgentText drops an event carrying neither text nor file info', () 
   assert.strictEqual(fired.length, 5, 'an empty toolUses and a null thinking are still nothing to say');
 });
 
+test('_publishAgentText nudges the phone once per published event, with the session name (t802)', () => {
+  // The phone's own junction rides this door because it is the one place BOTH
+  // observation paths pass per-request main-line text through. It must be reached
+  // on a box with no plugin host at all — that is the default install.
+  const fired = [];
+  const nudges = [];
+  const remote = { notifyProgress: (name) => nudges.push(name) };
+  const m = mkManager(fired, { getRemoteServer: () => remote, getPluginHooks: () => null });
+
+  m._publishAgentText({ session: 'seat', text: 'between two tool calls', source: 'jsonl' });
+  assert.deepStrictEqual(nudges, ['seat'], 'one nudge, naming the seat, with no plugin host present');
+  assert.strictEqual(fired.length, 0, 'ENTER: and no plugin fired — so the nudge above is not riding the hook');
+
+  m._publishAgentText({ session: 'seat', text: 'and again', source: 'wire' });
+  assert.deepStrictEqual(nudges, ['seat', 'seat'], 'per call, not per turn: this is what makes a long turn move');
+
+  // The emptiness bail is upstream of the nudge on purpose. A payload-less event
+  // means nothing new is on disk, so a refetch would be a phone round trip that
+  // re-renders exactly what it already shows.
+  m._publishAgentText({ session: 'seat', text: '', source: 'wire', files: [], reads: [] });
+  assert.strictEqual(nudges.length, 2, 'an event with nothing to say does not nudge either');
+
+  const quiet = mkManager([], { getRemoteServer: () => null, getPluginHooks: () => null });
+  assert.doesNotThrow(() => quiet._publishAgentText({ session: 'seat', text: 'hi', source: 'wire' }),
+    'and with no remote server the door is silent rather than throwing');
+
+  const angry = mkManager(fired, {
+    getRemoteServer: () => ({ notifyProgress: () => { throw new Error('sse exploded'); } }),
+  });
+  angry._publishAgentText({ session: 'seat', text: 'hi', source: 'wire' });
+  assert.strictEqual(fired.length, 1,
+    'a throwing notifyProgress does not cost the plugin feed its event');
+});
+
 test('_publishAgentText is consume-only — a throwing hook cannot escape into the junction', () => {
   // It is called from the wire\'s turn.completed handler, which also dispatches
   // intents. An escaping throw there costs intents, not just this feed.

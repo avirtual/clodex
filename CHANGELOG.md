@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Phone view: the model's interim text — what it writes between tool calls inside one turn — now appears as small dimmed notes as the turn progresses, so a long turn no longer looks frozen until its final reply lands.
+
 ## 5.57.0 — 2026-09-10 — The stale-host note stays on the Clodex team, and team create's replies keep up with mode:interview
 
 - Library > Prompts: a long team prompt name keeps its system/append suffix, and an empty library kind says "(no library system prompts)" so a plugin's rows beneath it do not read as a contradiction.

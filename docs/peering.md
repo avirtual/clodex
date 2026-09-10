@@ -58,7 +58,8 @@ renders stale-as-live), `pushTelemetry` (partial `{proxy}`/`{ctx}`/`{files}`
 frames, client merges), `pushUiEvent` (small `{kind,args}` trigger, never
 content — the viewer pulls via query; `file open` is never mirrored),
 `notifyResize` (80ms trailing debounce + dedup), `notifyExit`,
-`notifyActivity`/`notifySessions`/`notifyDmMail`.
+`notifyActivity`/`notifyProgress` (bodyless `{name}` nudge per main-line request,
+so the phone refetches interim text mid-turn)/`notifySessions`/`notifyDmMail`.
 
 Notable callback semantics (remote-wiring.js): `createSession` routes the
 live `manager.create()` (persists like `[agent:spawn]`); `restartSession`

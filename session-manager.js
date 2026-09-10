@@ -4297,15 +4297,12 @@ function createSessionManager(deps) {
       }
     }
 
-// The single door to the plugin turn-text feed. Consume-only, like every other
-// plugin hook: a throw here lands in the wire's event handler, which also
-// dispatches intents, so it must never escape. The engine owns the grant check
-// and the setImmediate deferral — this side only decides WHAT is published and
-// from WHERE.
+// The single door for per-request main-line text: the plugin turn-text feed and
+// the phone's progress nudge. Consume-only, like every other plugin hook: a
+// throw here lands in the wire's event handler, which also dispatches intents,
+// so it must never escape. The engine owns the grant check and the deferral.
     _publishAgentText(ev) {
       try {
-        const hooks = getPluginHooks && getPluginHooks();
-        if (!hooks || typeof hooks.fireAgentText !== 'function') return;
         // Nothing to say to ANY grant set. Deliberately admits more than the
         // engine's per-plugin rule, which re-judges emptiness against the fields
         // each subscriber's own grants let it see.
@@ -4313,6 +4310,9 @@ function createSessionManager(deps) {
         const hasReads = Array.isArray(ev.reads) && ev.reads.length;
         const hasTools = Array.isArray(ev.toolUses) && ev.toolUses.length;
         if (!ev.text && !hasFiles && !hasReads && !hasTools && !ev.thinking) return;
+        if (getRemoteServer()) { try { getRemoteServer().notifyProgress(ev.session); } catch {} }
+        const hooks = getPluginHooks && getPluginHooks();
+        if (!hooks || typeof hooks.fireAgentText !== 'function') return;
         hooks.fireAgentText(ev);
       } catch { /* consume-only */ }
     }
