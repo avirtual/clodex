@@ -6406,10 +6406,11 @@ test('t82 reassign WAKES the new assignee, but the old-assignee notice stays pas
 
 // t801: the suffix now rides behind `_hostIsThisTeamsCode`, and `_handleTask`
 // calls that with no arguments, so the seams cannot be passed at the call site —
-// they are bound here instead, exactly as t82 binds `_staleHostSuffix`. The REAL
-// gate runs; what this arranges is the true branch, by making the fixture team's
-// root the very directory the host's code is said to live in. Every t93 case
-// below would otherwise pin the gate refusing rather than the reply path.
+// they are bound here instead, exactly as t82 binds `_staleHostSuffix`. Neither
+// helper stubs the answer: the REAL gate runs against a `dir` the test controls,
+// so the t801 pins below can put a team on either side of it. `hostCodeIsTeamRoot`
+// is the matching side, which is what every t93 case needs — left alone they would
+// pin the gate refusing rather than the reply path they are about.
 function bindHostCodeDir(f, dir) {
   const realGate = Object.getPrototypeOf(f.m)._hostIsThisTeamsCode;
   f.m._hostIsThisTeamsCode = (team) => realGate.call(f.m, team, { dir });
