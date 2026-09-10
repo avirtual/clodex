@@ -1412,8 +1412,9 @@ function createTicketMethods(deps, shared) {
         try { team = resolveTeam(session.cwd); } catch { team = null; }
         if (!team) return { ok: false, error: 'no team' };
         const entry = getPersistence().get(name) || null;
+        if (!entry) return { ok: false, error: 'no record' };
         if (!standingSeat(entry)) return { ok: false, error: 'not a standing seat' };
-        const { ledger } = this._seatLedger(name, entry || session);
+        const { ledger } = this._seatLedger(name, entry);
         const cursor = this._readSeatCursors(team)[name] || null;
         const row = teamCost.seatLedgerRow({
           seat: name,

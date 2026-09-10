@@ -1045,3 +1045,65 @@ test('all three standing-seat boundaries are hooked, and stamp BEFORE the record
   assert.ok(clearAt > 0 && assignAt > 0, 'ENTER: both anchors found');
   assert.ok(clearAt < assignAt, 'the clear stamp must run before the session id is reassigned');
 });
+
+// t805 r1 must-fix: the REAL retirement lifecycle, in the order the app runs it.
+//
+// `kill()` drops the persistence record synchronously and the pty dies later, so
+// the exit stamp arrives at a seat with no record — and an ABSENT record used to
+// satisfy `standingSeat`, which asks only that a seat is neither ticket-minted
+// nor a reviewer. Both facts are true of `null`. Every reviewer and every ticket
+// seat therefore booked a SECOND row, from a null cursor (so: its whole session
+// again) on top of the `review`/`ticket` row its close had just written, and
+// cost-cursor.json grew an entry per one-shot name that never comes back.
+//
+// Driven through the real `_writeReviewCost` → `_stampSeatCost(kill)` →
+// `_stampSeatCost(exit)` sequence rather than by calling the guard directly: the
+// defect is entirely in WHEN the second call happens relative to the record
+// drop, which a direct call cannot stage.
+test('a retired reviewer books its round ONCE, even though the exit outlives its record', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
+    version: 1,
+    sessions: { 'rev-1': { cost: 6, requests: 12, turns: 3, inputTokens: 40, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+  }));
+  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-reg-'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+
+  const rec = {
+    name: 'team-reviewer-1', sessionId: 'rev-1', sessionIds: ['rev-1'],
+    ephemeral: true, reviewFor: 'team-hand-9', wireLabel: 'team.t9.review-r1',
+  };
+  const persistence = mkPersistence([rec]);
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir, registryDir, repo });
+  const team = { name: 'team', root: repo, roles: { hand: {}, lead: {} }, lead: 'team-lead' };
+  const ticket = { id: 't9', role: 'hand', taskDir: 'tasks/t9-review-once', reviewRound: 1 };
+
+  // 1. The review closes and books its round — the row that must stay alone.
+  const wrote = m._writeReviewCost('team-reviewer-1', team, ticket, rec, 1, 'ACCEPT', 0);
+  assert.strictEqual(wrote.ok, true, `the review row must be written: ${wrote.error}`);
+  assert.strictEqual(readLedger(teamsDir).filter((r) => r.kind === 'review').length, 1);
+
+  // 2. The seat is retired: the record goes FIRST, exactly as kill() does it.
+  const session = { name: 'team-reviewer-1', cwd: repo, sessionId: 'rev-1' };
+  m._stampSeatCost(session, 'kill');
+  persistence.remove('team-reviewer-1');
+  // ENTER: the record really is gone, or the exit below is not the case at all.
+  assert.strictEqual(persistence.get('team-reviewer-1'), null);
+
+  // 3. The pty dies afterwards and the exit stamp fires against nothing.
+  const exit = m._stampSeatCost(session, 'exit');
+  assert.strictEqual(exit.ok, false, 'a seat with no record must not book anything');
+  assert.strictEqual(exit.error, 'no record');
+
+  const rows = readLedger(teamsDir);
+  assert.deepStrictEqual(rows.map((r) => r.kind), ['review'],
+    `exactly one row for this seat — a seat row here double-counts the round\n--- got ---\n${JSON.stringify(rows)}`);
+  assert.ok(!fs.existsSync(path.join(teamsDir, 'team', 'cost-cursor.json')),
+    'and no cursor entry for a one-shot name that will never return to use it');
+
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(teamsDir, { recursive: true, force: true });
+  fs.rmSync(registryDir, { recursive: true, force: true });
+  fs.rmSync(repo, { recursive: true, force: true });
+});
