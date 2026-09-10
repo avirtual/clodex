@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Cost on every ticket, the Inbox on the phone, and honest standing-seat attribution
+## Unreleased
+
+## 5.59.0 — 2026-09-11 — Cost on every ticket, the Inbox on the phone, and honest standing-seat attribution
 
 - **Phone access serves the operator Inbox**: list, mark read, read-all and
   remove over `/api/inbox`, an `inbox` event on the SSE stream so a phone and
