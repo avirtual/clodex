@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- **A ticket's cost record no longer claims a long-lived seat's whole spend was
+  that one ticket's.** The rollup sums the ledger of the seat that worked the
+  ticket, which is the ticket's cost only when the ticket loop minted that seat
+  and tore it down at the close. A seat that outlives the ticket — a standing
+  hand you dispatch to by name, working ticket after ticket — had its entire
+  lifetime billed to whichever ticket it happened to close, and the record
+  labelled that number exact. One such row read $594.98 against 29 minutes of
+  work. Those rows are now marked `seat-lifetime`, which says the number is an
+  upper bound on the ticket rather than a measurement of it, and they are kept
+  distinct from the rows whose seat could not be identified at all, so the two
+  can never be added together or quoted as one figure. Ticket seats the loop
+  mints are unaffected and still report exact. Applies to tickets closed from
+  here on; existing records are not recomputed.
+
 ## 5.58.0 — 2026-09-10 — Team kits, interim text on the phone, and the auto-mode classifier as a side call
 
 - Team create takes `kit:<name>`: `default` builds the team on your own Claude
