@@ -58,6 +58,7 @@ function check(file, upto = Infinity) {
 
 if (require.main === module) {
   const [file, upto] = process.argv.slice(2);
+  if (!file) { console.error('usage: node scripts/boundary-check.js <file> [uptoLine]'); process.exit(2); }
   const flags = check(file, upto ? Number(upto) : Infinity);
   for (const f of flags) console.log(`  L${f.line}  ${f.why}\n      ${f.text}`);
   console.log(flags.length ? `\n${flags.length} flag(s) — each needs a human ruling.` : 'clean');

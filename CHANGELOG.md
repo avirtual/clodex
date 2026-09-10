@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Library > Prompts: a long team prompt name keeps its system/append suffix, and an empty library kind says "(no library system prompts)" so a plugin's rows beneath it do not read as a contradiction.
+- Small fixes: the Manage Plugins refresh never leaves an unhandled rejection, the inbox page size treats a missing or infinite limit as the default 30, and boundary-check prints its usage instead of a stack trace when run without a file.
 
 ## 5.56.0 — 2026-09-10 — The Inbox pages its notes, and Manage Plugins re-checks the library when it opens
 

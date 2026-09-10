@@ -1275,8 +1275,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
     },
     list() { return this._load(); },
     page({ limit = 30, before = null } = {}) {
-      const raw = Math.floor(Number(limit));
-      const n = Number.isFinite(raw) ? Math.max(1, Math.min(200, raw)) : 30;
+      const raw = limit == null ? NaN : Number(limit);
+      const n = Number.isFinite(raw) ? Math.max(1, Math.min(200, Math.floor(raw))) : 30;
       const cut = Number.isFinite(before);
       const kept = [];
       const all = this._load();
