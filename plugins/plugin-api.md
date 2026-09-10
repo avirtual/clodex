@@ -991,7 +991,7 @@ or fires an IPC is not slow — it is wrong, because a relayout is not an event.
 
 Sanctioned shared core utilities, frozen and named. In `"1"` there is exactly
 one entry, `gitWorktree`, offering the ten functions below (the module
-exports seven more, withheld — see the membership rule). All are `async` except
+exports nine more, withheld — see the membership rule). All are `async` except
 `defaultWorktreePath`, and all are best-effort: they return a shaped result or
 `null` rather than throwing.
 

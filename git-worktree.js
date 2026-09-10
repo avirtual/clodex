@@ -286,6 +286,56 @@ async function removeWorktree(worktreePath) {
   return { ok: true };
 }
 
+async function headSha(dir) {
+  if (!dir || !fs.existsSync(dir)) return null;
+  const r = await git(dir, ['rev-parse', 'HEAD']);
+  return r.ok ? (r.stdout.trim() || null) : null;
+}
+
+async function isWorktreeRoot(dir) {
+  if (!dir || !fs.existsSync(dir)) return false;
+  const r = await git(dir, ['rev-parse', '--show-toplevel']);
+  if (!r.ok) return false;
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(r.stdout.trim()) === real(dir);
+}
+
+async function checkoutDetached({ repoTop, dir, ref } = {}) {
+  const where = repoTop && String(repoTop).trim();
+  if (!where) return { ok: false, error: 'No repository given' };
+  const repo = await repoToplevel(where);
+  if (!repo) return { ok: false, error: `Not inside a git repository: ${where}` };
+  const dest = dir && String(dir).trim() ? path.resolve(String(dir).trim()) : null;
+  if (!dest) return { ok: false, error: 'No worktree path given' };
+  const want = String(ref || '').trim();
+  if (!want) return { ok: false, error: 'No ref given' };
+  if (!/^[A-Za-z0-9._/-]{1,128}$/.test(want) || want.includes('..')) {
+    return { ok: false, error: `Invalid ref: ${want}` };
+  }
+
+  const resolve = async () => {
+    const r = await git(repo, ['rev-parse', '--verify', '--quiet', `${want}^{commit}`]);
+    return r.ok ? (r.stdout.trim() || null) : null;
+  };
+  let sha = await resolve();
+  if (!sha) {
+    await git(repo, ['fetch', '--quiet']);
+    sha = await resolve();
+  }
+  if (!sha) return { ok: false, error: `ref ${want} does not resolve in ${where}` };
+
+  await git(repo, ['worktree', 'prune']);
+  if (await isWorktreeRoot(dest)) {
+    const co = await git(dest, ['checkout', '--detach', sha]);
+    if (!co.ok) return { ok: false, error: (co.stderr || 'git checkout --detach failed').trim() };
+  } else {
+    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); } catch {}
+    const add = await git(repo, ['worktree', 'add', '--detach', dest, sha]);
+    if (!add.ok) return { ok: false, error: (add.stderr || 'git worktree add failed').trim() };
+  }
+  return { ok: true, path: dest, ref: want, sha, repo };
+}
+
 // Parse `git worktree list --porcelain` into [{ path, branch, bare, head,
 // detached, locked, prunable }]. The first block is always the main working tree.
 function parseWorktreeList(out) {
@@ -598,4 +648,5 @@ module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
   diffText, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
+  checkoutDetached, headSha,
 };

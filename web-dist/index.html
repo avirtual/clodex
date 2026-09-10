@@ -3773,6 +3773,9 @@ body {
 .sandbox-workdir-row input {
   flex: 1;
 }
+#sandbox-ref {
+  width: 100%;
+}
 .sandbox-check {
   display: flex;
   align-items: center;
@@ -7745,6 +7748,11 @@ body {
           <button id="sandbox-token-clear" class="secondary" type="button" title="Delete the stored token">Clear</button>
         </div>
         <p class="hint-text" id="sandbox-auth-hint">Seeds the sandbox with your Claude subscription auth (<code>CLAUDE_CODE_OAUTH_TOKEN</code>). Stored locally at mode 0600, applied on the next Start. Or leave empty and run <code>claude login</code> inside a sandbox bash session.</p>
+      </div>
+      <div class="sandbox-field" id="sandbox-ref-field">
+        <label for="sandbox-ref">Track git ref</label>
+        <input id="sandbox-ref" type="text" spellcheck="false" autocomplete="off" maxlength="128" placeholder="(the running app's version)" />
+        <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits.</p>
       </div>
       <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" role="button" tabindex="0">Open in browser →</a></div>
       <div class="dialog-actions">
@@ -22317,6 +22325,12 @@ ${i3.join("\n")}
             return { kind: "idle", text: "Sandbox has not been created yet.", running: false };
         }
       }
+      function refLineText(status) {
+        const ref = status && typeof status.ref === "string" ? status.ref.trim() : "";
+        if (!ref) return "";
+        const sha = status && typeof status.sha === "string" ? status.sha.trim() : "";
+        return sha ? `${ref} @ ${sha.slice(0, 8)}` : ref;
+      }
       function openUrl(webPort) {
         return `http://localhost:${webPort}`;
       }
@@ -22330,7 +22344,7 @@ ${i3.join("\n")}
         }
         return parts.join(" \xB7 ");
       }
-      module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, openUrl, portsLineText };
+      module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, refLineText, openUrl, portsLineText };
     }
   });
 
@@ -35636,7 +35650,7 @@ ${detail}` });
       var { createMirrorLatch } = require_mirror_latch();
       var { createMicHandoff } = require_mic_handoff();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
-      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
+      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
@@ -41375,6 +41389,7 @@ ${res.stderr}` : "");
       var sbDockerRow = document.getElementById("sandbox-docker");
       var sbStatusRow = document.getElementById("sandbox-status");
       var sbWorkdir = document.getElementById("sandbox-workdir");
+      var sbRef = document.getElementById("sandbox-ref");
       var sbAutoStart = document.getElementById("sandbox-autostart");
       var sbToggleBtn = document.getElementById("btn-sandbox-toggle");
       var sbRebuildBtn = document.getElementById("btn-sandbox-rebuild");
@@ -41454,7 +41469,8 @@ ${res.stderr}` : "");
           sbGate = sandboxActionGate(detect);
           renderSandboxNotice(sbDockerRow, sbGate.notice);
           const sn = sandboxStatusNotice(status && status.state);
-          renderSandboxNotice(sbStatusRow, sn);
+          const refLine = sandboxRefLineText(status);
+          renderSandboxNotice(sbStatusRow, refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn);
           if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
           applyActionGate();
           sbMountsRestart.classList.toggle("hidden", !(sbMountsDirty && sbRunning));
@@ -41571,6 +41587,7 @@ ${res.stderr}` : "");
         const box = sbBoxes.find((b) => b.id === sbCurrentBox);
         sbDetailLabel.textContent = box && box.label || sbCurrentBox;
         sbWorkdir.value = cfg.workDir || "";
+        sbRef.value = cfg.ref || "";
         sbAutoStart.checked = !!cfg.autoStart;
         sbMounts = Array.isArray(cfg.mounts) ? cfg.mounts.map((m) => ({ host: m.host, ro: !!m.ro })) : [];
         sbMountsDirty = false;
@@ -41628,8 +41645,17 @@ ${res.stderr}` : "");
       function collectSandboxConfig() {
         return {
           workDir: sbWorkdir.value.trim() || null,
+          ref: sbRef.value.trim() || null,
           autoStart: sbAutoStart.checked
         };
+      }
+      async function saveSandboxConfig() {
+        const r = await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+        if (r && r.ok === false) {
+          showToast(r.error || "Sandbox settings were rejected.", { kind: "error", duration: 1e4 });
+          return false;
+        }
+        return true;
       }
       var sbWorkdirPick = document.getElementById("sandbox-workdir-pick");
       if (window.__CLODEX_WEB__) {
@@ -41677,7 +41703,8 @@ ${res.stderr}` : "");
         sbRebuildBtn.disabled = true;
         sbToggleBtn.textContent = wasRunning ? "Stopping\u2026" : "Starting\u2026";
         try {
-          await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+          const saved = await saveSandboxConfig();
+          if (!saved && !wasRunning) return;
           const r = wasRunning ? await window.api.sandboxDown(sbCurrentBox) : await window.api.sandboxUp(sbCurrentBox);
           if (!r || r.ok === false) {
             showToast(`Sandbox ${wasRunning ? "stop" : "start"} failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
@@ -41699,7 +41726,7 @@ ${res.stderr}` : "");
         sbRebuildBtn.disabled = true;
         sbRebuildBtn.textContent = "Rebuilding\u2026";
         try {
-          await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+          if (!await saveSandboxConfig()) return;
           const r = await window.api.sandboxRebuild(sbCurrentBox);
           if (!r || r.ok === false) {
             showToast(`Sandbox rebuild failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });

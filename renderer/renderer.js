@@ -27,7 +27,7 @@ const { altChordAction } = require('./lib/web-shortcuts');
 const { createMirrorLatch } = require('./lib/mirror-latch');
 const { createMicHandoff } = require('./lib/mic-handoff');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
@@ -6197,6 +6197,7 @@ const sandboxOverlay = document.getElementById('sandbox-overlay');
 const sbDockerRow = document.getElementById('sandbox-docker');
 const sbStatusRow = document.getElementById('sandbox-status');
 const sbWorkdir = document.getElementById('sandbox-workdir');
+const sbRef = document.getElementById('sandbox-ref');
 const sbAutoStart = document.getElementById('sandbox-autostart');
 const sbToggleBtn = document.getElementById('btn-sandbox-toggle');
 const sbRebuildBtn = document.getElementById('btn-sandbox-rebuild');
@@ -6290,7 +6291,8 @@ async function refreshSandboxStatus() {
     sbGate = sandboxActionGate(detect);
     renderSandboxNotice(sbDockerRow, sbGate.notice);
     const sn = sandboxStatusNotice(status && status.state);
-    renderSandboxNotice(sbStatusRow, sn);
+    const refLine = sandboxRefLineText(status);
+    renderSandboxNotice(sbStatusRow, refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn);
     // Update sbRunning BEFORE applyActionGate — the gate's Start-vs-Stop decision
     // reads sbRunning, and applying the gate on a stale value would mis-gate the
     // toggle right after a state flip (defect #1).
@@ -6418,6 +6420,7 @@ async function loadBoxDetail() {
   const box = sbBoxes.find((b) => b.id === sbCurrentBox);
   sbDetailLabel.textContent = (box && box.label) || sbCurrentBox;
   sbWorkdir.value = cfg.workDir || '';
+  sbRef.value = cfg.ref || '';
   sbAutoStart.checked = !!cfg.autoStart;
   sbMounts = Array.isArray(cfg.mounts) ? cfg.mounts.map((m) => ({ host: m.host, ro: !!m.ro })) : [];
   sbMountsDirty = false;
@@ -6473,8 +6476,18 @@ function closeSandboxDialog() {
 function collectSandboxConfig() {
   return {
     workDir: sbWorkdir.value.trim() || null,
+    ref: sbRef.value.trim() || null,
     autoStart: sbAutoStart.checked,
   };
+}
+
+async function saveSandboxConfig() {
+  const r = await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+  if (r && r.ok === false) {
+    showToast(r.error || 'Sandbox settings were rejected.', { kind: 'error', duration: 10000 });
+    return false;
+  }
+  return true;
 }
 
 const sbWorkdirPick = document.getElementById('sandbox-workdir-pick');
@@ -6516,7 +6529,8 @@ sbToggleBtn.addEventListener('click', async () => {
   sbRebuildBtn.disabled = true;
   sbToggleBtn.textContent = wasRunning ? 'Stopping…' : 'Starting…';
   try {
-    await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+    const saved = await saveSandboxConfig();
+    if (!saved && !wasRunning) return;
     const r = wasRunning ? await window.api.sandboxDown(sbCurrentBox) : await window.api.sandboxUp(sbCurrentBox);
     if (!r || r.ok === false) {
       showToast(`Sandbox ${wasRunning ? 'stop' : 'start'} failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
@@ -6539,7 +6553,7 @@ sbRebuildBtn.addEventListener('click', async () => {
   sbRebuildBtn.disabled = true;
   sbRebuildBtn.textContent = 'Rebuilding…';
   try {
-    await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+    if (!await saveSandboxConfig()) return;
     const r = await window.api.sandboxRebuild(sbCurrentBox);
     if (!r || r.ok === false) {
       showToast(`Sandbox rebuild failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });

@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- **A managed sandbox can track a git ref**: set "Track git ref" on the box to
+  `master` or a ticket branch and Rebuild builds the box from that commit, so a
+  team can run merged work beside the desktop app without restarting it.
+
 ## 5.59.0 — 2026-09-11 — Cost on every ticket, the Inbox on the phone, and honest standing-seat attribution
 
 - **Phone access serves the operator Inbox**: list, mark read, read-all and
