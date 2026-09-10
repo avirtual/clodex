@@ -4559,11 +4559,11 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
 
-      // A team file for the role's own stem outranks the template's stem only when
-      // the template was IMPLIED: the stock reviewer names none, so the default's
-      // stem would shadow the `prompts/system/reviewer.md` create writes. A named
-      // template keeps its own prompt — `reviewer:clodex-team-reviewer-shell` must
-      // not spawn a shell seat briefed by the team's copy of the no-shell prompt.
+      // A team file for the role's stem outranks an IMPLIED template's: the stock
+      // reviewer names none, so the default's would shadow the
+      // `prompts/system/reviewer.md` create writes. A NAMED one keeps its own —
+      // `reviewer:clodex-team-reviewer-shell` must not spawn a shell seat briefed
+      // by the team's copy of the no-shell prompt.
       const explicitTpl = !!(templateOverride || (def && def.template));
       const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
         ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
@@ -4577,9 +4577,8 @@ function createTicketMethods(deps, shared) {
       // Defense-in-depth: the template is agent-writable and its systemPromptFile
       // flows into resolveSystemPromptFile → promptLibrary._file, a bare path.join
       // with no confinement — a stem like "../../../../etc/x" escapes
-      // library/prompts/system. Rejected HERE and not in the shared resolver, to
-      // avoid widening the blast radius; the stem rides back on `promptEscaped`
-      // because the caller warns about it loudly.
+      // library/prompts/system. Rejected HERE, not in the shared resolver, to avoid
+      // widening the blast radius; the stem rides back on `promptEscaped`.
       let promptEscaped = null;
       if (systemPromptFile.includes('/') || systemPromptFile.includes('\\') || systemPromptFile.includes('..')) {
         promptEscaped = systemPromptFile;
