@@ -371,23 +371,34 @@ function createAppMenus(deps) {
       const rows = allPrompts();
       const libraryRows = rows.filter((p) => p && !p.team);
       const teamRows = rows.filter((p) => p && p.team);
-      const items = [];
-      for (const kind of ['system', 'append']) {
-        const cats = [
-          { label: 'Library', rows: promptRowsOf(libraryRows, kind, (p) => sendToFocused(channel, { kind, name: p.name })) },
-          ...teamCategories(teamRows.filter((p) => p.kind === kind), (p) => ({
-            label: truncate(p.name),
-            click: () => sendToFocused(channel, { team: p.team, kind, name: p.name }),
-          })),
-          ...bundles.map((b) => ({
-            label: b.name || b.id,
-            rows: promptRowsOf(b.prompts, kind, (p) => sendToFocused(channel, { plugin: b.id, kind, name: p.name })),
-          })),
-        ];
-        if (!cats.some((c) => c.rows.length)) continue;
-        items.push({ label: kind === 'system' ? 'System' : 'Append', enabled: false }, ...categoryMenu(cats, {}));
-      }
-      if (!items.length) items.push({ label: '(no prompts in library)', enabled: false });
+      const kindSubmenu = (kind) => categoryMenu([
+        { label: 'Library', rows: promptRowsOf(libraryRows, kind, (p) => sendToFocused(channel, { kind, name: p.name })) },
+        ...bundles.map((b) => ({
+          label: b.name || b.id,
+          rows: promptRowsOf(b.prompts, kind, (p) => sendToFocused(channel, { plugin: b.id, kind, name: p.name })),
+        })),
+      ], { empty: `(no ${kind} prompts)` });
+      const teamsSubmenu = () => {
+        const cats = teamCategories(teamRows, (p) => ({
+          label: truncate(`${p.name}  —  ${p.kind}`),
+          click: () => sendToFocused(channel, { team: p.team, kind: p.kind, name: p.name }),
+        }));
+        const items = categoryMenu(cats, { empty: '(no team prompts)' });
+        // categoryMenu leaves its first category headerless — right for Library,
+        // wrong here, where an unheaded first group reads as belonging to the
+        // team named by the NEXT header. Folded, every team is already a labelled
+        // submenu row, so ask the output which shape came back rather than
+        // recomputing the threshold.
+        const folded = items.length > 0 && Boolean(items[0].submenu);
+        return (cats.length && !folded)
+          ? [{ label: cats[0].label, enabled: false }, ...items]
+          : items;
+      };
+      const items = [
+        { label: 'System', submenu: kindSubmenu('system') },
+        { label: 'Append', submenu: kindSubmenu('append') },
+        { label: 'Teams', submenu: teamsSubmenu() },
+      ];
       items.push(...tail(channel, 'New Prompt…', null, 'Manage Prompts…'));
       return items;
     };
