@@ -384,11 +384,6 @@ function createAppMenus(deps) {
           click: () => sendToFocused(channel, { team: p.team, kind: p.kind, name: p.name }),
         }));
         const items = categoryMenu(cats, { empty: '(no team prompts)' });
-        // categoryMenu leaves its first category headerless — right for Library,
-        // wrong here, where an unheaded first group reads as belonging to the
-        // team named by the NEXT header. Folded, every team is already a labelled
-        // submenu row, so ask the output which shape came back rather than
-        // recomputing the threshold.
         const folded = items.length > 0 && Boolean(items[0].submenu);
         return (cats.length && !folded)
           ? [{ label: cats[0].label, enabled: false }, ...items]
