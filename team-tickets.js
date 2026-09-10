@@ -2469,7 +2469,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       reply(`team "${team.name}" created — root ${team.root}, lead ${team.lead}, dir ${dir}${copiedClause}. `
-        + 'Next: spawn the lead in that root, then [agent:team gather] and [agent:team role-add …] from it.');
+        + 'Next: spawn the lead in that root, then [agent:team role-add …] from it.');
     },
 
     _handleTeam(session, intent) {
@@ -2722,9 +2722,15 @@ function createTicketMethods(deps, shared) {
       } catch { return ''; } // instrumentation must never break the reply it rides on
     },
 
+    _hostIsThisTeamsCode(team, seams = {}) {
+      const dir = seams.dir || __dirname;
+      const root = team && team.root;
+      if (!root) return false;
+      try { return fs.realpathSync(root) === fs.realpathSync(dir); } catch { return false; }
+    },
+
     _handleTask(session, intent) {
       let stale = '';
-      try { stale = this._staleHostSuffix(); } catch { stale = ''; }
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
@@ -2744,6 +2750,7 @@ function createTicketMethods(deps, shared) {
         team = this._soloContext(session);
         if (!team) { reply(`error: this session is not on a team and is not inside a git repository — a ticket needs a project to belong to${this._spillRejectedPayload(session, `task ${intent.sub}`, String(intent.body == null ? '' : intent.body).trim())}`); return; }
       }
+      try { stale = this._hostIsThisTeamsCode(team) ? this._staleHostSuffix() : ''; } catch { stale = ''; }
       switch (intent.sub) {
         case 'add': this._taskAdd(session, team, intent, reply); break;
         case 'assign': this._taskAssign(session, team, intent, reply); break;

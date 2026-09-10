@@ -6404,6 +6404,23 @@ test('t82 reassign WAKES the new assignee, but the old-assignee notice stays pas
   assert.strictEqual(f.urgents[1], true, 'the reassigned spec is a work assignment and must wake');
 });
 
+// t801: the suffix now rides behind `_hostIsThisTeamsCode`, and `_handleTask`
+// calls that with no arguments, so the seams cannot be passed at the call site —
+// they are bound here instead, exactly as t82 binds `_staleHostSuffix`. The REAL
+// gate runs; what this arranges is the true branch, by making the fixture team's
+// root the very directory the host's code is said to live in. Every t93 case
+// below would otherwise pin the gate refusing rather than the reply path.
+function bindHostCodeDir(f, dir) {
+  const realGate = Object.getPrototypeOf(f.m)._hostIsThisTeamsCode;
+  f.m._hostIsThisTeamsCode = (team) => realGate.call(f.m, team, { dir });
+  return dir;
+}
+
+function hostCodeIsTeamRoot(f, dir = mkTmpRoot('clodex-t801-host-')) {
+  f.team.root = dir;
+  return bindHostCodeDir(f, dir);
+}
+
 // ── t93: the stale-host suffix on task replies ──────────────────────────────
 // A task reply is where the wrong conclusion actually forms: the lead reads
 // `ticket t91 → hand`, believes the merged behaviour is what just ran, and
@@ -6416,6 +6433,7 @@ test('t82 reassign WAKES the new assignee, but the old-assignee notice stays pas
 test('t93 a FRESH host adds nothing to a task reply — the happy path stays silent', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
+  hostCodeIsTeamRoot(f);
   f.m._staleHostSuffix = () => '';           // fresh: the real one returns '' here
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   const note = f.injected.join('\n');
@@ -6427,6 +6445,7 @@ test('t93 a FRESH host adds nothing to a task reply — the happy path stays sil
 test('t93 a STALE host warns on the task reply, where the wrong conclusion gets made', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
+  hostCodeIsTeamRoot(f);
   f.m._staleHostSuffix = () => ' — NOTE: running host (pid 55910) booted 8h ago from OLDER code than is on disk'
     + ' — merged fixes are NOT live until the app is restarted';
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
@@ -6440,6 +6459,7 @@ test('t93 a STALE host warns on the task reply, where the wrong conclusion gets 
 test('t93 the suffix rides EVERY task verb, not just add — a stale host is stale for all of them', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
+  hostCodeIsTeamRoot(f);
   f.m._staleHostSuffix = () => ' — NOTE: STALE-HOST-MARKER';
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, body: '' });
@@ -6452,11 +6472,58 @@ test('t93 the suffix rides EVERY task verb, not just add — a stale host is sta
 test('t93 _staleHostSuffix is computed ONCE per intent, not per reply line', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
+  hostCodeIsTeamRoot(f);
   let calls = 0;
   f.m._staleHostSuffix = () => { calls += 1; return ''; };
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   assert.strictEqual(calls, 1,
     'the check stats the whole module dir, so a per-reply call would put real IO on every task intent');
+});
+
+// ── t801: whose host is it ─────────────────────────────────────────────
+// The note names a restart of Clodex, so it is actionable only where a merge
+// changes the running host's code — the Clodex repo's own team. clodex-ios-lead
+// got it on `task reject t3` in a project that has nothing to do with this
+// binary, read it as being about the ticket, and got it again on every verb.
+
+test('t801 another team\'s ticket replies carry NO stale note — only the host\'s own repo does', () => {
+  const dir = mkTmpRoot('clodex-t801-code-');
+
+  const own = mkTasks();
+  own.seat('lead'); own.seat('team-hand');
+  hostCodeIsTeamRoot(own, dir);
+  own.m._staleHostSuffix = () => ' — NOTE: STALE-HOST-MARKER';
+  own.m._handleTask(own.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.match(own.injected.join('\n'), /STALE-HOST-MARKER/,
+    'ENTER: on the team whose root IS the code dir the note rides — so its absence below is the GATE, not a quiet stub');
+
+  const other = mkTasks();
+  other.seat('lead'); other.seat('team-hand');
+  other.team.root = mkTmpRoot('clodex-t801-other-');
+  bindHostCodeDir(other, dir);
+  other.m._staleHostSuffix = () => ' — NOTE: STALE-HOST-MARKER';
+  other.m._handleTask(other.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  other.m._handleTask(other.seat('lead'), { type: 'task', sub: 'list', id: null, who: null, body: '' });
+  const note = other.injected.join('\n');
+  assert.match(note, /ticket t1 → hand/, 'ENTER: the same replies were produced on the other team');
+  assert.doesNotMatch(note, /NOTE:/,
+    'a lead on another project cannot restart this host and cannot act on the notice — its replies must be byte-identical to a fresh host\'s');
+});
+
+test('t801 a team root that is a SYMLINK to the code dir still gets the note', () => {
+  const dir = mkTmpRoot('clodex-t801-symcode-');
+  const link = pathReal.join(mkTmpRoot('clodex-t801-symlink-'), 'root');
+  fsReal.symlinkSync(dir, link);
+
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.team.root = link;
+  bindHostCodeDir(f, dir);
+  f.m._staleHostSuffix = () => ' — NOTE: STALE-HOST-MARKER';
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.notStrictEqual(link, dir, 'ENTER: the two paths differ as strings — only a realpath on both sides can equate them');
+  assert.match(f.injected.join('\n'), /STALE-HOST-MARKER/,
+    'a checkout reached through a symlink is the same repository: a string compare would silence the one team that needs the note');
 });
 
 // A module dir and runRoot the real _staleHostSuffix reads as a quiet host: no
@@ -6681,6 +6748,7 @@ test('t82 a DELIVERED spec still confirms cleanly, with no scary NOTE appended',
   // passed at the call site — they are bound here instead. This is NOT a stub:
   // the REAL method runs. Replacing it with `() => ''` would assert only that
   // the fixture is quiet.
+  hostCodeIsTeamRoot(f);
   const realSuffix = Object.getPrototypeOf(f.m)._staleHostSuffix;
   const seams = quietHostSeams();
   f.m._staleHostSuffix = () => realSuffix.call(f.m, Date.now(), seams);
@@ -10716,7 +10784,7 @@ test('t773 create: bodyless is byte-identical to before — stock hand, old repl
   assert.deepStrictEqual(f.injected, [
     `[agent:team] team "shop" created — root ${pathReal.resolve(f.projectRoot)}, lead shop-lead, `
     + `dir ${pathReal.join(f.home, 'teams', 'shop')}. `
-    + 'Next: spawn the lead in that root, then [agent:team gather] and [agent:team role-add …] from it.',
+    + 'Next: spawn the lead in that root, then [agent:team role-add …] from it.',
   ]);
 });
 
