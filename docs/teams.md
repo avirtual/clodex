@@ -465,8 +465,14 @@ or one it is taking over; a lead name already in use is refused before anything 
 written, and a spawn that fails leaves the team on disk with the retry command in
 the reply. If `clodex-team-lead` is not installed the seat still boots, but bare —
 the brief composes only through that template — and the reply says it was NOT
-briefed rather than claiming otherwise. After a BODYLESS create two steps are
-still yours: spawn the lead with its cwd at the root — after the create, never
+briefed rather than claiming otherwise. `mode:interview` on a create with a brief
+says those words came from the operator rather than from a finished spec: the
+same team and the same brief file, but the opener tells the lead the brief is a
+starting point, and its first turn interviews the operator and rewrites
+`team-project.md` with the answers before it files anything. `mode:kickstart` is
+the default and is what an omitted `mode:` means; any other value is refused
+before anything is written. After a BODYLESS create two steps are still yours:
+spawn the lead with its cwd at the root — after the create, never
 before, because a seat resolves its team from its cwd at boot, and one spawned
 first boots teamless and misses the roster message a team seat gets at boot — and
 make the hand per-ticket with `[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do

@@ -48,8 +48,8 @@ test('the section names the runner, the brief file and the notify channel', () =
 test('the TAKEOVER arm names the files it must read before asking anything', () => {
   const body = section(read());
   const start = body.indexOf('**TAKEOVER**');
-  const end = body.indexOf('Either arm');
-  assert.ok(start !== -1 && end > start, 'TAKEOVER arm is bounded by the "Either arm" paragraph');
+  const end = body.indexOf('**INTERVIEW**');
+  assert.ok(start !== -1 && end > start, 'TAKEOVER arm is bounded by the INTERVIEW arm');
   const takeover = body.slice(start, end);
   assert.ok(takeover.includes('README'), 'names README');
   assert.ok(takeover.includes('package.json'), 'names package.json');
@@ -65,6 +65,35 @@ test('the NEW arm names the empty-suite contract and the question budget', () =>
   const arm = body.slice(start, end);
   assert.ok(arm.includes('TOTALS:'), 'names TOTALS:');
   assert.ok(arm.includes('at most three'), 'names at most three');
+});
+
+// t795. The opener sent on a `mode:interview` create names the INTERVIEW arm of
+// this heading by hand: the sentence is only actionable if the arm is really in
+// the prompt, and the arm is only actionable if it names the verb that rewrites
+// the brief. Both are strings in a markdown file no code reads, so nothing but
+// this pin stands between a rename and a lead sent to a section that is gone.
+test('t795: the INTERVIEW arm is present, sits last, and names the rewrite verb', () => {
+  const body = section(read());
+  const iTakeover = body.indexOf('**TAKEOVER**');
+  const iInterview = body.indexOf('**INTERVIEW**');
+  assert.ok(iInterview !== -1, 'INTERVIEW arm present');
+  assert.ok(iTakeover < iInterview, 'it follows TAKEOVER — the root arms come first');
+  const arm = body.slice(iInterview);
+  assert.ok(arm.includes('[agent:team prompt-save append team-project]'),
+    'the arm names the verb that rewrites the brief');
+  assert.ok(arm.includes('File NO ticket'), 'and forbids filing before the answers land');
+  assert.ok(body.includes('Every arm:'), 'the closing paragraph covers three arms, not two');
+  assert.ok(!body.includes('Either arm'), 'and the two-arm wording is gone');
+});
+
+test('t795: the prompt tells the lead its team\'s prompts are its own to edit', () => {
+  const text = read();
+  const heading = text.match(/^## Your team's prompts are yours$/gm) || [];
+  assert.strictEqual(heading.length, 1);
+  assert.ok(text.indexOf('## Team lifecycle') < text.indexOf("## Your team's prompts are yours"),
+    'it follows Team lifecycle');
+  assert.ok(text.indexOf("## Your team's prompts are yours") < text.indexOf(HEADING),
+    'and precedes the first-turn section that leans on it');
 });
 
 test('Team lifecycle still occurs once and precedes the new section', () => {

@@ -408,7 +408,7 @@ test('every rendered grammar line parses, with its placeholders filled in', () =
     'ENTER: the team-create form survived the split');
   assert.deepStrictEqual(
     parseIntent(fill('[agent:team create <name> root:<abs-path> [lead:<seat>]]')),
-    { type: 'team-create', name: 'shop', root: '/tmp', lead: 'boss', body: '' },
+    { type: 'team-create', name: 'shop', root: '/tmp', lead: 'boss', mode: null, body: '' },
     'ENTER: the filled form parses to the fields the handler reads, not merely to non-null',
   );
   const bad = forms.filter((f) => !parseIntent(fill(f)));

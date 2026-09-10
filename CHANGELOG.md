@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team create]` takes `mode:interview`: the team is set up from a few words, and the lead's first turn interviews the operator and rewrites the brief itself before filing a ticket, instead of treating the words as a finished spec. Omitted or `mode:kickstart` is today's behaviour.
+
 ## 5.54.0 — 2026-09-10 — Library > Prompts is three submenus: System, Append and Teams
 
 - Library > Prompts is now three submenus, System, Append and Teams, each opening its own list, so team prompts no longer sit beside the Append header looking like one more kind.

@@ -150,12 +150,14 @@ function parseTeamCreate(cleaned) {
   const argStr = m[1];
   const rootM = argStr.match(/\broot:(\S+)/);
   const leadM = argStr.match(/\blead:(\S+)/);
+  const modeM = argStr.match(/\bmode:(\S+)/);
   const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
   return {
     type: 'team-create',
     name: positional[0] || null,
     root: rootM ? rootM[1] : null,
     lead: leadM ? leadM[1] : null,
+    mode: modeM ? modeM[1] : null,
     body: m[2],
   };
 }
