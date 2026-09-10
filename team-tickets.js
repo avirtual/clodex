@@ -2861,7 +2861,11 @@ function createTicketMethods(deps, shared) {
       if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
       const st = await box.status();
       const ports = (st && st.ports) || (r && r.ports) || {};
-      const token = typeof box.remoteToken === 'function' ? box.remoteToken() : null;
+      // Called directly, NOT behind a `typeof` guard: the whole point of the file
+      // is the token, so a box that stopped exposing one must fail loudly into the
+      // catch rather than write `"token": null` that a seat would read as an
+      // answer and authenticate with.
+      const token = box.remoteToken();
       const record = {
         boxId,
         ref: (st && st.ref) || intent.ref || null,

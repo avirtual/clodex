@@ -982,6 +982,30 @@ test('setAuthToken: writes auth.env at mode 0600 with the CLAUDE_CODE_OAUTH_TOKE
   assert.strictEqual(sb.hasAuthToken(), true);
 });
 
+// t808: the peer-wire secret is what a team's seats authenticate to the box
+// with, and `[agent:team sandbox up]` copies it into the team's sandbox.json.
+// Without this export that verb has no token to write — and the handler's own
+// suite cannot see the gap, since its fake box supplies one either way.
+test('remoteToken: exposed on the box, and it IS the CLODEX_REMOTE_TOKEN in auth.env', () => {
+  const ud = freshUserData();
+  const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
+
+  assert.strictEqual(typeof sb.remoteToken, 'function', 'the main process can read the box secret');
+  assert.strictEqual(sb.remoteToken(), null, 'nothing provisioned yet → no token to hand out');
+
+  fs.mkdirSync(path.join(ud, 'sandbox'), { recursive: true });
+  fs.writeFileSync(path.join(ud, 'sandbox', 'auth.env'), 'CLODEX_REMOTE_TOKEN=tok-abc-123\n');
+  assert.strictEqual(sb.remoteToken(), 'tok-abc-123', 'it reads the SAME line registerPeer authenticates with');
+});
+
+// The other half of that boundary: reading the secret is a main-process
+// capability, so no `sandbox:*` IPC channel may forward it to the renderer.
+test('remoteToken: no ipc-handlers sandbox channel exposes it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.ok(!/remoteToken/.test(src),
+    'ipc-handlers.js names remoteToken — the peer-wire secret must not cross to the renderer');
+});
+
 test('setAuthToken: trims surrounding whitespace from a pasted token', () => {
   const ud = freshUserData();
   const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
