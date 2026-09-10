@@ -128,6 +128,7 @@ function parseIntentLegacy(rawLine) {
     const rootM = argStr.match(/\broot:(\S+)/);
     const leadM = argStr.match(/\blead:(\S+)/);
     const modeM = argStr.match(/\bmode:(\S+)/);
+    const kitM = argStr.match(/\bkit:(\S+)/);
     const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
     return {
       type: 'team-create',
@@ -135,6 +136,7 @@ function parseIntentLegacy(rawLine) {
       root: rootM ? rootM[1] : null,
       lead: leadM ? leadM[1] : null,
       mode: modeM ? modeM[1] : null,
+      kit: kitM ? kitM[1] : null,
       body: teamCreateMatch[2],
     };
   }
@@ -376,6 +378,11 @@ const ADVERSARIAL = [
   '[agent:team create shop root:/proj/shop mode:kickstart] brief',
   '[agent:team create shop root:/proj/shop mode:bogus] brief',
   '[agent:team create mode:interview root:/proj/shop shop]',
+  '[agent:team create shop root:/proj/shop kit:default]',
+  '[agent:team create shop root:/proj/shop kit:clodex] brief',
+  '[agent:team create kit:? root:/proj/shop shop]',
+  '[agent:team create shop root:/proj/shop kit:]',
+  '[agent:team create shop root:/proj/shop kit:a kit:b]',
   '[agent:team created shop root:/p]',
   '[agent:team watchdog abc]', '[agent:team watchdog]', '[agent:team foo]',
   '[agent:team]', '[agent:team-reviewer]',

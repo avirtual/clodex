@@ -844,6 +844,7 @@ const { createTeamManifest } = require('./team-manifest');
 const {
   findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
   setRole, removeRole, renameRole, setTeamWatchdog, setLead, teamsDir, deleteTeam,
+  kitCatalog, resolveKit,
   // PASSED, not left to defaultClodexHome(): that reads CLODEX_HOME, which
   // would put teams on a different tree than every other subsystem.
 } = createTeamManifest({ fs, clodexHome: REGISTRY_DIR });
@@ -1212,6 +1213,8 @@ const SessionManager = createSessionManager({
     gitWorktree,
     resolveTeam,
     createTeam,
+    kitCatalog,
+    resolveKit,
     addRole,
     listTeams,
     loadManifest,

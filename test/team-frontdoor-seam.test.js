@@ -59,12 +59,20 @@ test('team:create reaches createTeam with {name,root,lead} then spawns', async (
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
-  const res = await handlers['team:create']({}, { teamName: 'shop', name: 'clodex', type: 'claude', cwd: '/proj' });
+  const res = await handlers['team:create']({}, { teamName: 'shop', name: 'clodex', type: 'claude', cwd: '/proj', kit: 'default' });
   // The handler REACHED the writer with the right shape — not a swallowed failure.
-  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop', root: '/proj', lead: 'clodex' }]]);
+  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop', root: '/proj', lead: 'clodex', kit: 'default' }]]);
   assert.strictEqual(res.ok, true, 'handler returns ok after a successful write+spawn');
+
   assert.strictEqual(created.length, 1, 'falls through to the normal spawn');
   assert.strictEqual(created[0][0], 'clodex', 'seat name spawned');
+
+  // t803: an IPC caller that names no kit must reach createTeam with the key
+  // UNDEFINED rather than a value this handler picked — the default lives in
+  // createTeam, and a second copy here is what would let the two disagree.
+  writes.length = 0;
+  await handlers['team:create']({}, { teamName: 'shop2', name: 'clodex2', type: 'claude', cwd: '/proj2' });
+  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop2', root: '/proj2', lead: 'clodex2', kit: undefined }]]);
 });
 
 test('team:join reaches addRole (hand = stock def) then spawns', async () => {

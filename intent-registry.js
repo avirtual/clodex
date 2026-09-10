@@ -151,6 +151,7 @@ function parseTeamCreate(cleaned) {
   const rootM = argStr.match(/\broot:(\S+)/);
   const leadM = argStr.match(/\blead:(\S+)/);
   const modeM = argStr.match(/\bmode:(\S+)/);
+  const kitM = argStr.match(/\bkit:(\S+)/);
   const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
   return {
     type: 'team-create',
@@ -158,6 +159,7 @@ function parseTeamCreate(cleaned) {
     root: rootM ? rootM[1] : null,
     lead: leadM ? leadM[1] : null,
     mode: modeM ? modeM[1] : null,
+    kit: kitM ? kitM[1] : null,
     body: m[2],
   };
 }
