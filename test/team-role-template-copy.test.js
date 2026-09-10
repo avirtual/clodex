@@ -503,3 +503,27 @@ test('t791 create: a brief that cannot be saved unwinds the prompt copies too', 
   assert.strictEqual(fs.existsSync(dir), false,
     'the whole team directory is gone: a surviving prompts/system would make rmdir(prompts) and then rmdir(dir) fail, leaving a manifest-less team listTeams still reports');
 });
+
+test('t791 [agent:team role-add]: the reply names the prompt copy, over the REAL mutator', async () => {
+  const home = mkHome();
+  const root = mkTmpRoot('t791-proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'lead' });
+  const { m, injected } = mkPark({
+    fs, path, REGISTRY_DIR: home,
+    resolveTeam: () => tm.loadManifest('shop'),
+    findProjectRoot: () => root,
+    addRole: tm.addRole,
+  });
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  const seat = { name: 'lead', type: 'claude', agentType: 'claude', cwd: root, activityState: 'idle' };
+  m.sessions.set('lead', seat);
+
+  m._handleTeam(seat, { type: 'team', sub: 'role-add', name: 'scribe', prompt: 'clodex-team-hand', body: 'writes' });
+
+  assert.strictEqual(readPrompt(home, 'shop', 'scribe'), LIB_PROMPTS['clodex-team-hand'],
+    'ENTER: the role-add really did write the copy — the clause below is about this file');
+  assert.ok(injected.some((t) => t.includes('role "scribe" added to shop; prompts copied to prompts/system/<role>.md for scribe')),
+    `the role-add reply carries the clause — got: ${JSON.stringify(injected)}`);
+});

@@ -4559,14 +4559,17 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
 
-      // A team file for the role's own stem outranks the template's: the stock
-      // reviewer names no template, so the default one's stem would shadow the
-      // `prompts/system/reviewer.md` create writes it.
+      // A team file for the role's own stem outranks the template's stem only when
+      // the template was IMPLIED: the stock reviewer names none, so the default's
+      // stem would shadow the `prompts/system/reviewer.md` create writes. A named
+      // template keeps its own prompt — `reviewer:clodex-team-reviewer-shell` must
+      // not spawn a shell seat briefed by the team's copy of the no-shell prompt.
+      const explicitTpl = !!(templateOverride || (def && def.template));
       const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
         ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
         : null;
       let systemPromptFile =
-        ownRolePrompt
+        (ownRolePrompt && !explicitTpl)
           ? def.prompt
           : ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
             ? tpl.systemPromptFile

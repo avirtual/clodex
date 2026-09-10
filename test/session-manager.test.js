@@ -17776,3 +17776,41 @@ test('team-review (t791): with no team copy for the role\'s stem, the template\'
   assert.strictEqual(created[0][14], 'clodex-team-reviewer',
     'no team file for "reviewer", so the template\'s stem is unchanged');
 });
+
+// The other side of that precedence, and the reason it is conditional on the
+// template being IMPLIED. A template named explicitly — `reviewer:<name>` on the
+// ticket, or the role's own `template` from the GUI — carries its own prompt, and
+// the two are chosen together: the shell reviewer's Bash grant goes with the
+// briefing that tells it what shell access is for. Yielding to the team's copy of
+// the no-shell prompt here would spawn a seat holding Bash and briefed never to
+// use it.
+test('team-review (t791): an EXPLICITLY named template keeps its own prompt, over the team\'s copy for the role', async () => {
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-t791-x-');
+  const teamDir = pathReal.join(REGISTRY_DIR, 'teams', 'team');
+  const sysDir = pathReal.join(teamDir, 'prompts', 'system');
+  fsReal.mkdirSync(sysDir, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(sysDir, 'reviewer.md'), 'the team wrote this one');
+
+  const { m, created } = mkReview({
+    REGISTRY_DIR, fs: fsReal, path: pathReal, teamDir,
+    reviewerRole: { instantiate: 'subagent', prompt: 'reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false },
+    reviewTemplates: [
+      SHIPPED_REVIEWER_TEMPLATE,
+      { name: 'clodex-team-reviewer-shell', systemPromptFile: 'clodex-team-reviewer-shell',
+        intents: [], tools: ['Read', 'Grep', 'Glob', 'Bash'], env: {} },
+    ],
+    resolveSystemPromptFile: (stem, _plugins, t) => teamPromptFile({ fs: fsReal, path: pathReal }, t, 'system', stem),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope', { template: 'clodex-team-reviewer-shell' });
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  // ENTER: the team file the role points at really is on disk, so this is the
+  // override DECLINING to fire rather than finding nothing to fire on.
+  assert.ok(fsReal.existsSync(pathReal.join(sysDir, 'reviewer.md')),
+    'ENTER: the team owns prompts/system/reviewer.md — the override had a file to prefer');
+  assert.strictEqual(created[0][14], 'clodex-team-reviewer-shell',
+    'the NAMED template\'s prompt rides — a shell seat briefed by the no-shell prompt is the mismatch this prevents');
+});
