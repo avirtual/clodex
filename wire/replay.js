@@ -23,7 +23,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { WireProxy } = require('./proxy');
-const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall } = require('./role');
+const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall } = require('./role');
 const { WarmthStore } = require('./warmth');
 
 function parseArgs(argv) {
@@ -98,7 +98,7 @@ function observeRequest(classifier, obj, headers) {
     sessionId = m ? m[1] : null;
   }
   const agentId = (headers && headers['x-claude-code-agent-id']) || null;
-  const sideCall = isTitleCall(obj) || isProbeCall(obj);
+  const sideCall = isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj);
   const role = classifier.classify(obj, sessionId, agentId);
   if (!sideCall && !isSubagentRole(role)) classifier.noteMainFingerprint(sessionId, obj);
   return { sessionId, role, sideCall };

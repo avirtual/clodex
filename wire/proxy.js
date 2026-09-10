@@ -18,7 +18,7 @@ const { URL } = require('url');
 const { parseAgentPath, inferProvider } = require('./route');
 const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector } = require('./sse');
 const { Decompressor } = require('./decompress');
-const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall } = require('./role');
+const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
 
 // Hop-by-hop headers per RFC 7230 §6.1, plus content-length/host which the
@@ -286,7 +286,7 @@ class WireProxy extends EventEmitter {
           // the role.
           const rawAgentId = req.headers['x-claude-code-agent-id'];
           agentId = typeof rawAgentId === 'string' && rawAgentId ? rawAgentId : null;
-          sideCall = isTitleCall(obj) || isProbeCall(obj);
+          sideCall = isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj);
           role = this._roles.classify(obj, sessionId, agentId);
           if (!sideCall && !isSubagentRole(role)) {
             this._roles.noteMainFingerprint(sessionId, obj);

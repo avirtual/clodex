@@ -2326,6 +2326,14 @@ function createTicketMethods(deps, shared) {
       const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
       const name = intent.name || null;
       const root = intent.root || null;
+      const kitList = () => {
+        const lines = kitCatalog();
+        return lines.length ? `\n${lines.join('\n')}` : ' none are installed';
+      };
+      if (intent.kit === '?') {
+        reply(`kits:${kitList()}`);
+        return;
+      }
       if (!name) { reply('error: create needs a team name — [agent:team create <name> root:<abs-path> [lead:<seat>]]'); return; }
       if (!root || !nodePath.isAbsolute(root)) {
         reply(`error: create needs an absolute root — [agent:team create ${name} root:<abs-path>]`);
@@ -2336,15 +2344,7 @@ function createTicketMethods(deps, shared) {
         reply(`error: mode "${intent.mode}" is not kickstart or interview — no team was created`);
         return;
       }
-      const kitList = () => {
-        const lines = kitCatalog();
-        return lines.length ? `\n${lines.join('\n')}` : ' none are installed';
-      };
       let kitDef = null;
-      if (intent.kit === '?') {
-        reply(`kits:${kitList()}`);
-        return;
-      }
       try { kitDef = resolveKit(intent.kit); } catch (err) {
         reply(`error: ${err.message} — no team was created. Kits:${kitList()}`);
         return;
@@ -2476,7 +2476,8 @@ function createTicketMethods(deps, shared) {
             const briefedClause = mode === 'interview'
               ? 'and briefed (interview mode: it will ask the operator before filing a ticket).'
               : 'and briefed.';
-            reply(`${head}; ${team.lead} spawned in the root on template clodex-team-lead ${briefedClause} `
+            const leadTemplate = (team.roles && team.roles.lead && team.roles.lead.template) || DEFAULT_LEAD_TEMPLATE;
+            reply(`${head}; ${team.lead} spawned in the root on template ${leadTemplate} ${briefedClause} `
               + `Ask ${team.lead} for your first ticket.`);
             this._deliverParkedActive(team.lead, session.name, opener, 'dm');
             return;
