@@ -7909,6 +7909,7 @@ body {
         { name: "markAllNotificationsRead", kind: "invoke", channel: "notifications:markAllRead" },
         { name: "removeNotification", kind: "invoke", channel: "notifications:remove" },
         { name: "notificationUnreadCount", kind: "invoke", channel: "notifications:unreadCount" },
+        { name: "onNotificationsChanged", kind: "on", channel: "notifications:changed" },
         { name: "checkForUpdate", kind: "invoke", channel: "update:check" },
         { name: "getUpdateInfo", kind: "invoke", channel: "update:info" },
         { name: "getReleases", kind: "invoke", channel: "update:releases" },
@@ -24559,11 +24560,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
           await renderList();
           await refreshBadge();
         });
-        window.api.onIpcMessage((msg) => {
-          if (!msg || msg.type !== "notify") return;
+        function refreshFromEvent() {
           refreshBadge();
           if (isOpen()) renderList();
+        }
+        window.api.onIpcMessage((msg) => {
+          if (!msg || msg.type !== "notify") return;
+          refreshFromEvent();
         });
+        window.api.onNotificationsChanged(() => refreshFromEvent());
         window.api.onRequestOpenInboxDrawer(() => openDrawer());
         refreshBadge();
         return { openDrawer, closeDrawer };
