@@ -23340,27 +23340,49 @@ ${String(body || "").trim()}
         agents: '<span class="hint-text">No agents in library \u2014 add some via the \u{1F916} Agents drawer.</span>',
         skills: '<span class="hint-text">No skills in library \u2014 add some via the \u{1F9E9} Skills Library (Skills menu).</span>'
       };
-      function renderAppendChecklist(container, enabledSet, seat = null) {
+      function renderAppendChecklist(container, enabledSet, seat = null, teamRows = []) {
         container.innerHTML = "";
-        if (!promptLibCache.append.length && !hasBundleRows("prompts/append", seat)) {
+        const rows = Array.isArray(teamRows) ? teamRows.filter((r) => r && r.name) : [];
+        const shadowed = new Set(rows.map((r) => r.name));
+        const libraryRows = promptLibCache.append.filter((p) => !shadowed.has(p.name));
+        if (!libraryRows.length && !rows.length && !hasBundleRows("prompts/append", seat)) {
           container.innerHTML = BUNDLE_EMPTY_HINT["prompts/append"];
           return;
         }
-        for (const p of promptLibCache.append) {
+        const drawRow = (name, body) => {
           const row = document.createElement("label");
           row.className = "agent-check";
           const cb = document.createElement("input");
           cb.type = "checkbox";
-          cb.value = p.name;
-          cb.checked = enabledSet.has(p.name);
-          const preview = (p.body.split("\n")[0] || "").slice(0, 60);
+          cb.value = name;
+          cb.checked = enabledSet.has(name);
+          const preview = ((body || "").split("\n")[0] || "").slice(0, 60);
           const txt = document.createElement("span");
-          txt.innerHTML = `<strong>${esc(p.name)}</strong>${preview ? " \u2014 " + esc(preview) : ""}`;
+          txt.innerHTML = `<strong>${esc(name)}</strong>${preview ? " \u2014 " + esc(preview) : ""}`;
           row.appendChild(cb);
           row.appendChild(txt);
           container.appendChild(row);
+        };
+        for (const p of libraryRows) drawRow(p.name, p.body);
+        if (rows.length) {
+          const head = document.createElement("div");
+          head.className = "check-group";
+          head.textContent = `team ${(rows.find((r) => r.team) || {}).team || ""}`.trim();
+          container.appendChild(head);
+          for (const r of rows) drawRow(r.name, r.body);
         }
         appendBundleSections(container, "prompts/append", seat, enabledSet);
+      }
+      function mergeUnrendered(previous, renderedNames, checked) {
+        const rendered = new Set(renderedNames || []);
+        const out = Array.isArray(checked) ? [...checked] : [];
+        const seen = new Set(out);
+        for (const name of previous || []) {
+          if (rendered.has(name) || seen.has(name)) continue;
+          seen.add(name);
+          out.push(name);
+        }
+        return out;
       }
       function collectAppendChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
@@ -23700,6 +23722,7 @@ ${String(body || "").trim()}
       module.exports = {
         renderAppendChecklist,
         collectAppendChecklist,
+        mergeUnrendered,
         renderAgentChecklist,
         collectAgentChecklist,
         bundleSectionsOf,
@@ -35677,7 +35700,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -35924,6 +35947,7 @@ ${detail}` });
       var editingTemplateId = null;
       var editingTemplateBundle = null;
       var editingTemplateTeam = null;
+      var editingTemplateAppendPrev = [];
       var templatesDrawerRefresh = null;
       var templatesDrawerOpenTeam = null;
       function promptText(title, initial = "") {
@@ -37739,6 +37763,7 @@ ${detail}` });
         editingTemplateId = null;
         editingTemplateBundle = null;
         editingTemplateTeam = null;
+        editingTemplateAppendPrev = [];
         inputName.readOnly = false;
         overlayDismissed = false;
         if (toolOverlay) toolOverlay.classList.add("hidden");
@@ -37965,6 +37990,12 @@ ${detail}` });
         if (p.startsWith("~/")) return homeDir + p.slice(1);
         return p;
       }
+      function collectAppendPromptFiles() {
+        const checked = collectAppendChecklist(inputAppendList);
+        if (!editingTemplateTeam) return checked;
+        const rendered = Array.from(inputAppendList.querySelectorAll('input[type="checkbox"]')).map((cb) => cb.value);
+        return mergeUnrendered(editingTemplateAppendPrev, rendered, checked);
+      }
       function collectFormConfig() {
         const type = inputType.value;
         const agentType = type === "claude" || type === "codex";
@@ -37995,7 +38026,7 @@ ${detail}` });
           injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
           stripLevel: type === "claude" ? Number(inputStripLevel && inputStripLevel.value) || 0 : 0,
           systemPromptFile: agentType ? inputSystemPrompt.value || null : null,
-          appendPromptFiles: agentType ? collectAppendChecklist(inputAppendList) : []
+          appendPromptFiles: agentType ? collectAppendPromptFiles() : []
         };
       }
       function collectDialogEnv() {
@@ -38180,6 +38211,7 @@ ${detail}` });
         editingTemplateId = tpl ? tpl.id : null;
         editingTemplateBundle = bundle;
         editingTemplateTeam = teamOwner && teamOwner.team || null;
+        editingTemplateAppendPrev = Array.isArray(tpl && tpl.appendPromptFiles) ? tpl.appendPromptFiles : [];
         inputType.value = tpl && tpl.type || "claude";
         inputName.value = tpl && tpl.name || "";
         inputName.readOnly = !!bundle || !!editingTemplateTeam;
@@ -38210,7 +38242,8 @@ ${detail}` });
         await refreshNewSessionPlugins(tpl && tpl.plugins);
         if (agentType) {
           fillSystemPromptSelect(inputSystemPrompt, tpl && tpl.systemPromptFile || "", newSessionSeat());
-          renderAppendChecklist(inputAppendList, new Set(tpl && tpl.appendPromptFiles || []), newSessionSeat());
+          const teamAppendRows = editingTemplateTeam ? (await window.api.listPrompts() || []).filter((p) => p && p.kind === "append" && p.team === editingTemplateTeam) : [];
+          renderAppendChecklist(inputAppendList, new Set(tpl && tpl.appendPromptFiles || []), newSessionSeat(), teamAppendRows);
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
           await refreshNewSessionIntents(tpl && tpl.intents);
         }

@@ -46,7 +46,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -279,6 +279,7 @@ let dialogMode = 'create';
 let editingTemplateId = null;
 let editingTemplateBundle = null;
 let editingTemplateTeam = null;
+let editingTemplateAppendPrev = [];
 let templatesDrawerRefresh = null;
 let templatesDrawerOpenTeam = null;
 
@@ -2254,6 +2255,7 @@ async function openDialog(prefill = null) {
   editingTemplateId = null;
   editingTemplateBundle = null;
   editingTemplateTeam = null;
+  editingTemplateAppendPrev = [];
   inputName.readOnly = false;
   overlayDismissed = false; // fresh open re-checks: the prominence overlay may re-raise
   if (toolOverlay) toolOverlay.classList.add('hidden');
@@ -2514,6 +2516,13 @@ function expandPath(p) {
   return p;
 }
 
+function collectAppendPromptFiles() {
+  const checked = collectAppendChecklist(inputAppendList);
+  if (!editingTemplateTeam) return checked;
+  const rendered = Array.from(inputAppendList.querySelectorAll('input[type="checkbox"]')).map((cb) => cb.value);
+  return mergeUnrendered(editingTemplateAppendPrev, rendered, checked);
+}
+
 function collectFormConfig() {
   const type = inputType.value;
   const agentType = type === 'claude' || type === 'codex';
@@ -2553,7 +2562,7 @@ function collectFormConfig() {
     injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
     stripLevel: type === 'claude' ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
     systemPromptFile: agentType ? (inputSystemPrompt.value || null) : null,
-    appendPromptFiles: agentType ? collectAppendChecklist(inputAppendList) : [],
+    appendPromptFiles: agentType ? collectAppendPromptFiles() : [],
   };
 }
 
@@ -2744,6 +2753,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   editingTemplateId = tpl ? tpl.id : null;
   editingTemplateBundle = bundle;
   editingTemplateTeam = (teamOwner && teamOwner.team) || null;
+  editingTemplateAppendPrev = Array.isArray(tpl && tpl.appendPromptFiles) ? tpl.appendPromptFiles : [];
   inputType.value = (tpl && tpl.type) || 'claude';
   inputName.value = (tpl && tpl.name) || '';
   inputName.readOnly = !!bundle || !!editingTemplateTeam;
@@ -2776,7 +2786,11 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   await refreshNewSessionPlugins(tpl && tpl.plugins);
   if (agentType) {
     fillSystemPromptSelect(inputSystemPrompt, (tpl && tpl.systemPromptFile) || '', newSessionSeat());
-    renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []), newSessionSeat());
+    const teamAppendRows = editingTemplateTeam
+      ? ((await window.api.listPrompts()) || [])
+        .filter((p) => p && p.kind === 'append' && p.team === editingTemplateTeam)
+      : [];
+    renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []), newSessionSeat(), teamAppendRows);
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
     await refreshNewSessionIntents(tpl && tpl.intents);
   }
