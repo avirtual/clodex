@@ -2516,9 +2516,6 @@ function expandPath(p) {
   return p;
 }
 
-// A team template's stored `appendPromptFiles` may name a stem the form could
-// not draw a checkbox for; collectAppendChecklist reads checked boxes alone, so
-// such a name would be silently dropped on save.
 function collectAppendPromptFiles() {
   const checked = collectAppendChecklist(inputAppendList);
   if (!editingTemplateTeam) return checked;
