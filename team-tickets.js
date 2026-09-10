@@ -2443,6 +2443,13 @@ function createTicketMethods(deps, shared) {
             try { fs.unlinkSync(nodePath.join(dir, 'templates', `${r}.json`)); } catch {}
           }
           try { fs.rmdirSync(nodePath.join(dir, 'templates')); } catch {}
+          // The kit's exec defs too: a surviving exec/ makes the rmdir below
+          // fail, and what it leaves behind is a manifest-less team directory
+          // that listTeams still reports.
+          for (const c of (Array.isArray(team.execCopied) ? team.execCopied : [])) {
+            try { fs.unlinkSync(nodePath.join(dir, 'exec', `${c}.json`)); } catch {}
+          }
+          try { fs.rmdirSync(nodePath.join(dir, 'exec')); } catch {}
           try { fs.rmdirSync(dir); } catch {}
           this._refreshAppMenuQuietly();
           reply(`error: could not save the brief (${res.error}) — no team was created; `

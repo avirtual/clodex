@@ -43,6 +43,29 @@ const TPL_DIR = path.join(__dirname, '..', 'resources', 'library', 'templates');
 const readTpl = (stem) => JSON.parse(fs.readFileSync(path.join(TPL_DIR, `${stem}.json`), 'utf-8'));
 const STEMS = ['clodex-team-hand', 'clodex-team-lead'];
 
+// t803: the clodex KIT ships byte-identical copies of these two (pinned in
+// test/team-kits.test.js), so the partition below covers them transitively. The
+// default kit's copies are a different question and belong to that file: their
+// denylist is deliberately EMPTY, which no partition against KEEP can express.
+// What is kit-independent is the STALE-NAME check — a denylist naming a tool the
+// catalog does not have makes the CLI warn on every seat boot, whatever the
+// list's length — so that one runs over every shipped template, kit or not.
+const KIT_DIR = path.join(__dirname, '..', 'resources', 'library', 'kits');
+function everyShippedTemplate() {
+  const out = [];
+  for (const stem of STEMS) out.push([`templates/${stem}`, readTpl(stem)]);
+  for (const kit of fs.readdirSync(KIT_DIR)) {
+    const dir = path.join(KIT_DIR, kit, 'templates');
+    let files;
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      out.push([`kits/${kit}/templates/${f.slice(0, -5)}`, JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))]);
+    }
+  }
+  return out;
+}
+
 test('ENTER: the catalog is populated and every KEEP name is really in it', () => {
   // A KEEP name the catalog does not contain would make the partition
   // unsatisfiable and every message below misleading; an empty catalog would
@@ -96,6 +119,31 @@ for (const stem of STEMS) {
       `${stem}'s plugins must be [] — the seat is meant to carry no bundle`);
   });
 }
+
+test('t803: no shipped template, in any kit, denies a tool the catalog does not have', () => {
+  const shipped = everyShippedTemplate();
+  // ENTER: the walk must actually reach the kits, or the loop below is the two
+  // flat templates the tests above already cover and the widening is cosmetic.
+  assert.ok(shipped.some(([label]) => label.startsWith('kits/clodex/')), 'the walk reaches the clodex kit');
+  assert.ok(shipped.some(([label]) => label.startsWith('kits/default/')), 'the walk reaches the default kit');
+
+  for (const [label, tpl] of shipped) {
+    const stale = (tpl.disabledTools || []).filter((t) => !CLAUDE_TOOLS.includes(t));
+    assert.deepStrictEqual(stale, [], `${label} names tools the catalog does not have: ${stale.join(', ')}`);
+    assert.strictEqual(new Set(tpl.disabledTools || []).size, (tpl.disabledTools || []).length,
+      `${label} repeats a name in disabledTools`);
+  }
+});
+
+test('t803: every shipped template carries a ${TEAM_ROOT} cwd, kit or not', () => {
+  // The portability property the two per-file portable tests pin for the flat
+  // pair. It is kit-INDEPENDENT — an absolute cwd in any kit's template pins a
+  // new team's seat to whatever box authored the kit.
+  for (const [label, tpl] of everyShippedTemplate()) {
+    if (tpl.cwd === undefined) continue; // the reviewer template carries none
+    assert.strictEqual(tpl.cwd, '${TEAM_ROOT}', `${label} must not hardcode a path`);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // The create()-level pin: [] and absent are different values on argv.

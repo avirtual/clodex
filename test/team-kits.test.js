@@ -495,3 +495,40 @@ test('createTeam reports the kit it SEEDED from, distinct from the manifest\'s e
   assert.strictEqual(legacy.kitSeeded, null, 'nothing was seeded from, so nothing is claimed');
   assert.strictEqual(legacy.kit, 'clodex', 'while the effective kit still answers "what does addRole copy"');
 });
+
+test('a brief that cannot be saved unwinds the kit\'s exec copies too', async () => {
+  // The whole directory has to go. A surviving exec/ makes rmdir(dir) fail, and
+  // what is left is a manifest-less team directory listTeams still reports —
+  // the same failure mode the template and prompt unwinds exist to prevent.
+  const f = mkTeamCreate({ makeRepo: true });
+  seedKits(f.home);
+  fs.mkdirSync(path.join(f.home, 'library', 'kits', 'default', 'exec'), { recursive: true });
+  fs.writeFileSync(path.join(f.home, 'library', 'kits', 'default', 'exec', 'kit-cmd.json'),
+    JSON.stringify({ argv: ['echo', 'hi'] }));
+  // The brief save fails because its target directory is not writable.
+  const dir = path.join(f.home, 'teams', 'shop');
+  fs.mkdirSync(path.join(dir, 'prompts', 'append'), { recursive: true });
+  fs.chmodSync(path.join(dir, 'prompts', 'append'), 0o500);
+
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, kit: 'default', body: 'the brief',
+  });
+
+  assert.ok(f.injected[0] && f.injected[0].includes('no team was created'),
+    `ENTER: the brief save really failed — got: ${f.injected[0]}`);
+  assert.strictEqual(fs.existsSync(dir), false, 'the whole team directory is gone, exec/ included');
+});
+
+test('createTeam unwinds its kit exec copies when team.json cannot be written', () => {
+  const home = mkHome();
+  fs.mkdirSync(path.join(home, 'library', 'kits', 'default', 'exec'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'library', 'kits', 'default', 'exec', 'kit-cmd.json'),
+    JSON.stringify({ argv: ['echo', 'hi'] }));
+  // A directory where team.json must go: the atomic write fails, the unwind runs.
+  fs.mkdirSync(path.join(home, 'teams', 'x', 'team.json'), { recursive: true });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+
+  assert.throws(() => tm.createTeam({ name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead', kit: 'default' }));
+  assert.strictEqual(fs.existsSync(path.join(home, 'teams', 'x', 'exec')), false,
+    'the exec copies this call made are gone');
+});

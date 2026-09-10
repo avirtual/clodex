@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- Team create takes `kit:<name>`: `default` builds the team on your own Claude
+  Code setup (plan mode, skills, agents and tools left as you have them);
+  `clodex` is the aggressive ticket-loop profile the stock templates used to
+  impose on every team. Kits live in `~/.clodex/library/kits/` and mirror a team
+  directory; an unknown name lists what is available and creates nothing.
+
 - Phone view: the model's interim text — what it writes between tool calls inside one turn — now appears as small dimmed notes as the turn progresses, so a long turn no longer looks frozen until its final reply lands.
 
 ## 5.57.0 — 2026-09-10 — The stale-host note stays on the Clodex team, and team create's replies keep up with mode:interview

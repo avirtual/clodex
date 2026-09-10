@@ -234,6 +234,13 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
   }
 
+  function unwindExecCopies(teamName, names) {
+    for (const n of names || []) {
+      try { fs.unlinkSync(path.join(teamsDir, teamName, 'exec', `${n}.json`)); } catch {}
+    }
+    try { fs.rmdirSync(path.join(teamsDir, teamName, 'exec')); } catch {}
+  }
+
   function unwindPromptCopies(teamName, roleNames) {
     for (const r of roleNames) {
       try { fs.unlinkSync(path.join(teamsDir, teamName, 'prompts', 'system', `${r}.md`)); } catch {}
@@ -681,7 +688,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       unwindTemplateCopies(name, templatesCopied);
       throw err;
     }
-    copyKitExec(name, kitDir);
+    const execCopied = copyKitExec(name, kitDir);
     const manifest = {
       version: MANIFEST_VERSION,
       lead,
@@ -694,13 +701,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     } catch (err) {
       unwindTemplateCopies(name, templatesCopied);
       unwindPromptCopies(name, promptsCopied);
+      unwindExecCopies(name, execCopied);
       throw err;
     }
     // `kitSeeded` is what THIS call copied from, which is not `kit` on the
     // returned manifest: loadManifest fills that in with LEGACY_KIT for a file
     // that records none, so a caller reading it could not tell a kitless create
     // from one that named the clodex kit.
-    return { ...loadManifest(name), templatesCopied, promptsCopied, kitSeeded: resolvedKit ? resolvedKit.name : null };
+    return { ...loadManifest(name), templatesCopied, promptsCopied, execCopied, kitSeeded: resolvedKit ? resolvedKit.name : null };
   }
 
   function addRole(teamName, roleName, def, opts) {
