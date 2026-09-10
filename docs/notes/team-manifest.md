@@ -30,3 +30,20 @@ against a def shaped the way a stored one is. Without it `team:join`'s
 unconditional re-ride of the stock def compares `clodex-team-hand` against a role
 already pointing at `hand` and throws "already exists with a different
 definition".
+
+## copyRolePrompts
+
+The prompt twin of `copyRoleTemplates`, and the reason both exist separately: a
+template copy is REWRITTEN on the way out (`name` restamped to the role,
+`LISTING_KEYS` cut) because a template's `name` is what addresses the seat, while
+a system prompt is addressed only by its path, so this one copies bytes verbatim.
+
+`unwindPromptCopies` rmdirs `prompts/system` and then `prompts`, children first,
+and both rmdirs refuse a non-empty directory. That refusal is load-bearing here in
+a way the template unwind never faces: the kickstart create saves the team brief
+to `prompts/append/team-project.md`, so `prompts/` is shared with a file these
+copies do not own and must survive their unwind.
+
+The kickstart create's brief-save cleanup (team-tickets.js `_handleTeamCreate`)
+unwinds these by hand over `team.promptsCopied`, like the templates, and its
+`prompts/system` rmdir must run before its `prompts` one.
