@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   RoleClassifier, isSubagentRole, billingIsSubagent, billingFingerprint,
-  isTitleCall, isProbeCall,
+  isTitleCall, isProbeCall, isClassifierCall,
 } = require('../wire/role');
 
 const SID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
@@ -129,6 +129,34 @@ test('title side-call detection', () => {
   }), true);
   assert.equal(isTitleCall(parentTurn()), false); // has tools
   assert.equal(isTitleCall({ system: 'You are Claude Code.' }), false);
+});
+
+const CLASSIFIER_SYS = 'You are a security monitor for autonomous AI coding agents. Your job is to '
+  + 'classify whether a proposed tool call is safe to run without asking the operator. '
+  + '[…127 KB of policy…]';
+
+function classifierCall(extra = {}) {
+  return {
+    model: 'claude-sonnet-5',
+    max_tokens: 64,
+    system: [
+      { type: 'text', text: billing('a1b2c3.1.0.53', 'false') },
+      { type: 'text', text: CLASSIFIER_SYS },
+      { type: 'text', text: 'Respond with allow or ask.' },
+    ],
+    messages: [{ role: 'user', content: 'Bash(rm -rf build)' }],
+    ...extra,
+  };
+}
+
+test('auto-mode permission classifier detection', () => {
+  assert.equal(isClassifierCall(classifierCall()), true);
+  // The prefix alone decides, but only for a toolless call: a real agent turn
+  // that quoted the same prompt back carries tools and is the agent's own request.
+  assert.equal(isClassifierCall(classifierCall({ tools: [{ name: 'Bash' }] })), false);
+  assert.equal(isClassifierCall(parentTurn()), false);
+  assert.equal(isClassifierCall({ system: `${CLASSIFIER_SYS}`, max_tokens: 64 }), true);
+  assert.equal(isClassifierCall({ system: 'You are Claude Code.' }), false);
 });
 
 test('health-probe detection', () => {

@@ -61,6 +61,17 @@ function isTitleCall(obj) {
   return texts.some((t) => t.startsWith(TITLE_SYS_PREFIX));
 }
 
+const CLASSIFIER_SYS_PREFIX = 'You are a security monitor for autonomous AI coding agents';
+
+function isClassifierCall(obj) {
+  if (Array.isArray(obj.tools) && obj.tools.length) return false;
+  const sys = obj.system;
+  const texts = Array.isArray(sys)
+    ? sys.map((b) => (b && typeof b === 'object' ? (b.text || '') : ''))
+    : [typeof sys === 'string' ? sys : ''];
+  return texts.some((t) => t.startsWith(CLASSIFIER_SYS_PREFIX));
+}
+
 // A health/availability probe: bare user message, no system, no tools,
 // tiny max_tokens. Shares the session_id but is not an agent turn.
 const PROBE_MAX_TOKENS = 16;
@@ -120,5 +131,5 @@ class RoleClassifier {
 
 module.exports = {
   RoleClassifier, SUBAGENT_ROLES, isSubagentRole,
-  sysText, billingIsSubagent, billingFingerprint, isTitleCall, isProbeCall,
+  sysText, billingIsSubagent, billingFingerprint, isTitleCall, isProbeCall, isClassifierCall,
 };

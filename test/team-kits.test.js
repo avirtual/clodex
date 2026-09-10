@@ -418,6 +418,24 @@ test('a brief create with kit:default gets the LIFTED hand — the contrast, sam
     []);
 });
 
+test('the briefed-create reply names the template the lead REALLY booted on', async () => {
+  // A default-kit team repoints roles.lead.template at its own copy, so the
+  // hardcoded "clodex-team-lead" the reply used to print named a template that
+  // seat never touched.
+  const f = mkTeamCreate({ makeRepo: true });
+  seedKits(f.home);
+
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, kit: 'default', body: 'build a thing',
+  });
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.readTeam('shop').roles.lead.template, 'lead');
+  const line = f.toSeat('a').join('\n');
+  assert.match(line, /shop-lead spawned in the root on template lead and briefed\./);
+  assert.doesNotMatch(line, /on template clodex-team-lead/);
+});
+
 test('[agent:team create kit:bogus] refuses, lists the kits, and creates NOTHING', async () => {
   const f = mkTeamCreate();
   seedKits(f.home);
@@ -446,6 +464,23 @@ test('[agent:team create kit:?] lists the kits and creates nothing', async () =>
   assert.match(reply, /^clodex — /m);
   assert.match(reply, /^default — /m);
   assert.strictEqual(f.teamExists('shop'), false);
+});
+
+test('[agent:team create kit:?] lists the kits with NO team name — the literal the grammar invites', async () => {
+  // The ipc-prompt grammar line offers `kit:?` bare, so the listing must not be
+  // reachable only through a create that would otherwise have succeeded.
+  const f = mkTeamCreate();
+  seedKits(f.home);
+
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: null, root: null, lead: null, kit: '?', body: '',
+  });
+
+  const reply = f.injected.join('\n');
+  assert.match(reply, /^\[agent:team\] kits:/m);
+  assert.doesNotMatch(reply, /create needs a team name/);
+  assert.strictEqual(fs.existsSync(path.join(f.home, 'teams')), false,
+    'a bare listing must write no team directory at all');
 });
 
 test('the kit refusal lands BEFORE the root is git-init\'d', async () => {
