@@ -90,27 +90,59 @@ const BUNDLE_EMPTY_HINT = {
   skills: '<span class="hint-text">No skills in library — add some via the 🧩 Skills Library (Skills menu).</span>',
 };
 
-function renderAppendChecklist(container, enabledSet, seat = null) {
+// `teamRows` (team-owned append prompts, passed only when the dialog is editing
+// a TEAM template) draw as a checked section of their own. Without them a
+// team-only stem such as `team-project` had no checkbox at all, and
+// collectAppendChecklist — which rebuilds the list from checked boxes — wrote it
+// out of the template on save. The value is the BARE stem, unlike a bundle row's
+// `pluginId:stem`: the composer resolves a bare stem against the team dir first.
+function renderAppendChecklist(container, enabledSet, seat = null, teamRows = []) {
   container.innerHTML = '';
-  if (!promptLibCache.append.length && !hasBundleRows('prompts/append', seat)) {
+  const rows = Array.isArray(teamRows) ? teamRows.filter((r) => r && r.name) : [];
+  const shadowed = new Set(rows.map((r) => r.name));
+  const libraryRows = promptLibCache.append.filter((p) => !shadowed.has(p.name));
+  if (!libraryRows.length && !rows.length && !hasBundleRows('prompts/append', seat)) {
     container.innerHTML = BUNDLE_EMPTY_HINT['prompts/append'];
     return;
   }
-  for (const p of promptLibCache.append) {
+  const drawRow = (name, body) => {
     const row = document.createElement('label');
     row.className = 'agent-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    cb.value = p.name;
-    cb.checked = enabledSet.has(p.name);
-    const preview = (p.body.split('\n')[0] || '').slice(0, 60);
+    cb.value = name;
+    cb.checked = enabledSet.has(name);
+    const preview = ((body || '').split('\n')[0] || '').slice(0, 60);
     const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(p.name)}</strong>${preview ? ' — ' + esc(preview) : ''}`;
+    txt.innerHTML = `<strong>${esc(name)}</strong>${preview ? ' — ' + esc(preview) : ''}`;
     row.appendChild(cb);
     row.appendChild(txt);
     container.appendChild(row);
+  };
+  for (const p of libraryRows) drawRow(p.name, p.body);
+  if (rows.length) {
+    const head = document.createElement('div');
+    head.className = 'check-group';
+    head.textContent = `team ${(rows.find((r) => r.team) || {}).team || ''}`.trim();
+    container.appendChild(head);
+    for (const r of rows) drawRow(r.name, r.body);
   }
   appendBundleSections(container, 'prompts/append', seat, enabledSet);
+}
+
+// Names the FORM could not offer — a prompt file deleted under the team, a row
+// listPrompts could not read — survive a save instead of being read as unticked.
+// A stem that did render and is unticked is a deliberate removal and is dropped.
+function mergeUnrendered(previous, renderedNames, checked) {
+  const rendered = new Set(renderedNames || []);
+  const out = Array.isArray(checked) ? [...checked] : [];
+  const seen = new Set(out);
+  for (const name of previous || []) {
+    if (rendered.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
 }
 function collectAppendChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
@@ -538,7 +570,7 @@ function collectSkillChecklist(container) {
 }
 
 module.exports = {
-  renderAppendChecklist, collectAppendChecklist,
+  renderAppendChecklist, collectAppendChecklist, mergeUnrendered,
   renderAgentChecklist, collectAgentChecklist,
   bundleSectionsOf, repaintBundleSections,
   renderExecChecklist, collectExecChecklist,

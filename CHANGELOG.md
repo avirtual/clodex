@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Team templates keep their brief when edited**: the template editor now lists the owning team's own append prompts (e.g. `team-project`) as a checked section, so saving a team template no longer silently empties `appendPromptFiles`.
 - **A managed sandbox can track a git ref**: set "Track git ref" on the box to
   `master` or a ticket branch and Rebuild builds the box from that commit, so a
   team can run merged work beside the desktop app without restarting it.
