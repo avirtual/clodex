@@ -413,9 +413,162 @@ function orphanedCheckouts({ worktrees, records, real = null }) {
   };
 }
 
+const TEAM_LEDGER_FILE = 'cost.jsonl';
+
+function round6(v) { return Math.round(num(v) * 1e6) / 1e6; }
+
+function finite(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+
+function totalTokens(t) {
+  if (!t || typeof t !== 'object') return null;
+  const parts = [t.input, t.output, t.cacheRead, t.cacheWrite];
+  if (!parts.some((v) => finite(v) !== null)) return null;
+  return parts.reduce((a, v) => a + num(v), 0);
+}
+
+function ticketLedgerRow(rec, now = Date.now()) {
+  if (!rec || typeof rec !== 'object') return null;
+  const s = rec.sessions || {};
+  return {
+    kind: 'ticket',
+    ticket: rec.ticket || null,
+    team: rec.team || null,
+    role: rec.role || null,
+    seat: rec.seat || null,
+    attribution: s.attribution || 'unknown',
+    sessions: num(s.known),
+    tokens: totalTokens(rec.tokens),
+    usd: finite(rec.usd),
+    requests: finite(rec.requests),
+    at: now,
+  };
+}
+
+function reviewLedgerRow(rec, now = Date.now()) {
+  if (!rec || typeof rec !== 'object') return null;
+  const s = rec.sessions || {};
+  return {
+    kind: 'review',
+    ticket: rec.ticket || null,
+    team: rec.team || null,
+    round: finite(rec.round),
+    seat: rec.seat || null,
+    verdict: rec.verdict || null,
+    sessions: num(s.known),
+    tokens: totalTokens(rec.tokens),
+    usd: finite(rec.usd),
+    requests: finite(rec.requests),
+    at: now,
+  };
+}
+
+function seatLedgerRow({ seat, team = null, role = null, sessionId = null, boundary = null, lifetime, cursor = null, now = Date.now() }) {
+  if (!seat || !lifetime || typeof lifetime !== 'object') return null;
+  const c = cursor && typeof cursor === 'object' ? cursor : {};
+  const usd = round6(num(lifetime.usd) - num(c.usd));
+  const tokens = num(lifetime.tokens) - num(c.tokens);
+  if (!(usd > 0) && !(tokens > 0)) return null;
+  return {
+    kind: 'seat',
+    seat,
+    team: team || null,
+    role: role || null,
+    sessionId: sessionId || null,
+    boundary: boundary || null,
+    usd,
+    tokens,
+    requests: num(lifetime.requests) - num(c.requests),
+    turns: num(lifetime.turns) - num(c.turns),
+    from: round6(num(c.usd)),
+    to: round6(num(lifetime.usd)),
+    at: now,
+  };
+}
+
+function parseTeamLedger(text) {
+  const rows = [];
+  let malformed = 0;
+  for (const line of String(text == null ? '' : text).split('\n')) {
+    if (!line.trim()) continue;
+    let o = null;
+    try { o = JSON.parse(line); } catch { malformed++; continue; }
+    if (!o || typeof o !== 'object' || Array.isArray(o) || typeof o.kind !== 'string') { malformed++; continue; }
+    rows.push(o);
+  }
+  return { rows, malformed };
+}
+
+function readTeamLedger(teamDir, { readFile = null } = {}) {
+  if (typeof readFile !== 'function') throw new Error('readTeamLedger needs an injected readFile');
+  if (!teamDir) return { rows: [], malformed: 0, error: 'no team directory' };
+  let text;
+  try {
+    text = readFile(path.join(teamDir, TEAM_LEDGER_FILE), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { rows: [], malformed: 0, error: null };
+    return { rows: [], malformed: 0, error: (e && e.message) || 'unreadable' };
+  }
+  return { ...parseTeamLedger(text), error: null };
+}
+
+function rollupTeam(rows) {
+  const usd = { tickets: 0, reviews: 0, standing: 0, total: 0 };
+  const counts = { tickets: 0, reviews: 0, standing: 0, unattributed: 0, unpriced: 0 };
+  const byTicket = new Map();
+  const byRole = new Map();
+  let since = null;
+  const bump = (role, amount) => {
+    const key = role || '(no role)';
+    byRole.set(key, round6((byRole.get(key) || 0) + amount));
+  };
+  const entryFor = (id) => {
+    if (!id) return null;
+    if (!byTicket.has(id)) byTicket.set(id, { hand: null, attribution: null, reviews: [], total: null });
+    return byTicket.get(id);
+  };
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    if (!r || typeof r !== 'object') continue;
+    const at = finite(r.at);
+    if (at !== null && (since === null || at < since)) since = at;
+    const amount = finite(r.usd);
+    if (r.kind === 'ticket') {
+      counts.tickets++;
+      const exact = amount !== null && r.attribution !== 'seat-lifetime';
+      if (exact) { usd.tickets = round6(usd.tickets + amount); bump(r.role, amount); }
+      else counts.unattributed++;
+      const e = entryFor(r.ticket);
+      if (e) {
+        e.hand = exact ? amount : null;
+        e.attribution = r.attribution || 'unknown';
+        e.requests = finite(r.requests);
+        e.seat = r.seat || null;
+      }
+    } else if (r.kind === 'review') {
+      counts.reviews++;
+      if (amount !== null) { usd.reviews = round6(usd.reviews + amount); bump('review', amount); }
+      else counts.unpriced++;
+      const e = entryFor(r.ticket);
+      if (e) e.reviews.push({ round: finite(r.round), usd: amount, verdict: r.verdict || null });
+    } else if (r.kind === 'seat') {
+      counts.standing++;
+      if (amount !== null) { usd.standing = round6(usd.standing + amount); bump(r.role, amount); }
+      else counts.unpriced++;
+    }
+  }
+  usd.total = round6(usd.tickets + usd.reviews + usd.standing);
+  for (const e of byTicket.values()) {
+    const priced = e.reviews.filter((x) => x.usd !== null);
+    if (e.hand === null && !priced.length) { e.total = null; continue; }
+    e.total = round6(num(e.hand) + priced.reduce((a, x) => a + x.usd, 0));
+  }
+  return { usd, counts, byTicket, byRole, since };
+}
+
 module.exports = {
   COST_FILE, COST_VERSION, MAX_LABEL, TICKET_BRANCH_RE,
-  REVIEW_COST_FILE, REVIEW_COST_VERSION,
+  REVIEW_COST_FILE, REVIEW_COST_VERSION, TEAM_LEDGER_FILE,
   wireLabelFor, reviewWireLabelFor, ticketIdFromScope, resolveTaskDir,
   sumSessions, cachedFraction, costRecord, reviewCostRecord, orphanedCheckouts,
+  ticketLedgerRow, reviewLedgerRow, seatLedgerRow,
+  parseTeamLedger, readTeamLedger, rollupTeam,
 };
