@@ -56,6 +56,41 @@ function summaryText(counts) {
   return parts.join(' · ');
 }
 
+function money(usd) {
+  const n = Number(usd);
+  if (!Number.isFinite(n)) return '';
+  return n >= 100 ? `$${Math.round(n).toLocaleString('en-US')}` : `$${n.toFixed(2)}`;
+}
+
+function costText(cost) {
+  if (!cost) return '';
+  if (cost.usd === null || cost.usd === undefined) return 'cost unknown';
+  const total = cost.live || !Number.isFinite(Number(cost.reviewsUsd))
+    ? Number(cost.usd)
+    : Number(cost.usd) + Number(cost.reviewsUsd);
+  return `~${money(total)}${cost.live ? ' ·live' : ''}`;
+}
+
+function costTitle(cost) {
+  if (!cost) return '';
+  if (cost.live) return 'Live figure for the seat holding this ticket — it is still spending.';
+  if (cost.usd === null || cost.usd === undefined) {
+    return cost.attribution === 'seat-lifetime'
+      ? 'The seat that closed this ticket outlives it, so its ledger is an upper bound on the ticket rather than a measurement of it.'
+      : 'No seat could be resolved for this ticket, so what it spent is unknown — not zero.';
+  }
+  const parts = [`hand ${money(cost.usd)}`];
+  if (Number.isFinite(Number(cost.reviewsUsd))) {
+    parts.push(`review ${money(cost.reviewsUsd)}${cost.rounds ? ` over ${cost.rounds} round${cost.rounds === 1 ? '' : 's'}` : ''}`);
+  }
+  return parts.join(' + ');
+}
+
+function teamCostText(res) {
+  if (!res || !res.ok || !res.usd) return '';
+  return `team ${res.team}: ~${money(res.usd.total)}`;
+}
+
 /**
  * The label for a project row. The KEY carries a hash the operator never typed
  * and cannot act on, so the leaf leads; the team, when one names the project,
@@ -84,6 +119,10 @@ module.exports.ageLine = ageLine;
 module.exports.summaryText = summaryText;
 module.exports.projectLabel = projectLabel;
 module.exports.deliveryNote = deliveryNote;
+module.exports.money = money;
+module.exports.costText = costText;
+module.exports.costTitle = costTitle;
+module.exports.teamCostText = teamCostText;
 
 module.exports.activate = (rhost) => {
   let torn = false;
@@ -441,6 +480,12 @@ module.exports.activate = (rhost) => {
         flag.title = 'The merge loop gave up at this step. This ticket needs the lead to merge by hand.';
         meta.appendChild(flag);
       }
+      const spend = costText(t.cost);
+      if (spend) {
+        const cell = el('span', t.cost && t.cost.live ? 'tv-cost tv-cost-live' : 'tv-cost', spend);
+        cell.title = costTitle(t.cost);
+        meta.appendChild(cell);
+      }
       row.appendChild(meta);
 
       // The artifact path is how a fresh seat recovers a dead worker's task, so
@@ -460,7 +505,7 @@ module.exports.activate = (rhost) => {
       return row;
     }
 
-    function renderBoard(res) {
+    function renderBoard(res, cost) {
       boardPane.innerHTML = '';
       editorEl = null;
       if (!res.ok) {
@@ -479,6 +524,12 @@ module.exports.activate = (rhost) => {
       }
 
       const openHead = el('div', 'tv-section-head', `Open (${res.open.length})`);
+      const teamTotal = teamCostText(cost);
+      if (teamTotal) {
+        const cell = el('span', 'tv-team-cost', teamTotal);
+        cell.title = 'Everything this team has booked: tickets, review rounds and standing seats.';
+        openHead.appendChild(cell);
+      }
       // The one action that is not about an existing row, so it lives on the
       // section head rather than in the rows.
       openHead.appendChild(button('tv-btn tv-btn-primary tv-add', '+ New ticket',
@@ -547,12 +598,12 @@ module.exports.activate = (rhost) => {
       // Both, together: the assign controls the board paints are only as good
       // as the session list beside them, and fetching them apart would let a
       // board render with a stale picker.
-      const [res, live] = await Promise.all([ask('board', key), ask('sessions')]);
+      const [res, live, cost] = await Promise.all([ask('board', key), ask('sessions'), ask('teamCost', key)]);
       if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
       // A failed session list is not a failed board: the rows are still worth
-      // showing, with a picker that offers nothing.
+      // showing, with a picker that offers nothing. Same for the cost line.
       liveSessions = live.ok && Array.isArray(live.sessions) ? live.sessions : [];
-      renderBoard(res);
+      renderBoard(res, cost);
     }
 
     function renderProjects(res) {

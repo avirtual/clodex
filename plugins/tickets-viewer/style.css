@@ -450,3 +450,23 @@
   gap: 8px;
   margin-top: 12px;
 }
+
+/* Dim as .tv-age: a cost is context for a row, never the thing that summons the
+   operator's eye to it. The live variant lifts, because a number still moving
+   means something is spending right now. */
+.tv-cost {
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.tv-cost-live {
+  opacity: 0.85;
+}
+
+.tv-team-cost {
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.7;
+  font-size: 0.95em;
+  font-variant-numeric: tabular-nums;
+}
