@@ -801,7 +801,7 @@ function createSandboxManager(deps = {}) {
     let downError;
     try { const d = await inst.down(); if (d && d.ok === false) downError = d.error; }
     catch (e) { downError = String((e && e.message) || e); }
-    try { if (fs.existsSync(inst.srcDir())) await removeWorktree(inst.srcDir()); } catch { /* best effort */ }
+    try { if (fs.existsSync(inst.srcDir())) await removeWorktree(inst.srcDir()); } catch {}
     inst.unregisterPeer();
     const boxes = listBoxes().filter((b) => !(b && b.id === boxId));
     getUiSettings().set({ boxes });

@@ -329,7 +329,7 @@ async function checkoutDetached({ repoTop, dir, ref } = {}) {
     const co = await git(dest, ['checkout', '--detach', sha]);
     if (!co.ok) return { ok: false, error: (co.stderr || 'git checkout --detach failed').trim() };
   } else {
-    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); } catch { /* parent exists */ }
+    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); } catch {}
     const add = await git(repo, ['worktree', 'add', '--detach', dest, sha]);
     if (!add.ok) return { ok: false, error: (add.stderr || 'git worktree add failed').trim() };
   }
