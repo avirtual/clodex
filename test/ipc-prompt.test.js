@@ -408,9 +408,16 @@ test('every rendered grammar line parses, with its placeholders filled in', () =
     'ENTER: the team-create form survived the split');
   assert.deepStrictEqual(
     parseIntent(fill('[agent:team create <name> root:<abs-path> [lead:<seat>]]')),
-    { type: 'team-create', name: 'shop', root: '/tmp', lead: 'boss', mode: null, body: '' },
+    { type: 'team-create', name: 'shop', root: '/tmp', lead: 'boss', mode: null, kit: null, body: '' },
     'ENTER: the filled form parses to the fields the handler reads, not merely to non-null',
   );
+  // t803: `kit:` is documented in the DESCRIPTION half of the line rather than
+  // in the form, so the split above drops it — the form is what a seat copies.
+  // Filled here explicitly, since a key the parser reads and the form omits is
+  // exactly the pair that could drift apart unnoticed.
+  assert.deepStrictEqual(
+    parseIntent('[agent:team create shop root:/tmp lead:boss kit:default]'),
+    { type: 'team-create', name: 'shop', root: '/tmp', lead: 'boss', mode: null, kit: 'default', body: '' });
   const bad = forms.filter((f) => !parseIntent(fill(f)));
   assert.deepStrictEqual(bad, [],
     'each of these renders a form the parser rejects — a seat copying it emits nothing');
