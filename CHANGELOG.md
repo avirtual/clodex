@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — The Library menus share one layout: library, teams and plugins under their own headers, folding into submenus when long
+## Unreleased
+
+## 5.53.0 — 2026-09-10 — The Library menus share one layout: library, teams and plugins under their own headers, folding into submenus when long
 
 - The Library menus share one layout: library entries first, then each team and each plugin under its own header (prompts split System / Append), and when a list runs past sixteen entries every group folds into its own submenu. Team-owned templates and prompts are now reachable from the menu and open in the editor as the team's copy.
 
