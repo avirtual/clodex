@@ -605,9 +605,49 @@ test('t794: with nothing anywhere the three submenus still render, each with its
     'System ▸', 'Append ▸', 'Teams ▸', '—', 'New Prompt…', 'Manage Prompts…',
   ]);
   const sub = (label) => shape(prompts.find((i) => i.label === label).submenu);
-  assert.deepStrictEqual(sub('System'), ['[(no system prompts)]']);
-  assert.deepStrictEqual(sub('Append'), ['[(no append prompts)]']);
+  assert.deepStrictEqual(sub('System'), ['[(no library system prompts)]']);
+  assert.deepStrictEqual(sub('Append'), ['[(no library append prompts)]']);
   assert.deepStrictEqual(sub('Teams'), ['[(no team prompts)]']);
+});
+
+test('t799: an empty kind names the library, so the plugin rows under it are not a contradiction', () => {
+  const { host } = libraryFixture();
+  const prompts = buildTemplateWith(host, { stores: { listAllPrompts: () => [] } })
+    .find((m) => m.label === 'Library').submenu
+    .find((i) => i.label === 'Prompts').submenu;
+  const sub = (label) => shape(prompts.find((i) => i.label === label).submenu);
+  assert.deepStrictEqual(sub('System'), ['[(no library system prompts)]', '—', '[Reviewer]', 'strict']);
+  assert.deepStrictEqual(sub('Append'), ['[(no library append prompts)]', '—', '[Reviewer]', 'rules']);
+});
+
+const LONG_STEM = 'team-prompt-with-a-very-long-stem-that-runs-past-the-truncation-point';
+
+test('t799: a long team prompt name is truncated but the kind suffix survives', () => {
+  const { host } = libraryFixture();
+  const prompts = buildTemplateWith(host, {
+    stores: { listAllPrompts: () => [{ name: LONG_STEM, kind: 'append', body: 'U', team: 'shop' }] },
+  }).find((m) => m.label === 'Library').submenu
+    .find((i) => i.label === 'Prompts').submenu;
+  assert.deepStrictEqual(shape(prompts.find((i) => i.label === 'Teams').submenu), [
+    '[Team shop]',
+    'team-prompt-with-a-very-long-stem-that-runs-past-the-trun…  —  append',
+  ]);
+});
+
+test('t799: past sixteen team rows every team is its own submenu and no header row doubles it', () => {
+  const { host } = libraryFixture();
+  const many = [
+    ...Array.from({ length: 9 }, (_, i) => ({ name: `shop-${i + 1}`, kind: 'system', body: 'S', team: 'shop' })),
+    ...Array.from({ length: 8 }, (_, i) => ({ name: `yard-${i + 1}`, kind: 'append', body: 'A', team: 'yard' })),
+  ];
+  const prompts = buildTemplateWith(host, { stores: { listAllPrompts: () => many } })
+    .find((m) => m.label === 'Library').submenu
+    .find((i) => i.label === 'Prompts').submenu;
+  const teams = prompts.find((i) => i.label === 'Teams').submenu;
+  assert.deepStrictEqual(shape(teams), ['Team shop ▸', 'Team yard ▸'],
+    'the folded arm re-heads nothing: a disabled Team row above a live Team ▸ row would be the same name twice');
+  assert.deepStrictEqual(teams.map((i) => i.submenu.length), [9, 8]);
+  assert.deepStrictEqual(teams[0].submenu[0].label, 'shop-1  —  system');
 });
 
 test('t793: past sixteen rows every group folds into its own submenu', () => {

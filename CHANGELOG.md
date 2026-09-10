@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Library > Prompts: a long team prompt name keeps its system/append suffix, and an empty library kind says "(no library system prompts)" so a plugin's rows beneath it do not read as a contradiction.
+
 ## 5.56.0 — 2026-09-10 — The Inbox pages its notes, and Manage Plugins re-checks the library when it opens
 
 - The Inbox drawer loads the newest 30 notes and offers a "Load older" row for the rest, instead of rendering every note ever raised on each open.
