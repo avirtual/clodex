@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Team kits, interim text on the phone, and the auto-mode classifier as a side call
 
 - Team create takes `kit:<name>`: `default` builds the team on your own Claude
   Code setup (plan mode, skills, agents and tools left as you have them);
@@ -22,6 +22,8 @@ blocks a release.
 - `[agent:team create kit:?]` lists the kits without needing a team name, and the briefed-create reply names the template the lead really booted on rather than always saying `clodex-team-lead`.
 
 - The wire proxy recognises Claude Code's auto-mode permission classifier as a side call — on an auto-mode seat it was a third of all requests. A seat's turn count and its activity clock no longer move for the classifier's calls, so an idle seat reads idle. Its cost still lands on that seat, as every side call's does.
+
+- wirescope vendored at v0.6.66: the auto-mode permission classifier gets its own cost bucket and no longer poses as the seat's last replayable request.
 
 - Phone view: the model's interim text — what it writes between tool calls inside one turn — now appears as small dimmed notes as the turn progresses, so a long turn no longer looks frozen until its final reply lands.
 

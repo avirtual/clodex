@@ -345,7 +345,10 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
                       # {requests, est_usd, cache_read_tokens, input_tokens,
                       # write_tokens}; write_tokens > 0 = a ping re-wrote the
                       # prefix. None for pre-feature sessions.
-                      "keepwarm": tot.get("keepwarm")}
+                      "keepwarm": tot.get("keepwarm"),
+                      # the auto-mode permission classifier's side-calls, same
+                      # shape, also INSIDE est_usd/requests. None pre-feature.
+                      "classifier": tot.get("classifier")}
                      if tot else None),
             # per-window rollup from the last detected /compact boundary (or
             # session start): {turns, requests, est_usd, boundary_ts, compacted}.

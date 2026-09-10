@@ -251,7 +251,13 @@ def _new_totals():
             # a full cache read with no write; `write_tokens` here should stay
             # 0 and a nonzero value means a ping re-wrote a prefix (dirty).
             "keepwarm": {"requests": 0, "est_usd": 0.0, "cache_read_tokens": 0,
-                         "input_tokens": 0, "write_tokens": 0}}
+                         "input_tokens": 0, "write_tokens": 0},
+            # The auto-mode permission classifier's side-calls, priced apart the
+            # same way (INSIDE requests/est_usd). A seat that skips permissions
+            # never pays this line; one that grades every tool call pays it on
+            # a cheaper model, ~1 call per tool call.
+            "classifier": {"requests": 0, "est_usd": 0.0, "cache_read_tokens": 0,
+                           "input_tokens": 0, "write_tokens": 0}}
 
 
 _TOTALS = _new_totals()              # LOG_DIR-lifetime (reloaded at startup)
@@ -468,6 +474,13 @@ def _bump(totals, bill, stop=None):
             kw["cache_read_tokens"] += t.get("cache_read_input_tokens") or 0
             kw["input_tokens"] += t.get("input_tokens") or 0
             kw["write_tokens"] += w or (t.get("cache_write_flat_tokens") or 0)
+        if stop and stop.get("sidecall") == "classifier":
+            cl = totals.setdefault("classifier", _new_totals()["classifier"])
+            cl["requests"] += 1
+            cl["est_usd"] = round(cl["est_usd"] + (bill.get("est_usd") or 0), 6)
+            cl["cache_read_tokens"] += t.get("cache_read_input_tokens") or 0
+            cl["input_tokens"] += t.get("input_tokens") or 0
+            cl["write_tokens"] += w or (t.get("cache_write_flat_tokens") or 0)
         if bill.get("unpriced"):
             totals["unpriced_requests"] = totals.get("unpriced_requests", 0) + 1
             m = bill.get("model")

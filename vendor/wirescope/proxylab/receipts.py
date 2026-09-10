@@ -47,7 +47,8 @@ def _stash_view_state(session_id, *, text, truncated, stop_reason, bill):
 def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
               obj, title_call, is_messages, routed, out_dir, stem,
               status_code, resp_headers, tee_text=None, response_injection=None,
-              side_call=None, agent_header_id=None, keepwarm=False):
+              side_call=None, agent_header_id=None, keepwarm=False,
+              sidecall=None):
     """Finalize an anthropic-wire response (messages OR count_tokens).
     `routed` = /agent/<name>/ traffic (the only kind subscribers receive);
     `tee_text` = the subscriber tee's full reassembled turn text, when one ran
@@ -127,7 +128,11 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
                 and meta.get("stop_reason") not in (None, "tool_use")),
             # priced apart in the totals (billing._bump): the keep-warm bill is
             # the one line item a seat pays while nobody is talking to it
-            "keepwarm": bool(keepwarm)}
+            "keepwarm": bool(keepwarm),
+            # "title" / "probe" / "classifier" / None — the classifier (auto-mode
+            # permission grader) is priced apart too: it is what a seat pays
+            # for NOT running --dangerously-skip-permissions
+            "sidecall": sidecall}
     # per-line cost decomposition key — mirror report._line_key so the live
     # by_line buckets and the disk report agree: main line (parent/unknown)
     # collapses to "main" (title/probe side-calls ride the main line too),
@@ -141,6 +146,7 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
          "endpoint": "messages" if is_messages else "count_tokens",
          "status_code": status_code,
          "keepwarm": bool(keepwarm),   # a ping's receipt, not a turn's
+         "sidecall": sidecall,         # title / probe / classifier, else None
          # full headers Anthropic returned — request-id,
          # anthropic-ratelimit-*, billing/tier hints, etc.
          "response_headers": core_mod._safe_headers(resp_headers),

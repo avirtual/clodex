@@ -230,6 +230,49 @@ def _is_probe_call(obj):
     return isinstance(msgs, list) and len(msgs) <= 1
 
 
+# The CLI's AUTO-MODE PERMISSION CLASSIFIER (settings `defaultMode: "auto"`,
+# i.e. any seat NOT launched with --dangerously-skip-permissions): before each
+# tool call it grades the action with a one-shot side-call — zero tools, a
+# ~127k-char "You are a security monitor for autonomous AI coding agents" system
+# prompt, ONE user message holding a <transcript> of the seat's recent actions,
+# on a cheaper model than the seat (sonnet under an opus seat), stage 1 at
+# max_tokens 64 with stop `</severity>`, stage 2 at 8192. Measured 2026-09-10
+# (clodex-ios hand t7): 46 of 122 requests in 82 min, $0.64 of $7.25 — and,
+# being tool-less on the parent line, it classified as role=parent and became
+# the replayable last request, so /_session, /_context and the /_status model
+# all showed the MONITOR instead of the seat ("all I see is the monitor").
+# Same class as title/probe: transient, must never own identity, the stash, the
+# context snapshot, the hold anchor or a turn. Priced apart (it is real spend a
+# seat pays for not skipping permissions). Prefix read off the wire, not
+# inferred: the CLI binary's prompt function begins with exactly this line.
+_CLASSIFIER_SYS_PREFIX = "You are a security monitor for autonomous AI coding agents"
+
+def _is_classifier_call(obj):
+    if obj.get("tools"):
+        return False
+    sys = obj.get("system")
+    texts = ([b.get("text", "") for b in sys if isinstance(b, dict)]
+             if isinstance(sys, list) else [sys or ""])
+    return any(t.startswith(_CLASSIFIER_SYS_PREFIX) for t in texts)
+
+
+def _transient_kind(obj):
+    """Which transient non-agent request this is — "title" / "probe" /
+    "classifier" — or None for a real seat/subagent turn. One vocabulary for
+    the capture summary, the receipt and the totals decomposition. (Not named
+    `_sidecall_*`: transforms owns that prefix for the WebFetch/WebSearch
+    downshift, and the logproxy shim resolves names across modules by order.)"""
+    if not isinstance(obj, dict):
+        return None
+    if _is_title_call(obj):
+        return "title"
+    if _is_probe_call(obj):
+        return "probe"
+    if _is_classifier_call(obj):
+        return "classifier"
+    return None
+
+
 # A KEEP-WARM PING: a seat's full request (tools + system + history) replayed
 # with `max_tokens: 1` so the backend serves a cache read and slides the TTL.
 # Both pingers (proxylab.pinger and clodex's wire/hold.js port) build exactly

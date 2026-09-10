@@ -1674,11 +1674,15 @@ async def handler(request: Request) -> Response:
         msgs = obj.get("messages", []) or []
         msg_chars = len(json.dumps(msgs))
         keepwarm = meta_mod._is_keepwarm_ping(obj)
+        sidecall_kind = meta_mod._transient_kind(obj)
         record["summary"] = {
             # a keep-warm ping (max_tokens:1 replay of a seat request): priced
             # like a request, excluded from turns / replay stash / hold anchor /
             # bust lineage; the offline tools read it off this cheap sidecar
             "keepwarm": keepwarm,
+            # transient non-agent request sharing the session_id: "title" /
+            # "probe" / "classifier" (the auto-mode permission grader), else None
+            "sidecall": sidecall_kind,
             "model": model,
             "session_id": session_id,
             "account_uuid": account_uuid,
@@ -1699,12 +1703,13 @@ async def handler(request: Request) -> Response:
         # until found; flag the title side-call so the response capture can
         # harvest the session title the CLI generates anyway.
         if upstream_path.split("?")[0].endswith("/v1/messages"):
-            title_call = meta_mod._is_title_call(obj)
+            title_call = sidecall_kind == "title"
             # side_call = any transient non-agent request sharing the session_id:
-            # the title generator OR a health/quota probe. Both must stay out of
-            # the durable identity/replay/view/turn-count state; only the TRUE
-            # title call additionally harvests its answer as the session title.
-            side_call = title_call or meta_mod._is_probe_call(obj)
+            # the title generator, a health/quota probe, or the auto-mode
+            # permission classifier. All must stay out of the durable
+            # identity/replay/view/turn-count state; only the TRUE title call
+            # additionally harvests its answer as the session title.
+            side_call = sidecall_kind is not None
             # subagents (Task-spawned) share the parent's session_id; pass role
             # so a sub turn is logged distinctly and never overwrites the parent
             # agent's identity/model on the /_status row. The agent-id header
@@ -1893,7 +1898,8 @@ async def handler(request: Request) -> Response:
                     blob, n=n, ts=ts, agent=agent, role=role, model=model,
                     session_id=session_id, session_key=session_key, obj=obj,
                     agent_header_id=agent_id, keepwarm=keepwarm,
-                    title_call=title_call, side_call=side_call, is_messages=is_messages,
+                    title_call=title_call, side_call=side_call, sidecall=sidecall_kind,
+                    is_messages=is_messages,
                     routed=(m is not None), out_dir=out_dir, stem=stem,
                     status_code=up.status_code, resp_headers=dict(up.headers),
                     tee_text=(sub_tee.text if sub_tee is not None else None),
