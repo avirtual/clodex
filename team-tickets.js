@@ -4748,6 +4748,7 @@ function createTicketMethods(deps, shared) {
       getPersistence().upsert({
         name: seat.name, ephemeral: true,
         ...(seatLabel ? { wireLabel: seatLabel } : {}),
+        ticketId: ticket.id,
       });
       // Un-pin the ticket back to its role. Reloaded from the store rather than
       // mutating the caller's array: this runs after the caller returned, so that
@@ -7087,28 +7088,31 @@ function createTicketMethods(deps, shared) {
     // `closedBy` is evidence only when the closer HOLDS the ticket's role.
     // Preferring it unconditionally is the trap: `_taskCancel` is lead-only and
     // the lead can also close a `task done` for a seat that no longer can, so
-    // closedBy is frequently the LEAD, whose record is the largest ledger in the
-    // system.
+    // closedBy is frequently the LEAD, the largest ledger in the system.
     //
     // The lead is excluded even when it legitimately holds the ticket's role —
     // `matchSeatRole(team, team.lead)` returns 'lead' unconditionally, so a
-    // `lead`-assigned ticket would otherwise satisfy the guard exactly. The
-    // lifetime-sum shape this rollup uses is an approximation that only holds
-    // for a SHORT-LIVED actor: an ephemeral hand's lifetime is roughly one
-    // ticket, while the lead's spans every ticket in the project — and would be
-    // counted again into the next lead ticket, and the next.
+    // `lead`-assigned ticket would otherwise satisfy the guard exactly. Excluded
+    // outright rather than labelled `seat-lifetime` like any other long-lived
+    // seat: the lead's ledger spans every ticket, so even an upper bound
+    // published in `usd` would be the project's total.
     //
     // Everything else is UNKNOWN, on purpose. A declared unknown costs one
-    // ticket's row in a rollup; a confident wrong number poisons every rollup
-    // that sums it.
+    // ticket's row; a confident wrong number poisons every rollup that sums it.
     _costSeatFor(team, ticket) {
+      // Every resolution below sums the seat's WHOLE ledger, which equals this
+      // ticket's cost only for a seat minted for it and torn down with it — so a
+      // standing seat's whole life lands on every ticket it closes ($594.98 on
+      // one row whose 28.7 wall minutes could not buy it at any tier).
+      const mintedFor = (entry) => !!(entry && entry.ephemeral === true
+        && entry.ticketId && ticket && entry.ticketId === ticket.id);
       const at = (name, attribution) => {
         const entry = (name && getPersistence().get(name)) || null;
         // The NAME survives a missing record: a seat archived or deleted after
         // the close has no ledger, but it is still the join key back to its
         // other artifacts. `seatResolved: false` carries the no-ledger fact.
-        return entry ? { seatName: name, entry, attribution }
-          : { seatName: name || null, entry: null, attribution: 'unknown' };
+        if (!entry) return { seatName: name || null, entry: null, attribution: 'unknown' };
+        return { seatName: name, entry, attribution: mintedFor(entry) ? attribution : 'seat-lifetime' };
       };
       const assignee = ticket && ticket.assignee;
       if (!assignee) return { seatName: null, entry: null, attribution: 'unknown' };
@@ -7207,12 +7211,11 @@ function createTicketMethods(deps, shared) {
           ledger.ids = sessionIds;
 
           // The ticket's own tree first: it is the ticket's tree by construction.
-          // The record's is a fallback and counts ONLY for an exactly-pinned
-          // seat — on an inferred seat it is that seat's CURRENT tree, and even
-          // on an exact but long-lived name-addressed one it may be a tree the
-          // seat carries for itself. Either way it reports `worktreeMinted: true`
-          // with a commit count taken on some other branch. For a minted ticket
-          // seat the two are the same object, so this ordering is inert there.
+          // The record's is a fallback and counts ONLY for `'seat'`, now a seat
+          // minted for THIS ticket — on any other resolution the record's tree is
+          // whatever that seat currently holds, and taking it reports
+          // `worktreeMinted: true` with a commit count from another branch. For a
+          // minted seat the two are one object, so this ordering is inert there.
           const wt = ticket.worktree || (attribution === 'seat' && entry && entry.worktree) || null;
           let commits = null;
           let commitsBase = null;

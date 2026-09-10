@@ -222,16 +222,16 @@ const COST_VERSION = 1;
 // money would be indistinguishable from a free one. That false zero is the
 // class this whole artifact exists to prevent.
 //
-// `attribution` carries HOW the seat was found, because the resolutions are not
-// equally trustworthy and a consumer that cannot separate them averages an
-// exact number with an inferred one:
-//   'seat'        — the ticket named a persistence record. Exact.
-//   'role-closer' — the ticket named a role and the closer held that role.
-//   'unknown'     — no seat; the ledger fields are null.
-// Unset defaults to 'unknown', never to 'seat': a caller that forgot the
-// argument has not resolved anything, and the failure has to be the one that
-// under-claims. Defaulting to the value consumers are told is exact would let a
-// future call site publish a guess as a measurement by omission.
+// `attribution` separates resolutions of unequal trust, so a consumer cannot
+// average an exact number with an inferred or a polluted one:
+//   'seat'          — a seat minted for this ticket. Exact.
+//   'role-closer'   — a role ticket closed by a seat minted for it.
+//   'seat-lifetime' — resolved, but the seat outlives the ticket: the sum is
+//                     its whole life, an upper bound never added to the exact
+//                     rows, and not 'unknown', which has no ledger at all.
+//   'unknown'       — no seat; the ledger fields are null.
+// Unset defaults to 'unknown', never 'seat': a caller that forgot the argument
+// resolved nothing, so the failure under-claims rather than publishing a guess.
 function costRecord({
   ticket, team, ledger, worktree = null, commits = null, commitsBase = null,
   orphans = null, seatResolved = true, attribution = null, now = Date.now(),

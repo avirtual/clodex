@@ -167,6 +167,14 @@ test('create() mints from the record label, and both spawn paths seed it before 
   // preserve-across-restart.test.js then covers the call sites by construction.
   assert.match(src, /const ALWAYS_PRESERVE = \[[^\]]*'wireLabel'/,
     'wireLabel must be in ALWAYS_PRESERVE, or every restart un-attributes the seat');
+
+  // `ticketId` rides the identical contract and fails the identical way. Seeded
+  // only at the mint stub above, dropped by a kill()+create(), nothing regrows
+  // it — and _costSeatFor reads its ABSENCE as "this seat was not minted for
+  // this ticket", so every restarted ticket seat would downgrade to
+  // `seat-lifetime` and the exact rows would quietly become the minority.
+  assert.match(src, /const ALWAYS_PRESERVE = \[[^\]]*'ticketId'/,
+    'ticketId must be in ALWAYS_PRESERVE, or a restart makes every ticket seat read as standing');
 });
 
 // The taskDir shapes REAL tickets carry: relative and tilde-prefixed pointers
@@ -302,11 +310,187 @@ function mkRoleRig(seats = ROLE_SEATS, gitWorktree = undefined) {
   return {
     m,
     team: { name: 'team', root: repo, lead: 'team-lead', roles: { lead: {}, hand: {} } },
+    // What `_spawnTicketSeat` writes on its synchronous pre-create stub, and the
+    // whole of what makes a seat this ticket's: `ephemeral` plus the id it was
+    // minted for. A fixture seat without it is a STANDING seat, which is the
+    // other half of the distinction and why this is opt-in per test rather than
+    // baked into ROLE_SEATS — one record cannot have been minted for two ids.
+    mint: (name, ticketId) => persistence.upsert({ name, ephemeral: true, ticketId }),
+    persistence,
     read: (taskName) => JSON.parse(fs.readFileSync(
       path.join(projectDirFor(registryDir, repo), 'tasks', taskName, 'COST.json'), 'utf8')),
     cleanup: () => { for (const d of [userData, repo, home]) fs.rmSync(d, { recursive: true, force: true }); },
   };
 }
+
+// `sumSessions` sums a SEAT's whole history, which is the TICKET's cost only
+// when the seat was minted for it and torn down with it. The corpus caught the
+// other case: one row billed a standing seat's entire life to a single ticket —
+// $594.98 across 28.7 wall minutes, which no tier can produce — and stamped it
+// `attribution: 'seat'`, the value the taxonomy documents as EXACT. The least
+// accurate row in the corpus was labelled the most confident.
+//
+// The distinction, not the new string: an assertion that `seat-lifetime` merely
+// appears somewhere passes just as well on a change that labels EVERY row
+// shared, which measures nothing. So both arms are pinned here, and the standing
+// arm is billed TWICE — the identical usd under two different ticket ids is the
+// direct evidence that the window being summed is the seat's life and not either
+// ticket's.
+test('a standing seat is not exact for either of two tickets; a minted one still is', async () => {
+  const rig = mkRoleRig();
+
+  // ARM 1 — minted for THIS ticket. Still exact, still measured.
+  rig.mint('team-hand-1', 't40');
+  rig.m._writeTicketCost(rig.team, {
+    id: 't40', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-hand-1',
+    taskDir: 'tasks/minted-seat', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const minted = rig.read('minted-seat');
+  assert.deepStrictEqual(
+    [minted.sessions.attribution, minted.sessions.seatResolved, minted.seat, minted.usd],
+    ['seat', true, 'team-hand-1', 11],
+    'a seat minted for this ticket and torn down with it is exactly what `seat` means');
+
+  // ARM 2 — `team-hand-2` is never minted, so it is a standing seat. Two
+  // tickets, one seat, one ledger.
+  for (const [id, taskName] of [['t41', 'standing-first'], ['t42', 'standing-second']]) {
+    rig.m._writeTicketCost(rig.team, {
+      id, role: 'hand', assignee: 'team-hand-2', state: 'done', closedBy: 'team-hand-2',
+      taskDir: `tasks/${taskName}`, openedAt: 1, closedAt: 2,
+    });
+    await settle();
+  }
+  const first = rig.read('standing-first');
+  const second = rig.read('standing-second');
+  for (const [rec, id] of [[first, 't41'], [second, 't42']]) {
+    assert.strictEqual(rec.ticket, id);   // ENTER: the artifact landed at all
+    assert.strictEqual(rec.sessions.attribution, 'seat-lifetime',
+      `${id} summed a seat that outlives it — that is an upper bound, not this ticket's cost`);
+    assert.notStrictEqual(rec.sessions.attribution, 'seat',
+      `${id} must never claim the value consumers are told is exact`);
+  }
+  // And NOT unknown: the seat resolved and its ledger is real. Collapsing it into
+  // the no-ledger bucket would hide one large number inside a pile of small
+  // missing ones, which is the same two-numbers-as-one error the label fixes.
+  assert.deepStrictEqual(
+    [first.sessions.seatResolved, first.seat, first.usd],
+    [true, 'team-hand-2', 22],
+    'a standing seat is measured and named — only its window is wrong');
+
+  // THE PROOF: the same dollars under both ids. A per-ticket number cannot be
+  // equal across two tickets by construction; a lifetime sum must be.
+  assert.strictEqual(first.usd, second.usd,
+    'one ledger billed twice in full is exactly the pollution the label declares');
+  rig.cleanup();
+});
+
+// The other resolution sums the same wrong window. `role-closer` is already the
+// weaker inference, so a standing closer is weak AND polluted, and the label has
+// to say the part that survives summing — not how the seat was found, but that
+// the number is an upper bound. The trade is deliberate: this row loses the
+// closer detail. Nothing in the corpus reads it (`role-closer` has zero rows),
+// and a consumer that averaged it with the exact rows would be the failure.
+test('a role ticket closed by a STANDING role-holder is an upper bound too', async () => {
+  const rig = mkRoleRig();
+  rig.m._writeTicketCost(rig.team, {
+    id: 't43', role: 'hand', assignee: 'hand', state: 'done', closedBy: 'team-hand-2',
+    taskDir: 'tasks/role-closer-standing', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const standing = rig.read('role-closer-standing');
+  assert.deepStrictEqual(
+    [standing.sessions.attribution, standing.seat, standing.usd],
+    ['seat-lifetime', 'team-hand-2', 22],
+    "a closer that outlives the ticket sums its own life, however it was found");
+
+  // The CONTROL: minted for this ticket, the inference is unchanged. Without it
+  // the assertion above passes on a tree that labels every role-closer row.
+  rig.mint('team-hand-2', 't44');
+  rig.m._writeTicketCost(rig.team, {
+    id: 't44', role: 'hand', assignee: 'hand', state: 'done', closedBy: 'team-hand-2',
+    taskDir: 'tasks/role-closer-minted', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  assert.strictEqual(rig.read('role-closer-minted').sessions.attribution, 'role-closer',
+    'a minted closer keeps the inference it earned');
+  rig.cleanup();
+});
+
+// Both tests above stamp the mint by hand, so both pass against a tree where
+// `_spawnTicketSeat` writes no `ticketId` at all — every real ticket would then
+// resolve `seat-lifetime` and the exact case would exist only in fixtures. The
+// two halves have to meet: the REAL mint writes the record, and the REAL
+// resolver reads that record back.
+//
+// Driven through `_spawnTicketSeat` itself rather than asserted against its
+// source. `mode: 'spawn'` is what makes that affordable — the tree acquisition
+// and every git call sit behind the setImmediate that mode skips, while the
+// stub this asserts on is written SYNCHRONOUSLY before it, for the reason the
+// mint states: two dispatches in one lead turn must see each other's names.
+test('the real mint writes what the real resolver reads back as exact', async () => {
+  const rig = mkRoleRig([]);
+  rig.m.create = async () => ({ ok: true });
+  const ticket = {
+    id: 't46', role: 'hand', assignee: 'team-hand-46', state: 'done',
+    closedBy: 'team-hand-46', taskDir: 'tasks/mint-to-record',
+    openedAt: 1, closedAt: 2,
+  };
+  rig.m._spawnTicketSeat(
+    { name: 'team-lead' }, rig.team, ticket, 'hand',
+    { name: 'team-hand-46', branch: 't46-x' }, 'spawn',
+  );
+
+  // ENTER: the mint wrote a record at all, and stamped it for THIS ticket.
+  // Asserted here as well as through the artifact because the two failures read
+  // identically downstream — a resolver that stopped checking and a mint that
+  // stopped stamping both surface as one changed string.
+  const minted = rig.persistence.get('team-hand-46');
+  assert.ok(minted, 'the mint must write its stub synchronously, before any await');
+  assert.deepStrictEqual([minted.ephemeral, minted.ticketId], [true, 't46'],
+    'the stub carries the two facts that make this seat THIS ticket\'s');
+
+  // What create() adds once the CLI is up. Without it the ledger is empty and
+  // the row below would be a real but uninteresting zero.
+  rig.persistence.upsert({ name: 'team-hand-46', sessionId: 'sess-hand-1' });
+
+  rig.m._writeTicketCost(rig.team, ticket);
+  await settle();
+  const rec = rig.read('mint-to-record');
+  assert.deepStrictEqual(
+    [rec.sessions.attribution, rec.seat, rec.usd],
+    ['seat', 'team-hand-46', 11],
+    'a seat the loop minted for this ticket, read back by the resolver, is the exact case');
+  rig.cleanup();
+});
+
+// The record's worktree fallback is gated on `attribution === 'seat'`, whose
+// meaning this change narrowed — so the gate narrowed with it, and that is the
+// intended direction. A standing seat's `worktree:` is whatever it happens to
+// hold now; taking it would report `worktreeMinted: true` and a commit count
+// from an unrelated branch under a ticket that never had a tree.
+test('a standing seat lends no worktree to a ticket that had none', async () => {
+  const seats = ROLE_SEATS.map((s) => (s.name === 'team-hand-1'
+    ? { ...s, worktree: { path: '/tmp/wt-personal', branch: 'personal', baseSha: 'dead' } } : s));
+  const rig = mkRoleRig(seats, {
+    listWorktrees: async () => ({ ok: true, repo: '/proj', worktrees: [] }),
+    commitsOnBranch: async () => ({ ok: true, count: 9, base: 'dead' }),
+  });
+  rig.m._writeTicketCost(rig.team, {
+    id: 't45', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-hand-1',
+    taskDir: 'tasks/standing-tree', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const rec = rig.read('standing-tree');
+  // ENTER: the seat DID resolve, so the absence below is about the gate and not
+  // about a record that was never read.
+  assert.deepStrictEqual([rec.sessions.attribution, rec.seat], ['seat-lifetime', 'team-hand-1']);
+  assert.deepStrictEqual(
+    [rec.waste.worktreeMinted, rec.waste.commits, rec.waste.commitsBase],
+    [false, null, null],
+    "a standing seat's own checkout is not this ticket's waste");
+  rig.cleanup();
+});
 
 test('a role ticket does not bill whichever seat holds the role first', async () => {
   const rig = mkRoleRig();
@@ -377,6 +561,7 @@ test('a closer who is not the seat the ticket was DELIVERED to resolves to nothi
     'hand-2 closed a ticket delivered to hand-1 — that is not evidence of who spent');
 
   // Agreeing, it is the same inference as before: still role-closer, not better.
+  rig.mint('team-hand-2', 't28');
   rig.m._writeTicketCost(rig.team, {
     id: 't28', role: 'hand', assignee: 'hand', state: 'done', closedBy: 'team-hand-2',
     deliveredTo: { seat: 'team-hand-2', incarnation: 1, at: 5 },
@@ -410,6 +595,7 @@ test('a pinned seat that did not close, and a sibling of its role that did, reso
 
   // The CONTROL: the pinned seat closing its OWN ticket is still exact. Without
   // it the assertion above is satisfied by a tree that resolves nothing at all.
+  rig.mint('team-hand-1', 't30');
   rig.m._writeTicketCost(rig.team, {
     id: 't30', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-hand-1',
     taskDir: 'tasks/pin-own', openedAt: 1, closedAt: 2,
@@ -443,6 +629,7 @@ test('a pin contradicted by deliveredTo resolves to nothing, even when the LEAD 
 
   // The CONTROL: a CORROBORATING deliveredTo must not block an exact pin, or the
   // falsifier would unknown-out every replayed ticket that was never inherited.
+  rig.mint('team-hand-1', 't32');
   rig.m._writeTicketCost(rig.team, {
     id: 't32', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-lead',
     deliveredTo: { seat: 'team-hand-1', incarnation: 1, at: 5 },
@@ -482,18 +669,21 @@ test('a role ticket inherits no worktree from a seat that is working another tic
 });
 
 test("a ticket's own worktree wins over the record's, even for an exact seat", async () => {
-  // 63 live tickets pin to a long-lived NAME-addressed seat (`clodex-hand`), not
-  // to a minted ephemeral one. Such a seat can carry a `worktree:` of its own,
-  // unrelated to any ticket — so resolving exactly is not enough to make the
-  // record's tree this ticket's tree. For a minted ticket seat the two are the
-  // same object and this ordering is inert; where they differ, the ticket's is
-  // right by construction.
+  // The `attribution === 'seat'` gate now admits only a seat MINTED for this
+  // ticket, which closes the standing-seat half of this hazard outright (its own
+  // test does that one). What survives, and what this pins, is that even there
+  // the ticket's tree is preferred: `worktree` is in ALWAYS_PRESERVE, so a
+  // restart carries the record's pointer forward and it can be stale while the
+  // ticket's is right by construction. Taking the record's would report a commit
+  // count from the wrong branch under a `seat`-labelled, exactly-billed row —
+  // the most trusted rows carrying the wrong waste number.
   const seats = ROLE_SEATS.map((s) => (s.name === 'team-hand-1'
     ? { ...s, worktree: { path: '/tmp/wt-personal', branch: 'personal', baseSha: 'dead' } } : s));
   const rig = mkRoleRig(seats, {
     listWorktrees: async () => ({ ok: true, repo: '/proj', worktrees: [] }),
     commitsOnBranch: async (_cwd, branch, base) => ({ ok: true, count: branch === 't29' ? 3 : 99, base: base || 'none' }),
   });
+  rig.mint('team-hand-1', 't29');
   rig.m._writeTicketCost(rig.team, {
     id: 't29', role: 'hand', assignee: 'team-hand-1', state: 'done',
     worktree: { path: '/tmp/wt-t29', branch: 't29', baseSha: 'ba5e' },
@@ -536,6 +726,7 @@ test('a role ticket closed by a seat holding that role bills THAT seat', async (
   // so it is a hand reporting its own work. `team-hand-1` is live first, so a
   // first-live-seat scan would answer 11 here.
   const rig = mkRoleRig();
+  rig.mint('team-hand-2', 't23');
   rig.m._writeTicketCost(rig.team, {
     id: 't23', role: 'hand', assignee: 'hand', state: 'done', closedBy: 'team-hand-2',
     taskDir: 'tasks/role-closer', openedAt: 1, closedAt: 2,
@@ -553,6 +744,7 @@ test('a seat-pinned ticket is billed exactly, and an unstaffed role measures not
   // Also the control for the tests above: they assert absences, and a resolver
   // that resolved NOTHING would satisfy all of them.
   const rig = mkRoleRig();
+  rig.mint('team-hand-1', 't24');
   rig.m._writeTicketCost(rig.team, {
     id: 't24', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-lead',
     taskDir: 'tasks/seat-pinned', openedAt: 1, closedAt: 2,
