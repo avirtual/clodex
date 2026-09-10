@@ -63,15 +63,15 @@ function extractRenderPluginsDialog() {
 // plugins.updatesAvailable answers with. `asked` records the methods called and
 // `opened` what reached the README popover.
 function mount(pluginsList, pluginInvoke, openReadme = () => {}, refreshToken = null,
-  renderAgain = async () => {}) {
+  createElement = el) {
   return extractRenderPluginsDialog()(
     pluginsList,
     { api: { pluginInvoke }, __CLODEX_WEB__: false },
-    { createElement: el },
+    { createElement },
     (s) => `From github.com/${s.repo}`,
     { settingsSectionOwners: () => [] },
     () => el('div'),
-    renderAgain,
+    async () => {},
     () => {}, () => {}, () => {}, null, () => {}, () => true,
     pluginOrigin,
     openReadme,
@@ -243,7 +243,7 @@ test('the glyph is the first thing in the name node, ahead of the name', async (
 // sees the fresh list. A stub whose cached read stayed stale would pass a
 // renderer that painted the refresh reply directly AND one that repainted, which
 // is the distinction this fixture must not blur.
-function mountRefresh(calls, replies, renderAgain = async () => {}) {
+function mountRefresh(calls, replies, createElement = el) {
   const pluginsList = el('div');
   let cached = replies.cached;
   const fn = mount(
@@ -259,7 +259,7 @@ function mountRefresh(calls, replies, renderAgain = async () => {}) {
     },
     () => {},
     {},
-    renderAgain,
+    createElement,
   );
   return { fn, pluginsList };
 }
@@ -317,17 +317,20 @@ test('a repaint that throws is swallowed, not left as an unhandled rejection', a
   const capture = (r) => escaped.push(r);
   process.on('unhandledRejection', capture);
   try {
+    let armed = false;
+    let threw = 0;
     const calls = [];
-    const { fn, pluginsList } = mountRefresh(calls, {
+    const { fn } = mountRefresh(calls, {
       cached: [],
       fresh: [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }],
-    }, async () => { throw new Error('repaint blew up'); });
+    }, (tag) => { if (armed) { threw++; throw new Error('repaint blew up'); } return el(tag); });
     await fn();
+    armed = true;
     await settle();
     assert.strictEqual(calls.filter(([m, a]) => m === 'plugins.updatesAvailable' && a && a[0] && a[0].refresh === true).length, 1,
       'ENTER: the refresh fired, so the repaint below was actually reached');
-    assert.strictEqual(pluginsList.children.length, 1,
-      'ENTER: the first paint stands — the throw is the repaint, not the paint under test');
+    assert.ok(threw > 0,
+      'ENTER: the repaint really did throw — a fixture that never entered it would pass this test against any renderer');
     assert.deepStrictEqual(escaped.map((e) => e && e.message), [],
       'the fire-and-forget IIFE must terminate its own chain: an unhandled rejection here takes the whole renderer down under Electron');
   } finally {
