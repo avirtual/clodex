@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Team kits, interim text on the phone, and the auto-mode classifier as a side call
+## Unreleased
+
+## 5.58.0 — 2026-09-10 — Team kits, interim text on the phone, and the auto-mode classifier as a side call
 
 - Team create takes `kit:<name>`: `default` builds the team on your own Claude
   Code setup (plan mode, skills, agents and tools left as you have them);
