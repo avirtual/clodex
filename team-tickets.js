@@ -2843,9 +2843,6 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
-      // Only up/rebuild configure the box. `ref` is patched only when the intent
-      // carried the kv, so a bare `up` after `rebuild ref:t9-x` keeps t9-x, and
-      // SANDBOX_DEFAULT_REF seeds only a box that has no ref at all.
       const patch = { workDir: team.root };
       if (intent.ref) patch.ref = intent.ref;
       else if (!box.getConfig().ref) patch.ref = SANDBOX_DEFAULT_REF;

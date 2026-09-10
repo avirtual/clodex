@@ -663,7 +663,7 @@ test('t795: create carries mode:, and the positional name survives it', () => {
     'omitted stays null — the handler, not the parser, decides what null means');
 });
 
-test('t808: sandbox parses action and ref as LITERALS, with both defaults', () => {
+test('t808: sandbox parses action and ref as LITERALS — action defaults, ref does NOT', () => {
   // Literal objects, not field probes: the differential above proves the two
   // parser copies AGREE, and two copies of the same wrong default agree just as
   // well. `ref` stays NULL here on purpose — an absent kv must be distinguishable
