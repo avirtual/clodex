@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Teams own their templates and prompts: copied per role at create, listed and editable per team, picked from the popover
 
 - A new team gets its own copy of each role's template: create and role-add copy the stock template to `templates/<role>.json` in the team's directory and point the role at it, so what you edit for a team is the team's own file, not the library's. Existing teams are untouched (use `[agent:team role-set <role> model:<alias>]` to derive a copy).
 - Same for prompts: create and role-add copy each role's stock system prompt to `prompts/system/<role>.md` in the team's directory and point the role at it. The copy is the team's fork; delete it from the Prompts drawer's Team group to fall back to the library's current version.
