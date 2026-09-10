@@ -3311,6 +3311,18 @@ html, body {
 
 .inbox-item:hover { background: var(--sidebar-hover); }
 
+.inbox-load-older {
+  width: 100%;
+  padding: 8px 10px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .inbox-item.unread {
   background: rgba(233, 69, 96, 0.08);
   border-left-color: var(--accent);

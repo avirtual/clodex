@@ -33,6 +33,7 @@ function createInboxDrawer({ openFilePeek, showToast }) {
   const closeBtn = document.getElementById('inbox-close');
   const openBtn = document.getElementById('inbox-open');
   const countEl = document.getElementById('inbox-count');
+  let loaded = 30;
 
   async function refreshBadge() {
     let n = 0;
@@ -99,18 +100,18 @@ function createInboxDrawer({ openFilePeek, showToast }) {
   }
 
   async function renderList() {
-    const [items, wsNames] = await Promise.all([
-      window.api.listNotifications().catch(() => []),
+    const [page, wsNames] = await Promise.all([
+      window.api.pageNotifications({ limit: loaded }).catch(() => ({ items: [], hasMore: false })),
       workspaceNames(),
     ]);
+    const items = (page && page.items) || [];
     listEl.innerHTML = '';
-    if (!items || items.length === 0) {
+    if (items.length === 0) {
       emptyEl.style.display = '';
       return;
     }
     emptyEl.style.display = 'none';
-    // The store keeps append (chronological) order; the inbox reads newest-first.
-    for (const note of items.slice().reverse()) {
+    for (const note of items) {
       const wsLabel = note.workspaceId == null
         ? ''
         : (wsNames.get(note.workspaceId) || (note.workspaceId ? '(deleted workspace)' : ''));
@@ -136,10 +137,21 @@ function createInboxDrawer({ openFilePeek, showToast }) {
       });
       listEl.appendChild(el);
     }
+    if (page.hasMore) {
+      const more = document.createElement('button');
+      more.className = 'inbox-load-older';
+      more.textContent = 'Load older';
+      more.addEventListener('click', async () => {
+        loaded += 30;
+        await renderList();
+      });
+      listEl.appendChild(more);
+    }
   }
 
   function openDrawer() {
     drawer.classList.remove('hidden');
+    loaded = 30;
     renderList();
     refreshBadge();
   }

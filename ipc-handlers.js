@@ -676,6 +676,7 @@ function registerIpcHandlers(deps) {
   });
 
   handle('notifications:list', () => notifications.list());
+  handle('notifications:page', (_e, opts) => notifications.page(opts || {}));
   handle('notifications:markRead', (_e, id) => notifications.markRead(id));
   handle('notifications:markAllRead', () => notifications.markAllRead());
   handle('notifications:remove', (_e, id) => notifications.remove(id));

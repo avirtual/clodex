@@ -114,6 +114,7 @@ const API_CONTRACT = [
   { name: 'saveExecCommand', kind: 'invoke', channel: 'exec:save' },
   { name: 'removeExecCommand', kind: 'invoke', channel: 'exec:remove' },
   { name: 'listNotifications', kind: 'invoke', channel: 'notifications:list' },
+  { name: 'pageNotifications', kind: 'invoke', channel: 'notifications:page' },
   { name: 'markNotificationRead', kind: 'invoke', channel: 'notifications:markRead' },
   { name: 'markAllNotificationsRead', kind: 'invoke', channel: 'notifications:markAllRead' },
   { name: 'removeNotification', kind: 'invoke', channel: 'notifications:remove' },

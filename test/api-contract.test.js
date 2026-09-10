@@ -37,7 +37,7 @@ const PINNED_NAMES = [
   'savePrompt', 'removePrompt', 'saveTeamPrompt', 'removeTeamPrompt', 'injectPrompt', 'listAgents',
   'getAgent', 'saveAgent', 'removeAgent', 'listSkillLib',
   'getSkillLib', 'saveSkillLib', 'removeSkillLib', 'listExecCommands',
-  'getExecCommand', 'saveExecCommand', 'removeExecCommand', 'listNotifications',
+  'getExecCommand', 'saveExecCommand', 'removeExecCommand', 'listNotifications', 'pageNotifications',
   'markNotificationRead', 'markAllNotificationsRead', 'removeNotification', 'notificationUnreadCount',
   'checkForUpdate', 'getUpdateInfo', 'getReleases', 'openUpdate',
   'getVersion', 'getDiagnostics', 'toolsCheck', 'invalidateToolCache', 'onUpdateAvailable', 'onSessionContextAction',
@@ -239,8 +239,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 293-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 293, 'pinned list is the full 293-method surface');
+test('contract covers exactly the pinned 294-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 294, 'pinned list is the full 294-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -264,7 +264,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 293, 'window.api has exactly 293 methods');
+    assert.equal(generated.length, 294, 'window.api has exactly 294 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The Inbox drawer loads the newest 30 notes and offers a "Load older" row for the rest, instead of rendering every note ever raised on each open.
+
 ## 5.55.0 — 2026-09-10 — Team create gains mode:interview: the lead interviews the operator before its first ticket
 
 - `[agent:team create]` takes `mode:interview`: the team is set up from a few words, and the lead's first turn interviews the operator and rewrites the brief itself before filing a ticket, instead of treating the words as a finished spec. Omitted or `mode:kickstart` is today's behaviour.
