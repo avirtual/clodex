@@ -182,9 +182,9 @@ function nearMissFormHint(text) {
 // restart) must stay caller-controlled.
 // `wireLabel` is here for the same reason: it is seeded ONLY at the team-spawn
 // mint, nothing regrows it, and create() re-mints the proxy agent id from
-// `entry.wireLabel || name`. Dropped by an in-place restart, the seat's whole
-// remaining spend bills to an unlabeled route and its ticket's COST.json reads
-// a null label — the ticket looks free because the money went somewhere else.
+// `entry.wireLabel || name`. Dropped by an in-place restart, the ticket's
+// COST.json reads a null label and the spend bills to an unlabeled route.
+// `ticketId` rides that same mint: dropped, the seat reads as never minted.
 // `keepWarmAlways`/`holdUntil` pass both clauses too — written only by
 // setKeepWarmAlways/setHoldUntil off an operator action, absent from create()'s
 // argument list and its rebuild upsert, re-asserted by no caller. They must
@@ -211,7 +211,7 @@ function nearMissFormHint(text) {
 // id that is by construction not in the array, so a preserved list cannot
 // suppress a digest that is due. That is what makes it safe here where a bare
 // timestamp is not.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested'];
 
 // The delayed backstop SIGKILL for a pty that ignored `pty.kill()`. The `> 0`
 // is the whole function: `process.kill` reads non-positive pids as BROADCASTS,
