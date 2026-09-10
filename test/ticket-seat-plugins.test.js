@@ -249,7 +249,11 @@ function mkWorld({ tplPlugins } = {}) {
   // plugin-inheritance subject drives. refreshAppMenu is optional in a stronger
   // sense — the call site guards on typeof for the headless host.
   assertTicketDepsCovered(assert, deps, {
-    optional: ['ticketSuiteTimeoutMs', 'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu'],
+      // getSandboxManager is optional in that same sense: it is read only by
+      // _handleTeam's sandbox case, which no subject here drives — and a fixture
+      // that DID inject one would have to fake docker to say anything.
+    optional: ['ticketSuiteTimeoutMs', 'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
+        'getSandboxManager'],
   });
 
   const SessionManager = createSessionManager(deps);

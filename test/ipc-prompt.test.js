@@ -183,6 +183,25 @@ test('t754: the role-add row documents dispatch:/cwd:, in the literal AND in GRA
   }
 });
 
+// Same argument as t754 above, for t808's sandbox row: the byte-pins compare the
+// literal to GRAMMAR_LINES, so a row missing from BOTH sides keeps them equal and
+// ships a verb no lead can discover. Measured — deleting the row from both copies
+// left every byte-pin green. Pinned on both copies, and on the two facts a lead
+// gets wrong without them: that the token is in the FILE and not in the reply.
+test('t808: the sandbox row is present in the literal AND in GRAMMAR_LINES', () => {
+  const ROW = /^ {2}\[agent:team sandbox \[up\|rebuild\|down\|status\] \[ref:<ref>\]\]/m;
+  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the sandbox row');
+  assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
+  for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
+    assert.ok(/docker box `team-<name>` from that git ref \(default action up; ref defaults to master only when the box tracks none yet, and status\/down never change it\)/.test(src),
+      'the row names the box it mints, the default, and that status/down leave a tracked ref alone');
+    assert.ok(/~\/\.clodex\/teams\/<name>\/sandbox\.json \(mode 0600\)/.test(src),
+      'and the file the coordinates land in');
+    assert.ok(/that FILE is where your seats read the token; the reply never carries it/.test(src),
+      'a lead that expects the token in the reply will paste a token that is not there');
+  }
+});
+
 // The `]]` that t754 above used to guard rides the LAST kv, and t767 appended
 // model: after cwd:. Pinned here rather than there so the closing bracket still
 // has exactly one owner: a row whose kv list runs past the intent's `]` renders

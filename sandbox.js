@@ -649,7 +649,8 @@ function createSandbox(deps = {}) {
   }
 
   async function status() {
-    const trackedRef = getConfig().ref || null;
+    const statusConfig = getConfig();
+    const trackedRef = (statusConfig.ref && !statusConfig.image) ? statusConfig.ref : null;
     const r = await runCompose(['ps', '--format', 'json']);
     if (!r.ok && !r.stdout.trim()) {
       return { state: 'absent', ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null, error: r.stderr.trim() || undefined };
@@ -708,6 +709,7 @@ function createSandbox(deps = {}) {
     detect, getConfig, setConfig, writeComposeFile, translateHostPath,
     up, rebuild, down, status, logsTail, registerPeer, unregisterPeer,
     hasAuthToken, setAuthToken, clearAuthToken,
+    remoteToken,
     composePath, sandboxDir, srcDir,
   };
 }

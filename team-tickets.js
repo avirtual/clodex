@@ -39,6 +39,27 @@ const { resolveModelId, deriveModelTemplate } = require('./team-template-derive'
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
+const { BOX_ID_RE } = require('./sandbox');
+const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
+
+const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
+const SANDBOX_DEFAULT_REF = 'master';
+
+function sha8(sha) {
+  const s = String(sha == null ? '' : sha);
+  return s ? s.slice(0, 8) : 'unknown';
+}
+
+function sandboxRefClause(st) {
+  return (st && st.ref) ? ` (ref ${st.ref})` : '';
+}
+
+function sandboxPortClause(st) {
+  const ports = (st && st.ports) || {};
+  if (!ports.web && !ports.wire) return '';
+  return ` — web ${ports.web ? `http://127.0.0.1:${ports.web}` : '(no port)'}`
+    + ` · wire ${ports.wire ? `:${ports.wire}` : '(no port)'}`;
+}
 
 const TEAM_FILE_BODY_MAX = 64 * 1024;
 
@@ -417,6 +438,7 @@ function createTicketMethods(deps, shared) {
     pathFor,
     getPersistence,
     getRemindScheduler,
+    getSandboxManager,
     getTemplates,
     listAllTemplates,
     getUserDataPath,
@@ -2769,12 +2791,82 @@ function createTicketMethods(deps, shared) {
             reply(`prompt ${kind}/${stem} removed from ${res.file}`);
             return;
           }
+          case 'sandbox': {
+            this._handleTeamSandbox(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
+            return;
+          }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
       }
+    },
+
+    _teamSandboxFile(team) {
+      return path.join(teamsDir, team.name, 'sandbox.json');
+    },
+
+    async _handleTeamSandbox(team, intent, reply) {
+      const action = intent.action || 'up';
+      if (!SANDBOX_ACTIONS.includes(action)) {
+        reply(`error: sandbox action must be ${SANDBOX_ACTIONS.join(' | ')} (got "${action}")`);
+        return;
+      }
+      const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
+      if (!mgr) { reply('error: sandboxes are not enabled on this host'); return; }
+
+      const boxId = `team-${team.name}`;
+      if (!BOX_ID_RE.test(boxId)) {
+        reply(`error: box id "${boxId}" must be lowercase letters, digits, dashes or underscores (no dots, no spaces) — rename the team`);
+        return;
+      }
+      let box = mgr.get(boxId);
+      if (!box) {
+        const made = mgr.create(boxId, `${team.name} team`);
+        if (made && made.ok === false) { reply(`error: ${made.error}`); return; }
+        box = mgr.get(boxId);
+        if (!box) { reply(`error: sandbox ${boxId} could not be created`); return; }
+      }
+
+      const file = this._teamSandboxFile(team);
+      if (action === 'down') {
+        const r = await box.down();
+        if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
+        try { fs.unlinkSync(file); } catch {}
+        reply(`sandbox ${boxId} down — ${file} removed`);
+        return;
+      }
+      if (action === 'status') {
+        const st = await box.status();
+        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}`);
+        return;
+      }
+
+      const patch = { workDir: team.root };
+      if (intent.ref) patch.ref = intent.ref;
+      else if (!box.getConfig().ref) patch.ref = SANDBOX_DEFAULT_REF;
+      const saved = box.setConfig(patch);
+      if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
+
+      const r = action === 'rebuild' ? await box.rebuild() : await box.up();
+      if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
+      const st = await box.status();
+      const ports = (st && st.ports) || (r && r.ports) || {};
+      const token = box.remoteToken();
+      const record = {
+        boxId,
+        ref: (st && st.ref) || null,
+        sha: (st && st.sha) || null,
+        webUrl: ports.web ? `http://127.0.0.1:${ports.web}` : null,
+        wireUrl: ports.wire ? `http://127.0.0.1:${ports.wire}` : null,
+        token,
+        startedAt: new Date().toISOString(),
+      };
+      ensureDirMode700(path.dirname(file));
+      atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+      reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
+        + `${sandboxPortClause({ ports })} · token in ${file}`);
     },
 
     _teamFileDeps() {

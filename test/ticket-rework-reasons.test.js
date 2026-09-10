@@ -267,8 +267,12 @@ test('mkFixture injects every dep team-tickets.js reads', () => {
     // teamActivity channel (t785), and no subject here drives any of them.
     // refreshAppMenu is optional in a STRONGER sense — the call site guards on
     // typeof, because a headless host wires no Electron menu at all.
+      // getSandboxManager is optional in that same sense: it is read only by
+      // _handleTeam's sandbox case, which no subject here drives — and a fixture
+      // that DID inject one would have to fake docker to say anything.
     optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
-      'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu'],
+      'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
+        'getSandboxManager'],
   });
 });
 

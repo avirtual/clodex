@@ -1318,6 +1318,7 @@ const SessionManager = createSessionManager({
   getPeerManager: () => peerManager,
   getRemindScheduler: () => remindScheduler,
   getNotifications: () => notifications,
+  getSandboxManager: () => sandboxManager,
   getUserDataPath: () => userDataPath,
   openPath,
   notifyOS,

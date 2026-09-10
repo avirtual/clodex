@@ -982,6 +982,30 @@ test('setAuthToken: writes auth.env at mode 0600 with the CLAUDE_CODE_OAUTH_TOKE
   assert.strictEqual(sb.hasAuthToken(), true);
 });
 
+// t808: the peer-wire secret is what a team's seats authenticate to the box
+// with, and `[agent:team sandbox up]` copies it into the team's sandbox.json.
+// Without this export that verb has no token to write — and the handler's own
+// suite cannot see the gap, since its fake box supplies one either way.
+test('remoteToken: exposed on the box, and it IS the CLODEX_REMOTE_TOKEN in auth.env', () => {
+  const ud = freshUserData();
+  const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
+
+  assert.strictEqual(typeof sb.remoteToken, 'function', 'the main process can read the box secret');
+  assert.strictEqual(sb.remoteToken(), null, 'nothing provisioned yet → no token to hand out');
+
+  fs.mkdirSync(path.join(ud, 'sandbox'), { recursive: true });
+  fs.writeFileSync(path.join(ud, 'sandbox', 'auth.env'), 'CLODEX_REMOTE_TOKEN=tok-abc-123\n');
+  assert.strictEqual(sb.remoteToken(), 'tok-abc-123', 'it reads the SAME line registerPeer authenticates with');
+});
+
+// The other half of that boundary: reading the secret is a main-process
+// capability, so no `sandbox:*` IPC channel may forward it to the renderer.
+test('remoteToken: no ipc-handlers sandbox channel exposes it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.ok(!/remoteToken/.test(src),
+    'ipc-handlers.js names remoteToken — the peer-wire secret must not cross to the renderer');
+});
+
 test('setAuthToken: trims surrounding whitespace from a pasted token', () => {
   const ud = freshUserData();
   const sb = createSandbox({ getUiSettings: () => fakeSettings(), getUserDataPath: () => ud });
@@ -1587,6 +1611,33 @@ test('status: reports the tracked ref and the sha src is parked on', async () =>
   const after = await sb.status();
   assert.strictEqual(after.ref, 'master');
   assert.strictEqual(after.sha, sha);
+
+  await removeWorktree(sb.srcDir());
+});
+
+// t808 rider: bringUp only checks out a ref when `image` is unset (the
+// `config.ref && !config.image` gate), so with an override in place srcDir is
+// parked on whatever ref was last synced — some EARLIER one, or none. status()
+// reporting that stale pair is how a box advertises a ref it is demonstrably not
+// running, which is the read a team's seats would trust.
+test('status: an image override suppresses ref/sha — the box is not built from the ref', async () => {
+  const repo = tempRepo('one');
+  const sha = gitIn(repo, ['rev-parse', 'HEAD']);
+  const { sb } = refSandbox(repo);
+
+  sb.setConfig({ ref: 'master' });
+  assert.strictEqual((await sb.up()).ok, true);
+  const tracked = await sb.status();
+  assert.strictEqual(tracked.ref, 'master');
+  assert.strictEqual(tracked.sha, sha, 'the ref really was checked out — the src worktree is on disk');
+
+  // The ref STAYS in config; only the override is added. src is untouched, so a
+  // status that still read it would return the same sha as above.
+  sb.setConfig({ image: 'my/img:tag' });
+  const overridden = await sb.status();
+  assert.strictEqual(overridden.ref, null);
+  assert.strictEqual(overridden.sha, null);
+  assert.strictEqual(sb.getConfig().ref, 'master', 'the tracked ref is suppressed in the report, not erased');
 
   await removeWorktree(sb.srcDir());
 });

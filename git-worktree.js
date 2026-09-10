@@ -314,7 +314,7 @@ async function checkoutDetached({ repoTop, dir, ref } = {}) {
   }
 
   const resolve = async () => {
-    const r = await git(repo, ['rev-parse', '--verify', '--quiet', `${want}^{commit}`]);
+    const r = await git(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${want}^{commit}`]);
     return r.ok ? (r.stdout.trim() || null) : null;
   };
   let sha = await resolve();

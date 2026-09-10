@@ -623,6 +623,36 @@ test('mergeNoFf: a merge that fails without conflicting reports through the old 
   assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
 });
 
+// t808 rider: `checkoutDetached` interpolates the caller's ref straight into a
+// `rev-parse` argv, and its input regex admits a leading dash (`-` is in the
+// class, so `--all` passes it). `--end-of-options` is what makes git read the
+// argument as a ref rather than as an option, whatever it looks like.
+test('checkoutDetached: an ordinary ref still resolves through --end-of-options', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const sha = gitOut(repo, ['rev-parse', 'HEAD']);
+  const dest = path.join(mkTmpRoot('clodex-eoo-'), 'src');
+
+  const r = await wt.checkoutDetached({ repoTop: repo, dir: dest, ref: 'HEAD' });
+
+  assert.strictEqual(r.ok, true, r.error);
+  assert.strictEqual(r.sha, sha);
+  assert.strictEqual(gitOut(dest, ['rev-parse', 'HEAD']), sha, 'the worktree really is parked on it');
+  await wt.removeWorktree(dest);
+});
+
+test('checkoutDetached: a flag-shaped ref is refused as a ref, never executed as an option', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const dest = path.join(mkTmpRoot('clodex-eoo2-'), 'src');
+
+  // `--local-env-vars` is a rev-parse option that PRINTS and exits 0 when git
+  // reads it as one. Refusing it as an unresolvable ref is the whole point.
+  const r = await wt.checkoutDetached({ repoTop: repo, dir: dest, ref: '--local-env-vars' });
+
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /does not resolve/);
+  assert.ok(!fs.existsSync(dest), 'nothing was checked out');
+});
+
 // --- t780: initRepo / hasCommit, the two probes team create classifies with ---
 
 test('initRepo: a fresh empty dir becomes a repo with one commit', { skip: !gitAvailable() }, async () => {
