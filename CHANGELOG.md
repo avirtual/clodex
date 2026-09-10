@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Team create gains mode:interview: the lead interviews the operator before its first ticket
 
 - `[agent:team create]` takes `mode:interview`: the team is set up from a few words, and the lead's first turn interviews the operator and rewrites the brief itself before filing a ticket, instead of treating the words as a finished spec. Omitted or `mode:kickstart` is today's behaviour.
 
