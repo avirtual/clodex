@@ -164,6 +164,51 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
   }
 
+  // rmdirs children first, and both are non-empty-tolerant by way of the catch:
+  // a team brief at prompts/append/team-project.md keeps `prompts` alive, and
+  // must survive an unwind that only owns the system copies.
+  function unwindPromptCopies(teamName, roleNames) {
+    for (const r of roleNames) {
+      try { fs.unlinkSync(path.join(teamsDir, teamName, 'prompts', 'system', `${r}.md`)); } catch {}
+    }
+    try { fs.rmdirSync(path.join(teamsDir, teamName, 'prompts', 'system')); } catch {}
+    try { fs.rmdirSync(path.join(teamsDir, teamName, 'prompts')); } catch {}
+  }
+
+  // Byte-for-byte, unlike copyRoleTemplates: a template is rewritten (name
+  // restamped, listing keys cut) because its `name` addresses the seat, while a
+  // system prompt is addressed only by its path, so any edit here would be a
+  // silent divergence from the library file it claims to copy.
+  function copyRolePrompts(teamName, roles, opts) {
+    const repointOnly = !!(opts && opts.repointOnly === true);
+    const copied = [];
+    if (typeof teamName !== 'string' || !TEAM_STEM_RE.test(teamName)) return copied;
+    try {
+      for (const [roleName, def] of Object.entries(roles)) {
+        if (!def || typeof def !== 'object' || Array.isArray(def)) continue;
+        const stem = def.prompt;
+        if (typeof stem !== 'string' || !stem) continue;
+        if (badStem(stem) || !TEAM_STEM_RE.test(stem)) continue;
+        if (badStem(roleName) || !TEAM_STEM_RE.test(roleName)) continue;
+        const target = path.join(teamsDir, teamName, 'prompts', 'system', `${roleName}.md`);
+        let own = false;
+        try { fs.readFileSync(target, 'utf-8'); own = true; } catch {}
+        if (own) { def.prompt = roleName; continue; }
+        if (repointOnly) continue;
+        let body;
+        try { body = fs.readFileSync(path.join(home, 'library', 'prompts', 'system', `${stem}.md`), 'utf-8'); }
+        catch { continue; }
+        atomicWrite(target, body);
+        def.prompt = roleName;
+        copied.push(roleName);
+      }
+    } catch (err) {
+      unwindPromptCopies(teamName, copied);
+      throw err;
+    }
+    return copied;
+  }
+
   function copyRoleTemplates(teamName, roles, opts) {
     const repointOnly = !!(opts && opts.repointOnly === true);
     const copied = [];
@@ -535,6 +580,13 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       assertRoleCwd(k, seedRoles[k], resolvedRoot, file);
     }
     const templatesCopied = copyRoleTemplates(name, seedRoles);
+    let promptsCopied;
+    try {
+      promptsCopied = copyRolePrompts(name, seedRoles);
+    } catch (err) {
+      unwindTemplateCopies(name, templatesCopied);
+      throw err;
+    }
     const manifest = {
       version: MANIFEST_VERSION,
       lead,
@@ -545,9 +597,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       atomicWrite(file, JSON.stringify(manifest, null, 2));
     } catch (err) {
       unwindTemplateCopies(name, templatesCopied);
+      unwindPromptCopies(name, promptsCopied);
       throw err;
     }
-    return { ...loadManifest(name), templatesCopied };
+    return { ...loadManifest(name), templatesCopied, promptsCopied };
   }
 
   function addRole(teamName, roleName, def, opts) {
@@ -574,13 +627,21 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
       assertRoleCwd(roleName, rawMint.roles[roleName], team.root, team.file);
       const mintCopied = copyRoleTemplates(teamName, { [roleName]: rawMint.roles[roleName] });
+      let mintPrompts;
       try {
-        atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
+        mintPrompts = copyRolePrompts(teamName, { [roleName]: rawMint.roles[roleName] });
       } catch (err) {
         unwindTemplateCopies(teamName, mintCopied);
         throw err;
       }
-      return { ...loadManifest(teamName), templatesCopied: mintCopied };
+      try {
+        atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
+      } catch (err) {
+        unwindTemplateCopies(teamName, mintCopied);
+        unwindPromptCopies(teamName, mintPrompts);
+        throw err;
+      }
+      return { ...loadManifest(teamName), templatesCopied: mintCopied, promptsCopied: mintPrompts };
     }
     // Read on the load path, but must never enter through a WRITE: pickRoleKeys
     // drops it and emits no `dispatch`, so an addRole carrying `worktree: true`
@@ -595,6 +656,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
     copyRoleTemplates(teamName, { [roleName]: normalized }, { repointOnly: true });
+    copyRolePrompts(teamName, { [roleName]: normalized }, { repointOnly: true });
     const existing = team.roles[roleName];
     // Never mint an absent reserved key from a def: loadManifest only requires
     // `lead`, so a hand-deleted `reviewer` could otherwise be re-added with an
@@ -603,7 +665,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`the "${roleName}" role is operator-owned topology; add it via the app, not an intent/mutator (${team.file})`);
     }
     if (existing) {
-      if (JSON.stringify(existing) === JSON.stringify(normalized)) return { ...team, templatesCopied: [] }; // no-op
+      if (JSON.stringify(existing) === JSON.stringify(normalized)) return { ...team, templatesCopied: [], promptsCopied: [] }; // no-op
       throw new Error(`role "${roleName}" already exists on team "${teamName}" with a different definition`);
     }
     // Re-read raw to preserve hand-authored fields on the OTHER roles. The new
@@ -614,13 +676,21 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
     const templatesCopied = copyRoleTemplates(teamName, { [roleName]: raw.roles[roleName] });
+    let promptsCopied;
     try {
-      atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+      promptsCopied = copyRolePrompts(teamName, { [roleName]: raw.roles[roleName] });
     } catch (err) {
       unwindTemplateCopies(teamName, templatesCopied);
       throw err;
     }
-    return { ...loadManifest(teamName), templatesCopied };
+    try {
+      atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    } catch (err) {
+      unwindTemplateCopies(teamName, templatesCopied);
+      unwindPromptCopies(teamName, promptsCopied);
+      throw err;
+    }
+    return { ...loadManifest(teamName), templatesCopied, promptsCopied };
   }
 
   function setRole(teamName, roleName, patch) {
