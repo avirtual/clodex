@@ -495,3 +495,216 @@ test('t673: a negative or non-finite wallMs is refused rather than recorded', ()
   // And it accepts a real one, so the rejections above are not universal.
   assert.strictEqual(tc.reviewCostRecord({ ticket: 't', team: 'c', round: 1, seat: 's', wallMs: 1.6 }).wallMs, 2);
 });
+
+// ── the team ledger: cost.jsonl, and the rollup over it ─────────────────────
+//
+// Literal fixtures throughout, not rows built by the writers: the writers are
+// pinned separately, and a rollup fed its own producer's output cannot fail the
+// way a hand-edited or half-written ledger does — which is the shape this file
+// actually meets on disk.
+
+const LEDGER_ROWS = [
+  { kind: 'ticket', ticket: 't1', team: 'a', role: 'hand', seat: 'h1', attribution: 'seat', usd: 10, requests: 100, tokens: 5, at: 2000 },
+  { kind: 'review', ticket: 't1', team: 'a', round: 1, seat: 'r1', verdict: 'REJECT', usd: 2, at: 3000 },
+  { kind: 'review', ticket: 't1', team: 'a', round: 2, seat: 'r2', verdict: 'ACCEPT', usd: 3, at: 4000 },
+  { kind: 'ticket', ticket: 't2', team: 'a', role: 'hand', seat: 'h2', attribution: 'seat-lifetime', usd: 594.98, at: 5000 },
+  { kind: 'ticket', ticket: 't3', team: 'a', role: 'hand', seat: null, attribution: 'unknown', usd: null, at: 1000 },
+  { kind: 'seat', seat: 'lead', team: 'a', role: 'lead', usd: 7, tokens: 9, requests: 4, turns: 2, at: 6000 },
+];
+
+const ledgerText = (rows) => `${rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n')}\n`;
+
+test('parseTeamLedger keeps the good rows and COUNTS the rest, never dropping silently', () => {
+  const { rows, malformed } = tc.parseTeamLedger(ledgerText([
+    LEDGER_ROWS[0],
+    'not json at all',
+    '{"unterminated": ',
+    '[1,2,3]',           // valid JSON, not a row
+    '"a bare string"',   // ditto
+    '{"usd": 5}',        // an object with no kind is not a row either
+    LEDGER_ROWS[1],
+  ]));
+  assert.strictEqual(rows.length, 2, 'both real rows survive');
+  assert.strictEqual(malformed, 5, 'and every unusable line is counted, not skipped in silence');
+  assert.deepStrictEqual(rows.map((r) => r.kind), ['ticket', 'review']);
+});
+
+test('readTeamLedger reads the file, and a MISSING one is empty rather than an error', () => {
+  const files = new Map([['/teams/a/cost.jsonl', ledgerText([LEDGER_ROWS[0]])]]);
+  const readFile = (p) => {
+    if (files.has(p)) return files.get(p);
+    const e = new Error(`ENOENT: ${p}`);
+    e.code = 'ENOENT';
+    throw e;
+  };
+  const got = tc.readTeamLedger('/teams/a', { readFile });
+  assert.strictEqual(got.rows.length, 1);
+  assert.strictEqual(got.error, null);
+
+  // A team that has closed no tickets yet has no file, and that is a normal
+  // state — reporting it as an error would make every new team look broken.
+  const none = tc.readTeamLedger('/teams/b', { readFile });
+  assert.deepStrictEqual([none.rows.length, none.error], [0, null]);
+
+  // Any OTHER read failure is reported: a ledger nobody can read is not an
+  // empty one, and a $0 total off an EACCES is the false zero this whole
+  // artifact exists to refuse.
+  const denied = tc.readTeamLedger('/teams/c', {
+    readFile: () => { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; },
+  });
+  assert.strictEqual(denied.rows.length, 0);
+  assert.match(denied.error, /EACCES/);
+});
+
+test('readTeamLedger REFUSES to invent an fs rather than reading one', () => {
+  // The module is a pure leaf (docs/architecture.md), so the reader is injected.
+  // Throwing beats defaulting to require('fs'): a caller that forgot would get a
+  // silent read of the operator's real ledger from inside a test.
+  assert.throws(() => tc.readTeamLedger('/teams/a'), /injected readFile/);
+});
+
+test('rollupTeam splits the three kinds and never sums a null as zero', () => {
+  const roll = tc.rollupTeam(LEDGER_ROWS);
+  assert.strictEqual(roll.usd.tickets, 10, 'only the EXACT ticket row counts');
+  assert.strictEqual(roll.usd.reviews, 5, 'both review rounds');
+  assert.strictEqual(roll.usd.standing, 7);
+  assert.strictEqual(roll.usd.total, 22);
+  // ENTER: the two rows deliberately excluded are really in the fixture, or the
+  // totals above are trivially right for a set that never contained them.
+  assert.ok(LEDGER_ROWS.some((r) => r.attribution === 'seat-lifetime'), 'a lifetime row is in the set');
+  assert.ok(LEDGER_ROWS.some((r) => r.usd === null), 'and an unpriced one');
+  assert.strictEqual(roll.counts.tickets, 3, 'all three ticket rows are COUNTED');
+  assert.strictEqual(roll.counts.unattributed, 2,
+    'the lifetime row and the null row are both unattributable — counted, never summed');
+});
+
+test('a seat-lifetime ticket contributes its COUNT but not its dollars', () => {
+  // $594.98 against a ticket a standing seat merely closed is the number t478
+  // stopped publishing as exact. It must not reappear in a total by the back
+  // door of a rollup that reads `usd` without reading `attribution`.
+  const roll = tc.rollupTeam(LEDGER_ROWS);
+  assert.ok(roll.usd.total < 100, `a total of ${roll.usd.total} means the lifetime row was summed`);
+  const e = roll.byTicket.get('t2');
+  assert.deepStrictEqual([e.hand, e.total, e.attribution], [null, null, 'seat-lifetime'],
+    'and the per-ticket row reports it as unknown rather than as its seat\'s whole life');
+});
+
+test('byTicket joins a hand to its review rounds', () => {
+  const roll = tc.rollupTeam(LEDGER_ROWS);
+  const t1 = roll.byTicket.get('t1');
+  assert.strictEqual(t1.hand, 10);
+  assert.strictEqual(t1.total, 15, 'hand plus both rounds');
+  assert.deepStrictEqual(t1.reviews.map((r) => [r.round, r.usd, r.verdict]),
+    [[1, 2, 'REJECT'], [2, 3, 'ACCEPT']]);
+  assert.strictEqual(t1.requests, 100);
+});
+
+test('a ticket with NOTHING priced totals null, not 0', () => {
+  const roll = tc.rollupTeam(LEDGER_ROWS);
+  assert.strictEqual(roll.byTicket.get('t3').total, null,
+    'a ticket whose spend nobody could attribute is UNKNOWN — a 0 would read as free work');
+});
+
+test('rollupTeam reports the EARLIEST timestamp as its since', () => {
+  // Rows arrive in write order, and the earliest is deliberately not first in
+  // the fixture: taking rows[0].at would answer 2000 here.
+  assert.strictEqual(tc.rollupTeam(LEDGER_ROWS).since, 1000);
+  assert.strictEqual(tc.rollupTeam([]).since, null, 'an empty ledger has no since to claim');
+});
+
+test('rollupTeam groups by role, with reviews under their own key', () => {
+  const roll = tc.rollupTeam(LEDGER_ROWS);
+  assert.strictEqual(roll.byRole.get('hand'), 10);
+  assert.strictEqual(roll.byRole.get('lead'), 7);
+  assert.strictEqual(roll.byRole.get('review'), 5,
+    'review spend is not a role\'s — folding it into the reviewed ticket\'s role would double the hand\'s figure');
+});
+
+test('rollupTeam survives junk in the row array', () => {
+  const roll = tc.rollupTeam([null, undefined, 42, 'row', { kind: 'nonsense', usd: 999 }, LEDGER_ROWS[0]]);
+  assert.strictEqual(roll.usd.total, 10, 'an unknown kind contributes nothing, and nothing throws');
+});
+
+// ── the three row builders ──────────────────────────────────────────────────
+
+test('ticketLedgerRow carries the attribution VERBATIM off the COST.json record', () => {
+  // The whole point of the ledger row: a consumer decides what to sum from this
+  // field, so a builder that dropped or normalised it would make every rollup
+  // above sum a lifetime figure as if it were exact.
+  const rec = tc.costRecord({
+    ticket: { id: 't7', role: 'hand', assignee: 'h1', state: 'done', closedAt: 5 },
+    team: 'a', ledger: { usd: 4, requests: 9, known: 1, total: 1, inputTokens: 2, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    attribution: 'seat-lifetime', now: 5,
+  });
+  const row = tc.ticketLedgerRow(rec, 99);
+  assert.deepStrictEqual(
+    [row.kind, row.ticket, row.role, row.seat, row.attribution, row.usd, row.requests, row.tokens, row.at],
+    ['ticket', 't7', 'hand', 'h1', 'seat-lifetime', 4, 9, 5, 99]);
+});
+
+test('an UNRESOLVED ticket record makes a row with null money, never zero', () => {
+  const rec = tc.costRecord({
+    ticket: { id: 't8', role: 'hand', state: 'done' }, team: 'a', ledger: null,
+    seatResolved: false, attribution: 'unknown', now: 1,
+  });
+  const row = tc.ticketLedgerRow(rec, 2);
+  assert.deepStrictEqual([row.usd, row.requests, row.tokens], [null, null, null],
+    'nulls survive into the ledger, so the rollup can exclude them with a count');
+});
+
+test('reviewLedgerRow keeps the round and the verdict, which is what makes rounds separable', () => {
+  const rec = tc.reviewCostRecord({
+    ticket: 't7', team: 'a', round: 2, seat: 'r2', verdict: 'ACCEPT',
+    ledger: { usd: 3, requests: 11, known: 1, total: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 1 },
+    now: 5,
+  });
+  const row = tc.reviewLedgerRow(rec, 88);
+  assert.deepStrictEqual(
+    [row.kind, row.ticket, row.round, row.seat, row.verdict, row.usd, row.tokens, row.at],
+    ['review', 't7', 2, 'r2', 'ACCEPT', 3, 4, 88]);
+});
+
+test('seatLedgerRow books the DELTA since the seat was last stamped', () => {
+  // The whole mechanism for a standing seat: it has no ticket end, so each
+  // boundary books what it spent since the last one. Booking the lifetime would
+  // re-add everything already in the ledger at every /clear.
+  const row = tc.seatLedgerRow({
+    seat: 'lead', team: 'a', role: 'lead', sessionId: 's2', boundary: 'clear',
+    lifetime: { usd: 30, tokens: 100, requests: 50, turns: 10 },
+    cursor: { usd: 12, tokens: 40, requests: 20, turns: 4 },
+    now: 7,
+  });
+  assert.deepStrictEqual([row.kind, row.seat, row.boundary, row.usd, row.tokens, row.requests, row.turns],
+    ['seat', 'lead', 'clear', 18, 60, 30, 6]);
+  assert.deepStrictEqual([row.from, row.to], [12, 30],
+    'the window is recorded, so a wrong delta is auditable instead of silently wrong');
+});
+
+test('a seat with no cursor books its whole life ONCE', () => {
+  const row = tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 5, tokens: 9, requests: 2, turns: 1 }, cursor: null, now: 1,
+  });
+  assert.deepStrictEqual([row.usd, row.from, row.to], [5, 0, 5]);
+});
+
+test('a boundary that spent NOTHING books no row at all', () => {
+  // An idle seat hits exit, clear and compact like any other. A zero row per
+  // boundary would bloat the ledger and put a run of $0.00 rows in front of
+  // every real one.
+  assert.strictEqual(tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 12, tokens: 40, requests: 20, turns: 4 },
+    cursor: { usd: 12, tokens: 40, requests: 20, turns: 4 },
+  }), null);
+  assert.strictEqual(tc.seatLedgerRow({ seat: 'lead', lifetime: null }), null, 'and no ledger books nothing');
+  assert.strictEqual(tc.seatLedgerRow({ seat: '', lifetime: { usd: 5 } }), null, 'and neither does a nameless seat');
+});
+
+test('a lifetime BELOW the cursor books nothing rather than a negative row', () => {
+  // Reachable for real: wire-totals keeps only the newest 500 sessions, so a
+  // long-lived seat's lifetime figure can fall when old rows age out. A negative
+  // row would subtract from the team total money that really was spent.
+  assert.strictEqual(tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 3, tokens: 1, requests: 1, turns: 1 },
+    cursor: { usd: 40, tokens: 90, requests: 9, turns: 9 },
+  }), null);
+});
