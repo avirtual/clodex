@@ -687,6 +687,8 @@ test('exec-def schema accepts valid payloads via real parseAndValidate', () => {
     // The rest of this file spends 300 lines exercising the verb the schema
     // under test would have rejected.
     { action: 'tickets', agent: 'clodex' },
+    { action: 'cost', agent: 'clodex' },
+    { action: 'cost', agent: 'clodex', target: 't803' },
   ]) {
     const r = parseAndValidate(EXEC_DEF, JSON.stringify(payload));
     assert.strictEqual(r.ok, true, `should accept ${JSON.stringify(payload)}: ${r.error}`);
@@ -748,8 +750,8 @@ test('exec-def schema accepts every filter the script implements, and no other',
 test('exec-def schema accepts every action the script dispatches, and no other', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
   const actions = [...src.matchAll(/if \(action === '(\w+)'\) return do\w+\(payload\);/g)].map((m) => m[1]);
-  assert.deepStrictEqual(actions.slice().sort(), ['retire', 'roster', 'tickets'],
-    'ENTER: scraped the three dispatched verbs from the main() chain');
+  assert.deepStrictEqual(actions.slice().sort(), ['cost', 'retire', 'roster', 'tickets'],
+    'ENTER: scraped the four dispatched verbs from the main() chain');
 
   assert.deepStrictEqual(enumOf('action').slice().sort(), actions.slice().sort(),
     'the seed\'s action enum and the script\'s dispatch disagree — a verb is gated out, or gated in with nothing behind it');

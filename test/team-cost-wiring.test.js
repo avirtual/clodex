@@ -133,12 +133,20 @@ test('create() mints from the record label, and both spawn paths seed it before 
   // point — the property is an ordering in the source that no runnable unit test
   // can observe without spawning a PTY. Re-anchor it on the moved code; do NOT
   // loosen the pattern until it passes, which retires the check silently.
-  const seeds = ticketSrc.match(/wireLabel: \w+ \}/g) || [];
+  //
+  // Two shapes, not one: t805 made the ticket seat's mint stamp its fields
+  // UNCONDITIONALLY (`wireLabel: seatLabel || null`) while the reviewer's stays
+  // conditional (`...(reviewLabel ? { wireLabel: reviewLabel } : {})`), so a
+  // single pattern can no longer count both. Re-anchored on what each site now
+  // writes, per the instruction above — not widened to `wireLabel:` bare, which
+  // would also match this comment's neighbours and any future field.
+  const seeds = (ticketSrc.match(/wireLabel: \w+ \}/g) || [])
+    .concat(ticketSrc.match(/wireLabel: \w+ \|\| null,/g) || []);
   assert.strictEqual(seeds.length, 2,
     `expected exactly 2 wireLabel seeds (reviewer + ticket seat), found ${seeds.length}`);
   // ENTER: and none stayed behind in core, which would mean the move split a
   // spawn path in half rather than carrying it across.
-  assert.strictEqual((src.match(/wireLabel: \w+ \}/g) || []).length, 0,
+  assert.strictEqual((src.match(/wireLabel: \w+( \}| \|\| null,)/g) || []).length, 0,
     'a wireLabel seed is still in session-manager.js — both spawn paths moved to team-tickets.js');
 
   for (const [label, seedRe, createRe] of [
@@ -149,7 +157,7 @@ test('create() mints from the record label, and both spawn paths seed it before 
     // t776 appended the loop's --add-dir argv to the reviewer's create() call,
     // re-anchored here on the new literal rather than gap-matched through it.
     ['reviewer', /reviewFor: session\.name,\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.\(reviewTicket \? \{ reviewTicket \} : \{\}\),\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, \[\.\.\.shape\.extraArgs, \.\.\.addDirs\.flatMap\(\(d\) => \['--add-dir', d\]\)\], null, shape\.workspaceId,/],
-    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, seatCwd,/],
+    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*wireLabel: seatLabel \|\| null,\n\s*ticketId: ticket\.id,/, /seat\.name, shape\.type, seatCwd,/],
   ]) {
     const seedAt = ticketSrc.search(seedRe);
     const createAt = ticketSrc.search(createRe);
@@ -831,4 +839,49 @@ test('a ticket with no taskDir writes nothing, and a broken ledger still records
   fs.rmSync(userData, { recursive: true, force: true });
   fs.rmSync(repo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+// t805 rider: a seat NAME re-minted over a surviving record must not inherit the
+// PREVIOUS ticket's identity from it.
+//
+// `upsert` spread-merges (stores.js), and the persistence double above mirrors
+// that exactly — which is what makes this reachable: a record can survive a seat
+// under archive, under a retire that did not discard, or across any restart that
+// did not remove it, and the ticket loop reuses seat names freely. A mint that
+// left either field to a conditional would take the stale value, and
+// `_costSeatFor` reads `ticketId === ticket.id` as its whole definition of
+// "minted for this ticket" — so t2's spend would be published as t1's, exactly,
+// with `attribution: 'seat'` and no way to tell.
+//
+// Driven through the REAL _spawnTicketSeat rather than a copy of its object
+// literal: the mint is a synchronous stub taken before any await, so it has
+// already landed by the time the spawn machinery beyond it fails on the stub
+// deps, and a test that rebuilt the literal here would pass against a mint that
+// no longer writes it at all.
+test('a re-minted seat name reads the NEW ticket, never the record it merged over', async () => {
+  const persistence = mkPersistence([{
+    // The survivor: minted for t1, still carrying t1's identity and label.
+    name: 'team-hand-1', ephemeral: true, ticketId: 't1',
+    wireLabel: 'team.t1.hand', sessionId: 'old-session',
+  }]);
+  const { m } = mkManager({ persistence });
+
+  // ENTER: the stale record really is there and really does name t1, or the
+  // assertions below hold over a record the mint simply created fresh.
+  assert.strictEqual(persistence.get('team-hand-1').ticketId, 't1');
+
+  try {
+    m._spawnTicketSeat(
+      'lead', { name: 'team', root: '/tmp/nope', roles: { hand: {} } },
+      { id: 't2', role: 'hand', assignee: 'hand' }, 'hand', { name: 'team-hand-1' },
+    );
+  } catch { /* the spawn beyond the mint needs a PTY; the mint is synchronous and already landed */ }
+
+  const rec = persistence.get('team-hand-1');
+  assert.strictEqual(rec.ticketId, 't2',
+    'the mint must OVERWRITE ticketId — inheriting t1 bills t2\'s work to t1 as an exact figure');
+  assert.strictEqual(rec.ephemeral, true,
+    'and re-assert ephemeral, which decides whether the seat is torn down with its ticket');
+  assert.strictEqual(rec.wireLabel, 'team.t2.hand',
+    'and re-label the wire, or the proxy keeps billing t2\'s requests to t1\'s route');
 });

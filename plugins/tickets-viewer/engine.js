@@ -16,10 +16,10 @@ const crypto = require('node:crypto');
 // COMPARED TO CORE, in test/tickets-viewer-path-parity.test.js: projectDirFor,
 // nextTicketId, ticketTitle, extractTaskDir, ticketStarted, ticketTaskDirRefusal,
 // resolveTaskDir, ticketTaskDirLine, ticketTaskDirLineFor, closeLine,
-// atomicWriteFileSync, stallMsFor, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS. Editing one
-// of these to disagree with core fails the suite. A symbol NOT on this list may
-// still be tested here, but never against core — so a green suite is not
-// evidence that it still agrees.
+// atomicWriteFileSync, stallMsFor, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS,
+// parseTeamLedger, rollupTeam, readTeamLedger. Editing one of these to disagree
+// with core fails the suite. A symbol NOT on this list may still be tested here,
+// but never against core — so a green suite is not evidence that it agrees.
 //
 // manifestWarning is a deliberate SUBSET of core's validator, so it must never
 // be made byte-equal to it.

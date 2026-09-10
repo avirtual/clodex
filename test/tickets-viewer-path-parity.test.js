@@ -350,6 +350,8 @@ test('viewer task-dir refusal agrees with core team-tickets, byte for byte', () 
 //   - `ticketTaskDirLineFor` against core's `_ticketTaskDirRender().line` — the
 //     GATE. Both halves can be byte-identical while the viewer renders under a
 //     different condition, or never renders at all.
+//
+// The cost rollup is the fourth copied pair, pinned at the end of this file.
 const coreCost = require('../team-cost');
 const { ticketTaskDirLine: coreTaskDirLine } = require('../session-manager');
 
@@ -735,4 +737,79 @@ test('viewer watchdog bounds agree with the window core clamps into', () => {
   // would never call anything stalled while core kept nudging.
   assert.strictEqual(viewer.stallMsFor({ watchdogMs: 1 }), floor, 'below the floor reads as the floor');
   assert.strictEqual(viewer.stallMsFor({ watchdogMs: 1e300 }), ceiling, 'above the ceiling reads as the ceiling');
+});
+
+// ── the cost rollup, copied in for the same §4 reason ───────────────────────
+//
+// A drifted rollup is the same class of silent failure as a drifted
+// projectDirFor: nothing throws, the board still paints, and the number it
+// paints is simply wrong. Worse than the hash case in one respect — a wrong
+// hash shows an EMPTY board, which reads as broken, while a wrong total reads as
+// authoritative.
+//
+// The fixture deliberately carries every arm the two copies could disagree on:
+// an exact ticket, a seat-lifetime one (must not be summed), a null-usd one
+// (must not sum as 0), two review rounds, a standing-seat row, and a malformed
+// line.
+const PARITY_LEDGER_ROWS = [
+  '{"kind":"ticket","ticket":"t1","team":"a","role":"hand","seat":"h1","attribution":"seat","usd":10,"requests":100,"tokens":5,"at":2000}',
+  '{"kind":"review","ticket":"t1","team":"a","round":1,"seat":"r1","verdict":"REJECT","usd":2,"at":3000}',
+  '{"kind":"review","ticket":"t1","team":"a","round":2,"seat":"r2","verdict":"ACCEPT","usd":null,"at":4000}',
+  '{"kind":"ticket","ticket":"t2","team":"a","role":"hand","seat":"h2","attribution":"seat-lifetime","usd":594.98,"at":5000}',
+  '{"kind":"ticket","ticket":"t3","team":"a","role":"hand","seat":null,"attribution":"unknown","usd":null,"at":1000}',
+  '{"kind":"seat","seat":"lead","team":"a","role":"lead","usd":7,"tokens":9,"requests":4,"turns":2,"at":6000}',
+  'this line is not JSON',
+  '{"no":"kind"}',
+];
+
+test('viewer parseTeamLedger agrees with core team-cost, malformed count included', () => {
+  const text = `${PARITY_LEDGER_ROWS.join('\n')}\n`;
+  const mine = viewer.parseTeamLedger(text);
+  const theirs = coreCost.parseTeamLedger(text);
+
+  // ENTER: the fixture must actually contain BOTH kinds of line, or the two
+  // agreements below are agreements about an empty question.
+  assert.ok(mine.rows.length >= 6, 'the parse must yield the real rows');
+  assert.ok(mine.malformed === 2, 'and count the two unusable ones');
+
+  assert.deepStrictEqual(mine.rows, theirs.rows, 'the copies parse different rows out of the same file');
+  assert.strictEqual(mine.malformed, theirs.malformed, 'and disagree on how many lines were unusable');
+});
+
+test('viewer rollupTeam agrees with core team-cost on every total it publishes', () => {
+  const rows = coreCost.parseTeamLedger(`${PARITY_LEDGER_ROWS.join('\n')}\n`).rows;
+  const mine = viewer.rollupTeam(rows);
+  const theirs = coreCost.rollupTeam(rows);
+
+  // ENTER: the totals are non-trivial and the exclusions really happened —
+  // otherwise two copies that both returned zeros would "agree" perfectly.
+  assert.ok(theirs.usd.total > 0, 'the fixture prices something');
+  assert.ok(theirs.usd.total < 100, 'and excludes the $594.98 lifetime row from the total');
+  assert.strictEqual(theirs.counts.unattributed, 2, 'the lifetime and null rows are counted, not summed');
+
+  assert.deepStrictEqual(mine.usd, theirs.usd, 'the copies publish different money');
+  assert.deepStrictEqual(mine.counts, theirs.counts, 'or count the rows differently');
+  assert.strictEqual(mine.since, theirs.since);
+  assert.deepStrictEqual([...mine.byRole.entries()].sort(), [...theirs.byRole.entries()].sort());
+  assert.deepStrictEqual([...mine.byTicket.entries()].sort(), [...theirs.byTicket.entries()].sort(),
+    'the per-ticket join is what the row cell renders — a drift here misprices one ticket at a time');
+});
+
+test('viewer readTeamLedger reads a real cost.jsonl, and a missing one is empty', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-ledger-'));
+  fs.writeFileSync(path.join(dir, 'cost.jsonl'), `${PARITY_LEDGER_ROWS.join('\n')}\n`);
+
+  const mine = viewer.readTeamLedger(dir);
+  // Core's is the same function with the fs INJECTED — the pure-leaf rule — so
+  // parity here is between the copy's own read and core's over the same bytes.
+  const theirs = coreCost.readTeamLedger(dir, { readFile: (p, enc) => fs.readFileSync(p, enc) });
+  assert.deepStrictEqual(mine.rows, theirs.rows);
+  assert.strictEqual(mine.malformed, theirs.malformed);
+  assert.strictEqual(mine.error, null);
+
+  const empty = viewer.readTeamLedger(path.join(dir, 'nope'));
+  assert.deepStrictEqual([empty.rows.length, empty.error], [0, null],
+    'a team that has closed nothing yet has no file, and that is not an error');
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -4843,7 +4843,7 @@ function createTicketMethods(deps, shared) {
       });
       getPersistence().upsert({
         name: seat.name, ephemeral: true,
-        ...(seatLabel ? { wireLabel: seatLabel } : {}),
+        wireLabel: seatLabel || null,
         ticketId: ticket.id,
       });
       // Un-pin the ticket back to its role. Reloaded from the store rather than
