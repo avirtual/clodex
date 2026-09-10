@@ -377,10 +377,10 @@ function createAppMenus(deps) {
           label: b.name || b.id,
           rows: promptRowsOf(b.prompts, kind, (p) => sendToFocused(channel, { plugin: b.id, kind, name: p.name })),
         })),
-      ], { empty: `(no ${kind} prompts)` });
+      ], { empty: `(no library ${kind} prompts)` });
       const teamsSubmenu = () => {
         const cats = teamCategories(teamRows, (p) => ({
-          label: truncate(`${p.name}  —  ${p.kind}`),
+          label: `${truncate(p.name)}  —  ${p.kind}`,
           click: () => sendToFocused(channel, { team: p.team, kind: p.kind, name: p.name }),
         }));
         const items = categoryMenu(cats, { empty: '(no team prompts)' });

@@ -232,10 +232,10 @@ function buildLibraryMenu(ctx) {
         label: b.name || b.id,
         rows: promptRowsOf(b.prompts, kind, (p) => emit(channel, { plugin: b.id, kind, name: p.name })),
       })),
-    ], { empty: `(no ${kind} prompts)` });
+    ], { empty: `(no library ${kind} prompts)` });
     const teamsSubmenu = () => {
       const cats = teamCategories(teamRows, (p) => ({
-        label: trunc(`${p.name}  —  ${p.kind}`),
+        label: `${trunc(p.name)}  —  ${p.kind}`,
         run: () => emit(channel, { team: p.team, kind: p.kind, name: p.name }),
       }));
       const rows = categoryRows(cats, { empty: '(no team prompts)' });

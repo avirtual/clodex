@@ -170,6 +170,48 @@ test('t794: a team row clicks with {team, …} and past sixteen rows every group
   assert.deepStrictEqual((await Promise.resolve(agents[1].submenu())).map((r) => r.label), ['critic']);
 });
 
+const webShape = (rows) => rows.map((r) => (r.sep ? '—' : r.head ? `[${r.head}]`
+  : r.disabled ? `[${r.label}]` : r.submenu ? `${r.label} ▸` : r.label));
+
+const promptsWith = async (prompts) => {
+  const { ctx } = recordingCtx();
+  const withPrompts = { ...ctx, api: { ...ctx.api, listPrompts: async () => prompts } };
+  const top = await Promise.resolve(buildMenus(withPrompts).find((m) => m.label === 'Library').items());
+  return Promise.resolve(top.find((r) => r.label === 'Prompts').submenu());
+};
+
+test('t799: an empty kind names the library, so the plugin rows under it are not a contradiction', async () => {
+  const prompts = await promptsWith([]);
+  const sub = async (label) => webShape(await Promise.resolve(prompts.find((r) => r.label === label).submenu()));
+  assert.deepStrictEqual(await sub('System'), ['[(no library system prompts)]', '—', '[Reviewer]', 'strict']);
+  assert.deepStrictEqual(await sub('Append'), ['[(no library append prompts)]', '—', '[Reviewer]', 'rules']);
+});
+
+const WEB_LONG_STEM = 'team-prompt-with-a-very-long-stem-that-runs-past-the-truncation-point';
+
+test('t799: a long team prompt name is truncated but the kind suffix survives', async () => {
+  const prompts = await promptsWith([{ name: WEB_LONG_STEM, kind: 'append', body: 'U', team: 'shop' }]);
+  const teams = await Promise.resolve(prompts.find((r) => r.label === 'Teams').submenu());
+  assert.deepStrictEqual(webShape(teams), [
+    '[Team shop]',
+    'team-prompt-with-a-very-long-stem-that-runs-past-the-trun…  —  append',
+  ]);
+});
+
+test('t799: past sixteen team rows every team is its own submenu and no header row doubles it', async () => {
+  const prompts = await promptsWith([
+    ...Array.from({ length: 9 }, (_, i) => ({ name: `shop-${i + 1}`, kind: 'system', body: 'S', team: 'shop' })),
+    ...Array.from({ length: 8 }, (_, i) => ({ name: `yard-${i + 1}`, kind: 'append', body: 'A', team: 'yard' })),
+  ]);
+  const teams = await Promise.resolve(prompts.find((r) => r.label === 'Teams').submenu());
+  assert.deepStrictEqual(webShape(teams), ['Team shop ▸', 'Team yard ▸'],
+    'the folded arm re-heads nothing: a disabled Team row above a live Team ▸ row would be the same name twice');
+  const rowsOf = async (r) => Promise.resolve(r.submenu());
+  assert.deepStrictEqual((await rowsOf(teams[0])).length, 9);
+  assert.deepStrictEqual((await rowsOf(teams[1])).length, 8);
+  assert.strictEqual((await rowsOf(teams[0]))[0].label, 'shop-1  —  system');
+});
+
 test('New Session… carries the Alt+T accelerator hint (its real browser Alt chord)', async () => {
   const { ctx } = recordingCtx();
   const file = buildMenus(ctx).find((m) => m.label === 'File');

@@ -8988,10 +8988,10 @@ body {
               label: b.name || b.id,
               rows: promptRowsOf(b.prompts, kind, (p) => emit(channel, { plugin: b.id, kind, name: p.name }))
             }))
-          ], { empty: `(no ${kind} prompts)` });
+          ], { empty: `(no library ${kind} prompts)` });
           const teamsSubmenu = () => {
             const cats = teamCategories(teamRows, (p) => ({
-              label: trunc(`${p.name}  \u2014  ${p.kind}`),
+              label: `${trunc(p.name)}  \u2014  ${p.kind}`,
               run: () => emit(channel, { team: p.team, kind: p.kind, name: p.name })
             }));
             const rows2 = categoryRows(cats, { empty: "(no team prompts)" });
