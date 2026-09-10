@@ -1297,6 +1297,11 @@
         </div>
         <p class="hint-text" id="sandbox-auth-hint">Seeds the sandbox with your Claude subscription auth (<code>CLAUDE_CODE_OAUTH_TOKEN</code>). Stored locally at mode 0600, applied on the next Start. Or leave empty and run <code>claude login</code> inside a sandbox bash session.</p>
       </div>
+      <div class="sandbox-field" id="sandbox-ref-field">
+        <label for="sandbox-ref">Track git ref</label>
+        <input id="sandbox-ref" type="text" spellcheck="false" autocomplete="off" maxlength="128" placeholder="(the running app's version)" />
+        <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits.</p>
+      </div>
       <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" role="button" tabindex="0">Open in browser →</a></div>
       <div class="dialog-actions">
         <!-- Both start disabled: pessimistic until the open probe confirms docker

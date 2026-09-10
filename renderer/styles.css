@@ -2491,6 +2491,9 @@ html, body {
 .sandbox-field input:disabled { opacity: 0.5; }
 .sandbox-workdir-row { display: flex; gap: 6px; }
 .sandbox-workdir-row input { flex: 1; }
+/* Every other .sandbox-field input sits in a flex row that stretches it; this
+   one is a bare child, so without a width it collapses to the UA's ~20ch. */
+#sandbox-ref { width: 100%; }
 .sandbox-check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 12px 0; cursor: pointer; }
 .sandbox-check input { margin: 0; }
 .sandbox-mount-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }

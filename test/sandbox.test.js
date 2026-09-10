@@ -1392,3 +1392,235 @@ test('manager: bringUp is serialized across instances (shared chain, no probe ra
   await Promise.all([mgr.get('sandbox').up(), mgr.get('proj').up()]);
   assert.strictEqual(maxInFlight, 1, 'the two bringUps never overlapped');
 });
+
+// ── tracked git ref (t807) ──────────────────────────────────────────────────
+//
+// A box with `ref` set builds from a DETACHED worktree of the Clodex checkout at
+// that commit, rather than from the live checkout (dev) or the GHCR tag
+// (packaged). These tests drive real git against a temp repo — the whole point
+// of the feature is what git does, and a mocked git would pin only the arg
+// vectors, which is the half that was never in doubt.
+
+const { execFileSync } = require('node:child_process');
+const { removeWorktree } = require('../git-worktree');
+
+function gitIn(dir, args) {
+  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+// A repo with one commit on `master` and a file whose content identifies the
+// commit, so a test can tell WHICH commit the src worktree is parked on without
+// comparing shas by hand.
+function tempRepo(marker = 'one') {
+  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'repo-'));
+  gitIn(dir, ['init', '-q', '-b', 'master']);
+  gitIn(dir, ['config', 'user.name', 'Clodex']);
+  gitIn(dir, ['config', 'user.email', 'clodex@localhost']);
+  fs.writeFileSync(path.join(dir, 'marker.txt'), marker);
+  gitIn(dir, ['add', '-A']);
+  gitIn(dir, ['commit', '-q', '-m', marker]);
+  return dir;
+}
+
+function commitOn(repo, branch, marker) {
+  gitIn(repo, ['checkout', '-q', branch]);
+  fs.writeFileSync(path.join(repo, 'marker.txt'), marker);
+  gitIn(repo, ['add', '-A']);
+  gitIn(repo, ['commit', '-q', '-m', marker]);
+  return gitIn(repo, ['rev-parse', 'HEAD']);
+}
+
+// Every temp repo grows worktrees under a temp userData; both live inside
+// TMP_USERDATA, which the process-exit hook removes wholesale. The git ADMIN
+// entries live in the repo, which goes with it.
+function refSandbox(repo, extra = {}) {
+  const settings = fakeSettings();
+  const ud = freshUserData();
+  const sb = createSandbox({
+    spawn: okComposeSpawn(),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: repo,
+    ...extra,
+  });
+  return { sb, settings, ud };
+}
+
+test('resolveImage: the four precedence cases, literal', () => {
+  // 1. An image override wins over everything, ref included.
+  assert.deepStrictEqual(
+    resolveImage({ isPackaged: true, appVersion: '9.9.9', override: 'my/img:tag', repoRoot: '/repo', ref: 'master', srcDir: '/ud/sandbox/src', sha: 'abc1234' }),
+    { kind: 'image', image: 'my/img:tag' },
+  );
+  // 2. A ref beats the packaged GHCR tag — a packaged app CAN build from a
+  //    worktree, because docker does the build, not the app.
+  assert.deepStrictEqual(
+    resolveImage({ isPackaged: true, appVersion: '9.9.9', override: null, repoRoot: '/repo', ref: 'master', srcDir: '/ud/sandbox/src', sha: 'abc1234' }),
+    { kind: 'build', context: '/ud/sandbox/src', dockerfile: 'docker/web/Dockerfile', ref: 'master', sha: 'abc1234' },
+  );
+  // 2b. …and beats the dev checkout too, so the two halves agree.
+  assert.deepStrictEqual(
+    resolveImage({ isPackaged: false, appVersion: '9.9.9', override: null, repoRoot: '/repo', ref: 'master', srcDir: '/ud/sandbox/src', sha: null }),
+    { kind: 'build', context: '/ud/sandbox/src', dockerfile: 'docker/web/Dockerfile', ref: 'master', sha: null },
+  );
+  // 3. No ref, packaged → the version tag.
+  assert.deepStrictEqual(
+    resolveImage({ isPackaged: true, appVersion: '9.9.9', override: null, repoRoot: '/repo', ref: null, srcDir: null, sha: null }),
+    { kind: 'image', image: 'ghcr.io/avirtual/clodex:9.9.9' },
+  );
+  // 4. No ref, dev → the live checkout, WITHOUT ref/sha keys.
+  assert.deepStrictEqual(
+    resolveImage({ isPackaged: false, appVersion: '9.9.9', override: null, repoRoot: '/repo', ref: null, srcDir: null, sha: null }),
+    { kind: 'build', context: '/repo', dockerfile: 'docker/web/Dockerfile' },
+  );
+});
+
+test('setConfig: DEFAULT_CONFIG carries ref:null and a plain branch name is accepted', () => {
+  assert.strictEqual(DEFAULT_CONFIG.ref, null);
+  const { sb } = refSandbox(tempRepo());
+  assert.strictEqual(sb.getConfig().ref, null);
+  assert.strictEqual(sb.setConfig({ ref: '  feature/x  ' }).ref, 'feature/x');
+  assert.strictEqual(sb.setConfig({ ref: '' }).ref, null, 'an empty string clears the ref');
+  sb.setConfig({ ref: 'master' });
+  assert.strictEqual(sb.setConfig({ ref: null }).ref, null, 'null clears the ref');
+});
+
+test("setConfig: rejects a traversal ref and an over-long one, each with a reason", () => {
+  const { sb } = refSandbox(tempRepo());
+  const traversal = sb.setConfig({ ref: '../x' });
+  assert.strictEqual(traversal.ok, false);
+  assert.match(traversal.error, /\.\./);
+  const long = sb.setConfig({ ref: 'a'.repeat(200) });
+  assert.strictEqual(long.ok, false);
+  assert.match(long.error, /too long/i);
+  // A rejected save must not have PERSISTED anything — the reason is the whole
+  // point, and a box left half-configured would build from a ref nobody typed.
+  assert.strictEqual(sb.getConfig().ref, null);
+});
+
+test('up: with a ref, src is a detached worktree at that commit and compose builds from it', async () => {
+  const repo = tempRepo('one');
+  const sha = gitIn(repo, ['rev-parse', 'HEAD']);
+  const { sb } = refSandbox(repo);
+  sb.setConfig({ ref: 'master' });
+
+  const r = await sb.up();
+  assert.strictEqual(r.ok, true, r.error);
+  assert.strictEqual(gitIn(sb.srcDir(), ['rev-parse', 'HEAD']), sha);
+  assert.strictEqual(gitIn(sb.srcDir(), ['rev-parse', '--abbrev-ref', 'HEAD']), 'HEAD', 'detached, so the ref stays free for the operator');
+  assert.strictEqual(fs.readFileSync(path.join(sb.srcDir(), 'marker.txt'), 'utf8'), 'one');
+
+  const yaml = fs.readFileSync(sb.composePath(), 'utf8');
+  assert.match(yaml, new RegExp(`context: ${sb.srcDir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+  assert.ok(!yaml.includes(`context: ${repo}\n`), 'the live checkout is NOT the build context');
+
+  await removeWorktree(sb.srcDir());
+});
+
+test('up: a second up after a new commit on the ref moves src forward', async () => {
+  const repo = tempRepo('one');
+  const { sb } = refSandbox(repo);
+  sb.setConfig({ ref: 'master' });
+  assert.strictEqual((await sb.up()).ok, true);
+  assert.strictEqual(fs.readFileSync(path.join(sb.srcDir(), 'marker.txt'), 'utf8'), 'one');
+
+  const second = commitOn(repo, 'master', 'two');
+  assert.strictEqual((await sb.up()).ok, true);
+  assert.strictEqual(gitIn(sb.srcDir(), ['rev-parse', 'HEAD']), second);
+  assert.strictEqual(fs.readFileSync(path.join(sb.srcDir(), 'marker.txt'), 'utf8'), 'two');
+
+  await removeWorktree(sb.srcDir());
+});
+
+test('rebuild: refreshes src to the ref before building it', async () => {
+  const repo = tempRepo('one');
+  const { sb } = refSandbox(repo);
+  sb.setConfig({ ref: 'master' });
+  assert.strictEqual((await sb.up()).ok, true);
+  const second = commitOn(repo, 'master', 'two');
+  assert.strictEqual((await sb.rebuild()).ok, true);
+  assert.strictEqual(gitIn(sb.srcDir(), ['rev-parse', 'HEAD']), second);
+  await removeWorktree(sb.srcDir());
+});
+
+test('up: an unresolvable ref fails with the exact error and leaves src untouched', async () => {
+  const repo = tempRepo('one');
+  const first = gitIn(repo, ['rev-parse', 'HEAD']);
+  const { sb } = refSandbox(repo);
+  sb.setConfig({ ref: 'master' });
+  assert.strictEqual((await sb.up()).ok, true);
+
+  sb.setConfig({ ref: 'no-such-branch' });
+  const r = await sb.up();
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, `ref no-such-branch does not resolve in ${repo}`);
+  // The PREVIOUS build context survives: a failed refresh must not leave the box
+  // with nothing to build from.
+  assert.strictEqual(gitIn(sb.srcDir(), ['rev-parse', 'HEAD']), first);
+
+  await removeWorktree(sb.srcDir());
+});
+
+test('up: a ref on a repoRoot that is not a git checkout says so, and does not fall back', async () => {
+  const notARepo = fs.mkdtempSync(path.join(TMP_USERDATA, 'asar-'));
+  const { sb } = refSandbox(notARepo, { isPackaged: () => true, appVersion: '9.9.9' });
+  sb.setConfig({ ref: 'master' });
+  const r = await sb.up();
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'this Clodex was not launched from a git checkout; tracking a ref needs one');
+  assert.ok(!fs.existsSync(sb.composePath()), 'no compose was written, so nothing silently built the GHCR tag');
+});
+
+test('status: reports the tracked ref and the sha src is parked on', async () => {
+  const repo = tempRepo('one');
+  const sha = gitIn(repo, ['rev-parse', 'HEAD']);
+  const { sb } = refSandbox(repo);
+
+  const before = await sb.status();
+  assert.strictEqual(before.ref, null);
+  assert.strictEqual(before.sha, null, 'no ref tracked → no sha to report');
+
+  sb.setConfig({ ref: 'master' });
+  assert.strictEqual((await sb.up()).ok, true);
+  const after = await sb.status();
+  assert.strictEqual(after.ref, 'master');
+  assert.strictEqual(after.sha, sha);
+
+  await removeWorktree(sb.srcDir());
+});
+
+test('manager: remove() removes the box src worktree, not just the registry row', async () => {
+  const repo = tempRepo('one');
+  const settings = fakeBoxSettings([{ id: 'proj', label: 'proj', config: { ref: 'master' } }]);
+  const ud = freshUserData();
+  const mgr = createSandboxManager({
+    spawn: okComposeSpawn(),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: repo,
+  });
+  const box = mgr.get('proj');
+  assert.strictEqual((await box.up()).ok, true);
+  // git prints realpath'd paths and the temp userData sits under a symlinked
+  // /tmp, so the raw srcDir would never appear in the listing either way.
+  const src = fs.realpathSync(box.srcDir());
+  assert.ok(gitIn(repo, ['worktree', 'list']).includes(src), 'git knows the src worktree before remove');
+
+  const r = await mgr.remove('proj');
+  assert.strictEqual(r.ok, true);
+  assert.ok(!gitIn(repo, ['worktree', 'list']).includes(src), 'git no longer names the src worktree');
+  assert.deepStrictEqual(settings._state().boxes, []);
+});
+
+// The git calls belong in git-worktree.js, where every other one in this repo
+// lives: a second, sandbox-local way to shell out to git would drift from the
+// error handling and the main-tree guard that file already carries.
+test('source shape: sandbox.js shells out to git nowhere — the calls live in git-worktree.js', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'sandbox.js'), 'utf8');
+  assert.ok(!src.includes("spawnSync('git'"), 'no spawnSync of git');
+  assert.ok(!/['"`]git['"`]/.test(src), 'no bare git literal — that is git-worktree.js\'s job');
+});

@@ -33,8 +33,11 @@ const DEFAULT_SANDBOX_CONFIG = {
   wirePort: 7820,
   autoStart: false,
   image: null,
+  ref: null,
   mounts: [],
 };
+
+const BOX_REF_RE = /^[A-Za-z0-9._/-]{1,128}$/;
 
 // A managed box's id is gated to the docker-compose PROJECT-name charset
 // (lowercase, digits, dash/underscore) — sandbox.js pins the box's compose project
@@ -301,8 +304,16 @@ function sanitizeSandbox(raw) {
     wirePort: port(raw.wirePort, 7820),
     autoStart: raw.autoStart === true,
     image: strOrNull(raw.image),
+    ref: sanitizeBoxRef(raw.ref),
     mounts: sanitizeSandboxMounts(raw.mounts),
   };
+}
+
+function sanitizeBoxRef(raw) {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || s.includes('..') || !BOX_REF_RE.test(s)) return null;
+  return s;
 }
 
 function sanitizeSandboxMounts(raw) {

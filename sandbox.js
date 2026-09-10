@@ -12,6 +12,7 @@ const fs = require('fs');
 const { readEnvFile, writeEnvFile } = require('./env-file');
 const { defaultClodexHome } = require('./clodex-paths');
 const { createDetectCache } = require('./detect-cache');
+const { repoToplevel, checkoutDetached, headSha, removeWorktree } = require('./git-worktree');
 
 const DEFAULT_PORTS = { web: 7810, wirescope: 7811, wire: 7820 };
 
@@ -22,8 +23,25 @@ const DEFAULT_CONFIG = {
   wirePort: DEFAULT_PORTS.wire,
   autoStart: false,
   image: null,
+  ref: null,
   mounts: [],
 };
+
+const REF_RE = /^[A-Za-z0-9._/-]+$/;
+const REF_MAX = 128;
+const NO_REPO_FOR_REF = 'this Clodex was not launched from a git checkout; tracking a ref needs one';
+
+function normalizeRef(raw) {
+  if (raw == null) return { ref: null };
+  if (typeof raw !== 'string') return { error: 'Track git ref must be text (a branch, tag or commit).' };
+  const s = raw.trim();
+  if (!s) return { ref: null };
+  if (s.length > REF_MAX) return { error: `Track git ref is too long (${s.length} characters, max ${REF_MAX}).` };
+  if (!REF_RE.test(s) || s.includes('..')) {
+    return { error: `Track git ref may only contain letters, digits, dot, dash, underscore and slash (no ".."): ${s}` };
+  }
+  return { ref: s };
+}
 
 const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.claude'];
 const MOUNT_TARGET_ROOT = '/home/clodex';
@@ -57,8 +75,9 @@ const DETECT_TIMEOUT_MS = 4000;
 const PORT_SCAN_WINDOW = 40;
 
 
-function resolveImage({ isPackaged, appVersion, override, repoRoot }) {
+function resolveImage({ isPackaged, appVersion, override, repoRoot, ref, srcDir, sha }) {
   if (override) return { kind: 'image', image: override };
+  if (ref) return { kind: 'build', context: srcDir, dockerfile: 'docker/web/Dockerfile', ref, sha: sha || null };
   if (isPackaged) return { kind: 'image', image: `${GHCR_REPO}:${appVersion}` };
   return { kind: 'build', context: repoRoot, dockerfile: 'docker/web/Dockerfile' };
 }
@@ -407,6 +426,21 @@ function createSandbox(deps = {}) {
   function sandboxDir() { return path.join(getUserDataPath(), subdir); }
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
   function authEnvPath() { return path.join(sandboxDir(), 'auth.env'); }
+  function srcDir() { return path.join(sandboxDir(), 'src'); }
+
+  async function syncSrcToRef(ref) {
+    if (!await repoToplevel(repoRoot)) return { ok: false, error: NO_REPO_FOR_REF };
+    fs.mkdirSync(sandboxDir(), { recursive: true });
+    return checkoutDetached({ repoTop: repoRoot, dir: srcDir(), ref });
+  }
+
+  async function resolveImageForConfig(config) {
+    const ref = config.ref || null;
+    return resolveImage({
+      isPackaged: isPackaged(), appVersion, override: config.image, repoRoot,
+      ref, srcDir: ref ? srcDir() : null, sha: ref ? await headSha(srcDir()) : null,
+    });
+  }
 
   function getConfig() {
     let s = {};
@@ -420,6 +454,11 @@ function createSandbox(deps = {}) {
       const checked = validateMountsForSave(next.mounts);
       if (checked.error) return { ok: false, error: checked.error };
       next.mounts = checked.mounts;
+    }
+    if (partial && 'ref' in partial) {
+      const checked = normalizeRef(next.ref);
+      if (checked.error) return { ok: false, error: checked.error };
+      next.ref = checked.ref;
     }
     writeBoxConfig(next);
     return getConfig();
@@ -511,9 +550,7 @@ function createSandbox(deps = {}) {
 
   async function writeComposeFile() {
     const config = getConfig();
-    const image = resolveImage({
-      isPackaged: isPackaged(), appVersion, override: config.image, repoRoot,
-    });
+    const image = await resolveImageForConfig(config);
     let ownPorts = [];
     try { ownPorts = parseOwnPorts(fs.readFileSync(composePath(), 'utf8')); } catch { /* no prior file */ }
     const busy = await buildBusySet(config, ownPorts);
@@ -565,6 +602,11 @@ function createSandbox(deps = {}) {
       try { ensureRemoteToken(); } catch (e) {
         return { ok: false, error: `token provision failed: ${(e && e.message) || e}` };
       }
+      const config = getConfig();
+      if (config.ref && !config.image) {
+        const synced = await syncSrcToRef(config.ref);
+        if (!synced.ok) return { ok: false, error: synced.error };
+      }
       let gen;
       try { gen = await writeComposeFile(); } catch (e) {
         return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
@@ -607,12 +649,13 @@ function createSandbox(deps = {}) {
   }
 
   async function status() {
+    const trackedRef = getConfig().ref || null;
     const r = await runCompose(['ps', '--format', 'json']);
     if (!r.ok && !r.stdout.trim()) {
-      return { state: 'absent', error: r.stderr.trim() || undefined };
+      return { state: 'absent', ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null, error: r.stderr.trim() || undefined };
     }
     const state = parseComposeState(r.stdout);
-    const out = { state };
+    const out = { state, ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null };
     // Only meaningful while running: the compose file persists after Stop, but its
     // ports then describe no live listener, and Start regenerates them.
     if (state === 'running') {
@@ -665,7 +708,7 @@ function createSandbox(deps = {}) {
     detect, getConfig, setConfig, writeComposeFile, translateHostPath,
     up, rebuild, down, status, logsTail, registerPeer, unregisterPeer,
     hasAuthToken, setAuthToken, clearAuthToken,
-    composePath, sandboxDir,
+    composePath, sandboxDir, srcDir,
   };
 }
 
@@ -758,6 +801,7 @@ function createSandboxManager(deps = {}) {
     let downError;
     try { const d = await inst.down(); if (d && d.ok === false) downError = d.error; }
     catch (e) { downError = String((e && e.message) || e); }
+    try { if (fs.existsSync(inst.srcDir())) await removeWorktree(inst.srcDir()); } catch { /* best effort */ }
     inst.unregisterPeer();
     const boxes = listBoxes().filter((b) => !(b && b.id === boxId));
     getUiSettings().set({ boxes });

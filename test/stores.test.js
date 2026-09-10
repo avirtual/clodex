@@ -3278,7 +3278,7 @@ test('uiSettings: boxes defaults to one seed box on a fresh install (no top-leve
     assert.strictEqual(s.boxes[0].label, 'sandbox');
     assert.deepStrictEqual(s.boxes[0].config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
-      autoStart: false, image: null, mounts: [],
+      autoStart: false, image: null, ref: null, mounts: [],
     });
   } finally { cleanup(); }
 });
@@ -3316,7 +3316,7 @@ test('uiSettings: a multi-box registry round-trips each box config verbatim', ()
       { id: 'sandbox', label: 'sandbox', config: {} },
       { id: 'proj', label: 'My Project', config: {
         workDir: '/Users/me/work', webPort: 7830, wirescopePort: 7831,
-        wirePort: 7840, autoStart: true, image: 'my/img:tag',
+        wirePort: 7840, autoStart: true, image: 'my/img:tag', ref: 'feature/x',
         mounts: [{ host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' }],
       } },
     ] });
@@ -3324,13 +3324,13 @@ test('uiSettings: a multi-box registry round-trips each box config verbatim', ()
     assert.strictEqual(boxes.proj.label, 'My Project');
     assert.deepStrictEqual(boxes.proj.config, {
       workDir: '/Users/me/work', webPort: 7830, wirescopePort: 7831,
-      wirePort: 7840, autoStart: true, image: 'my/img:tag',
+      wirePort: 7840, autoStart: true, image: 'my/img:tag', ref: 'feature/x',
       mounts: [{ host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' }],
     });
     // The shared box's blank config fills to DEFAULT_SANDBOX_CONFIG.
     assert.deepStrictEqual(boxes.sandbox.config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
-      autoStart: false, image: null, mounts: [],
+      autoStart: false, image: null, ref: null, mounts: [],
     });
   } finally { cleanup(); }
 });
@@ -3397,6 +3397,7 @@ test('uiSettings: a box config sanitizer bounds junk fields + coerces mount rows
       wirescopePort: 'nope',    // non-int → default
       autoStart: 'yes',         // truthy-but-not-true → false
       image: '',                // empty → null
+      ref: '../escape',         // traversal → null (never reaches `git worktree add`)
       bogus: 'dropped',         // unknown key → gone
       mounts: [
         { host: '  ' },                         // blank host → dropped
@@ -3409,7 +3410,7 @@ test('uiSettings: a box config sanitizer bounds junk fields + coerces mount rows
     } }] });
     assert.deepStrictEqual(uiSettings.get().boxes[0].config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
-      autoStart: false, image: null,
+      autoStart: false, image: null, ref: null,
       mounts: [
         { host: '/a', ro: false },
         { host: '/b', ro: false },

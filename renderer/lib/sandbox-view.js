@@ -101,6 +101,13 @@ function statusNotice(state) {
   }
 }
 
+function refLineText(status) {
+  const ref = status && typeof status.ref === 'string' ? status.ref.trim() : '';
+  if (!ref) return '';
+  const sha = status && typeof status.sha === 'string' ? status.sha.trim() : '';
+  return sha ? `${ref} @ ${sha.slice(0, 8)}` : ref;
+}
+
 // The browser-reachable address of the container's web frontend (the host web
 // port publish). localhost, not 127.0.0.1, to match the compose comment + what
 // users type.
@@ -124,4 +131,4 @@ function portsLineText(effective) {
   return parts.join(' · ');
 }
 
-module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, openUrl, portsLineText };
+module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, refLineText, openUrl, portsLineText };

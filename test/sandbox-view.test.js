@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
+const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, refLineText, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -157,6 +157,22 @@ test('statusNotice: absent/unknown → not-created copy, running false', () => {
   assert.match(n.text, /not been created/i);
   // Any unexpected state falls back to the same safe "not created / stopped".
   assert.strictEqual(statusNotice(undefined).running, false);
+});
+
+test('refLineText: a tracked ref with a resolved sha reads `master @ <sha8>`', () => {
+  assert.strictEqual(refLineText({ state: 'running', ref: 'master', sha: '3b920409abcdef0123456789' }), 'master @ 3b920409');
+});
+
+test('refLineText: a ref whose src is not built yet is the bare ref, not a broken `@`', () => {
+  assert.strictEqual(refLineText({ state: 'absent', ref: 'feature/x', sha: null }), 'feature/x');
+});
+
+test('refLineText: no tracked ref says nothing at all', () => {
+  // '' is the caller's signal to leave the status line exactly as statusNotice
+  // wrote it — a box on the app's own version has no second thing to report.
+  assert.strictEqual(refLineText({ state: 'running', ref: null, sha: null }), '');
+  assert.strictEqual(refLineText(null), '');
+  assert.strictEqual(refLineText({ state: 'running', ref: '   ' }), '');
 });
 
 test('openUrl: localhost + the web port', () => {

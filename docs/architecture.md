@@ -707,10 +707,12 @@ accept teardown removes.
 
 ### Sandbox and external tools
 
-- **sandbox.js** — container-backed session placement. Electron-free and
-  deps-injected so the unit suite drives it with spawn/docker mocked;
-  `<userData>/<subdir>/compose.yaml` is regenerated from config on every Start
-  and is never the source of truth.
+- **sandbox.js** — container-backed session placement, from the app's own
+  version, an image override, or a git ref of the checkout (a box tracking
+  `ref` builds from `<userData>/<subdir>/src`, a detached worktree refreshed on
+  every Start). Electron-free and deps-injected so the unit suite drives it with
+  spawn/docker mocked; `<userData>/<subdir>/compose.yaml` is regenerated from
+  config on every Start and is never the source of truth.
 - **tool-doctor.js** — external-tool presence detection: probe a list of tool
   specs via an INJECTED `whichBin`, return a presence report plus pure UI copy.
   The app warns or gates on this BEFORE a user spawns a session whose CLI is
