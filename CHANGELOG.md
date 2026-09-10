@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Library > Prompts is three submenus: System, Append and Teams
 
 - Library > Prompts is now three submenus, System, Append and Teams, each opening its own list, so team prompts no longer sit beside the Append header looking like one more kind.
 
