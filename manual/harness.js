@@ -57,6 +57,11 @@ window.api = {
   listSessions: async () => SESSIONS,
   reservedSessionNames: async () => ({ ok: true, names: SESSIONS.map((s) => s.name) }),
   teamRolePrompts: async () => ({ ok: true, prompts: ['clodex-team-lead', 'clodex-team-hand'], all: ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer'] }),
+  listTemplates: async () => ([
+    { name: 'fable-design', id: 'fable-design' },
+    { name: 'clodex-team-hand', id: 'team:clodex:clodex-team-hand', team: 'clodex' },
+    { name: 'rev:audit', id: 'rev:audit', plugin: 'rev' },
+  ]),
 };
 
 const { initTeamRolesPopover } = require(path.join(REPO, 'renderer', 'popovers', 'team-roles-popover.js'));

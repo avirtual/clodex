@@ -280,6 +280,7 @@ let editingTemplateId = null;
 let editingTemplateBundle = null;
 let editingTemplateTeam = null;
 let templatesDrawerRefresh = null;
+let templatesDrawerOpenTeam = null;
 
 function promptText(title, initial = '') {
   return new Promise((resolve) => {
@@ -3742,7 +3743,18 @@ const {
   getSessionType: sessionTypeOf,
 });
 
-const { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
+const { openTeamRolesPopover } = initTeamRolesPopover({
+  promptText,
+  openSessionDialog: openDialog,
+  openTemplate: (row) => {
+    if (!row) return;
+    if (row.team) {
+      if (templatesDrawerOpenTeam) templatesDrawerOpenTeam(row);
+      return;
+    }
+    openTemplateEditor(row);
+  },
+});
 
 // Create Team… — a team with NO seat behind it, which is why it goes
 // through teamCreateBare rather than the new-session dialog's teamCreate (that
@@ -7208,7 +7220,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 });
 
 
-({ refreshTemplatesList: templatesDrawerRefresh } = initLibraryDrawers({
+({ refreshTemplatesList: templatesDrawerRefresh, openTeamTemplate: templatesDrawerOpenTeam } = initLibraryDrawers({
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
   openTemplateEditor,

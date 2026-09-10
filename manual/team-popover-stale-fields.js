@@ -39,7 +39,7 @@ app.whenReady().then(async () => {
   };
   const fieldState = () => js(`(() => [...${body}.querySelectorAll('.team-role-field')].map((f) => ({
       field: f.dataset.field || null, stale: f.classList.contains('stale'),
-      value: (f.querySelector('input') || {}).value,
+      value: (f.querySelector('[data-f]') || {}).value,
       hasClear: !!f.querySelector('.team-role-stale-clear'),
     })).filter((x) => x.field))()`);
 
