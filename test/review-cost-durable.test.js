@@ -106,7 +106,7 @@ function mkFixture(extra = {}) {
     MSG_MAX_AGE: 1800,
     termAvailableFor: require('../drawer-avail').termAvailableFor,
     REGISTRY_DIR: home,
-    // The real one, because _reviewLedger reads `wire-totals.json` out of it and
+    // The real one, because _seatLedger reads `wire-totals.json` out of it and
     // the whole subject is which bytes it found there.
     getUserDataPath: () => userData,
     AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
