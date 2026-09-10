@@ -50,7 +50,17 @@ catalog, persist the disabled/inject sets — a separate `/api/restart-session`
 applies) — all four under the `args` cap, shipped together — and `POST /api/dm` +
 `/api/dm/claim` (federation, `dm` cap) and `POST /api/peer/roster` (hub-relay
 federation, `relay` cap — the hub pushes this spoke the roster of agents on its
-OTHER relay-enabled peers; see messaging.md §4a).
+OTHER relay-enabled peers; see messaging.md §4a) and the operator inbox —
+`GET /api/inbox?limit=&before=` (newest-first page + `unread`; limit clamped
+1..200, default 50), `GET /api/inbox/unread`, `POST /api/inbox/read/:id`
+(idempotent, 404 unknown), `POST /api/inbox/read-all` (`marked`),
+`POST /api/inbox/remove/:id` (404 unknown) — all five under the `inbox` cap,
+which is present only when the notifications store is injected.
+
+Inbox changes push an `inbox` SSE event on `/api/events`:
+`{kind:'added'|'read'|'read-all'|'removed', id?, unread, note?}` (`added`
+carries the full note). It is emitted from the STORE's `onChange`, not from the
+routes, so a desktop-side mark-read moves the phone's badge and vice versa.
 
 Fan-out from the session manager (cheap no-ops when unattached):
 `pushOutput` (4MB backpressure → destroy the stream — a half-open tunnel

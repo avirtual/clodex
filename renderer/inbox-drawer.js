@@ -168,14 +168,18 @@ function createInboxDrawer({ openFilePeek, showToast }) {
     await refreshBadge();
   });
 
-  // The single `notify` ipc broadcast (audit line + live signal) drives both the
-  // badge and, when the drawer is open, a full refetch-repaint so a note arriving
-  // live inserts its row rather than only bumping the count.
-  window.api.onIpcMessage((msg) => {
-    if (!msg || msg.type !== 'notify') return;
+  // Badge always; a full refetch-repaint only when the drawer is open, so a note
+  // arriving live inserts its row rather than only bumping the count.
+  function refreshFromEvent() {
     refreshBadge();
     if (isOpen()) renderList();
+  }
+
+  window.api.onIpcMessage((msg) => {
+    if (!msg || msg.type !== 'notify') return;
+    refreshFromEvent();
   });
+  window.api.onNotificationsChanged(() => refreshFromEvent());
 
   window.api.onRequestOpenInboxDrawer(() => openDrawer());
 
