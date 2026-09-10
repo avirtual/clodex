@@ -2336,9 +2336,6 @@ function createTicketMethods(deps, shared) {
         reply(`error: mode "${intent.mode}" is not kickstart or interview — no team was created`);
         return;
       }
-      // Ahead of _classifyTeamRoot, which mkdirs and git-inits the root: an
-      // unknown kit must leave nothing behind, and a directory this call made
-      // is something behind.
       const kitList = () => {
         const lines = kitCatalog();
         return lines.length ? `\n${lines.join('\n')}` : ' none are installed';
@@ -2405,9 +2402,6 @@ function createTicketMethods(deps, shared) {
         }
       }
       const rootClause = cls.kind === 'takeover' ? '(existing repo, untouched)' : "(new, git init'd)";
-      // The kit's own defs where it has them: a caller `roles` object wins over
-      // the kit's roles in createTeam, so building this from STOCK_ROLE_DEFS
-      // would make `kit:` inert on exactly the brief path.
       const kitRoles = (kitDef && Object.keys(kitDef.roles).length) ? kitDef.roles : STOCK_ROLE_DEFS;
       const roles = hasBrief ? {
         lead: { ...kitRoles.lead },
@@ -2443,9 +2437,6 @@ function createTicketMethods(deps, shared) {
             try { fs.unlinkSync(nodePath.join(dir, 'templates', `${r}.json`)); } catch {}
           }
           try { fs.rmdirSync(nodePath.join(dir, 'templates')); } catch {}
-          // The kit's exec defs too: a surviving exec/ makes the rmdir below
-          // fail, and what it leaves behind is a manifest-less team directory
-          // that listTeams still reports.
           for (const c of (Array.isArray(team.execCopied) ? team.execCopied : [])) {
             try { fs.unlinkSync(nodePath.join(dir, 'exec', `${c}.json`)); } catch {}
           }

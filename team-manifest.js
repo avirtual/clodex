@@ -55,9 +55,6 @@ const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
 
 const DEFAULT_KIT = 'default';
 
-// A manifest with no `kit` predates kits, and its roles name the flat library
-// stems the clodex kit re-files under the same names — so reading it as `clodex`
-// changes no bytes any addRole would copy.
 const LEGACY_KIT = 'clodex';
 
 const WATCHDOG_MIN_MS = 5 * 60 * 1000;
@@ -180,7 +177,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     };
   }
 
-  // The discovery surface: one line per kit, for a `kit:?` or an unknown name.
   function kitCatalog() {
     return listKits().map((n) => {
       const k = readKit(n);
@@ -188,9 +184,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     });
   }
 
-  // An EXPLICIT name that resolves to nothing throws before anything is written;
-  // an absent one falls back to the flat library and records no kit, which is
-  // what a home with no kits seeded yet (or a caller predating the key) gets.
   function resolveKit(kit) {
     if (kit == null) return readKit(DEFAULT_KIT);
     const name = String(kit);
@@ -209,9 +202,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     atomicWriteFileSync(file, data);
   }
 
-  // Kit dir first, flat library second. The fallback is not decoration: the
-  // default kit's reviewer role names a stem only the flat library ships, so a
-  // kit-only lookup would copy nothing for it.
   function sourceDirs(opts, ...segments) {
     const kitDir = opts && typeof opts.kitDir === 'string' && opts.kitDir ? opts.kitDir : null;
     return [
@@ -278,9 +268,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return copied;
   }
 
-  // Not unwound with the template/prompt copies: an exec def is additive and
-  // names no role, so a half-written set leaves a grant that resolves rather
-  // than a role pointing at a file that is gone.
   function copyKitExec(teamName, kitDir) {
     if (!kitDir) return [];
     if (typeof teamName !== 'string' || !TEAM_STEM_RE.test(teamName)) return [];
@@ -500,9 +487,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
-    // Absent reads as LEGACY_KIT, and the key is never written back: a manifest
-    // predating kits already names the flat library stems, and rewriting it
-    // would edit a file the operator did not ask us to touch.
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
     return { name, root: path.resolve(root), lead, roles, kit, file, dir: path.dirname(file), watchdogMs, version, droppedFields };
   }
@@ -641,7 +625,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 
   function createTeam({ name, root, lead, roles, kit } = {}) {
     assertTeamName(name);
-    // Ahead of every write below, so an unknown kit leaves no team dir behind.
     const resolvedKit = resolveKit(kit);
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
       throw new Error(`team "${name}" root must be an absolute path`);
@@ -704,18 +687,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       unwindExecCopies(name, execCopied);
       throw err;
     }
-    // `kitSeeded` is what THIS call copied from, which is not `kit` on the
-    // returned manifest: loadManifest fills that in with LEGACY_KIT for a file
-    // that records none, so a caller reading it could not tell a kitless create
-    // from one that named the clodex kit.
     return { ...loadManifest(name), templatesCopied, promptsCopied, execCopied, kitSeeded: resolvedKit ? resolvedKit.name : null };
   }
 
   function addRole(teamName, roleName, def, opts) {
     const team = loadManifest(teamName); // throws if the team is missing
     const operator = !!(opts && opts.operator === true);
-    // Never resolveKit: a kit deleted from the library since the team was made
-    // must not turn every later role-add into a throw. Absent → flat library.
     const teamKit = readKit(team.kit);
     const kitDir = teamKit ? teamKit.dir : null;
     if (!ROLE_RE.test(roleName)) {
@@ -726,9 +703,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // hands back the bypass. Ahead of the def validation below, so a def nobody
     // reads cannot refuse the write.
     if (operator && RESERVED_ROLE_KEYS.has(roleName) && !team.roles[roleName]) {
-      // The KIT's def wins where it has one: STOCK_ROLE_DEFS names the flat
-      // library stems, and a default-kit team re-minting from those would fall
-      // through the kit and copy the aggressive template back onto itself.
       const kitDef = (teamKit && teamKit.roles[roleName]) || null;
       const stock = kitDef || STOCK_ROLE_DEFS[roleName];
       if (!stock) {
