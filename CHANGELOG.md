@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Cost on every ticket, the Inbox on the phone, and honest standing-seat attribution
 
 - **Phone access serves the operator Inbox**: list, mark read, read-all and
   remove over `/api/inbox`, an `inbox` event on the SSE stream so a phone and
@@ -26,7 +26,6 @@ blocks a release.
   compact into `~/.clodex/teams/<team>/cost.jsonl`; `[agent:exec clodex-team]
   {"action":"cost"}` reads the whole ledger back, and `target:<ticketId>` reads
   one ticket's split.
-
 - **A ticket's cost record no longer claims a long-lived seat's whole spend was
   that one ticket's.** The rollup sums the ledger of the seat that worked the
   ticket, which is the ticket's cost only when the ticket loop minted that seat
