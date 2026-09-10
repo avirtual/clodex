@@ -172,6 +172,25 @@ test('the drawer separates team rows from library rows and shows the shadow note
     'a team row deletes through the team IPC, not the library one');
 });
 
+// t793: the Library menu's team rows send `{team, name}`, and only the branch
+// below tells that apart from the plugin `{plugin, name}` payload — both are
+// objects, and `bundleTarget` answers for a plugin that is not there by returning
+// nothing, so a missing branch opens NOTHING and looks like a dead menu row.
+// Source-shape because the drawer is DOM-bound; the payload itself is asserted
+// from the menu side in app-menus-plugins.test.js.
+test('openTemplatesDrawer routes an arg.team payload to the team row before the plugin lookup', () => {
+  const fn = DRAWER_SRC.slice(DRAWER_SRC.indexOf('async function openTemplatesDrawer'));
+  const body = fn.slice(0, fn.indexOf('function closeTemplatesDrawer'));
+  const iTeam = body.indexOf('if (arg.team)');
+  const iBundle = body.indexOf("bundleTarget('templates', arg)");
+  assert.ok(iTeam > 0, 'openTemplatesDrawer branches on arg.team');
+  assert.ok(iBundle > iTeam, 'the team branch runs BEFORE the plugin lookup');
+  assert.ok(/x\.team === arg\.team && x\.name === arg\.name/.test(body),
+    'the row is found by team AND name — a bare name matches another team\'s copy');
+  assert.ok(/openTeamTemplate\(row\)/.test(body),
+    'it opens through openTeamTemplate, the same call the drawer\'s own Team group rows make');
+});
+
 // The two name-resolving consumers must NOT see team rows: they match by bare
 // stem across every team, so admitting them lets one team's copy answer for
 // another's. Source-shape because both are one-line filters whose absence is

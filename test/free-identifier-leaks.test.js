@@ -71,6 +71,11 @@ const SCANNED_MODULES = [
   'intent-registry.js',
   'prompt-rails.js',
   'exec-schema.js',
+  // The Library menus' category layout (t793). A pure array→array leaf: the rows
+  // and their click handlers arrive built, so it can be measured against the web
+  // bar's hand-written copy from one table. A reach into the coordinator scope
+  // would put a store read inside the shape, where the mirror cannot follow it.
+  'library-menu-shape.js',
   // The team-manifest preflight resolver (t414). Every disk touch is an injected
   // probe, which is the whole reason its findings table is assertable without a
   // library on disk — a reach for `fs` or `REGISTRY_DIR` would quietly undo that.

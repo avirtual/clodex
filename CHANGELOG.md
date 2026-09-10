@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The Library menus share one layout: library entries first, then each team and each plugin under its own header (prompts split System / Append), and when a list runs past sixteen entries every group folds into its own submenu. Team-owned templates and prompts are now reachable from the menu and open in the editor as the team's copy.
+
 ## 5.52.0 — 2026-09-10 — Teams own their templates and prompts: copied per role at create, listed and editable per team, picked from the popover
 
 - A new team gets its own copy of each role's template: create and role-add copy the stock template to `templates/<role>.json` in the team's directory and point the role at it, so what you edit for a team is the team's own file, not the library's. Existing teams are untouched (use `[agent:team role-set <role> model:<alias>]` to derive a copy).

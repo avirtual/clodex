@@ -844,6 +844,16 @@ accept teardown removes.
   browser", shared by BOTH hosts (main's window-open/will-navigate guards and
   the renderer's WebLinksAddon). True ONLY for http/https — the sole schemes
   handed to `shell.openExternal`.
+- **library-menu-shape.js** — `categoryMenu(categories, { empty, foldAt })`:
+  the layout every Library submenu uses. Takes `[{ label, rows }]` in source
+  order (Library, then one per team, then one per plugin bundle) and returns
+  either today's flat shape — library rows inline, each further category behind
+  a separator + disabled header — or, past `FOLD_AT` rows counted over rows
+  alone, one `{ label, submenu }` per category including Library. app-menus.js
+  requires it; renderer/web/menubar.js carries a hand copy (`categoryRows`,
+  the bar's `{sep}`/`{head}` vocabulary) because the web bundle cannot require a
+  root module, and test/library-menu-shape.test.js measures both against one
+  table.
 - **sidebar-width.js** — the clamp/reset decision for the resizable sidebar.
   Pure leaf shared by both hosts: `stores.js` clamps on read AND write through
   it, and the renderer clamps every drag frame and the pre-paint localStorage

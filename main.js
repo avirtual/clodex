@@ -255,6 +255,8 @@ const {
   getSkillLibrary: () => skillLibrary,
   getPromptLibrary: () => promptLibrary,
   getTemplates: () => templates,
+  listAllTemplates: () => (engine ? engine.listAllTemplates() : []),
+  listAllPrompts: () => (engine ? engine.listAllPrompts() : []),
   getExecLibrary: () => execLibrary,
   getEnvScopes: () => envScopes,
   getPluginHost: () => (engine ? engine.getPluginHost() : null),

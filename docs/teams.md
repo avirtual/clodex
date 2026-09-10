@@ -90,7 +90,10 @@ its own file; the library copy is what the NEXT team starts from. The role's
 stock system prompt is copied the same way, to `prompts/system/<role>.md`. Both
 copies are the team's fork and stop receiving upstream fixes; a team that wants
 the library's current version deletes its copy — from the Prompts drawer's Team
-group for a prompt — so the role's stem falls back to the library.
+group for a prompt — so the role's stem falls back to the library. The Library
+menu lists both kinds under a **Team &lt;name&gt;** heading too, below the library
+rows and above the plugin ones, and a row there opens the team's copy in the
+editor rather than the library file it was forked from.
 
 A team's own template is reachable by naming it — from a role's `template`, from
 `[agent:spawn … template:<stem>]` by a seat inside the team — and is not listed
