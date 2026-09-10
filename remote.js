@@ -959,7 +959,7 @@ class RemoteServer {
       if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
       const rawLimit = parseInt(url.searchParams.get('limit'), 10);
       const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, rawLimit)) : 50;
-      const rawBefore = Number(url.searchParams.get('before'));
+      const rawBefore = parseInt(url.searchParams.get('before'), 10);
       const before = Number.isFinite(rawBefore) ? rawBefore : null;
       const page = this._notifications.page({ limit, before });
       return this._json(res, 200, {
