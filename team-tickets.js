@@ -627,10 +627,10 @@ function createTicketMethods(deps, shared) {
             // `[]` intents (everything gated) is a real value that must apply; an
             // absent key (all-enabled template) passes null → create() omits it →
             // the seat keeps the living all-enabled default. PRIVILEGED intents are
-            // STRIPPED here (Task 27): this is an AGENT-INITIATED mint, so a template
-            // carrying `reboot` (a file path the spawner authored, or a saved
-            // template) can't self-grant the capability — only an operator's local
-            // GUI create/edit may. null passes through untouched.
+            // STRIPPED here: this is an AGENT-INITIATED mint, so a template carrying
+            // `reboot` (a file path the spawner authored, or a saved template) can't
+            // self-grant it — only an operator's local GUI create/edit may. null
+            // passes through untouched.
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
             sessionEnv, true,
             // Wire-off is not an authority grant in the privileged-intent sense —
@@ -2402,10 +2402,6 @@ function createTicketMethods(deps, shared) {
         if (!res.ok) {
           try { fs.unlinkSync(nodePath.join(dir, 'team.json')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'append')); } catch {}
-          // Before the `prompts` rmdir below, which refuses a non-empty
-          // directory: the system copies are the team's own and would otherwise
-          // strand `prompts/` and, through it, the team dir this path reports as
-          // never created.
           for (const r of (Array.isArray(team.promptsCopied) ? team.promptsCopied : [])) {
             try { fs.unlinkSync(nodePath.join(dir, 'prompts', 'system', `${r}.md`)); } catch {}
           }
@@ -4563,12 +4559,9 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
 
-      // The role's own prompt outranks the template's stem when the TEAM owns a
-      // file for it. Without this the stock reviewer — which names no template,
-      // so the default library one supplies `clodex-team-reviewer` here — would
-      // resolve past the `prompts/system/reviewer.md` that create just wrote it,
-      // and a team could never edit its reviewer's briefing. Ordinary teams keep
-      // the template's stem: the override needs a team file to point at.
+      // A team file for the role's own stem outranks the template's: the stock
+      // reviewer names no template, so the default one's stem would shadow the
+      // `prompts/system/reviewer.md` create writes it.
       const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
         ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
         : null;
@@ -4578,16 +4571,12 @@ function createTicketMethods(deps, shared) {
           : ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
             ? tpl.systemPromptFile
             : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile));
-      // Defense-in-depth (T52 nit): the template is agent-writable and its
-      // systemPromptFile flows into resolveSystemPromptFile → promptLibrary._file,
-      // a bare path.join with no confinement — a stem like "../../../../etc/x"
-      // escapes library/prompts/system. This is a PRE-EXISTING, non-escalating gap
-      // (def.prompt already flowed through the same resolver, and a system prompt
-      // only INSTRUCTS — it grants no tool/intent/env, all of which stay capped),
-      // but since T52 makes the template the canonical prompt source, reject a
-      // traversing/absolute stem HERE (not in the shared resolver — don't widen the
-      // blast radius) and fall back to the shipped default. The rejected stem rides
-      // back on `promptEscaped` because the caller warns about it loudly.
+      // Defense-in-depth: the template is agent-writable and its systemPromptFile
+      // flows into resolveSystemPromptFile → promptLibrary._file, a bare path.join
+      // with no confinement — a stem like "../../../../etc/x" escapes
+      // library/prompts/system. Rejected HERE and not in the shared resolver, to
+      // avoid widening the blast radius; the stem rides back on `promptEscaped`
+      // because the caller warns about it loudly.
       let promptEscaped = null;
       if (systemPromptFile.includes('/') || systemPromptFile.includes('\\') || systemPromptFile.includes('..')) {
         promptEscaped = systemPromptFile;

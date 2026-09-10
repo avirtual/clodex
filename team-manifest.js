@@ -164,9 +164,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     try { fs.rmdirSync(path.join(teamsDir, teamName, 'templates')); } catch {}
   }
 
-  // rmdirs children first, and both are non-empty-tolerant by way of the catch:
-  // a team brief at prompts/append/team-project.md keeps `prompts` alive, and
-  // must survive an unwind that only owns the system copies.
   function unwindPromptCopies(teamName, roleNames) {
     for (const r of roleNames) {
       try { fs.unlinkSync(path.join(teamsDir, teamName, 'prompts', 'system', `${r}.md`)); } catch {}
@@ -175,10 +172,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     try { fs.rmdirSync(path.join(teamsDir, teamName, 'prompts')); } catch {}
   }
 
-  // Byte-for-byte, unlike copyRoleTemplates: a template is rewritten (name
-  // restamped, listing keys cut) because its `name` addresses the seat, while a
-  // system prompt is addressed only by its path, so any edit here would be a
-  // silent divergence from the library file it claims to copy.
   function copyRolePrompts(teamName, roles, opts) {
     const repointOnly = !!(opts && opts.repointOnly === true);
     const copied = [];
