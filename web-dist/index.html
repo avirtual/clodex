@@ -9942,6 +9942,33 @@ body {
         if (counts.malformed) parts.push(`${counts.malformed} unreadable record(s)`);
         return parts.join(" \xB7 ");
       }
+      function money(usd) {
+        const n = Number(usd);
+        if (!Number.isFinite(n)) return "";
+        return n >= 100 ? `$${Math.round(n).toLocaleString("en-US")}` : `$${n.toFixed(2)}`;
+      }
+      function costText(cost) {
+        if (!cost) return "";
+        if (cost.usd === null || cost.usd === void 0) return "cost unknown";
+        const total = cost.live || !Number.isFinite(Number(cost.reviewsUsd)) ? Number(cost.usd) : Number(cost.usd) + Number(cost.reviewsUsd);
+        return `~${money(total)}${cost.live ? " \xB7live" : ""}`;
+      }
+      function costTitle(cost) {
+        if (!cost) return "";
+        if (cost.live) return "Live figure for the seat holding this ticket \u2014 it is still spending.";
+        if (cost.usd === null || cost.usd === void 0) {
+          return cost.attribution === "seat-lifetime" ? "The seat that closed this ticket outlives it, so its ledger is an upper bound on the ticket rather than a measurement of it." : "No seat could be resolved for this ticket, so what it spent is unknown \u2014 not zero.";
+        }
+        const parts = [`hand ${money(cost.usd)}`];
+        if (Number.isFinite(Number(cost.reviewsUsd))) {
+          parts.push(`review ${money(cost.reviewsUsd)}${cost.rounds ? ` over ${cost.rounds} round${cost.rounds === 1 ? "" : "s"}` : ""}`);
+        }
+        return parts.join(" + ");
+      }
+      function teamCostText(res) {
+        if (!res || !res.ok || !res.usd) return "";
+        return `team ${res.team}: ~${money(res.usd.total)}`;
+      }
       function projectLabel(p) {
         if (!p) return "";
         return p.team ? `${p.leaf || p.key} \xB7 ${p.team}` : p.leaf || p.key;
@@ -9955,6 +9982,10 @@ body {
       module.exports.summaryText = summaryText;
       module.exports.projectLabel = projectLabel;
       module.exports.deliveryNote = deliveryNote;
+      module.exports.money = money;
+      module.exports.costText = costText;
+      module.exports.costTitle = costTitle;
+      module.exports.teamCostText = teamCostText;
       module.exports.activate = (rhost) => {
         let torn = false;
         const alive = () => !torn;
@@ -10196,6 +10227,12 @@ Cancelled tickets are not counted as done.`)) return;
               flag.title = "The merge loop gave up at this step. This ticket needs the lead to merge by hand.";
               meta.appendChild(flag);
             }
+            const spend = costText(t.cost);
+            if (spend) {
+              const cell = el("span", t.cost && t.cost.live ? "tv-cost tv-cost-live" : "tv-cost", spend);
+              cell.title = costTitle(t.cost);
+              meta.appendChild(cell);
+            }
             row.appendChild(meta);
             const art = el(
               "div",
@@ -10207,7 +10244,7 @@ Cancelled tickets are not counted as done.`)) return;
             if (!(opts && opts.closed)) row.appendChild(rowActions(t));
             return row;
           }
-          function renderBoard(res) {
+          function renderBoard(res, cost) {
             boardPane.innerHTML = "";
             editorEl = null;
             if (!res.ok) {
@@ -10218,6 +10255,12 @@ Cancelled tickets are not counted as done.`)) return;
               boardPane.appendChild(el("div", "tv-warning", `This project's team manifest is unusable: ${res.warning}`));
             }
             const openHead = el("div", "tv-section-head", `Open (${res.open.length})`);
+            const teamTotal = teamCostText(cost);
+            if (teamTotal) {
+              const cell = el("span", "tv-team-cost", teamTotal);
+              cell.title = "Everything this team has booked: tickets, review rounds and standing seats.";
+              openHead.appendChild(cell);
+            }
             openHead.appendChild(button(
               "tv-btn tv-btn-primary tv-add",
               "+ New ticket",
@@ -10273,10 +10316,10 @@ Cancelled tickets are not counted as done.`)) return;
             boardPane.innerHTML = "";
             editorEl = null;
             boardPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
-            const [res, live] = await Promise.all([ask("board", key), ask("sessions")]);
+            const [res, live, cost] = await Promise.all([ask("board", key), ask("sessions"), ask("teamCost", key)]);
             if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
             liveSessions = live.ok && Array.isArray(live.sessions) ? live.sessions : [];
-            renderBoard(res);
+            renderBoard(res, cost);
           }
           function renderProjects(res) {
             projectsPane.innerHTML = "";

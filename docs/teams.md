@@ -71,7 +71,24 @@ Everything below is what you add so that loop is *productive* on your code.
   prompts/append/<stem>.md  project knowledge the team owns
   templates/<stem>.json     seat templates the team owns
   exec/<name>.json          exec grants the team owns
+  cost.jsonl                what the team has spent, append-only
+  cost-cursor.json          per standing seat: what has been booked already
 ```
+
+`cost.jsonl` is one JSON row per event, in three kinds. A `ticket` row is
+appended as a ticket closes, beside the `COST.json` written into its task dir; a
+`review` row per review round, beside its `REVIEW-COST.jsonl`. A `seat` row is
+the one kind with no close behind it: a STANDING seat — one you dispatch to by
+name, working ticket after ticket — has no ticket end, so it books what it has
+spent since its last row at three boundaries instead: the session ending,
+a `/clear`, and a compact. Each of those books the DELTA, which is what
+`cost-cursor.json` remembers; a boundary that spent nothing writes no row.
+
+A ticket seat and a reviewer never write `seat` rows — their spend is already
+booked once by the close. Read the file back with
+`[agent:exec clodex-team] {"action":"cost","agent":"<you>"}`, or
+`{"action":"cost","target":"t42","agent":"<you>"}` for one ticket's hand and
+review split. The tickets board shows the same figures per row.
 
 The loop's own data is *not* here: `tickets.json` and the per-ticket `tasks/`
 directories are keyed to the PROJECT, not the team, and live under

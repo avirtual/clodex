@@ -28,6 +28,13 @@ and the host surface exposes no seam a plugin could reach any of them through.
 Records carry `viewer` as their opener or `closedBy` so the registry never
 misattributes one to an agent.
 
+Cost is READ here and never written: a row shows what its ticket cost, from the
+`COST.json` and `REVIEW-COST.jsonl` in its task dir, and the header shows the
+team's total from `cost.jsonl`. The rollup over those files is copied in under
+§4 and compared against core's in test/tickets-viewer-path-parity.test.js — a
+drifted copy prints a wrong total rather than failing, which reads as
+authoritative.
+
 Spec DELIVERY is the one side effect that IS reachable, and it is done:
 `add`-with-an-assignee and `assign` both inject the spec into the live seat and
 stamp the ticket started, because an assignment nobody is told about is the one

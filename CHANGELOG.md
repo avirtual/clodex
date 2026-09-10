@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **Every ticket shows what it cost.** A done ticket on the tickets board carries
+  its hand figure plus its review rounds, one in progress carries a live figure,
+  and the board header carries the team's total. A ticket whose spend could not
+  be attributed to a seat says `cost unknown` rather than `$0` — it burned real
+  money and a zero would read as free work. Standing seats, which have no ticket
+  end to book against, now record their spend at session end, `/clear` and
+  compact into `~/.clodex/teams/<team>/cost.jsonl`; `[agent:exec clodex-team]
+  {"action":"cost"}` reads the whole ledger back, and `target:<ticketId>` reads
+  one ticket's split.
+
 - **A ticket's cost record no longer claims a long-lived seat's whole spend was
   that one ticket's.** The rollup sums the ledger of the seat that worked the
   ticket, which is the ticket's cost only when the ticket loop minted that seat
