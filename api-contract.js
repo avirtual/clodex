@@ -119,6 +119,7 @@ const API_CONTRACT = [
   { name: 'markAllNotificationsRead', kind: 'invoke', channel: 'notifications:markAllRead' },
   { name: 'removeNotification', kind: 'invoke', channel: 'notifications:remove' },
   { name: 'notificationUnreadCount', kind: 'invoke', channel: 'notifications:unreadCount' },
+  { name: 'onNotificationsChanged', kind: 'on', channel: 'notifications:changed' },
   { name: 'checkForUpdate', kind: 'invoke', channel: 'update:check' },
   { name: 'getUpdateInfo', kind: 'invoke', channel: 'update:info' },
   { name: 'getReleases', kind: 'invoke', channel: 'update:releases' },

@@ -4,8 +4,9 @@
 // marked read when its row is clicked; a "Mark all read" button clears the lot.
 //
 // FACTORY (matches ipc-log's genus, not the CRUD library drawers): live counter
-// + event-driven list, fed by the single `notify` ipc broadcast the main-side
-// handler emits per arrival. Still no core STATE injected — the store, unread
+// + event-driven list, fed by the `notify` broadcast per arrival and by
+// `notifications:changed` per store mutation, from any surface including a
+// phone over /api/inbox. Still no core STATE injected — the store, unread
 // count, and workspace-name resolution are all pulled over ipc, and the "click a
 // live row to focus its session" nice-to-have stays dropped to keep it that way.
 // What is injected is two FUNCTIONS, both owned by the core because a second
@@ -168,14 +169,18 @@ function createInboxDrawer({ openFilePeek, showToast }) {
     await refreshBadge();
   });
 
-  // The single `notify` ipc broadcast (audit line + live signal) drives both the
-  // badge and, when the drawer is open, a full refetch-repaint so a note arriving
-  // live inserts its row rather than only bumping the count.
-  window.api.onIpcMessage((msg) => {
-    if (!msg || msg.type !== 'notify') return;
+  // Badge always; a full refetch-repaint only when the drawer is open, so a note
+  // arriving live inserts its row rather than only bumping the count.
+  function refreshFromEvent() {
     refreshBadge();
     if (isOpen()) renderList();
+  }
+
+  window.api.onIpcMessage((msg) => {
+    if (!msg || msg.type !== 'notify') return;
+    refreshFromEvent();
   });
+  window.api.onNotificationsChanged(() => refreshFromEvent());
 
   window.api.onRequestOpenInboxDrawer(() => openDrawer());
 

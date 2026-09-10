@@ -109,3 +109,74 @@ test('page: a numeric string limit is honoured as that number', () => {
     assert.strictEqual(p.hasMore, true);
   } finally { cleanup(); }
 });
+
+// --- onChange (t806): the store is the single emitter for every surface -----
+// The phone's /api/inbox routes and the six IPC handlers both mutate this store,
+// and each has to move the OTHER surface's badge. These pin the literal payload
+// per mutation kind, since remote.js broadcasts it verbatim as the `inbox` SSE
+// frame and the app builds against that shape.
+
+test('onChange: add emits {kind:added, id, unread, note} with the stored record', () => {
+  const { notifications, cleanup } = freshNotifications([]);
+  try {
+    const seen = [];
+    notifications.onChange((p) => seen.push(p));
+    const rec = notifications.add({ from: 'agent-a', workspaceId: 'ws-1', body: 'decide' });
+    assert.strictEqual(seen.length, 1, 'exactly one event per add');
+    assert.deepStrictEqual(seen[0], { kind: 'added', id: rec.id, unread: 1, note: rec });
+  } finally { cleanup(); }
+});
+
+test('onChange: markRead emits {kind:read, id, unread} once, and NOT on the idempotent repeat', () => {
+  const { notifications, cleanup } = freshNotifications([note(1), note(2)]);
+  try {
+    const seen = [];
+    notifications.onChange((p) => seen.push(p));
+    notifications.markRead('n1');
+    assert.deepStrictEqual(seen, [{ kind: 'read', id: 'n1', unread: 1 }]);
+    // ENTER: the second call still returns true (the id exists) but changes
+    // nothing, so a second frame would tell every phone to repaint for no change.
+    assert.strictEqual(notifications.markRead('n1'), true, 'still reports the id exists');
+    assert.strictEqual(seen.length, 1, 'an already-read note emits nothing');
+    // An unknown id is not a mutation either.
+    assert.strictEqual(notifications.markRead('nope'), false);
+    assert.strictEqual(seen.length, 1, 'an unknown id emits nothing');
+  } finally { cleanup(); }
+});
+
+test('onChange: markAllRead emits {kind:read-all, unread:0}, and nothing when none were unread', () => {
+  const { notifications, cleanup } = freshNotifications([note(1), note(2)]);
+  try {
+    const seen = [];
+    notifications.onChange((p) => seen.push(p));
+    assert.strictEqual(notifications.markAllRead(), 2);
+    assert.deepStrictEqual(seen, [{ kind: 'read-all', unread: 0 }]);
+    assert.strictEqual(notifications.markAllRead(), 0);
+    assert.strictEqual(seen.length, 1, 'a no-op mark-all emits nothing');
+  } finally { cleanup(); }
+});
+
+test('onChange: remove emits {kind:removed, id, unread}, and nothing for an unknown id', () => {
+  const { notifications, cleanup } = freshNotifications([note(1), note(2)]);
+  try {
+    const seen = [];
+    notifications.onChange((p) => seen.push(p));
+    assert.strictEqual(notifications.remove('n1'), true);
+    assert.deepStrictEqual(seen, [{ kind: 'removed', id: 'n1', unread: 1 }]);
+    assert.strictEqual(notifications.remove('n1'), false);
+    assert.strictEqual(seen.length, 1, 'removing what is gone emits nothing');
+  } finally { cleanup(); }
+});
+
+test('onChange: a throwing listener does not break the mutation or starve the next listener', () => {
+  const { notifications, cleanup } = freshNotifications([]);
+  try {
+    const seen = [];
+    notifications.onChange(() => { throw new Error('listener blew up'); });
+    notifications.onChange((p) => seen.push(p.kind));
+    const rec = notifications.add({ from: 'a', body: 'b' });
+    assert.strictEqual(rec.readAt, null, 'add still returned its record');
+    assert.deepStrictEqual(notifications.list().map((n) => n.id), [rec.id], 'and still wrote it');
+    assert.deepStrictEqual(seen, ['added'], 'the second listener still ran');
+  } finally { cleanup(); }
+});

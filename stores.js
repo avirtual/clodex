@@ -1255,6 +1255,15 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
   };
 
   const notifications = {
+    _listeners: [],
+    onChange(fn) {
+      if (typeof fn === 'function') this._listeners.push(fn);
+    },
+    _emit(payload) {
+      for (const fn of this._listeners) {
+        try { fn(payload); } catch {}
+      }
+    },
     _load() {
       try {
         const all = JSON.parse(fs.readFileSync(NOTIFICATIONS_FILE, 'utf-8'));
@@ -1299,13 +1308,18 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       };
       all.push(rec);
       this._save(all);
+      this._emit({ kind: 'added', id: rec.id, unread: this.unreadCount(), note: rec });
       return rec;
     },
     markRead(id) {
       const all = this._load();
       const rec = all.find((n) => n.id === id);
       if (!rec) return false;
-      if (rec.readAt == null) { rec.readAt = Date.now(); this._save(all); }
+      if (rec.readAt == null) {
+        rec.readAt = Date.now();
+        this._save(all);
+        this._emit({ kind: 'read', id, unread: this.unreadCount() });
+      }
       return true;
     },
     markAllRead() {
@@ -1313,7 +1327,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       const now = Date.now();
       let count = 0;
       for (const n of all) { if (n.readAt == null) { n.readAt = now; count++; } }
-      if (count) this._save(all);
+      if (count) {
+        this._save(all);
+        this._emit({ kind: 'read-all', unread: this.unreadCount() });
+      }
       return count;
     },
     remove(id) {
@@ -1321,6 +1338,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       const next = all.filter((n) => n.id !== id);
       if (next.length === all.length) return false;
       this._save(next);
+      this._emit({ kind: 'removed', id, unread: this.unreadCount() });
       return true;
     },
     unreadCount() { return this._load().reduce((n, r) => n + (r.readAt == null ? 1 : 0), 0); },

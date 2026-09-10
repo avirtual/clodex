@@ -30,7 +30,7 @@ class RemoteServer {
                 query, createSession, killSession, restartSession, getCatalogs,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
-                deliverDm, claimDms, listDmOrigins, receiveRoster,
+                deliverDm, claimDms, listDmOrigins, receiveRoster, notifications,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 token, insecure }) {
     this._port = port;
@@ -68,6 +68,7 @@ class RemoteServer {
     this._claimDms = claimDms || null;
     this._listDmOrigins = listDmOrigins || null;
     this._receiveRoster = receiveRoster || null;
+    this._notifications = notifications || null;
     // The peer terminal (t219). Four callbacks that are passed together or not
     // at all: remote-wiring supplies them only while some peer holds the grant,
     // and their ABSENCE is the capability gate — the endpoints 501 and `shell`
@@ -205,6 +206,10 @@ class RemoteServer {
 
   notifyProgress(name) {
     this._broadcast('progress', { name });
+  }
+
+  notifyInbox(payload) {
+    this._broadcast('inbox', payload);
   }
 
   notifySessions() {
@@ -537,6 +542,7 @@ class RemoteServer {
       if (this._deliverDm) caps.push('dm'); // inbound DM + outbox claim (federation)
       if (this._receiveRoster) caps.push('relay'); // accepts a hub-pushed relay roster (hub-relay federation)
       if (this._wtermOpen) caps.push('shell'); // peer terminal — present only while a peer holds the grant
+      if (this._notifications) caps.push('inbox');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, caps,
@@ -948,6 +954,38 @@ class RemoteServer {
           .then(() => this._json(res, 200, { ok: true }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
+    }
+    if (req.method === 'GET' && p === '/api/inbox') {
+      if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
+      const rawLimit = parseInt(url.searchParams.get('limit'), 10);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, rawLimit)) : 50;
+      const rawBefore = parseInt(url.searchParams.get('before'), 10);
+      const before = Number.isFinite(rawBefore) ? rawBefore : null;
+      const page = this._notifications.page({ limit, before });
+      return this._json(res, 200, {
+        ok: true, notes: page.items, unread: this._notifications.unreadCount(),
+      });
+    }
+    if (req.method === 'GET' && p === '/api/inbox/unread') {
+      if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
+      return this._json(res, 200, { ok: true, unread: this._notifications.unreadCount() });
+    }
+    if (req.method === 'POST' && p.startsWith('/api/inbox/read/')) {
+      if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
+      const id = decodeURIComponent(p.slice('/api/inbox/read/'.length));
+      if (!this._notifications.markRead(id)) return this._json(res, 404, { ok: false, error: 'unknown note' });
+      const rec = this._notifications.list().find((n) => n.id === id);
+      return this._json(res, 200, { ok: true, id, readAt: rec ? rec.readAt : null });
+    }
+    if (req.method === 'POST' && p === '/api/inbox/read-all') {
+      if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
+      return this._json(res, 200, { ok: true, marked: this._notifications.markAllRead() });
+    }
+    if (req.method === 'POST' && p.startsWith('/api/inbox/remove/')) {
+      if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
+      const id = decodeURIComponent(p.slice('/api/inbox/remove/'.length));
+      if (!this._notifications.remove(id)) return this._json(res, 404, { ok: false, error: 'unknown note' });
+      return this._json(res, 200, { ok: true, id });
     }
     this._json(res, 404, { ok: false, error: 'not found' });
   }

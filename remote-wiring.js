@@ -32,7 +32,7 @@ function createRemoteWiring(deps) {
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary,
-    getPersistence, getUiSettings, getWorkspaces,
+    getPersistence, getUiSettings, getWorkspaces, getNotifications,
     getRemoteServer, setRemoteServer, setRemoteError, getDrawerPtys,
     readRemoteEnvToken, resolveRemoteToken,
     appVersion, isPackaged,
@@ -43,7 +43,21 @@ function createRemoteWiring(deps) {
     getWirescopeInfo,
   } = deps;
 
+  let inboxWatched = false;
+  function watchInbox() {
+    if (inboxWatched) return;
+    const store = getNotifications && getNotifications();
+    if (!store || typeof store.onChange !== 'function') return;
+    inboxWatched = true;
+    store.onChange((payload) => {
+      const server = getRemoteServer();
+      if (server) { try { server.notifyInbox(payload); } catch {} }
+      try { manager._broadcast('notifications:changed', payload); } catch {}
+    });
+  }
+
   function syncRemoteServer() {
+    watchInbox();
     const s = getUiSettings().get();
     const envEnabled = process.env.CLODEX_REMOTE_ENABLE === '1';
     const enabled = s.remoteEnabled || envEnabled;
@@ -70,6 +84,7 @@ function createRemoteWiring(deps) {
         token: remoteToken,
         insecure: remoteInsecure,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
+        notifications: (getNotifications && getNotifications()) || null,
         getSessions: () =>
           // Agents AND bash: bash sessions are IPC-private (no registry/socket/who)
           // but ARE exposed on the peer surface for visibility/attach/control. The

@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **Phone access serves the operator Inbox**: list, mark read, read-all and
+  remove over `/api/inbox`, an `inbox` event on the SSE stream so a phone and
+  the desktop keep the same unread badge, and an `inbox` capability in hello so
+  older apps hide the tab.
+
 - **A ticket's cost record no longer claims a long-lived seat's whole spend was
   that one ticket's.** The rollup sums the ledger of the seat that worked the
   ticket, which is the ticket's cost only when the ticket loop minted that seat

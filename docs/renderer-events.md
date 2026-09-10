@@ -6,7 +6,7 @@ THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (64 channels). This doc maps each to its emission point, its
+`preload.js` (65 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -73,6 +73,7 @@ Every live window; a web host fans to every connection.
 |---|---|---|
 | `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/… — common fields `{type, from, to, body}`; some carry `{ts, kind}`; `keepwarm` carries `{session}` and NO `to`, which is what makes it render as a one-sided row | ~40 sites: session-manager (intent routing, DM fan-out, remind/exec/notify), remote-wiring (wire relay), wirescope-proxy |
 | `pending-count` | `msg` object `{name, count}` (parked-DM badge) | session-manager |
+| `notifications:changed` | `payload` `{kind, id?, unread, note?}` — an operator-inbox mutation, from ANY surface including a phone over `/api/inbox`. Distinct from the `ipc-message` `{type:'notify'}` row above, which fires on ARRIVAL only: a note marked read off-box produces no `notify`, and without this the desktop badge keeps counting it | remote-wiring `watchInbox` (the notifications store's `onChange`) |
 | `wire-quota` | `snapshot` (account plan quota off the wire's `anthropic-ratelimit-unified-*` response headers; absolute `reset`, no baked countdown) | session-manager `_broadcastQuota` (wire `response` event) |
 | `speaker-busy` | `busy` boolean — a spoken reply started or finished playing, box-wide. The renderer holds the turn-end mic re-arm while it is true; `say` blocks until playback ends, so the false edge is the end of audio and not an estimate | engine `createSpeaker({ onBusy })` → `manager._broadcast` |
 | `mic-target` | `name` string or null — which seat holds the microphone, box-wide. Broadcast to EVERY window, not sent to the holder's: a window that just LOST it is the one that has to stop re-arming, and to stop a recorder already lit there (renderer/lib/mic-handoff.js). Paired with the `voice:micTarget` invoke, which is how a window opened mid-dictation learns a target that is not going to change again | session-manager `_setMicTarget` (focus report or external voice tap) |
