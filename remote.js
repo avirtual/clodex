@@ -203,6 +203,10 @@ class RemoteServer {
     this._broadcast('activity', { name, state, turnEnd: !!turnEnd });
   }
 
+  notifyProgress(name) {
+    this._broadcast('progress', { name });
+  }
+
   notifySessions() {
     const live = new Set((this._getSessions() || []).map(s => s.name));
     for (const name of this._activity.keys()) {

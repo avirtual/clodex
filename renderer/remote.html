@@ -65,6 +65,9 @@
   .msg { max-width: 88%; margin-bottom: 10px; padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
   .msg.user { background: var(--user-bubble); margin-left: auto; border-bottom-right-radius: 4px; }
   .msg.assistant { background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg.assistant.interim {
+    background: none; border-style: dashed; color: var(--dim); font-size: 12px;
+  }
   #thinking { display: none; color: var(--dim); font-size: 13px; padding: 2px 12px 10px; }
   #thinking.on { display: block; }
 
@@ -127,6 +130,7 @@
   let fetching = false;
   let pending = [];          // sent texts not yet visible in the transcript
   let burstTimers = [];
+  let lastProgressBurst = 0;   // coalescing clock for the progress SSE nudge
 
   // --- data ---
 
@@ -244,9 +248,9 @@
     }
   }
 
-  function appendBubble(role, text) {
+  function appendBubble(role, text, interim) {
     const d = document.createElement('div');
-    d.className = 'msg ' + role;
+    d.className = 'msg ' + role + (interim ? ' interim' : '');
     // server-side strip of the delivery label ships with the app process;
     // duplicate it here so a page reload suffices before a GUI restart.
     // Leading control chars = the Ctrl-U from input injection.
@@ -264,7 +268,7 @@
     // that window doesn't make it vanish.
     const recent = messages.slice(-20).filter(m => m.role === 'user').map(m => m.text);
     pending = pending.filter(t => !recent.some(r => r === t || r.includes(t)));
-    for (const m of messages) appendBubble(m.role, m.text);
+    for (const m of messages) appendBubble(m.role, m.text, m.interim);
     for (const t of pending) appendBubble('user', t);
     if (atBottom) scrollDown();
   }
@@ -367,6 +371,19 @@
         // stats (cost/req/ctx) move once per turn — refresh them then
         if (d.turnEnd) setTimeout(loadSessions, 1500);
       }
+    });
+    // Per-request progress inside one turn: the transcript already has more text
+    // than the phone is showing. Coalesced because the jsonl observation path
+    // ALSO fires activity per flush, so an uncoalesced burst here doubles the
+    // fetch on that path; turn-end bursts stay uncoalesced, since the final
+    // reply must always land.
+    es.addEventListener('progress', (e) => {
+      const d = JSON.parse(e.data);
+      if (open !== d.name) return;
+      const now = Date.now();
+      if (now - lastProgressBurst < 1500) return;
+      lastProgressBurst = now;
+      burstFetch();
     });
     es.addEventListener('sessions', () => loadSessions());
   }
