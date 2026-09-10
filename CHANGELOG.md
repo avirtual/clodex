@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team create's replies keep up with it: a failed brief save suggests a retry that keeps mode:interview, a failed lead spawn says which arm to tell the lead it is in, and the create help line no longer sends a briefed team through spawn, gather and role-add.
+
 ## 5.56.0 — 2026-09-10 — The Inbox pages its notes, and Manage Plugins re-checks the library when it opens
 
 - The Inbox drawer loads the newest 30 notes and offers a "Load older" row for the rest, instead of rendering every note ever raised on each open.

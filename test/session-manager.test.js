@@ -10991,9 +10991,50 @@ test('t782 create: a spawn that FAILS leaves the team on disk and says how to re
     + `dir ${pathReal.join(f.home, 'teams', 'shop')}; hand takes a branch + worktree + seat per ticket; `
     + 'brief saved to prompts/append/team-project.md; '
     + 'shop-lead could NOT be spawned (boom) — the team is on disk; '
-    + `re-fire [agent:spawn name:shop-lead cwd:${pathReal.resolve(f.projectRoot)}] yourself.`,
+    + `re-fire [agent:spawn name:shop-lead cwd:${pathReal.resolve(f.projectRoot)}] yourself. `
+    + 'Then tell it: root is an EXISTING project (TAKEOVER) — the opener is only delivered on a successful spawn.',
   ]);
   assert.deepStrictEqual(f.openers, [], 'and no opener was sent anywhere — there is no seat to send it to');
+});
+
+// --- t798: the create's failure replies describe the create that was asked for ---
+
+test('t798 create: the save-failure retry hint keeps mode:interview', async () => {
+  const f = mkTeamCreate({ wrapFs: (real, home) => ({ ...real, __home: home }) });
+  fsReal.mkdirSync(pathReal.join(f.home, 'teams', 'shop', 'prompts', 'append', 'team-project.md'),
+    { recursive: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, mode: 'interview', body: 'the brief',
+  });
+  assert.strictEqual(f.injected.length, 1, 'ENTER: the save really failed — this is the retry hint');
+  assert.ok(f.injected[0].includes(
+    `re-fire [agent:team create shop root:${f.projectRoot} mode:interview] with the brief`),
+  f.injected[0]);
+});
+
+test('t798 create: a spawn failure names the arm the hand-respawned lead is in', async () => {
+  const f = mkTeamCreate({ createThrows: 'boom' });
+  await f.m._handleIntent('a', {
+    type: 'team-create',
+    name: 'shop',
+    root: pathReal.join(f.projectRoot, 'leaf'),
+    lead: null,
+    mode: 'interview',
+    body: 'Ship the thing.',
+  });
+  await tick();
+  assert.strictEqual(f.injected.length, 1, 'ENTER: the spawn really failed — this is the retry reply');
+  assert.ok(f.injected[0].includes('Then tell it: root is NEW, interview mode — the opener is only delivered on a successful spawn.'),
+    f.injected[0]);
+
+  const g = mkTeamCreate({ makeRepo: true, createThrows: 'boom' });
+  await g.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: g.projectRoot, lead: null, mode: null, body: 'Ship the thing.',
+  });
+  await tick();
+  assert.strictEqual(g.injected.length, 1);
+  assert.ok(g.injected[0].includes('root is an EXISTING project (TAKEOVER) — the opener'), g.injected[0]);
+  assert.ok(!/interview mode/.test(g.injected[0]), 'kickstart names no mode', g.injected[0]);
 });
 
 test('t751 set-lead: the LEAD rewrites team.json; a non-lead is refused', () => {
