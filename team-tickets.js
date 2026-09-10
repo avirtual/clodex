@@ -7088,26 +7088,22 @@ function createTicketMethods(deps, shared) {
     // `closedBy` is evidence only when the closer HOLDS the ticket's role.
     // Preferring it unconditionally is the trap: `_taskCancel` is lead-only and
     // the lead can also close a `task done` for a seat that no longer can, so
-    // closedBy is frequently the LEAD, whose record is the largest ledger in the
-    // system.
+    // closedBy is frequently the LEAD, the largest ledger in the system.
     //
     // The lead is excluded even when it legitimately holds the ticket's role —
     // `matchSeatRole(team, team.lead)` returns 'lead' unconditionally, so a
-    // `lead`-assigned ticket would otherwise satisfy the guard exactly. It is
-    // excluded outright rather than labelled `seat-lifetime` like any other
-    // long-lived seat: the lead's ledger spans every ticket in the project, so
-    // even an upper bound published in `usd` would be the project's total.
+    // `lead`-assigned ticket would otherwise satisfy the guard exactly. Excluded
+    // outright rather than labelled `seat-lifetime` like any other long-lived
+    // seat: the lead's ledger spans every ticket, so even an upper bound
+    // published in `usd` would be the project's total.
     //
     // Everything else is UNKNOWN, on purpose. A declared unknown costs one
-    // ticket's row in a rollup; a confident wrong number poisons every rollup
-    // that sums it.
+    // ticket's row; a confident wrong number poisons every rollup that sums it.
     _costSeatFor(team, ticket) {
       // Every resolution below sums the seat's WHOLE ledger, which equals this
-      // ticket's cost only for a seat minted for it and torn down with it. A
-      // standing seat's window is its own life, so the same sum lands on every
-      // ticket it works — $594.98 on one row whose 28.7 wall minutes could not
-      // have bought it at any tier. The mint stamps `ticketId` beside
-      // `ephemeral`; a record predating the stamp answers no, which under-claims.
+      // ticket's cost only for a seat minted for it and torn down with it — so a
+      // standing seat's whole life lands on every ticket it closes ($594.98 on
+      // one row whose 28.7 wall minutes could not buy it at any tier).
       const mintedFor = (entry) => !!(entry && entry.ephemeral === true
         && entry.ticketId && ticket && entry.ticketId === ticket.id);
       const at = (name, attribution) => {
@@ -7215,12 +7211,11 @@ function createTicketMethods(deps, shared) {
           ledger.ids = sessionIds;
 
           // The ticket's own tree first: it is the ticket's tree by construction.
-          // The record's is a fallback and counts ONLY for `'seat'`, which is now
-          // a seat minted for THIS ticket — on any other resolution the record's
-          // tree is whatever that seat currently holds, and taking it reports
-          // `worktreeMinted: true` with a commit count from some other branch.
-          // For a minted ticket seat the two are the same object, so this
-          // ordering is inert there.
+          // The record's is a fallback and counts ONLY for `'seat'`, now a seat
+          // minted for THIS ticket — on any other resolution the record's tree is
+          // whatever that seat currently holds, and taking it reports
+          // `worktreeMinted: true` with a commit count from another branch. For a
+          // minted seat the two are one object, so this ordering is inert there.
           const wt = ticket.worktree || (attribution === 'seat' && entry && entry.worktree) || null;
           let commits = null;
           let commitsBase = null;
