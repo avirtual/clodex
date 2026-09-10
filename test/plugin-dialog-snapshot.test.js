@@ -565,7 +565,10 @@ const FILL_SITES = [
     what: 'the args dialog', src: rendererSrc, file: 'renderer.js',
     fill: 'argsPluginsRendered', render: 'renderPluginChecklist(argsPluginList,',
     applyFrom: "document.getElementById('btn-args-save').addEventListener",
-    applyTo: '\n({ refreshTemplatesList: templatesDrawerRefresh }',
+    // Anchored on the destructure's FIRST binding, not the whole pattern: what
+    // initLibraryDrawers hands back grows, and a marker naming the closing brace
+    // stops matching the day it does — silently unbounding the slice.
+    applyTo: '\n({ refreshTemplatesList: templatesDrawerRefresh',
   },
   {
     what: 'the Intents popover', src: popoverSrc, file: 'checklist-popovers.js',

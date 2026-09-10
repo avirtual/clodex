@@ -110,6 +110,46 @@ function promptOptionGroups(names, teamOwned, team) {
   return groups;
 }
 
+const PLUGIN_OPTION_TITLE = 'a plugin template cannot be a role template: '
+  + 'the role field takes a plain name, and a plugin\'s is "<plugin>:<stem>"';
+
+function templateOptionGroups(rows, team, stored) {
+  const list = Array.isArray(rows) ? rows.filter((t) => t && typeof t.name === 'string' && t.name) : [];
+  const opt = (t) => ({ value: t.name, label: t.name });
+  const groups = [{ label: null, options: [{ value: '', label: '(none)' }] }];
+  const own = team ? list.filter((t) => t.team === team) : [];
+  const library = list.filter((t) => !t.team && !t.plugin);
+  const plugins = list.filter((t) => t.plugin);
+  if (own.length) groups.push({ label: `Team ${team}`, options: own.map(opt) });
+  if (library.length) groups.push({ label: 'Library', options: library.map(opt) });
+  if (plugins.length) {
+    groups.push({
+      label: 'Plugins',
+      options: plugins.map((t) => ({ ...opt(t), disabled: true, title: PLUGIN_OPTION_TITLE })),
+    });
+  }
+  const kept = typeof stored === 'string' ? stored : '';
+  if (kept && !groups.some((g) => g.options.some((o) => o.value === kept))) {
+    groups.push({
+      label: null,
+      options: [{
+        value: kept,
+        label: `${kept} (missing)`,
+        title: `no template named "${kept}" is installed for this team, in the library or in a plugin`,
+      }],
+    });
+  }
+  return groups;
+}
+
+function templateRowFor(rows, team, value) {
+  if (!value) return null;
+  const list = Array.isArray(rows) ? rows : [];
+  return list.find((t) => t && t.team === team && t.name === value)
+    || list.find((t) => t && !t.team && !t.plugin && t.name === value)
+    || null;
+}
+
 // The branch ORDER is the meaning: a team-owned stem is on disk and resolves first,
 // so it is answered BEFORE the branches that accuse a stem of being absent or off the rail.
 function storedPromptNote(prompt, opts = {}) {
@@ -616,7 +656,7 @@ function usesByRole(planItems, roleKeys) {
 
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole, usesByRole,
-  promptOptionGroups, storedPromptNote,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor,
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,

@@ -30,7 +30,7 @@ const {
   teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
-  promptOptionGroups, storedPromptNote,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -39,7 +39,7 @@ const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 // not reached as a global). `openSessionDialog` is renderer.js's openDialog: the
 // "Create lead seat…" affordance routes to the EXISTING spawn path with the name
 // and the team root prefilled rather than growing a second way to make a session.
-function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
+function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = {}) {
   const popover = document.getElementById('team-roles-popover');
   const nameEl = document.getElementById('team-roles-popover-name');
   const listEl = document.getElementById('team-roles-list');
@@ -314,6 +314,46 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     return group;
   }
 
+  function buildTemplateControl(stored) {
+    const select = document.createElement('select');
+    select.dataset.f = 'template';
+    for (const group of templateOptionGroups(templateRows, teamName(), stored)) {
+      let parent = select;
+      if (group.label !== null) {
+        parent = document.createElement('optgroup');
+        parent.label = group.label;
+        select.appendChild(parent);
+      }
+      for (const o of group.options) {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        if (o.title) opt.title = o.title;
+        if (o.disabled) opt.disabled = true;
+        parent.appendChild(opt);
+      }
+    }
+    select.value = stored;
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'secondary team-role-template-open';
+    open.textContent = 'Open';
+    open.title = 'Edit this template — its model, tools and prompts — in the template editor.';
+    const rowFor = () => templateRowFor(templateRows, teamName(), select.value);
+    const syncOpen = () => {
+      open.disabled = !rowFor();
+    };
+    syncOpen();
+    select.addEventListener('change', syncOpen);
+    open.addEventListener('click', () => {
+      const row = rowFor();
+      if (!row) return;
+      closeTeamRolesPopover();
+      if (typeof openTemplate === 'function') openTemplate(row);
+    });
+    return { select, open };
+  }
+
   // B3/R4: the cwd + template fields, in whatever state fieldReveal says. Built
   // imperatively and rebuilt on every dispatch change.
   //
@@ -334,13 +374,21 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       field.dataset.field = f;
       const label = document.createElement('span');
       label.textContent = f;
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.dataset.f = f;
-      input.placeholder = f === 'cwd' ? 'optional: subdirectory (e.g. api)' : 'optional: spawn template name';
-      input.value = (values && values[f]) || ''; // PROPERTY (agent-writable).
+      const stored = (values && values[f]) || '';
+      let input;
+      let open = null;
+      if (f === 'template') {
+        ({ select: input, open } = buildTemplateControl(stored));
+      } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.dataset.f = f;
+        input.placeholder = 'optional: subdirectory (e.g. api)';
+        input.value = stored; // PROPERTY (agent-writable).
+      }
       field.appendChild(label);
       field.appendChild(input);
+      if (open) field.appendChild(open);
       if (state === 'stale') {
         // The R4 case: a value IS stored but the role dispatches standing, so
         // nothing consumes it. It must stay VISIBLE — buildSavePatch always sends
@@ -752,7 +800,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         // empty value, which is the same invariant that makes hiding lossless.
         const liveValues = () => {
           const read = (f) => {
-            const el = revealBox.querySelector(`input[data-f="${f}"]`);
+            const el = revealBox.querySelector(`[data-f="${f}"]`);
             return el ? el.value : '';
           };
           return { cwd: read('cwd'), template: read('template') };
@@ -944,11 +992,19 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     }
   }
 
+  let templateRows = [];
+  async function populateTemplateOptions() {
+    let rows;
+    try { rows = await window.api.listTemplates(); } catch { rows = null; }
+    templateRows = Array.isArray(rows) ? rows : [];
+  }
+
   async function openTeamRolesPopover(name, anchorEl) {
     setStatus('');
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
     await populatePromptOptions(name);
+    await populateTemplateOptions();
     // Every open starts fully collapsed — the acceptance test (lead + hand +
     // reviewer + one custom role fitting without scrolling) is measured in this
     // state, so it must be the state an open lands in, not one the operator has
@@ -1028,7 +1084,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     }
     if (act === 'save') {
       const val = (f) => {
-        // prompt is a <select>, the rest are <input>s — match on data-f alone.
+        // prompt and template are <select>s, cwd is an <input> — match on data-f alone.
         const inp = rowEl.querySelector(`[data-f="${f}"]`);
         return inp ? inp.value : '';
       };
@@ -1294,10 +1350,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   submitOnEnter(addBrief, addBtn);
   submitOnEnter(addTemplate, addBtn);
   submitOnEnter(watchdogInput, watchdogSet);
-  // Per-row edit inputs (brief/template) are regenerated by renderRows, so wire
-  // Enter through delegation on the list — same shape as the click delegation
-  // above. Enter in a row input fires that row's Save button. The prompt <select>
-  // is excluded (Enter there is native option-commit, not a submit).
+  // The row's `brief` input is regenerated by renderRows, so wire Enter through
+  // delegation on the list — same shape as the click delegation above. Enter in a
+  // row input fires that row's Save button. The prompt and template <select>s are
+  // excluded (Enter there is native option-commit, not a submit).
   listEl.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return;
     const inp = e.target.closest('input[data-f]');

@@ -1169,3 +1169,231 @@ test('storedPromptNote: the three library verdicts are unchanged', () => {
   assert.match(storedPromptNote('p', { offered: [], all: [] }).label,
     /missing from library/, 'absent from disk entirely');
 });
+
+// --- t792: the role template picker ------------------------------------------
+const { templateOptionGroups, templateRowFor } = require('../renderer/lib/team-roles');
+
+// One listing, every discriminator the real `templates:list` returns: library
+// rows have neither `team` nor `plugin`, team rows carry `team`, plugin rows
+// carry `plugin` and a `<plugin>:<stem>` name (see engine.js listAllTemplates).
+const ROWS = [
+  { name: 'clodex-team-hand', id: 'clodex-team-hand' },
+  { name: 'fable-design', id: 'fable-design' },
+  { name: 'hand', id: 'team:shop:hand', team: 'shop' },
+  { name: 'lead', id: 'team:other:lead', team: 'other' },
+  { name: 'rev:audit', id: 'rev:audit', plugin: 'rev' },
+];
+
+test('templateOptionGroups: (none) first, then Team / Library / Plugins in that order', () => {
+  const groups = templateOptionGroups(ROWS, 'shop', '');
+  assert.deepStrictEqual(groups.map((g) => g.label), [null, 'Team shop', 'Library', 'Plugins'],
+    'the group order is the RESOLUTION order — a spawn for this team reads its own copy first');
+  assert.deepStrictEqual(groups[0].options, [{ value: '', label: '(none)' }],
+    'the empty option leads, so a role with no template has something selected');
+  assert.deepStrictEqual(groups[1].options, [{ value: 'hand', label: 'hand' }],
+    'the team group holds THIS team\'s row, labelled by the stem the role field stores');
+  assert.deepStrictEqual(groups[2].options.map((o) => o.value), ['clodex-team-hand', 'fable-design'],
+    'library rows are the ones with neither discriminator');
+});
+
+test('templateOptionGroups: another team\'s templates are not offered', () => {
+  // The defect this closes: `lead` belongs to team `other` and naming it from
+  // team `shop` stores a stem that resolves to the LIBRARY at spawn time, or to
+  // nothing — the one wrong pick the field can make that still validates.
+  const values = templateOptionGroups(ROWS, 'shop', '').flatMap((g) => g.options.map((o) => o.value));
+  assert.ok(values.includes('hand'), 'ENTER: this team\'s own row IS offered, so the absence below is the filter');
+  assert.ok(!values.includes('lead'), 'a row owned by another team must not appear');
+});
+
+test('templateOptionGroups: with no team, the Team group is absent — not empty', () => {
+  const groups = templateOptionGroups(ROWS, '', '');
+  assert.deepStrictEqual(groups.map((g) => g.label), [null, 'Library', 'Plugins'],
+    'an unnamed team can own nothing, and an empty optgroup renders as a bare heading');
+});
+
+test('templateOptionGroups: plugin rows are listed but unselectable', () => {
+  const plugins = templateOptionGroups(ROWS, 'shop', '').find((g) => g.label === 'Plugins');
+  assert.deepStrictEqual(plugins.options, [{
+    value: 'rev:audit',
+    label: 'rev:audit',
+    disabled: true,
+    title: 'a plugin template cannot be a role template: '
+      + 'the role field takes a plain name, and a plugin\'s is "<plugin>:<stem>"',
+  }], 'setRole validates the template against NAME_RE, which has no colon — a role can never hold one');
+});
+
+test('templateOptionGroups: a stored stem the listing does not offer is synthesized (missing)', () => {
+  const groups = templateOptionGroups(ROWS, 'shop', 'gone-away');
+  const last = groups[groups.length - 1];
+  assert.strictEqual(last.label, null, 'the synthesized option sits outside every group');
+  assert.strictEqual(last.options.length, 1);
+  assert.strictEqual(last.options[0].value, 'gone-away',
+    'the VALUE is the stored stem verbatim: the select is what Save reads, so anything else rewrites the role');
+  assert.strictEqual(last.options[0].label, 'gone-away (missing)');
+  assert.match(last.options[0].title, /no template named "gone-away" is installed/);
+});
+
+test('templateOptionGroups: an OFFERED stored stem synthesizes nothing, in any group', () => {
+  // ENTER for the test above: the synthesis is keyed on absence from the whole
+  // listing, so each group has to be able to satisfy it.
+  for (const stored of ['hand', 'fable-design', 'rev:audit', '']) {
+    const groups = templateOptionGroups(ROWS, 'shop', stored);
+    assert.ok(!groups.some((g) => g.options.some((o) => /\(missing\)/.test(o.label))),
+      `"${stored}" is in the listing (or blank) and must not be accused of being missing`);
+  }
+});
+
+test('templateOptionGroups: a failed or empty listing still carries the stored stem', () => {
+  // The listing is one IPC call per open; a reject leaves `rows` empty. Dropping
+  // the stored stem there would make the select read '' and Save omit a blank
+  // template — the value survives on disk, but the operator is shown a role with
+  // no template it never had.
+  for (const rows of [[], null, undefined]) {
+    const groups = templateOptionGroups(rows, 'shop', 'clodex-team-hand');
+    assert.deepStrictEqual(groups.map((g) => g.label), [null, null], 'nothing to group, just (none) + the stem');
+    assert.strictEqual(groups[1].options[0].value, 'clodex-team-hand');
+  }
+});
+
+test('templateOptionGroups: a row without a usable name is skipped, not rendered blank', () => {
+  const groups = templateOptionGroups([{ id: 'x' }, { name: '', id: 'y' }, { name: 'ok', id: 'ok' }], 'shop', '');
+  assert.deepStrictEqual(groups.map((g) => g.label), [null, 'Library']);
+  assert.deepStrictEqual(groups[1].options, [{ value: 'ok', label: 'ok' }],
+    'an unnamed row would render as an empty option that stores an empty template');
+});
+
+test('templateRowFor: this team\'s row wins over the library copy it shadows', () => {
+  // The CHANGELOG's promise is "Open the hand's template, set the model, save".
+  // The library row comes FIRST in the listing (engine.js emits library, then
+  // plugin, then team rows), so a name-only find opens the library copy — a file
+  // no seat for this team reads, which is the silent edit t748 closed for the
+  // drawer.
+  const shadowed = [
+    { name: 'hand', id: 'hand' },
+    { name: 'hand', id: 'team:shop:hand', team: 'shop' },
+  ];
+  assert.strictEqual(templateRowFor(shadowed, 'shop', 'hand').id, 'team:shop:hand');
+  // ENTER: the library row IS reachable by the same call for a team that does not
+  // own the stem, so the assertion above is about precedence, not about the find.
+  assert.strictEqual(templateRowFor(shadowed, 'other', 'hand').id, 'hand');
+});
+
+test('templateRowFor: another team\'s row is never the Open target', () => {
+  // `lead` is owned by team `other`. Opening it from team `shop` would edit
+  // another team's file from a popover that names neither it nor the team.
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'lead'), null);
+  assert.strictEqual(templateRowFor(ROWS, 'other', 'lead').id, 'team:other:lead',
+    'ENTER: its OWN team reaches it, so the null above is the ownership check');
+});
+
+test('templateRowFor: the team\'s own row is found, and a library row still is', () => {
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'hand').id, 'team:shop:hand');
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'fable-design').id, 'fable-design');
+});
+
+test('templateRowFor: (none) opens nothing, even against a row named \'\'', () => {
+  // `select.value` is '' for the (none) option, and a listing row with an empty
+  // name would match it by equality — enabling Open on a selection that names no
+  // template at all.
+  const withBlank = [{ name: '', id: 'blank' }, ...ROWS];
+  assert.strictEqual(templateRowFor(withBlank, 'shop', ''), null);
+  assert.strictEqual(templateRowFor(withBlank, 'shop', null), null);
+});
+
+test('templateRowFor: a plugin row is never the Open target', () => {
+  // Same reason it is unselectable in the picker: a role can never hold one, so
+  // Open on it would edit a file this role does not read.
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'rev:audit'), null);
+  assert.strictEqual(templateRowFor([], 'shop', 'anything'), null, 'and an empty listing opens nothing');
+  assert.strictEqual(templateRowFor(null, 'shop', 'anything'), null, 'as does a failed one');
+});
+
+test('t792 wiring: the row template field is a select the save path reads, and an Open beside it', () => {
+  // The popover is DOM-bound and has no unit tests (its header says so), so this
+  // pins the wire by shape. Each fact below, missing, leaves templateOptionGroups
+  // perfectly correct and the feature broken.
+  const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
+  const fn = /function buildTemplateControl\([\s\S]*?\n  \}/.exec(pop);
+  assert.ok(fn, 'ENTER: found buildTemplateControl — a rename would reduce every assertion below to nothing');
+  // CODE ONLY: every negative below is about what the control DOES, and the
+  // comments in it name `data-act` and the attribute route precisely because
+  // those are the traps — matching them would fail on the prose explaining them.
+  const src = fn[0].split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+
+  assert.match(src, /select\.dataset\.f = 'template'/,
+    'the save path reads `[data-f="template"]`.value, so the select must carry the same hook the input did');
+  assert.match(src, /templateOptionGroups\(templateRows, teamName\(\), stored\)/,
+    'the options come from the helper, over the cached listing and THIS team');
+  assert.ok(!/<input|type = 'text'/.test(src), 'no text input survives in the template control');
+  // SECURITY: stems come from an agent-writable team.json and from template JSON
+  // in this nodeIntegration renderer.
+  assert.ok(!/innerHTML|setAttribute/.test(src),
+    'stems must land as `.value`/`textContent` properties, never in an attribute');
+  assert.match(src, /opt\.value = o\.value;/, 'option values by PROPERTY');
+  assert.match(src, /opt\.textContent = o\.label;/, 'option labels by PROPERTY');
+
+  assert.match(src, /open\.textContent = 'Open'/, 'the Open button is beside the select');
+  assert.ok(!/open\.dataset\.act|data-act/.test(src),
+    'Open must NOT carry data-act: the list delegation matches button[data-act] and would route it through the row switch');
+  assert.match(src, /open\.disabled = !rowFor\(\)/,
+    'Open is dead unless the selection names a row the editor can be seeded from');
+  assert.match(src, /select\.addEventListener\('change', syncOpen\)/,
+    'and it re-syncs on every change, or it stays dead after the first real pick');
+  assert.match(src, /const rowFor = \(\) => templateRowFor\(templateRows, teamName\(\), select\.value\)/,
+    'the Open target is resolved by the team-first helper, over THIS team — a name-only find '
+    + 'over the raw listing opens another team\'s file, or the library copy of a stem this team shadows');
+  assert.match(src, /closeTeamRolesPopover\(\);\n\s*if \(typeof openTemplate === 'function'\) openTemplate\(row\)/,
+    'the click closes the popover and hands the ROW to the injected opener — no globals');
+});
+
+test('t792 wiring: the template listing is fetched once per open, and the field renders from it', () => {
+  const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
+
+  const open = pop.slice(pop.indexOf('async function openTeamRolesPopover'));
+  const openBody = open.slice(0, open.indexOf('\n  }\n'));
+  assert.match(openBody, /await populateTemplateOptions\(\)/,
+    'the listing is fetched on OPEN — renderRows runs again per disclose and after every mutation');
+  const rows = pop.slice(pop.indexOf('function renderRows'));
+  assert.ok(!/window\.api\.listTemplates/.test(rows.slice(0, rows.indexOf('\n  }\n'))),
+    'and never from renderRows, which would be one IPC round trip per repaint');
+
+  const reveal = /function renderRevealedFields\([\s\S]*?\n  \}/.exec(pop);
+  assert.ok(reveal, 'ENTER: found renderRevealedFields');
+  assert.match(reveal[0], /buildTemplateControl\(stored\)/, 'the revealed template field is the picker');
+
+  // The rebuild path: `template` is no longer an <input>, so a selector that
+  // still says `input[data-f=…]` reads '' for it and a dispatch change silently
+  // reverts an unsaved pick.
+  const live = /const liveValues = \(\) => \{[\s\S]*?\n {8}\};/.exec(pop);
+  assert.ok(live, 'ENTER: found the live-values reader the rebuild seeds from');
+  assert.ok(!/input\[data-f/.test(live[0]),
+    'the reader must match on data-f alone — an `input[…]` selector cannot see the template select');
+});
+
+test('t792 wiring: the Open routes a team row to the drawer\'s own team opener', () => {
+  // The team branch is the one that needs the third argument (`{ team }`), and
+  // getting it wrong opens the LIBRARY copy of the same stem — an edit to a file
+  // no spawn for this team reads, which is the silent failure t748 closed for the
+  // drawer. renderer.js must reuse the drawer's opener rather than grow a copy.
+  const rj = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
+  const wire = /const \{ openTeamRolesPopover \} = initTeamRolesPopover\(\{[\s\S]*?\n\}\);/.exec(rj);
+  assert.ok(wire, 'ENTER: found the popover construction — a rename would vacuum out this test');
+  assert.match(wire[0], /if \(row\.team\) \{\n\s*if \(templatesDrawerOpenTeam\) templatesDrawerOpenTeam\(row\);/,
+    'a team row goes to the drawer\'s openTeamTemplate, which passes the team owner');
+  assert.match(wire[0], /openTemplateEditor\(row\)/, 'a library row goes straight to the editor');
+
+  const drawers = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'library-drawers.js'), 'utf-8');
+  assert.match(drawers, /return \{ refreshTemplatesList, openTeamTemplate \};/,
+    'and the drawer EXPORTS it — a second copy of the team-owner argument would drift from this one');
+  assert.match(drawers, /openTemplateEditor\(tpl, null, \{ team: tpl\.team \}\)/,
+    'ENTER: that opener is the one carrying the team owner, which is why it is shared rather than re-written');
+  assert.match(rj, /openTeamTemplate: templatesDrawerOpenTeam \} = initLibraryDrawers\(/,
+    'renderer.js binds the export it calls');
+  // ORDER: initLibraryDrawers runs far below the popover construction, so the
+  // opener must be read from the binding at CLICK time. Destructuring it into the
+  // deps object instead would capture null and make every Open a no-op.
+  assert.ok(rj.indexOf('initTeamRolesPopover({') < rj.indexOf('} = initLibraryDrawers('),
+    'ENTER: the drawer is initialised AFTER the popover, which is why the opener is read late');
+  assert.match(wire[0], /openTemplate: \(row\) => \{/,
+    'the dep is a function reading the binding, not the binding\'s value at construction time');
+});
