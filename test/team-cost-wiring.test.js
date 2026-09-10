@@ -316,6 +316,7 @@ function mkRoleRig(seats = ROLE_SEATS, gitWorktree = undefined) {
     // other half of the distinction and why this is opt-in per test rather than
     // baked into ROLE_SEATS — one record cannot have been minted for two ids.
     mint: (name, ticketId) => persistence.upsert({ name, ephemeral: true, ticketId }),
+    persistence,
     read: (taskName) => JSON.parse(fs.readFileSync(
       path.join(projectDirFor(registryDir, repo), 'tasks', taskName, 'COST.json'), 'utf8')),
     cleanup: () => { for (const d of [userData, repo, home]) fs.rmSync(d, { recursive: true, force: true }); },
@@ -413,6 +414,53 @@ test('a role ticket closed by a STANDING role-holder is an upper bound too', asy
   await settle();
   assert.strictEqual(rig.read('role-closer-minted').sessions.attribution, 'role-closer',
     'a minted closer keeps the inference it earned');
+  rig.cleanup();
+});
+
+// Both tests above stamp the mint by hand, so both pass against a tree where
+// `_spawnTicketSeat` writes no `ticketId` at all — every real ticket would then
+// resolve `seat-lifetime` and the exact case would exist only in fixtures. The
+// two halves have to meet: the REAL mint writes the record, and the REAL
+// resolver reads that record back.
+//
+// Driven through `_spawnTicketSeat` itself rather than asserted against its
+// source. `mode: 'spawn'` is what makes that affordable — the tree acquisition
+// and every git call sit behind the setImmediate that mode skips, while the
+// stub this asserts on is written SYNCHRONOUSLY before it, for the reason the
+// mint states: two dispatches in one lead turn must see each other's names.
+test('the real mint writes what the real resolver reads back as exact', async () => {
+  const rig = mkRoleRig([]);
+  rig.m.create = async () => ({ ok: true });
+  const ticket = {
+    id: 't46', role: 'hand', assignee: 'team-hand-46', state: 'done',
+    closedBy: 'team-hand-46', taskDir: 'tasks/mint-to-record',
+    openedAt: 1, closedAt: 2,
+  };
+  rig.m._spawnTicketSeat(
+    { name: 'team-lead' }, rig.team, ticket, 'hand',
+    { name: 'team-hand-46', branch: 't46-x' }, 'spawn',
+  );
+
+  // ENTER: the mint wrote a record at all, and stamped it for THIS ticket.
+  // Asserted here as well as through the artifact because the two failures read
+  // identically downstream — a resolver that stopped checking and a mint that
+  // stopped stamping both surface as one changed string.
+  const minted = rig.persistence.get('team-hand-46');
+  assert.ok(minted, 'the mint must write its stub synchronously, before any await');
+  assert.deepStrictEqual([minted.ephemeral, minted.ticketId], [true, 't46'],
+    'the stub carries the two facts that make this seat THIS ticket\'s');
+
+  // What create() adds once the CLI is up. Without it the ledger is empty and
+  // the row below would be a real but uninteresting zero.
+  rig.persistence.upsert({ name: 'team-hand-46', sessionId: 'sess-hand-1' });
+
+  rig.m._writeTicketCost(rig.team, ticket);
+  await settle();
+  const rec = rig.read('mint-to-record');
+  assert.deepStrictEqual(
+    [rec.sessions.attribution, rec.seat, rec.usd],
+    ['seat', 'team-hand-46', 11],
+    'a seat the loop minted for this ticket, read back by the resolver, is the exact case');
   rig.cleanup();
 });
 
