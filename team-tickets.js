@@ -33,6 +33,7 @@ const {
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
+  teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
 const { formatGatherReport } = require('./team-gather');
@@ -2390,14 +2391,25 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const dir = nodePath.join(teamsDir, team.name);
-      const copiedClause = Array.isArray(team.templatesCopied) && team.templatesCopied.length
+      const copiedClause = (Array.isArray(team.templatesCopied) && team.templatesCopied.length
         ? `; templates copied to templates/<role>.json for ${team.templatesCopied.join(', ')}`
-        : '';
+        : '')
+        + (Array.isArray(team.promptsCopied) && team.promptsCopied.length
+          ? `; prompts copied to prompts/system/<role>.md for ${team.promptsCopied.join(', ')}`
+          : '');
       if (hasBrief) {
         const res = teamPromptSave(this._teamFileDeps(), team.name, 'append', 'team-project', brief);
         if (!res.ok) {
           try { fs.unlinkSync(nodePath.join(dir, 'team.json')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'append')); } catch {}
+          // Before the `prompts` rmdir below, which refuses a non-empty
+          // directory: the system copies are the team's own and would otherwise
+          // strand `prompts/` and, through it, the team dir this path reports as
+          // never created.
+          for (const r of (Array.isArray(team.promptsCopied) ? team.promptsCopied : [])) {
+            try { fs.unlinkSync(nodePath.join(dir, 'prompts', 'system', `${r}.md`)); } catch {}
+          }
+          try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'system')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts')); } catch {}
           for (const r of (Array.isArray(team.templatesCopied) ? team.templatesCopied : [])) {
             try { fs.unlinkSync(nodePath.join(dir, 'templates', `${r}.json`)); } catch {}
@@ -2480,9 +2492,12 @@ function createTicketMethods(deps, shared) {
             let added;
             try { added = addRole(team.name, name, def); }
             catch (err) { if (addUndo) addUndo(); throw err; }
-            const addCopied = Array.isArray(added && added.templatesCopied) && added.templatesCopied.length
+            const addCopied = (Array.isArray(added && added.templatesCopied) && added.templatesCopied.length
               ? `; templates copied to templates/<role>.json for ${added.templatesCopied.join(', ')}`
-              : '';
+              : '')
+              + (Array.isArray(added && added.promptsCopied) && added.promptsCopied.length
+                ? `; prompts copied to prompts/system/<role>.md for ${added.promptsCopied.join(', ')}`
+                : '');
             reply(`role "${name}" added to ${team.name}${addClause}${addCopied}`);
             return;
           }
@@ -4548,10 +4563,21 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
 
+      // The role's own prompt outranks the template's stem when the TEAM owns a
+      // file for it. Without this the stock reviewer — which names no template,
+      // so the default library one supplies `clodex-team-reviewer` here — would
+      // resolve past the `prompts/system/reviewer.md` that create just wrote it,
+      // and a team could never edit its reviewer's briefing. Ordinary teams keep
+      // the template's stem: the override needs a team file to point at.
+      const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
+        ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
+        : null;
       let systemPromptFile =
-        (tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
-          ? tpl.systemPromptFile
-          : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile);
+        ownRolePrompt
+          ? def.prompt
+          : ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
+            ? tpl.systemPromptFile
+            : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile));
       // Defense-in-depth (T52 nit): the template is agent-writable and its
       // systemPromptFile flows into resolveSystemPromptFile → promptLibrary._file,
       // a bare path.join with no confinement — a stem like "../../../../etc/x"
