@@ -566,14 +566,18 @@ test('the row block reaches removeSourcePlugin and nothing else new', () => {
   const src = pluginRowSrc();
   const calls = [...src.matchAll(/pluginInvoke\('_host', '([^']+)'/g)].map((m) => m[1]);
   assert.deepStrictEqual(calls,
-    ['plugins.status', 'plugins.updatesAvailable', 'plugins.readme',
+    ['plugins.status', 'plugins.updatesAvailable', 'plugins.updatesAvailable', 'plugins.readme',
       'plugins.unregister', 'plugins.rescan', 'plugins.removeSourcePlugin'],
     'removeSourcePlugin rescans host-side; the unregister above it does not, which is why only that '
-    + 'one is followed by an explicit plugins.rescan. updatesAvailable sits with status at the TOP, '
-    + 'once for the whole dialog: it is a cached read, but moving it into the row loop would make the '
-    + 'badge cost one host round trip per row on every paint. plugins.readme is the only one of these '
+    + 'one is followed by an explicit plugins.rescan. Both updatesAvailable reads sit with status at '
+    + 'the TOP, once for the whole dialog: the first is the cached paint and the second the on-open '
+    + 're-check, and moving either into the row loop would make the badge cost one host round trip '
+    + 'per row on every paint. plugins.readme is the only one of these '
     + 'on no paint path at all — it sits inside the Help button\'s click handler, so a README is read '
     + 'when one operator asks for one, not once per row per repaint');
+  assert.ok(/updatesAvailable',\s*\[\{\s*refresh:\s*true\s*\}\]/.test(src),
+    'the second read must carry refresh:true — two cached reads re-check nothing, and the drawer '
+    + 'stays as stale as the last six-hourly sweep left it');
 });
 
 test('Remove closes the update section when it is the removed row that owns it', () => {

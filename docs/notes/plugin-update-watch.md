@@ -18,10 +18,12 @@ network.
 
 ## run
 
-`resolveUpdate` is a tarball fetch and extract per plugin, so it cannot run on
-a dialog paint and cannot run over an unbounded candidate set. Hence the cap
-and the rotating cursor: a fixed first-N window would starve the tail forever.
-A candidate not answered this run keeps its PRIOR verdict rather than
+`resolveUpdate` is a tarball fetch per plugin, so the cap and rotating cursor
+bound each run — a fixed first-N window would starve the tail forever. The
+drawer's `{refresh:true}` read is the only on-demand caller; the 90 s and 6 h
+timers are unchanged. Concurrent callers share one in-flight promise, so an
+open landing on a tick waits for it rather than taking the pre-boot cache. A
+candidate not answered this run keeps its PRIOR verdict rather than
 disappearing — an offline tick must not clear a real badge — while a row that
 stops being a candidate is dropped without a fetch.
 

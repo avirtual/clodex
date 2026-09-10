@@ -43,7 +43,7 @@ function makeManager(sessions = []) {
 // default cannot be reached by omission — undefined must still mean "present".
 function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds,
   notifications = undefined, notifyOS = undefined, getPluginUpdates = undefined,
-  onPluginUpdated = undefined } = {}) {
+  refreshPluginUpdates = undefined, onPluginUpdated = undefined } = {}) {
   const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = { ...settings };
   const logged = [];
@@ -66,6 +66,7 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
     getPluginUpdates,
+    refreshPluginUpdates,
     onPluginUpdated,
     getNotifications: () => store,
     notifyOS: notifyOS || ((spec) => { osNotes.push(spec); }),
@@ -814,6 +815,85 @@ test('_host plugins.updatesAvailable is an empty list with no watcher wired', as
   const { engine } = makeHost({ loader: fakeLoader() });
   assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
     { ok: true, updates: [] });
+});
+
+test('plugins.updatesAvailable with {refresh:true} answers with the FRESH check, not the cache', async () => {
+  // The drawer's second read. The cached list is what the 90 s/6 h sweep last
+  // published, so a plugin pushed since then is missing from it; the refresh runs
+  // the checker and its answer is what the rows repaint from. The two literals
+  // differ on purpose — a handler that awaited the refresh and then returned the
+  // cache anyway would satisfy any assertion the two shared.
+  const cached = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const fresh = [{ id: 'later', from: 'ccccccc', to: 'ddddddd', version: '0.3.0' }];
+  let ran = 0;
+  const { engine } = makeHost({
+    loader: fakeLoader(),
+    getPluginUpdates: () => cached,
+    refreshPluginUpdates: async () => { ran += 1; return fresh; },
+  });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [{ refresh: true }], 'desktop'),
+    { ok: true, updates: fresh });
+  assert.equal(ran, 1, 'exactly one check per refreshing read');
+});
+
+test('plugins.updatesAvailable without the arg never runs a check', async () => {
+  // Every other caller — the app menu, each repaint of the drawer — reads the
+  // cache. A refresh made unconditional would fetch the whole library on every
+  // menu build.
+  const cached = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  let ran = 0;
+  const { engine } = makeHost({
+    loader: fakeLoader(),
+    getPluginUpdates: () => cached,
+    refreshPluginUpdates: async () => { ran += 1; return []; },
+  });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: true, updates: cached });
+  assert.equal(ran, 0, 'a cached read that checks the library is the cost this arg exists to gate');
+});
+
+test('a refreshing read with no watcher wired falls back to the cached list', async () => {
+  // headless-main.js wires no update watcher, so the dep is absent there. The
+  // method must answer rather than throw a TypeError out of dispatch.
+  const cached = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({ loader: fakeLoader(), getPluginUpdates: () => cached });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [{ refresh: true }], 'desktop'),
+    { ok: true, updates: cached });
+});
+
+test('a refresh that never answers falls back to the cache at the 20 s bound', async (t) => {
+  // The check is network-bound: a git fetch against an unreachable host can sit
+  // for minutes. The drawer awaits this reply, so an unbounded wait is a dialog
+  // that never repaints and a promise that never settles. The clock is faked so
+  // the bound itself is the subject rather than a shorter stand-in for it.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const cached = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({
+    loader: fakeLoader(),
+    getPluginUpdates: () => cached,
+    refreshPluginUpdates: () => new Promise(() => {}),
+  });
+  let settled = null;
+  const p = engine.dispatch('_host', 'plugins.updatesAvailable', [{ refresh: true }], 'desktop')
+    .then((r) => { settled = r; });
+  await Promise.resolve();
+  t.mock.timers.tick(19999);
+  await new Promise(setImmediate);
+  assert.strictEqual(settled, null, 'ENTER: it is still waiting a millisecond short of the bound');
+  t.mock.timers.tick(1);
+  await p;
+  assert.deepEqual(settled, { ok: true, updates: cached });
+});
+
+test('a refresh that throws still answers with the cached list', async () => {
+  const cached = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const { engine } = makeHost({
+    loader: fakeLoader(),
+    getPluginUpdates: () => cached,
+    refreshPluginUpdates: async () => { throw new Error('offline'); },
+  });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [{ refresh: true }], 'desktop'),
+    { ok: true, updates: cached });
 });
 
 test('a successful applyUpdate spends the badge: updatesAvailable goes empty', async () => {

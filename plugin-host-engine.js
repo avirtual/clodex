@@ -15,6 +15,7 @@ const {
 const { registerIntent, unregisterSource } = require('./intent-registry');
 
 const README_MAX = 64 * 1024;
+const UPDATE_REFRESH_TIMEOUT_MS = 20 * 1000;
 
 function createPluginHostEngine(deps) {
   const {
@@ -29,6 +30,7 @@ function createPluginHostEngine(deps) {
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
     getPluginUpdates,
+    refreshPluginUpdates,
     onPluginUpdated,
     getPersistence,   // getter: the sessions store — read for per-session plugin grants
     onPluginStateChanged,
@@ -744,10 +746,22 @@ function createPluginHostEngine(deps) {
         return r.ok ? { ok: true, ...r } : errorEnvelope(r.error);
       } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
     },
-    'plugins.updatesAvailable': () => ({
-      ok: true,
-      updates: (typeof getPluginUpdates === 'function' ? getPluginUpdates() : []) || [],
-    }),
+    'plugins.updatesAvailable': async (options) => {
+      const cached = () => (typeof getPluginUpdates === 'function' ? getPluginUpdates() : []) || [];
+      if (!options || !options.refresh || typeof refreshPluginUpdates !== 'function') {
+        return { ok: true, updates: cached() };
+      }
+      let timer = null;
+      const bound = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), UPDATE_REFRESH_TIMEOUT_MS);
+        if (timer.unref) timer.unref();
+      });
+      let fresh = null;
+      try { fresh = await Promise.race([Promise.resolve(refreshPluginUpdates()), bound]); }
+      catch { fresh = null; }
+      finally { if (timer) clearTimeout(timer); }
+      return { ok: true, updates: Array.isArray(fresh) ? fresh : cached() };
+    },
     'plugins.installFromSource': async (spec) => {
       const loader = getLoader && getLoader();
       if (!loader) return errorEnvelope('no plugin loader');

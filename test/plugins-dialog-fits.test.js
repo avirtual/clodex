@@ -116,7 +116,7 @@ function el(tag) {
 const FREE = ['pluginsList', 'window', 'document', 'sourceLine', 'pluginBar',
   'makePluginSettingsPanel', 'renderPluginsDialog', 'showPluginsRegisterNote',
   'openPluginsSourceUpdate', 'showToast', 'pluginsSourceTarget',
-  'closePluginsSourceSection', 'confirm', 'pluginOrigin'];
+  'closePluginsSourceSection', 'confirm', 'pluginOrigin', 'pluginsUpdateRefresh'];
 
 function extractRenderPluginsDialog() {
   const start = rendererSrc.indexOf('async function renderPluginsDialog() {');
@@ -145,6 +145,7 @@ async function renderRow(plugin) {
     async () => {},
     () => {}, () => {}, () => {}, null, () => {}, () => true,
     pluginOrigin,
+    null,
   );
   const got = await fn();
   assert.strictEqual(got.length, 1, 'ENTER: the fixture plugin reached the row loop');

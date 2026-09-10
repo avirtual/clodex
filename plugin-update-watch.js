@@ -15,7 +15,7 @@ function createPluginUpdateWatch(deps) {
   } = deps || {};
 
   let cached = [];
-  let running = false;
+  let inflight = null;
   let timer = null;
   let firstTimer = null;
   let cursor = 0;
@@ -50,59 +50,59 @@ function createPluginUpdateWatch(deps) {
     return out;
   }
 
-  async function run() {
-    if (running) return cached.slice();
-    running = true;
-    try {
-      const loader = getLoader && getLoader();
-      if (!loader || typeof loader.libraryCatalog !== 'function'
-        || typeof loader.resolveUpdate !== 'function') return cached.slice();
+  async function runOnce() {
+    const loader = getLoader && getLoader();
+    if (!loader || typeof loader.libraryCatalog !== 'function'
+      || typeof loader.resolveUpdate !== 'function') return cached.slice();
 
-      let cat = null;
-      try { cat = await loader.libraryCatalog(); } catch (e) { cat = { ok: false, error: (e && e.message) || e }; }
-      if (!cat || !cat.ok) {
-        note(`library catalog unavailable — ${(cat && cat.error) || 'no answer'}`);
-        return cached.slice();
-      }
-
-      const candidates = (cat.plugins || [])
-        .filter((p) => p && p.installed === 'fetched' && p.upToDate === false)
-        .map((p) => p.id);
-      const prior = new Map(cached.map((e) => [e.id, e]));
-      const verdicts = new Map();
-      let failed = false;
-
-      for (const id of slice(candidates)) {
-        let r = null;
-        try { r = await loader.resolveUpdate(id); } catch (e) { r = { ok: false, error: (e && e.message) || e }; }
-        if (!r || !r.ok) {
-          failed = true;
-          note(`could not resolve ${id} — ${(r && r.error) || 'no answer'}`);
-          continue;
-        }
-        verdicts.set(id, r.changed ? {
-          id,
-          from: r.previousCommit == null ? null : r.previousCommit,
-          to: r.commit == null ? null : r.commit,
-          version: (r.manifest && r.manifest.version) || null,
-        } : null);
-      }
-      if (!failed) lastNote = null;
-
-      const next = [];
-      for (const id of candidates) {
-        if (verdicts.has(id)) {
-          const v = verdicts.get(id);
-          if (v) next.push(v);
-        } else if (prior.has(id)) {
-          next.push(prior.get(id));
-        }
-      }
-      publish(next);
+    let cat = null;
+    try { cat = await loader.libraryCatalog(); } catch (e) { cat = { ok: false, error: (e && e.message) || e }; }
+    if (!cat || !cat.ok) {
+      note(`library catalog unavailable — ${(cat && cat.error) || 'no answer'}`);
       return cached.slice();
-    } finally {
-      running = false;
     }
+
+    const candidates = (cat.plugins || [])
+      .filter((p) => p && p.installed === 'fetched' && p.upToDate === false)
+      .map((p) => p.id);
+    const prior = new Map(cached.map((e) => [e.id, e]));
+    const verdicts = new Map();
+    let failed = false;
+
+    for (const id of slice(candidates)) {
+      let r = null;
+      try { r = await loader.resolveUpdate(id); } catch (e) { r = { ok: false, error: (e && e.message) || e }; }
+      if (!r || !r.ok) {
+        failed = true;
+        note(`could not resolve ${id} — ${(r && r.error) || 'no answer'}`);
+        continue;
+      }
+      verdicts.set(id, r.changed ? {
+        id,
+        from: r.previousCommit == null ? null : r.previousCommit,
+        to: r.commit == null ? null : r.commit,
+        version: (r.manifest && r.manifest.version) || null,
+      } : null);
+    }
+    if (!failed) lastNote = null;
+
+    const next = [];
+    for (const id of candidates) {
+      if (verdicts.has(id)) {
+        const v = verdicts.get(id);
+        if (v) next.push(v);
+      } else if (prior.has(id)) {
+        next.push(prior.get(id));
+      }
+    }
+    publish(next);
+    return cached.slice();
+  }
+
+  function run() {
+    if (inflight) return inflight;
+    inflight = runOnce().finally(() => { inflight = null; });
+    return inflight;
   }
 
   function start() {

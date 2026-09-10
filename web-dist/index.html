@@ -40483,6 +40483,7 @@ ${res.stderr}` : "");
       var pluginsOverlay = document.getElementById("plugins-overlay");
       var pluginsList = document.getElementById("plugins-list");
       var pluginsRegisterNote = document.getElementById("plugins-register-note");
+      var pluginsUpdateRefresh = null;
       function showPluginsRegisterNote(text, kind) {
         if (!pluginsRegisterNote) return;
         pluginsRegisterNote.className = kind === "warn" ? "plugin-row-note warn" : "plugin-row-note";
@@ -40491,6 +40492,7 @@ ${res.stderr}` : "");
       }
       function closePluginsDialog() {
         closePluginReadmePopover();
+        pluginsUpdateRefresh = null;
         pluginsOverlay.classList.add("hidden");
       }
       var pluginReadmePopover = document.getElementById("plugin-readme-popover");
@@ -40514,6 +40516,7 @@ ${res.stderr}` : "");
         showPluginsRegisterNote("");
         closePluginsLibrarySection();
         closePluginsSourceSection();
+        pluginsUpdateRefresh = {};
         await renderPluginsDialog();
         pluginsOverlay.classList.remove("hidden");
       }
@@ -40529,9 +40532,24 @@ ${res.stderr}` : "");
           updates = await window.api.pluginInvoke("_host", "plugins.updatesAvailable");
         } catch {
         }
-        const updateById = new Map(
-          (updates && updates.ok && updates.updates || []).map((u) => [u.id, u])
-        );
+        const updateSig = (list) => (list || []).map((u) => `${u.id}@${u.to}@${u.version}`).join(",");
+        const updateList = updates && updates.ok && updates.updates || [];
+        const updateById = new Map(updateList.map((u) => [u.id, u]));
+        const refreshToken = pluginsUpdateRefresh;
+        if (refreshToken && !refreshToken.fired) {
+          refreshToken.fired = true;
+          const painted = updateSig(updateList);
+          (async () => {
+            let fresh = null;
+            try {
+              fresh = await window.api.pluginInvoke("_host", "plugins.updatesAvailable", [{ refresh: true }]);
+            } catch {
+            }
+            if (pluginsUpdateRefresh !== refreshToken) return;
+            if (updateSig(fresh && fresh.ok && fresh.updates || []) === painted) return;
+            await renderPluginsDialog();
+          })();
+        }
         const plugins = status && status.ok && status.plugins || [];
         const problems = status && status.ok && status.problems || [];
         const shadowed = status && status.ok && status.shadowed || [];

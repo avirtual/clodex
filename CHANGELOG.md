@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The Inbox drawer loads the newest 30 notes and offers a "Load older" row for the rest, instead of rendering every note ever raised on each open.
+- Manage Plugins re-checks the plugin library when it opens, so a plugin pushed after the boot-time check shows its "Update available" note within seconds instead of waiting for the six-hourly sweep.
 
 ## 5.55.0 — 2026-09-10 — Team create gains mode:interview: the lead interviews the operator before its first ticket
 
