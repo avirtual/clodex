@@ -196,6 +196,22 @@ test('the prompts drawer separates team rows from library rows and shows the sha
     'an unreadable team row previews what Edit would do to it');
 });
 
+// t793: the twin of the templates branch (team-template-drawer.test.js). The
+// prompts payload carries `kind` as well, and kind+name is the file identity —
+// a lookup that dropped it would open the append copy for a system row.
+test('openPromptsDrawer routes an arg.team payload to the team row before the plugin lookup', () => {
+  const fn = DRAWER_SRC.slice(DRAWER_SRC.indexOf('async function openPromptsDrawer'));
+  const body = fn.slice(0, fn.indexOf('function closePromptsDrawer'));
+  const iTeam = body.indexOf('if (arg.team)');
+  const iPlugin = body.indexOf('if (arg.plugin)');
+  assert.ok(iTeam > 0, 'openPromptsDrawer branches on arg.team');
+  assert.ok(iPlugin > iTeam, 'the team branch runs BEFORE the plugin branch');
+  assert.ok(/x\.team === arg\.team\s*\n?\s*&& x\.kind === kind && x\.name === arg\.name/.test(body),
+    'the row is found by team, kind AND name');
+  assert.ok(/openTeamPrompt\(row\)/.test(body),
+    'it opens through openTeamPrompt, the same call the drawer\'s own Team group rows make');
+});
+
 test('a team prompt row offers no Inject — that is a library affordance', () => {
   // The team block runs from its `Team ${team}` header to the plugin groups.
   const start = DRAWER_SRC.indexOf('promptsList.appendChild(head);');

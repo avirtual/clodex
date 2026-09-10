@@ -17,6 +17,7 @@
 
 const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('electron');
 const os = require('os');
+const { categoryMenu } = require('./library-menu-shape');
 
 const CLODEX_REPO_URL = 'https://github.com/avirtual/clodex';
 const CLODEX_PLUGINS_REPO_URL = 'https://github.com/avirtual/clodex-plugins';
@@ -106,6 +107,7 @@ function createAppMenus(deps) {
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
     getTeams,
+    listAllTemplates, listAllPrompts,
   } = deps;
 
   let tray = null;
@@ -329,18 +331,22 @@ function createAppMenus(deps) {
       if (host && typeof host.bundles === 'function') bundles = host.bundles() || [];
     } catch { bundles = []; }
 
-    const kindMenu = ({ channel, library, empty, pluginEntries, newLabel, accelerator, manageLabel }) => {
-      const items = library.length ? library : [{ label: empty, enabled: false }];
-      for (const b of bundles) {
-        const entries = pluginEntries(b);
-        if (!entries.length) continue;
-        items.push({ type: 'separator' }, { label: b.name || b.id, enabled: false }, ...entries);
-      }
-      items.push(
-        { type: 'separator' },
-        { label: newLabel, ...(accelerator ? { accelerator } : {}), click: () => sendToFocused(channel, ':new') },
-        { label: manageLabel, click: () => sendToFocused(channel, null) },
-      );
+    const teamCategories = (rows, rowFor) => [...new Set(rows.map((r) => r.team))]
+      .map((team) => ({ label: `Team ${team}`, rows: rows.filter((r) => r.team === team).map(rowFor) }));
+
+    const tail = (channel, newLabel, accelerator, manageLabel) => [
+      { type: 'separator' },
+      { label: newLabel, ...(accelerator ? { accelerator } : {}), click: () => sendToFocused(channel, ':new') },
+      { label: manageLabel, click: () => sendToFocused(channel, null) },
+    ];
+
+    const kindMenu = ({ channel, library, teams = [], empty, pluginEntries, newLabel, accelerator, manageLabel }) => {
+      const items = categoryMenu([
+        { label: 'Library', rows: library },
+        ...teams,
+        ...bundles.map((b) => ({ label: b.name || b.id, rows: pluginEntries(b) })),
+      ], { empty });
+      items.push(...tail(channel, newLabel, accelerator, manageLabel));
       return items;
     };
     const described = (e) => truncate(e.description ? `${e.name}  —  ${e.description}` : e.name);
@@ -349,15 +355,61 @@ function createAppMenus(deps) {
       click: () => sendToFocused(channel, { plugin: b.id, name }),
     });
 
-    const promptItems = (rows, click) => {
-      const out = [];
+    const allTemplates = () => {
+      try { return (listAllTemplates ? listAllTemplates() : listOf(getTemplates)) || []; } catch { return []; }
+    };
+    const allPrompts = () => {
+      try { return (listAllPrompts ? listAllPrompts() : listOf(getPromptLibrary)) || []; } catch { return []; }
+    };
+
+    const promptRowsOf = (rows, kind, click) => (rows || [])
+      .filter((p) => p && p.kind === kind)
+      .map((p) => ({ label: truncate(p.name), click: () => click(p) }));
+
+    const promptsMenu = () => {
+      const channel = 'request-open-prompts-drawer';
+      const rows = allPrompts();
+      const libraryRows = rows.filter((p) => p && !p.team);
+      const teamRows = rows.filter((p) => p && p.team);
+      const items = [];
       for (const kind of ['system', 'append']) {
-        const ofKind = rows.filter((p) => p && p.kind === kind);
-        if (!ofKind.length) continue;
-        out.push({ label: kind === 'system' ? 'System' : 'Append', enabled: false });
-        for (const p of ofKind) out.push({ label: truncate(p.name), click: () => click(p, kind) });
+        const cats = [
+          { label: 'Library', rows: promptRowsOf(libraryRows, kind, (p) => sendToFocused(channel, { kind, name: p.name })) },
+          ...teamCategories(teamRows.filter((p) => p.kind === kind), (p) => ({
+            label: truncate(p.name),
+            click: () => sendToFocused(channel, { team: p.team, kind, name: p.name }),
+          })),
+          ...bundles.map((b) => ({
+            label: b.name || b.id,
+            rows: promptRowsOf(b.prompts, kind, (p) => sendToFocused(channel, { plugin: b.id, kind, name: p.name })),
+          })),
+        ];
+        if (!cats.some((c) => c.rows.length)) continue;
+        items.push({ label: kind === 'system' ? 'System' : 'Append', enabled: false }, ...categoryMenu(cats, {}));
       }
-      return out;
+      if (!items.length) items.push({ label: '(no prompts in library)', enabled: false });
+      items.push(...tail(channel, 'New Prompt…', null, 'Manage Prompts…'));
+      return items;
+    };
+
+    const templatesMenu = () => {
+      const channel = 'request-open-templates-drawer';
+      const rows = allTemplates().filter((t) => t && !t.plugin);
+      return kindMenu({
+        channel,
+        library: rows.filter((t) => !t.team).map((t) => ({
+          label: truncate(t.name),
+          click: () => sendToFocused(channel, t.id || t.name),
+        })),
+        teams: teamCategories(rows.filter((t) => t.team), (t) => ({
+          label: truncate(t.name),
+          click: () => sendToFocused(channel, { team: t.team, name: t.name }),
+        })),
+        empty: '(no templates in library)',
+        pluginEntries: (b) => (b.templates || []).map((t) => bundleItem(channel, b, t.name)),
+        newLabel: 'New Template…',
+        manageLabel: 'Manage Templates…',
+      });
     };
 
     return {
@@ -365,30 +417,11 @@ function createAppMenus(deps) {
       submenu: [
         {
           label: 'Prompts',
-          submenu: kindMenu({
-            channel: 'request-open-prompts-drawer',
-            library: promptItems(listOf(getPromptLibrary), (p, kind) =>
-              sendToFocused('request-open-prompts-drawer', { kind, name: p.name })),
-            empty: '(no prompts in library)',
-            pluginEntries: (b) => promptItems(b.prompts || [], (p, kind) =>
-              sendToFocused('request-open-prompts-drawer', { plugin: b.id, kind, name: p.name })),
-            newLabel: 'New Prompt…',
-            manageLabel: 'Manage Prompts…',
-          }),
+          submenu: promptsMenu(),
         },
         {
           label: 'Templates',
-          submenu: kindMenu({
-            channel: 'request-open-templates-drawer',
-            library: listOf(getTemplates).map((t) => ({
-              label: truncate(t.name),
-              click: () => sendToFocused('request-open-templates-drawer', t.id || t.name),
-            })),
-            empty: '(no templates in library)',
-            pluginEntries: (b) => (b.templates || []).map((t) => bundleItem('request-open-templates-drawer', b, t.name)),
-            newLabel: 'New Template…',
-            manageLabel: 'Manage Templates…',
-          }),
+          submenu: templatesMenu(),
         },
         {
           label: 'Agents',

@@ -22,6 +22,8 @@
 
 const BAR_H = 30; // px — kept in sync with the .has-web-menubar offset in styles.css
 
+const FOLD_AT = 16;
+
 // The physical key is Alt everywhere; only the GLYPH is platform-cosmetic.
 // Browsers reach this page from any OS, so show ⌥ on Macs and "Alt+" elsewhere.
 // (navigator is global in Node 21+ too, so tests see the host platform's form.)
@@ -172,36 +174,95 @@ function buildMenus(ctx) {
   ];
 }
 
+function categoryRows(categories, { empty, foldAt = FOLD_AT } = {}) {
+  const all = (Array.isArray(categories) ? categories : []).filter(Boolean);
+  const head = all[0] || { label: 'Library', rows: [] };
+  const rest = all.slice(1).filter((c) => c.rows && c.rows.length);
+  const headRows = (head.rows && head.rows.length)
+    ? head.rows
+    : (empty ? [{ label: empty, disabled: true }] : []);
+  const total = rest.reduce((n, c) => n + c.rows.length, headRows.length);
+
+  if (total > foldAt) {
+    const out = [{ label: head.label, submenu: () => headRows }];
+    for (const c of rest) out.push({ label: c.label, submenu: () => c.rows });
+    return out;
+  }
+
+  const out = [...headRows];
+  for (const c of rest) out.push({ sep: true }, { head: c.label }, ...c.rows);
+  return out;
+}
+
 function buildLibraryMenu(ctx) {
   const { emit, api } = ctx;
   const read = async (fn) => {
     try { return (await Promise.resolve(fn ? fn() : [])) || []; } catch { return []; }
   };
-  const kindRows = async ({ channel, library, empty, pluginEntries, newLabel, manageLabel, bundles }) => {
-    const rows = library.length ? library : [{ label: empty, disabled: true }];
-    for (const b of await bundles()) {
-      const entries = pluginEntries(b);
-      if (!entries.length) continue;
-      rows.push({ sep: true }, { head: b.name || b.id }, ...entries);
-    }
-    rows.push(
-      { sep: true },
-      { label: newLabel, run: () => emit(channel, ':new') },
-      { label: manageLabel, run: () => emit(channel, null) },
-    );
+  const teamCategories = (rows, rowFor) => [...new Set(rows.map((r) => r.team))]
+    .map((team) => ({ label: `Team ${team}`, rows: rows.filter((r) => r.team === team).map(rowFor) }));
+  const tail = (channel, newLabel, manageLabel) => [
+    { sep: true },
+    { label: newLabel, run: () => emit(channel, ':new') },
+    { label: manageLabel, run: () => emit(channel, null) },
+  ];
+  const kindRows = async ({ channel, library, teams = [], empty, pluginEntries, newLabel, manageLabel, bundles }) => {
+    const rows = categoryRows([
+      { label: 'Library', rows: library },
+      ...teams,
+      ...(await bundles()).map((b) => ({ label: b.name || b.id, rows: pluginEntries(b) })),
+    ], { empty });
+    rows.push(...tail(channel, newLabel, manageLabel));
     return rows;
   };
   const described = (e) => trunc(e.description ? `${e.name}  —  ${e.description}` : e.name);
   const bundleRow = (channel, b, name) => ({ label: trunc(name), run: () => emit(channel, { plugin: b.id, name }) });
-  const promptRows = (rows, click) => {
-    const out = [];
+  const promptRowsOf = (rows, kind, click) => (rows || [])
+    .filter((p) => p && p.kind === kind)
+    .map((p) => ({ label: trunc(p.name), run: () => click(p) }));
+  const promptsRows = async (bundles) => {
+    const channel = 'request-open-prompts-drawer';
+    const all = await read(api.listPrompts);
+    const libraryRows = all.filter((p) => p && !p.team);
+    const teamRows = all.filter((p) => p && p.team);
+    const catalog = await bundles();
+    const rows = [];
     for (const kind of ['system', 'append']) {
-      const ofKind = rows.filter((p) => p && p.kind === kind);
-      if (!ofKind.length) continue;
-      out.push({ head: kind === 'system' ? 'System' : 'Append' });
-      for (const p of ofKind) out.push({ label: trunc(p.name), run: () => click(p, kind) });
+      const cats = [
+        { label: 'Library', rows: promptRowsOf(libraryRows, kind, (p) => emit(channel, { kind, name: p.name })) },
+        ...teamCategories(teamRows.filter((p) => p.kind === kind), (p) => ({
+          label: trunc(p.name),
+          run: () => emit(channel, { team: p.team, kind, name: p.name }),
+        })),
+        ...catalog.map((b) => ({
+          label: b.name || b.id,
+          rows: promptRowsOf(b.prompts, kind, (p) => emit(channel, { plugin: b.id, kind, name: p.name })),
+        })),
+      ];
+      if (!cats.some((c) => c.rows.length)) continue;
+      rows.push({ head: kind === 'system' ? 'System' : 'Append' }, ...categoryRows(cats, {}));
     }
-    return out;
+    if (!rows.length) rows.push({ label: '(no prompts in library)', disabled: true });
+    rows.push(...tail(channel, 'New Prompt…', 'Manage Prompts…'));
+    return rows;
+  };
+  const templatesRows = async (bundles) => {
+    const channel = 'request-open-templates-drawer';
+    const all = (await read(api.listTemplates)).filter((t) => t && !t.plugin);
+    return kindRows({
+      channel,
+      library: all.filter((t) => !t.team)
+        .map((t) => ({ label: trunc(t.name), run: () => emit(channel, t.id || t.name) })),
+      teams: teamCategories(all.filter((t) => t.team), (t) => ({
+        label: trunc(t.name),
+        run: () => emit(channel, { team: t.team, name: t.name }),
+      })),
+      empty: '(no templates in library)',
+      pluginEntries: (b) => (b.templates || []).map((name) => bundleRow(channel, b, name)),
+      newLabel: 'New Template…',
+      manageLabel: 'Manage Templates…',
+      bundles,
+    });
   };
   return {
     label: 'Library',
@@ -211,28 +272,11 @@ function buildLibraryMenu(ctx) {
       return [
         {
           label: 'Prompts',
-          submenu: async () => kindRows({
-            channel: 'request-open-prompts-drawer',
-            library: promptRows((await read(api.listPrompts)).filter((p) => !p.team), (p, kind) => emit('request-open-prompts-drawer', { kind, name: p.name })),
-            empty: '(no prompts in library)',
-            pluginEntries: (b) => promptRows(b.prompts || [], (p, kind) => emit('request-open-prompts-drawer', { plugin: b.id, kind, name: p.name })),
-            newLabel: 'New Prompt…',
-            manageLabel: 'Manage Prompts…',
-            bundles,
-          }),
+          submenu: () => promptsRows(bundles),
         },
         {
           label: 'Templates',
-          submenu: async () => kindRows({
-            channel: 'request-open-templates-drawer',
-            library: (await read(api.listTemplates)).filter((t) => !t.plugin)
-              .map((t) => ({ label: trunc(t.name), run: () => emit('request-open-templates-drawer', t.id || t.name) })),
-            empty: '(no templates in library)',
-            pluginEntries: (b) => (b.templates || []).map((name) => bundleRow('request-open-templates-drawer', b, name)),
-            newLabel: 'New Template…',
-            manageLabel: 'Manage Templates…',
-            bundles,
-          }),
+          submenu: () => templatesRows(bundles),
         },
         {
           label: 'Agents',
@@ -562,4 +606,7 @@ function mount(shim) {
   }
 }
 
-module.exports = { mount, buildMenus, buildLibraryMenu, buildPluginsMenu, buildTeamsMenu, navQuery, BAR_H, THEMES };
+module.exports = {
+  mount, buildMenus, buildLibraryMenu, buildPluginsMenu, buildTeamsMenu,
+  categoryRows, navQuery, BAR_H, FOLD_AT, THEMES,
+};

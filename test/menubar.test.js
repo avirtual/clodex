@@ -25,17 +25,22 @@ function recordingCtx() {
   const api = {
     listAgents: async () => [{ name: 'agent-one', description: 'first' }],
     listSkillLib: async () => [{ name: 'skill-one', description: 'a skill' }],
-    // The team rows listPrompts now carries (t790) are the Prompts DRAWER's
-    // business, not this menu's: it opens the library editor by bare {kind, name},
-    // which resolves against the library alone. `team-sys` shadows `lib-sys` and
-    // `team-only` exists nowhere else — both must be absent from the submenu below.
+    // t790's team rows are listed now (t793): under a `Team <name>` group, and
+    // clicking one sends `{team, …}` so the drawer opens the TEAM's copy. The
+    // library `{kind, name}` payload resolves against the library alone, which
+    // is why a shadowing team row cannot ride it — `lib-sys` exists in both, and
+    // the two must reach the drawer by different payloads.
     listPrompts: async () => [
       { name: 'lib-append', kind: 'append', body: 'A' },
       { name: 'lib-sys', kind: 'system', body: 'S' },
       { name: 'lib-sys', kind: 'system', body: 'T', team: 'shop', id: 'team:shop:system:lib-sys' },
       { name: 'team-only', kind: 'append', body: 'U', team: 'shop', id: 'team:shop:append:team-only' },
     ],
-    listTemplates: async () => [{ id: 'tpl-one', name: 'tpl-one' }, { id: 'rev:audit', name: 'rev:audit', plugin: 'rev' }],
+    listTemplates: async () => [
+      { id: 'tpl-one', name: 'tpl-one' },
+      { id: 'rev:audit', name: 'rev:audit', plugin: 'rev' },
+      { id: 'team:shop:hand', name: 'hand', team: 'shop' },
+    ],
     listExecCommands: async () => [{ name: 'cmd-one' }],
     pluginCatalog: async () => [{
       id: 'rev', name: 'Reviewer', editable: true, dir: '/p/rev',
@@ -105,12 +110,13 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
   const shape = (rows) => rows.map((r) => (r.sep ? '—' : r.head ? `[${r.head}]` : r.label));
   const sub = async (label) => shape(await Promise.resolve(top.find((r) => r.label === label).submenu()));
   assert.deepStrictEqual(await sub('Prompts'), [
-    '[System]', 'lib-sys', '[Append]', 'lib-append',
-    '—', '[Reviewer]', '[System]', 'strict', '[Append]', 'rules',
+    '[System]', 'lib-sys', '—', '[Team shop]', 'lib-sys', '—', '[Reviewer]', 'strict',
+    '[Append]', 'lib-append', '—', '[Team shop]', 'team-only', '—', '[Reviewer]', 'rules',
     '—', 'New Prompt…', 'Manage Prompts…',
-  ], 'one lib-sys, not two, and no team-only row: the team copies are fenced out');
+  ], 'System and Append are the top categories; each carries library, team and plugin groups');
   assert.deepStrictEqual(await sub('Templates'),
-    ['tpl-one', '—', '[Reviewer]', 'audit', '—', 'New Template…', 'Manage Templates…'],
+    ['tpl-one', '—', '[Team shop]', 'hand', '—', '[Reviewer]', 'audit',
+      '—', 'New Template…', 'Manage Templates…'],
     'a plugin template shows its stem, not the plugin-id:stem row the flat list carries');
   assert.deepStrictEqual(await sub('Agents'),
     ['agent-one  —  first', '—', '[Reviewer]', 'critic', '—', 'New Agent…', 'Manage Agent Types…']);
@@ -135,6 +141,34 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
     'the four items left File for the Library menu');
   const view = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'View').items());
   assert.ok(view.some((r) => r.label === 'Show IPC Traffic…'), 'IPC traffic moved to View with the Agents menu gone');
+});
+
+test('t793: a team row clicks with {team, …} and past sixteen rows every group folds', async () => {
+  const { ctx, rec } = recordingCtx();
+  const top = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'Library').items());
+  const open = async (label) => Promise.resolve(top.find((r) => r.label === label).submenu());
+
+  const templates = await open('Templates');
+  templates.find((r) => r.label === 'hand').run();
+  const prompts = await open('Prompts');
+  // Both `lib-sys` rows carry the same label; the team one is the row after the
+  // `Team shop` header, and it is exactly the pair a bare-name lookup confuses.
+  const teamSys = prompts[prompts.findIndex((r) => r.head === 'Team shop') + 1];
+  teamSys.run();
+  prompts.find((r) => r.label === 'team-only').run();
+  assert.deepStrictEqual(rec.emits, [
+    ['request-open-templates-drawer', { team: 'shop', name: 'hand' }],
+    ['request-open-prompts-drawer', { team: 'shop', kind: 'system', name: 'lib-sys' }],
+    ['request-open-prompts-drawer', { team: 'shop', kind: 'append', name: 'team-only' }],
+  ], 'a team row names its team, so the drawer opens the team copy and not the library one');
+
+  const many = { ...ctx, api: { ...ctx.api, listAgents: async () => Array.from({ length: 17 }, (_, i) => ({ name: `a${i + 1}` })) } };
+  const agentsTop = await Promise.resolve(buildMenus(many).find((m) => m.label === 'Library').items());
+  const agents = await Promise.resolve(agentsTop.find((r) => r.label === 'Agents').submenu());
+  assert.deepStrictEqual(agents.map((r) => (r.sep ? '—' : r.label)),
+    ['Library', 'Reviewer', '—', 'New Agent…', 'Manage Agent Types…']);
+  assert.strictEqual((await Promise.resolve(agents[0].submenu())).length, 17);
+  assert.deepStrictEqual((await Promise.resolve(agents[1].submenu())).map((r) => r.label), ['critic']);
 });
 
 test('New Session… carries the Alt+T accelerator hint (its real browser Alt chord)', async () => {

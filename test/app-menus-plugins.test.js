@@ -463,9 +463,13 @@ test('t680: each kind lists the library first, then each contributing plugin und
   const { host, stores } = libraryFixture();
   const lib = buildTemplateWith(host, { stores }).find((m) => m.label === 'Library').submenu;
   const sub = (label) => shape(lib.find((i) => i.label === label).submenu);
+  // t793 moved the kind split OUTSIDE the source split: System and Append are the
+  // top-level categories now, and each carries its own library / team / plugin
+  // groups. The pre-t793 shape put the whole plugin bundle under one header and
+  // re-split kinds inside it, which cannot express a team group per kind.
   assert.deepStrictEqual(sub('Prompts'), [
-    '[System]', 'lib-sys', '[Append]', 'lib-append',
-    '—', '[Reviewer]', '[System]', 'strict', '[Append]', 'rules',
+    '[System]', 'lib-sys', '—', '[Reviewer]', 'strict',
+    '[Append]', 'lib-append', '—', '[Reviewer]', 'rules',
     '—', 'New Prompt…', 'Manage Prompts…',
   ]);
   assert.deepStrictEqual(sub('Templates'),
@@ -522,6 +526,83 @@ test('t680: a plugin entry click sends the drawer channel with {plugin, name}; l
     ['request-open-skills-drawer', null],
     ['request-open-inbox-drawer'],
   ]);
+});
+
+// ── Team sources in the Library menu (t793) ─────────────────────────────────
+
+// The menu's team rows come from the ENGINE listings, not from the library
+// stores: `listAllTemplates`/`listAllPrompts` are the only sources that carry a
+// `team` field at all. Injecting them as deps here is what the fixture below
+// exercises — a menu that kept reading getTemplates()/getPromptLibrary() would
+// render the same library rows and simply have no team group to show.
+function teamSources() {
+  return {
+    listAllTemplates: () => [
+      { id: 'tpl-one', name: 'tpl-one', type: 'claude' },
+      { id: 'rev:audit', name: 'audit', type: 'claude', plugin: 'rev' },
+      { id: 'team:shop:hand', name: 'hand', type: 'claude', team: 'shop', teamName: 'shop' },
+    ],
+    listAllPrompts: () => [
+      { name: 'lib-append', kind: 'append', body: 'A' },
+      { name: 'lib-sys', kind: 'system', body: 'S' },
+      { name: 'shop-sys', kind: 'system', body: 'T', team: 'shop', id: 'team:shop:system:shop-sys' },
+      { name: 'shop-app', kind: 'append', body: 'U', team: 'shop', id: 'team:shop:append:shop-app' },
+    ],
+  };
+}
+
+test('t793: a team template lists under Team <name> between the library and plugin groups', () => {
+  const { host, stores } = libraryFixture();
+  const lib = buildTemplateWith(host, { stores: { ...stores, ...teamSources() } })
+    .find((m) => m.label === 'Library').submenu;
+  assert.deepStrictEqual(shape(lib.find((i) => i.label === 'Templates').submenu), [
+    'tpl-one', '—', '[Team shop]', 'hand', '—', '[Reviewer]', 'audit',
+    '—', 'New Template…', 'Manage Templates…',
+  ]);
+});
+
+test('t793: a team template row sends {team, name} — the payload the drawer routes on', () => {
+  const { host, stores } = libraryFixture();
+  const sent = [];
+  const lib = buildTemplateWith(host, { stores: { ...stores, ...teamSources() }, sent })
+    .find((m) => m.label === 'Library').submenu;
+  lib.find((i) => i.label === 'Templates').submenu.find((i) => i.label === 'hand').click();
+  assert.deepStrictEqual(sent, [['request-open-templates-drawer', { team: 'shop', name: 'hand' }]]);
+});
+
+test('t793: a team prompt lands under its own kind, and clicks with {team, kind, name}', () => {
+  const { host, stores } = libraryFixture();
+  const sent = [];
+  const lib = buildTemplateWith(host, { stores: { ...stores, ...teamSources() }, sent })
+    .find((m) => m.label === 'Library').submenu;
+  const prompts = lib.find((i) => i.label === 'Prompts').submenu;
+  assert.deepStrictEqual(shape(prompts), [
+    '[System]', 'lib-sys', '—', '[Team shop]', 'shop-sys', '—', '[Reviewer]', 'strict',
+    '[Append]', 'lib-append', '—', '[Team shop]', 'shop-app', '—', '[Reviewer]', 'rules',
+    '—', 'New Prompt…', 'Manage Prompts…',
+  ], 'each kind carries its own library / team / plugin groups');
+
+  prompts.find((i) => i.label === 'shop-sys').click();
+  prompts.find((i) => i.label === 'shop-app').click();
+  assert.deepStrictEqual(sent, [
+    ['request-open-prompts-drawer', { team: 'shop', kind: 'system', name: 'shop-sys' }],
+    ['request-open-prompts-drawer', { team: 'shop', kind: 'append', name: 'shop-app' }],
+  ]);
+});
+
+test('t793: past sixteen rows every group folds into its own submenu', () => {
+  const { host, stores } = libraryFixture();
+  const many = Array.from({ length: 17 }, (_, i) => ({ name: `agent-${i + 1}` }));
+  const lib = buildTemplateWith(host, {
+    stores: { ...stores, getAgentLibrary: () => ({ list: () => many }) },
+  }).find((m) => m.label === 'Library').submenu;
+  const agents = lib.find((i) => i.label === 'Agents').submenu;
+  // 17 library rows + the plugin's one: both categories become submenus, and the
+  // tail is untouched by the fold.
+  assert.deepStrictEqual(agents.map((i) => (i.type === 'separator' ? '—' : i.label)),
+    ['Library', 'Reviewer', '—', 'New Agent…', 'Manage Agent Types…']);
+  assert.strictEqual(agents[0].submenu.length, 17, 'every library row is inside the Library submenu');
+  assert.deepStrictEqual(agents[1].submenu.map((i) => i.label), ['critic']);
 });
 
 test('t680: a bundle change through updateBundle refreshes the menu', () => {

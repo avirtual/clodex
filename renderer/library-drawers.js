@@ -151,6 +151,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   let editingPrompt = null;
   let editingPromptBundle = null;
   let editingPromptTeam = null;
+  let lastPromptTeamRows = [];
 
   function openTeamPrompt(p) {
     openPromptEditor(p, null, { team: p.team });
@@ -160,6 +161,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     const all = (await window.api.listPrompts()) || [];
     const items = all.filter((p) => !p.team);
     const teamRows = all.filter((p) => p.team);
+    lastPromptTeamRows = teamRows;
     if (refreshPluginCatalog) await refreshPluginCatalog();
     const groups = [
       ...bundleGroups('prompts/system').map((g) => ({ ...g, kind: 'system' })),
@@ -265,6 +267,12 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     if (arg === ':new') { openPromptEditor(null); return; }
     if (!arg || typeof arg !== 'object') return;
     const kind = arg.kind === 'system' ? 'system' : 'append';
+    if (arg.team) {
+      const row = lastPromptTeamRows.find((x) => x.team === arg.team
+        && x.kind === kind && x.name === arg.name);
+      if (row) openTeamPrompt(row);
+      return;
+    }
     if (arg.plugin) {
       await openBundleEntry(`prompts/${kind}`, arg, (sec, name, body) => openPromptEditor({ kind, name, body }, sec));
       return;
@@ -820,6 +828,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     return parts.join(' · ') || '(defaults)';
   }
 
+  let lastTemplateTeamRows = [];
+
   function openTeamTemplate(tpl) {
     closeTemplatesDrawer();
     openTemplateEditor(tpl, null, { team: tpl.team });
@@ -829,6 +839,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     const all = (await window.api.listTemplates()) || [];
     const items = all.filter((t) => !t.plugin && !t.team);
     const teamRows = all.filter((t) => !t.plugin && t.team);
+    lastTemplateTeamRows = teamRows;
     const pluginTemplates = new Map(all.filter((t) => t.plugin).map((t) => [t.id, t]));
     if (refreshPluginCatalog) await refreshPluginCatalog();
     const groups = bundleGroups('templates');
@@ -928,6 +939,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     if (arg === ':new') { closeTemplatesDrawer(); openTemplateEditor(null); return; }
     if (!arg) return;
     if (typeof arg === 'object') {
+      if (arg.team) {
+        const row = lastTemplateTeamRows.find((x) => x.team === arg.team && x.name === arg.name);
+        if (row) openTeamTemplate(row);
+        return;
+      }
       const t = bundleTarget('templates', arg);
       if (!t) return;
       if (!t.sec.editable) { revealBundle(t.sec); return; }
