@@ -255,6 +255,7 @@ const EXPECTED = [
   // its noWire, and passing `shape.noWire` here would let one blind the wire that
   // measures the seat.
   { file: 'team-tickets.js', mint: true, noWire: 'false', label: 'team-review reviewer seat — ephemeral, monotonic name, always brand new. Never wire-off: it is a short-lived seat Clodex spawns, and the wire is what its verdict rides.' },
+  { file: 'team-tickets.js', mint: null, noWire: null, label: '[agent:team sandbox] — mgr.create(id, label), the BOX REGISTRY, exactly as sandbox:createBox above. Same object, same reasoning: no mint axis, no PTY. Listed so the census stays exhaustive and nobody "fixes" it by adding a flag.' },
   { file: 'team-tickets.js', mint: true, noWire: 'false', label: 'branch-per-ticket seat — [agent:task add] to a role with `worktree: true` mints a one-shot seat in its own git worktree. Always new: the name carries the ticket number, and a taken name never reaches create() — it is either the ticket\'s own live seat (spec re-sent), its archived record (held, with the recovery named), or a tree still held by a live seat (refused). Never wire-off: it is a working seat Clodex spawns on the lead\'s behalf, with no operator checkbox behind it, and the same reasoning as the reviewer row.' },
 ];
 

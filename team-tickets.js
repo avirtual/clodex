@@ -39,15 +39,7 @@ const { resolveModelId, deriveModelTemplate } = require('./team-template-derive'
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
-// The SAME regex box creation is gated on, imported rather than copied: a local
-// copy would drift and let `team sandbox` mint an id manager.create refuses.
 const { BOX_ID_RE } = require('./sandbox');
-// team-manifest's atomicWrite, inlined rather than injected: durability is not a
-// seam a caller may vary, and the 0600 temp file it renames into place is what
-// gives sandbox.json its mode — a plain writeFileSync would land the peer-wire
-// token at the umask default. Deliberately NOT named `ensureDir`: that name is
-// already a deps destructure inside createTicketMethods, and shadowing it would
-// swap a fixture's probe for the real module.
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 
 const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
@@ -2814,32 +2806,28 @@ function createTicketMethods(deps, shared) {
       return path.join(teamsDir, team.name, 'sandbox.json');
     },
 
-    // Async, so the switch's own try/catch cannot see a rejection here — the
-    // caller attaches the `.catch` that turns one into an `error:` reply.
     async _handleTeamSandbox(team, intent, reply) {
       const action = intent.action || 'up';
       if (!SANDBOX_ACTIONS.includes(action)) {
         reply(`error: sandbox action must be ${SANDBOX_ACTIONS.join(' | ')} (got "${action}")`);
         return;
       }
-      const manager = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
-      if (!manager) { reply('error: sandboxes are not enabled on this host'); return; }
+      const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
+      if (!mgr) { reply('error: sandboxes are not enabled on this host'); return; }
 
       const boxId = `team-${team.name}`;
       if (!BOX_ID_RE.test(boxId)) {
         reply(`error: box id "${boxId}" must be lowercase letters, digits, dashes or underscores (no dots, no spaces) — rename the team`);
         return;
       }
-      let box = manager.get(boxId);
+      let box = mgr.get(boxId);
       if (!box) {
-        const made = manager.create(boxId, `${team.name} team`);
+        const made = mgr.create(boxId, `${team.name} team`);
         if (made && made.ok === false) { reply(`error: ${made.error}`); return; }
-        box = manager.get(boxId);
+        box = mgr.get(boxId);
         if (!box) { reply(`error: sandbox ${boxId} could not be created`); return; }
       }
 
-      // `image` is deliberately absent from the patch: an operator override set in
-      // the GUI still wins over a ref, and adding it here would silently clear it.
       const saved = box.setConfig({ ref: intent.ref || null, workDir: team.root });
       if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
 
@@ -2861,10 +2849,6 @@ function createTicketMethods(deps, shared) {
       if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
       const st = await box.status();
       const ports = (st && st.ports) || (r && r.ports) || {};
-      // Called directly, NOT behind a `typeof` guard: the whole point of the file
-      // is the token, so a box that stopped exposing one must fail loudly into the
-      // catch rather than write `"token": null` that a seat would read as an
-      // answer and authenticate with.
       const token = box.remoteToken();
       const record = {
         boxId,
@@ -2877,8 +2861,6 @@ function createTicketMethods(deps, shared) {
       };
       ensureDirMode700(path.dirname(file));
       atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
-      // The reply names the FILE, never the token: this line lands in the lead's
-      // transcript, its logs and any dm it is quoted into.
       reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
         + `${sandboxPortClause({ ports })} · token in ${file}`);
     },

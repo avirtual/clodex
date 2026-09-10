@@ -1318,10 +1318,6 @@ const SessionManager = createSessionManager({
   getPeerManager: () => peerManager,
   getRemindScheduler: () => remindScheduler,
   getNotifications: () => notifications,
-  // A GETTER, not the value: sandboxManager is constructed further down this
-  // file than createSessionManager is called, so passing it directly reads the
-  // binding in its temporal dead zone. Null whenever the host disabled
-  // sandboxes, which is what `[agent:team sandbox]` refuses on.
   getSandboxManager: () => sandboxManager,
   getUserDataPath: () => userDataPath,
   openPath,
