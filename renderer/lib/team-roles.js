@@ -142,6 +142,14 @@ function templateOptionGroups(rows, team, stored) {
   return groups;
 }
 
+function templateRowFor(rows, team, value) {
+  if (!value) return null;
+  const list = Array.isArray(rows) ? rows : [];
+  return list.find((t) => t && t.team === team && t.name === value)
+    || list.find((t) => t && !t.team && !t.plugin && t.name === value)
+    || null;
+}
+
 // The branch ORDER is the meaning: a team-owned stem is on disk and resolves first,
 // so it is answered BEFORE the branches that accuse a stem of being absent or off the rail.
 function storedPromptNote(prompt, opts = {}) {
@@ -648,7 +656,7 @@ function usesByRole(planItems, roleKeys) {
 
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole, usesByRole,
-  promptOptionGroups, storedPromptNote, templateOptionGroups,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor,
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,

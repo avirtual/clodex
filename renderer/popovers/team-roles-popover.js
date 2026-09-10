@@ -30,7 +30,7 @@ const {
   teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
-  promptOptionGroups, storedPromptNote, templateOptionGroups,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -339,7 +339,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     open.className = 'secondary team-role-template-open';
     open.textContent = 'Open';
     open.title = 'Edit this template — its model, tools and prompts — in the template editor.';
-    const rowFor = () => templateRows.find((t) => t && !t.plugin && t.name === select.value) || null;
+    const rowFor = () => templateRowFor(templateRows, teamName(), select.value);
     const syncOpen = () => {
       open.disabled = !rowFor();
     };

@@ -1171,7 +1171,7 @@ test('storedPromptNote: the three library verdicts are unchanged', () => {
 });
 
 // --- t792: the role template picker ------------------------------------------
-const { templateOptionGroups } = require('../renderer/lib/team-roles');
+const { templateOptionGroups, templateRowFor } = require('../renderer/lib/team-roles');
 
 // One listing, every discriminator the real `templates:list` returns: library
 // rows have neither `team` nor `plugin`, team rows carry `team`, plugin rows
@@ -1262,6 +1262,52 @@ test('templateOptionGroups: a row without a usable name is skipped, not rendered
     'an unnamed row would render as an empty option that stores an empty template');
 });
 
+test('templateRowFor: this team\'s row wins over the library copy it shadows', () => {
+  // The CHANGELOG's promise is "Open the hand's template, set the model, save".
+  // The library row comes FIRST in the listing (engine.js emits library, then
+  // plugin, then team rows), so a name-only find opens the library copy — a file
+  // no seat for this team reads, which is the silent edit t748 closed for the
+  // drawer.
+  const shadowed = [
+    { name: 'hand', id: 'hand' },
+    { name: 'hand', id: 'team:shop:hand', team: 'shop' },
+  ];
+  assert.strictEqual(templateRowFor(shadowed, 'shop', 'hand').id, 'team:shop:hand');
+  // ENTER: the library row IS reachable by the same call for a team that does not
+  // own the stem, so the assertion above is about precedence, not about the find.
+  assert.strictEqual(templateRowFor(shadowed, 'other', 'hand').id, 'hand');
+});
+
+test('templateRowFor: another team\'s row is never the Open target', () => {
+  // `lead` is owned by team `other`. Opening it from team `shop` would edit
+  // another team's file from a popover that names neither it nor the team.
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'lead'), null);
+  assert.strictEqual(templateRowFor(ROWS, 'other', 'lead').id, 'team:other:lead',
+    'ENTER: its OWN team reaches it, so the null above is the ownership check');
+});
+
+test('templateRowFor: the team\'s own row is found, and a library row still is', () => {
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'hand').id, 'team:shop:hand');
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'fable-design').id, 'fable-design');
+});
+
+test('templateRowFor: (none) opens nothing, even against a row named \'\'', () => {
+  // `select.value` is '' for the (none) option, and a listing row with an empty
+  // name would match it by equality — enabling Open on a selection that names no
+  // template at all.
+  const withBlank = [{ name: '', id: 'blank' }, ...ROWS];
+  assert.strictEqual(templateRowFor(withBlank, 'shop', ''), null);
+  assert.strictEqual(templateRowFor(withBlank, 'shop', null), null);
+});
+
+test('templateRowFor: a plugin row is never the Open target', () => {
+  // Same reason it is unselectable in the picker: a role can never hold one, so
+  // Open on it would edit a file this role does not read.
+  assert.strictEqual(templateRowFor(ROWS, 'shop', 'rev:audit'), null);
+  assert.strictEqual(templateRowFor([], 'shop', 'anything'), null, 'and an empty listing opens nothing');
+  assert.strictEqual(templateRowFor(null, 'shop', 'anything'), null, 'as does a failed one');
+});
+
 test('t792 wiring: the row template field is a select the save path reads, and an Open beside it', () => {
   // The popover is DOM-bound and has no unit tests (its header says so), so this
   // pins the wire by shape. Each fact below, missing, leaves templateOptionGroups
@@ -1293,8 +1339,9 @@ test('t792 wiring: the row template field is a select the save path reads, and a
     'Open is dead unless the selection names a row the editor can be seeded from');
   assert.match(src, /select\.addEventListener\('change', syncOpen\)/,
     'and it re-syncs on every change, or it stays dead after the first real pick');
-  assert.match(src, /!t\.plugin && t\.name === select\.value/,
-    'a plugin row is excluded from Open as it is from the picker — a role can never hold one');
+  assert.match(src, /const rowFor = \(\) => templateRowFor\(templateRows, teamName\(\), select\.value\)/,
+    'the Open target is resolved by the team-first helper, over THIS team — a name-only find '
+    + 'over the raw listing opens another team\'s file, or the library copy of a stem this team shadows');
   assert.match(src, /closeTeamRolesPopover\(\);\n\s*if \(typeof openTemplate === 'function'\) openTemplate\(row\)/,
     'the click closes the popover and hands the ROW to the injected opener — no globals');
 });
