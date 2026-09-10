@@ -393,3 +393,43 @@ test('onChange fires when the confirmed set changes and stays quiet when it does
   await w.run();
   assert.strictEqual(fired, 1, 'the same answer twice is not a change');
 });
+
+test('two runs at once become one check, and both callers get the fresh list', async () => {
+  // The drawer's on-open refresh can land on top of the six-hourly tick. The old
+  // shape answered the second caller with the cache it happened to hold — which
+  // for the drawer's very first refresh is the EMPTY pre-boot list, so the rows
+  // would repaint to no badges while the real check was still running. Both
+  // callers must resolve to the same fresh list, off one pass over the library.
+  const rows = [{ id: 'y', installed: 'fetched', upToDate: false }];
+  const asked = [];
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const loader = {
+    libraryCatalog: async () => { await gate; return { ok: true, repo: 'r', commit: 'lib9999', plugins: rows }; },
+    resolveUpdate: async (id) => { asked.push(id); return changed('bbbbbbb', 'ccccccc', '1.2.0'); },
+  };
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent });
+  const a = w.run();
+  const b = w.run();
+  release();
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.deepStrictEqual(asked, ['y'], 'one check, so each candidate is resolved once — not once per caller');
+  const want = [{ id: 'y', from: 'bbbbbbb', to: 'ccccccc', version: '1.2.0' }];
+  assert.deepStrictEqual(ra, want);
+  assert.deepStrictEqual(rb, want, 'the second caller must WAIT for the run, not be handed the stale cache');
+});
+
+test('a run started after the first one settled is a new check', async () => {
+  // The coalescing window must close, or the 6 h tick after the drawer's refresh
+  // would return the same promise forever and the list would never move again.
+  const rows = [{ id: 'y', installed: 'fetched', upToDate: false }];
+  const asked = [];
+  const loader = {
+    libraryCatalog: async () => ({ ok: true, repo: 'r', commit: 'lib9999', plugins: rows }),
+    resolveUpdate: async (id) => { asked.push(id); return changed('bbbbbbb', 'ccccccc', '1.2.0'); },
+  };
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent });
+  await w.run();
+  await w.run();
+  assert.deepStrictEqual(asked, ['y', 'y']);
+});

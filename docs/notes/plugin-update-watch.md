@@ -18,6 +18,14 @@ network.
 
 ## run
 
+The one on-demand caller is Manage Plugins, which fires a single
+`plugins.updatesAvailable` with `{refresh:true}` per open; the 90 s first sweep
+and the 6 h interval are unchanged. Concurrent callers share one in-flight
+promise rather than being handed the cache — the drawer's first refresh would
+otherwise repaint from the empty pre-boot list while the real check ran.
+
+## runOnce
+
 `resolveUpdate` is a tarball fetch and extract per plugin, so it cannot run on
 a dialog paint and cannot run over an unbounded candidate set. Hence the cap
 and the rotating cursor: a fixed first-N window would starve the tail forever.

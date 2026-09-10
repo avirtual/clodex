@@ -64,7 +64,7 @@ function el(tag) {
   return e;
 }
 
-const FREE = ['pluginsOverlay', 'document', 'renderMarkdown', 'placeAboveAnchor'];
+const FREE = ['pluginsOverlay', 'document', 'renderMarkdown', 'placeAboveAnchor', 'pluginsUpdateRefresh'];
 
 // From `function closePluginsDialog` to the line that opens the dialog — the
 // whole popover block plus the dialog's close, so the wiring BETWEEN them is
@@ -96,6 +96,7 @@ function mount() {
     { getElementById: (id) => nodes[id] || el('div') },
     renderMarkdown,
     (popover, anchor) => placed.push([popover, anchor]),
+    null,
   );
   return { ...fns, nodes, pluginsOverlay, placed };
 }

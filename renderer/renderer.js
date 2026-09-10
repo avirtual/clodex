@@ -5384,6 +5384,7 @@ window.api.onRequestOpenPeersDialog(() => openPeersDialog());
 const pluginsOverlay = document.getElementById('plugins-overlay');
 const pluginsList = document.getElementById('plugins-list');
 const pluginsRegisterNote = document.getElementById('plugins-register-note');
+let pluginsUpdateRefresh = null;
 
 function showPluginsRegisterNote(text, kind) {
   if (!pluginsRegisterNote) return;
@@ -5394,6 +5395,7 @@ function showPluginsRegisterNote(text, kind) {
 
 function closePluginsDialog() {
   closePluginReadmePopover();
+  pluginsUpdateRefresh = null;
   pluginsOverlay.classList.add('hidden');
 }
 
@@ -5423,6 +5425,7 @@ async function openPluginsDialog() {
   showPluginsRegisterNote('');
   closePluginsLibrarySection();
   closePluginsSourceSection();
+  pluginsUpdateRefresh = {};
   await renderPluginsDialog();
   pluginsOverlay.classList.remove('hidden');
 }
@@ -5433,9 +5436,23 @@ async function renderPluginsDialog() {
   try { status = await window.api.pluginInvoke('_host', 'plugins.status'); } catch {}
   let updates = null;
   try { updates = await window.api.pluginInvoke('_host', 'plugins.updatesAvailable'); } catch {}
-  const updateById = new Map(
-    (((updates && updates.ok && updates.updates) || [])).map((u) => [u.id, u]),
-  );
+  const updateSig = (list) => (list || []).map((u) => `${u.id}@${u.to}@${u.version}`).join(',');
+  const updateList = ((updates && updates.ok && updates.updates) || []);
+  const updateById = new Map(updateList.map((u) => [u.id, u]));
+  const refreshToken = pluginsUpdateRefresh;
+  if (refreshToken && !refreshToken.fired) {
+    refreshToken.fired = true;
+    const painted = updateSig(updateList);
+    (async () => {
+      let fresh = null;
+      try {
+        fresh = await window.api.pluginInvoke('_host', 'plugins.updatesAvailable', [{ refresh: true }]);
+      } catch {}
+      if (pluginsUpdateRefresh !== refreshToken) return;
+      if (updateSig((fresh && fresh.ok && fresh.updates) || []) === painted) return;
+      await renderPluginsDialog();
+    })();
+  }
   const plugins = (status && status.ok && status.plugins) || [];
   const problems = (status && status.ok && status.problems) || [];
   const shadowed = (status && status.ok && status.shadowed) || [];

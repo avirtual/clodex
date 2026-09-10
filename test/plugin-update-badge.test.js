@@ -45,7 +45,8 @@ function el(tag) {
 const FREE = ['pluginsList', 'window', 'document', 'sourceLine', 'pluginBar',
   'makePluginSettingsPanel', 'renderPluginsDialog', 'showPluginsRegisterNote',
   'openPluginsSourceUpdate', 'showToast', 'pluginsSourceTarget',
-  'closePluginsSourceSection', 'confirm', 'pluginOrigin', 'openPluginReadmePopover'];
+  'closePluginsSourceSection', 'confirm', 'pluginOrigin', 'openPluginReadmePopover',
+  'pluginsUpdateRefresh'];
 
 function extractRenderPluginsDialog() {
   const start = rendererSrc.indexOf('async function renderPluginsDialog() {');
@@ -61,7 +62,7 @@ function extractRenderPluginsDialog() {
 // `plugins` is what plugins.status answers with; `updates` is what
 // plugins.updatesAvailable answers with. `asked` records the methods called and
 // `opened` what reached the README popover.
-function mount(pluginsList, pluginInvoke, openReadme = () => {}) {
+function mount(pluginsList, pluginInvoke, openReadme = () => {}, refreshToken = null) {
   return extractRenderPluginsDialog()(
     pluginsList,
     { api: { pluginInvoke }, __CLODEX_WEB__: false },
@@ -73,6 +74,7 @@ function mount(pluginsList, pluginInvoke, openReadme = () => {}) {
     () => {}, () => {}, () => {}, null, () => {}, () => true,
     pluginOrigin,
     openReadme,
+    refreshToken,
   );
 }
 
@@ -228,4 +230,80 @@ test('the glyph is the first thing in the name node, ahead of the name', async (
     'a glyph appended after the name column reads as a suffix and breaks the fixed-width alignment');
   assert.strictEqual(nameEl.children[1].textContent, 'Remote Demo',
     'the name still has to be on the row beside the glyph');
+});
+
+// ── the refresh the drawer fires on open ────────────────────────────────────
+
+// A second `plugins.updatesAvailable`, carrying `[{ refresh: true }]`, that runs
+// AFTER the first paint. The cached read alone is 90 s/6 h stale, so a plugin
+// pushed since the boot check has no badge until this reply lands.
+// The host's own cache is part of the subject: plugin-update-watch publishes the
+// run's result before the refresh reply returns, so the repaint's plain read
+// sees the fresh list. A stub whose cached read stayed stale would pass a
+// renderer that painted the refresh reply directly AND one that repainted, which
+// is the distinction this fixture must not blur.
+function mountRefresh(calls, replies) {
+  const pluginsList = el('div');
+  let cached = replies.cached;
+  const fn = mount(
+    pluginsList,
+    async (_id, method, args) => {
+      calls.push([method, args]);
+      if (method === 'plugins.status') return { ok: true, plugins: [INSTALLED], problems: [], shadowed: [] };
+      if (method === 'plugins.updatesAvailable') {
+        if (args && args[0] && args[0].refresh) { cached = replies.fresh; return { ok: true, updates: replies.fresh }; }
+        return { ok: true, updates: cached };
+      }
+      return { ok: true };
+    },
+    () => {},
+    {},
+  );
+  return { fn, pluginsList };
+}
+
+const settle = async () => { for (let i = 0; i < 4; i++) await new Promise(setImmediate); };
+
+test('opening the drawer paints the cached badge and then asks for a fresh check', async () => {
+  const calls = [];
+  const { fn, pluginsList } = mountRefresh(calls, {
+    cached: [],
+    fresh: [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }],
+  });
+  await fn();
+  assert.strictEqual(badgeOf(pluginsList.children[0]), null,
+    'ENTER: the cached list is empty, so the first paint carries no badge and the badge below can only come from the refresh');
+  await settle();
+  const refreshes = calls.filter(([m, a]) => m === 'plugins.updatesAvailable' && a && a[0] && a[0].refresh === true);
+  assert.strictEqual(refreshes.length, 1,
+    'exactly one refresh per open — the repaint must not re-fire it, or an open drawer checks the library forever');
+  assert.strictEqual(badgeOf(pluginsList.children[0]).textContent, 'Update available (1.1.0 → 1.2.0)',
+    'the fresh reply must reach the rows: a check whose answer is dropped is the bug this closes');
+});
+
+test('a refresh that agrees with the cached list does not repaint', async () => {
+  const same = [{ id: 'demo', from: 'aaaaaaa', to: 'bbbbbbb', version: '1.2.0' }];
+  const calls = [];
+  const { fn } = mountRefresh(calls, { cached: same, fresh: same.map((u) => ({ ...u })) });
+  await fn();
+  await settle();
+  assert.strictEqual(calls.filter(([m]) => m === 'plugins.status').length, 1,
+    'an unchanged answer must leave the drawer alone — a repaint per open drops focus and scroll for nothing');
+});
+
+test('with no refresh token the dialog makes the cached read only', async () => {
+  // Every repaint path (a checkbox toggle, a Remove, the plugin-state event at
+  // renderer.js) re-enters renderPluginsDialog with the token already spent.
+  const calls = [];
+  const pluginsList = el('div');
+  const fn = mount(pluginsList, async (_id, method, args) => {
+    calls.push([method, args]);
+    if (method === 'plugins.status') return { ok: true, plugins: [INSTALLED], problems: [], shadowed: [] };
+    return { ok: true, updates: [] };
+  }, () => {}, null);
+  await fn();
+  await settle();
+  assert.deepStrictEqual(calls.map(([m, a]) => [m, a]),
+    [['plugins.status', undefined], ['plugins.updatesAvailable', undefined]],
+    'a repaint that re-checked the library would make the 6 h sweep run once per row toggle');
 });

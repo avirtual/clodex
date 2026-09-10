@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Manage Plugins re-checks the plugin library when it opens, so a plugin pushed after the boot-time check shows its "Update available" note within seconds instead of waiting for the six-hourly sweep.
+
 ## 5.55.0 — 2026-09-10 — Team create gains mode:interview: the lead interviews the operator before its first ticket
 
 - `[agent:team create]` takes `mode:interview`: the team is set up from a few words, and the lead's first turn interviews the operator and rewrites the brief itself before filing a ticket, instead of treating the words as a finished spec. Omitted or `mode:kickstart` is today's behaviour.
