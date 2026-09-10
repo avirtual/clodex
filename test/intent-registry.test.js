@@ -127,12 +127,14 @@ function parseIntentLegacy(rawLine) {
     const argStr = teamCreateMatch[1];
     const rootM = argStr.match(/\broot:(\S+)/);
     const leadM = argStr.match(/\blead:(\S+)/);
+    const modeM = argStr.match(/\bmode:(\S+)/);
     const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
     return {
       type: 'team-create',
       name: positional[0] || null,
       root: rootM ? rootM[1] : null,
       lead: leadM ? leadM[1] : null,
+      mode: modeM ? modeM[1] : null,
       body: teamCreateMatch[2],
     };
   }
@@ -370,6 +372,10 @@ const ADVERSARIAL = [
   '[agent:team create shop root:/proj/shop] trailing',
   '[agent:team create shop root:/proj/shop] first line of the brief',
   '[agent:team create shop root:/proj/shop lead:boss] first line of the brief',
+  '[agent:team create shop root:/proj/shop mode:interview] brief',
+  '[agent:team create shop root:/proj/shop mode:kickstart] brief',
+  '[agent:team create shop root:/proj/shop mode:bogus] brief',
+  '[agent:team create mode:interview root:/proj/shop shop]',
   '[agent:team created shop root:/p]',
   '[agent:team watchdog abc]', '[agent:team watchdog]', '[agent:team foo]',
   '[agent:team]', '[agent:team-reviewer]',
@@ -626,6 +632,20 @@ test('t751: team-create is its own privileged row; plain team stays ordinary', (
   // The strip at the mint/wire boundary follows from PRIVILEGED_INTENTS, so an
   // agent-authored template cannot grant itself the mint.
   assert.deepStrictEqual(registry.withoutPrivilegedIntentsFor(['dm', 'team-create', 'team']), ['dm', 'team']);
+});
+
+// t795. `mode:` reaches the handler as a field or the handler cannot refuse a bad
+// one before the mkdir. The null case is the load-bearing half: kickstart is the
+// default and is spelled by ABSENCE, so a parser that defaulted the field here
+// would make an omitted mode indistinguishable from an explicit one.
+test('t795: create carries mode:, and the positional name survives it', () => {
+  const withMode = parseIntent('[agent:team create shop root:/x lead:shop-lead mode:interview] Ship it.');
+  assert.strictEqual(withMode.mode, 'interview');
+  assert.strictEqual(withMode.name, 'shop', 'mode:x is a kv, never the name');
+  assert.strictEqual(withMode.root, '/x');
+  assert.strictEqual(withMode.lead, 'shop-lead');
+  assert.strictEqual(parseIntent('[agent:team create shop root:/x] Ship it.').mode, null,
+    'omitted stays null — the handler, not the parser, decides what null means');
 });
 
 test('end and escape are NOT rows — the scanner shell owns them', () => {

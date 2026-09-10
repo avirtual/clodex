@@ -2329,6 +2329,11 @@ function createTicketMethods(deps, shared) {
         reply(`error: create needs an absolute root — [agent:team create ${name} root:<abs-path>]`);
         return;
       }
+      const mode = intent.mode == null ? 'kickstart' : String(intent.mode);
+      if (mode !== 'kickstart' && mode !== 'interview') {
+        reply(`error: mode "${intent.mode}" is not kickstart or interview — no team was created`);
+        return;
+      }
       const cls = await this._classifyTeamRoot(root);
       if (!cls.kind) {
         const refusals = {
@@ -2345,6 +2350,10 @@ function createTicketMethods(deps, shared) {
       }
       const brief = String(intent.body == null ? '' : intent.body).replace(/^\n/, '');
       const hasBrief = brief.trim().length > 0;
+      if (!hasBrief && mode === 'interview') {
+        reply('error: mode:interview needs a brief body — no team was created');
+        return;
+      }
       if (hasBrief) {
         const bytes = Buffer.byteLength(brief, 'utf-8');
         if (bytes > TEAM_FILE_BODY_MAX) {
@@ -2422,13 +2431,17 @@ function createTicketMethods(deps, shared) {
       if (hasBrief) {
         const head = `team "${team.name}" created — root ${team.root} ${rootClause}, lead ${team.lead}, dir ${dir}; `
           + `hand takes a branch + worktree + seat per ticket; brief saved to prompts/append/team-project.md${copiedClause}`;
-        const opener = cls.kind === 'takeover'
+        const rootArm = cls.kind === 'takeover'
           ? `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is an EXISTING `
             + 'project you are taking over — Clodex touched none of its files. Follow "First turn on a fresh team" '
             + 'in your prompt.'
           : `You are the lead of team ${team.name}. This is your first turn. Root ${team.root} is a NEW project — `
             + 'Clodex created and git-init\'d it, and it is empty apart from one empty commit. Follow '
             + '"First turn on a fresh team" in your prompt.';
+        const opener = mode === 'interview'
+          ? `${rootArm} The brief is a STARTING POINT another agent wrote from a few words of the operator's, `
+            + 'not a spec: follow the INTERVIEW arm of "First turn on a fresh team" — ask before you file.'
+          : rootArm;
         const onReply = (msg) => {
           if (/^ok: spawned/.test(msg)) {
             const bare = msg.match(/lead role template "[^"]*" not installed, spawned with no template/);
@@ -2437,7 +2450,10 @@ function createTicketMethods(deps, shared) {
                 + '— NOT briefed: the brief composes only through that template; install it and respawn.');
               return;
             }
-            reply(`${head}; ${team.lead} spawned in the root on template clodex-team-lead and briefed. `
+            const briefedClause = mode === 'interview'
+              ? 'and briefed (interview mode: it will ask the operator before filing a ticket).'
+              : 'and briefed.';
+            reply(`${head}; ${team.lead} spawned in the root on template clodex-team-lead ${briefedClause} `
               + `Ask ${team.lead} for your first ticket.`);
             this._deliverParkedActive(team.lead, session.name, opener, 'dm');
             return;

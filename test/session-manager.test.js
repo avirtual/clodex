@@ -10874,6 +10874,89 @@ test('t782 create: a TAKEOVER root injects the takeover opener instead', async (
     'and NOTHING was PTY-injected into the booting seat');
 });
 
+// --- t795: mode:interview ---------------------------------------------------
+
+test('t795 create: interview APPENDS to the root arm, and kickstart never does', async () => {
+  // The root arm is the same string in both modes — the mode adds a sentence, it
+  // does not choose an opener. Asserted on ONE fixture pair so the kickstart half
+  // is a real differential rather than a claim about a different create.
+  const f = mkTeamCreate();
+  const root = pathReal.join(f.projectRoot, 'leaf');
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root, lead: null, mode: 'interview', body: 'A crypto app.',
+  });
+  await tick();
+  const body = f.openers[0].body;
+  assert.ok(body.includes(
+    `You are the lead of team shop. This is your first turn. Root ${pathReal.resolve(root)} is a NEW project — `
+    + 'Clodex created and git-init\'d it, and it is empty apart from one empty commit. '
+    + 'Follow "First turn on a fresh team" in your prompt.'), body);
+  assert.ok(body.includes(
+    ' The brief is a STARTING POINT another agent wrote from a few words of the operator\'s, not a spec: '
+    + 'follow the INTERVIEW arm of "First turn on a fresh team" — ask before you file.'), body);
+
+  const g = mkTeamCreate();
+  const groot = pathReal.join(g.projectRoot, 'leaf');
+  await g.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: groot, lead: null, mode: null, body: 'A crypto app.',
+  });
+  await tick();
+  assert.ok(!g.openers[0].body.includes('STARTING POINT'),
+    'kickstart is byte-identical to before — the sentence is the whole difference');
+});
+
+test('t795 create: the interview reply says the lead will ask before it files', async () => {
+  const f = mkTeamCreate({ makeRepo: true });
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, mode: 'interview', body: 'A crypto app.',
+  });
+  await tick();
+  const line = f.toSeat('a')[0];
+  assert.ok(line.includes('shop-lead spawned in the root on template clodex-team-lead '
+    + 'and briefed (interview mode: it will ask the operator before filing a ticket). '
+    + 'Ask shop-lead for your first ticket.'), line);
+});
+
+test('t795 create: an unknown mode is refused BEFORE anything is written', async () => {
+  // Pre-write like the taken-lead refusal above, and for the same reason: a mode
+  // rejected after the mkdir leaves a git repo in a directory the caller only named.
+  const f = mkTeamCreate();
+  const root = pathReal.join(f.projectRoot, 'leaf');
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root, lead: null, mode: 'bogus', body: 'A crypto app.',
+  });
+  await tick();
+  assert.deepStrictEqual(f.injected, [
+    '[agent:team] error: mode "bogus" is not kickstart or interview — no team was created',
+  ]);
+  assert.strictEqual(fsReal.existsSync(pathReal.join(f.home, 'teams', 'shop')), false, 'no team dir at all');
+  assert.strictEqual(fsReal.existsSync(root), false, 'and the root leaf was never made');
+  assert.strictEqual(f.created.length, 0, 'nothing spawned');
+});
+
+test('t795 create: mode:interview with no brief is refused; bodyless kickstart still works', async () => {
+  // An interview with nothing to interview ABOUT is the bad shape: the arm tells
+  // the lead to rewrite a brief, and there is no brief file without a body. A
+  // bodyless KICKSTART is the pre-t795 bodyless create and must stay legal.
+  const f = mkTeamCreate();
+  const root = pathReal.join(f.projectRoot, 'leaf');
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root, lead: null, mode: 'interview', body: '  \n ',
+  });
+  await tick();
+  assert.deepStrictEqual(f.injected, [
+    '[agent:team] error: mode:interview needs a brief body — no team was created',
+  ]);
+  assert.strictEqual(fsReal.existsSync(pathReal.join(f.home, 'teams', 'shop')), false, 'no team dir');
+
+  const g = mkTeamCreate();
+  await g.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: pathReal.join(g.projectRoot, 'leaf'), lead: null, mode: null, body: '',
+  });
+  await tick();
+  assert.ok(g.teamExists('shop'), 'the bodyless kickstart create is untouched');
+});
+
 test('t782 create: a TAKEN lead name is refused BEFORE anything is written', async () => {
   // Pre-write, and that is the whole point: refused after the mkdir, the seat
   // gets a team.json naming a lead that can never boot, plus a git repo in a
