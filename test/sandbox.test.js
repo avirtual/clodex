@@ -1591,6 +1591,33 @@ test('status: reports the tracked ref and the sha src is parked on', async () =>
   await removeWorktree(sb.srcDir());
 });
 
+// t808 rider: bringUp only checks out a ref when `image` is unset (the
+// `config.ref && !config.image` gate), so with an override in place srcDir is
+// parked on whatever ref was last synced — some EARLIER one, or none. status()
+// reporting that stale pair is how a box advertises a ref it is demonstrably not
+// running, which is the read a team's seats would trust.
+test('status: an image override suppresses ref/sha — the box is not built from the ref', async () => {
+  const repo = tempRepo('one');
+  const sha = gitIn(repo, ['rev-parse', 'HEAD']);
+  const { sb } = refSandbox(repo);
+
+  sb.setConfig({ ref: 'master' });
+  assert.strictEqual((await sb.up()).ok, true);
+  const tracked = await sb.status();
+  assert.strictEqual(tracked.ref, 'master');
+  assert.strictEqual(tracked.sha, sha, 'the ref really was checked out — the src worktree is on disk');
+
+  // The ref STAYS in config; only the override is added. src is untouched, so a
+  // status that still read it would return the same sha as above.
+  sb.setConfig({ image: 'my/img:tag' });
+  const overridden = await sb.status();
+  assert.strictEqual(overridden.ref, null);
+  assert.strictEqual(overridden.sha, null);
+  assert.strictEqual(sb.getConfig().ref, 'master', 'the tracked ref is suppressed in the report, not erased');
+
+  await removeWorktree(sb.srcDir());
+});
+
 test('manager: remove() removes the box src worktree, not just the registry row', async () => {
   const repo = tempRepo('one');
   const settings = fakeBoxSettings([{ id: 'proj', label: 'proj', config: { ref: 'master' } }]);

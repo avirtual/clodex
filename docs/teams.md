@@ -456,6 +456,34 @@ prompts describe *behaviour*; the append describes *your code*. Keeping that
 seam is what lets a Clodex upgrade improve your team's judgement without
 touching anything you wrote.
 
+## Team sandbox
+
+A team's own docker box, so its seats can exercise **merged** code while the
+desktop app keeps running the version you launched.
+
+The lead binds one with `[agent:team sandbox [up|rebuild|down|status]
+[ref:<ref>]]` — action defaults to `up`, `ref:` to `master`. It mints (or
+reuses) the box `team-<name>`, points it at that ref with the team root as its
+work directory, and brings it up. `rebuild` rebuilds the image first; `down`
+stops it; `status` only reports. Lead-only, like every `[agent:team …]` verb,
+and refused with `sandboxes are not enabled on this host` where the host has no
+sandbox support.
+
+After a successful `up` or `rebuild` the box's coordinates land in
+`~/.clodex/teams/<name>/sandbox.json`, mode 0600:
+
+```json
+{ "boxId": "team-clodex", "ref": "master", "sha": "…", "webUrl": "http://127.0.0.1:7810",
+  "wireUrl": "http://127.0.0.1:7820", "token": "…", "startedAt": "…" }
+```
+
+`token` is the box's peer-wire secret. It is in that file and nowhere else — not
+in the reply, not in the logs, not over IPC — so a seat that needs to reach the
+box reads the file. `down` deletes it; `status` never writes it.
+
+An `image` override set on the box in the GUI still wins over `ref:`: the verb
+patches `ref` and `workDir` only.
+
 ## Scaling the team
 
 Roles are cheap. Add one in the roles popover — click your team in the sidebar —

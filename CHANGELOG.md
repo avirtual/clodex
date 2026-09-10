@@ -16,6 +16,10 @@ blocks a release.
 - **A managed sandbox can track a git ref**: set "Track git ref" on the box to
   `master` or a ticket branch and Rebuild builds the box from that commit, so a
   team can run merged work beside the desktop app without restarting it.
+- **A team can bind its own sandbox**: `[agent:team sandbox [up|rebuild|down|status] [ref:<ref>]]`
+  builds box `team-<name>` from that ref and writes the team's URLs and token to
+  `~/.clodex/teams/<name>/sandbox.json` (0600), so a team tests merged code on a
+  box while the desktop keeps running.
 
 ## 5.59.0 — 2026-09-11 — Cost on every ticket, the Inbox on the phone, and honest standing-seat attribution
 

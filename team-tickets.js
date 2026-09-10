@@ -42,10 +42,13 @@ const { CLAUDE_TOOLS } = require('./catalogs');
 // The SAME regex box creation is gated on, imported rather than copied: a local
 // copy would drift and let `team sandbox` mint an id manager.create refuses.
 const { BOX_ID_RE } = require('./sandbox');
-// Not the injected `fs`: this is the durable write team-manifest's atomicWrite
-// uses, and its 0600 temp file is what gives sandbox.json its mode — a plain
-// writeFileSync would land the peer-wire token at the umask default.
-const { atomicWriteFileSync } = require('./fs-util');
+// team-manifest's atomicWrite, inlined rather than injected: durability is not a
+// seam a caller may vary, and the 0600 temp file it renames into place is what
+// gives sandbox.json its mode — a plain writeFileSync would land the peer-wire
+// token at the umask default. Deliberately NOT named `ensureDir`: that name is
+// already a deps destructure inside createTicketMethods, and shadowing it would
+// swap a fixture's probe for the real module.
+const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 
 const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
 
@@ -2868,7 +2871,7 @@ function createTicketMethods(deps, shared) {
         token,
         startedAt: new Date().toISOString(),
       };
-      ensureDir(path.dirname(file));
+      ensureDirMode700(path.dirname(file));
       atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
       // The reply names the FILE, never the token: this line lands in the lead's
       // transcript, its logs and any dm it is quoted into.
