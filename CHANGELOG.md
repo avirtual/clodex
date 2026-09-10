@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Library > Prompts is now three submenus, System, Append and Teams, each opening its own list, so team prompts no longer sit beside the Append header looking like one more kind.
+
 ## 5.53.0 — 2026-09-10 — The Library menus share one layout: library, teams and plugins under their own headers, folding into submenus when long
 
 - The Library menus share one layout: library entries first, then each team and each plugin under its own header (prompts split System / Append), and when a list runs past sixteen entries every group folds into its own submenu. Team-owned templates and prompts are now reachable from the menu and open in the editor as the team's copy.

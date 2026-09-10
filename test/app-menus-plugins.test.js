@@ -436,7 +436,9 @@ function libraryFixture() {
   return { host, stores };
 }
 
-const shape = (items) => items.map((i) => (i.type === 'separator' ? '—' : i.enabled === false ? `[${i.label}]` : i.label));
+const shape = (items) => items.map((i) => (i.type === 'separator' ? '—'
+  : i.enabled === false ? `[${i.label}]`
+    : i.submenu ? `${i.label} ▸` : i.label));
 
 test('t680: Library replaces Agents and Skills at their position, with one submenu per kind and Inbox at the tail', () => {
   const { host, stores } = libraryFixture();
@@ -448,7 +450,7 @@ test('t680: Library replaces Agents and Skills at their position, with one subme
   const iEdit = labels.indexOf('Edit');
   assert.ok(iFile >= 0 && iLibrary === iFile + 1 && iEdit === iLibrary + 1, `File → Library → Edit, got ${labels}`);
   assert.deepStrictEqual(shape(template[iLibrary].submenu),
-    ['Prompts', 'Templates', 'Agents', 'Skills', 'Exec Commands', '—', 'Inbox…']);
+    ['Prompts ▸', 'Templates ▸', 'Agents ▸', 'Skills ▸', 'Exec Commands ▸', '—', 'Inbox…']);
 
   const win = template.find((m) => m.label === 'Window').submenu.map((i) => i.label).filter(Boolean);
   for (const gone of ['Prompts…', 'Templates…', 'Exec Commands…', 'Inbox…']) {
@@ -463,15 +465,14 @@ test('t680: each kind lists the library first, then each contributing plugin und
   const { host, stores } = libraryFixture();
   const lib = buildTemplateWith(host, { stores }).find((m) => m.label === 'Library').submenu;
   const sub = (label) => shape(lib.find((i) => i.label === label).submenu);
-  // t793 moved the kind split OUTSIDE the source split: System and Append are the
-  // top-level categories now, and each carries its own library / team / plugin
-  // groups. The pre-t793 shape put the whole plugin bundle under one header and
-  // re-split kinds inside it, which cannot express a team group per kind.
   assert.deepStrictEqual(sub('Prompts'), [
-    '[System]', 'lib-sys', '—', '[Reviewer]', 'strict',
-    '[Append]', 'lib-append', '—', '[Reviewer]', 'rules',
-    '—', 'New Prompt…', 'Manage Prompts…',
+    'System ▸', 'Append ▸', 'Teams ▸', '—', 'New Prompt…', 'Manage Prompts…',
   ]);
+  const promptsSub = (label) => shape(lib.find((i) => i.label === 'Prompts').submenu
+    .find((i) => i.label === label).submenu);
+  assert.deepStrictEqual(promptsSub('System'), ['lib-sys', '—', '[Reviewer]', 'strict']);
+  assert.deepStrictEqual(promptsSub('Append'), ['lib-append', '—', '[Reviewer]', 'rules']);
+  assert.deepStrictEqual(promptsSub('Teams'), ['[(no team prompts)]']);
   assert.deepStrictEqual(sub('Templates'),
     ['tpl-one', '—', '[Reviewer]', 'audit', '—', 'New Template…', 'Manage Templates…'],
     'a plugin template shows its stem under the plugin header, not rev:audit');
@@ -502,8 +503,9 @@ test('t680: a plugin entry click sends the drawer channel with {plugin, name}; l
   const sent = [];
   const lib = buildTemplateWith(host, { stores, sent }).find((m) => m.label === 'Library').submenu;
   const item = (kind, label) => lib.find((i) => i.label === kind).submenu.find((i) => i.label === label);
-  item('Prompts', 'rules').click();
-  item('Prompts', 'lib-sys').click();
+  const promptItem = (group, label) => item('Prompts', group).submenu.find((i) => i.label === label);
+  promptItem('Append', 'rules').click();
+  promptItem('System', 'lib-sys').click();
   item('Templates', 'audit').click();
   item('Templates', 'tpl-one').click();
   item('Agents', 'critic').click();
@@ -570,24 +572,42 @@ test('t793: a team template row sends {team, name} — the payload the drawer ro
   assert.deepStrictEqual(sent, [['request-open-templates-drawer', { team: 'shop', name: 'hand' }]]);
 });
 
-test('t793: a team prompt lands under its own kind, and clicks with {team, kind, name}', () => {
+test('t794: Prompts is three always-folded submenus, and a team row carries its kind in the label', () => {
   const { host, stores } = libraryFixture();
   const sent = [];
   const lib = buildTemplateWith(host, { stores: { ...stores, ...teamSources() }, sent })
     .find((m) => m.label === 'Library').submenu;
   const prompts = lib.find((i) => i.label === 'Prompts').submenu;
   assert.deepStrictEqual(shape(prompts), [
-    '[System]', 'lib-sys', '—', '[Team shop]', 'shop-sys', '—', '[Reviewer]', 'strict',
-    '[Append]', 'lib-append', '—', '[Team shop]', 'shop-app', '—', '[Reviewer]', 'rules',
-    '—', 'New Prompt…', 'Manage Prompts…',
-  ], 'each kind carries its own library / team / plugin groups');
+    'System ▸', 'Append ▸', 'Teams ▸', '—', 'New Prompt…', 'Manage Prompts…',
+  ], 'three submenus even with four prompts, so the fold never decides the top shape');
+  const sub = (label) => prompts.find((i) => i.label === label).submenu;
+  assert.deepStrictEqual(shape(sub('System')), ['lib-sys', '—', '[Reviewer]', 'strict']);
+  assert.deepStrictEqual(shape(sub('Append')), ['lib-append', '—', '[Reviewer]', 'rules']);
+  assert.deepStrictEqual(shape(sub('Teams')),
+    ['[Team shop]', 'shop-sys  —  system', 'shop-app  —  append'],
+    'both kinds sit in one team group, told apart by the label alone');
 
-  prompts.find((i) => i.label === 'shop-sys').click();
-  prompts.find((i) => i.label === 'shop-app').click();
+  sub('Teams').find((i) => i.label === 'shop-sys  —  system').click();
+  sub('Teams').find((i) => i.label === 'shop-app  —  append').click();
   assert.deepStrictEqual(sent, [
     ['request-open-prompts-drawer', { team: 'shop', kind: 'system', name: 'shop-sys' }],
     ['request-open-prompts-drawer', { team: 'shop', kind: 'append', name: 'shop-app' }],
   ]);
+});
+
+test('t794: with nothing anywhere the three submenus still render, each with its own placeholder', () => {
+  const { host } = libraryFixture();
+  const prompts = buildTemplateWith(host, { stores: { getPluginHost: () => null } })
+    .find((m) => m.label === 'Library').submenu
+    .find((i) => i.label === 'Prompts').submenu;
+  assert.deepStrictEqual(shape(prompts), [
+    'System ▸', 'Append ▸', 'Teams ▸', '—', 'New Prompt…', 'Manage Prompts…',
+  ]);
+  const sub = (label) => shape(prompts.find((i) => i.label === label).submenu);
+  assert.deepStrictEqual(sub('System'), ['[(no system prompts)]']);
+  assert.deepStrictEqual(sub('Append'), ['[(no append prompts)]']);
+  assert.deepStrictEqual(sub('Teams'), ['[(no team prompts)]']);
 });
 
 test('t793: past sixteen rows every group folds into its own submenu', () => {

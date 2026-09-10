@@ -107,13 +107,11 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
   assert.deepStrictEqual(top.map((r) => r.label || (r.sep ? '—' : '?')),
     ['Prompts', 'Templates', 'Agents', 'Skills', 'Exec Commands', '—', 'Inbox…']);
 
-  const shape = (rows) => rows.map((r) => (r.sep ? '—' : r.head ? `[${r.head}]` : r.label));
+  const shape = (rows) => rows.map((r) => (r.sep ? '—' : r.head ? `[${r.head}]` : r.submenu ? `${r.label} ▸` : r.label));
   const sub = async (label) => shape(await Promise.resolve(top.find((r) => r.label === label).submenu()));
   assert.deepStrictEqual(await sub('Prompts'), [
-    '[System]', 'lib-sys', '—', '[Team shop]', 'lib-sys', '—', '[Reviewer]', 'strict',
-    '[Append]', 'lib-append', '—', '[Team shop]', 'team-only', '—', '[Reviewer]', 'rules',
-    '—', 'New Prompt…', 'Manage Prompts…',
-  ], 'System and Append are the top categories; each carries library, team and plugin groups');
+    'System ▸', 'Append ▸', 'Teams ▸', '—', 'New Prompt…', 'Manage Prompts…',
+  ], 'the web mirror carries the same three always-folded submenus');
   assert.deepStrictEqual(await sub('Templates'),
     ['tpl-one', '—', '[Team shop]', 'hand', '—', '[Reviewer]', 'audit',
       '—', 'New Template…', 'Manage Templates…'],
@@ -126,8 +124,9 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
     ['cmd-one', '—', 'New Exec Command…', 'Manage Exec Commands…']);
 
   const prompts = await Promise.resolve(top.find((r) => r.label === 'Prompts').submenu());
-  prompts.find((r) => r.label === 'rules').run();
-  prompts.find((r) => r.label === 'lib-sys').run();
+  const promptKind = async (label) => Promise.resolve(prompts.find((r) => r.label === label).submenu());
+  (await promptKind('Append')).find((r) => r.label === 'rules').run();
+  (await promptKind('System')).find((r) => r.label === 'lib-sys').run();
   const agents = await Promise.resolve(top.find((r) => r.label === 'Agents').submenu());
   agents.find((r) => r.label === 'critic').run();
   assert.deepStrictEqual(rec.emits, [
@@ -143,7 +142,7 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
   assert.ok(view.some((r) => r.label === 'Show IPC Traffic…'), 'IPC traffic moved to View with the Agents menu gone');
 });
 
-test('t793: a team row clicks with {team, …} and past sixteen rows every group folds', async () => {
+test('t794: a team row clicks with {team, …} and past sixteen rows every group folds', async () => {
   const { ctx, rec } = recordingCtx();
   const top = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'Library').items());
   const open = async (label) => Promise.resolve(top.find((r) => r.label === label).submenu());
@@ -151,11 +150,11 @@ test('t793: a team row clicks with {team, …} and past sixteen rows every group
   const templates = await open('Templates');
   templates.find((r) => r.label === 'hand').run();
   const prompts = await open('Prompts');
-  // Both `lib-sys` rows carry the same label; the team one is the row after the
-  // `Team shop` header, and it is exactly the pair a bare-name lookup confuses.
-  const teamSys = prompts[prompts.findIndex((r) => r.head === 'Team shop') + 1];
-  teamSys.run();
-  prompts.find((r) => r.label === 'team-only').run();
+  const teams = await Promise.resolve(prompts.find((r) => r.label === 'Teams').submenu());
+  assert.deepStrictEqual(teams.map((r) => (r.head ? `[${r.head}]` : r.label)),
+    ['[Team shop]', 'lib-sys  —  system', 'team-only  —  append']);
+  teams.find((r) => r.label === 'lib-sys  —  system').run();
+  teams.find((r) => r.label === 'team-only  —  append').run();
   assert.deepStrictEqual(rec.emits, [
     ['request-open-templates-drawer', { team: 'shop', name: 'hand' }],
     ['request-open-prompts-drawer', { team: 'shop', kind: 'system', name: 'lib-sys' }],

@@ -8970,23 +8970,27 @@ body {
           const libraryRows = all.filter((p) => p && !p.team);
           const teamRows = all.filter((p) => p && p.team);
           const catalog = await bundles();
-          const rows = [];
-          for (const kind of ["system", "append"]) {
-            const cats = [
-              { label: "Library", rows: promptRowsOf(libraryRows, kind, (p) => emit(channel, { kind, name: p.name })) },
-              ...teamCategories(teamRows.filter((p) => p.kind === kind), (p) => ({
-                label: trunc(p.name),
-                run: () => emit(channel, { team: p.team, kind, name: p.name })
-              })),
-              ...catalog.map((b) => ({
-                label: b.name || b.id,
-                rows: promptRowsOf(b.prompts, kind, (p) => emit(channel, { plugin: b.id, kind, name: p.name }))
-              }))
-            ];
-            if (!cats.some((c) => c.rows.length)) continue;
-            rows.push({ head: kind === "system" ? "System" : "Append" }, ...categoryRows(cats, {}));
-          }
-          if (!rows.length) rows.push({ label: "(no prompts in library)", disabled: true });
+          const kindSubmenu = (kind) => categoryRows([
+            { label: "Library", rows: promptRowsOf(libraryRows, kind, (p) => emit(channel, { kind, name: p.name })) },
+            ...catalog.map((b) => ({
+              label: b.name || b.id,
+              rows: promptRowsOf(b.prompts, kind, (p) => emit(channel, { plugin: b.id, kind, name: p.name }))
+            }))
+          ], { empty: `(no ${kind} prompts)` });
+          const teamsSubmenu = () => {
+            const cats = teamCategories(teamRows, (p) => ({
+              label: trunc(`${p.name}  \u2014  ${p.kind}`),
+              run: () => emit(channel, { team: p.team, kind: p.kind, name: p.name })
+            }));
+            const rows2 = categoryRows(cats, { empty: "(no team prompts)" });
+            const folded = rows2.length > 0 && Boolean(rows2[0].submenu);
+            return cats.length && !folded ? [{ head: cats[0].label }, ...rows2] : rows2;
+          };
+          const rows = [
+            { label: "System", submenu: () => kindSubmenu("system") },
+            { label: "Append", submenu: () => kindSubmenu("append") },
+            { label: "Teams", submenu: teamsSubmenu }
+          ];
           rows.push(...tail(channel, "New Prompt\u2026", "Manage Prompts\u2026"));
           return rows;
         };
