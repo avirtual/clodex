@@ -417,8 +417,8 @@ Your first injected text after `team create` names which arms you are in: one
 root arm always, and INTERVIEW on top of it when the brief is a starting point
 rather than a spec. The brief the operator wrote is `team-project.md`, composed
 into your context at boot: it says what they want built, not what Clodex found.
-Work the arm, then send ONE `[agent:notify-user]` and stop — the operator is
-waiting on it, and a second note before they answer is noise.
+Work the arms you are in, then send ONE `[agent:notify-user]` and stop — the
+operator is waiting on it, and a second note before they answer is noise.
 
 **NEW** (the root was created and git-init'd by Clodex; it holds one empty
 commit and nothing else):

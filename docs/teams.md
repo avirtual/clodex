@@ -471,8 +471,8 @@ same team and the same brief file, but the opener tells the lead the brief is a
 starting point, and its first turn interviews the operator and rewrites
 `team-project.md` with the answers before it files anything. `mode:kickstart` is
 the default and is what an omitted `mode:` means; any other value is refused
-before anything is written. After a BODYLESS create two steps are
-still yours: spawn the lead with its cwd at the root — after the create, never
+before anything is written. After a BODYLESS create two steps are still yours:
+spawn the lead with its cwd at the root — after the create, never
 before, because a seat resolves its team from its cwd at boot, and one spawned
 first boots teamless and misses the roster message a team seat gets at boot — and
 make the hand per-ticket with `[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
