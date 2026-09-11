@@ -288,3 +288,19 @@ test('create(): no CLAUDE_CONFIG_DIR anywhere spawns exactly as before', async (
     assert.strictEqual('CLAUDE_CONFIG_DIR' in spawns[0].env, false, 'the default account is the ABSENCE of the var');
   } finally { stop('plain'); }
 });
+
+test('create(): a BASH seat on a missing account dir SPAWNS — that is how /login mints it', () => {
+  // t812. The guard is claude-only: Preferences ▸ Accounts ▸ Log in opens a bash
+  // seat carrying the account's CLAUDE_CONFIG_DIR and writes `claude /login`
+  // into it, and for a registered-but-never-logged-in account that dir may not
+  // exist yet. Refusing the bash spawn would make an unminted dir unfixable from
+  // the UI — the one path that creates it is the one path the guard blocked.
+  const { m, spawns, stop } = mkManager();
+  const missing = path.join(os.tmpdir(), 'clx-no-such-account-dir-t812');
+  assert.strictEqual(fs.existsSync(missing), false, 'ENTER: the path really is absent');
+  return create(m, 'login-sub-2', { CLAUDE_CONFIG_DIR: missing }, 'bash').then(() => {
+    assert.strictEqual(spawns.length, 1, 'the shell opened');
+    assert.strictEqual(spawns[0].env.CLAUDE_CONFIG_DIR, missing, 'and it carries the account it is there to log in');
+    stop('login-sub-2');
+  });
+});

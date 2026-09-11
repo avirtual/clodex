@@ -291,3 +291,43 @@ test('modelSelects: `fable` matches a dated claude-fable-* id in BOTH directions
   // A prefix that merely starts the same is a different model, not a fable.
   assert.strictEqual(modelSelects('claude-fabulous-1', 'fable'), false);
 });
+
+// --- t812 riders -------------------------------------------------------------
+
+test('save() is ATOMIC: the registry goes through a .tmp that does not survive', () => {
+  const { accounts, clodexHome } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'max', configDir: '/tmp/registered-2' });
+  const file = path.join(clodexHome, 'accounts.json');
+  assert.strictEqual(fs.existsSync(`${file}.tmp`), false, 'the scratch file is renamed away, not left behind');
+  // The rename must carry the real content, not an empty or partial file: a
+  // truncated registry parses as no accounts at all, which is how every
+  // registered subscription would vanish with nothing logged.
+  const obj = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.deepStrictEqual(obj.accounts.map((a) => a.label), ['sub-2']);
+  assert.strictEqual(obj.accounts[0].configDir, '/tmp/registered-2');
+  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'the mode survives the rename');
+  // And a SECOND write over the existing file still lands atomically.
+  accounts.add({ label: 'sub-3', plan: 'pro', configDir: '/tmp/registered-3' });
+  assert.strictEqual(fs.existsSync(`${file}.tmp`), false);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(file, 'utf-8')).accounts.map((a) => a.label),
+    ['sub-2', 'sub-3'],
+  );
+});
+
+test('labelResolver(): one registry read answers many dirs, with labelFor\'s answers', () => {
+  const { accounts, claudeHome } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'max', configDir: '/tmp/registered-2' });
+  const resolve = accounts.labelResolver();
+  assert.strictEqual(resolve(claudeHome), 'default');
+  assert.strictEqual(resolve('/tmp/registered-2'), 'sub-2');
+  assert.strictEqual(resolve('/Users/someone/sub-9'), 'sub-9');
+  assert.strictEqual(resolve(''), null);
+
+  // The point of the resolver is that the file is read ONCE. Deleting the
+  // registry after it is built must not change its answers — a per-call
+  // labelFor would start saying `registered-2` (the basename fallback) here.
+  fs.rmSync(path.join(accounts.registryFile));
+  assert.strictEqual(resolve('/tmp/registered-2'), 'sub-2', 'the map was built up front');
+  assert.strictEqual(accounts.labelFor('/tmp/registered-2'), 'registered-2', 'ENTER: labelFor really does re-read');
+});

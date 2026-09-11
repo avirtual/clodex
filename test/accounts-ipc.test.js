@@ -291,3 +291,50 @@ test('sweep: restarts are SEQUENTIAL — never two seats mid-kill at once', asyn
   assert.deepStrictEqual(res.moved, ['a', 'b', 'c'], 'ENTER: all three did move — otherwise the count below is trivial');
   assert.strictEqual(maxInFlight, 1, 'exactly one restart in flight at any moment');
 });
+
+// --- t812 riders -------------------------------------------------------------
+
+test('accounts:move-by-model refuses an empty model or label BEFORE reaching the sweep', async () => {
+  // An empty model selects nothing in modelSelects, so the sweep would walk
+  // every live seat and skip each one — an expensive no-op the handler reported
+  // as `{ ok: true, moved: [] }`, indistinguishable from "nothing matched".
+  let called = 0;
+  const { call } = fixture({ moveAccountByModel: async () => { called++; return { ok: true, moved: [], skipped: [] }; } });
+  const want = { ok: false, error: 'move needs both a model and an account label', moved: [], skipped: [] };
+  assert.deepStrictEqual(await call('accounts:move-by-model', { model: '', label: 'sub-2' }), want);
+  assert.deepStrictEqual(await call('accounts:move-by-model', { model: 'fable', label: '' }), want);
+  assert.deepStrictEqual(await call('accounts:move-by-model', {}), want);
+  assert.deepStrictEqual(await call('accounts:move-by-model', null), want);
+  assert.strictEqual(called, 0, 'nothing reached the sweep');
+  // ENTER: a complete pair still gets through, so the guard is on the empties
+  // and not on the channel.
+  assert.deepStrictEqual(
+    await call('accounts:move-by-model', { model: 'fable', label: 'sub-2' }),
+    { ok: true, moved: [], skipped: [] },
+  );
+  assert.strictEqual(called, 1);
+});
+
+test('sweep: a seat with NO CLAUDE_CONFIG_DIR is already on `default` and is not restarted', async () => {
+  // The absence of the var IS the default selection (accounts.js's rule), so a
+  // move to `default` must skip such a seat. Without the equivalence it reads
+  // `undefined !== '/home/u/.claude'` and kills a PTY to write a variable that
+  // changes nothing.
+  const fx = sweepFixture();
+  const res = await fx.run({
+    label: 'default',
+    configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null),
+  });
+  assert.deepStrictEqual(res.moved, [], 'the only matching seat was already there');
+  assert.deepStrictEqual(res.skipped[0], { name: 'fable-idle', reason: 'already on account default' });
+  assert.strictEqual(fx.restarts.length, 0, 'no PTY was killed to achieve nothing');
+});
+
+test('sweep: the equivalence is DEFAULT-only — a seat with no var still moves to a registered account', async () => {
+  // The same seats, the same missing var, moving to `sub-2` instead: this must
+  // still restart, or the rider above would have turned every move into a skip.
+  const fx = sweepFixture();
+  const res = await fx.run();
+  assert.deepStrictEqual(res.moved, ['fable-idle']);
+  assert.strictEqual(fx.restarts.length, 1);
+});

@@ -89,7 +89,8 @@ function accountOptions(accounts, current, home = os.homedir()) {
   const curLabel = String(cur.label == null ? DEFAULT_LABEL : cur.label);
   const rows = rowsOf(accounts);
   const out = [];
-  const def = rows.find((a) => String(a.label) === DEFAULT_LABEL) || { label: DEFAULT_LABEL, email: null, configDir: '' };
+  const def = rows.find((a) => String(a.label) === DEFAULT_LABEL)
+    || { label: DEFAULT_LABEL, email: null, configDir: `${home}/.claude` };
   out.push({ value: DEFAULT_LABEL, text: optionText(def, home), selected: curLabel === DEFAULT_LABEL });
   for (const row of rows) {
     if (String(row.label) === DEFAULT_LABEL) continue;
@@ -105,7 +106,12 @@ function loginSeat(label, account, { reserved = [], home = os.homedir(), bump = 
   const want = String(label == null ? DEFAULT_LABEL : label);
   const base = `login-${want}`;
   const taken = reserved instanceof Set ? reserved : new Set(reserved || []);
-  const name = typeof bump === 'function' ? bump(base, taken) : base;
+  // Bump from `${base}-2`, NOT from `base`. Account labels routinely end in a
+  // digit (`sub-2`), and bumpDefaultName increments a trailing number — so
+  // bumping the bare base turns a taken `login-sub-2` into `login-sub-3`, a name
+  // that reads as sub-3's login seat while running on sub-2's config dir.
+  let name = base;
+  if (typeof bump === 'function' && taken.has(base)) name = bump(`${base}-2`, taken);
   const params = { name, type: 'bash', cwd: home, env: null };
   if (want !== DEFAULT_LABEL) {
     const dir = String((account && account.configDir) || '');

@@ -150,6 +150,26 @@ session env and exec grants the whole family is LOCAL-only, and by the
 registration-is-the-capability rule: the `accounts:*` handlers register only
 under `enableAccounts`, which web-host.js declines.
 
+The UI half (t812) adds no state of its own — the env TEXT stays the single
+source. Preferences ▸ Accounts lists every row from `accounts:list` with its
+email, plan, config dir and live-seat count, plus **Log in** (every row),
+and **Move**, **Re-sync settings** and **Remove** on registered rows only; the
+default row has none of the latter three, because it is implicit, it is the
+source Re-sync copies FROM, and there is no registry row to drop. **Log in**
+spawns a `bash` seat named `login-<label>` in `$HOME` carrying only that
+account's `CLAUDE_CONFIG_DIR`, then writes `claude /login` into it — which is
+why `create()`'s missing-dir guard is claude-only: refusing that bash spawn
+would make an unminted dir unfixable from the UI. **Move** takes its model from
+a select of the `--model` seen on live claude seats plus the four aliases, and
+reports `moved N · skipped: name (reason), …` behind a confirm, since every
+matching seat restarts. Both session dialogs carry an Account `<select>` above
+the env textarea that reads and writes `CLAUDE_CONFIG_DIR` in that box and
+nothing else (`renderer/lib/account-select.js`): picking `default` REMOVES the
+line, an unregistered dir shows as `custom` and selecting `custom` is a no-op,
+and typing in the textarea moves the select. A sidebar row shows a
+`.session-account` chip only when its label is not `default`, so the common
+sidebar is unchanged.
+
 **Library scoping (skills + agents).** The `~/.clodex/{skills,agents}/*.md`
 libraries stay FLAT; two OPTIONAL frontmatter keys scope a file:
 `workspace: <name>` (visible only in that workspace — matched on its DISPLAY
