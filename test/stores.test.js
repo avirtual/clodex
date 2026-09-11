@@ -1685,29 +1685,38 @@ test('seed: shipped team prompts brief their load-bearing protocol verbs', () =>
 });
 
 // The prompts are still the only comment guidance a hand receives: the rule's other
-// home, .claude/CLAUDE.md, is gitignored and absent from every ticket worktree. What
-// changed is the division of labour. `test/comment-ratchet.test.js` now carries the
-// QUANTITY half mechanically, so the prompts keep only what a line count cannot see:
-// the criterion a surviving comment must meet, the escape hatch that stops a hand
-// reading the zero budget and a real need as a contradiction, and — the load-bearing
-// half — deletion rather than qualification as the repair, on both sides. A reviewer
-// asking for qualifiers is what grew the files while the code stood still.
+// home, .claude/CLAUDE.md, is gitignored and absent from every ticket worktree. A
+// "default is NONE" that a net-zero gate backs reads as "comment, then trim to
+// even", and two hands in a row spent the end of their context doing exactly that
+// (operator ruling 2026-09-11). So the hand's instruction is a flat zero, and the
+// whole-file category sweep — which cost more than a ticket on a large module — is
+// gone; the doesNotMatch arms below are what stops a revert restoring either.
 test('seed: shipped team prompts carry the comment rule, in both directions', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  assert.match(hand, /A comment earns\s+its place only by naming a WRONG CHANGE it prevents/,
-    'hand prompt states the earns-its-place bar');
+  assert.match(hand, /Your diff adds ZERO comment lines/,
+    'hand prompt states the flat zero, not a budget to spend');
+  assert.match(hand, /Not net zero — zero/,
+    'and rules out the net-zero reading the gate alone invites');
   assert.match(hand, /comment-ratchet\.test\.js/,
-    'hand prompt names the gate that now enforces the quantity half');
-  assert.match(hand, /a file new on\s+your branch ships with zero/,
-    'and the budget a new file gets, which is the arm a hand hits first');
+    'hand prompt names the gate that backs it');
   assert.match(hand, /docs\/notes\/<module>\.md/,
     'hand prompt gives the escape hatch for a fact the code cannot express');
+  assert.match(hand, /renderer-lib-format\.md/,
+    'with the worked example of the flattened name, so the hatch does not red on an orphan');
   assert.match(hand, /separators flattened to hyphens/,
-    'and the note-naming convention the same gate resolves, so the hatch does not red on an orphan');
+    'and the note-naming convention the same gate resolves');
   assert.match(hand, /never by line number/,
-    'which carries the line-number rot rule onto notes, where the sweep patterns do not reach');
-  assert.match(hand, /Prefer DELETING a stale or over-wide comment to rewriting it/,
-    'hand prompt keeps deletion over rewriting — an equal-length rewrite moves no line count');
+    'which carries the line-number rot rule onto notes');
+  assert.match(hand, /the NEIGHBOUR your\s+insertion now sits between/,
+    'hand prompt keeps the neighbour check: the sentence that breaks is rarely the one edited');
+  assert.match(hand, /DELETE what the code no longer backs/,
+    'and deletion over qualification as the repair — a rewrite resets apparent freshness unverified');
+  assert.match(hand, /Do NOT sweep the whole file/,
+    'hand prompt bounds the check to its own hunks');
+  assert.doesNotMatch(hand, /drive it to zero/,
+    'the whole-file category sweep is gone from the hand prompt on purpose');
+  assert.doesNotMatch(hand, /boundary-check\.js/,
+    'and with it the post-cut lint it ran — scripts/boundary-check.js stays in the repo, unrun by hands');
   const reviewer = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-reviewer.md'), 'utf-8');
   assert.match(reviewer, /DELETING IS THE DEFAULT REPAIR/,
     'reviewer prompt makes deletion the default repair for an over-wide comment');
@@ -1717,56 +1726,6 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
     'reviewer prompt makes an added or falsified comment in a touched SOURCE hunk a finding — test/ prose is out of ratchet scope by design');
   assert.match(reviewer, /counts lines and cannot read\s+them/,
     'and says why it reaches only the reviewer: an equal-length swap passes the ratchet');
-});
-
-// Both halves reach defects a code-identity check and a cold review cannot: the
-// reviewer reads the diff, so a comment nobody opened is invisible to it, and a
-// cut that severs a sentence head leaves a tail that compiles, passes identity
-// and reads inverted. The greppable patterns are pinned as LITERALS because a
-// hand pastes them — a "grep the always-cut categories" instruction with the
-// patterns dropped is the version that gets found incidentally again. The
-// caveat is pinned in its author's words: softening it into a gate recreates,
-// one level up, the coverage claim this whole section exists to remove.
-test('seed: the hand prompt carries the decomment sweep and the post-cut boundary check', () => {
-  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  assert.match(hand, /a comment you never opened appears nowhere\s+and cannot be reviewed/,
-    'hand prompt gives the structural reason a sweep is needed: the diff cannot show an omission');
-  assert.match(hand, /Grep\s+each always-cut category across the WHOLE file and drive it to zero/,
-    'and the instruction to sweep the whole file rather than the blocks the pass happens to open');
-  for (const pattern of ['test/.*\\.test\\.js|pinned by|covered by',
-    '\\bt[0-9]{2,3}\\b|Task [0-9]+|GH#',
-    '[A-Z]{2,}\\.md|§',
-    ':[0-9]{3,}']) {
-    assert.ok(hand.includes(pattern), `hand prompt ships the greppable pattern: ${pattern}`);
-  }
-  assert.match(hand, /The list is a floor/,
-    'the category list is a floor, so a category found mid-pass is swept too');
-  assert.match(hand, /TRUE and CHECKABLE earns its place/,
-    'and a true coverage claim survives the sweep — it finds them, it does not delete them unread');
-  assert.match(hand, /check what SURVIVES each cut, not only what it removed/,
-    'hand prompt states the post-cut half: the residue is the defect, not the deletion');
-  assert.match(hand, /semantically\s+INVERTED/,
-    'and names the failure: a severed head leaves a valid sentence meaning the opposite');
-  assert.match(hand, /boundary-check\.js/, 'and points at the implementation');
-  assert.doesNotMatch(hand, /const CONNECTOR|require\('fs'\)/,
-    'by POINTER, not by pasting the code into a prompt every hand reads on every ticket');
-  assert.match(hand, /the check is a\s+lint that needs a human ruling per flag, not a gate/,
-    "the author's precision caveat, unsoftened: a lint, not a gate");
-  assert.match(hand, /It cannot distinguish a\s+severed head from a lowercase-but-complete sentence; it only narrows where to\s+look/,
-    'including the half that says what it cannot do — each flag still needs a human ruling');
-  // The pointer is the one claim in this section that rots on its own: the tool
-  // can move or go away and the prose stays confident. Resolving the path OUT of
-  // the prompt (not repeating it here) is what makes this a check rather than a
-  // second copy of the same claim — the earlier version cited an untracked
-  // ~/.clodex path that existed only on its author's box, which is the exact
-  // "documents not in this repo" category the section three paragraphs up tells
-  // hands to grep for and verify with git ls-files.
-  const cited = hand.match(/Implementation, do not inline it:\s+`([^`]+)`/);
-  assert.ok(cited, 'the prompt names its implementation in a form a test can resolve');
-  assert.ok(!cited[1].startsWith('~') && !path.isAbsolute(cited[1]),
-    `cited tool path must be repo-relative so it resolves for every reader, got: ${cited[1]}`);
-  assert.ok(fs.existsSync(path.join(__dirname, '..', cited[1])),
-    `the prompt cites a tool that is not in the repo: ${cited[1]}`);
 });
 
 // A prompt is a claim on a path no execution passes through: nothing throws when
@@ -1820,9 +1779,9 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
 test('seed: Stage A — hands sweep their own hunks, leads let prose nits ride along', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
-  assert.match(hand, /Before you close, and again after every rework fix/,
+  assert.match(hand, /before you close, and again after\s+every rework fix/,
     'A1 fires at both points the fix can falsify a neighbour, not only at close');
-  assert.match(hand, /what it now sits BETWEEN/,
+  assert.match(hand, /it is the NEIGHBOUR your\s+insertion now sits between/,
     'A1 names the orphaning mechanism: the neighbour breaks, not the line you edited');
   assert.match(lead, /An ACCEPT whose nits are comment or CHANGELOG sentences is an ACCEPT/,
     'A2 states the default: an ACCEPT with prose nits is merged');
