@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased — the hand prompt bounds what a hand reads; a box keeps its state on the host
 
 - The hand prompt gains a "Tool results" section that bounds what a hand reads into its own context (head/sed ranges, stat before diff, no cat over 200 lines, Explore agents for large files, no polling while waiting), the neighbour-comment check drops from 25 lines of context to 5, and the shipped copies catch up with the report shape, worktree rule and no-operator posture the clodex team's own copy has carried for a week.
+- `[agent:team sandbox up]` ships the team into the box: its prompts, templates, exec grants and a `team.json` rewritten to the box's work dir with every `account:` dropped land in the box's own teams dir (under `~/.clodex/boxes/<id>/dot/teams/`), once — a box that already carries the team keeps its own copy — and `sandbox.json` records where.
 - A sandbox box keeps its state (`/data`, its `~/.clodex` and its `~/.claude`) on host directories under `~/.clodex/boxes/<id>/` instead of docker named volumes, so a killed or rebuilt container loses no seat, ticket or login and the operator can back the box up or resume its seats; deleting the box deletes that folder and nothing else. Existing boxes start with empty state on their next `up` (the login rides auth.env); the old `clodex-data`/`clodex-dot`/`claude-auth` volumes stay until `docker volume rm`.
 
 ## 5.63.1 — 2026-09-11 — a seat can ask what its exec runs are doing; the role account is a picker
