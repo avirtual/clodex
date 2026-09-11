@@ -763,6 +763,7 @@ function okComposeSpawn() { return fakeSpawn({ code: 0 }); }
 test('up: writes compose, brings it up, registers the peer', async () => {
   const settings = fakeSettings();
   const sb = createSandbox({
+    registryDir: TMP_REGISTRY,
     spawn: okComposeSpawn(),
     getUiSettings: () => settings,
     getUserDataPath: () => TMP_USERDATA,
@@ -1155,6 +1156,30 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   assert.ok(yaml.includes(`- "${path.join(base, 'data')}:/data"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'dot')}:/home/clodex/.clodex"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'claude')}:/home/clodex/.claude"`));
+});
+
+test('source shape: every factory call in this file injects a registryDir (never the real ~/.clodex)', () => {
+  const src = fs.readFileSync(__filename, 'utf8');
+  const re = /create(?:Sandbox|SandboxManager)\(\{/g;
+  const missing = [];
+  let seen = 0;
+  let m;
+  while ((m = re.exec(src))) {
+    let i = m.index + m[0].length - 1;
+    let depth = 0;
+    do {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') depth--;
+      i++;
+    } while (depth > 0 && i < src.length);
+    seen++;
+    if (!src.slice(m.index, i).includes('registryDir')) {
+      missing.push(src.slice(0, m.index).split('\n').length);
+    }
+  }
+  assert.ok(seen >= 50, `expected every factory call site, scanned ${seen}`);
+  assert.deepStrictEqual(missing, [],
+    `factory calls without a registryDir would mkdir/rmSync the operator's real ~/.clodex/boxes — lines ${missing.join(', ')}`);
 });
 
 // ── factory: remote-wire token auto-provision (remote-auth chunk 4) ──────────
