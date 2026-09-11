@@ -324,9 +324,10 @@ test('up seeds bash and worker and says so, without the token', async () => {
   assert.ok(line.includes(h.file), 'and still points at the file the token is in');
 });
 
-// The box's own refusal is the useful message; a fabricated "set a token" line
-// would have been wrong for a box whose credentials live in the volume. The box
-// answers in JSON, and the reply must carry the sentence, not the punctuation.
+// t818: a box may be authenticated through its claude-auth volume, which no env
+// token reflects, so the handler asks the box rather than pre-judging it — and
+// the box's own refusal is the useful message. The box answers in JSON, and the
+// reply must carry the sentence, not the punctuation.
 test('a worker the box refuses is reported with the box status and reason, and up still succeeds', async () => {
   const h = mkHandler({ post: (n) => (n === 'worker' ? { status: 500, body: { ok: false, error: 'no credentials' } } : null) });
   await fire(h, { action: 'up' });

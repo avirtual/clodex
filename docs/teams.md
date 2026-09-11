@@ -511,14 +511,13 @@ of the repo. The tool lockdown works against any box; the prompt needs a box
 built from this ref or later, since an older box's create route ignores the
 field and seeds the seat with its default prompt.
 
-The `worker` is
-always attempted — its auth may come from an env token or from a login done by
-hand inside the box — and the reply ends with `worker seeded`, `worker present`
-or `worker NOT seeded: <status> <what the box said>`; a refused `worker` is
-reported, not an error, so the rest of the box is still up. Seats that already
-exist are left alone, so a `rebuild` does not duplicate them. If the box never gets
-healthy the reply is an error and `sandbox.json` stays put, because that file is
-how you reach a box that is merely slow.
+The `worker` is always attempted — its auth may come from an env token or from a
+login done by hand inside the box — and the reply ends with `worker seeded`,
+`worker present` or `worker NOT seeded: <status> <what the box said>`; a refused
+`worker` is reported, not an error, so the rest of the box is still up. Seats
+that already exist are left alone, so a `rebuild` does not duplicate them. If the
+box never gets healthy the reply is an error and `sandbox.json` stays put,
+because that file is how you reach a box that is merely slow.
 
 ## Scaling the team
 
