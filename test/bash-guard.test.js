@@ -54,6 +54,10 @@ const TABLE = [
   { cmd: '/usr/bin/git add -A', want: 'deny' },
   { cmd: 'command git add -A', want: 'deny' },
   { cmd: 'env FOO=1 git add -A', want: 'deny' },
+  { cmd: 'git commit -am x', want: 'deny' },
+  { cmd: 'git commit -qa -m x', want: 'deny' },
+  { cmd: 'git commit --all -m x', want: 'deny' },
+  { cmd: 'git commit -a', want: 'deny' },
 
   // A NEWLINE separates commands exactly as `;` does, and stage-then-commit
   // across two lines is the default shape a hand writes. Treated as plain token
@@ -62,10 +66,6 @@ const TABLE = [
   { cmd: 'git status\ngit add -A', want: 'deny' },
   { cmd: 'cd sub\ngit commit -am x', want: 'deny' },
   { cmd: 'git commit -m x\ngit add -A', want: 'deny' },
-  { cmd: 'git commit -am x', want: 'deny' },
-  { cmd: 'git commit -qa -m x', want: 'deny' },
-  { cmd: 'git commit --all -m x', want: 'deny' },
-  { cmd: 'git commit -a', want: 'deny' },
 
   { cmd: 'git add a.js b.js', want: 'pass' },
   { cmd: 'git add cli-hooks.js test/bash-guard.test.js', want: 'pass' },
@@ -77,10 +77,9 @@ const TABLE = [
   { cmd: 'echo "git add -A"', want: 'pass' },
   { cmd: 'grep -rn "git add -A" docs', want: 'pass' },
   { cmd: 'ls -A', want: 'pass' },
-  // A backslash-newline is a CONTINUATION, not a separator: this is one `git
-  // add` of two paths, and splitting on the newline would leave a second
-  // segment starting at `b.js` — harmless here, but the same rule that splits
-  // it would split a quoted heredoc body.
+  // A backslash-newline is a CONTINUATION, not a separator: the escape branch
+  // consumes it before the newline split can see it, so this stays ONE `git
+  // add` of two paths rather than a second segment starting at `b.js`.
   { cmd: 'git add a.js \\\n  b.js', want: 'pass' },
   { cmd: 'echo hi\ngit status', want: 'pass' },
 ];
