@@ -17,7 +17,7 @@ blocks a release.
   (`~/.clodex/accounts.json`), mints an isolated config dir per account that
   shares transcripts, plugins and skills with `~/.claude`, labels every session
   row with its account, and can move every seat on a given model to another
-  account in one step. The Preferences pane and dialog selectors land next.
+  account in one step.
 - **Accounts in the UI**: Preferences ▸ Accounts lists your registered Claude
   subscriptions with Add, Log in (opens a shell on that account for `/login`),
   Re-sync and Remove, and "Move seats on model X here"; the new-session and edit

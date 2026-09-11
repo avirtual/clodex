@@ -1273,10 +1273,6 @@ function createSessionManager(deps) {
         mergedEnv = { ...baseEnv };
       }
 
-      // Claude only: the CLI is what mints an empty config there and loops on
-      // onboarding. A bash seat carrying the var is how the operator RUNS
-      // `claude /login` to create that dir in the first place, so refusing the
-      // spawn would make the missing dir unfixable from the UI.
       const accountDir = type === 'claude' ? mergedEnv.CLAUDE_CONFIG_DIR : null;
       if (accountDir) {
         let ok = false;
@@ -3528,10 +3524,6 @@ function createSessionManager(deps) {
         } catch { return null; }
       };
       const accountsStore = (getAccounts && getAccounts()) || null;
-      // One registry read for the whole list, not one per row. Built inside a
-      // try for the same reason the per-row read below has one: list() is a
-      // render path, and a store that throws while building the map would take
-      // the whole sidebar with it rather than costing one row its label.
       let resolveAccount = null;
       try {
         if (accountsStore) {

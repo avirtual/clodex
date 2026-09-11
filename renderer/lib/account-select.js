@@ -106,10 +106,6 @@ function loginSeat(label, account, { reserved = [], home = os.homedir(), bump = 
   const want = String(label == null ? DEFAULT_LABEL : label);
   const base = `login-${want}`;
   const taken = reserved instanceof Set ? reserved : new Set(reserved || []);
-  // Bump from `${base}-2`, NOT from `base`. Account labels routinely end in a
-  // digit (`sub-2`), and bumpDefaultName increments a trailing number — so
-  // bumping the bare base turns a taken `login-sub-2` into `login-sub-3`, a name
-  // that reads as sub-3's login seat while running on sub-2's config dir.
   let name = base;
   if (typeof bump === 'function' && taken.has(base)) name = bump(`${base}-2`, taken);
   const params = { name, type: 'bash', cwd: home, env: null };

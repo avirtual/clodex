@@ -176,10 +176,6 @@ function renderEnvHint(textarea, hint) {
 function refreshEnvHint() { renderEnvHint(inputEnv, envHint); }
 const inputAccount = document.getElementById('input-account');
 
-// The registry read once per dialog open. `null` means "not fetched yet"; an
-// empty array is a real answer from a host with no accounts, and the two must
-// not collapse — a host that declines `accounts:*` leaves the select showing
-// `default` alone rather than re-asking on every keystroke of the env box.
 let dialogAccounts = null;
 
 async function fetchAccounts() {
@@ -609,12 +605,6 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   // files are NOT lost: the JsonlWatcher feeds the same sink. What goes is
   // subagent attribution on the edits.)
   if (noWire) item.dataset.noWire = '1';
-  // Only a NON-default account is recorded, on the row and in the chip. Every
-  // row would otherwise carry one saying `default`, which is the state the
-  // operator already assumes — the chip marks the exception, so the common
-  // sidebar is unchanged. Same condition as applyAccountChip, which repaints
-  // this row on the refresh loop: a builder that stamped `default` here would
-  // disagree with the very next repaint.
   if (account && account !== ACCOUNT_DEFAULT) item.dataset.account = account;
   const displayName = label || name;
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
@@ -1137,10 +1127,6 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
       }
     }
   } catch {} finally { metaRefreshInFlight = false; }
-  // The account label rides `session:list`, not `sidebar:meta` — it is read off
-  // the persisted env by the manager, and only live rows have one. Applied here
-  // rather than on its own timer so a move (which restarts the seat) repaints
-  // within the same tick the rest of the row does.
   try {
     const live = await window.api.listSessions();
     if (Array.isArray(live)) for (const s of live) applyAccountChip(s.name, s.account || null);
@@ -4751,10 +4737,6 @@ function setPrefsAccountsState(msg, kind) {
   prefsAccountsState.style.color = kind === 'error' ? 'var(--warn, #d9a55b)' : 'var(--muted, #8b949e)';
 }
 
-// `session:list` rows carry the account LABEL but not extraArgs, so the model a
-// seat runs on has to come from its persisted args — one read per live claude
-// seat. Bounded by seat count and only on a prefs open, which is why it is not
-// worth a new channel.
 async function liveClaudeModels(live) {
   const out = new Set(MODEL_ALIASES);
   for (const s of live) {

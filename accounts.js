@@ -69,9 +69,6 @@ function createAccounts(deps = {}) {
     } catch { return []; }
   }
 
-  // Write-then-rename: a crash or a full disk mid-write would otherwise leave a
-  // truncated registry, and load()'s JSON.parse catch turns that into an EMPTY
-  // account list — every registered account silently gone with no error anywhere.
   function save(rows) {
     try { fs.mkdirSync(clodexHome, { recursive: true }); } catch {}
     const tmp = `${registryFile}.tmp`;
@@ -104,10 +101,6 @@ function createAccounts(deps = {}) {
     return resolveLabel(load(), configDir);
   }
 
-  // The batch form of labelFor: one registry read for a whole `session:list`
-  // pass instead of one per row. Callers that label many dirs at once must use
-  // this — labelFor re-reads and re-parses accounts.json every call, so a
-  // twenty-seat list did twenty reads of the same file on every poll.
   function labelResolver() {
     const rows = load();
     return (configDir) => resolveLabel(rows, configDir);
@@ -226,9 +219,6 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
       continue;
     }
     const prevEnv = (entry && entry.env && typeof entry.env === 'object') ? entry.env : {};
-    // A seat with NO CLAUDE_CONFIG_DIR already runs on `default` — the absence
-    // of the var IS the default selection, so a move to `default` must skip it
-    // rather than restart it to set a variable that changes nothing.
     const already = prevEnv.CLAUDE_CONFIG_DIR ? prevEnv.CLAUDE_CONFIG_DIR === dir : toDefault;
     if (already) { skipped.push({ name, reason: `already on account ${label}` }); continue; }
     if (live.activityState && live.activityState !== 'idle') {

@@ -254,9 +254,10 @@ bundle), whose packaged form is the Docker image under
   0600) plus the mint recipe for `~/.clodex/accounts/<label>/`, the isolated
   `CLAUDE_CONFIG_DIR` a seat on that account spawns with. The `default` account is
   implicit — label `default`, configDir `~/.claude`, never stored, always first in
-  `list()`. `labelFor(configDir)` is what puts an `account` on every `session:list`
-  row. Deps injected (fs/path/os/clodexHome/claudeHome), so it unit-tests under
-  plain node; no electron.
+  `list()`. `labelResolver()` is what puts an `account` on every `session:list`
+  row — the batch form of `labelFor(configDir)`, reading the registry once per
+  list rather than once per row. Deps injected (fs/path/os/clodexHome/claudeHome),
+  so it unit-tests under plain node; no electron.
 - **env-scopes.js** — merges the GUI-managed environment scopes over the base
   process env for a wrapper PTY, and is the single source for the canonical
   precedence. Pure fs/path, no electron.
@@ -1190,7 +1191,12 @@ and are not, which is why the judgement worth testing is pushed down here.
   persists), **env-row.js** (one Preferences ▸ Env row — its layout CLASSES, its
   full-text titles, and the "shipped" marker, which tracks the VALUE so an edited
   default drops it; takes `document` as a parameter so all of that is assertable
-  without a browser), **name-suggest.js** (`session-<counter>` minted before the global
+  without a browser), **account-select.js** (the Account picker as a VIEW onto the
+  `CLAUDE_CONFIG_DIR` line inside the env textarea — no separate persisted field,
+  the same shape args-model.js gives `--model`; `default` is the ABSENCE of the
+  line and an unregistered dir reads as `custom`, which the picker leaves alone),
+  **account-row.js** (one Preferences ▸ Accounts row — its layout classes and its
+  per-kind button set, the default row having no Re-sync or Remove), **name-suggest.js** (`session-<counter>` minted before the global
   reserved-name set is prefetched, so it must resolve collisions),
   **name-validity.js** (whether the typed name may be created — the grammar, the
   live-vs-archived reason line, whether Create is enabled, and whether a
