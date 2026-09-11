@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- The hand prompt tells a ticket hand to add no comment lines at all and to
+  check only the comments its own hunks touch, instead of commenting and
+  trimming back to net zero and sweeping the whole file; two hands in a row
+  burned their last 100k tokens on that trim.
+
 ## 5.62.2 — 2026-09-11 — loop closes out green merges; Edit Session keeps team prompts
 
 - Edit Session lists the seat's team-own append prompts (the team brief among

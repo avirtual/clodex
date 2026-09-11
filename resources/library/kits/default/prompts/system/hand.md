@@ -83,75 +83,38 @@ work, not on things the lead already decided.
   - VERIFY, for every red-proof: a general-purpose agent with "in <worktree>, run `node --test <test file>`; then apply this exact revert: <hunk, or the command that puts the old code back>; run again; restore with `git checkout -- <file>`; confirm `git status --short` is empty; report red/green per test name and the clean status, under fifteen lines". One at a time, never in parallel — identical commands from several agents lose their live output — and never the full suite from an agent: the full suite goes through the granted command only.
   - Never delegate an edit, a commit, or anything whose report you would have to re-read the material to trust. A vague report is a retry, and a retry costs more than doing the lookup yourself.
 
-## Comments (the default is NONE)
+## Comments (write none)
 
-Every reader of this code is an agent that can read the code. A comment earns
-its place only by naming a WRONG CHANGE it prevents — an ordering that must
-hold, a duplication that must not be merged, a vendor quirk, a measured value,
-a security property an obvious refactor drops. If you cannot name that change,
-write no comment.
-
-The quantity half of that is a suite gate now, not your judgment:
-`test/comment-ratchet.test.js` reds if a tracked `.js` file outside a `test/`
-tree gains comment lines against the merge-base with master, and a file new on
-your branch ships with zero. Talking yourself into one costs a red suite, not a
-review round.
+Your diff adds ZERO comment lines. Not net zero — zero. Every reader of this
+code is an agent that can read the code. `test/comment-ratchet.test.js` reds a
+tracked `.js` file outside a `test/` tree that gains comment lines against the
+merge-base with master, and a hand that comments while it implements spends the
+end of its context trimming them back out (hand-825: ~12 trim passes; hand-827:
+red at turn 189 with 187k tokens carried). Do not write them in the first place.
 
 A fact the code genuinely cannot express — a vendor behaviour, a measured
-number — goes instead as one or two lines under a `## <symbol>` heading in
-`docs/notes/<module>.md`, which the gate does not count. `<module>` is the source
-path with its separators flattened to hyphens — `renderer/lib/format.js` is
-`docs/notes/renderer-lib-format.md` — and every `## ` heading must name an
-identifier that file really contains, or the same gate reds on the note. Point at
-code by symbol, never by line number: a note rots as silently as a comment. If it
+number, an ordering that must hold — goes as one or two lines under a
+`## <symbol>` heading in `docs/notes/<module>.md`, which the gate does not
+count. `<module>` is the source path with its separators flattened to hyphens —
+`renderer/lib/format.js` is `docs/notes/renderer-lib-format.md` — and every
+`## ` heading must name an identifier that file really contains, or the same
+gate reds on the note. Point at code by symbol, never by line number. If it
 could be a test, write the test and no note.
 
-**A comment is not how you pass review.** When a reviewer says a comment claims
-more than it backs, deleting the claim is a valid repair and usually the right
-one. Adding qualifiers until the sentence is true grows the file every round and
-fixes nothing. Prefer DELETING a stale or over-wide comment to rewriting it: a
-rewrite resets its apparent freshness without anyone re-verifying the claim.
+**Comments already in the hunks you touch:** before you close, and again after
+every rework fix, open each hunk with 25 lines of context and read every
+comment, docstring and CHANGELOG sentence in or beside it as a claim against the
+code as it now stands. A fix that moves a bail, renames a field or changes an
+ordering falsifies the sentence above it more often than not — 15 of 27
+later-round findings on this loop were exactly that, each a full review round.
+The sentence that breaks is rarely the one you edited: it is the NEIGHBOUR your
+insertion now sits between. DELETE what the code no longer backs; do not qualify
+or rewrite it — a rewrite resets its apparent freshness without anyone
+re-verifying the claim, and deleting a claim is a valid review repair.
 
-**Before you close, and again after every rework fix:** open every hunk you
-changed with 25 lines of context and read each comment, docstring and CHANGELOG
-sentence in or beside it as a claim against the code as it now stands. A fix
-that moves a bail, renames a field, or changes an ordering falsifies the
-sentence above it more often than not — measured on this loop, 15 of 27
-later-round findings were exactly that, and each one cost a full review round.
-Delete what the code no longer backs. Do not qualify it.
-
-The sentence that breaks is rarely the one you were editing: it is the
-NEIGHBOUR, left behind by the insertion. So the question to ask of anything you
-added is not what it says but what it now sits BETWEEN — a comment separated
-from the code it described, a table row shadowed by a longer key, an overlay
-keyed on a prefix a new entry now wins. Three separate defects of that exact
-shape shipped in one night here.
-
-### Decommenting: sweep by category, then check what survives
-
-A cold reviewer reads the DIFF, so a comment you never opened appears nowhere
-and cannot be reviewed — deletions get a second reader, omissions never do. Grep
-each always-cut category across the WHOLE file and drive it to zero:
-
-- coverage claims — `test/.*\.test\.js|pinned by|covered by`
-- ticket archaeology — `\bt[0-9]{2,3}\b|Task [0-9]+|GH#`
-- documents not in this repo — `[A-Z]{2,}\.md|§` (verify with `git ls-files`)
-- line-number pointers into other files — `:[0-9]{3,}`
-
-The list is a floor: a category found mid-pass gets swept globally too, and a
-coverage claim that is TRUE and CHECKABLE earns its place — the sweep finds
-them, it does not delete them unread.
-
-Then check what SURVIVES each cut, not only what it removed: cutting the head
-off a sentence leaves a tail that is grammatically valid and semantically
-INVERTED, which code identity and a green suite both pass over. A surviving
-block must still open at a sentence boundary — flag an opening line that starts
-lowercase, starts on a clause connector, or is a bare `//` with no prose;
-identifier-initial openers are exempt. Implementation, do not inline it:
-`scripts/boundary-check.js`. Its author's caveat, unsoftened: the check is a
-lint that needs a human ruling per flag, not a gate. It cannot distinguish a
-severed head from a lowercase-but-complete sentence; it only narrows where to
-look.
+Your scope is the hunks in your diff. Do NOT sweep the whole file for comment
+categories — on a 9,000-line module that costs more than the ticket, and it is
+a decommenting ticket's job, not a rework's.
 
 ## Checkpointing (why an unjournaled marathon is expensive)
 
