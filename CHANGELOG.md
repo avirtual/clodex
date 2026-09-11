@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — the hand prompt bounds what a hand reads; a box keeps its state on the host and receives its team
+## Unreleased
+
+## 5.63.2 — 2026-09-12 — the hand prompt bounds what a hand reads; a box keeps its state on the host and receives its team
 
 - The hand prompt gains a "Tool results" section that bounds what a hand reads into its own context (head/sed ranges, stat before diff, no cat over 200 lines, Explore agents for large files, no polling while waiting), the neighbour-comment check drops from 25 lines of context to 5, and the shipped copies catch up with the report shape, worktree rule and no-operator posture the clodex team's own copy has carried for a week.
 - `[agent:team sandbox up]` ships the team into the box: its prompts, templates, exec grants and a `team.json` rewritten to the box's work dir with every `account:` dropped land in the box's own teams dir (under `~/.clodex/boxes/<id>/dot/teams/`), once — a box that already carries the team keeps its own copy — and `sandbox.json` records where.
