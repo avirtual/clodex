@@ -628,8 +628,16 @@ test('t825: the MIRROR race — a lead accept in flight when the loop closes out
   };
   f.m.destroy = async () => { throw new Error('the lead accept tore down a tree the loop had already removed'); };
 
-  const r = await f.m._closeOutMergedTicket(f.team, row, ts, { by: 'lead' });
-  f.deps.gitWorktree.isMerged = realIsMerged;
+  // `finally`, because `f.deps.gitWorktree` IS the live `require('../git-worktree')`
+  // object whenever the fixture gets no `gitOver` — shared with every other
+  // subject in the runner. A throw here with a bare restore below it would leave
+  // the stub installed process-wide and cascade into unrelated files.
+  let r;
+  try {
+    r = await f.m._closeOutMergedTicket(f.team, row, ts, { by: 'lead' });
+  } finally {
+    f.deps.gitWorktree.isMerged = realIsMerged;
+  }
 
   assert.ok(interleaved, 'ENTER: the close-out really landed inside the await, or this races nothing');
   assert.ok(r.already, `the lead's accept finds the work done and says so. Got: ${r.text}`);
