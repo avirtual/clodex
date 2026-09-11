@@ -50,6 +50,7 @@ const SANDBOX_DEFAULT_REF = 'master';
 const SANDBOX_HOME_DIR = '/home/clodex';
 const SANDBOX_WORK_DIR = '/home/clodex/work';
 const SANDBOX_WORKER_SEED = 'worker';
+const SANDBOX_TEAM_SUBDIRS = ['prompts', 'templates', 'exec'];
 const SANDBOX_WORKER_TOOLS_OFF = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent'];
 const SANDBOX_WORKER_PROMPT = 'You are a test fixture seeded on a sandbox by the team lead.'
   + ' When asked for an intent, emit it verbatim on its own line and nothing else.'
@@ -2945,6 +2946,31 @@ function createTicketMethods(deps, shared) {
       return path.join(teamsDir, team.name, 'sandbox.json');
     },
 
+    _shipTeamIntoBox(team, box) {
+      if (typeof box.stateDir !== 'function') {
+        return { dir: null, line: 'sandbox: this box has no state dir; team not shipped' };
+      }
+      const dest = path.join(box.stateDir(), 'dot', 'teams', team.name);
+      const manifest = path.join(dest, 'team.json');
+      if (fs.existsSync(manifest)) {
+        return { dir: dest, line: `team ${team.name} already present in the box (kept)` };
+      }
+      ensureDirMode700(dest);
+      for (const sub of SANDBOX_TEAM_SUBDIRS) {
+        const src = path.join(team.dir, sub);
+        if (!fs.existsSync(src)) continue;
+        fs.cpSync(src, path.join(dest, sub), { recursive: true });
+      }
+      const obj = JSON.parse(fs.readFileSync(team.file || path.join(team.dir, 'team.json'), 'utf-8'));
+      const translated = box.translateHostPath(team.root) || {};
+      obj.root = translated.container || SANDBOX_WORK_DIR;
+      for (const role of Object.values(obj.roles || {})) {
+        if (role && typeof role === 'object') delete role.account;
+      }
+      atomicWriteFileSync(manifest, `${JSON.stringify(obj, null, 2)}\n`);
+      return { dir: dest, line: `team ${team.name} shipped into the box (teams/${team.name})` };
+    },
+
     async _handleTeamSandbox(team, intent, reply) {
       const action = intent.action || 'up';
       if (!SANDBOX_ACTIONS.includes(action)) {
@@ -2992,6 +3018,8 @@ function createTicketMethods(deps, shared) {
       const st = await box.status();
       const ports = (st && st.ports) || (r && r.ports) || {};
       const token = box.remoteToken();
+      const shipped = this._shipTeamIntoBox(team, box);
+      reply(shipped.line);
       const record = {
         boxId,
         ref: (st && st.ref) || null,
@@ -2999,6 +3027,7 @@ function createTicketMethods(deps, shared) {
         webUrl: ports.web ? `http://127.0.0.1:${ports.web}` : null,
         wireUrl: ports.wire ? `http://127.0.0.1:${ports.wire}` : null,
         token,
+        teamDir: shipped.dir,
         startedAt: new Date().toISOString(),
       };
       ensureDirMode700(path.dirname(file));

@@ -23,7 +23,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 
-function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, config = {} } = {}) {
+function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null } = {}) {
   const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
   // The box's config is REAL state here, not a spy log: the handler reads it back
@@ -52,6 +52,7 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult
     remoteToken: () => TOKEN,
     async waitHealthy() { calls.waitHealthy++; return healthResult || { ok: true, polls: 1, ms: 4000 }; },
     translateHostPath: () => ({ container: '/home/clodex/work' }),
+    ...(noStateDir ? {} : { stateDir: () => stateRoot }),
   });
   const instances = new Map();
   const manager = {
@@ -95,16 +96,36 @@ function mkFakeFetch({ sessions = [], post } = {}) {
 function mkBox(opts = {}) {
   const home = mkTmpRoot('t808-');
   const teamsDir = path.join(home, 'teams');
-  fs.mkdirSync(path.join(teamsDir, 'clodex'), { recursive: true, mode: 0o700 });
+  const dir = path.join(teamsDir, 'clodex');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const team = {
     name: 'clodex',
     root: '/proj',
     lead: 'lead',
-    file: path.join(teamsDir, 'clodex', 'team.json'),
-    dir: path.join(teamsDir, 'clodex'),
+    file: path.join(dir, 'team.json'),
+    dir,
     roles: { lead: { brief: 'the lead' }, hand: { brief: 'the hand' } },
   };
-  const fake = opts.noManager ? null : mkFakeManager(opts);
+  const manifest = {
+    name: 'clodex',
+    root: '/proj',
+    lead: 'lead',
+    kit: 'clodex-team',
+    roles: {
+      lead: { brief: 'the lead', account: 'opsguru' },
+      hand: { brief: 'the hand', account: 'personal' },
+    },
+  };
+  fs.writeFileSync(team.file, `${JSON.stringify(manifest, null, 2)}\n`);
+  fs.mkdirSync(path.join(dir, 'prompts', 'system'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'prompts', 'system', 'x.md'), 'system prompt x\n');
+  fs.mkdirSync(path.join(dir, 'templates'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'templates', 'y.json'), '{"type":"claude"}\n');
+  fs.mkdirSync(path.join(dir, 'exec'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'exec', 'z.json'), '{"command":"true"}\n');
+  fs.writeFileSync(path.join(dir, 'tickets.json'), '{"tickets":[]}\n');
+  const stateRoot = mkTmpRoot('t836-state-');
+  const fake = opts.noManager ? null : mkFakeManager({ ...opts, stateRoot });
   const net = mkFakeFetch(opts);
   const methods = createTicketMethods({
     fs,
@@ -131,6 +152,10 @@ function mkBox(opts = {}) {
     box: () => fake.manager.get('team-clodex'),
     requests: net.requests,
     file: path.join(teamsDir, 'clodex', 'sandbox.json'),
+    srcDir: dir,
+    stateRoot,
+    shipped: path.join(stateRoot, 'dot', 'teams', 'clodex'),
+    replies: injected,
   };
 }
 
@@ -164,7 +189,7 @@ test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', 
   assert.ok(exists(b.file), 'sandbox.json landed');
   const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
   assert.deepStrictEqual(Object.keys(rec).sort(),
-    ['boxId', 'ref', 'sha', 'startedAt', 'token', 'webUrl', 'wireUrl'].sort());
+    ['boxId', 'ref', 'sha', 'startedAt', 'teamDir', 'token', 'webUrl', 'wireUrl'].sort());
   assert.strictEqual(rec.boxId, 'team-clodex');
   assert.strictEqual(rec.ref, 'master');
   assert.strictEqual(rec.sha, 'abcdef1234567890');
@@ -278,6 +303,59 @@ test('sandbox.json ref is null when status reports null, even though the intent 
   const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
   assert.strictEqual(rec.ref, null, 'the file reports the box, not the request');
   assert.strictEqual(rec.sha, null);
+});
+
+test('up ships prompts, templates and exec grants into the box, with a rewritten team.json', async () => {
+  const b = mkBox();
+  const before = JSON.parse(fs.readFileSync(path.join(b.srcDir, 'team.json'), 'utf-8'));
+  assert.strictEqual(before.roles.lead.account, 'opsguru', 'ENTER: the host manifest carries an account');
+  assert.strictEqual(before.roles.hand.account, 'personal', 'ENTER: on both roles');
+
+  await fire(b, b.lead, { action: 'up' });
+
+  assert.strictEqual(fs.readFileSync(path.join(b.shipped, 'prompts', 'system', 'x.md'), 'utf-8'), 'system prompt x\n');
+  assert.strictEqual(fs.readFileSync(path.join(b.shipped, 'templates', 'y.json'), 'utf-8'), '{"type":"claude"}\n');
+  assert.strictEqual(fs.readFileSync(path.join(b.shipped, 'exec', 'z.json'), 'utf-8'), '{"command":"true"}\n');
+  assert.ok(!exists(path.join(b.shipped, 'tickets.json')), 'the box board starts empty');
+  assert.ok(!exists(path.join(b.shipped, 'sandbox.json')), 'the host token file is not shipped');
+
+  const out = JSON.parse(fs.readFileSync(path.join(b.shipped, 'team.json'), 'utf-8'));
+  assert.strictEqual(out.root, '/home/clodex/work', 'root is the translated container path');
+  assert.ok(!('account' in out.roles.lead), 'no role carries an account inside the box');
+  assert.ok(!('account' in out.roles.hand));
+  assert.strictEqual(out.lead, 'lead');
+  assert.strictEqual(out.kit, 'clodex-team');
+  assert.deepStrictEqual(Object.keys(out.roles).sort(), ['hand', 'lead']);
+  assert.strictEqual(out.roles.lead.brief, 'the lead');
+  assert.ok(b.replies.some((l) => l.includes('team clodex shipped into the box (teams/clodex)')));
+});
+
+test('a second up keeps the box-side team.json the box lead has since changed', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'up' });
+  const manifest = path.join(b.shipped, 'team.json');
+  fs.writeFileSync(manifest, '{"name":"clodex","changed":"by the box lead"}\n');
+
+  await fire(b, b.lead, { action: 'up' });
+
+  assert.strictEqual(fs.readFileSync(manifest, 'utf-8'), '{"name":"clodex","changed":"by the box lead"}\n');
+  assert.ok(b.replies.some((l) => l.includes('team clodex already present in the box (kept)')));
+});
+
+test('sandbox.json records where the team landed', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'up' });
+  const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
+  assert.strictEqual(rec.teamDir, b.shipped);
+});
+
+test('a box with no state dir says so and still seeds', async () => {
+  const b = mkBox({ noStateDir: true });
+  await fire(b, b.lead, { action: 'up' });
+  assert.ok(b.replies.some((l) => l.includes('no state dir; team not shipped')));
+  const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
+  assert.strictEqual(rec.teamDir, null);
+  assert.match(b.last(), /seeded bash/);
 });
 
 test('a non-lead gets the same refusal the other team verbs give, and writes nothing', async () => {
