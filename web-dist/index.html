@@ -3622,6 +3622,10 @@ body {
 #prefs-dialog select {
   width: 100%;
 }
+#prefs-dialog .prefs-row select {
+  width: auto;
+  flex: 0 0 auto;
+}
 #prefs-dialog select:disabled {
   opacity: 0.45;
   cursor: default;
@@ -4329,6 +4333,11 @@ body {
   display: block;
   width: 100%;
   margin-top: 4px;
+}
+#dialog input,
+#dialog select,
+#prefs-dialog input[type=text],
+#prefs-dialog select {
   padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -4338,7 +4347,9 @@ body {
   outline: none;
 }
 #dialog input:focus,
-#dialog select:focus {
+#dialog select:focus,
+#prefs-dialog input[type=text]:focus,
+#prefs-dialog select:focus {
   border-color: var(--accent);
 }
 .hint-text {
@@ -7562,24 +7573,24 @@ body {
         <p class="hint-text">Each account is a label plus the <code>CLAUDE_CONFIG_DIR</code> a seat on it spawns with; <code>default</code> is <code>~/.claude</code> and is never stored. Adding an account with no config dir mints one that shares transcripts, plugins and skills with the default. A seat picks its account in the New Session and Edit Session dialogs.</p>
         <div id="prefs-accounts-list" style="margin-top: 8px;"></div>
         <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
-          <input type="text" id="prefs-account-label" placeholder="label" spellcheck="false" autocomplete="off" style="flex: 1;">
-          <input type="text" id="prefs-account-email" placeholder="email (optional)" spellcheck="false" autocomplete="off" style="flex: 2;">
-          <select id="prefs-account-plan" style="flex: none;">
+          <input type="text" id="prefs-account-label" placeholder="label" spellcheck="false" autocomplete="off" style="flex: 1; min-width: 0;">
+          <input type="text" id="prefs-account-email" placeholder="email (optional)" spellcheck="false" autocomplete="off" style="flex: 2; min-width: 0;">
+          <select id="prefs-account-plan">
             <option value="pro">pro</option>
             <option value="max">max</option>
             <option value="team">team</option>
             <option value="api">api</option>
             <option value="unknown" selected>unknown</option>
           </select>
-          <button id="prefs-account-add" class="secondary" type="button" style="flex: none;">Add</button>
         </div>
         <div class="prefs-row" style="gap: 6px; margin-top: 6px;">
-          <input type="text" id="prefs-account-dir" placeholder="config dir (optional — minted when blank)" spellcheck="false" autocomplete="off" style="flex: 1;">
+          <input type="text" id="prefs-account-dir" placeholder="config dir (optional)" spellcheck="false" autocomplete="off" style="flex: 2; min-width: 0;">
+          <button id="prefs-account-add" class="secondary" type="button" style="flex: none;">Add</button>
         </div>
         <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
-          <span>Move seats on model</span>
-          <select id="prefs-account-model" style="flex: none;"></select>
-          <span class="hint-text" style="margin: 0;">to an account with its <strong>Move</strong> button. Restarts every matching seat.</span>
+          <label for="prefs-account-model" style="white-space: nowrap; flex: none;">Move seats on model</label>
+          <select id="prefs-account-model"></select>
+          <span class="hint-text" style="flex: 1; min-width: 0; margin: 0;">to an account with its <strong>Move</strong> button. Restarts every matching seat.</span>
         </div>
         <span id="prefs-accounts-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </details>

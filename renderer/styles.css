@@ -2387,6 +2387,10 @@ html, body {
    of widening the dialog (the horizontal-scroll cause at the old fixed width). */
 #prefs-dialog input[type="text"],
 #prefs-dialog select { width: 100%; }
+/* A select in a prefs row sizes to its CONTENT. Without this it takes the
+   `width: 100%` above as its flex basis, demands the whole line, and the row's
+   inputs are what shrink to fit — measured at ~10px each. */
+#prefs-dialog .prefs-row select { width: auto; flex: 0 0 auto; }
 /* The voice row is shown disabled rather than hidden when there is no session to
    send `/voice` to (a row that vanishes from a settings dialog reads as a missing
    feature), so it needs to LOOK inert — the default UA styling of a disabled
@@ -2754,6 +2758,18 @@ html, body {
   display: block;
   width: 100%;
   margin-top: 4px;
+}
+
+/* Split from the block above so #prefs-dialog can share the dark control
+   treatment without the stacked-field layout: prefs controls sit in flex rows,
+   where display:block and margin-top push each one out of alignment. The prefs
+   half names input[type="text"] rather than input because that dialog's inputs
+   are mostly checkboxes and radios, and this padding and border would draw each
+   one as a 30px box. */
+#dialog input,
+#dialog select,
+#prefs-dialog input[type="text"],
+#prefs-dialog select {
   padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2764,7 +2780,9 @@ html, body {
 }
 
 #dialog input:focus,
-#dialog select:focus {
+#dialog select:focus,
+#prefs-dialog input[type="text"]:focus,
+#prefs-dialog select:focus {
   border-color: var(--accent);
 }
 
