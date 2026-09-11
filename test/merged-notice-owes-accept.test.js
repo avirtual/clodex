@@ -266,6 +266,31 @@ test('a close-out that could NOT finish still owes the accept, and says why', ()
     'the reassurance is kept here: the seat, the ref and that tree really are still there');
 });
 
+test('the dirty-downgrade detail survives whole — the cap does not eat the recovery', () => {
+  const f = mkLoop();
+  // The real sentence with a real worktree path: an absolute ticket-tree path
+  // alone is ~80 chars, and the seat clause, the recovery instruction and the
+  // branch clause follow it. At a 300-char cap the line stops inside the
+  // instruction, so the lead is told the tree is dirty and never told what to
+  // do about it — the one arm of this notice that exists to be acted on.
+  const wt = '/Users/somebody/projects/tmux/wb-wrap-ui-t1-build-the-widget-and-then-report-it';
+  const text = 'ticket t1 accepted — merged into master; team-hand was ARCHIVED, not retired, and its worktree '
+    + `was KEPT — ${wt} has uncommitted work that a removal would have deleted. `
+    + 'Commit or clear that tree, then `[agent:task accept t1]` again to finish the cleanup; '
+    + 'branch t1-build-the-widget-and-then-report-it was KEPT (the accept above is unfinished).';
+  assert.ok(text.length > 300 && text.length < 600,
+    `ENTER: the sentence must actually exceed the old cap, or this pins nothing. Got ${text.length}`);
+
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: { ok: false, closedOut: true, text } });
+  const body = f.gated[0].body;
+  assert.ok(body.includes('Commit or clear that tree'),
+    `the recovery instruction survives the cap. Got:\n${body}`);
+  assert.ok(body.includes('was KEPT (the accept above is unfinished)'),
+    'and the branch clause after it — a ref the lead would otherwise hunt for');
+  assert.ok(!firesAnyIntent(body),
+    'and the wider cap does not cost the column-1 invariant: the collapse, not the length, is what protects it');
+});
+
 test('a null closeOut — the loop never reached the teardown — reads as a step owed', () => {
   const f = mkLoop();
   // The default arm, which is the only arm a caller can reach by FORGETTING to

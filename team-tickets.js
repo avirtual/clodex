@@ -2196,18 +2196,24 @@ function createTicketMethods(deps, shared) {
         try {
           const fresh = ticketsStore.load(team.root);
           const row = fresh.find((t) => t.id === ticketId);
-          // The lead can accept WHILE the suite runs, past the pre-merge re-read:
-          // unguarded, the loop tears down twice and restamps over the lead.
-          const acceptedInFlight = row && (row.acceptedAt || row.closedOut);
-          if (acceptedInFlight) {
+          // `state` FIRST: a row reopened by a reject can still carry
+          // `acceptedAt` from the round before it.
+          const reopened = row && row.state !== 'done';
+          const acceptedInFlight = !reopened && row && (row.acceptedAt || row.closedOut);
+          if (reopened) {
+            log.info('ticket', `ticket ${ticketId} was reopened (${row.state}) while the post-merge suite ran — the merge stands and the loop tore nothing down`);
+          } else if (acceptedInFlight) {
             log.info('ticket', `ticket ${ticketId} was accepted by ${row.acceptedBy || 'the lead'} while the post-merge suite ran — the loop reports that instead of closing out again`);
           }
           closeOut = !row
             ? { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` }
-            : acceptedInFlight
-              ? { ok: true, closedOut: true, already: true,
-                text: `ticket ${ticketId} accepted — ${row.acceptedBy || 'the lead'} accepted it while the post-merge suite ran` }
-              : await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' });
+            : reopened
+              ? { ok: false, closedOut: false, reopened: true, state: row.state,
+                text: `the ticket was reopened (${row.state}) while the post-merge suite ran, so the seat, worktree and branch were left alone` }
+              : acceptedInFlight
+                ? { ok: true, closedOut: true, already: true,
+                  text: `ticket ${ticketId} accepted — ${row.acceptedBy || 'the lead'} accepted it while the post-merge suite ran` }
+                : await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' });
         } catch (e) {
           log.error('ticket', `loop close-out for ${ticketId} failed after a green merge: ${e.message}`);
           closeOut = { ok: false, closedOut: false, text: `the loop's close-out threw (${e.message})` };
@@ -2320,9 +2326,9 @@ function createTicketMethods(deps, shared) {
     // a line start makes the LEAD auto-accept on receipt, destroying the
     // worktree, which no revert undoes. Keep the prefix.
     //
-    // `closeOut` is `_closeOutMergedTicket`'s result, or null. BOTH flags are
-    // read; every other shape falls to the step line, so a forgotten argument
-    // cannot report a teardown that never ran.
+    // `closeOut` is `_closeOutMergedTicket`'s result, or null. `reopened`, `ok`
+    // and `closedOut` are all read; every other shape falls to the step line, so
+    // a forgotten argument cannot report a teardown that never ran.
     _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned, closeOut = null }) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
@@ -2330,7 +2336,9 @@ function createTicketMethods(deps, shared) {
         // `[agent:` — an invariant the hazard comment above reasons about as lines
         // each carrying a prose prefix. A multi-line interpolation breaks that
         // silently.
-        const oneLine = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300);
+        const collapse = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
+        const oneLine = (v) => collapse(v, 300);
+        const wideLine = (v) => collapse(v, 600);
         const measured = !!(changelog && changelog.known === true && typeof changelog.touched === 'boolean');
         const changelogLine = measured
           ? (changelog.touched
@@ -2357,14 +2365,16 @@ function createTicketMethods(deps, shared) {
           // apart rather than the scan being widened.
           : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} diff --stat ${sha}^1 ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
         const stamp = (this._loadTicket(team, ticketId) || {}).suiteRemeasured;
-        // Line 2 is either a REPORT or a STEP, never both. `oneLine`, because a
-        // close-out sentence can carry git stderr, whose newlines would reach
-        // column 1.
         const closedOutOk = !!(closeOut && closeOut.ok && closeOut.closedOut);
-        const stepLine = closedOutOk
-          ? `Closed out: ${oneLine(closeOutDetail(ticketId, closeOut.text))}`
-          : `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it. `
-            + `The loop could not close it out: ${oneLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
+        // A reopened ticket gets its own arm: `Step owed:` would name a verb
+        // `_taskAccept` refuses on a state that is not `done`.
+        const stepLine = closeOut && closeOut.reopened
+          ? `Reopened by rework (${closeOut.state}) during the post-merge suite: the merge is on ${MERGE_TARGET_BRANCH}, `
+            + `nothing was torn down, and the rework round's tree is the one now live. No step is owed here.`
+          : closedOutOk
+            ? `Closed out: ${wideLine(closeOutDetail(ticketId, closeOut.text))}`
+            : `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it. `
+              + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
@@ -8140,7 +8150,12 @@ function createTicketMethods(deps, shared) {
     async _closeOutMergedTicket(team, ticket, tickets, { by, note = '' }) {
       // Checked HERE as well as at the call site, every arm ending in
       // `_finishAccept`, which stamps `acceptedBy` unconditionally. One-sided: a
-      // lead accept over a loop close-out is the dirty-row recovery.
+      // lead accept over a loop close-out is the dirty-row recovery. The loop
+      // never enters `_taskAccept`, so that verb's `state` refusal is not a gate.
+      if (by === 'ticket-loop' && ticket.state !== 'done') {
+        return { ok: false, closedOut: false, reopened: true, state: ticket.state,
+          text: `the ticket was reopened (${ticket.state}) before the loop could close it out, so the seat, worktree and branch were left alone` };
+      }
       if (by === 'ticket-loop' && (ticket.acceptedAt || ticket.closedOut)) {
         return { ok: true, closedOut: true, already: true,
           text: `ticket ${ticket.id} accepted — ${ticket.acceptedBy || 'the lead'} accepted it first; the loop changed nothing` };
@@ -8158,11 +8173,19 @@ function createTicketMethods(deps, shared) {
 
       const m = await gitWorktree.isMerged(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
 
-      // The MIRROR: `_taskAccept` passed its `loopClosedOut` gate before this
-      // await, the only point a handler can interleave.
-      if (by !== 'ticket-loop') {
+      // The MIRROR, both directions: whichever side passed its entry gate first,
+      // the other can still enter this await and both tear down.
+      {
         const now = this._loadTicket(team, ticket.id);
-        if (now && now.loopClosedOut) {
+        if (now && by === 'ticket-loop' && now.state !== 'done') {
+          return { ok: false, closedOut: false, reopened: true, state: now.state,
+            text: `the ticket was reopened (${now.state}) while this close-out was running, so the seat, worktree and branch were left alone` };
+        }
+        if (now && by === 'ticket-loop' && now.acceptedAt && now.acceptedBy !== 'ticket-loop') {
+          return { ok: true, closedOut: true, already: true,
+            text: `ticket ${ticket.id} accepted — ${now.acceptedBy} accepted it while this close-out was running; the loop changed nothing` };
+        }
+        if (now && by !== 'ticket-loop' && now.loopClosedOut) {
           return { ok: true, closedOut: true, already: true,
             text: `ticket ${ticket.id} accepted — the loop closed it out while this accept was running; nothing was changed` };
         }
