@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — The Accounts pane fits the dialog, and ticket hands cannot stage the whole tree
+## Unreleased
+
+## 5.61.1 — 2026-09-11 — The Accounts pane fits the dialog, and ticket hands cannot stage the whole tree
 
 - **Preferences ▸ Accounts fits the dialog**: the add form, config-dir field and
   "Move seats on model" row lay out on their own lines with the dialog's dark
