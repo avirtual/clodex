@@ -7280,6 +7280,8 @@ let argsEditingSource = null;
 let argsAgentsPersisted = [];
 let argsAgentsRendered = [];
 let argsAgentsAuto = [];
+let argsAppendPersisted = [];
+let argsAppendRendered = [];
 let argsPluginsPersisted = null;
 let argsPluginsRendered = [];
 let argsSkillsDisabledPersisted = [];
@@ -7338,7 +7340,12 @@ async function openArgsDialog(name, argsSource = null) {
   argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
   renderPluginChecklist(argsPluginList, res.plugins);
   fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || '', argsSeat());
-  renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []), argsSeat());
+  const argsTeamAppendRows = res.team
+    ? (promptLib || []).filter((p) => p && p.kind === 'append' && p.team === res.team)
+    : [];
+  renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []), argsSeat(), argsTeamAppendRows);
+  argsAppendPersisted = res.appendPromptFiles || [];
+  argsAppendRendered = [...getPromptLibCache().append.map((p) => p.name), ...argsTeamAppendRows.map((r) => r.name)];
   const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
   renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto, argsSeat());
   argsAgentsPersisted = res.agents || [];
@@ -7418,7 +7425,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     ? null : proxyValueFromControls(argsProxyMode, argsProxyUrl);
   const promptsHidden = argsPromptRow.style.display === 'none';
   const systemPromptFile = promptsHidden ? null : (argsSystemPrompt.value || null);
-  const appendPromptFiles = promptsHidden ? [] : collectAppendChecklist(argsAppendList);
+  const appendPromptFiles = promptsHidden ? []
+    : mergeUnrendered(argsAppendPersisted, argsAppendRendered, collectAppendChecklist(argsAppendList));
   const agents = argsAgentsRow.style.display === 'none' ? [] : reconcilePartialSelection(
     argsAgentsPersisted, argsAgentsRendered, collectAgentChecklist(argsAgentsList), argsAgentsAuto);
   const denyBuiltins = argsAgentsRow.style.display === 'none'

@@ -1621,6 +1621,7 @@ function readSessionArgs(name) {
     execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [], // exec GRANT allowlist (local-only; stripped at the peer wire)
     env: (entry.env && typeof entry.env === 'object') ? entry.env : {}, // per-session env (T46b; local-only, stripped at the peer wire)
     agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)), // scope-filtered offer list
+    team: (() => { try { const t = resolveTeam(entry.cwd); return t ? t.name : null; } catch { return null; } })(),
     stripLevel: stripLevelOf(entry),
   } : { ok: false };
 }
