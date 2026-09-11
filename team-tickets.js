@@ -6752,15 +6752,24 @@ function createTicketMethods(deps, shared) {
         const roleKey = ticket.role || matchSeatRole(team, seat);
         if (!roleKey || !(team.roles && Object.prototype.hasOwnProperty.call(team.roles, roleKey))) return unchanged;
         const opener = this.sessions.get(team.lead);
-        if (!opener || !opener.agentType) return unchanged;
+        if (!opener || !opener.agentType) {
+          log.info('intent', `ticket ${ticket.id}: seat ${seat} is past the compact threshold but was KEPT — `
+            + `no live lead (${team.lead}) to open a replacement seat`);
+          return unchanged;
+        }
         const fresh = this._reworkSeatName(team, roleKey, ticket);
-        if (!fresh) return unchanged;
+        if (!fresh) {
+          log.info('intent', `ticket ${ticket.id}: seat ${seat} is past the compact threshold but was KEPT — `
+            + `every replacement name for role ${roleKey} is taken`);
+          return unchanged;
+        }
         const tokens = s.ctxInfo.tok;
         const head = gitWorktree.headShaSync(wt.path);
         const range = wt.baseSha ? `git log --oneline ${wt.baseSha}..HEAD` : 'git log --oneline -20';
         const prefix = `REWORK on a FRESH seat: the previous seat (${seat}) was replaced at ~${Math.round(tokens / 1000)}k `
           + `tokens. Your branch ${wt.branch}${head ? ` at ${head}` : ''} carries its commits; read \`${range}\`, `
-          + `the diff, and JOURNAL.md in your tree before touching anything. Then:\n${deliveryText || ''}\n`;
+          + `\`git status\` (the replaced seat may have left uncommitted edits), the diff, and JOURNAL.md in your `
+          + `tree before touching anything. Then:\n${deliveryText || ''}\n`;
         try { getPersistence().setWorktree(seat, null); } catch { /* best-effort */ }
         Promise.resolve(this.archive(seat)).catch((e) => {
           log.error('intent', `rework seat replacement: archiving ${seat} failed: ${e.message}`);
@@ -7534,7 +7543,7 @@ function createTicketMethods(deps, shared) {
     //
     // Everything else is UNKNOWN, on purpose. A declared unknown costs one
     // ticket's row; a confident wrong number poisons every rollup that sums it.
-    _costSeatFor(team, ticket) {
+    _costSeatResolve(team, ticket) {
       // Every resolution below sums the seat's WHOLE ledger, which equals this
       // ticket's cost only for a seat minted for it and torn down with it — so a
       // standing seat's whole life lands on every ticket it closes.
@@ -7598,6 +7607,23 @@ function createTicketMethods(deps, shared) {
       return { seatName: null, entry: null, attribution: 'unknown' };
     },
 
+    _costSeatFor(team, ticket) {
+      const r = this._costSeatResolve(team, ticket);
+      const stamps = (ticket && Array.isArray(ticket.seatReplacements)) ? ticket.seatReplacements : [];
+      const ids = entrySessionIds(r.entry);
+      if (!stamps.length || !r.entry) return { ...r, sessionIds: ids };
+      const seen = new Set(ids);
+      for (const stamp of stamps) {
+        const prev = stamp && stamp.prev;
+        if (!prev || prev === r.seatName) continue;
+        let rec = null;
+        try { rec = getPersistence().get(prev); } catch { rec = null; }
+        if (!rec) return { seatName: r.seatName, entry: null, attribution: 'unknown', sessionIds: [] };
+        for (const id of entrySessionIds(rec)) if (!seen.has(id)) { seen.add(id); ids.push(id); }
+      }
+      return { ...r, sessionIds: ids };
+    },
+
     // COST.json — the per-ticket rollup, written at close.
     //
     // Deferred and fully best-effort: the commit count shells out to git, and a
@@ -7633,9 +7659,8 @@ function createTicketMethods(deps, shared) {
       if (!taskDir) return;
       setImmediate(async () => {
         try {
-          const { seatName, entry, attribution } = this._costSeatFor(team, ticket);
+          const { seatName, entry, attribution, sessionIds } = this._costSeatFor(team, ticket);
           const seatResolved = !!entry;
-          const sessionIds = entrySessionIds(entry);
           let totals = null;
           try {
             totals = JSON.parse(fs.readFileSync(path.join(getUserDataPath(), 'wire-totals.json'), 'utf8'));

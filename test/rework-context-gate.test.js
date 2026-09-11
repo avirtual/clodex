@@ -43,6 +43,8 @@ const { createTeamManifest } = require('../team-manifest');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 const { CTX_REMINDER_NUDGE_TOKENS } = require('../ctx-reminder');
+const { matchSeatRole } = require('../team-manifest');
+const { projectDirFor } = require('../clodex-paths');
 
 const SEED_DIR = mkTmpRoot('clodex-t827-seed-');
 
@@ -296,6 +298,14 @@ test("a lead reject at 200k archives the heavy seat and spawns a fresh one on th
   assert.strictEqual(t.worktree.branch, 't1-work', 'on the same branch');
   assert.strictEqual(t.worktree.baseSha, world.baseSha,
     'and keeps its fork point — losing it silently disables the loop (loopEligible reads branch && baseSha)');
+  // The fresh name has to decompose back to the role, or the seat resolves to NO
+  // role and replay, reconcile, the role badge and the cost rollup's role arm all
+  // stop seeing it. `_reworkSeatName`'s `-r<N>` and `matchSeatRole`'s `/-r\d+$/`
+  // strip are two halves of one convention that nothing else pins — every other
+  // subject here resolves the fresh seat by exact name, so a rename of either
+  // side would keep this whole file green.
+  assert.strictEqual(matchSeatRole(f.team, FRESH), 'hand',
+    'the fresh seat name still decomposes to its role');
   const spawn = f.created.find((c) => c.name === FRESH);
   assert.ok(spawn, 'the fresh seat was really spawned, not merely pinned');
   assert.strictEqual(real(spawn.cwd), world.treePath, 'INTO the existing tree');
@@ -325,6 +335,11 @@ test("the fresh seat's first write opens with the rework prefix, ahead of the sp
     'with the log range anchored on the recorded fork point, not a guess');
   assert.match(body, /JOURNAL\.md in your tree before touching anything/,
     'and points at the journal, which is the whole substitute for the discarded transcript');
+  // The follow-up path replaces a seat that is working the rework RIGHT NOW and
+  // SIGTERMs it mid-turn, so "your branch carries its commits" is true of the
+  // commits and silent about whatever was still in the tree unstaged.
+  assert.match(body, /git status/,
+    'and at `git status`, because a replaced seat can leave uncommitted edits the commit list never shows');
   assert.match(body, /the retry bound is still off by one/, 'the must-fixes themselves ride the same write');
   assert.match(body, /the original spec body/, 'as does the spec, so the fresh seat needs no second dispatch');
   assert.ok(body.indexOf('REWORK on a FRESH seat') < body.indexOf('the retry bound is still off by one'),
@@ -368,6 +383,82 @@ test('the replacement is stamped on the ticket, so a later reader can see the ro
   assert.strictEqual(stamps[0].next, FRESH);
   assert.strictEqual(stamps[0].tokens, OVER, 'the measurement that drove it, not a re-derivation');
   assert.strictEqual(typeof stamps[0].at, 'number', 'and when');
+});
+
+// ── the rollup still bills the seat that spent the money ───────────────────
+//
+// A replacement moves the pin to the fresh seat, and the fresh seat's record is
+// minted for this ticket — so every falsifier `_costSeatFor` owns is satisfied
+// and the row publishes `attribution: 'seat'`, the value consumers are told is
+// EXACT, off a ledger that starts at the replacement. The spend it omits is the
+// 200k+ seat this whole ticket exists to retire, which makes the error perverse
+// in the operator's direction: the tickets that cost the most report the least.
+// Driven through the real reject rather than a hand-written stamp, so the ticket
+// under measurement is the one the gate actually produces.
+
+const REPLACED_LEDGER = {
+  version: 1,
+  sessions: {
+    'sess-heavy': { cost: 40, requests: 170, turns: 14, refusals: 0, inputTokens: 200, outputTokens: 100, cacheReadTokens: 9000, cacheWriteTokens: 0 },
+    'sess-fresh': { cost: 2, requests: 12, turns: 2, refusals: 0, inputTokens: 20, outputTokens: 10, cacheReadTokens: 900, cacheWriteTokens: 0 },
+  },
+};
+
+test('COST.json for a replaced ticket bills BOTH seats, not just the one that finished it', async () => {
+  const world = mkWorld();
+  const f = mkFixture(world);
+  fsReal.writeFileSync(pathReal.join(world.userData, 'wire-totals.json'), JSON.stringify(REPLACED_LEDGER));
+  ready(f, world, { tok: OVER });
+  f.persistence.upsert({ name: 'team-hand-1', sessionId: 'sess-heavy' });
+
+  leadReject(f);
+  await settle();
+  assert.strictEqual(f.one().assignee, FRESH, 'ENTER: the replacement happened, so there are two seats to bill');
+  f.persistence.upsert({ name: FRESH, sessionId: 'sess-fresh' });
+
+  // The real rollup, which mkFixture stubs out for every other subject here.
+  delete f.m._writeTicketCost;
+  const closed = { ...f.one(), state: 'done', closedAt: 5, closedBy: FRESH };
+  f.m._writeTicketCost(f.team, closed);
+  await settle();
+
+  const file = pathReal.join(projectDirFor(world.home, world.repo), 'tasks', 't1-fixture', 'COST.json');
+  assert.ok(fsReal.existsSync(file), `ENTER: the rollup landed at ${file}`);
+  const rec = JSON.parse(fsReal.readFileSync(file, 'utf8'));
+  assert.strictEqual(rec.seat, FRESH, 'the row names the seat that closed it, which is the joinable one');
+  assert.deepStrictEqual(rec.sessions.ids.slice().sort(), ['sess-fresh', 'sess-heavy'],
+    'and sums BOTH seats — seatReplacements[].prev names the archived one and archive() keeps its record readable');
+  assert.strictEqual(rec.usd, 42,
+    'the ticket really cost 42, not the 2 the fresh seat spent: an under-count stamped `seat` poisons every rollup that sums it');
+  assert.strictEqual(rec.sessions.attribution, 'seat',
+    'still exact — both records were minted for THIS ticket, so the window summed is the ticket\'s');
+  assert.strictEqual(rec.sessions.known, 2, 'with both session ledgers actually found, not one found and one silently absent');
+});
+
+test('a replaced ticket whose archived seat record is GONE declares unknown rather than under-counting', async () => {
+  const world = mkWorld();
+  const f = mkFixture(world);
+  fsReal.writeFileSync(pathReal.join(world.userData, 'wire-totals.json'), JSON.stringify(REPLACED_LEDGER));
+  ready(f, world, { tok: OVER });
+  f.persistence.upsert({ name: 'team-hand-1', sessionId: 'sess-heavy' });
+
+  leadReject(f);
+  await settle();
+  f.persistence.upsert({ name: FRESH, sessionId: 'sess-fresh' });
+  // An operator deleting the archived row, or a restart that swept it: the prior
+  // spend is now unreadable, and the fresh seat's ledger alone is a FLOOR.
+  f.persistence.remove('team-hand-1');
+
+  delete f.m._writeTicketCost;
+  f.m._writeTicketCost(f.team, { ...f.one(), state: 'done', closedAt: 5, closedBy: FRESH });
+  await settle();
+
+  const rec = JSON.parse(fsReal.readFileSync(
+    pathReal.join(projectDirFor(world.home, world.repo), 'tasks', 't1-fixture', 'COST.json'), 'utf8'));
+  assert.strictEqual(rec.sessions.attribution, 'unknown',
+    'the gap is declared: one unknown row is cheap, a confident 2 against a 42 ticket is not');
+  assert.strictEqual(rec.usd, null, 'and no number is published beside it');
+  assert.strictEqual(rec.seat, FRESH, 'the NAME survives, so the row is still joinable back to the seat');
 });
 
 // ── (b)(c)(d) the three arms that must NOT replace ─────────────────────────
