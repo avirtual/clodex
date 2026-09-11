@@ -242,7 +242,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     // beside the refusal it deliberately does not share.
     enableLocalTerminal: true,
     enableConsole: true,
-    enableAccounts: false,
+    enableAccounts: true,
   };
   (registerHandlers || require('./ipc-handlers').registerIpcHandlers)(deps);
 
