@@ -754,7 +754,7 @@ function createSessionManager(deps) {
         // order — so deferring costs no accuracy.
         setImmediate(() => {
           try {
-            const account = this._accountForProxyAgent(ev.agent);
+            const account = this._accountForWireAgent(ev.agent);
             const snap = store.note(ev.headers, { status: ev.status, account });
             if (snap) this._broadcast('wire-quota', this._quotaPayload(store));
           } catch (e) {
@@ -3493,15 +3493,10 @@ function createSessionManager(deps) {
       } catch { return 'default'; }
     }
 
-    _accountForProxyAgent(agent) {
+    _accountForWireAgent(agent) {
       if (!agent) return null;
-      let match = null;
-      for (const s of this.sessions.values()) {
-        if (s.proxyAgent === agent) { match = s; break; }
-      }
-      if (!match) match = this.sessions.get(agent) || null;
-      if (!match) return null;
-      return this.accountFor(match.name);
+      const s = this.sessions.get(agent);
+      return s ? this.accountFor(s.name) : null;
     }
 
     list() {

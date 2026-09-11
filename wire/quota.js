@@ -6,8 +6,9 @@
 //
 // Three properties that make this unlike the rest of the wire's state:
 //
-//   * SCOPE IS THE ACCOUNT, NOT THE SESSION. Every seat on the box spends the
-//     same plan, so this is keyed by organization id and surfaces ONCE, not
+//   * SCOPE IS THE ACCOUNT, NOT THE SESSION. Seats sharing a plan spend the
+//     same pool, so this is keyed by the seat's account label (the org id only
+//     when no caller could resolve one) and surfaces once per account, never
 //     per session.
 //   * IT IS ONLY AS FRESH AS THE LAST FORWARDED TURN. Nothing polls the API.
 //     Hence `as_of`/`age_s` on every snapshot — a consumer rendering a

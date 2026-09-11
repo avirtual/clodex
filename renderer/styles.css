@@ -3882,7 +3882,17 @@ html, body {
 /* The pill itself. Per-chip rather than on the strip because level and
    staleness are per ACCOUNT: one subscription at rejected must not colour the
    other's number loud. */
+/* Each chip ellipsises ITSELF. The strip's own cap is the whole header budget,
+   so without this a loud first chip eats it and the second account's label
+   never reaches the screen at all — the one thing this feature exists to show.
+   inline-block is what makes text-overflow apply per chip; vertical-align
+   keeps the pills on one baseline once they are inline-blocks. */
 #drawer-quota .quota-chip {
+  display: inline-block;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
   padding: 2px 7px;
   border-radius: 999px;
 }

@@ -161,6 +161,11 @@ test('seam: a codex turn with a 200 contributes nothing either', async () => {
 // (key by the org header) is exercised in wire-quota.test.js; what only the
 // seam can show is that the SEAT's label reaches note() at all — the store
 // cannot tell a label it was never handed from one that does not exist.
+//
+// `agent` IS the session name: the in-process wire's registerAgent() takes the
+// bare name (session-manager.js `_ensureWire`), and only the EXTERNAL proxy id
+// is a distinct `proxyAgent` label. A fixture that set one here would pass
+// against a lookup that never matches a real event.
 const ACCOUNTS = {
   labelResolver: () => (dir) => (dir === '/cfg/sub-2' ? 'sub-2' : null),
 };
@@ -179,9 +184,9 @@ function recordingStore(m) {
 test('seam: a response from a seat on a registered account is filed under that label', async () => {
   await onWire(async ({ wire, m }) => {
     const calls = recordingStore(m);
-    m.sessions.set('worker', { name: 'worker', proxyAgent: 'cc-worker-1' });
+    m.sessions.set('worker', { name: 'worker' });
     wire.emit('response', {
-      agent: 'cc-worker-1', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,
+      agent: 'worker', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,
     });
     await tick();
     assert.strictEqual(calls.length, 1, 'ENTER: the consumer reached the store at all — every field read below is off this call');
