@@ -33,6 +33,7 @@ function makeDeps(overrides = {}) {
   let srv = null;
   const createCalls = [];
   const stripCalls = [];
+  const spawnCalls = [];
   const manager = {
     sessions: new Map(),
     create: async (...args) => {
@@ -40,6 +41,12 @@ function makeDeps(overrides = {}) {
       const out = { name: args[0], type: args[1], pid: 4242 };
       if (overrides.createWarnings) out.warnings = overrides.createWarnings;
       return out;
+    },
+    _handleSpawnIntent: (spawner, intent, opts = {}) => {
+      spawnCalls.push({ spawner, intent });
+      const line = overrides.spawnReply
+        || 'ok: spawned "clodex-lead" (claude) @ /r (lead of team clodex) via template "clodex-team-lead"';
+      setImmediate(() => opts.onReply(line));
     },
   };
   const persistence = { get: () => undefined, setStripLevel: (n, l) => stripCalls.push([n, l]) };
@@ -54,6 +61,8 @@ function makeDeps(overrides = {}) {
     parseCtxFile: () => null, jsonlToMessages: () => [], ensureDir: () => {}, homeRelativize: (x) => x,
     claimOutbox: () => [], listOutboxOrigins: () => [],
     manager, proxyPoller: { snapshot: () => null },
+    loadManifest: overrides.loadManifest
+      || ((n) => { throw new Error(`no such team "${n}"`); }),
     restartClodex: () => {}, restartSession: () => {}, peerProxyView: () => null,
     readSessionArgs: () => ({ ok: false }),
     applySessionArgs: (n, p, w) => { argsCalls.push([n, p, w]); return { ok: true }; },
@@ -71,7 +80,7 @@ function makeDeps(overrides = {}) {
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
   };
-  return { deps, createCalls, stripCalls, argsCalls };
+  return { deps, createCalls, stripCalls, argsCalls, spawnCalls, manager };
 }
 
 // Patch RemoteServer (require()d lazily inside syncRemoteServer) with a capturing
@@ -253,6 +262,72 @@ test('createSession: execCommands are stripped inbound and forced [] into create
     execCommands: [{ name: 'rm', cmd: 'rm -rf /' }],
   });
   assert.deepStrictEqual(createCalls[0][IDX.execCommands], [], 'exec grants never reach create()');
+});
+
+const LEAD_MANIFEST = { lead: 'clodex-lead', root: '/r' };
+const leadDeps = (over = {}) => makeDeps({ loadManifest: () => LEAD_MANIFEST, ...over });
+
+test('createSession: {name,team} spawns the lead through the spawn handler, not create()', async () => {
+  const { deps, createCalls, spawnCalls } = leadDeps();
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({ name: 'clodex-lead', team: 'clodex' });
+  assert.deepStrictEqual(ack, { ok: true, name: 'clodex-lead', type: 'claude', team: 'clodex', lead: true });
+  assert.deepStrictEqual(createCalls, [], 'the team arm never reaches manager.create()');
+  assert.strictEqual(spawnCalls.length, 1);
+  assert.deepStrictEqual(spawnCalls[0].intent, { name: 'clodex-lead', cwd: '/r' });
+});
+
+test('createSession: a name other than the manifest lead is refused', async () => {
+  const { deps, createCalls, spawnCalls } = leadDeps();
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({ name: 'someone', team: 'clodex' });
+  assert.strictEqual(ack.ok, false);
+  assert.match(ack.error, /only the lead/);
+  assert.match(ack.error, /clodex-lead/);
+  assert.deepStrictEqual(createCalls, []);
+  assert.deepStrictEqual(spawnCalls, []);
+});
+
+test('createSession: an unknown team reports the manifest error and never spawns', async () => {
+  const { deps, createCalls, spawnCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({ name: 'clodex-lead', team: 'nope' });
+  assert.deepStrictEqual(ack, { ok: false, error: 'team spawn: no such team "nope"' });
+  assert.deepStrictEqual(createCalls, []);
+  assert.deepStrictEqual(spawnCalls, []);
+});
+
+test('createSession: nothing but the name crosses the wire on the team arm', async () => {
+  const { deps, spawnCalls } = leadDeps();
+  const opts = captureOptions(deps);
+  const body = {
+    name: 'clodex-lead', team: 'clodex',
+    execCommands: ['x'], intents: ['reboot'],
+    extraArgs: ['--dangerously-skip-permissions'], cwd: '/elsewhere',
+  };
+  for (const k of ['execCommands', 'intents', 'extraArgs', 'cwd']) {
+    assert.ok(k in body, `ENTER: the body carries ${k}`);
+  }
+  const ack = await opts.createSession(body);
+  assert.strictEqual(ack.ok, true);
+  assert.deepStrictEqual(spawnCalls[0].intent, { name: 'clodex-lead', cwd: '/r' });
+  assert.deepStrictEqual(spawnCalls[0].spawner, { name: 'wire', type: 'claude', cwd: '/r', proxy: null });
+});
+
+test('createSession: a handler error line comes back as the ack error', async () => {
+  const { deps } = leadDeps({ spawnReply: 'error: template "x" not installed' });
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({ name: 'clodex-lead', team: 'clodex' });
+  assert.deepStrictEqual(ack, { ok: false, error: 'error: template "x" not installed' });
+});
+
+test('createSession: a live seat of that name is name-taken, and never spawns', async () => {
+  const { deps, manager, spawnCalls } = leadDeps();
+  manager.sessions.set('clodex-lead', { name: 'clodex-lead' });
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({ name: 'clodex-lead', team: 'clodex' });
+  assert.deepStrictEqual(ack, { ok: false, error: 'name taken "clodex-lead"' });
+  assert.deepStrictEqual(spawnCalls, []);
 });
 
 // ── t8 F1: PLUGIN verbs never cross the wire either ──────────────────────────

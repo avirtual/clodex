@@ -33,7 +33,7 @@ function createRemoteWiring(deps) {
     DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
     parseCtxFile, jsonlToMessages, ensureDir, homeRelativize,
     claimOutbox, listOutboxOrigins,
-    manager, proxyPoller,
+    manager, proxyPoller, loadManifest,
     restartClodex, restartSession, peerProxyView,
     readSessionArgs, applySessionArgs,
     readSkillCatalog, applySessionSkills,
@@ -61,6 +61,35 @@ function createRemoteWiring(deps) {
       const server = getRemoteServer();
       if (server) { try { server.notifyInbox(payload); } catch {} }
       try { manager._broadcast('notifications:changed', payload); } catch {}
+    });
+  }
+
+  function spawnTeamLead(name, teamName) {
+    let team;
+    try { team = loadManifest(teamName); }
+    catch (e) { return { ok: false, error: `team spawn: ${e.message}` }; }
+    if (name !== team.lead) {
+      return { ok: false, error: `team spawn: only the lead of team "${teamName}" (${team.lead}) can be spawned by team` };
+    }
+    if (manager.sessions.has(name)) return { ok: false, error: `name taken "${name}"` };
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (out) => { if (settled) return; settled = true; clearTimeout(timer); resolve(out); };
+      const timer = setTimeout(
+        () => finish({ ok: false, error: 'team spawn: no reply from the spawn handler' }),
+        60000,
+      );
+      if (typeof timer.unref === 'function') timer.unref();
+      const onReply = (msg) => {
+        const reply = String(msg || '');
+        if (/^ok: spawned/.test(reply)) finish({ ok: true, name, type: 'claude', team: teamName, lead: true });
+        else finish({ ok: false, error: reply });
+      };
+      manager._handleSpawnIntent(
+        { name: 'wire', type: 'claude', cwd: team.root, proxy: null },
+        { name, cwd: team.root },
+        { onReply },
+      );
     });
   }
 
@@ -147,6 +176,7 @@ function createRemoteWiring(deps) {
           // execCommands [] into create() regardless. The renderer never sends them.
           const b = withoutExecGrants(body) || {};
           const name = String(b.name || '').trim();
+          if (typeof b.team === 'string' && b.team.trim()) return spawnTeamLead(name, b.team.trim());
           const type = b.type;
           const t = (type === 'codex') ? 'codex' : (type === 'claude') ? 'claude' : (type === 'bash') ? 'bash' : null;
           const rawCwd = String(b.cwd || '').trim();
