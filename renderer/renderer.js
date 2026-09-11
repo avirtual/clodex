@@ -43,7 +43,7 @@ const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/cho
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require('./lib/account-select');
-const { accountRowView, buildAccountRow } = require('./lib/account-row');
+const { accountRowView, buildAccountRow, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -4753,26 +4753,10 @@ const prefsAccountAdd = document.getElementById('prefs-account-add');
 const prefsAccountModel = document.getElementById('prefs-account-model');
 const prefsAccountsState = document.getElementById('prefs-accounts-state');
 
-const MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'];
-
 function setPrefsAccountsState(msg, kind) {
   if (!prefsAccountsState) return;
   prefsAccountsState.textContent = msg || '';
   prefsAccountsState.style.color = kind === 'error' ? 'var(--warn, #d9a55b)' : 'var(--muted, #8b949e)';
-}
-
-async function liveClaudeModels(live) {
-  const out = new Set(MODEL_ALIASES);
-  for (const s of live) {
-    if (s.type !== 'claude') continue;
-    try {
-      const res = await window.api.getSessionArgs(s.name);
-      if (!res || !res.ok) continue;
-      const { model } = splitModelArg(res.extraArgs || []);
-      if (model) out.add(model);
-    } catch {}
-  }
-  return [...out];
 }
 
 async function refreshPrefsAccounts() {
@@ -4797,7 +4781,7 @@ async function refreshPrefsAccounts() {
   }
 
   if (prefsAccountModel) {
-    const models = await liveClaudeModels(live);
+    const models = modelOptions(live);
     const keep = prefsAccountModel.value;
     prefsAccountModel.textContent = '';
     for (const m of models) {

@@ -126,6 +126,68 @@ test('list(): a host with no accounts store answers `default`, and a throwing on
   assert.strictEqual(ok.seat.account, 'sub-2');
 });
 
+// --- 1b. the `model` column (t816) -------------------------------------------
+//
+// The EFFECTIVE model, not the flag: the Prefs "Move seats on model" select
+// builds its option list from this column, so a seat running a model through
+// settings.json rather than `--model` has to be offerable there.
+
+const withSettings = {
+  ...registry,
+  settingsModelResolver: () => (dir) => (dir === '/minted/sub-2' ? 'claude-opus-5' : ''),
+};
+
+test('list(): a row with no --model carries the model its config dir\'s settings.json names', () => {
+  const rows = mkRows([{ name: 'unpinned' }], {
+    entries: { unpinned: { extraArgs: ['--dangerously-skip-permissions'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } } },
+    accounts: withSettings,
+  });
+  assert.strictEqual(rows.unpinned.model, 'claude-opus-5');
+});
+
+test('list(): a --model flag wins, and a seat with neither reads \'\'', () => {
+  const rows = mkRows([{ name: 'pinned' }, { name: 'bare' }], {
+    entries: {
+      pinned: { extraArgs: ['--model', 'claude-fable-5-1[1m]'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } },
+      bare: { extraArgs: [], env: { CLAUDE_CONFIG_DIR: '/elsewhere' } },
+    },
+    accounts: withSettings,
+  });
+  assert.strictEqual(rows.pinned.model, 'claude-fable-5-1[1m]', 'the flag is not overwritten by the settings default');
+  assert.strictEqual(rows.bare.model, '');
+});
+
+test('list(): a bash seat has no model, and a store without the resolver degrades to the flag', () => {
+  const rows = mkRows(
+    [{ name: 'a-shell', type: 'bash', agentType: null }, { name: 'seat' }],
+    {
+      entries: {
+        'a-shell': { extraArgs: ['--model', 'claude-opus-5'] },
+        seat: { extraArgs: ['--model', 'claude-opus-5'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } },
+      },
+      accounts: withSettings,
+    },
+  );
+  // null, not '': a bash seat has no model to have, which is a different claim
+  // from a claude seat that names none.
+  assert.strictEqual(rows['a-shell'].model, null);
+  assert.strictEqual(rows.seat.model, 'claude-opus-5', 'ENTER: the column is populated on the claude row beside it');
+
+  // t811's registry shape has no settingsModelResolver at all, and a throwing
+  // one is the unreadable-registry case: both fall back to the flag rather than
+  // taking the whole render path down.
+  const old = mkRows([{ name: 'seat' }], {
+    entries: { seat: { extraArgs: ['--model', 'claude-opus-5'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } } },
+    accounts: registry,
+  });
+  assert.strictEqual(old.seat.model, 'claude-opus-5');
+  const broken = mkRows([{ name: 'seat' }], {
+    entries: { seat: { extraArgs: [], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } } },
+    accounts: { ...registry, settingsModelResolver: () => { throw new Error('unreadable'); } },
+  });
+  assert.strictEqual(broken.seat.model, '');
+});
+
 // --- 2. create() refuses a missing account dir -------------------------------
 
 function mkManager() {

@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- **Move-by-model sees the settings default**: a seat that runs a model through
+  `settings.json` rather than a `--model` flag is now selected by "Move seats on
+  model", and the model list offers that default.
+
 ## 5.61.1 — 2026-09-11 — The Accounts pane fits the dialog, and ticket hands cannot stage the whole tree
 
 - **Preferences ▸ Accounts fits the dialog**: the add form, config-dir field and

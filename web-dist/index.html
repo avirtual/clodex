@@ -23299,6 +23299,16 @@ ${i3.join("\n")}
     "renderer/lib/account-row.js"(exports, module) {
       "use strict";
       var { DEFAULT_LABEL, abbrevHome } = require_account_select();
+      var MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
+      function modelOptions(rows) {
+        const out = new Set(MODEL_ALIASES);
+        for (const r of Array.isArray(rows) ? rows : []) {
+          if (!r || typeof r !== "object" || r.type !== "claude") continue;
+          const m = String(r.model == null ? "" : r.model);
+          if (m) out.add(m);
+        }
+        return [...out];
+      }
       function accountRowView(account, seats, home) {
         const a = account && typeof account === "object" ? account : {};
         const label = String(a.label == null ? "" : a.label);
@@ -23355,7 +23365,7 @@ ${i3.join("\n")}
         const remove = view.isDefault ? null : mk("prefs-account-remove", "Remove");
         return { row, login, move, resync, remove };
       }
-      module.exports = { accountRowView, buildAccountRow };
+      module.exports = { accountRowView, buildAccountRow, modelOptions, MODEL_ALIASES };
     }
   });
 
@@ -36031,7 +36041,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require_account_select();
-      var { accountRowView, buildAccountRow } = require_account_row();
+      var { accountRowView, buildAccountRow, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
@@ -40287,25 +40297,10 @@ Click for live activity`;
       var prefsAccountAdd = document.getElementById("prefs-account-add");
       var prefsAccountModel = document.getElementById("prefs-account-model");
       var prefsAccountsState = document.getElementById("prefs-accounts-state");
-      var MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
       function setPrefsAccountsState(msg, kind) {
         if (!prefsAccountsState) return;
         prefsAccountsState.textContent = msg || "";
         prefsAccountsState.style.color = kind === "error" ? "var(--warn, #d9a55b)" : "var(--muted, #8b949e)";
-      }
-      async function liveClaudeModels(live) {
-        const out = new Set(MODEL_ALIASES);
-        for (const s of live) {
-          if (s.type !== "claude") continue;
-          try {
-            const res = await window.api.getSessionArgs(s.name);
-            if (!res || !res.ok) continue;
-            const { model } = splitModelArg(res.extraArgs || []);
-            if (model) out.add(model);
-          } catch {
-          }
-        }
-        return [...out];
       }
       async function refreshPrefsAccounts() {
         if (!prefsAccountsList) return;
@@ -40335,7 +40330,7 @@ Click for live activity`;
           seatsBy.set(key, (seatsBy.get(key) || 0) + 1);
         }
         if (prefsAccountModel) {
-          const models = await liveClaudeModels(live);
+          const models = modelOptions(live);
           const keep = prefsAccountModel.value;
           prefsAccountModel.textContent = "";
           for (const m of models) {

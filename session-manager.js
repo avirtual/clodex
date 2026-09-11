@@ -110,6 +110,7 @@ const { foldDraft } = require('./hint-arm');
 const { didGrow } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
+const { effectiveModel } = require('./accounts');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -3484,6 +3485,21 @@ function createSessionManager(deps) {
       } catch { return null; }
     }
 
+    _settingsModelResolver() {
+      try {
+        const accountsStore = (getAccounts && getAccounts()) || null;
+        if (!accountsStore || !accountsStore.settingsModelResolver) return null;
+        return accountsStore.settingsModelResolver();
+      } catch { return null; }
+    }
+
+    modelFor(name, settingsModelFor = this._settingsModelResolver()) {
+      try {
+        const entry = getPersistence().get(name);
+        return effectiveModel(entry, { settingsModelFor }) || '';
+      } catch { return ''; }
+    }
+
     accountFor(name, resolve = this._accountResolver()) {
       if (!resolve) return 'default';
       try {
@@ -3556,6 +3572,7 @@ function createSessionManager(deps) {
         } catch { return null; }
       };
       const resolveAccount = this._accountResolver();
+      const resolveSettingsModel = this._settingsModelResolver();
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
@@ -3573,6 +3590,7 @@ function createSessionManager(deps) {
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
         account: this.accountFor(s.name, resolveAccount),
+        model: s.type === 'claude' ? this.modelFor(s.name, resolveSettingsModel) : null,
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }

@@ -1686,6 +1686,7 @@ function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
     liveSessions: manager.sessions.values(),
     getEntry: (name) => persistence.get(name),
     configDirFor: (l) => accounts.configDirFor(l),
+    settingsModelFor: accounts.settingsModelResolver(),
     applyArgs: async (name, patch, entryWs) => {
       const res = await applySessionArgs(name, patch, entryWs || wsId);
       if (res && res.ok && res.restarted) {

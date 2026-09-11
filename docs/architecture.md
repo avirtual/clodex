@@ -256,7 +256,10 @@ bundle), whose packaged form is the Docker image under
   implicit — label `default`, configDir `~/.claude`, never stored, always first in
   `list()`. `labelResolver()` is what puts an `account` on every `session:list`
   row — the batch form of `labelFor(configDir)`, reading the registry once per
-  list rather than once per row. Deps injected (fs/path/os/clodexHome/claudeHome),
+  list rather than once per row; `settingsModelResolver()` is its counterpart for
+  the `model` column and for the move sweep, memoizing the `model` key of each
+  config dir's `settings.json` so `effectiveModel(entry)` can answer for a seat
+  that carries no `--model` flag. Deps injected (fs/path/os/clodexHome/claudeHome),
   so it unit-tests under plain node; no electron.
 - **env-scopes.js** — merges the GUI-managed environment scopes over the base
   process env for a wrapper PTY, and is the single source for the canonical
@@ -1196,7 +1199,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   the same shape args-model.js gives `--model`; `default` is the ABSENCE of the
   line and an unregistered dir reads as `custom`, which the picker leaves alone),
   **account-row.js** (one Preferences ▸ Accounts row — its layout classes and its
-  per-kind button set, the default row having no Re-sync or Remove), **name-suggest.js** (`session-<counter>` minted before the global
+  per-kind button set, the default row having no Re-sync or Remove; also
+  `modelOptions(rows)`, the "Move seats on model" list, built from the `model`
+  column of live claude rows plus the four aliases), **name-suggest.js** (`session-<counter>` minted before the global
   reserved-name set is prefetched, so it must resolve collisions),
   **name-validity.js** (whether the typed name may be created — the grammar, the
   live-vs-archived reason line, whether Create is enabled, and whether a
