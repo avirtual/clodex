@@ -177,6 +177,36 @@ test('a runner that prints no TOTALS is reported as "nothing measured", never as
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a lock refusal reaches the seat WHOLE — the order is what the exec exists to deliver', () => {
+  // A refused run produces no TOTALS, so it used to fall into the "no TOTALS
+  // summary … last line:" wrapper, which slices the runner's line at 160 with a
+  // 79-char prefix in front of it. `[agent:remind in <K>m]` sits at char 149+
+  // of the refusal (run-tests.js's die() prefixes `run-tests: `), so the cut
+  // landed inside the fragment and the dispatcher's own 200-slice then left the
+  // caller "…not starting a s". The entire deliverable was lost on this path,
+  // and a seat that cannot read the wait retries every two minutes — the loop
+  // the refusal was written to stop.
+  const root = mkRoot();
+  try {
+    const refusal = 'run-tests: another suite run is already going (pid 1234567, running 2:05 of a'
+      + ' ~9 min suite) - waited 30s, not starting a second. Do not re-emit: emit'
+      + ' [agent:remind in 6m] re-run the suite, END YOUR TURN. Parts of this suite bind real'
+      + ' ports, so a second run deadlocks both; if it is wedged: kill 1234567 && rm -rf /x/y';
+    writeStub(root, { body: `console.error(${JSON.stringify(refusal)});`, exit: 1 });
+    const r = run(root, '{}');
+    assert.strictEqual(r.code, 1, 'a refusal is not a green');
+    assert.ok(r.digest.includes('[agent:remind in 6m]'),
+      `the literal line the caller must emit has to survive; got ${JSON.stringify(r.digest)}`);
+    assert.ok(r.digest.includes('END YOUR TURN'),
+      `and the instruction to stop being billed; got ${JSON.stringify(r.digest)}`);
+    assert.ok(r.digest.length <= 200,
+      `the dispatcher delivers 200 chars of the last stderr line, so anything past that never `
+      + `arrives; got ${r.digest.length}`);
+    assert.ok(!r.digest.startsWith(`[${path.basename(root)}] no TOTALS summary`),
+      `the refusal must not be wrapped as an unexplained failure; got ${JSON.stringify(r.digest)}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('a runner that executed ZERO tests is a failure, not a 0/0 green', () => {
   const root = mkRoot();
   try {

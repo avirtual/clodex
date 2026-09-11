@@ -30,7 +30,10 @@ The refusal's `running <M:SS>` comes from the pid file's mtime: every entry
 point writes that file at acquisition, so it dates a holder this process never
 launched just as well as one it did.
 
-Its length is capped by the exec dispatcher, which delivers only the LAST
-stderr line sliced to 200 chars (`session-manager.js`, `_handleExecIntent`).
-Every branch is pinned under that in `test/test-digest-lock.test.js`; the
-`[agent:remind in <K>m]` fragment is the half that must survive a cut.
+The line is ~330 chars and is NOT delivered whole: the exec dispatcher hands
+back only the LAST stderr line sliced to 200 (`session-manager.js`,
+`_handleExecIntent`). Only the half up to `END YOUR TURN.` is guaranteed —
+`scripts/clodex-run-tests.js` cuts there and `clodex-run-tests-bin.test.js`
+pins that under 200. So the `[agent:remind in <K>m]` fragment must stay before
+that boundary, and the `kill … && rm -rf` remediation — for a human at a
+terminal, not a seat — after it.

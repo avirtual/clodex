@@ -102,6 +102,18 @@ function wallShow(ms) {
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
+const TURN_END = 'END YOUR TURN.';
+
+function lockRefusal(lines) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!/another suite run is already going/.test(lines[i])) continue;
+    const order = lines[i].replace(/^run-tests: /, '');
+    const cut = order.indexOf(TURN_END);
+    return cut === -1 ? order : order.slice(0, cut + TURN_END.length);
+  }
+  return null;
+}
+
 const stdout = res.stdout || '';
 const stderr = res.stderr || '';
 const code = res.status;
@@ -114,6 +126,8 @@ for (let m = TOTALS_RE.exec(stdout); m; m = TOTALS_RE.exec(stdout)) totals = m;
 if (!totals) {
   const combined = `${stdout}\n${stderr}${res.error ? `\n${res.error.message}` : ''}`;
   const lines = combined.split('\n').map((l) => l.trim()).filter(Boolean);
+  const refusal = lockRefusal(lines);
+  if (refusal) emit(refusal, 1, 200);
   const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
   emit(
     `[${LEAF}] no TOTALS summary from scripts/run-tests.js (exit ${code}) — last line: ${last}`,

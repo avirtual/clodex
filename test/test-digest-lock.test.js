@@ -361,8 +361,8 @@ test('lock: every refusal line fits the 200-char slice the exec dispatcher deliv
   // The live branch is measured BOTH ways. It is the only one that grows with
   // its inputs — a recorded duration adds the suite estimate and a longer nap —
   // so a subject that only ever drove the unrecorded case would pass over the
-  // longest line the dispatcher can be handed. 99 hours and a 7-digit pid are
-  // past anything real and still have to fit.
+  // longest line the dispatcher can be handed. 99 hours is past anything real
+  // and still has to fit.
   for (const state of ['live', 'dead', 'nopid', 'released']) {
     for (const lastMs of [undefined, 359999000]) {
       const out = refusalFor(state, lastMs);
@@ -446,7 +446,11 @@ test('nap: a holder already past the recorded duration still gets a real wait, n
   // The overrun case: the suite is slower than last time, or the holder is
   // wedged. `[agent:remind in 0m]` is not a schedulable interval and reads as
   // "re-emit now", which is the retry loop this whole message replaces.
-  const out = refusalAgainstFreshHolder(1000);
+  //
+  // 1ms, not 1000ms: it is the only recording that drives the unfloored
+  // arithmetic BELOW 2. At 1000ms `int((1 + 59) / 60) + 1` is already 2, so the
+  // subject would hold with the floor deleted and pin nothing.
+  const out = refusalAgainstFreshHolder(1);
   const m = /\[agent:remind in (\d+)m\]/.exec(out);
   assert.ok(m, `ENTER: the refusal named no nap at all, so there is no floor to check; got ${JSON.stringify(out)}`);
   assert.ok(Number(m[1]) >= 2,
@@ -467,7 +471,7 @@ const ROOT = path.join(__dirname, '..');
 // suite run that already holds the real one. So the child gets a throwaway root
 // (a copy of the runner + its one require) and the assertions never touch the
 // lock of the run they are part of.
-function withFakeLock(holderPid, check, { lastMs } = {}) {
+function withFakeLock(holderPid, check, { lastMs, agedMs } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -480,6 +484,13 @@ function withFakeLock(holderPid, check, { lastMs } = {}) {
   // is derived from. The pid file's mtime is the holder's start time, so the
   // holder reads as ~0s in and the nap is arithmetic rather than a race.
   if (lastMs !== undefined) fs.writeFileSync(path.join(root, '.test-digest.last'), `${lastMs}\n`);
+  // `agedMs` backdates that mtime, which is the ONLY way to make the runner see
+  // a holder already past the recorded duration: the subtraction has to go
+  // negative for the floor under it to be reachable at all.
+  if (agedMs !== undefined) {
+    const when = new Date(Date.now() - agedMs);
+    fs.utimesSync(path.join(lockDir, 'pid'), when, when);
+  }
   const stub = path.join(root, 'stub.test.js');
   fs.writeFileSync(stub, "require('node:test').test('stub', () => {});\n");
   try {
@@ -584,6 +595,20 @@ test('nap: npm test\'s refusal names the suite length and the exact reminder to 
     assert.match(out, /END YOUR TURN/,
       'and it must say to end the turn, or the caller naps while still being billed');
   }, { lastMs: 300000 });
+});
+
+test('nap: npm test floors the wait too — a holder past the estimate never gets 0m', () => {
+  // The sh runner's floor is pinned above; this is the same overrun at the
+  // other entry point, and it was the branch nothing exercised. A holder aged
+  // ten minutes against a one-minute recording makes the unfloored value
+  // negative, so `[agent:remind in -9m]` — not a schedulable interval, and read
+  // by a seat as "re-emit now" — is exactly what the floor prevents.
+  withFakeLock(String(process.pid), (out) => {
+    const m = /\[agent:remind in (-?\d+)m\]/.exec(out);
+    assert.ok(m, `ENTER: the refusal named no nap, so there is no floor to check; got ${JSON.stringify(out)}`);
+    assert.ok(Number(m[1]) >= 2,
+      `a nap under 2m re-bills the caller's whole context for a refusal it was told to expect; got ${m[1]}m`);
+  }, { lastMs: 60000, agedMs: 600000 });
 });
 
 test('nap: with no recording npm test still refuses, guessing no suite length', () => {
@@ -898,13 +923,26 @@ test('nap: the digest line CARRIES the run\'s wall time, on both verdicts', () =
   }
 });
 
-test('nap: a completed digest run records its wall time, whatever the verdict', () => {
-  // BOTH arms. A recording written only on green leaves the estimate stale for
-  // exactly the branch being re-run most — the red one — and the refusal a
-  // queued hand reads would then be sized from whenever the tree last passed.
-  for (const c of DIGEST_CASES.filter((x) => x.what !== 'suite did not run')) {
+test('nap: a digest run records its wall time iff it actually measured the suite', () => {
+  // BOTH completed arms. A recording written only on green leaves the estimate
+  // stale for exactly the branch being re-run most — the red one — and the
+  // refusal a queued hand reads would then be sized from whenever the tree last
+  // passed.
+  //
+  // And NOT the third. A sweep that dies before any test runs — a bad node
+  // flag, a module-level throw — takes a couple of seconds, and recording that
+  // would tell every later refusal from either runner that the suite is a
+  // minute long and a 2m nap is enough. That is the retry storm this ticket
+  // exists to kill, rebuilt out of a number nobody measured.
+  for (const c of DIGEST_CASES) {
     const r = runDigest(c);
     assert.ok(r.lines.length > 0, `ENTER: ${c.what}: the script wrote nothing, so it did not run`);
+    if (c.what === 'suite did not run') {
+      assert.strictEqual(r.last, null,
+        `${c.what}: a run that produced no summary measured nothing and must record nothing; `
+        + `got ${JSON.stringify(r.last)}`);
+      continue;
+    }
     assert.ok(r.last !== null,
       `${c.what}: no .test-digest.last after a completed run — every later refusal then guesses`);
     assert.match(r.last, /^\d+\n?$/,

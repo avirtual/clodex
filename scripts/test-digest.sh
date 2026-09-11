@@ -318,11 +318,6 @@ out=$(node --test --test-reporter=tap 2>&1)
 code=$?
 wall_end=$(date '+%s' 2>/dev/null)
 
-# Recorded on ANY exit code: a red run measured the same suite and took the same
-# time, so excluding it would leave the estimate stale for exactly the branch
-# most likely to be re-run. Written before the digest so the refusal a queued
-# caller reads is already derived from this run.
-#
 # FLOORED AT 1, never 0. The unit is milliseconds but `date` here resolves to
 # whole seconds — sh has no portable sub-second clock, and node is not available
 # to borrow one from, since node is the thing being measured. A sub-second run
@@ -334,7 +329,6 @@ case "$wall_start$wall_end" in
   *) wall_ms=$(( (wall_end - wall_start) * 1000 )) ;;
 esac
 [ "$wall_ms" -gt 0 ] || wall_ms=1
-write_last_run_ms "$wall_ms"
 wall_show=$(awk -v ms="$wall_ms" 'BEGIN {
   s = int(ms / 1000);
   printf "%dm %02ds", int(s / 60), s % 60
@@ -477,6 +471,13 @@ if [ "$tests" -eq 0 ]; then
   [ "$code" -eq 0 ] && exit 1
   exit "$code"
 fi
+
+# BELOW the arm above, so only a run that produced a summary is recorded. A red
+# run measured the same suite and took the same time, so excluding it would
+# leave the estimate stale for exactly the branch most likely to be re-run; a
+# run that died before any test executed measured nothing, and its few seconds
+# would tell every later refusal the suite is a minute long.
+write_last_run_ms "$wall_ms"
 
 if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ]; then
   # A green run makes any dump on disk older than the verdict just printed, and
