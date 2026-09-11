@@ -426,7 +426,7 @@ test('a REJECT on a loop-closed ticket clears the no-op, or the next round can n
   // lands here. Left behind, the stamp makes `task accept` a permanent no-op on
   // the reopened ticket, so the round-2 seat, worktree and branch could never be
   // torn down by any verb at all.
-  f.patch({ acceptedAt: T0, acceptedBy: 'ticket-loop', closedOut: true, loopClosedOut: LOOP_CLOSED });
+  f.patch({ acceptedAt: T0, acceptedBy: 'ticket-loop', acceptNote: 'the tree was dirty', closedOut: true, loopClosedOut: LOOP_CLOSED });
   f.m._taskReject(f.m.sessions.get('lead'), f.team,
     { type: 'task', sub: 'reject', id: 't1', who: null, body: 'another round please' }, () => {});
 
@@ -436,6 +436,12 @@ test('a REJECT on a loop-closed ticket clears the no-op, or the next round can n
   assert.ok(!('loopClosedOut' in t),
     'the loop close-out describes a round that is over; carried into the rework round it disables the '
     + 'only verb that can clean the new tree up');
+  // The STAMP outlives `closedOut` on the dirty-tree arm, which sets both and
+  // removes nothing. Left on a reopened row it reads as accepted, and the next
+  // round's loop guards skip their own close-out off it.
+  assert.ok(!('acceptedAt' in t), 'a reopened ticket is not an accepted one');
+  assert.ok(!('acceptedBy' in t), 'and nobody is credited with accepting it');
+  assert.ok(!('acceptNote' in t), 'nor does the note outlive the accept it annotated');
 });
 
 test('the LOOP-driven reject clears it too, or a red rework round strands its own tree', () => {
@@ -457,6 +463,9 @@ test('the LOOP-driven reject clears it too, or a red rework round strands its ow
   assert.ok(!('loopClosedOut' in t),
     'the loop close-out belongs to the round that just ended; carried forward it makes `task accept` a '
     + 'no-op on the rework round, whose worktree nothing else can remove');
+  assert.ok(!('acceptedAt' in t) && !('acceptedBy' in t),
+    'and the stamp goes with it here too — a clear in one reopen path and not the other is the asymmetry '
+    + 'this pair of subjects exists to catch');
 });
 
 test('a DIRTY-tree close-out is NOT a no-op: its own reply asked for this accept', async () => {
@@ -532,15 +541,6 @@ test('an ACCEPTED ticket is not reminded — the step has been taken', async () 
     'the lead already accepted; naming the step again points it at a retired seat and a deleted tree');
 });
 
-test('an accept that did NOT close out still counts as taken', async () => {
-  const f = mkLoop();
-  // The dirty-tree and standing-seat arms stamp `acceptedAt` and leave the tree
-  // standing, so `closedOut` alone would re-remind a lead that has already acted.
-  f.patch({ mergedAt: T0, acceptedAt: T0 + MIN, acceptedBy: 'lead' });
-  await f.m._sweepTeamTickets(f.team, T0 + (10 * MIN));
-  assert.deepStrictEqual(f.gated, [], 'acceptedAt is the step being taken, whatever the accept then removed');
-});
-
 test('a ticket the LOOP closed out never nudges: there is no step to name', async () => {
   const f = mkLoop();
   f.patch({ mergedAt: T0, acceptedAt: T0, acceptedBy: 'ticket-loop', closedOut: true, loopClosedOut: LOOP_CLOSED });
@@ -571,6 +571,27 @@ test('a loop close-out that KEPT a tree is still nudged — that one really does
   f.patch({ mergedAt: T0, acceptedAt: T0, acceptedBy: 'ticket-loop', closedOut: true });
   await f.m._sweepTeamTickets(f.team, T0 + (10 * MIN));
   assert.strictEqual(f.gated.length, 1, 'the backstop still fires when the loop could not finish');
+  assert.strictEqual(f.gated[0].body,
+    '[ticket t1 merged 10m ago, not accepted] Step owed: `[agent:task accept t1]`.',
+    'and it is the same one-line reminder');
+});
+
+test('a LEAD accept that kept the tree is nudged too — the stamp is not the close-out', async () => {
+  const f = mkLoop();
+  // The lead's `!m.ok` / `!m.merged` arms: `acceptedAt` stamped, no `closedOut`,
+  // worktree and branch KEPT, and the reply says "accept again once it can".
+  // Suppressing on the stamp alone means that tree is never mentioned by
+  // anything again — the backstop is the only thing left that would.
+  //
+  // This REVERSES t817's rule that the stamp alone is the step being taken. That
+  // rule was written when every merge owed an accept and the notice always named
+  // one; now the loop closes the clean case out itself, so the tickets still
+  // reaching this sweep are the ones that kept something. The nudge fires once
+  // (`mergedNudgedAt`), and what it names is what that accept's own reply asked
+  // for — so the nag it was guarding against is a reminder of a real debt.
+  f.patch({ mergedAt: T0, acceptedAt: T0, acceptedBy: 'lead' });
+  await f.m._sweepTeamTickets(f.team, T0 + (10 * MIN));
+  assert.strictEqual(f.gated.length, 1, 'an accept that could not finish still owes the verb it invited');
   assert.strictEqual(f.gated[0].body,
     '[ticket t1 merged 10m ago, not accepted] Step owed: `[agent:task accept t1]`.',
     'and it is the same one-line reminder');

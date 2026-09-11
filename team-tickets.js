@@ -2199,20 +2199,29 @@ function createTicketMethods(deps, shared) {
           // `state` FIRST: a reopened row can still carry an older `acceptedAt`.
           const reopened = row && row.state !== 'done';
           const acceptedInFlight = !reopened && row && (row.acceptedAt || row.closedOut);
+          // `closedOut`, NOT the stamp, picks that accept's SENTENCE: `!m.ok` and
+          // `!m.merged` stamp and keep a tree that, called a close-out, is never
+          // mentioned again. Neither records a reason, so neither is quoted.
+          const finishedInFlight = acceptedInFlight && !!row.closedOut;
+          const who = row && (row.acceptedBy || 'the lead');
           if (reopened) {
             log.info('ticket', `ticket ${ticketId} was reopened (${row.state}) while the post-merge suite ran — the merge stands and the loop tore nothing down`);
           } else if (acceptedInFlight) {
-            log.info('ticket', `ticket ${ticketId} was accepted by ${row.acceptedBy || 'the lead'} while the post-merge suite ran — the loop reports that instead of closing out again`);
+            log.info('ticket', `ticket ${ticketId} was accepted by ${who} while the post-merge suite ran — the loop reports that instead of closing out again`);
           }
           closeOut = !row
             ? { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` }
             : reopened
               ? { ok: false, closedOut: false, reopened: true, state: row.state,
                 text: `the ticket was reopened (${row.state}) while the post-merge suite ran, so the seat, worktree and branch were left alone` }
-              : acceptedInFlight
+              : finishedInFlight
                 ? { ok: true, closedOut: true, already: true,
-                  text: `ticket ${ticketId} accepted — ${row.acceptedBy || 'the lead'} accepted it while the post-merge suite ran` }
-                : await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' });
+                  text: `ticket ${ticketId} accepted — ${who} accepted it while the post-merge suite ran` }
+                : acceptedInFlight
+                  ? { ok: false, closedOut: false, already: true,
+                    text: `${who} accepted it while the post-merge suite ran, but that accept did not finish the cleanup `
+                      + '(tree or branch kept)' }
+                  : await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' });
         } catch (e) {
           log.error('ticket', `loop close-out for ${ticketId} failed after a green merge: ${e.message}`);
           closeOut = { ok: false, closedOut: false, text: `the loop's close-out threw (${e.message})` };
@@ -6734,6 +6743,9 @@ function createTicketMethods(deps, shared) {
         ticket.closedBy = null;
         delete ticket.closedOut;       // same reason as _taskReject's reopen
         delete ticket.loopClosedOut;   // and with it, or the NEXT round cannot be accepted
+        delete ticket.acceptedAt;
+        delete ticket.acceptedBy;
+        delete ticket.acceptNote;
         ticket.lastActivityAt = Date.now();
         ticket.nudgedAt = null;
         // Written here for the reason the header gives: _taskReject's guard reads
@@ -7639,10 +7651,14 @@ function createTicketMethods(deps, shared) {
       // reading it as closed out and refuses a `for <id>` reminder binding on the
       // rework round, which is a round the reminder is wanted for.
       delete ticket.closedOut;
-      // `loopClosedOut` goes with it: the loop leaves a closed-out ticket `done`,
-      // which is what reject reopens, and left behind it makes `task accept` a
-      // permanent no-op on the NEXT round's tree.
+      // `loopClosedOut` and the accept STAMP go with it, for one reason:
+      // `_finishAccept` writes both on arms that KEEP the tree, so left behind
+      // they make `task accept` a no-op on the next round's tree and make the
+      // next round's loop guards skip their own close-out.
       delete ticket.loopClosedOut;
+      delete ticket.acceptedAt;
+      delete ticket.acceptedBy;
+      delete ticket.acceptNote;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       // The marker that makes the guard above decidable. Nothing else on the
@@ -9350,16 +9366,12 @@ function createTicketMethods(deps, shared) {
       for (const t of tickets) {
         if (typeof t.mergedAt !== 'number' || t.mergedNudgedAt) continue;
         if (t.state !== 'done') continue;
-        // A close-out the LOOP ran and did not finish is the one shape where
-        // `acceptedAt` and `closedOut` are both set and a step is still owed:
-        // the dirty-tree and standing-seat arms stamp them, keep the tree, and
-        // the MERGED notice for them says `Step owed`. Reading those two fields
-        // alone would disarm this backstop on precisely the tickets it exists
-        // for — a lead who missed that dm would never hear again. A LEAD's
-        // accept is the opposite case and still suppresses unconditionally: the
-        // lead has acted, whatever the accept then removed.
-        const loopOwes = t.acceptedBy === 'ticket-loop' && !t.loopClosedOut;
-        if (!loopOwes && (t.acceptedAt || t.closedOut)) continue;
+        // An accept that did not CLOSE THE TICKET OUT still owes a step, whoever
+        // ran it: `!m.ok` and `!m.merged` stamp, keep the tree and invite a
+        // second accept. The loop's half asks `loopClosedOut` — its tree-keeping
+        // arms DO set `closedOut`.
+        const owes = t.acceptedBy === 'ticket-loop' ? !t.loopClosedOut : !t.closedOut;
+        if (!owes && (t.acceptedAt || t.closedOut)) continue;
         if (t.mergeError) continue;
         if (now - t.mergedAt < MERGED_ACCEPT_NUDGE_MS) continue;
         const tid = t.id;
