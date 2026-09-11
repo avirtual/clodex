@@ -195,3 +195,8 @@ allow — a seat with `exec` but not the command id is refused, and vice versa.
   (optional def field, integer ≥ 30 000, default 3m), and stamps its result with
   the same `run #<seq>`. Shorter runs stay silent whatever the def says, so a
   10-second command pays no prompt tax to say it started.
+- **`[agent:exec status] {}` is a reserved name, not a registered command.** It
+  answers from `session.execRuns` (last 3 runs, newest first, or one via
+  `{"seq":N}`) without a grant and without spawning; a registry def named
+  `status` is shadowed by it and unreachable. In-memory only — the records die
+  with the session, so a restarted seat sees no runs.

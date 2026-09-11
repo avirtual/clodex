@@ -583,8 +583,11 @@ test('t81: the three false statements are GONE from the section', () => {
   // 2. stdout does NOT come back, so the section must not promise output.
   assert.ok(!p.includes('Output returns in your input'),
     'the section no longer claims command output returns');
-  // 3. and it states the truth instead: success is silent, stdout is dropped.
-  assert.ok(/Success is SILENT/.test(p), 'silent-success stated');
+  assert.ok(!/SILENT/.test(p),
+    'ENTER: post-t831 a long run is NOT silent — it acks, ticks and delivers, so the word is gone');
+  assert.ok(/returns nothing on success/.test(p), 'the short-run truth stated instead');
+  assert.ok(/acknowledges its start with a run number/.test(p), 'and the long-run truth');
+  assert.ok(p.includes('[agent:exec status] {}'), 'the query that answers "is my run alive" is named');
   assert.ok(/stdout is never returned to you/.test(p), 'stdout-dropped stated');
   // The argv guarantee is the security shape and must SURVIVE the rewrite.
   assert.ok(/never write the command line itself/.test(p), 'argv guarantee kept');

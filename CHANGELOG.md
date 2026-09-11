@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:exec status] {}` tells a seat what its exec runs are doing — running with elapsed time, or finished with the result line — without a grant and without spawning anything, and the seat-facing exec prose now says a long run reports on its own instead of claiming success is silent.
+
 ## 5.63.0 — 2026-09-11 — roles carry an account; rework seats replaced past the compact threshold; execs report their runs
 
 - A granted exec run longer than a minute acknowledges its start with the run number and ceiling, injects a "still running" line every few minutes (`statusEveryMs`, default 3m), and stamps the result with the same run number, so a seat never has to poll to learn whether its suite is alive.
