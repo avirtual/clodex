@@ -497,7 +497,7 @@ function createSessionManager(deps) {
     writeBundlePlugins,
     getPluginBundles,
     readSystemPromptBody,
-    getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
+    getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
   } = deps;
@@ -1271,6 +1271,18 @@ function createSessionManager(deps) {
         });
       } catch {
         mergedEnv = { ...baseEnv };
+      }
+
+      // A CLAUDE_CONFIG_DIR pointing at nothing does not fail the spawn — the
+      // CLI happily mints an empty config there and the seat loops on
+      // onboarding, silently, forever. Refuse BEFORE spawning so the operator
+      // sees the reason instead of a wedged tab. Read off the merged env
+      // because the var can arrive from any scope, not just this call's.
+      const accountDir = mergedEnv.CLAUDE_CONFIG_DIR;
+      if (accountDir) {
+        let ok = false;
+        try { ok = fs.statSync(accountDir).isDirectory(); } catch { ok = false; }
+        if (!ok) throw new Error(`account dir ${accountDir} does not exist`);
       }
 
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
@@ -3516,6 +3528,19 @@ function createSessionManager(deps) {
           return open ? open.id : null;
         } catch { return null; }
       };
+      // The account label comes off the PERSISTED env, not the live process's:
+      // the persisted entry is the respawn recipe, so it is what the row claims
+      // the seat will come back on. An unregistered dir falls back to its
+      // basename inside labelFor, so `~/sub-2` still reads as `sub-2`.
+      const accountsStore = (getAccounts && getAccounts()) || null;
+      const accountFor = (name) => {
+        if (!accountsStore) return 'default';
+        try {
+          const entry = getPersistence().get(name);
+          const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
+          return dir ? (accountsStore.labelFor(dir) || 'default') : 'default';
+        } catch { return 'default'; }
+      };
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
@@ -3532,6 +3557,7 @@ function createSessionManager(deps) {
         noWire: !!s.noWire,
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
+        account: accountFor(s.name),
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }
