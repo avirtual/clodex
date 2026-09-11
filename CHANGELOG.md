@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — teams protocol: role binding by name, duplicate-intent echo, exec-grant honesty, locked-down sandbox worker
+## Unreleased
+
+## 5.62.1 — 2026-09-11 — teams protocol: role binding by name, duplicate-intent echo, exec-grant honesty, locked-down sandbox worker
 
 - The roster's "[agent:exec clodex-team]" line is printed only to a seat that
   actually holds the grant; a seat without it is told how to get it, and
