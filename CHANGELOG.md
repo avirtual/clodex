@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Team sandboxes: a box per team, built from any ref, ready with seeded seats
 
 - **Team templates keep their brief when edited**: the template editor now lists the owning team's own append prompts (e.g. `team-project`) as a checked section, so saving a team template no longer silently empties `appendPromptFiles`.
 - **A managed sandbox can track a git ref**: set "Track git ref" on the box to
