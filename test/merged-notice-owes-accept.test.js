@@ -390,6 +390,27 @@ test('a REJECT on a loop-closed ticket clears the no-op, or the next round can n
     + 'only verb that can clean the new tree up');
 });
 
+test('the LOOP-driven reject clears it too, or a red rework round strands its own tree', () => {
+  const f = mkLoop();
+  // The second reopen path, and it needs the clear for the same reason: the loop
+  // rejects a ticket whose verify suite came back red, on the round AFTER a
+  // close-out, and reaches `_rejectTicketFromLoop` rather than `_taskReject`.
+  // Pinned separately because the two writes are in different functions — a
+  // clear added to one and forgotten in the other is invisible to a test that
+  // only drives the lead's verb.
+  f.patch({ acceptedAt: T0, acceptedBy: 'ticket-loop', closedOut: true, loopClosedOut: LOOP_CLOSED });
+  f.m._teamLiveSeatNames = () => ['lead', 'team-hand'];
+  const r = f.m._rejectTicketFromLoop(f.team, 't1', 'the suite FAILS on your branch');
+
+  assert.ok(r && r.ok, `ENTER: the loop reject went through. Got: ${JSON.stringify(r)}`);
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: and reopened the ticket');
+  assert.ok(!('closedOut' in t), 'ENTER: clearing the flag beside the one under test');
+  assert.ok(!('loopClosedOut' in t),
+    'the loop close-out belongs to the round that just ended; carried forward it makes `task accept` a '
+    + 'no-op on the rework round, whose worktree nothing else can remove');
+});
+
 test('a DIRTY-tree close-out is NOT a no-op: its own reply asked for this accept', async () => {
   const f = mkLoop();
   // `closedOut` and `acceptedBy: 'ticket-loop'` are both set here too, which is
