@@ -261,6 +261,23 @@ test('note: a 429 with no headers lands on the GIVEN account, not on the last on
   assert.strictEqual(dflt.last_429, undefined, 'the account that was NOT refused carries no refusal');
 });
 
+test('note: a 429 for an account with NO reading yet attaches to nothing, not to the other pool', () => {
+  // The branch above cannot see this: once sub-2 has an entry, keying by the
+  // label and falling back to `_lastAccount` pick the same row. The difference
+  // is exactly here — a subscription refused before its first good reading.
+  // The old fallback would stamp the refusal on `default`, and the chip would
+  // read "rate-limited" for the pool that was never refused.
+  const store = new QuotaStore();
+  store.note(LIVE_HEADERS, { account: 'default', now: NOW });
+  assert.strictEqual(store.snapshotAll(NOW).length, 1, 'ENTER: default is the only entry, so a stray refusal has exactly one place to land');
+  assert.strictEqual(store.note({}, { status: 429, account: 'sub-2', now: NOW + 1 }), null,
+    'nothing to attach to reads as null, the same as a 429 before any reading at all');
+  const rows = store.snapshotAll(NOW + 1);
+  assert.strictEqual(rows.length, 1, 'and no empty sub-2 row was invented');
+  assert.strictEqual(rows[0].account, 'default');
+  assert.strictEqual(rows[0].last_429, undefined, 'the untouched pool carries no refusal');
+});
+
 test('note: no account given keys by the org id exactly as before', () => {
   // The fallback is what keeps an unresolvable seat, and every older caller,
   // filing where they always did.

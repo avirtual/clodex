@@ -3847,21 +3847,23 @@ html, body {
 
 /* Account plan quota — the STRIP, holding one .quota-chip per account. It stays
    an inline text container rather than becoming a flex row: text-overflow works
-   on inline content and would stop applying to flex items, and the ellipsis is
-   what keeps the overflow below from shoving the tabs.
+   on inline content and stops applying to flex items, and the ellipsis is what
+   keeps a second account's chip from shoving the tabs.
    Bounded like #drawer-status and for the same reason: #drawer-tabs is the
-   designated shrinker and #drawer is overflow:hidden, so an unbounded chip
+   designated shrinker and #drawer is overflow:hidden, so an unbounded strip
    pushes the tabs and their unread badges off screen at exactly the moment the
    loud one fires. The cap is measured in Electron at this size and font: the
-   longest string the feature emits is "week (all models) quota 100% used ·
+   longest string ONE chip emits is "week (all models) quota 100% used ·
    resets in 23h 59m · rate-limited 59s ago" at 389px border-box. It is the
    SINGLE-WINDOW FALLBACK that is the worst case, not the three-window bar the
    chip normally shows (303px) — the fallback spells the window out in full
    while the bar abbreviates it, and fmtQuotaReset's hours branch runs to
    "23h 59m", wider than any "Nd Nh". So sizing to the common shape would
    ellipsise the trailing refusal off a wirescope reading that carries no
-   window map. flex-shrink:1 lets it give up width anyway under genuine
-   pressure, ellipsising instead of shoving. Full text is in the tooltip. */
+   window map. The cap is NOT multiplied for a second account: two full-width
+   chips would own a third of the header, so the strip ellipsises past one and
+   the tooltips carry the rest. flex-shrink:1 lets it give up width anyway
+   under genuine pressure, ellipsising instead of shoving. */
 #drawer-quota {
   font-size: 10px;
   white-space: nowrap;
