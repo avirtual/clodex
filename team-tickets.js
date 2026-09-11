@@ -6731,8 +6731,6 @@ function createTicketMethods(deps, shared) {
       } catch { return null; }
     },
 
-    // `-r<N>`, never a bare `-<N>`: matchSeatRole strips `/-r\d+$/` BEFORE its
-    // `[-_]?\d+$` strip, so `team-hand-827-2` resolves to no role at all.
     _reworkSeatName(team, roleKey, ticket) {
       const n = String(ticket.id).replace(/^t/, '');
       for (let k = 2; k <= 20; k += 1) {
@@ -6773,9 +6771,6 @@ function createTicketMethods(deps, shared) {
         const prefix = `REWORK on a FRESH seat: the previous seat (${seat}) was replaced at ~${Math.round(tokens / 1000)}k `
           + `tokens. Your branch ${wt.branch}${head ? ` at ${head}` : ''} carries its commits; read \`${range}\`, `
           + `the diff, and JOURNAL.md in your tree before touching anything. Then:\n${deliveryText || ''}\n`;
-        // BEFORE the archive and synchronously: `_ticketTreeHolder` reads occupancy
-        // off the RECORD, so a pointer left here makes `_existingTicketTree` refuse
-        // the reuse and the spawn re-fork a branch already checked out.
         try { getPersistence().setWorktree(seat, null); } catch { /* best-effort */ }
         Promise.resolve(this.archive(seat)).catch((e) => {
           log.error('intent', `rework seat replacement: archiving ${seat} failed: ${e.message}`);
