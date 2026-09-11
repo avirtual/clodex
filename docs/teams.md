@@ -321,10 +321,6 @@ review is expensive, and paying it for a branch that fails its own suite is the
 most costly mistake the loop can make. A red verify run is measured a second
 time before it rejects — a green re-run proceeds to review and the record names
 the first run, while a second red rejects carrying both runs' failing names.
-A rework is never handed to a ticket seat whose context is already past the
-compact threshold (175k tokens by default): that seat is archived, a fresh one is
-spawned onto the same branch and the same worktree, the must-fixes are delivered
-there, and the reject reply names both seats.
 
 **Today that step looks for `scripts/run-tests.js` in the worktree**, spawns it
 with `--reporter=dot`, and parses TAP output. It also diffs the branch's

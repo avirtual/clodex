@@ -516,7 +516,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   // Declared before the delegation loop below, which must skip them.
   const WITHHELD_KEYS = new Set([
     'deleteBranch', 'isMerged', 'diffText', 'mergeNoFf', 'revertCommit', 'initRepo', 'hasCommit',
-    'checkoutDetached', 'headSha', 'headShaSync',
+    'checkoutDetached', 'headSha',
   ]);
 
   // The façade is frozen, so the assignment is a silent no-op in sloppy mode and
