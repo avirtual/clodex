@@ -370,6 +370,26 @@ test('the no-op leaves the record exactly as the loop left it', async () => {
     'not one field moves — re-stamping `acceptedBy` would rewrite the loop out of the history of its own close-out');
 });
 
+test('a REJECT on a loop-closed ticket clears the no-op, or the next round can never be accepted', () => {
+  const f = mkLoop();
+  // Reachable by one ordinary lead move: the loop closes a green merge out and
+  // leaves the ticket `done`, which is precisely the state `reject` reopens — a
+  // lead who reads the MERGED notice and decides the work needs another round
+  // lands here. Left behind, the stamp makes `task accept` a permanent no-op on
+  // the reopened ticket, so the round-2 seat, worktree and branch could never be
+  // torn down by any verb at all.
+  f.patch({ acceptedAt: T0, acceptedBy: 'ticket-loop', closedOut: true, loopClosedOut: LOOP_CLOSED });
+  f.m._taskReject(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'reject', id: 't1', who: null, body: 'another round please' }, () => {});
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the reject really reopened it');
+  assert.ok(!('closedOut' in t), 'ENTER: and cleared the flag beside the one under test');
+  assert.ok(!('loopClosedOut' in t),
+    'the loop close-out describes a round that is over; carried into the rework round it disables the '
+    + 'only verb that can clean the new tree up');
+});
+
 test('a DIRTY-tree close-out is NOT a no-op: its own reply asked for this accept', async () => {
   const f = mkLoop();
   // `closedOut` and `acceptedBy: 'ticket-loop'` are both set here too, which is

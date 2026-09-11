@@ -6765,6 +6765,7 @@ function createTicketMethods(deps, shared) {
         ticket.closedAt = null;
         ticket.closedBy = null;
         delete ticket.closedOut;       // same reason as _taskReject's reopen
+        delete ticket.loopClosedOut;   // and with it, or the NEXT round cannot be accepted
         ticket.lastActivityAt = Date.now();
         ticket.nudgedAt = null;
         // Written here for the reason the header gives: _taskReject's guard reads
@@ -7670,6 +7671,14 @@ function createTicketMethods(deps, shared) {
       // reading it as closed out and refuses a `for <id>` reminder binding on the
       // rework round, which is a round the reminder is wanted for.
       delete ticket.closedOut;
+      // `loopClosedOut` goes with it, and this one is reachable by an ordinary
+      // lead move rather than a corner: the loop closes a green merge out and
+      // leaves the ticket `done`, which is exactly the state reject reopens. Left
+      // behind, it makes `task accept` a permanent no-op on the reopened ticket —
+      // so the NEXT round's seat, worktree and branch could never be torn down by
+      // any verb. The field answers "did the loop finish with THIS close-out",
+      // and a reopen ends the close-out it was describing.
+      delete ticket.loopClosedOut;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       // The marker that makes the guard above decidable. Nothing else on the
@@ -7984,12 +7993,11 @@ function createTicketMethods(deps, shared) {
       return { seatName, rec, branch, ephemeralSeat: !!(rec && rec.ephemeral) };
     },
 
-    // `closedOut` is passed by the CALLING ARM, never derived here: finish()
-    // runs on every accept path and cannot tell them apart, and that is exactly
-    // the conflation this parameter exists to prevent. The arms, each carrying
-    // the reason its own terminality is what it is — the terminality
-    // enumeration; the route list above names the same five arms for a
-    // different fact, and the comments below name arms rather than re-count them:
+    // `closedOut` is passed by the CALLING ARM, never derived here: this runs on
+    // every accept path and cannot tell them apart, and that is exactly the
+    // conflation the parameter exists to prevent. The arms, each carrying the
+    // reason its own terminality is what it is — the comments at those arms name
+    // them rather than re-count them:
     //
     //   no-branch     TERMINAL. Nothing to merge and no second accept to
     //                 invite, so acceptance is the whole story.
