@@ -15524,12 +15524,47 @@ test('task add: a template env key outside the allowlist is dropped AND named in
   const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
   assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(replies)}`);
 
-  assert.deepStrictEqual(sessionEnv, { CLODEX_DISABLE_IPC_PROMPT: '1' },
-    'only the well-typed allowlisted key crosses');
+  assert.deepStrictEqual(sessionEnv, { CLODEX_DISABLE_IPC_PROMPT: '1', CLODEX_TICKET: 't1' },
+    'only the well-typed allowlisted key crosses, beside the ticket marker');
   assert.match(reply, /ANTHROPIC_BASE_URL/, 'the out-of-allowlist key must be named to the lead');
   assert.match(reply, /outside the allowed set/, 'with the authority reason');
   assert.match(reply, /FORCE_PROMPT_CACHING_5M/, 'the badly-typed key must be named too');
   assert.match(reply, /allowed but their values are not strings/, 'with its OWN reason, not the authority one');
+});
+
+// t814: CLODEX_TICKET is what `run/<name>/bash-guard.sh` gates on — it is the
+// only thing that tells a live seat it is holding a ticket, so a dispatch that
+// forgot it leaves the hand able to `git add -A` again with nothing to say so.
+// The reviewer arm is half the pin: that seat stages nothing, and a marker there
+// would deny the one `git add` a reviewer might legitimately need.
+test('t814: a ticket seat is marked with CLODEX_TICKET, a reviewer seat is not', async () => {
+  const { repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let sessionEnv = 'UNSET';
+  f.m.create = async (...args) => { sessionEnv = args[18]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => sessionEnv !== 'UNSET' || f.gated.length);
+
+  // ENTER: a dispatch that never reached create() would make the key assertion
+  // below an assertion about the string 'UNSET', which has no CLODEX_TICKET
+  // either — i.e. it would read as a pass.
+  assert.notStrictEqual(sessionEnv, 'UNSET', 'ENTER: create() must have been reached');
+  // The LITERAL id, not `ticket.id` recomputed here: the guard interpolates this
+  // string into the refusal a hand reads, so a marker carrying the wrong ticket
+  // is as bad as none.
+  assert.strictEqual(sessionEnv.CLODEX_TICKET, 't1');
+
+  const r = mkReview();
+  r.m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  r.m._handleTeamReview(r.m.sessions.get('lead'), 'check the ticket branch');
+  await new Promise((res) => setImmediate(res));
+  // ENTER: with no recorded create call the absence below is vacuous.
+  assert.strictEqual(r.created.length, 1, 'ENTER: the reviewer seat must have spawned');
+  const reviewerEnv = r.created[0][18];
+  assert.ok(reviewerEnv && !('CLODEX_TICKET' in reviewerEnv),
+    `the reviewer seat carries no ticket marker, got ${JSON.stringify(reviewerEnv)}`);
 });
 
 // t431 point (b): the refusal must land before ANYTHING is written. The
@@ -17185,8 +17220,8 @@ test('task add: the role\'s template shapes the seat it staffs', async () => {
   assert.deepStrictEqual(got.execCommands, ['clodex-run-tests'], 'exec grants apply');
   assert.deepStrictEqual(got.intents, ['dm'],
     'a PRIVILEGED intent in a template must be stripped: this is an agent-initiated mint, so a template carrying `reboot` cannot self-grant it');
-  assert.deepStrictEqual(got.env, { FORCE_PROMPT_CACHING_5M: '1' },
-    'env is confined to the allowlist — a template is agent-writable and ANTHROPIC_BASE_URL redirects credentials');
+  assert.deepStrictEqual(got.env, { FORCE_PROMPT_CACHING_5M: '1', CLODEX_TICKET: 't1' },
+    'env is confined to the allowlist — a template is agent-writable and ANTHROPIC_BASE_URL redirects credentials — plus the ticket marker, which the dispatcher adds and no template can supply');
   assert.strictEqual(got.promptFile, 'clodex-team-hand',
     'the ROLE prompt still wins the prompt slot: a template must not silently displace the role delta that defines the seat\'s job');
   // stripLevel is NOT a create() arg — it is a persistence write applied after,

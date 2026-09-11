@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Ticket hands cannot stage the whole tree**: a generated hook denies `git add -A`/`--all`/`.`/`-u` and `git commit -a` on a ticket seat, with a reason telling the hand to add the paths it edited; every other seat is unaffected.
+
 ## 5.61.0 — 2026-09-11 — Registered subscriptions: accounts, a select on every seat, and a quota chip per account
 
 - **Registered subscriptions**: Clodex keeps a list of Claude accounts

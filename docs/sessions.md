@@ -231,7 +231,9 @@ for disabled skills — a `"*"` entry in `disabledSkills` is the sentinel for
 (injected skills excepted) while the persisted entry keeps the raw `*` so a
 restart re-expands), plus the attention/statusline/acks/pending/ctxwarn scripts
 and the two Bash-console ones — `bash-console.sh` (PostToolUse/PostToolUseFailure,
-the settled record) and `bash-live.sh` (PreToolUse, the in-flight observer)
+the settled record) and `bash-live.sh` (PreToolUse, the in-flight observer) —
+plus `bash-guard.sh` (PreToolUse, after the observer: denies a whole-tree
+`git add`/`git commit -a` on a seat marked `CLODEX_TICKET`, no-ops everywhere else)
 (see [messaging.md](messaging.md) §7 for the drain semantics).
 
 Codex gets the shared SessionStart script plus a per-cwd `.codex/hooks.json`
