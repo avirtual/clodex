@@ -42822,6 +42822,8 @@ ${res.stderr}` : "");
       var argsAgentsPersisted = [];
       var argsAgentsRendered = [];
       var argsAgentsAuto = [];
+      var argsAppendPersisted = [];
+      var argsAppendRendered = [];
       var argsPluginsPersisted = null;
       var argsPluginsRendered = [];
       var argsSkillsDisabledPersisted = [];
@@ -42882,7 +42884,10 @@ ${res.stderr}` : "");
         argsPluginsRendered = getPluginCatalogCache().map((pl) => String(pl.id));
         renderPluginChecklist(argsPluginList, res.plugins);
         fillSystemPromptSelect(argsSystemPrompt, res.systemPromptFile || "", argsSeat());
-        renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []), argsSeat());
+        const argsTeamAppendRows = res.team ? (promptLib || []).filter((p) => p && p.kind === "append" && p.team === res.team) : [];
+        renderAppendChecklist(argsAppendList, new Set(res.appendPromptFiles || []), argsSeat(), argsTeamAppendRows);
+        argsAppendPersisted = res.appendPromptFiles || [];
+        argsAppendRendered = [...getPromptLibCache().append.map((p) => p.name), ...argsTeamAppendRows.map((r) => r.name)];
         const argsAuto = new Set(autoEnabledFor(agentLib || [], name));
         renderAgentChecklist(argsAgentsList, new Set(res.agents || []), argsAuto, argsSeat());
         argsAgentsPersisted = res.agents || [];
@@ -42966,7 +42971,7 @@ ${res.stderr}` : "");
         const proxy = argsProxyRow.style.display === "none" ? null : proxyValueFromControls(argsProxyMode, argsProxyUrl);
         const promptsHidden = argsPromptRow.style.display === "none";
         const systemPromptFile = promptsHidden ? null : argsSystemPrompt.value || null;
-        const appendPromptFiles = promptsHidden ? [] : collectAppendChecklist(argsAppendList);
+        const appendPromptFiles = promptsHidden ? [] : mergeUnrendered(argsAppendPersisted, argsAppendRendered, collectAppendChecklist(argsAppendList));
         const agents = argsAgentsRow.style.display === "none" ? [] : reconcilePartialSelection(
           argsAgentsPersisted,
           argsAgentsRendered,

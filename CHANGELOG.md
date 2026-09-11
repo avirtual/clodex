@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- Edit Session lists the seat's team-own append prompts (the team brief among
+  them) and keeps any append stem it could not draw, so saving the dialog — an
+  account change, a tool toggle — no longer silently strips the team brief from
+  a lead's record.
+
 ## 5.62.1 — 2026-09-11 — teams protocol: role binding by name, duplicate-intent echo, exec-grant honesty, locked-down sandbox worker
 
 - The roster's "[agent:exec clodex-team]" line is printed only to a seat that
