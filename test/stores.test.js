@@ -1728,6 +1728,27 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
     'and says why it reaches only the reviewer: an equal-length swap passes the ratchet');
 });
 
+// Every hand this week ended a ticket at 180-320k, and the audited one was 58%
+// tool results — sed/grep over a 9,900-line module, with the Agent tool loaded
+// and unused. The delegate bullet above was already there, so the missing half
+// was a bound on what the hand reads ITSELF. That bound existed only in the
+// clodex team's private append copy, where no other team's hand could see it,
+// so it moves into the SYSTEM prompt and leaves the append: the doesNotMatch
+// arm is what stops a revert restoring the duplicate and re-splitting the rule
+// across two files that then drift.
+test('seed: the hand prompt bounds what a hand reads into its own context', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  assert.match(hand, /## Tool results/,
+    'the budget rule has a section of its own in the system prompt, not a line buried in a bullet');
+  assert.match(hand, /never `cat` a file over 200 lines/,
+    'with the read ceiling stated as a hard number a hand cannot negotiate');
+  assert.match(hand, /END YOUR TURN/,
+    'and the anti-polling rule names the alternative, since a hand polls when it has nothing else to do');
+  const append = fs.readFileSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md'), 'utf-8');
+  assert.doesNotMatch(append, /Bound what you pull into your own context/,
+    'the append copy no longer duplicates the rule — it moved to the system prompt, where every team sees it');
+});
+
 // A prompt is a claim on a path no execution passes through: nothing throws when
 // it goes stale, and every seat that boots obeys it anyway. These pin the two
 // halves of the branch-per-ticket division of labour, which is exactly the kind
@@ -1783,6 +1804,10 @@ test('seed: Stage A — hands sweep their own hunks, leads let prose nits ride a
     'A1 fires at both points the fix can falsify a neighbour, not only at close');
   assert.match(hand, /it is the NEIGHBOUR your\s+insertion now sits between/,
     'A1 names the orphaning mechanism: the neighbour breaks, not the line you edited');
+  assert.match(hand, /5 lines of context/,
+    'A1 opens the hunk with the narrow window — 25 lines was a re-read of the file per hunk');
+  assert.doesNotMatch(hand, /25 lines of context/,
+    'and the wide window is gone, not merely joined by a narrower one');
   assert.match(lead, /An ACCEPT whose nits are comment or CHANGELOG sentences is an ACCEPT/,
     'A2 states the default: an ACCEPT with prose nits is merged');
   assert.match(lead, /asserting COVERAGE/,
