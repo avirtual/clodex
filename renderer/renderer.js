@@ -609,12 +609,15 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   // files are NOT lost: the JsonlWatcher feeds the same sink. What goes is
   // subagent attribution on the edits.)
   if (noWire) item.dataset.noWire = '1';
-  if (account) item.dataset.account = account;
+  // Only a NON-default account is recorded, on the row and in the chip. Every
+  // row would otherwise carry one saying `default`, which is the state the
+  // operator already assumes — the chip marks the exception, so the common
+  // sidebar is unchanged. Same condition as applyAccountChip, which repaints
+  // this row on the refresh loop: a builder that stamped `default` here would
+  // disagree with the very next repaint.
+  if (account && account !== ACCOUNT_DEFAULT) item.dataset.account = account;
   const displayName = label || name;
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
-  // Only a NON-default account earns a chip. Every row would otherwise carry one
-  // saying `default`, which is the state the operator already assumes — the chip
-  // exists to mark the exception, so the common sidebar is unchanged.
   const accountChip = account && account !== ACCOUNT_DEFAULT ? esc(account) : '';
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''}>${typeGlyph(type, backend)}</span>
