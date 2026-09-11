@@ -219,6 +219,11 @@ test('t767/t830: the role-add row documents model: and account:, closes the inte
       'the row says what account: DOES — which seats it reaches is the whole question a lead has about it');
     assert.ok(/an ephemeral seat cannot be edited after the fact, so this is the only way to move them/.test(src),
       'and why it is a ROLE field: the seats it moves are gone before Edit Session could reach them');
+    // The headline case of the feature is a cold reviewer, and `reviewer` is a
+    // reserved role every other role verb refuses. A row that omits the carve-out
+    // sends a lead at a refusal for the one thing the row is telling them to do.
+    assert.ok(/It is the one field the reviewer role accepts from role-set, and only alone/.test(src),
+      'the row says the reserved role takes this kv, since the grammar above it invites exactly that');
   }
 });
 

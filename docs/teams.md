@@ -633,13 +633,19 @@ can open Edit Session on a reviewer that lives six minutes, and a template canno
 carry the key at all — template env is filtered to an allowlist that drops
 `CLAUDE_CONFIG_DIR` on purpose, since one template is shared across teams and
 must not redirect anyone's credentials. The label is checked against the registry
-when you set it; `account:default` clears the field, and a label whose account
-was deleted afterwards refuses the spawn rather than quietly booting the seat on
-the subscription the role was moved off.
+by every set-time door — the intent and the roles popover both — and
+`account:default` clears the field. A label the registry no longer knows refuses
+the spawn rather than quietly booting the seat on the subscription the role was
+moved off, and a registry that cannot be READ says so in its own words instead of
+reporting a deletion that may not have happened.
 
-`lead` and `reviewer` are operator-owned topology: every role verb refuses them,
-so a team you meant to run solo still carries a reviewer definition — harmless,
-and the roster renders it as not addressable until a seat exists. `cwd:` names a
+`lead` and `reviewer` are operator-owned topology: every role verb refuses them
+except an `account:`-only `role-set`, so a team you meant to run solo still
+carries a reviewer definition — harmless, and the roster renders it as not
+addressable until a seat exists. The account is the one carve-out because the
+reviewer's seats are the ephemeral ones the field exists for: a patch that names
+any other key still bounces, and so does an `account:` that rides in beside a
+brief. `cwd:` names a
 directory that must already exist under the root; Clodex never creates it.
 
 The whole sequence is packaged as the **team-bootstrap** skill in the public

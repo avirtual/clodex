@@ -58,22 +58,33 @@ const SHIPPED_REVIEWER_TEMPLATE = {
   },
 };
 
-function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, templates } = {}) {
+function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, templates, realManifest = false, accountsThrow = false } = {}) {
   const home = mkTmpRoot('clodex-t830-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
-  const team = {
-    name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
-    file: pathReal.join(home, 'teams', 'team', 'team.json'),
-    roles: {
-      lead: { brief: 'the lead', dispatch: 'standing' },
-      // `spawn`, not `worktree`: this dispatch reaches the same
-      // _spawnTicketSeat → resolveSeatShape → create() path without touching
-      // git, so the fixture root need not be a real repo. The account is
-      // resolved above the branch that differs between the two modes.
-      hand: { brief: 'the hand', dispatch: 'spawn', template: 'clodex-team-hand', ...handRole },
-      reviewer: { prompt: 'clodex-team-reviewer', brief: 'the reviewer', ...reviewerRole },
-    },
+  const teamsDir = pathReal.join(home, 'teams');
+  const roleDefs = {
+    lead: { brief: 'the lead', dispatch: 'standing' },
+    // `spawn`, not `worktree`: this dispatch reaches the same
+    // _spawnTicketSeat → resolveSeatShape → create() path without touching
+    // git, so the fixture root need not be a real repo. The account is
+    // resolved above the branch that differs between the two modes.
+    hand: { brief: 'the hand', dispatch: 'spawn', template: 'clodex-team-hand', ...handRole },
+    reviewer: { prompt: 'clodex-team-reviewer', brief: 'the reviewer', ...reviewerRole },
   };
+  const teamFile = pathReal.join(teamsDir, 'team', 'team.json');
+  const team = { name: 'team', root: '/proj', lead: 'lead', watchdogMs: null, file: teamFile, roles: roleDefs };
+  // The mutator half is only wired when a test drives it, because the REAL
+  // team-manifest is the subject there: a stubbed setRole would let the reserved
+  // carve-out look reachable while the manifest quietly refused it.
+  let tm = null;
+  if (realManifest) {
+    fsReal.mkdirSync(pathReal.dirname(teamFile), { recursive: true });
+    fsReal.writeFileSync(teamFile, JSON.stringify({ root: '/proj', lead: 'lead', roles: roleDefs }, null, 2));
+    tm = require('../team-manifest').createTeamManifest({ fs: fsReal, clodexHome: home });
+  }
+  // Re-read per call, so a spawn that follows a role-set in the same test sees
+  // what the mutator WROTE rather than the def the fixture was built from.
+  const liveTeam = () => (tm ? { ...team, roles: tm.loadManifest('team').roles } : team);
   const store = [];
   const persistence = {
     list: () => store,
@@ -97,10 +108,12 @@ function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, temp
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,
     getTemplates: () => ({ list: () => tplList }),
-    getAccounts: () => ({
-      list: () => accounts,
-      configDirFor: (label) => (accounts.find((a) => a.label === label) || {}).configDir || null,
-    }),
+    getAccounts: () => (accountsThrow
+      ? { list: () => { throw new Error('EACCES'); }, configDirFor: () => { throw new Error('EACCES'); } }
+      : {
+        list: () => accounts,
+        configDirFor: (label) => (accounts.find((a) => a.label === label) || {}).configDir || null,
+      }),
     notifyOS: () => {},
     intentEnabled,
     withoutPrivilegedIntentsFor: require('../intent-registry').withoutPrivilegedIntentsFor,
@@ -124,8 +137,12 @@ function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, temp
     REGISTRY_DIR: home,
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-    resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
+    resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? liveTeam() : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
+    teamsDir,
+    refreshAppMenu: () => {},
+    setRole: tm ? tm.setRole : undefined,
+    addRole: tm ? tm.addRole : undefined,
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -146,7 +163,7 @@ function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, temp
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
     return m.sessions.get(name);
   };
-  return { m, team, home, tstore, persistence, injected, created, gated, seat };
+  return { m, team, home, tstore, persistence, injected, created, gated, seat, liveTeam };
 }
 
 const settle = () => new Promise((r) => setImmediate(() => setImmediate(r)));
@@ -242,8 +259,22 @@ test('t830: a reviewer role naming a deleted account refuses the spawn', async (
 
   assert.strictEqual(f.created.length, 0,
     'no seat at all — booting on the app\'s own account is the subscription this role was moved OFF');
-  assert.ok(f.injected.some((t) => /role reviewer names account "gone", which no longer exists/.test(t)),
+  assert.ok(f.injected.some((t) => /role reviewer names account "gone", which is not in the accounts registry/.test(t)),
     `and the lead is told which label is dangling, got: ${JSON.stringify(f.injected)}`);
+});
+
+// An unreadable registry is not a deleted label, and the two want different
+// responses from whoever reads the escalation: one is "fix the role", the other
+// is "fix the box". Collapsing them reports a deletion that did not happen.
+test('t830: a registry that cannot be READ refuses with its own reason, not a deletion', async () => {
+  const f = mkFixture({ reviewerRole: { account: 'work' }, accountsThrow: true });
+  f.seat('lead');
+  f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+  await settle();
+
+  assert.strictEqual(f.created.length, 0, 'no seat spawned — the label may well be fine');
+  assert.ok(f.injected.some((t) => /role reviewer names account "work", but the accounts registry could not be read/.test(t)),
+    `the reason is the registry, not the label, got: ${JSON.stringify(f.injected)}`);
 });
 
 test('t830: a hand role naming a deleted account fails the ticket spawn and says why', async () => {
@@ -252,6 +283,48 @@ test('t830: a hand role naming a deleted account fails the ticket spawn and says
 
   assert.strictEqual(f.created.length, 0, 'no ticket seat spawned');
   assert.ok(f.injected.some((t) => /failed to spawn/.test(t)
-    && /role hand names account "gone", which no longer exists/.test(t)),
+    && /role hand names account "gone", which is not in the accounts registry/.test(t)),
   `the spawn-failure reply carries the dangling label, got: ${JSON.stringify(f.injected)}`);
+});
+
+// ── MUST-FIX 1 (r1): the reviewer's account has to be REACHABLE ────────────
+//
+// The headline case of the whole ticket is moving cold reviewers to a second
+// subscription, and `reviewer` is a RESERVED role: setRole refuses every patch
+// on one. Without the carve-out, the only way to set reviewer.account is
+// hand-editing team.json — while ipc-prompt and both lead prompts tell the lead
+// to use `role-set`. So this drives the REAL manifest through the REAL intent
+// handler and then spawns, rather than injecting the def into a fixture.
+
+test('t830: role-set reviewer account:<label> is accepted, and the next cold reviewer boots on it', async () => {
+  const f = mkFixture({ realManifest: true });
+  f.seat('lead');
+  f.m._handleTeam(f.m.sessions.get('lead'), { type: 'team', sub: 'role-set', name: 'reviewer', account: 'work', body: '' });
+  assert.ok(f.injected.some((t) => /role "reviewer" updated/.test(t)),
+    `the reserved refusal must not fire for an account-only patch, got: ${JSON.stringify(f.injected)}`);
+  assert.strictEqual(f.liveTeam().roles.reviewer.account, 'work', 'and it reached disk');
+
+  f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+  await settle();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer seat must have spawned');
+  assert.strictEqual(f.created[0][SESSION_ENV_ARG].CLAUDE_CONFIG_DIR, WORK_DIR,
+    'the label a lead can now set is the one the seat actually boots on — the two halves must '
+    + 'meet, or the grammar advertises a field the spawn never reads');
+});
+
+// The carve-out is one field wide, not a hole in the lock: everything that made
+// `reviewer` operator-owned still is.
+test('t830: role-set reviewer with any OTHER key is still refused', async () => {
+  const f = mkFixture({ realManifest: true });
+  f.seat('lead');
+  f.m._handleTeam(f.m.sessions.get('lead'), { type: 'team', sub: 'role-set', name: 'reviewer', cwd: 'sub', body: '' });
+  assert.ok(f.injected.some((t) => /operator-owned topology/.test(t)),
+    `cwd on a reserved role keeps the refusal, got: ${JSON.stringify(f.injected)}`);
+  assert.ok(!f.liveTeam().roles.reviewer.cwd, 'and nothing landed');
+
+  f.m._handleTeam(f.m.sessions.get('lead'), { type: 'team', sub: 'role-set', name: 'reviewer', account: 'work', body: 'a new brief' });
+  assert.ok(f.injected.some((t) => /operator-owned topology/.test(t) && /brief/.test(t)),
+    `an account rode in beside a brief and the whole patch must bounce, got: ${JSON.stringify(f.injected)}`);
+  assert.ok(!f.liveTeam().roles.reviewer.account,
+    'the account must NOT half-apply out of a patch that was refused');
 });

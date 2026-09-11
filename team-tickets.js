@@ -25,7 +25,7 @@ const {
   parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
-const { DEFAULT_LABEL: DEFAULT_ACCOUNT_LABEL } = require('./accounts');
+const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
@@ -476,21 +476,11 @@ function createTicketMethods(deps, shared) {
     withoutPrivilegedIntentsFor,
   } = deps;
   const seedFetch = deps.fetch || ((...a) => globalThis.fetch(...a));
-  const accountConfigDir = (label) => {
-    if (!label) return null;
-    try {
-      const store = (typeof getAccounts === 'function' && getAccounts()) || null;
-      if (!store || typeof store.configDirFor !== 'function') return null;
-      return store.configDirFor(label) || null;
-    } catch { return null; }
+  const accountStore = () => {
+    try { return (typeof getAccounts === 'function' && getAccounts()) || null; }
+    catch { return null; }
   };
-  const accountLabels = () => {
-    try {
-      const store = (typeof getAccounts === 'function' && getAccounts()) || null;
-      if (!store || typeof store.list !== 'function') return [];
-      return store.list().map((a) => a && a.label).filter(Boolean);
-    } catch { return []; }
-  };
+  const resolveAccount = (label) => resolveAccountLabel(accountStore(), label);
   const allTemplates = () => (typeof listAllTemplates === 'function'
     ? listAllTemplates().filter((t) => t && !t.team)
     : getTemplates().list());
@@ -1133,7 +1123,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (shape.accountMissing) {
-        reply(`error: role reviewer names account "${shape.accountMissing}", which no longer exists`);
+        reply(`error: ${accountMissingError('reviewer', shape.accountMissing)}`);
         return;
       }
 
@@ -4846,14 +4836,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _resolveRoleAccount(label) {
-      const want = String(label || '').trim();
-      if (!want) return { ok: true, label: null };
-      if (want === DEFAULT_ACCOUNT_LABEL) return { ok: true, label: null };
-      if (!accountConfigDir(want)) {
-        const known = accountLabels();
-        return { ok: false, error: `no account "${want}" — accounts: ${known.length ? known.join(', ') : DEFAULT_ACCOUNT_LABEL}` };
-      }
-      return { ok: true, label: want };
+      return resolveAccount(label);
     },
 
     // The ONE seat shape both team spawn paths pass to create(). They diverged
@@ -4892,8 +4875,9 @@ function createTicketMethods(deps, shared) {
       // this resolver exists to prevent.
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
-      const accountDir = accountLabel ? accountConfigDir(accountLabel) : null;
-      const accountMissing = (accountLabel && !accountDir) ? accountLabel : null;
+      const acct = accountLabel ? resolveAccount(accountLabel) : { ok: true, configDir: null };
+      const accountDir = acct.ok ? (acct.configDir || null) : null;
+      const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
       const withAccount = (env) => {
         if (!accountDir) return env;
         return { ...(env || {}), CLAUDE_CONFIG_DIR: accountDir };
@@ -5341,7 +5325,7 @@ function createTicketMethods(deps, shared) {
           }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
           if (shape.accountMissing) {
-            throw new Error(`role ${roleKey} names account "${shape.accountMissing}", which no longer exists`);
+            throw new Error(accountMissingError(roleKey, shape.accountMissing));
           }
           // Not inside resolveSeatShape: the tree is minted above, after the shape
           // is built, and the review path shares that resolver with no tree at all.

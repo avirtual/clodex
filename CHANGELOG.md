@@ -17,7 +17,10 @@ blocks a release.
   and every seat the loop mints for it — ticket hands, cold reviewers, one-shot
   spawns — boots on that account's config dir. Ephemeral seats could not be moved
   to a second subscription before: they live too briefly for Edit Session, and
-  reviewer template env drops `CLAUDE_CONFIG_DIR` by design.
+  reviewer template env drops `CLAUDE_CONFIG_DIR` by design. `account` is the one
+  field the built-in `reviewer` role accepts from `role-set` and from its row in
+  the roles popover — every other key on it is still operator-owned — and the
+  label is checked against the registry at every door that sets it.
 - The hand prompt tells a ticket hand to add no comment lines at all and to
   check only the comments its own hunks touch, instead of commenting and
   trimming back to net zero and sweeping the whole file; two hands in a row

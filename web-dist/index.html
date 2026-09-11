@@ -32439,19 +32439,17 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             el.appendChild(body);
             if (row.readOnly) {
               el.classList.add("read-only");
-              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label><div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
+              body.querySelector('input[data-f="account"]').value = row.account;
               if (row.key === "lead" && stage === "normal") body.appendChild(buildLeadSeatBlock(manifest));
               if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
-                const actions = document.createElement("div");
-                actions.className = "team-role-actions";
                 const rm = document.createElement("button");
                 rm.type = "button";
                 rm.className = "secondary";
                 rm.dataset.act = "remove";
                 rm.textContent = "Remove";
                 rm.title = "Take this built-in role off the team. You can add it back here.";
-                actions.appendChild(rm);
-                body.appendChild(actions);
+                body.querySelector(".team-role-actions").appendChild(rm);
               }
             } else {
               body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label><div class="team-role-dispatch" data-f-group="dispatch"></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
@@ -32706,7 +32704,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
               return on ? on.value : "";
             };
-            const patch = buildSavePatch({
+            const patch = rowEl.classList.contains("read-only") ? { account: String(val("account") || "").trim() } : buildSavePatch({
               brief: val("brief"),
               prompt: val("prompt"),
               template: val("template"),

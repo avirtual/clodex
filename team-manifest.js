@@ -52,6 +52,7 @@ const EDITABLE_ROLE_FIELDS = ['account', 'brief', 'cwd', 'dispatch', 'prompt', '
 // team.json is agent-writable and these keys are trusted downstream: the mutators
 // must never create, destroy or rename them.
 const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
+const RESERVED_ROLE_PATCH_FIELDS = new Set(['account']);
 
 const DEFAULT_KIT = 'default';
 
@@ -789,14 +790,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 
   function setRole(teamName, roleName, patch) {
     const team = loadManifest(teamName); // throws if the team is missing
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new Error(`setRole patch must be an object (${team.file})`);
+    }
     if (RESERVED_ROLE_KEYS.has(roleName)) {
-      throw new Error(`the "${roleName}" role is operator-owned topology; edit it via the app, not an intent/mutator (${team.file})`);
+      const outside = Object.keys(patch).filter((k) => !RESERVED_ROLE_PATCH_FIELDS.has(k));
+      if (outside.length) {
+        throw new Error(`the "${roleName}" role is operator-owned topology; edit it via the app, not an intent/mutator — only ${[...RESERVED_ROLE_PATCH_FIELDS].join(', ')} may be patched here, not ${outside.join(', ')} (${team.file})`);
+      }
     }
     if (!team.roles[roleName]) {
       throw new Error(`role "${roleName}" not found on team "${teamName}" — use addRole (${team.file})`);
-    }
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-      throw new Error(`setRole patch must be an object (${team.file})`);
     }
     const EDITABLE = EDITABLE_ROLE_FIELDS;
     const clean = {};
@@ -1082,5 +1086,5 @@ module.exports = {
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
   ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
-  ROLE_RE, RESERVED_ROLE_KEYS,
+  ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS,
 };

@@ -696,17 +696,20 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       if (!expanded) body.classList.add('hidden');
       el.appendChild(body);
       if (row.readOnly) {
-        // Reserved (lead/reviewer): explained-and-locked. brief + prompt are shown
-        // read-only. SECURITY: these are agent-writable strings — rendered as
-        // ESCAPED TEXT between tags (never into an attribute), same rule as the
-        // editable branch. The lock note is a fixed, newcomer-facing string.
+        // Reserved (lead/reviewer): locked EXCEPT `account`, whose seats are too
+        // short-lived to edit any other way. SECURITY: all three are agent-written
+        // — brief/prompt are ESCAPED TEXT between tags, account takes its `.value`
+        // by property, never into an attribute.
         el.classList.add('read-only');
         body.innerHTML =
           `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
           `<span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div>` +
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
-          `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>`;
+          `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>` +
+          `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label>` +
+          `<div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
+        body.querySelector('input[data-f="account"]').value = row.account;
         // The lead ROLE stays locked; which SEAT fills it does not (t420).
         // Gated on `normal` because a non-normal stage ALREADY hoisted a lead
         // block card above the list: two live seat editors for one setting, each
@@ -720,16 +723,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         // `[agent:team role-rm]` intent does not. `lead` has no such row, because
         // a team.json without it fails to load outright.
         if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
-          const actions = document.createElement('div');
-          actions.className = 'team-role-actions';
           const rm = document.createElement('button');
           rm.type = 'button';
           rm.className = 'secondary';
           rm.dataset.act = 'remove';
           rm.textContent = 'Remove';
           rm.title = 'Take this built-in role off the team. You can add it back here.';
-          actions.appendChild(rm);
-          body.appendChild(actions);
+          body.querySelector('.team-role-actions').appendChild(rm);
         }
       } else {
         // SECURITY: brief/prompt/template/cwd/account are agent-writable unconstrained strings
@@ -1103,12 +1103,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       // when it is already blank (so '' is a no-op clear), and buildSavePatch
       // OMITS a blank `template`, leaving the stored one untouched.
 
-      // buildSavePatch sends brief/prompt (blank clears) but OMITS a blank
-      // template — backend setRole throws NAME_RE on '' (no clear-template in v1).
-      const patch = buildSavePatch({
-        brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: dispatchVal(),
-        cwd: val('cwd'), account: val('account'),
-      });
+      // buildSavePatch OMITS a blank template (setRole throws NAME_RE on ''); a
+      // reserved row sends `account` alone, the only key setRole lets one patch.
+      const patch = rowEl.classList.contains('read-only')
+        ? { account: String(val('account') || '').trim() }
+        : buildSavePatch({
+          brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: dispatchVal(),
+          cwd: val('cwd'), account: val('account'),
+        });
       const res = await window.api.teamSetRole(name, role, patch);
       await afterMutation(res, `role "${role}" saved`);
     } else if (act === 'rename') {

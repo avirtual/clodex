@@ -433,7 +433,9 @@ cwd IS a worktree is still on the team.
   `[agent:team role-set <role> account:<label>]` — `account:` pins every seat the
   loop mints for the role — ticket hands, cold reviewers — to that account's
   config dir; an ephemeral seat cannot be edited after the fact, so this is the
-  only way to move them.
+  only way to move them. It is also the ONE field `reviewer` takes from a role
+  verb, and only alone: `account:` beside a brief, or any other key on a
+  reserved role, is still refused as operator-owned topology.
 - An edit reaches seats spawned AFTER the save, never one already running.
 
 ## First turn on a fresh team
