@@ -6721,16 +6721,6 @@ function createTicketMethods(deps, shared) {
       return out;
     },
 
-    _treeHeadShaSync(treePath) {
-      if (!treePath) return null;
-      try {
-        const out = childProcess.execFileSync('git', ['-C', treePath, 'rev-parse', 'HEAD'],
-          { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
-        const sha = String(out || '').trim();
-        return /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
-      } catch { return null; }
-    },
-
     _reworkSeatName(team, roleKey, ticket) {
       const n = String(ticket.id).replace(/^t/, '');
       for (let k = 2; k <= 20; k += 1) {
@@ -6766,7 +6756,7 @@ function createTicketMethods(deps, shared) {
         const fresh = this._reworkSeatName(team, roleKey, ticket);
         if (!fresh) return unchanged;
         const tokens = s.ctxInfo.tok;
-        const head = this._treeHeadShaSync(wt.path);
+        const head = gitWorktree.headShaSync(wt.path);
         const range = wt.baseSha ? `git log --oneline ${wt.baseSha}..HEAD` : 'git log --oneline -20';
         const prefix = `REWORK on a FRESH seat: the previous seat (${seat}) was replaced at ~${Math.round(tokens / 1000)}k `
           + `tokens. Your branch ${wt.branch}${head ? ` at ${head}` : ''} carries its commits; read \`${range}\`, `
