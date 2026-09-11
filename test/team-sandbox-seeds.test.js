@@ -329,11 +329,11 @@ test('a clodex-lead that already exists reads present, not seeded', async () => 
 });
 
 test('a box image that predates the team arm is reported with the rebuild hint', async () => {
-  const h = mkHandler({ post: (n) => (n === 'clodex-lead' ? { status: 400, body: { ok: false, error: 'cwd required' } } : null) });
+  const h = mkHandler({ post: (n) => (n === 'clodex-lead' ? { status: 400, body: { ok: false, error: 'invalid type "undefined" — must be claude, codex, or bash' } } : null) });
   await fire(h, { action: 'up' });
   const line = h.last();
   assert.ok(!line.startsWith('[agent:team] error:'), `an old image is not a failed up: ${line}`);
-  assert.match(line, /seeded bash · token in .* · lead clodex-lead NOT seeded: 400 cwd required \(the box image predates the team arm — rebuild it\)$/);
+  assert.match(line, /seeded bash · token in .* · lead clodex-lead NOT seeded: 400 invalid type "undefined" — must be claude, codex, or bash \(the box image predates the team arm — rebuild it\)$/);
 });
 
 test('a lead the box already has by name reads present, not NOT seeded', async () => {

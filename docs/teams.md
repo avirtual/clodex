@@ -527,7 +527,8 @@ login done by hand inside the box — and the reply ends with `lead <name> seede
 `lead <name> present` or `lead <name> NOT seeded: <status> <what the box said>`;
 a refused lead is reported, not an error, so the rest of the box is still up. A
 box built before the team arm existed reads the body as a plain seat spec and
-refuses it for a missing `cwd`; that reply carries a hint to rebuild the box.
+refuses it with `invalid type "undefined"`, since a `{ name, team }` body names
+no session type; that reply carries a hint to rebuild the box.
 Seats that already exist are left alone, so a `rebuild` does not duplicate them.
 If the box never gets healthy the reply is an error and `sandbox.json` stays put,
 because that file is how you reach a box that is merely slow. A team copy that

@@ -54,7 +54,7 @@ const SANDBOX_TEAM_SUBDIRS = ['prompts', 'templates', 'exec'];
 function leadSeedClause(result, leadName) {
   if (result && result.state !== 'failed') return ` · lead ${leadName} ${result.state}`;
   const error = (result && result.error) || 'the box reported nothing for it';
-  const hint = /cwd required/.test(error) ? ' (the box image predates the team arm — rebuild it)' : '';
+  const hint = /invalid type "undefined"/.test(error) ? ' (the box image predates the team arm — rebuild it)' : '';
   return ` · lead ${leadName} NOT seeded: ${error}${hint}`;
 }
 
