@@ -2196,8 +2196,7 @@ function createTicketMethods(deps, shared) {
         try {
           const fresh = ticketsStore.load(team.root);
           const row = fresh.find((t) => t.id === ticketId);
-          // `state` FIRST: a row reopened by a reject can still carry
-          // `acceptedAt` from the round before it.
+          // `state` FIRST: a reopened row can still carry an older `acceptedAt`.
           const reopened = row && row.state !== 'done';
           const acceptedInFlight = !reopened && row && (row.acceptedAt || row.closedOut);
           if (reopened) {
@@ -2328,7 +2327,8 @@ function createTicketMethods(deps, shared) {
     //
     // `closeOut` is `_closeOutMergedTicket`'s result, or null. `reopened`, `ok`
     // and `closedOut` are all read; every other shape falls to the step line, so
-    // a forgotten argument cannot report a teardown that never ran.
+    // a forgotten argument cannot report a teardown that never ran. A REOPEN
+    // renders no verb anywhere in the body, reassurance line included.
     _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned, closeOut = null }) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
@@ -2366,8 +2366,7 @@ function createTicketMethods(deps, shared) {
           : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} diff --stat ${sha}^1 ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
         const stamp = (this._loadTicket(team, ticketId) || {}).suiteRemeasured;
         const closedOutOk = !!(closeOut && closeOut.ok && closeOut.closedOut);
-        // A reopened ticket gets its own arm: `Step owed:` would name a verb
-        // `_taskAccept` refuses on a state that is not `done`.
+        // A reopen gets its own arm: `Step owed:` names a verb `_taskAccept` refuses.
         const stepLine = closeOut && closeOut.reopened
           ? `Reopened by rework (${closeOut.state}) during the post-merge suite: the merge is on ${MERGE_TARGET_BRANCH}, `
             + `nothing was torn down, and the rework round's tree is the one now live. No step is owed here.`
@@ -2384,8 +2383,9 @@ function createTicketMethods(deps, shared) {
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured (first run: ${oneLine(stamp.first) || 'unrecorded'}).`] : []),
           changelogLine,
-          // False once the loop has closed out: tree, ref and seat are gone.
-          ...(closedOutOk ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
+          // False once the loop has closed out; on a REOPEN it is true but its
+          // verb is not, and line 2 has already said it.
+          ...(closedOutOk || (closeOut && closeOut.reopened) ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
         ].join('\n');
         this._stampMerged(team, ticketId);
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
@@ -8151,7 +8151,7 @@ function createTicketMethods(deps, shared) {
       // Checked HERE as well as at the call site, every arm ending in
       // `_finishAccept`, which stamps `acceptedBy` unconditionally. One-sided: a
       // lead accept over a loop close-out is the dirty-row recovery. The loop
-      // never enters `_taskAccept`, so that verb's `state` refusal is not a gate.
+      // never enters `_taskAccept`, so its `state` refusal is not a gate.
       if (by === 'ticket-loop' && ticket.state !== 'done') {
         return { ok: false, closedOut: false, reopened: true, state: ticket.state,
           text: `the ticket was reopened (${ticket.state}) before the loop could close it out, so the seat, worktree and branch were left alone` };

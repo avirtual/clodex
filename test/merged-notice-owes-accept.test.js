@@ -291,6 +291,29 @@ test('the dirty-downgrade detail survives whole — the cap does not eat the rec
     'and the wider cap does not cost the column-1 invariant: the collapse, not the length, is what protects it');
 });
 
+test('a REOPENED ticket is reported and asked nothing — the notice renders no verb at all', () => {
+  const f = mkLoop();
+  // The third arm. `Step owed:` here would name a verb `_taskAccept` refuses on
+  // a state that is not `done`, so the lead would emit it and get an error over
+  // work that is mid-rework.
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: {
+    ok: false, closedOut: false, reopened: true, state: 'open',
+    text: 'the ticket was reopened (open) while the post-merge suite ran, so the seat, worktree and branch were left alone',
+  } });
+  const body = f.gated[0].body;
+  assert.ok(body.includes('Reopened by rework (open) during the post-merge suite'),
+    `the reopen is the report. Got:\n${body}`);
+  assert.ok(!body.includes('Step owed:'), 'and nothing is owed');
+  assert.ok(!body.includes('Closed out:'), 'nor was anything closed out');
+  // Both suppressions matter, and they are separate lines: the reassurance four
+  // lines down carries its own copy of the verb, so dropping it from line 2 alone
+  // still leaves a ready-to-fire accept in the body.
+  assert.ok(!body.includes('[agent:task accept'),
+    `the verb appears NOWHERE in this body — not on line 2, not in the reassurance. Got:\n${body}`);
+  assert.ok(!body.includes('Nothing was torn down:'),
+    'the reassurance goes with the verb it exists to introduce — line 2 already says nothing was torn down');
+});
+
 test('a null closeOut — the loop never reached the teardown — reads as a step owed', () => {
   const f = mkLoop();
   // The default arm, which is the only arm a caller can reach by FORGETTING to

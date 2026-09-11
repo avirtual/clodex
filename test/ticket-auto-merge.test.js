@@ -675,6 +675,12 @@ test('t825: a REJECT during the post-merge suite leaves the rework round its sea
     '`Step owed:` would name a verb _taskAccept refuses outright on an open ticket');
   assert.ok(notes[0].body.includes('Reopened by rework (open) during the post-merge suite'),
     `line 2 reports the reopen and asks for nothing. Got:\n${notes[0].body}`);
+  // The reassurance four lines below line 2 renders the same verb, and on this
+  // arm it is one `_taskAccept` refuses outright — a notice that says "no step is
+  // owed" and then names a step is a notice the lead acts on and gets an error
+  // from.
+  assert.ok(!notes[0].body.includes('[agent:task accept'),
+    `the notice offers no verb at all on a reopened ticket. Got:\n${notes[0].body}`);
 });
 
 test('t825: _closeOutMergedTicket refuses for the loop on a ticket that is not done', async () => {
