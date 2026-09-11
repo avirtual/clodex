@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **The ticket loop says what the lead owes**: a reviewer ACCEPT and the MERGED notice both name the `task accept` step, and a merged ticket left unaccepted for ten minutes gets one reminder.
+
 ## 5.61.1 — 2026-09-11 — The Accounts pane fits the dialog, and ticket hands cannot stage the whole tree
 
 - **Preferences ▸ Accounts fits the dialog**: the add form, config-dir field and
