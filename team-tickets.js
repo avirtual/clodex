@@ -49,16 +49,13 @@ const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
 const SANDBOX_DEFAULT_REF = 'master';
 const SANDBOX_HOME_DIR = '/home/clodex';
 const SANDBOX_WORK_DIR = '/home/clodex/work';
-const SANDBOX_WORKER_SEED = 'worker';
 const SANDBOX_TEAM_SUBDIRS = ['prompts', 'templates', 'exec'];
-const SANDBOX_WORKER_TOOLS_OFF = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent'];
-const SANDBOX_WORKER_PROMPT = 'You are a test fixture seeded on a sandbox by the team lead.'
-  + ' When asked for an intent, emit it verbatim on its own line and nothing else.'
-  + ' Do not edit files, run commands, or start work on your own.';
 
-function workerSeedClause(result) {
-  if (result && result.state !== 'failed') return ` · ${SANDBOX_WORKER_SEED} ${result.state}`;
-  return ` · ${SANDBOX_WORKER_SEED} NOT seeded: ${(result && result.error) || 'the box reported nothing for it'}`;
+function leadSeedClause(result, leadName) {
+  if (result && result.state !== 'failed') return ` · lead ${leadName} ${result.state}`;
+  const error = (result && result.error) || 'the box reported nothing for it';
+  const hint = /cwd required/.test(error) ? ' (the box image predates the team arm — rebuild it)' : '';
+  return ` · lead ${leadName} NOT seeded: ${error}${hint}`;
 }
 
 function sha8(sha) {
@@ -3018,7 +3015,12 @@ function createTicketMethods(deps, shared) {
       const st = await box.status();
       const ports = (st && st.ports) || (r && r.ports) || {};
       const token = box.remoteToken();
-      const shipped = this._shipTeamIntoBox(team, box);
+      let shipped;
+      try {
+        shipped = this._shipTeamIntoBox(team, box);
+      } catch (e) {
+        shipped = { dir: null, line: `team NOT shipped: ${e.message}` };
+      }
       reply(shipped.line);
       const record = {
         boxId,
@@ -3036,34 +3038,24 @@ function createTicketMethods(deps, shared) {
       const health = await box.waitHealthy();
       if (!health || health.ok === false) { reply(`error: ${(health && health.error) || 'health check failed'}`); return; }
 
-      const translated = box.translateHostPath(team.root) || {};
-      const workerCwd = translated.container || SANDBOX_WORK_DIR;
       const seeds = [
         { name: 'bash', type: 'bash', cwd: SANDBOX_HOME_DIR },
-        {
-          name: SANDBOX_WORKER_SEED,
-          type: 'claude',
-          cwd: workerCwd,
-          extraArgs: [],
-          disabledTools: SANDBOX_WORKER_TOOLS_OFF,
-          disabledSkills: ['*'],
-          systemPromptBody: SANDBOX_WORKER_PROMPT,
-        },
+        { name: team.lead, team: team.name },
       ];
       const seeded = await seedSandboxSessions({
-        wireUrl: record.wireUrl, token, seeds, optional: [SANDBOX_WORKER_SEED], fetch: seedFetch,
+        wireUrl: record.wireUrl, token, seeds, optional: [team.lead], fetch: seedFetch,
       });
       if (!seeded || seeded.ok === false) { reply(`error: ${(seeded && seeded.error) || 'seeding failed'}`); return; }
       const results = seeded.results || [];
-      const worker = results.find((r) => r.name === SANDBOX_WORKER_SEED);
-      const ready = results.filter((r) => r.name !== SANDBOX_WORKER_SEED && r.state !== 'failed').map((r) => r.name);
+      const leadResult = results.find((r) => r.name === team.lead);
+      const ready = results.filter((r) => r.name !== team.lead && r.state !== 'failed').map((r) => r.name);
 
       reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
         + `${sandboxPortClause({ ports })}`
         + ` · healthy in ${Math.round((health.ms || 0) / 1000)}s`
         + ` · seeded ${ready.join(', ')}`
         + ` · token in ${file}`
-        + `${workerSeedClause(worker)}`);
+        + `${leadSeedClause(leadResult, team.lead)}`);
     },
 
     _teamFileDeps() {

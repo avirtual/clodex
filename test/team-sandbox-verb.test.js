@@ -124,7 +124,7 @@ function mkBox(opts = {}) {
   fs.mkdirSync(path.join(dir, 'exec'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'exec', 'z.json'), '{"command":"true"}\n');
   fs.writeFileSync(path.join(dir, 'tickets.json'), '{"tickets":[]}\n');
-  const stateRoot = mkTmpRoot('t836-state-');
+  const stateRoot = opts.stateRoot || mkTmpRoot('t836-state-');
   const fake = opts.noManager ? null : mkFakeManager({ ...opts, stateRoot });
   const net = mkFakeFetch(opts);
   const methods = createTicketMethods({
@@ -347,6 +347,24 @@ test('sandbox.json records where the team landed', async () => {
   await fire(b, b.lead, { action: 'up' });
   const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
   assert.strictEqual(rec.teamDir, b.shipped);
+});
+
+test('a team copy that throws is reported, and sandbox.json is still written and the box still seeded', async () => {
+  const blocked = path.join(mkTmpRoot('t838-blocked-'), 'state');
+  fs.writeFileSync(blocked, 'a file where the box state dir should be\n');
+  const b = mkBox({ stateRoot: blocked });
+
+  await fire(b, b.lead, { action: 'up' });
+
+  assert.ok(b.replies.some((l) => l.includes('team NOT shipped:')),
+    `the failure is named to the lead: ${JSON.stringify(b.replies)}`);
+  assert.ok(exists(b.file), 'the token file the box is only reachable through still landed');
+  const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
+  assert.strictEqual(rec.teamDir, null, 'and records that nothing was shipped');
+  assert.strictEqual(rec.token, TOKEN);
+  assert.deepStrictEqual(b.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['bash', 'lead'],
+    'the seats are still created — a box with no team copy is still a box');
+  assert.match(b.last(), /seeded bash/);
 });
 
 test('a box with no state dir says so and still seeds', async () => {
