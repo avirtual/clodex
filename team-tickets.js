@@ -4845,15 +4845,6 @@ function createTicketMethods(deps, shared) {
       return { cwd: resolved, fallback: null };
     },
 
-    // The ONE seat shape both team spawn paths pass to create(). They diverged
-    // silently twice — the review path hand-rolled a second copy of the env
-    // allowlist filter against the same constant, so either copy could be edited
-    // without the other. `purpose` selects the reviewer's hard rules; everything
-    // else resolves identically for both.
-    //
-    // `opener` is the session doing the spawning (the lead). It is not derivable
-    // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
-    // is the permission posture.
     _resolveRoleAccount(label) {
       const want = String(label || '').trim();
       if (!want) return { ok: true, label: null };
@@ -4865,6 +4856,15 @@ function createTicketMethods(deps, shared) {
       return { ok: true, label: want };
     },
 
+    // The ONE seat shape both team spawn paths pass to create(). They diverged
+    // silently twice — the review path hand-rolled a second copy of the env
+    // allowlist filter against the same constant, so either copy could be edited
+    // without the other. `purpose` selects the reviewer's hard rules; everything
+    // else resolves identically for both.
+    //
+    // `opener` is the session doing the spawning (the lead). It is not derivable
+    // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
+    // is the permission posture.
     resolveSeatShape(team, roleKey, purpose, opener, templateOverride = null) {
       // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
       // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
