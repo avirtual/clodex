@@ -204,19 +204,21 @@ try {
     }
     if (c === "'" || c === '"') { q = c; had = true; continue; }
     if (c === BS && i + 1 < cmd.length) { i++; tok += cmd.charAt(i); had = true; continue; }
+    if (c === String.fromCharCode(10)) { push(); segs.push([]); continue; }
     if (c <= " ") { push(); continue; }
     if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}") { push(); segs.push([]); continue; }
     tok += c; had = true;
   }
   push();
   const ADD_DENY = ["-A", "--all", "--no-ignore-removal", "-u", "--update"];
-  const ADD_PATHS = [".", "./", ":/"];
+  const ADD_PATHS = [".", "./", ":/", "*"];
   const TAKES_ARG = "mcCFt";
+  const PREFIX = ["command", "exec", "env"];
   let bad = false;
   for (const seg of segs) {
     let i = 0;
-    while (i < seg.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i])) i++;
-    if (seg[i] !== "git") continue;
+    while (i < seg.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i]) || PREFIX.indexOf(seg[i]) >= 0)) i++;
+    if (!seg[i] || seg[i].split("/").pop() !== "git") continue;
     i++;
     while (i < seg.length) {
       const t = seg[i];

@@ -50,6 +50,18 @@ const TABLE = [
   { cmd: 'git status; git add .', want: 'deny' },
   { cmd: 'git -C /tmp/wt add -A', want: 'deny' },
   { cmd: 'git add -Av', want: 'deny' },
+  { cmd: 'git add *', want: 'deny' },
+  { cmd: '/usr/bin/git add -A', want: 'deny' },
+  { cmd: 'command git add -A', want: 'deny' },
+  { cmd: 'env FOO=1 git add -A', want: 'deny' },
+
+  // A NEWLINE separates commands exactly as `;` does, and stage-then-commit
+  // across two lines is the default shape a hand writes. Treated as plain token
+  // whitespace it collapses into one segment whose subcommand is whatever the
+  // FIRST line ran, and the `git add -A` behind it is never examined at all.
+  { cmd: 'git status\ngit add -A', want: 'deny' },
+  { cmd: 'cd sub\ngit commit -am x', want: 'deny' },
+  { cmd: 'git commit -m x\ngit add -A', want: 'deny' },
   { cmd: 'git commit -am x', want: 'deny' },
   { cmd: 'git commit -qa -m x', want: 'deny' },
   { cmd: 'git commit --all -m x', want: 'deny' },
@@ -65,6 +77,12 @@ const TABLE = [
   { cmd: 'echo "git add -A"', want: 'pass' },
   { cmd: 'grep -rn "git add -A" docs', want: 'pass' },
   { cmd: 'ls -A', want: 'pass' },
+  // A backslash-newline is a CONTINUATION, not a separator: this is one `git
+  // add` of two paths, and splitting on the newline would leave a second
+  // segment starting at `b.js` — harmless here, but the same rule that splits
+  // it would split a quoted heredoc body.
+  { cmd: 'git add a.js \\\n  b.js', want: 'pass' },
+  { cmd: 'echo hi\ngit status', want: 'pass' },
 ];
 
 test('the guard denies every whole-tree stage and passes everything else', () => {
