@@ -101,6 +101,13 @@ const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } =
 // Keep in sync with the senderName literals at the _deliver* call sites.
 const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex']);
 
+const ECHOED_DUP_TYPES = new Set(['task', 'remind', 'spawn', 'team']);
+
+function dupIdentity(intent) {
+  const what = intent.id || intent.target || intent.name || '';
+  return what ? `${intent.type} ${what}` : intent.type;
+}
+
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
@@ -821,6 +828,11 @@ function createSessionManager(deps) {
               // still guards against a tee-failure replay double-running it.
               if (intent.type !== 'exec' && fired.has(bkey)) {
                 log.warn('intent', `intra-turn dup ${intent.type} ${t.agent} — swallowed`);
+                if (ECHOED_DUP_TYPES.has(intent.type)) {
+                  this._injectText(s, `[agent:${intent.type}] skipped: duplicate of an intent earlier in this same reply `
+                    + `(same ${dupIdentity(intent)}) — not re-run; if it was meant as a distinct emission, `
+                    + 'change what identifies it', { parkable: true });
+                }
                 continue;
               }
               const v = this._intentDeduper.claim(t.agent, bkey, 'wire');

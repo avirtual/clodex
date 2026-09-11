@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket/remind/spawn/team intent swallowed as a duplicate of one earlier in
+  the same reply is echoed back as "skipped: duplicate …" instead of vanishing
+  into the log; the lead prompt now says acks are per-intent and asynchronous,
+  so a missing ack is not a dropped verb (gathered teams: re-gather to pick up
+  the prompt change).
 - **The sandbox worker is a fixture, not a full agent**: the `worker` seat that
   `team sandbox up|rebuild` seeds runs without Bash, file-editing, web or
   subagent tools and with a fixture prompt, so it can answer intent probes but
