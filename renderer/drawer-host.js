@@ -704,10 +704,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // for most of a cycle and the reason a chip appearing is itself the signal.
   //
   // Emptying the host is what hides it: the `:empty` rule in styles.css takes it
-  // out of the flex row entirely, gap included. Each account gets its OWN
-  // element rather than one joined string, because level and staleness are
-  // per-account — one subscription at `rejected` must not colour the other's
-  // number loud.
+  // out of the flex row entirely, gap included.
   function setQuota(chips) {
     if (!quotaEl) return;
     const list = Array.isArray(chips) ? chips.filter(Boolean) : (chips ? [chips] : []);

@@ -1208,13 +1208,6 @@ function createSessionManager(deps) {
       return this._quotaStore;
     }
 
-    // The shape both the broadcast and the `wire:quota` pull carry, built in
-    // ONE place so a window that pulls at launch and one that is pushed to a
-    // second later cannot disagree about what a reading looks like. `latest`
-    // is the pre-t813 flat snapshot, kept for the single-reading path;
-    // `accounts` is every account the wire has seen. Null when nothing has been
-    // observed at all — "no reading" must stay distinguishable from "a reading
-    // with no accounts in it".
     _quotaPayload(store) {
       const latest = store.snapshot();
       if (!latest) return null;
@@ -3481,9 +3474,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // Building the resolver is the expensive half (accounts store reads its
-    // registry), so it is separable: list() builds ONE for the whole sweep,
-    // while the quota consumer builds one per forwarded turn.
     _accountResolver() {
       try {
         const accountsStore = (getAccounts && getAccounts()) || null;
@@ -3494,10 +3484,6 @@ function createSessionManager(deps) {
       } catch { return null; }
     }
 
-    // The account label a seat runs on, off its persisted CLAUDE_CONFIG_DIR.
-    // ONE implementation for the sidebar row and for the quota store's key: a
-    // second copy would let a chip be labelled with an account the row beside
-    // it does not show.
     accountFor(name, resolve = this._accountResolver()) {
       if (!resolve) return 'default';
       try {
@@ -3507,10 +3493,6 @@ function createSessionManager(deps) {
       } catch { return 'default'; }
     }
 
-    // The account label behind a wire `response` event's `agent`. Null, never
-    // 'default', when no live session claims it: the store's org-header keying
-    // is the honest fallback for a seat we cannot place, while a 'default' here
-    // would file an unknown seat's numbers on top of a real account's row.
     _accountForProxyAgent(agent) {
       if (!agent) return null;
       let match = null;

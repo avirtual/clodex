@@ -572,16 +572,6 @@ function quotaChip(q, clientAgeS = 0) {
   return { level, text: parts.join(' · '), tip, stale };
 }
 
-// One chip per ACCOUNT, which is the unit the quota is actually charged against:
-// with two subscriptions in use the whole point is watching which pool empties
-// first, and a single readout keyed on whichever org header arrived last just
-// alternates between them. `entries` are pickQuota's, each carrying an
-// `account` label; the selection rule runs unchanged WITHIN a label, so a
-// wirescope fallback still loses to a wire reading for the same account.
-//
-// The label is rendered only when more than one chip survives: one subscription
-// must read exactly as it did before this existed, and a lone `default ·` prefix
-// is noise for the operator who has nothing to tell it apart from.
 function quotaChips(entries, nowMs = Date.now()) {
   if (!Array.isArray(entries)) return [];
   const byAccount = new Map();

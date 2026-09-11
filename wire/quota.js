@@ -204,11 +204,6 @@ class QuotaStore {
     // once so the org lookup and the parse agree.
     const lower = {};
     for (const [k, v] of Object.entries(headers || {})) lower[String(k).toLowerCase()] = v;
-    // The SEAT's account label is the key when the caller could resolve one:
-    // the org header is whatever the last response happened to carry, so keying
-    // by it collapses two subscriptions into one flickering number the moment
-    // both are in use. Without a label, key by org as before — that fallback is
-    // what keeps an unresolvable agent, and the 429 branch below, correct.
     const label = typeof account === 'string' && account ? account : null;
     const acct = label || lower['anthropic-organization-id'] || 'default';
     const parsed = parseQuotaHeaders(lower);
@@ -219,9 +214,8 @@ class QuotaStore {
         // ATTRIBUTION: a 429 need not carry the org header either, and filing
         // it under 'default' would park it beside no reading at all — the bar
         // would show a stale percentage with no sign of the wall being hit.
-        // Fall back to the account we last read from. A resolved LABEL is not a
-        // guess, so it files strictly: a refusal on one subscription must never
-        // land on the other's row.
+        // Fall back to the account we last read from — but a resolved LABEL is
+        // not a guess, so it files strictly rather than falling back at all.
         const key = label != null ? label
           : (this._byAccount.has(acct) ? acct : this._lastAccount);
         const cur = key != null ? this._byAccount.get(key) : null;
@@ -273,9 +267,6 @@ class QuotaStore {
   }
 
   // Every account we hold, labelled, for a chip that renders one segment each.
-  // `default` leads because it is the seat account an unconfigured install runs
-  // on, so the row an operator with one subscription sees must not move when a
-  // second one appears beside it.
   snapshotAll(now = Date.now() / 1000) {
     const rows = [];
     for (const [account, entry] of this._byAccount) {

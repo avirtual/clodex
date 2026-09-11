@@ -3503,25 +3503,19 @@ function applyWarmBadge(name) {
 
 // The plan quota is the ACCOUNT's, so the drawer bar shows one readout PER
 // ACCOUNT and none per session. Two sources feed it: our own wire's response
-// headers (`wire-quota`, turn-frequency, preferred, and labelled by the seat's
-// account) and the wirescope poller's `/_status` block, kept as the fallback for
+// headers (`wire-quota`, turn-frequency, preferred, labelled by the seat's
+// account) and the wirescope poller's `/_status` block, the fallback for
 // sessions not routed through our wire. `quotaChips` holds the whole selection
 // rule — pickQuota per account, including the void-on-roll check that needs the
-// absolute reset — so it can be unit-tested; this function only gathers the
-// candidates.
+// absolute reset — so it can be unit-tested; this only gathers the candidates.
 //
 // No session-type filter here, and none is needed: a codex turn carries no
 // ratelimit headers, so a codex seat contributes no reading by construction.
-let wireQuota = null; // { quota, at } — the latest reading, whatever account
-let wireQuotaAccounts = []; // [{ account, quota, at }] — one per account seen
+let wireQuota = null;
+let wireQuotaAccounts = [];
 function refreshQuotaChip() {
   const entries = [];
   for (const e of wireQuotaAccounts) entries.push({ ...e, source: 'wire' });
-  // The wirescope poller knows no account: its reading belongs to whichever
-  // subscription that proxy runs on, and nothing in /_status says which. Filing
-  // it under `default` is only honest while the wire has said nothing about
-  // `default` itself — otherwise it would outrank, or be outranked by, a
-  // labelled reading it may have nothing to do with.
   const haveDefault = wireQuotaAccounts.some((e) => e.account === 'default');
   if (!haveDefault) {
     for (const [, st] of proxyState) {
@@ -3537,9 +3531,6 @@ function refreshQuotaChip() {
   refreshAuthBanner(proxyState.values());
 }
 
-// The broadcast carries every account at once, so the renderer REPLACES its list
-// rather than merging: an account whose row the store dropped must leave the bar
-// with it, and a merge would keep rendering a chip nothing updates again.
 function acceptWireQuota(payload, at = Date.now()) {
   const rows = (payload && Array.isArray(payload.accounts)) ? payload.accounts : [];
   const next = [];
