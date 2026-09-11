@@ -1939,6 +1939,42 @@ test('formatRoster: the action line keys off the role name, never the lead SEAT 
   assert.match(roster, /Dispatch: TWO steps\. \[agent:task add <role>\] <spec>/);
 });
 
+// The line advertised the verb to every seat, so a lead spawned without the
+// grant read "Ground truth on demand: [agent:exec clodex-team] {...}" and got
+// "not granted to this seat" on trying it. Grants are the seat's persisted
+// execCommands; `grants` absent means UNKNOWN, which must not be read as none.
+test('formatRoster: the exec line is advertised only to a seat that holds the grant', () => {
+  const held = formatRoster(TEAM(), [], { seat: 'clodex', grants: ['clodex-team', 'clodex-run-tests'] });
+  assert.deepStrictEqual(execPayloadFrom(held), { action: 'roster', agent: 'clodex' },
+    'a seat that holds the grant gets the invocation, unchanged');
+  assert.ok(!/NOT granted/.test(held), 'and is told nothing about a grant it has');
+
+  const without = formatRoster(TEAM(), [], { seat: 'clodex', grants: [] });
+  // ENTER: the whole point of the vector — a seat with no grants must be told
+  // so, or the line is an advertisement for a verb that bounces.
+  assert.match(without, /NOT granted/, 'ENTER: a seat without the grant is told it lacks it');
+  assert.match(without, /^Ground truth on demand: \[agent:exec clodex-team\] is NOT granted to this seat — Edit Session ▸ Exec commands, or respawn on a template that carries it \(clodex-team-lead does\)$/m,
+    'and told both ways to get it');
+  assert.strictEqual(execPayloadFrom(without), null,
+    'no JSON payload survives: a seat that copies one only earns a bounce');
+
+  // A grant list the caller could not read is not evidence of no grants, so the
+  // line stays exactly as it was before this option existed.
+  assert.strictEqual(formatRoster(TEAM(), [], { seat: 'clodex' }),
+    formatRoster(TEAM(), [], { seat: 'clodex', grants: null }),
+    'omitted and explicit-null are the same UNKNOWN case');
+  const lastLine = (t) => t.split('\n').at(-1);
+  assert.strictEqual(lastLine(formatRoster(TEAM(), [], { seat: 'clodex' })),
+    'Ground truth on demand: [agent:exec clodex-team] {"action":"roster","agent":"clodex"}',
+    'unknown grants render the pre-existing line byte for byte');
+
+  // Held-with-others and a non-lead seat: the gate is the grant, never the role.
+  assert.match(formatRoster(TEAM(), [], { seat: 'shop-hand', grants: ['clodex-run-tests'] }), /NOT granted/,
+    'a hand missing it is told too — _handleExecIntent bounces it the same way');
+  assert.deepStrictEqual(execPayloadFrom(formatRoster(TEAM(), [], { seat: 'shop-hand', grants: ['clodex-team'] })),
+    { action: 'roster', agent: 'shop-hand' });
+});
+
 // The block renders the invocation with a PLACEHOLDER agent, never the reader's
 // seat: that token is the one thing this block must not vary on. Both halves are
 // load-bearing and neither implies the other — dropping the payload strands a

@@ -2628,6 +2628,55 @@ test('t770: lead.template naming an uninstalled stem spawns bare and SAYS so', a
   assert.ok(!/via template/.test(f.replies.at(-1)), 'and it must not claim a template was applied');
 });
 
+// --- t824: a lead spawned with no clodex-team grant is told in the reply -----
+// The roster block advertises `[agent:exec clodex-team]` to the lead, but the
+// grant lives only in the seat's persisted execCommands (from the template).
+// A lead on a template carrying none boots advertising a verb that bounces, and
+// the spawn reply is the moment the spawner can still fix it.
+test('t824: a lead spawned on a template with no execCommands carries the grant WARNING', async () => {
+  const bare = { id: 'plain-lead', name: 'plain-lead', type: 'claude' };
+  const f = mkLeadSpawn({ extraTemplates: [bare] });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot, template: 'plain-lead' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the seat really booted — the WARNING is never a refusal');
+  assert.deepStrictEqual(f.created[0][16], [], 'ENTER: and it booted with no grants, which is what is warned about');
+  const reply = f.replies.at(-1);
+  assert.match(reply, /^\[agent:spawn\] ok: spawned "acme-lead"/, 'ENTER: the ok reply is what the WARNING rides');
+  assert.match(reply, /WARNING: lead seat has no clodex-team exec grant \(template "plain-lead" carries none\); the roster verb will bounce until granted/);
+});
+
+test('t824: a lead on clodex-team-lead holds the grant, so the reply says nothing', async () => {
+  const f = mkLeadSpawn();
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.ok(f.created[0][16].includes('clodex-team'), 'ENTER: the shipped lead template really carries the grant');
+  assert.ok(!/WARNING: lead seat has no clodex-team/.test(f.replies.at(-1)),
+    `a granted lead must not be warned, got: ${f.replies.at(-1)}`);
+});
+
+test('t824: a NON-lead seat with no grants is not warned — the roster line tells it instead', async () => {
+  const bare = { id: 'plain-seat', name: 'plain-seat', type: 'claude' };
+  const f = mkLeadSpawn({ extraTemplates: [bare] });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-hand', cwd: f.projectRoot, template: 'plain-seat' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][16], [], 'ENTER: this seat has no grants either');
+  assert.ok(!/WARNING: lead seat has no clodex-team/.test(f.replies.at(-1)),
+    `only the lead's missing grant is a spawn-time warning, got: ${f.replies.at(-1)}`);
+});
+
+test('t824: a lead spawned off any team gets no WARNING — there is no team whose roster to hold', async () => {
+  const bare = { id: 'plain-lead', name: 'plain-lead', type: 'claude' };
+  const f = mkLeadSpawn({ extraTemplates: [bare] });
+  const nowhere = mkTmpRoot('t824-nowhere-');
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: nowhere, template: 'plain-lead' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.ok(!/WARNING: lead seat has no clodex-team/.test(f.replies.at(-1)),
+    `off-team spawn must not warn, got: ${f.replies.at(-1)}`);
+});
+
 test('t782 _validateSeatName: the five verdicts, with the error strings the spawn reply carries', () => {
   const m2 = mk({
     AGENT_NAME_RE: AGENT_NAME_RE_T,
