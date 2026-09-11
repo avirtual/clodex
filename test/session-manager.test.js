@@ -4120,23 +4120,43 @@ test('composeRosterFor: renders for the NAMED seat, live or persistence-only', (
   const { m } = mkPark({
     ...teamDeps,
     peerStatusLabel: () => 'idle 12m, warm',
-    getPersistence: () => ({ get: (n) => (n === 'team-gone' ? { cwd: '/proj/z' } : null) }),
+    getPersistence: () => ({
+      get: (n) => {
+        // `team-gone` is the real store's shape for a seat with NO grants: the
+        // key is DELETED on an empty list (stores.js setExecCommands), never
+        // written as []. `team-kept` is the same persistence-only seat WITH the
+        // grant, which is what keeps the naming property below exercised.
+        if (n === 'team-gone') return { cwd: '/proj/z' };
+        if (n === 'team-kept') return { cwd: '/proj/z', execCommands: ['clodex-team'] };
+        return null;
+      },
+    }),
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
 
   const forLead = m.composeRosterFor('lead');
-  assert.match(forLead, /"agent":"lead"/, 'the exec line names the seat the digest is for');
   assert.match(forLead, /live: lead \(you\)/, 'the reading seat is marked in its own digest');
   assert.match(forLead, /live: team-dev \(idle 12m, warm\)/, 'teammates carry their warmth label');
   assert.match(forLead, /Dispatch: TWO steps\. \[agent:task add <role>\]/, 'the lead seat gets the action line');
 
   // Not in the map: the cwd comes from persistence, and the seat name must
   // still reach formatRoster.
-  const forGone = m.composeRosterFor('team-gone');
-  assert.match(forGone, /"agent":"team-gone"/, 'a persistence-only seat is still named in its own digest');
-  assert.ok(!/Dispatch:/.test(forGone), 'a non-lead seat gets no action line');
+  const forKept = m.composeRosterFor('team-kept');
+  assert.match(forKept, /"agent":"team-kept"/, 'a persistence-only seat is still named in its own digest');
+  assert.ok(!/Dispatch:/.test(forKept), 'a non-lead seat gets no action line');
   assert.strictEqual(m.composeRosterFor('nowhere'), null, 'no cwd anywhere → no roster');
+
+  // ENTER: the digest is the longest-lived of the three call sites — it is
+  // re-served on every context reset — so a seat with no grants must be told
+  // so HERE, not handed an invocation that bounces for the rest of its life.
+  const forGone = m.composeRosterFor('team-gone');
+  assert.match(forGone, /NOT granted/,
+    'ENTER: an entry with no execCommands key is a seat with NO grants, not an unknown one');
+  assert.ok(!/"agent":"team-gone"/.test(forGone), 'and it is handed no payload to copy');
+  // `lead` has no persistence entry at all in this stub: unreadable, not empty.
+  assert.match(forLead, /"agent":"lead"/,
+    'a seat with NO entry stays UNKNOWN and keeps the advertisement');
 });
 
 // MUST-FIX 1: a RESUMED codex seat has no stashed roster — _settleBoot just closes

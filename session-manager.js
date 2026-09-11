@@ -3251,7 +3251,8 @@ function createSessionManager(deps) {
     _seatGrants(name) {
       try {
         const e = getPersistence().get(name);
-        return Array.isArray(e && e.execCommands) ? e.execCommands : null;
+        if (!e) return null;
+        return Array.isArray(e.execCommands) ? e.execCommands : [];
       } catch { return null; }
     }
 
