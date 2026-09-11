@@ -620,6 +620,15 @@ test('t825: a REJECT during the post-merge suite leaves the rework round its sea
   });
   f.m.kill = async (n) => { f.persistence.remove(n); f.m.sessions.delete(n); };
 
+  // Counted, because the three state guards all render the same sentence: with
+  // only the disk and the notice to look at, this subject passes whichever layer
+  // caught the reopen, and so pins none of them. The call site's job is that the
+  // close-out is never ENTERED — the refusal inside it is the second line of
+  // defence, not the first.
+  const realCloseOut = f.m._closeOutMergedTicket.bind(f.m);
+  let closeOutCalls = 0;
+  f.m._closeOutMergedTicket = async (...args) => { closeOutCalls += 1; return realCloseOut(...args); };
+
   // The REAL `_taskReject`, fired at the real seam, exactly as the mid-merge
   // reject subject below does for `currentBranch`.
   const realSuite = f.m._runTicketSuite.bind(f.m);
@@ -636,6 +645,8 @@ test('t825: a REJECT during the post-merge suite leaves the rework round its sea
 
   const t = f.one();
   assert.strictEqual(t.state, 'open', 'ENTER: the ticket is open for rework when the loop reaches its close-out');
+  assert.strictEqual(closeOutCalls, 0,
+    'the merge step reads the row and declines to call the close-out at all');
   // The teardown must not have run. Each of these is a separate irreversible
   // loss, so none of them stands in for the others.
   assert.ok(fsReal.existsSync(wtPath), 'the rework round keeps its checkout');
@@ -680,11 +691,29 @@ test('t825: _closeOutMergedTicket refuses for the loop on a ticket that is not d
   f.tstore.save(f.team.root, ts);
   f.m.destroy = async () => { throw new Error('the loop tore down a ticket that was open for rework'); };
 
-  const r = await f.m._closeOutMergedTicket(f.team, row, ts, { by: 'ticket-loop' });
+  // The post-`isMerged` re-read refuses a reopen too, and its `{ok:false,
+  // closedOut:false, reopened:true}` is indistinguishable from this one's — so
+  // the flags alone pin whichever layer happened to catch it. The ENTRY guard's
+  // distinct claim is that it refuses BEFORE any git runs, which is both the
+  // sentence it returns and the fact that `isMerged` is never reached.
+  const realIsMerged = require('../git-worktree').isMerged;
+  let mergeChecks = 0;
+  f.deps.gitWorktree.isMerged = async (...args) => { mergeChecks += 1; return realIsMerged(...args); };
+
+  let r;
+  try {
+    r = await f.m._closeOutMergedTicket(f.team, row, ts, { by: 'ticket-loop' });
+  } finally {
+    f.deps.gitWorktree.isMerged = realIsMerged;
+  }
 
   assert.ok(r.reopened, `the loop is refused on an open ticket. Got: ${r.text}`);
   assert.strictEqual(r.ok, false, 'and it is NOT reported as a close-out');
   assert.strictEqual(r.closedOut, false, 'nor as closing the ticket');
+  assert.strictEqual(mergeChecks, 0,
+    'refused on ENTRY — a state the caller could have read itself is not worth a git call');
+  assert.ok(r.text.includes('before the loop could close it out'),
+    `and the sentence says where it stopped, which is how the two refusals differ. Got: ${r.text}`);
   assert.ok(!f.one().loopClosedOut, 'nothing is stamped');
   assert.strictEqual(f.one().acceptedBy, undefined, 'and no accept is attributed');
 });
