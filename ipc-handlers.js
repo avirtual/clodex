@@ -1193,12 +1193,6 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  // Registered Claude subscriptions. LOCAL-only by ABSENCE on the web surface,
-  // the enableDrawerServices shape: a configDir is the path to a credential
-  // store, and `move-by-model` restarts live seats — neither belongs to a
-  // remote viewer. Registration IS the capability there (web-host dispatches any
-  // registered channel by name), so the gate has to be the `if`, not a flag the
-  // client chooses.
   if (enableAccounts) {
     handle('accounts:list', () => {
       if (!accounts) return { ok: false, error: 'accounts not supported on this host' };

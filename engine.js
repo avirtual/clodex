@@ -195,11 +195,6 @@ function createEngine({ userDataPath, seams = {}, log }) {
 
   const enableConsole = seams.enableConsole !== false;
 
-  // The registered-subscription surface (t811). Gated for the same reason the
-  // drawer services are, and NOT for the reason the local terminal is ungated:
-  // an account's configDir is the path to a credential store, and
-  // `accounts:move-by-model` kills and respawns live seats on this box. Neither
-  // is something the ungated `session:create` already grants a web client.
   const enableAccounts = seams.enableAccounts !== false;
 
   // The browser frontend's host, for peers that want to REACH it (t30). A
@@ -1688,9 +1683,6 @@ function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
   return sweepAccountMove({
     model,
     label,
-    // Snapshotted by sweepAccountMove before the first restart: a respawn
-    // replaces the session object mid-sweep, and iterating the live Map while it
-    // mutates would visit a seat twice or not at all.
     liveSessions: manager.sessions.values(),
     getEntry: (name) => persistence.get(name),
     configDirFor: (l) => accounts.configDirFor(l),

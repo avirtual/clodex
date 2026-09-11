@@ -242,11 +242,6 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     // beside the refusal it deliberately does not share.
     enableLocalTerminal: true,
     enableConsole: true,
-    // Registered subscriptions (t811) join the DECLINED set, not the granted
-    // one: `accounts:list` hands out the filesystem path of each account's
-    // credential store, and `accounts:move-by-model` kills and respawns live
-    // seats on this box. The `session:create` argument that ungated the drawer
-    // terminal does not reach either.
     enableAccounts: false,
   };
   (registerHandlers || require('./ipc-handlers').registerIpcHandlers)(deps);

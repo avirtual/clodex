@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **Registered subscriptions**: Clodex keeps a list of Claude accounts
+  (`~/.clodex/accounts.json`), mints an isolated config dir per account that
+  shares transcripts, plugins and skills with `~/.claude`, labels every session
+  row with its account, and can move every seat on a given model to another
+  account in one step. The Preferences pane and dialog selectors land next.
 - **Team templates keep their brief when edited**: the template editor now lists the owning team's own append prompts (e.g. `team-project`) as a checked section, so saving a team template no longer silently empties `appendPromptFiles`.
 - **A managed sandbox can track a git ref**: set "Track git ref" on the box to
   `master` or a ticket branch and Rebuild builds the box from that commit, so a

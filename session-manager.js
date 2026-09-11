@@ -1273,11 +1273,6 @@ function createSessionManager(deps) {
         mergedEnv = { ...baseEnv };
       }
 
-      // A CLAUDE_CONFIG_DIR pointing at nothing does not fail the spawn — the
-      // CLI happily mints an empty config there and the seat loops on
-      // onboarding, silently, forever. Refuse BEFORE spawning so the operator
-      // sees the reason instead of a wedged tab. Read off the merged env
-      // because the var can arrive from any scope, not just this call's.
       const accountDir = mergedEnv.CLAUDE_CONFIG_DIR;
       if (accountDir) {
         let ok = false;
@@ -3528,12 +3523,8 @@ function createSessionManager(deps) {
           return open ? open.id : null;
         } catch { return null; }
       };
-      // The account label comes off the PERSISTED env, not the live process's:
-      // the persisted entry is the respawn recipe, so it is what the row claims
-      // the seat will come back on. An unregistered dir falls back to its
-      // basename inside labelFor, so `~/sub-2` still reads as `sub-2`.
       const accountsStore = (getAccounts && getAccounts()) || null;
-      const accountFor = (name) => {
+      const accountFromPersistedEnv = (name) => {
         if (!accountsStore) return 'default';
         try {
           const entry = getPersistence().get(name);
@@ -3557,7 +3548,7 @@ function createSessionManager(deps) {
         noWire: !!s.noWire,
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
-        account: accountFor(s.name),
+        account: accountFromPersistedEnv(s.name),
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }

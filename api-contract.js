@@ -462,12 +462,6 @@ const API_CONTRACT = [
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
   { name: 'envDefaultsGet', kind: 'invoke', channel: 'envDefaults:get' },
   { name: 'envDefaultsRestore', kind: 'invoke', channel: 'envDefaults:restore' },
-  // Registered Claude subscriptions (t811): the registry behind every seat's
-  // CLAUDE_CONFIG_DIR, plus the bulk "move every seat on model X to account Y".
-  // Bound on both surfaces because this table is a binding table, not a
-  // permission list — the web build's bindings reach no handler, since
-  // registration is gated on enableAccounts (ipc-handlers.js), the same shape
-  // as the ctl:* rows above.
   { name: 'accountsList', kind: 'invoke', channel: 'accounts:list' },
   { name: 'accountsAdd', kind: 'invoke', channel: 'accounts:add' },
   { name: 'accountsRemove', kind: 'invoke', channel: 'accounts:remove' },

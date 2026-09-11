@@ -7,3 +7,13 @@
 `team:gather` reply only — `applyGather` runs inside `gatherTeam`, before this
 handler sees the result, so the leaf and the `[agent:team gather]` intent path
 still have it.
+
+## enableAccounts
+
+The `accounts:*` family is gated by ABSENCE of registration, the
+`enableDrawerServices` shape, not by a flag the handler consults: web-host
+dispatches any registered channel by name, so registration IS the capability
+there. It joins the DECLINED set rather than the granted one because
+`accounts:list` hands out the filesystem path of each account's credential
+store and `accounts:move-by-model` kills and respawns live seats — neither is
+something the ungated `session:create` already grants a web client.
