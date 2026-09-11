@@ -30,7 +30,7 @@ const {
   teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
-  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, accountOptions,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -516,6 +516,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       head.appendChild(chip);
     }
 
+    if (summary.account) {
+      const acct = document.createElement('span');
+      acct.className = 'team-role-chip team-role-account';
+      acct.textContent = summary.account;
+      acct.title = 'Account every seat the loop mints for this role boots on';
+      head.appendChild(acct);
+    }
+
     // A collapsed row must not swallow an unresolved reference. The checklist
     // itself lives in the body; this is the marker that says there is one.
     if (owed && owed.length) {
@@ -707,9 +715,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
           `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>` +
-          `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label>` +
+          `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label>` +
           `<div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
-        body.querySelector('input[data-f="account"]').value = row.account;
+        paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
         // The lead ROLE stays locked; which SEAT fills it does not (t420).
         // Gated on `normal` because a non-normal stage ALREADY hoisted a lead
         // block card above the list: two live seat editors for one setting, each
@@ -744,7 +752,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `<div class="team-role-editcap">Edit this role</div>` +
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
-          `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label>` +
+          `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label>` +
           `<div class="team-role-dispatch" data-f-group="dispatch"></div>` +
           `<div class="team-role-reveal" data-reveal></div>` +
           `<div class="team-role-actions">` +
@@ -753,7 +761,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `<button type="button" data-act="remove" class="secondary">Remove</button>` +
           `</div>`;
         body.querySelector('input[data-f="brief"]').value = row.brief;
-        body.querySelector('input[data-f="account"]').value = row.account;
+        paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
         // Prompt is a picker (a stem the resolver can find — free text just fails
         // at spawn time; matches the Add Role form). Options come from the same
         // rail-filtered list; a stored prompt the list does not offer still has
@@ -1002,12 +1010,36 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     templateRows = Array.isArray(rows) ? rows : [];
   }
 
+  let accountRows = [];
+  async function populateAccountOptions() {
+    let res;
+    try { res = await window.api.accountsList(); } catch { res = null; }
+    accountRows = (res && res.ok && Array.isArray(res.accounts)) ? res.accounts : [];
+  }
+
+  function paintAccountSelect(sel, stored) {
+    if (!sel) return;
+    sel.innerHTML = '';
+    const opts = accountOptions(accountRows, stored);
+    for (const o of opts) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.text;
+      if (o.marked) opt.title = 'Save is refused until this is set to a registered account or default';
+      sel.appendChild(opt);
+    }
+    const chosen = opts.find((o) => o.selected);
+    sel.value = chosen ? chosen.value : '';
+  }
+
   async function openTeamRolesPopover(name, anchorEl) {
     setStatus('');
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
     await populatePromptOptions(name);
     await populateTemplateOptions();
+    await populateAccountOptions();
+    paintAccountSelect(addAccount, '');
     // Every open starts fully collapsed — the acceptance test (lead + hand +
     // reviewer + one custom role fitting without scrolling) is measured in this
     // state, so it must be the state an open lands in, not one the operator has
@@ -1087,7 +1119,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     }
     if (act === 'save') {
       const val = (f) => {
-        // prompt and template are <select>s, cwd and account are <input>s — match on data-f alone.
+        // prompt, template and account are <select>s, cwd is an <input> — match on data-f alone.
         const inp = rowEl.querySelector(`[data-f="${f}"]`);
         return inp ? inp.value : '';
       };
@@ -1162,7 +1194,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   // on the next open would read as saved state for a role that was never added.
   const resetAddForm = () => {
     addName.value = ''; addBrief.value = ''; addTemplate.value = '';
-    addPrompt.value = ''; addCwd.value = ''; addAccount.value = '';
+    addPrompt.value = ''; addCwd.value = ''; paintAccountSelect(addAccount, '');
     addDispatch.value = DEFAULT_DISPATCH;
     paintAddReveal();
   };
