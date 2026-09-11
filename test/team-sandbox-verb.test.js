@@ -23,7 +23,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 
-function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, hasToken = true, config = {} } = {}) {
+function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, config = {} } = {}) {
   const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
   // The box's config is REAL state here, not a spy log: the handler reads it back
@@ -51,7 +51,6 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult
     },
     remoteToken: () => TOKEN,
     async waitHealthy() { calls.waitHealthy++; return healthResult || { ok: true, polls: 1, ms: 4000 }; },
-    hasAuthToken: () => hasToken,
     translateHostPath: () => ({ container: '/home/clodex/work' }),
   });
   const instances = new Map();

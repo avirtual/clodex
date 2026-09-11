@@ -135,7 +135,7 @@ test('createSession: every wire key lands in the right create() position', async
   assert.deepStrictEqual(c[IDX.extraArgs], ['--model', 'opus']);
   assert.strictEqual(c[IDX.resumeId], 'sess-123');
   assert.strictEqual(c[IDX.workspaceId], 'default');
-  assert.strictEqual(c[IDX.systemPromptBody], null, 'F2 — systemPromptBody stays null');
+  assert.strictEqual(c[IDX.systemPromptBody], null, 'a body with no systemPromptBody still gets null');
   assert.strictEqual(c[IDX.fork], true);
   assert.strictEqual(c[IDX.proxy], 'http://p');
   assert.deepStrictEqual(c[IDX.agents], ['a1']);
@@ -155,6 +155,48 @@ test('createSession: every wire key lands in the right create() position', async
   assert.strictEqual(c[IDX.mint], true,
     'the peer spawn front door must declare itself a mint — omitting it takes create()\'s '
     + 'default (false), which freezes the new session onto a dead same-named session\'s prompt baseline');
+});
+
+// ── createSession: systemPromptBody (t821) ───────────────────────────────────
+
+// The route hard-coded null here, so a seeder could lock a box seat's TOOLS but
+// never tell it what it is for. A bounded string now crosses; the bound is what
+// keeps a create body from carrying an unbounded prompt over the wire.
+test('createSession: a string systemPromptBody reaches create() verbatim', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  await opts.createSession({ name: 'fx', type: 'claude', cwd: '/tmp/f', systemPromptBody: 'be a fixture' });
+  assert.strictEqual(createCalls[0][IDX.systemPromptBody], 'be a fixture');
+});
+
+test('createSession: a systemPromptBody over 4 KB is dropped to null', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  await opts.createSession({ name: 'fx', type: 'claude', cwd: '/tmp/f', systemPromptBody: 'x'.repeat(4097) });
+  assert.strictEqual(createCalls[0][IDX.systemPromptBody], null);
+});
+
+test('createSession: exactly 4 KB is still accepted — the bound is inclusive', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  await opts.createSession({ name: 'fx', type: 'claude', cwd: '/tmp/f', systemPromptBody: 'x'.repeat(4096) });
+  assert.strictEqual(createCalls[0][IDX.systemPromptBody], 'x'.repeat(4096));
+});
+
+// The cap is on BYTES, not characters: a 4096-character prompt of multi-byte
+// text is a ~12 KB body, and a length check would wave it through.
+test('createSession: the 4 KB cap counts utf-8 bytes, not characters', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  await opts.createSession({ name: 'fx', type: 'claude', cwd: '/tmp/f', systemPromptBody: '€'.repeat(2000) });
+  assert.strictEqual(createCalls[0][IDX.systemPromptBody], null, '2000 chars is 6000 bytes — over the cap');
+});
+
+test('createSession: a non-string systemPromptBody is null, not forwarded', async () => {
+  const { deps, createCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  await opts.createSession({ name: 'fx', type: 'claude', cwd: '/tmp/f', systemPromptBody: { evil: 1 } });
+  assert.strictEqual(createCalls[0][IDX.systemPromptBody], null);
 });
 
 // ── createSession: session env (T46) — sanitize inbound + ack envKeys echo ───

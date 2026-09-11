@@ -1,7 +1,13 @@
 'use strict';
 
 async function readBody(res) {
-  try { return String(await res.text()).trim().slice(0, 300); } catch { return ''; }
+  let text = '';
+  try { text = String(await res.text()).trim(); } catch { return ''; }
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.error === 'string') text = parsed.error.trim();
+  } catch {}
+  return text.slice(0, 300);
 }
 
 async function seedSandboxSessions({ wireUrl, token, seeds, optional, fetch } = {}) {

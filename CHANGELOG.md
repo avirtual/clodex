@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **The sandbox worker is a fixture, not a full agent**: the `worker` seat that
+  `team sandbox up|rebuild` seeds runs without Bash, file-editing, web or
+  subagent tools and with a fixture prompt, so it can answer intent probes but
+  cannot change the box's repo.
+
 ## 5.62.0 — 2026-09-11 — Move-by-model sees every Fable seat, moved seats keep their folder trust, and the loop says what the lead owes
 
 - **Moved seats stop asking to trust their folder**: a minted account copies the
