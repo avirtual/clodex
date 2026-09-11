@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { shapeQuota, quotaChip, fmtQuotaReset, QUOTA_429_RECENT_S, QUOTA_WINDOW_LABEL } = require('../proxy-util');
+const { shapeQuota, quotaChip, quotaChips, fmtQuotaReset, QUOTA_429_RECENT_S, QUOTA_WINDOW_LABEL } = require('../proxy-util');
 const { CLAIM_WINDOW } = require('../wire/quota');
 
 // Measured verbatim off this box's wirescope v0.6.53 /_status at 95% weekly.
@@ -398,6 +398,77 @@ test('quotaChip: the tip says the figure is the account, not the session', () =>
   // The bottom bar's neighbouring numbers are all per-SESSION; an unlabelled
   // account percentage beside them invites a category error.
   assert.match(quotaChip(shapeQuota(LIVE, CAPS)).tip, /not this session/i);
+});
+
+// ---- one chip per account (t813) ----
+
+const LOUD = { status: 'rejected', window: '7d', usedPct: 69, resetsInS: 3600, ageS: 1 };
+const QUIET = { status: 'rejected', window: '5h', usedPct: 12, resetsInS: 600, ageS: 1 };
+
+test('quotaChips: one account renders exactly what quotaChip already returned, unlabelled', () => {
+  // The single-subscription operator must see no change at all — a lone
+  // `default · ` prefix is noise for someone with nothing to tell apart.
+  const chips = quotaChips([{ account: 'default', quota: LOUD, at: Date.now(), source: 'wire' }]);
+  assert.strictEqual(chips.length, 1);
+  assert.deepStrictEqual(chips[0], quotaChip(LOUD, 0));
+  assert.strictEqual(chips[0].text, 'week (all models) quota 69% used · resets in 1h');
+});
+
+test('quotaChips: two accounts render two chips, labelled, default first', () => {
+  const now = Date.now();
+  const chips = quotaChips([
+    { account: 'sub-2', quota: QUIET, at: now, source: 'wire' },
+    { account: 'default', quota: LOUD, at: now, source: 'wire' },
+  ], now);
+  assert.strictEqual(chips.length, 2, 'ENTER: two chips, or the per-chip texts below read one entry twice');
+  assert.strictEqual(chips[0].text, 'default · week (all models) quota 69% used · resets in 1h');
+  assert.strictEqual(chips[1].text, 'sub-2 · 5h quota 12% used · resets in 10m');
+  assert.match(chips[0].tip, /^default · /);
+  assert.match(chips[1].tip, /^sub-2 · /);
+});
+
+test('quotaChips: level and staleness stay per account', () => {
+  // One subscription at the wall must not colour the other's number loud.
+  const now = Date.now();
+  const chips = quotaChips([
+    { account: 'default', quota: { ...LOUD, status: 'allowed_warning', windows: { '7d': { usedPct: 69, status: 'allowed_warning' } } }, at: now, source: 'wire' },
+    { account: 'sub-2', quota: { ...QUIET, windows: { '5h': { usedPct: 12, status: 'rejected' } } }, at: now - 600000, source: 'wire' },
+  ], now);
+  assert.deepStrictEqual(chips.map((c) => c.level), ['warn', 'loud']);
+  assert.deepStrictEqual(chips.map((c) => !!c.stale), [false, true]);
+});
+
+test('quotaChips: the selection rule still runs WITHIN an account', () => {
+  // A wirescope poll and a wire reading for the same label are still two
+  // candidates for ONE chip, not two chips — the per-account split must not
+  // turn the source ranking into a second row.
+  const now = Date.now();
+  const chips = quotaChips([
+    { account: 'default', quota: QUIET, at: now, source: 'wirescope' },
+    { account: 'default', quota: LOUD, at: now - 60000, source: 'wire' },
+  ], now);
+  assert.strictEqual(chips.length, 1, 'one account, one chip, however many readings feed it');
+  assert.strictEqual(chips[0].text, 'week (all models) quota 69% used · resets in 1h',
+    'the wire reading won, unlabelled because it is the only chip');
+});
+
+test('quotaChips: an account whose reading renders nothing drops out and unlabels the rest', () => {
+  // quotaChip returning null is the comfortable case, and a comfortable
+  // account is not a blank chip — it is no chip. The survivor is then alone,
+  // so it loses its prefix.
+  const now = Date.now();
+  const chips = quotaChips([
+    { account: 'default', quota: { status: 'allowed', window: '7d', usedPct: 3, ageS: 1 }, at: now, source: 'wire' },
+    { account: 'sub-2', quota: QUIET, at: now, source: 'wire' },
+  ], now);
+  assert.strictEqual(chips.length, 1);
+  assert.strictEqual(chips[0].text, '5h quota 12% used · resets in 10m');
+});
+
+test('quotaChips: no entries, or none with a quota, is an empty list', () => {
+  assert.deepStrictEqual(quotaChips([]), []);
+  assert.deepStrictEqual(quotaChips(null), []);
+  assert.deepStrictEqual(quotaChips([{ account: 'default', at: Date.now() }]), []);
 });
 
 // The chip is DOM-free everywhere above; this one case is not, because the cap

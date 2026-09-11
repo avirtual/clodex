@@ -5361,22 +5361,32 @@ body {
   max-width: 400px;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 2px 7px;
-  border-radius: 999px;
   cursor: default;
 }
 #drawer-quota:empty {
   display: none;
 }
-#drawer-quota[data-level=warn] {
+#drawer-quota .quota-chip {
+  display: inline-block;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+#drawer-quota .quota-chip + .quota-chip {
+  margin-left: 6px;
+}
+#drawer-quota .quota-chip[data-level=warn] {
   color: var(--text-dim);
   background: color-mix(in srgb, var(--text-dim) 10%, transparent);
 }
-#drawer-quota[data-level=loud] {
+#drawer-quota .quota-chip[data-level=loud] {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
-#drawer-quota[data-stale] {
+#drawer-quota .quota-chip[data-stale] {
   opacity: 0.5;
 }
 #drawer-clipboard {
@@ -8038,9 +8048,9 @@ body {
         { name: "onSessionAttention", kind: "on", channel: "session-attention" },
         { name: "onSessionCtx", kind: "on", channel: "session-ctx" },
         { name: "onSessionProxy", kind: "on", channel: "session-proxy" },
-        // Account plan quota off our own wire's response headers. Window-wide and
-        // session-less by nature — the figure is the whole account's, and it arrives
-        // on a forwarded turn rather than on a poll.
+        // Plan quota off our own wire's response headers, one reading per ACCOUNT and
+        // session-less by nature — each figure is a whole account's, and it arrives on
+        // a forwarded turn rather than on a poll.
         { name: "onWireQuota", kind: "on", channel: "wire-quota" },
         // The startup read of the same figure: the broadcast above only fires on a
         // forwarded turn, so a restored reading needs a pull to reach a new window.
@@ -21221,6 +21231,35 @@ ${i3.join("\n")}
         const tip = tipLines.concat(sentences).join("\n");
         return { level, text: parts.join(" \xB7 "), tip, stale };
       }
+      function quotaChips(entries, nowMs = Date.now()) {
+        if (!Array.isArray(entries)) return [];
+        const byAccount = /* @__PURE__ */ new Map();
+        for (const e of entries) {
+          if (!e || !e.quota) continue;
+          const account = typeof e.account === "string" && e.account ? e.account : "default";
+          if (!byAccount.has(account)) byAccount.set(account, []);
+          byAccount.get(account).push(e);
+        }
+        const labels = Array.from(byAccount.keys()).sort((a, b) => {
+          if (a === b) return 0;
+          if (a === "default") return -1;
+          if (b === "default") return 1;
+          return a < b ? -1 : 1;
+        });
+        const chips = [];
+        for (const account of labels) {
+          const picked = pickQuota(byAccount.get(account), nowMs);
+          if (!picked) continue;
+          const chip = quotaChip(picked.quota, picked.clientAgeS);
+          if (chip) chips.push({ account, chip });
+        }
+        if (chips.length < 2) return chips.map((c) => c.chip);
+        return chips.map(({ account, chip }) => ({
+          ...chip,
+          text: `${account} \xB7 ${chip.text}`,
+          tip: `${account} \xB7 ${chip.tip}`
+        }));
+      }
       function shapeProxyRecord(r, probe, now = Date.now()) {
         const base = { ts: now, version: probe.version, capabilities: probe.capabilities };
         if (!r) return { ...base, linked: false };
@@ -21277,6 +21316,7 @@ ${i3.join("\n")}
         shapeSubagent,
         shapeQuota,
         quotaChip,
+        quotaChips,
         pickQuota,
         fmtQuotaReset,
         QUOTA_STALE_S,
@@ -24600,20 +24640,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
           refreshStatus();
           armChanged();
         }
-        function setQuota(chip) {
+        function setQuota(chips) {
           if (!quotaEl) return;
-          if (!chip) {
-            quotaEl.textContent = "";
-            quotaEl.removeAttribute("data-level");
-            quotaEl.removeAttribute("title");
-            quotaEl.removeAttribute("data-stale");
-            return;
+          const list = Array.isArray(chips) ? chips.filter(Boolean) : chips ? [chips] : [];
+          quotaEl.textContent = "";
+          quotaEl.removeAttribute("data-level");
+          quotaEl.removeAttribute("title");
+          quotaEl.removeAttribute("data-stale");
+          for (const chip of list) {
+            const el = document.createElement("span");
+            el.className = "quota-chip";
+            el.textContent = chip.text;
+            el.dataset.level = chip.level;
+            el.title = chip.tip;
+            if (chip.stale) el.dataset.stale = "1";
+            quotaEl.appendChild(el);
           }
-          quotaEl.textContent = chip.text;
-          quotaEl.dataset.level = chip.level;
-          quotaEl.title = chip.tip;
-          if (chip.stale) quotaEl.dataset.stale = "1";
-          else quotaEl.removeAttribute("data-stale");
         }
         return {
           register,
@@ -35938,7 +35980,7 @@ ${detail}` });
       var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
-      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChip, shapeQuota, pickQuota } = require_proxy_util();
+      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require_render_html();
@@ -39144,16 +39186,31 @@ ${detail}` });
         el.dataset.refusal = p && p.linked && p.refusals > 0 ? "1" : "";
       }
       var wireQuota = null;
+      var wireQuotaAccounts = [];
       function refreshQuotaChip() {
         const entries = [];
-        if (wireQuota) entries.push({ ...wireQuota, source: "wire" });
-        for (const [, st] of proxyState) {
-          if (!st || !st.payload || !st.payload.quota) continue;
-          entries.push({ quota: st.payload.quota, at: st.at || 0, source: "wirescope" });
+        for (const e of wireQuotaAccounts) entries.push({ ...e, source: "wire" });
+        const haveDefault = wireQuotaAccounts.some((e) => e.account === "default");
+        if (!haveDefault) {
+          for (const [, st] of proxyState) {
+            if (!st || !st.payload || !st.payload.quota) continue;
+            entries.push({ account: "default", quota: st.payload.quota, at: st.at || 0, source: "wirescope" });
+          }
         }
-        const picked = pickQuota(entries);
-        drawerHost.setQuota(picked ? quotaChip(picked.quota, picked.clientAgeS) : null);
+        drawerHost.setQuota(quotaChips(entries));
         refreshAuthBanner(proxyState.values());
+      }
+      function acceptWireQuota(payload, at = Date.now()) {
+        const rows = payload && Array.isArray(payload.accounts) ? payload.accounts : [];
+        const next = [];
+        for (const row of rows) {
+          const shaped = shapeQuota(row, { quota: true });
+          if (shaped) next.push({ account: row.account || "default", quota: shaped, at });
+        }
+        wireQuotaAccounts = next;
+        const latest = shapeQuota(payload && payload.latest, { quota: true });
+        wireQuota = latest ? { quota: latest, at } : null;
+        return next.length > 0 || latest != null;
       }
       window.api.onSessionProxy((name, payload) => {
         proxyState.set(name, { payload, at: Date.now() });
@@ -39163,18 +39220,17 @@ ${detail}` });
         refreshActivityChips();
         if (name === activeSession) renderProxyBar();
       });
-      window.api.onWireQuota((snapshot) => {
-        const shaped = shapeQuota(snapshot, { quota: true });
-        if (shaped) wireQuota = { quota: shaped, at: Date.now() };
+      window.api.onWireQuota((payload) => {
+        acceptWireQuota(payload);
         refreshQuotaChip();
       });
       if (window.api.getWireQuota) {
-        window.api.getWireQuota().then((snapshot) => {
-          const shaped = shapeQuota(snapshot, { quota: true });
+        window.api.getWireQuota().then((payload) => {
+          const shaped = shapeQuota(payload && payload.latest, { quota: true });
           if (!shaped) return;
           const ageMs = (shaped.ageS || 0) * 1e3;
           const at = Date.now() - ageMs;
-          if (!wireQuota || wireQuota.at < at) wireQuota = { quota: shaped, at };
+          if (!wireQuota || wireQuota.at < at) acceptWireQuota(payload, at);
           refreshQuotaChip();
         }).catch(() => {
         });

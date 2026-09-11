@@ -6,8 +6,9 @@
 //
 // Three properties that make this unlike the rest of the wire's state:
 //
-//   * SCOPE IS THE ACCOUNT, NOT THE SESSION. Every seat on the box spends the
-//     same plan, so this is keyed by organization id and surfaces ONCE, not
+//   * SCOPE IS THE ACCOUNT, NOT THE SESSION. Seats sharing a plan spend the
+//     same pool, so this is keyed by the seat's account label (the org id only
+//     when no caller could resolve one) and surfaces once per account, never
 //     per session.
 //   * IT IS ONLY AS FRESH AS THE LAST FORWARDED TURN. Nothing polls the API.
 //     Hence `as_of`/`age_s` on every snapshot — a consumer rendering a
@@ -199,16 +200,13 @@ class QuotaStore {
 
   // Record the quota headers off a finished upstream response. Cheap enough to
   // sit on the response path: a scan of ~30 header keys.
-  note(headers, { status = null, now = Date.now() / 1000 } = {}) {
+  note(headers, { status = null, now = Date.now() / 1000, account = null } = {}) {
     // Callers pass whatever the http library handed them; normalize casing
     // once so the org lookup and the parse agree.
     const lower = {};
     for (const [k, v] of Object.entries(headers || {})) lower[String(k).toLowerCase()] = v;
-    // A response that omits the org header files under the literal 'default'
-    // and persists as its own row, so one real org that intermittently omits it
-    // reads as two accounts. Faithful to the reference and nothing surfaces the
-    // account count today — for whoever does.
-    const acct = lower['anthropic-organization-id'] || 'default';
+    const label = typeof account === 'string' && account ? account : null;
+    const acct = label || lower['anthropic-organization-id'] || 'default';
     const parsed = parseQuotaHeaders(lower);
     if (!parsed) {
       if (status === 429) {
@@ -217,8 +215,10 @@ class QuotaStore {
         // ATTRIBUTION: a 429 need not carry the org header either, and filing
         // it under 'default' would park it beside no reading at all — the bar
         // would show a stale percentage with no sign of the wall being hit.
-        // Fall back to the account we last read from.
-        const key = this._byAccount.has(acct) ? acct : this._lastAccount;
+        // Fall back to the account we last read from — but a resolved LABEL is
+        // not a guess, so it files strictly rather than falling back at all.
+        const key = label != null ? label
+          : (this._byAccount.has(acct) ? acct : this._lastAccount);
         const cur = key != null ? this._byAccount.get(key) : null;
         if (cur) {
           cur.last_429 = now;
@@ -265,6 +265,22 @@ class QuotaStore {
     }
     if (acct == null) return null;
     return snapshotFrom(this._byAccount.get(acct), this._byAccount.size, now);
+  }
+
+  // Every account we hold, labelled, for a chip that renders one segment each.
+  snapshotAll(now = Date.now() / 1000) {
+    const rows = [];
+    for (const [account, entry] of this._byAccount) {
+      const snap = snapshotFrom(entry, this._byAccount.size, now);
+      if (snap) rows.push({ account, ...snap });
+    }
+    rows.sort((a, b) => {
+      if (a.account === b.account) return 0;
+      if (a.account === 'default') return -1;
+      if (b.account === 'default') return 1;
+      return a.account < b.account ? -1 : 1;
+    });
+    return rows;
   }
 
   _persist(acct, entry) {

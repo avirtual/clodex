@@ -749,13 +749,14 @@ function createSessionManager(deps) {
         // Client bytes first: this event fires before the response head is
         // written downstream, and the store's write is a synchronous disk sync.
         // Doing it inline puts that sync on time-to-first-token for every
-        // Claude turn. Nothing here is ordering-sensitive — the store is keyed
-        // by org and note() stamps its own timestamp — so deferring costs no
-        // accuracy.
+        // Claude turn. Nothing here is ordering-sensitive — note() stamps its
+        // own timestamp and the key comes off the seat rather than off arrival
+        // order — so deferring costs no accuracy.
         setImmediate(() => {
           try {
-            const snap = store.note(ev.headers, { status: ev.status });
-            if (snap) this._broadcast('wire-quota', snap);
+            const account = this._accountForWireAgent(ev.agent);
+            const snap = store.note(ev.headers, { status: ev.status, account });
+            if (snap) this._broadcast('wire-quota', this._quotaPayload(store));
           } catch (e) {
             this._shadowLog({ type: 'wire-quota-error', error: e.message });
           }
@@ -1207,8 +1208,14 @@ function createSessionManager(deps) {
       return this._quotaStore;
     }
 
-    // The plan quota is the ACCOUNT's, so it goes out window-wide on its own
-    // channel rather than riding a per-session payload. Deliberately NOT folded
+    _quotaPayload(store) {
+      const latest = store.snapshot();
+      if (!latest) return null;
+      return { accounts: store.snapshotAll(), latest };
+    }
+
+    // The plan quota is the ACCOUNT's, so it goes out on its own channel to
+    // every window rather than riding a per-session payload. Deliberately NOT folded
     // into the wirescope poller's `session-proxy`: that poller returns early
     // when no session has a wirescope base, which would make the wire source —
     // the one that needs no external service — depend on one existing.
@@ -1216,8 +1223,8 @@ function createSessionManager(deps) {
       const store = this.quotaStore();
       if (!store) return;
       try {
-        const snap = store.snapshot();
-        if (snap) this._broadcast('wire-quota', snap);
+        const payload = this._quotaPayload(store);
+        if (payload) this._broadcast('wire-quota', payload);
       } catch (e) {
         this._shadowLog({ type: 'wire-quota-error', error: e.message });
       }
@@ -3467,6 +3474,31 @@ function createSessionManager(deps) {
       }
     }
 
+    _accountResolver() {
+      try {
+        const accountsStore = (getAccounts && getAccounts()) || null;
+        if (!accountsStore) return null;
+        return accountsStore.labelResolver
+          ? accountsStore.labelResolver()
+          : (d) => accountsStore.labelFor(d);
+      } catch { return null; }
+    }
+
+    accountFor(name, resolve = this._accountResolver()) {
+      if (!resolve) return 'default';
+      try {
+        const entry = getPersistence().get(name);
+        const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
+        return dir ? (resolve(dir) || 'default') : 'default';
+      } catch { return 'default'; }
+    }
+
+    _accountForWireAgent(agent) {
+      if (!agent) return null;
+      const s = this.sessions.get(agent);
+      return s ? this.accountFor(s.name) : null;
+    }
+
     list() {
       const teamByCwd = new Map();
       const resolvedTeamFor = (cwd) => {
@@ -3523,23 +3555,7 @@ function createSessionManager(deps) {
           return open ? open.id : null;
         } catch { return null; }
       };
-      const accountsStore = (getAccounts && getAccounts()) || null;
-      let resolveAccount = null;
-      try {
-        if (accountsStore) {
-          resolveAccount = accountsStore.labelResolver
-            ? accountsStore.labelResolver()
-            : (d) => accountsStore.labelFor(d);
-        }
-      } catch { resolveAccount = null; }
-      const accountFromPersistedEnv = (name) => {
-        if (!resolveAccount) return 'default';
-        try {
-          const entry = getPersistence().get(name);
-          const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
-          return dir ? (resolveAccount(dir) || 'default') : 'default';
-        } catch { return 'default'; }
-      };
+      const resolveAccount = this._accountResolver();
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
@@ -3556,7 +3572,7 @@ function createSessionManager(deps) {
         noWire: !!s.noWire,
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
-        account: accountFromPersistedEnv(s.name),
+        account: this.accountFor(s.name, resolveAccount),
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }

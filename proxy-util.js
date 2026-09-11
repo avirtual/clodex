@@ -572,6 +572,36 @@ function quotaChip(q, clientAgeS = 0) {
   return { level, text: parts.join(' · '), tip, stale };
 }
 
+function quotaChips(entries, nowMs = Date.now()) {
+  if (!Array.isArray(entries)) return [];
+  const byAccount = new Map();
+  for (const e of entries) {
+    if (!e || !e.quota) continue;
+    const account = (typeof e.account === 'string' && e.account) ? e.account : 'default';
+    if (!byAccount.has(account)) byAccount.set(account, []);
+    byAccount.get(account).push(e);
+  }
+  const labels = Array.from(byAccount.keys()).sort((a, b) => {
+    if (a === b) return 0;
+    if (a === 'default') return -1;
+    if (b === 'default') return 1;
+    return a < b ? -1 : 1;
+  });
+  const chips = [];
+  for (const account of labels) {
+    const picked = pickQuota(byAccount.get(account), nowMs);
+    if (!picked) continue;
+    const chip = quotaChip(picked.quota, picked.clientAgeS);
+    if (chip) chips.push({ account, chip });
+  }
+  if (chips.length < 2) return chips.map((c) => c.chip);
+  return chips.map(({ account, chip }) => ({
+    ...chip,
+    text: `${account} · ${chip.text}`,
+    tip: `${account} · ${chip.tip}`,
+  }));
+}
+
 function shapeProxyRecord(r, probe, now = Date.now()) {
   const base = { ts: now, version: probe.version, capabilities: probe.capabilities };
   if (!r) return { ...base, linked: false };
@@ -624,7 +654,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
-  shapeQuota, quotaChip, pickQuota, fmtQuotaReset, QUOTA_STALE_S, QUOTA_429_RECENT_S,
+  shapeQuota, quotaChip, quotaChips, pickQuota, fmtQuotaReset, QUOTA_STALE_S, QUOTA_429_RECENT_S,
   QUOTA_WINDOW_LABEL,
   boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,

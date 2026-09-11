@@ -706,7 +706,7 @@ function registerIpcHandlers(deps) {
   // the broadcast that carries it fires only when a turn arrives.
   handle('wire:quota', () => {
     const store = manager.quotaStore();
-    return store ? store.snapshot() : null;
+    return store ? manager._quotaPayload(store) : null;
   });
 
   handle('proxy:context', (_e, name, opts) => fetchProxyContext(name, opts));

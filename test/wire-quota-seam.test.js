@@ -44,7 +44,7 @@ const CODEX_429_HEADERS = { 'content-type': 'application/json' };
 // happened" case vacuously.
 const tick = () => new Promise((r) => setImmediate(r));
 
-function mkManager() {
+function mkManager(extra = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t418-seam-'));
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
@@ -57,6 +57,7 @@ function mkManager() {
     getPersistence: () => ({ list: () => [], get: () => null }),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
+    ...extra,
   });
   const m = new SessionManager();
   const broadcasts = [];
@@ -66,8 +67,8 @@ function mkManager() {
 
 // Drives the REAL subscriber by emitting on the REAL wire, then tears the port
 // down. `fn` receives the wire so each test emits the responses it cares about.
-async function onWire(fn) {
-  const { m, broadcasts, root } = mkManager();
+async function onWire(fn, extra = {}) {
+  const { m, broadcasts, root } = mkManager(extra);
   const wire = await m._ensureWire();
   try {
     await fn({ wire, m, broadcasts });
@@ -93,7 +94,8 @@ test('seam: an anthropic response with quota headers reaches the store and broad
     // read "no broadcast" off a subscriber that never fires for anything.
     assert.strictEqual(broadcasts.length, 1, 'ENTER: the subscriber is wired and fired for a Claude turn');
     assert.strictEqual(broadcasts[0].channel, 'wire-quota');
-    assert.strictEqual(broadcasts[0].payload.primary.used_pct, 95);
+    assert.strictEqual(broadcasts[0].payload.latest.primary.used_pct, 95);
+    assert.strictEqual(broadcasts[0].payload.accounts.length, 1);
     assert.strictEqual(m.quotaStore().snapshot().representative_window, '7d');
   });
 });
@@ -153,6 +155,69 @@ test('seam: a codex turn with a 200 contributes nothing either', async () => {
   });
 });
 
+// ---- which ACCOUNT a reading is filed under (t813) ----
+
+// The consumer's half of the per-account keying. The store's own fallback
+// (key by the org header) is exercised in wire-quota.test.js; what only the
+// seam can show is that the SEAT's label reaches note() at all — the store
+// cannot tell a label it was never handed from one that does not exist.
+//
+// `agent` IS the session name: the in-process wire's registerAgent() takes the
+// bare name (session-manager.js `_ensureWire`), and only the EXTERNAL proxy id
+// is a distinct `proxyAgent` label. A fixture that set one here would pass
+// against a lookup that never matches a real event.
+const ACCOUNTS = {
+  labelResolver: () => (dir) => (dir === '/cfg/sub-2' ? 'sub-2' : null),
+};
+
+function recordingStore(m) {
+  const calls = [];
+  m._quotaStore = {
+    note: (headers, opts) => { calls.push(opts); return null; },
+    snapshot: () => null,
+    snapshotAll: () => [],
+    close: () => {},
+  };
+  return calls;
+}
+
+test('seam: a response from a seat on a registered account is filed under that label', async () => {
+  await onWire(async ({ wire, m }) => {
+    const calls = recordingStore(m);
+    m.sessions.set('worker', { name: 'worker' });
+    wire.emit('response', {
+      agent: 'worker', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,
+    });
+    await tick();
+    assert.strictEqual(calls.length, 1, 'ENTER: the consumer reached the store at all — every field read below is off this call');
+    assert.strictEqual(calls[0].account, 'sub-2');
+  }, {
+    getAccounts: () => ACCOUNTS,
+    getPersistence: () => ({
+      list: () => [],
+      get: (n) => (n === 'worker' ? { env: { CLAUDE_CONFIG_DIR: '/cfg/sub-2' } } : null),
+    }),
+  });
+});
+
+test('seam: an agent no live session claims is filed with NO label, so the store keys by org', async () => {
+  // Null and not 'default': a seat we cannot place would otherwise pile its
+  // numbers onto the default account's row, which is worse than the org keying
+  // that at least separates two real orgs.
+  await onWire(async ({ wire, m }) => {
+    const calls = recordingStore(m);
+    wire.emit('response', {
+      agent: 'cc-ghost-9', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,
+    });
+    await tick();
+    assert.strictEqual(calls.length, 1, 'ENTER: the consumer reached the store — an absent call would pass the check below vacuously');
+    assert.strictEqual(calls[0].account, null);
+  }, {
+    getAccounts: () => ACCOUNTS,
+    getPersistence: () => ({ list: () => [], get: () => null }),
+  });
+});
+
 test('wire:quota serves the stored reading, so a window opened before any turn is not blank', async () => {
   // api-contract pins that this channel is REGISTERED; nothing pinned that it
   // returns anything. The lazy store is the other half: it must build without a
@@ -173,9 +238,18 @@ test('wire:quota serves the stored reading, so a window opened before any turn i
     assert.strictEqual(fn(null), null, 'nothing observed yet reads as null, not as a hollow reading');
     // No wire was ever built here: the store is reachable on its own.
     m.quotaStore().note(CLAUDE_HEADERS);
-    const snap = fn(null);
-    assert.strictEqual(snap.primary.used_pct, 95);
-    assert.strictEqual(snap.representative_window, '7d');
+    const payload = fn(null);
+    // The SHAPE is the pin: api-contract only says the channel exists, and the
+    // renderer reads `latest` for the restore path and `accounts` for the chips.
+    // A handler that went back to returning the flat snapshot would leave both
+    // undefined and blank the bar at exactly the cold launch this serves.
+    assert.deepStrictEqual(Object.keys(payload).sort(), ['accounts', 'latest']);
+    assert.strictEqual(payload.latest.primary.used_pct, 95);
+    assert.strictEqual(payload.latest.representative_window, '7d');
+    assert.strictEqual(payload.accounts.length, 1);
+    assert.strictEqual(payload.accounts[0].account, 'a0aca1fb-5695-4f38-854c-28911e5c20e4',
+      'no session claims this agent, so the store fell back to keying by the org header');
+    assert.strictEqual(payload.accounts[0].primary.used_pct, 95);
   } finally {
     if (m._quotaStore) m._quotaStore.close();
     fs.rmSync(root, { recursive: true, force: true });
