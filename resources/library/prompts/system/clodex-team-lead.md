@@ -111,9 +111,9 @@ visible rather than silently lost.
   the loop runs this exact teardown and the `[ticket MERGED]` notice reports the
   result: a line opening `Closed out:` means the seat is retired, the worktree
   removed and the branch deleted, and you owe nothing. A line opening `Step
-  owed:` means it could not finish — MERGE FAILED, not merged, the check could
-  not run, a dirty or unreadable tree, a standing assignee — and names which; the
-  verb is then yours. On a ticket already closed out it is a NO-OP, not an error:
+  owed:` means it could not finish — a dirty or unreadable tree, a standing
+  assignee, a removal or a branch delete that failed — and names which; the verb
+  is then yours. On a ticket already closed out it is a NO-OP, not an error:
   it restates what the loop did and changes nothing.
   It is the cleanup verb: on a DONE ticket with a branch, it checks whether that
   branch is actually merged and, only if it is AND the tree is clean, retires
@@ -253,12 +253,12 @@ cwd IS a worktree is still on the team.
   The FIRST row below is the one you read most, and it is keyed on the
   `[ticket MERGED]` notice rather than on a reply, because when the loop runs
   the accept there is no reply — that row is the loop reporting row 1 of the
-  table under it. The five arms after it are what YOU get when you emit the verb
+  table under it, in its clean form. The five arms after it are what YOU get when you emit the verb
   yourself.
 
   | reply says | arm | closes the ticket out? |
   |---|---|---|
-  | `Closed out:` (in the MERGED notice, not a reply) | the LOOP ran the accept on a green merge and it finished: row 1 below, verbatim, after the words `Closed out: ` | yes — and nothing is owed. Emitting the verb here is a no-op that says so |
+  | `Closed out:` (in the MERGED notice, not a reply) | the LOOP ran the accept on a green merge and it finished: row 1 below in its CLEAN form (a failed removal renders `Step owed:` instead), after the words `Closed out: ` | yes — and nothing is owed. Emitting the verb here is a no-op that says so |
   | `accepted — no ticket branch recorded` | no branch at all — the ticket was worked in the shared checkout, so there is never a tree or a ref to remove. A one-shot seat is ARCHIVED (resumable, and anything it left uncommitted is in the shared checkout); any other seat is left as it is | yes — terminal, there is no second accept to invite |
   | `accepted, but the merge check could NOT run` | git could not answer, treated as NOT merged | no — accept again once it can |
   | `accepted, but branch X is NOT merged into` | the branch is genuinely not in | no — merge it, then accept again |

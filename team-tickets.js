@@ -1803,11 +1803,9 @@ function createTicketMethods(deps, shared) {
         // STEP 2 then asks git about a ref that is gone, takes `fail()`, and
         // stamps MERGE FAILED back onto the row the accept just cleared.
         //
-        // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on EVERY
-        // accept arm, including the two that do NOT close out, where the merge is
-        // still genuinely owed and a retry that lands it is the wanted outcome.
-        // `closedOut` is passed by the CALLING arm precisely to keep that
-        // distinction.
+        // `closedOut`, NOT `acceptedAt`: `_finishAccept` stamps `acceptedAt` on
+        // EVERY arm, including the two that do NOT close out, where the merge is
+        // still owed and a retry that lands it is the wanted outcome.
         //
         // Silent like the reopen case above it, but not for its reason: there
         // nothing had been decided about the merge, here the lead's accept IS the
@@ -2198,9 +2196,18 @@ function createTicketMethods(deps, shared) {
         try {
           const fresh = ticketsStore.load(team.root);
           const row = fresh.find((t) => t.id === ticketId);
-          closeOut = row
-            ? await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' })
-            : { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` };
+          // The lead can accept WHILE the suite runs, past the pre-merge re-read:
+          // unguarded, the loop tears down twice and restamps over the lead.
+          const acceptedInFlight = row && (row.acceptedAt || row.closedOut);
+          if (acceptedInFlight) {
+            log.info('ticket', `ticket ${ticketId} was accepted by ${row.acceptedBy || 'the lead'} while the post-merge suite ran — the loop reports that instead of closing out again`);
+          }
+          closeOut = !row
+            ? { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` }
+            : acceptedInFlight
+              ? { ok: true, closedOut: true, already: true,
+                text: `ticket ${ticketId} accepted — ${row.acceptedBy || 'the lead'} accepted it while the post-merge suite ran` }
+              : await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' });
         } catch (e) {
           log.error('ticket', `loop close-out for ${ticketId} failed after a green merge: ${e.message}`);
           closeOut = { ok: false, closedOut: false, text: `the loop's close-out threw (${e.message})` };
@@ -2357,7 +2364,7 @@ function createTicketMethods(deps, shared) {
         const stepLine = closedOutOk
           ? `Closed out: ${oneLine(closeOutDetail(ticketId, closeOut.text))}`
           : `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it. `
-            + `The loop could not close it out: ${oneLine((closeOut && closeOut.text) || 'it did not run')}`;
+            + `The loop could not close it out: ${oneLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
@@ -8033,24 +8040,18 @@ function createTicketMethods(deps, shared) {
       // `ephemeral` + `reviewTicket` and never appears as an assignee. So this
       // is an addition, not a second teardown of the same seat.
       //
-      // In `finish()` rather than in one arm, because every accept arm runs it
-      // and every one deletes `loopStep`: `!m.ok` and `!m.merged` end the review
-      // round just as terminally as the arms that close out, despite inviting
-      // another accept, and a per-arm call would leak on whichever arm a later
-      // edit forgot.
+      // Here rather than per-arm: `!m.ok` and `!m.merged` end the review round as
+      // terminally as the closing arms, so a per-arm call would leak on one.
       this._retireReviewSeatsFor(team, ticket.id, 'accepted');
       this._broadcast('ipc-message', { type: 'task', from: by, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
       log.info('intent', `task accept ${ticket.id} by ${by}: ${msg}`);
-      // Cancellation is gated on the SAME fact the stamp is: only an accept
-      // that closed the ticket out collects its reminders. `!m.merged` replies
-      // "Merge it, then [agent:task accept <id>] again to clean up"; `!m.ok`
-      // replies that the merge check could NOT run and nothing was removed.
-      // Cancelling on either would drop "check the branch landed" in the very
+      // Gated on the SAME fact the stamp is: only an accept that closed the
+      // ticket out collects its reminders. Cancelling on the two arms that
+      // invite another accept would drop "check the branch landed" in the very
       // message saying the landing has not been shown.
       const dropped = closedOut ? this._cancelTicketReminders(team.lead, ticket.id) : '';
       return dropped ? `${msg} ${dropped}` : msg;
     },
-
 
     // `[agent:task accept <id>]` — the lead's acknowledgement, and the only verb
     // that tears anything down BY HAND. The loop shares `_closeOutMergedTicket`;
@@ -8137,6 +8138,13 @@ function createTicketMethods(deps, shared) {
     // is the TICKET finished, true on the veto and dirty downgrade that removed
     // nothing; `ok` is the CLEANUP too, and only it licenses "Closed out".
     async _closeOutMergedTicket(team, ticket, tickets, { by, note = '' }) {
+      // Checked HERE as well as at the call site, every arm ending in
+      // `_finishAccept`, which stamps `acceptedBy` unconditionally. One-sided: a
+      // lead accept over a loop close-out is the dirty-row recovery.
+      if (by === 'ticket-loop' && (ticket.acceptedAt || ticket.closedOut)) {
+        return { ok: true, closedOut: true, already: true,
+          text: `ticket ${ticket.id} accepted — ${ticket.acceptedBy || 'the lead'} accepted it first; the loop changed nothing` };
+      }
       const { seatName, rec, branch, ephemeralSeat } = this._acceptSeatFacts(ticket);
       // What this accept ACTED ON, for the compare-and-clear in `_finishAccept`.
       // A plain `let`: `mergeStamp` below is in its temporal dead zone on the
@@ -8149,6 +8157,16 @@ function createTicketMethods(deps, shared) {
       });
 
       const m = await gitWorktree.isMerged(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
+
+      // The MIRROR: `_taskAccept` passed its `loopClosedOut` gate before this
+      // await, the only point a handler can interleave.
+      if (by !== 'ticket-loop') {
+        const now = this._loadTicket(team, ticket.id);
+        if (now && now.loopClosedOut) {
+          return { ok: true, closedOut: true, already: true,
+            text: `ticket ${ticket.id} accepted — the loop closed it out while this accept was running; nothing was changed` };
+        }
+      }
 
       // What happened to the SEAT, as a sentence fragment ending in "and its " so
       // each caller can finish with its own "worktree and branch were KEPT".
@@ -8407,8 +8425,8 @@ function createTicketMethods(deps, shared) {
               ? `Read the escalation for this ticket first — it says whether a merge was made, and names its sha where there is one. Confirm against ${m.base} accordingly`
               : `The loop never merged this branch, so if ${branch} is an ancestor of ${m.base} now, someone merged it by hand — confirm that`;
         // TERMINAL, and the second accept is the recovery. `closedOut` retires the
-        // stamp through finish()'s existing rule, and that is what lets a second
-        // accept differ from this one: nothing the lead can do to the REPOSITORY
+        // stamp through `_finishAccept`'s rule, which lets a second accept differ
+        // from this one: nothing the lead can do to the REPOSITORY
         // clears a mergeError, so a non-terminal refusal here would re-refuse for
         // ever and no `task accept` could ever reclaim the tree — a gate whose
         // input cannot change is a wall. The reply names the second accept as the

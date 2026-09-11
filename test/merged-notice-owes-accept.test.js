@@ -501,6 +501,19 @@ test('a ticket the LOOP closed out never nudges: there is no step to name', asyn
     'the seat is retired and the tree is gone; naming `task accept` here points the lead at a no-op');
 });
 
+test('a LEAD accept that the loop then ran over is not nudged either', async () => {
+  const f = mkLoop();
+  // The third consequence of the accept-during-suite race: unguarded, the loop
+  // restamped `acceptedBy` to `ticket-loop` without `loopClosedOut`, which is
+  // exactly the shape this gate reads as "the loop still owes a step" — so the
+  // watchdog woke the lead to emit a verb over a ticket they had already torn
+  // down themselves. Guarded, the stamp stays the lead's and this pass skips it.
+  f.patch({ mergedAt: T0, acceptedAt: T0, acceptedBy: 'lead', closedOut: true });
+  await f.m._sweepTeamTickets(f.team, T0 + (60 * MIN));
+  assert.deepStrictEqual(f.gated, [],
+    'the lead accepted it; naming the step again points them at a retired seat and a deleted tree');
+});
+
 test('a loop close-out that KEPT a tree is still nudged — that one really does owe a step', async () => {
   const f = mkLoop();
   // `acceptedAt` and `closedOut` are set, and the ten-minute backstop used to read

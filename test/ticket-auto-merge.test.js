@@ -453,6 +453,190 @@ test('the lead is told the merge landed, and that a repo with NO changelog owes 
   }
 });
 
+// ── t825: the green merge closes the ticket out, end to end ────────────────
+// THE subject for this ticket's headline behaviour, and it is the only one that
+// reaches it through production code. Every other green-merge subject in this
+// file runs with no persistence record for `team-hand`, so `ephemeralSeat` is
+// false, `complete` is false, and the notice they observe says `Step owed:` —
+// which means `const complete = false` was GREEN across the entire suite, as was
+// deleting the `closeOut` argument from the `_notifyMergeLanded` call. Three
+// production wires (complete ever true, `loopClosedOut` ever stamped, `closeOut`
+// ever threaded) were pinned only in their negative direction.
+//
+// So this one pays for a REAL linked worktree and a REAL ephemeral record: they
+// are what `_closeOutMergedTicket` reads to reach row 1, and a stub of either
+// would put the assertions back to measuring the fixture.
+test('t825: a green merge retires the seat, removes the tree, deletes the ref, and REPORTS it', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const wtPath = pathReal.join(repo.dir, 'wt');
+  // A real linked checkout on the ticket branch — what `destroy()` removes and
+  // what makes `git branch -d` refusable until it is gone.
+  execFileSync('git', ['-C', repo.dir, 'worktree', 'add', '-q', wtPath, 'tl-1'], { encoding: 'utf8' });
+  const f = mkMerge({ repo });
+  // `ephemeral: true` is THE fact that opens the teardown gate; without the
+  // record, absence of evidence keeps the seat and this subject measures the
+  // step-owed arm instead.
+  f.persistence.upsert({
+    name: 'team-hand', cwd: wtPath, ephemeral: true,
+    worktree: { path: wtPath, branch: 'tl-1', baseSha: repo.baseSha },
+  });
+  // The merge fixture stubs `kill` to drop the record, but `destroy()` also
+  // awaits `_waitForExit`, which polls `this.sessions` for up to 8s. The stub
+  // kill never deletes the session, so without this the teardown stalls the
+  // whole 8s before removing the tree.
+  f.m.kill = async (n) => { f.persistence.remove(n); f.m.sessions.delete(n); };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge itself happened and escalated nothing');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one MERGED notice');
+  const lines = notes[0].body.split('\n');
+  assert.ok(lines[2].startsWith('Closed out: merged into'),
+    `line 2 reports the final state in the accept's own words. Got:\n${notes[0].body}`);
+  assert.ok(lines[2].includes('team-hand retired and its worktree removed'),
+    'naming the seat and the tree, which is the part nothing else reports');
+  assert.ok(lines[2].includes('branch tl-1 deleted'), 'and the ref');
+
+  // The three sentences that must NOT survive a close-out. Each was true of
+  // every notice before this ticket, so their absence is the behaviour change.
+  assert.ok(!notes[0].body.includes('Step owed:'), 'nothing is owed');
+  assert.ok(!notes[0].body.includes('Nothing was torn down'), 'and plenty was');
+  assert.ok(!notes[0].body.includes('[agent:task accept'),
+    'the verb is not rendered at all — emitting it would be a no-op that bills a lead turn');
+
+  // The RECORD, which is what makes a later accept a no-op and what the nudge
+  // gate reads.
+  const t = f.one();
+  assert.ok(t.loopClosedOut && typeof t.loopClosedOut.at === 'number',
+    'the close-out is stamped complete, which is what silences a later accept and the watchdog');
+  assert.strictEqual(t.acceptedBy, 'ticket-loop', 'attributed to the loop, which did it');
+  assert.strictEqual(t.closedOut, true, 'and the ticket is closed out');
+
+  // DISK, not the record's opinion of disk. A teardown that updated fields and
+  // left the checkout behind would pass every assertion above.
+  assert.ok(!fsReal.existsSync(wtPath), 'the worktree is gone from disk');
+  const branches = git(repo.dir, ['branch', '--list', 'tl-1']);
+  assert.strictEqual(branches.trim(), '', 'and tl-1 is no longer a branch');
+  assert.strictEqual(f.persistence.get('team-hand'), null, 'the seat record went with it');
+});
+
+// ── t825: the accept that lands DURING the post-merge suite ────────────────
+// The window is the whole suite — minutes on a real repo — and nothing in it
+// blocks `_taskAccept`, which gates on lead-ness, id and `state === 'done'`.
+// The pre-merge re-read covers queue→merge only.
+//
+// Unguarded, the loop tears down a second time over a tree that is already
+// gone: `isMerged` answers `ok:false` on the deleted ref, the `!m.ok` arm says
+// "worktree and branch were KEPT. Nothing was removed" about a seat, a checkout
+// and a ref that do not exist, `_finishAccept` overwrites `acceptedBy` with
+// `ticket-loop`, and the nudge gate then wakes the lead over a finished ticket.
+test('t825: a lead accept during the post-merge suite is REPORTED, not overwritten', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  // The interleave, at the real seam: the suite runs between the merge and the
+  // close-out, so stamping the accept from inside the suite stub is the honest
+  // place for it — a patch applied before `_autoMergeTicket` would be the
+  // already-accepted case the top-of-function gate catches, not this one.
+  const realSuite = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (...args) => {
+    const out = await realSuite(...args);
+    const ts = f.tstore.load(f.team.root);
+    const row = ts.find((t) => t.id === 't1');
+    row.acceptedAt = Date.now();
+    row.acceptedBy = 'lead';
+    row.closedOut = true;
+    f.tstore.save(f.team.root, ts);
+    return out;
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the MERGED notice still went out');
+  const t = f.one();
+  assert.strictEqual(t.acceptedBy, 'lead',
+    'the lead who actually emitted the verb keeps the attribution — the loop must not restamp it');
+  assert.ok(!t.loopClosedOut,
+    'and the loop does not claim a close-out it did not perform');
+  assert.ok(!notes[0].body.includes('Step owed:'),
+    `the ticket is accepted, so nothing is owed. Got:\n${notes[0].body}`);
+  assert.ok(!notes[0].body.includes('Nothing was removed'),
+    'and the notice must never say that over a teardown the lead already ran');
+  assert.ok(notes[0].body.includes('Closed out: lead accepted it while the post-merge suite ran'),
+    `line 2 reports who closed it and when. Got:\n${notes[0].body}`);
+});
+
+test('t825: _closeOutMergedTicket refuses for the loop when an accept already landed', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  // The guard inside the function, not at the call site: every arm here ends in
+  // `_finishAccept`, which stamps `acceptedBy` unconditionally, so a caller that
+  // forgot to ask would silently re-attribute the lead's accept. Driven directly
+  // to pin the refusal independently of the merge step's own check.
+  const ts = f.tstore.load(f.team.root);
+  const row = ts.find((t) => t.id === 't1');
+  row.acceptedAt = 1700000000000;
+  row.acceptedBy = 'lead';
+  row.closedOut = true;
+  f.tstore.save(f.team.root, ts);
+
+  f.m.destroy = async () => { throw new Error('the teardown ran despite an accept having landed'); };
+  const r = await f.m._closeOutMergedTicket(f.team, row, ts, { by: 'ticket-loop' });
+
+  assert.ok(r.already, 'the loop is told an accept beat it');
+  assert.ok(r.text.includes('lead accepted it first'), `and by whom. Got: ${r.text}`);
+  assert.strictEqual(f.one().acceptedBy, 'lead', 'the stamp is untouched');
+  assert.ok(!f.one().loopClosedOut, 'and nothing claims the loop finished it');
+
+  // One-sided: a LEAD accept may still run over a loop close-out, because that
+  // is the dirty-row recovery. Gating both ways would strand that tree.
+  const ts2 = f.tstore.load(f.team.root);
+  const row2 = ts2.find((t) => t.id === 't1');
+  const r2 = await f.m._closeOutMergedTicket(f.team, row2, ts2, { by: 'lead' });
+  assert.ok(!r2.already, 'a lead accept is not refused by the same condition');
+});
+
+test('t825: the MIRROR race — a lead accept in flight when the loop closes out does not tear down twice', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const ts = f.tstore.load(f.team.root);
+  const row = ts.find((t) => t.id === 't1');
+  f.tstore.save(f.team.root, ts);
+
+  // The lead's accept passed `_taskAccept`'s `loopClosedOut` gate on a snapshot,
+  // and the loop finishes inside the `isMerged` await below it. Intent handlers
+  // are synchronous, so that await is the only place this can interleave — which
+  // is why the re-check lives immediately after it rather than at the top.
+  const realIsMerged = require('../git-worktree').isMerged;
+  let interleaved = false;
+  f.deps.gitWorktree.isMerged = async (...args) => {
+    const out = await realIsMerged(...args);
+    if (!interleaved) {
+      interleaved = true;
+      const ts2 = f.tstore.load(f.team.root);
+      const r2 = ts2.find((t) => t.id === 't1');
+      r2.acceptedAt = Date.now(); r2.acceptedBy = 'ticket-loop'; r2.closedOut = true;
+      r2.loopClosedOut = { at: Date.now(), text: 'ticket t1 accepted — merged into master; team-hand retired and its worktree removed; branch tl-1 deleted.' };
+      f.tstore.save(f.team.root, ts2);
+    }
+    return out;
+  };
+  f.m.destroy = async () => { throw new Error('the lead accept tore down a tree the loop had already removed'); };
+
+  const r = await f.m._closeOutMergedTicket(f.team, row, ts, { by: 'lead' });
+  f.deps.gitWorktree.isMerged = realIsMerged;
+
+  assert.ok(interleaved, 'ENTER: the close-out really landed inside the await, or this races nothing');
+  assert.ok(r.already, `the lead's accept finds the work done and says so. Got: ${r.text}`);
+  assert.ok(r.text.includes('the loop closed it out while this accept was running'),
+    `and names why it did nothing. Got: ${r.text}`);
+});
+
 test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and removes no tree it may not', async () => {
   const repo = mkRepo();
   // A CHANGELOG on master, so "untouched" is a real observation rather than a
