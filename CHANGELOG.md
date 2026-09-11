@@ -17,6 +17,10 @@ blocks a release.
   check only the comments its own hunks touch, instead of commenting and
   trimming back to net zero and sweeping the whole file; two hands in a row
   burned their last 100k tokens on that trim.
+- A rework is never handed to a ticket seat whose context is past the compact
+  threshold (default 175k tokens): the loop archives that seat, spawns a fresh one
+  onto the same branch and worktree, delivers the must-fixes there, and the reject
+  reply names the replacement.
 
 ## 5.62.2 — 2026-09-11 — loop closes out green merges; Edit Session keeps team prompts
 
