@@ -42,6 +42,8 @@ const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
+const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require('./lib/account-select');
+const { accountRowView, buildAccountRow } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -172,7 +174,49 @@ function renderEnvHint(textarea, hint) {
   hint.textContent = `Ignored ${skipped.length} line${skipped.length > 1 ? 's' : ''}: ${skipped.map((s) => s.reason).join('; ')}`;
 }
 function refreshEnvHint() { renderEnvHint(inputEnv, envHint); }
+const inputAccount = document.getElementById('input-account');
+
+// The registry read once per dialog open. `null` means "not fetched yet"; an
+// empty array is a real answer from a host with no accounts, and the two must
+// not collapse — a host that declines `accounts:*` leaves the select showing
+// `default` alone rather than re-asking on every keystroke of the env box.
+let dialogAccounts = null;
+
+async function fetchAccounts() {
+  try {
+    const res = await window.api.accountsList();
+    return (res && res.ok && Array.isArray(res.accounts)) ? res.accounts : [];
+  } catch { return []; }
+}
+
+function paintAccountSelect(sel, envText, accounts) {
+  if (!sel) return;
+  const rows = accounts || [];
+  const label = accountFromEnv(envText, rows);
+  const current = label === 'custom'
+    ? { label, configDir: parseEnvLines(envText).env.CLAUDE_CONFIG_DIR || '' }
+    : { label, configDir: '' };
+  sel.textContent = '';
+  for (const opt of accountOptions(rows, current)) {
+    const el = document.createElement('option');
+    el.value = opt.value;
+    el.textContent = opt.text;
+    if (opt.selected) el.selected = true;
+    sel.appendChild(el);
+  }
+}
+
+function bindAccountSelect(sel, textarea, getAccounts) {
+  if (!sel || !textarea) return;
+  sel.addEventListener('change', () => {
+    textarea.value = envWithAccount(textarea.value, sel.value, getAccounts() || []);
+    textarea.dispatchEvent(new Event('input'));
+  });
+  textarea.addEventListener('input', () => paintAccountSelect(sel, textarea.value, getAccounts() || []));
+}
+
 if (inputEnv) inputEnv.addEventListener('input', refreshEnvHint);
+bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
 const inputModel = document.getElementById('input-model');
 const modelRow = document.getElementById('model-row');
 const argsHint = document.getElementById('args-hint');
@@ -551,7 +595,7 @@ async function deleteSessionRow(name) {
   }
 }
 
-function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false) {
+function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null) {
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
@@ -565,8 +609,13 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   // files are NOT lost: the JsonlWatcher feeds the same sink. What goes is
   // subagent attribution on the edits.)
   if (noWire) item.dataset.noWire = '1';
+  if (account) item.dataset.account = account;
   const displayName = label || name;
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
+  // Only a NON-default account earns a chip. Every row would otherwise carry one
+  // saying `default`, which is the state the operator already assumes — the chip
+  // exists to mark the exception, so the common sidebar is unchanged.
+  const accountChip = account && account !== ACCOUNT_DEFAULT ? esc(account) : '';
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''}>${typeGlyph(type, backend)}</span>
     <div class="session-info">
@@ -576,6 +625,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
         <span class="session-badges">
           ${noWire ? '<span class="session-nowire" data-tip="Wire off — no ANTHROPIC_BASE_URL: no tee, no warmth/wire telemetry. Intents and touched files still work; subagent attribution does not.">⊘</span>' : ''}
           ${type === 'claude' ? '<span class="session-pending" data-tip="Parked messages waiting — click to deliver now"></span>' : ''}
+          <span class="session-account"${accountChip ? ` data-tip="account ${esc(account)}"` : ''}>${accountChip}</span>
           <span class="session-think"></span>
           <span class="session-warm"></span>
           <span class="session-ctx"></span>
@@ -1084,6 +1134,14 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
       }
     }
   } catch {} finally { metaRefreshInFlight = false; }
+  // The account label rides `session:list`, not `sidebar:meta` — it is read off
+  // the persisted env by the manager, and only live rows have one. Applied here
+  // rather than on its own timer so a move (which restarts the seat) repaints
+  // within the same tick the rest of the row does.
+  try {
+    const live = await window.api.listSessions();
+    if (Array.isArray(live)) for (const s of live) applyAccountChip(s.name, s.account || null);
+  } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
   // yet when loadPluginRenderers paints them — without a repaint here the boot
@@ -2300,6 +2358,8 @@ async function openDialog(prefill = null) {
   if (advancedSection) advancedSection.open = !!prefill;
   if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
   refreshEnvHint();
+  dialogAccounts = await fetchAccounts();
+  paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : '', dialogAccounts);
   applyTypeDefaults();
   paintNameField(nameFieldEls(), { ok: true, kind: 'free', message: '' });
   const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -2970,6 +3030,18 @@ window.api.onSessionCtx((name, pct, tok, size, cost, modelName) => {
   applyCtxBadge(name, pct);
   if (name === activeSession) renderProxyBar();
 });
+
+function applyAccountChip(name, label) {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  const chip = el.querySelector('.session-account');
+  if (!chip) return;
+  const show = label && label !== ACCOUNT_DEFAULT ? String(label) : '';
+  if (show) el.dataset.account = show; else delete el.dataset.account;
+  chip.textContent = show;
+  if (show) chip.dataset.tip = `account ${show}`;
+  else delete chip.dataset.tip;
+}
 
 function applyPendingBadge(name, count) {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -4658,6 +4730,151 @@ if (prefsEnvRestore) prefsEnvRestore.addEventListener('click', async () => {
   refreshPrefsEnv();
 });
 if (prefsEnvScope) prefsEnvScope.addEventListener('change', () => { setPrefsEnvState(''); refreshPrefsEnv(); });
+
+const prefsAccountsList = document.getElementById('prefs-accounts-list');
+const prefsAccountLabel = document.getElementById('prefs-account-label');
+const prefsAccountEmail = document.getElementById('prefs-account-email');
+const prefsAccountPlan = document.getElementById('prefs-account-plan');
+const prefsAccountDir = document.getElementById('prefs-account-dir');
+const prefsAccountAdd = document.getElementById('prefs-account-add');
+const prefsAccountModel = document.getElementById('prefs-account-model');
+const prefsAccountsState = document.getElementById('prefs-accounts-state');
+
+const MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'];
+
+function setPrefsAccountsState(msg, kind) {
+  if (!prefsAccountsState) return;
+  prefsAccountsState.textContent = msg || '';
+  prefsAccountsState.style.color = kind === 'error' ? 'var(--warn, #d9a55b)' : 'var(--muted, #8b949e)';
+}
+
+// `session:list` rows carry the account LABEL but not extraArgs, so the model a
+// seat runs on has to come from its persisted args — one read per live claude
+// seat. Bounded by seat count and only on a prefs open, which is why it is not
+// worth a new channel.
+async function liveClaudeModels(live) {
+  const out = new Set(MODEL_ALIASES);
+  for (const s of live) {
+    if (s.type !== 'claude') continue;
+    try {
+      const res = await window.api.getSessionArgs(s.name);
+      if (!res || !res.ok) continue;
+      const { model } = splitModelArg(res.extraArgs || []);
+      if (model) out.add(model);
+    } catch {}
+  }
+  return [...out];
+}
+
+async function refreshPrefsAccounts() {
+  if (!prefsAccountsList) return;
+  let res;
+  try { res = await window.api.accountsList(); } catch { res = null; }
+  prefsAccountsList.textContent = '';
+  if (!res || res.ok === false) {
+    setPrefsAccountsState((res && res.error) || 'Accounts are unavailable on this host.', 'error');
+    if (prefsAccountModel) prefsAccountModel.textContent = '';
+    return;
+  }
+  setPrefsAccountsState('');
+  const accounts = res.accounts || [];
+  let live = [];
+  try { const l = await window.api.listSessions(); if (Array.isArray(l)) live = l; } catch {}
+
+  const seatsBy = new Map();
+  for (const s of live) {
+    const key = s.account || ACCOUNT_DEFAULT;
+    seatsBy.set(key, (seatsBy.get(key) || 0) + 1);
+  }
+
+  if (prefsAccountModel) {
+    const models = await liveClaudeModels(live);
+    const keep = prefsAccountModel.value;
+    prefsAccountModel.textContent = '';
+    for (const m of models) {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      prefsAccountModel.appendChild(opt);
+    }
+    if (models.includes(keep)) prefsAccountModel.value = keep;
+  }
+
+  for (const account of accounts) {
+    const view = accountRowView(account, seatsBy.get(account.label) || 0);
+    const { row, login, move, resync, remove } = buildAccountRow(document, view);
+    login.addEventListener('click', () => startLoginSeat(account));
+    if (move) {
+      move.addEventListener('click', async () => {
+        const model = prefsAccountModel ? prefsAccountModel.value : '';
+        if (!model) { setPrefsAccountsState('Pick a model to move first.', 'error'); return; }
+        if (!confirm(`Move every live claude seat on model "${model}" to account "${account.label}"? Each one restarts.`)) return;
+        const r = await window.api.accountsMoveByModel({ model, label: account.label });
+        if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Move failed.', 'error'); return; }
+        const skipped = (r.skipped || []).map((s) => `${s.name} (${s.reason})`).join(', ');
+        setPrefsAccountsState(`moved ${(r.moved || []).length}${skipped ? ` · skipped: ${skipped}` : ''}`);
+        refreshPrefsAccounts();
+      });
+    }
+    if (resync) {
+      resync.addEventListener('click', async () => {
+        const r = await window.api.accountsResync({ label: account.label });
+        if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Re-sync failed.', 'error'); return; }
+        setPrefsAccountsState(r.copied ? `Copied settings.json into ${account.label}.` : `Nothing to copy for ${account.label}.`);
+      });
+    }
+    if (remove) {
+      remove.addEventListener('click', async () => {
+        if (!confirm(`Remove account "${account.label}"? Its config dir and login are left on disk.`)) return;
+        const r = await window.api.accountsRemove({ label: account.label });
+        if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Remove failed.', 'error'); return; }
+        refreshPrefsAccounts();
+      });
+    }
+    prefsAccountsList.appendChild(row);
+  }
+}
+
+async function startLoginSeat(account) {
+  let reserved = [];
+  try {
+    const r = await window.api.reservedSessionNames();
+    reserved = reservedUnion(reservedSets(r));
+  } catch {}
+  const params = loginSeat(account.label, account, { reserved, bump: bumpDefaultName });
+  if (!params) { setPrefsAccountsState(`Account "${account.label}" has no config dir.`, 'error'); return; }
+  const result = await window.api.createSession(
+    params.name, params.type, params.cwd, [], null, null, false, null, [], [], [], [], [],
+    null, null, [], [], null, params.env, false, null,
+  );
+  if (!result || !result.ok) { setPrefsAccountsState((result && result.error) || 'Could not open a login shell.', 'error'); return; }
+  closePrefs();
+  createTerminal(params.name);
+  addSessionToSidebar(params.name, params.type, params.cwd, null,
+    (result.session && result.session.backend) || null,
+    (result.session && result.session.team) || null,
+    (result.session && result.session.noWire) === true,
+    account.label);
+  switchSession(params.name);
+  window.api.writeToSession(params.name, 'claude /login\n');
+}
+
+async function addPrefsAccount() {
+  const label = (prefsAccountLabel.value || '').trim();
+  const email = (prefsAccountEmail.value || '').trim();
+  const plan = prefsAccountPlan ? prefsAccountPlan.value : 'unknown';
+  const configDir = (prefsAccountDir.value || '').trim();
+  if (!label) { setPrefsAccountsState('Enter a label first.', 'error'); return; }
+  const res = await window.api.accountsAdd({ label, email: email || null, plan, configDir: configDir || null });
+  if (!res || res.ok === false) { setPrefsAccountsState((res && res.error) || 'Add failed.', 'error'); return; }
+  prefsAccountLabel.value = '';
+  prefsAccountEmail.value = '';
+  prefsAccountDir.value = '';
+  setPrefsAccountsState(`Added ${label} at ${abbrevHome(res.account && res.account.configDir)}.`);
+  refreshPrefsAccounts();
+}
+
+if (prefsAccountAdd) prefsAccountAdd.addEventListener('click', addPrefsAccount);
 
 function renderRemoteTokenState(hasToken) {
   prefsRemoteTokenState.textContent = hasToken
@@ -6842,6 +7059,11 @@ async function openPrefs() {
   if (prefsEnvSecret) prefsEnvSecret.checked = false;
   setPrefsEnvState('');
   refreshPrefsEnv();
+  if (prefsAccountLabel) prefsAccountLabel.value = '';
+  if (prefsAccountEmail) prefsAccountEmail.value = '';
+  if (prefsAccountDir) prefsAccountDir.value = '';
+  setPrefsAccountsState('');
+  refreshPrefsAccounts();
   setClaudeToolsCache(s.claudeTools || []);
   renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
   await renderPrefsSkillDefaults(s.defaultSkillDeny || []);
@@ -7051,7 +7273,10 @@ const argsInjectSkillsList = document.getElementById('args-inject-skills-list');
 const argsEnvSection = document.getElementById('args-env-section');
 const argsEnv = document.getElementById('args-env');
 const argsEnvHint = document.getElementById('args-env-hint');
+const argsAccount = document.getElementById('args-account');
+let argsAccounts = null;
 if (argsEnv) argsEnv.addEventListener('input', () => renderEnvHint(argsEnv, argsEnvHint));
+bindAccountSelect(argsAccount, argsEnv, () => argsAccounts);
 wireBulkToggles(argsToolsRow, argsToolsList);
 wireBulkToggles(argsSkillsRow, argsSkillsList);
 let argsEditingName = null;
@@ -7172,6 +7397,8 @@ async function openArgsDialog(name, argsSource = null) {
   if (isEnvEditable) {
     argsEnv.value = formatEnvLines(res.env || {});
     renderEnvHint(argsEnv, argsEnvHint);
+    argsAccounts = await fetchAccounts();
+    paintAccountSelect(argsAccount, argsEnv.value, argsAccounts);
   } else {
     argsEnv.value = '';
     renderEnvHint(argsEnv, argsEnvHint);

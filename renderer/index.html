@@ -684,6 +684,10 @@
         </label>
         <details id="env-section" class="dialog-section">
           <summary>Environment variables</summary>
+          <label id="account-row">Account
+            <select id="input-account"></select>
+            <span class="hint-text">Which registered Claude subscription this seat spawns on. Writes <code>CLAUDE_CONFIG_DIR</code> into the box below — that line is the selection, so editing it by hand moves this picker too. Manage accounts in Preferences ▸ Accounts.</span>
+          </label>
           <label id="env-row">
             <textarea id="input-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
             <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Applied at spawn; persisted so a restart/resume reuses them.</span>
@@ -868,6 +872,10 @@
       </details>
       <details id="args-env-section" class="dialog-section">
         <summary>Environment variables</summary>
+        <label id="args-account-row">Account
+          <select id="args-account"></select>
+          <span class="hint-text">Which registered Claude subscription this seat spawns on. Writes <code>CLAUDE_CONFIG_DIR</code> into the box below — that line is the selection, so editing it by hand moves this picker too.</span>
+        </label>
         <label id="args-env-row">
           <textarea id="args-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
           <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. Clear the box to remove all session vars. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Changes take effect on the next spawn — tick "Restart session now" below to apply them immediately.</span>
@@ -1033,6 +1041,32 @@
           <button id="prefs-env-restore" class="secondary" type="button" style="flex: none;" title="Bring back any of Clodex's shipped defaults you deleted. Values you edited are left alone.">Restore shipped defaults</button>
         </div>
         <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+      </details>
+      <details class="prefs-group" data-group="accounts">
+        <summary><h4>Accounts</h4><span class="prefs-group-sub">Your registered Claude subscriptions, and which seats run on them</span></summary>
+        <p class="hint-text">Each account is a label plus the <code>CLAUDE_CONFIG_DIR</code> a seat on it spawns with; <code>default</code> is <code>~/.claude</code> and is never stored. Adding an account with no config dir mints one that shares transcripts, plugins and skills with the default. A seat picks its account in the New Session and Edit Session dialogs.</p>
+        <div id="prefs-accounts-list" style="margin-top: 8px;"></div>
+        <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
+          <input type="text" id="prefs-account-label" placeholder="label" spellcheck="false" autocomplete="off" style="flex: 1;">
+          <input type="text" id="prefs-account-email" placeholder="email (optional)" spellcheck="false" autocomplete="off" style="flex: 2;">
+          <select id="prefs-account-plan" style="flex: none;">
+            <option value="pro">pro</option>
+            <option value="max">max</option>
+            <option value="team">team</option>
+            <option value="api">api</option>
+            <option value="unknown" selected>unknown</option>
+          </select>
+          <button id="prefs-account-add" class="secondary" type="button" style="flex: none;">Add</button>
+        </div>
+        <div class="prefs-row" style="gap: 6px; margin-top: 6px;">
+          <input type="text" id="prefs-account-dir" placeholder="config dir (optional — minted when blank)" spellcheck="false" autocomplete="off" style="flex: 1;">
+        </div>
+        <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
+          <span>Move seats on model</span>
+          <select id="prefs-account-model" style="flex: none;"></select>
+          <span class="hint-text" style="margin: 0;">to an account with its <strong>Move</strong> button. Restarts every matching seat.</span>
+        </div>
+        <span id="prefs-accounts-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </details>
       <details class="prefs-group" data-group="traffic">
         <summary><h4>Traffic optimization</h4><span class="prefs-group-sub">Wirescope, and the transcript bake and memory hints that run on it</span></summary>

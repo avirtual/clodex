@@ -586,6 +586,18 @@ html, body {
 }
 .session-ctx:empty { display: none; }
 
+.session-account {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  line-height: 14px;
+  white-space: nowrap;
+  color: var(--accent, #6aa6ff);
+  background: color-mix(in srgb, var(--accent, #6aa6ff) 14%, transparent);
+}
+.session-account:empty { display: none; }
+
 @keyframes mentionPulse {
   0%   { background: transparent; }
   15%  { background: rgba(255, 193, 7, 0.35); }
@@ -2565,6 +2577,13 @@ html, body {
 .prefs-env-row .prefs-env-val { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .prefs-env-row button { flex: none; }
 .prefs-env-shipped { flex: none; font-size: 10px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em; }
+.prefs-account-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.prefs-account-row .prefs-account-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prefs-account-row .prefs-account-email { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prefs-account-row .prefs-account-dir { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prefs-account-row .prefs-account-seats { flex: none; }
+.prefs-account-row button { flex: none; }
+.prefs-account-plan { flex: none; font-size: 10px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em; }
 .prefs-check { display: flex; align-items: center; gap: 8px; }
 .prefs-check input[type="checkbox"] { margin: 0; }
 .prefs-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none; }

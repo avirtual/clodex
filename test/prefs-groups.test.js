@@ -40,6 +40,8 @@ const CONTROLS = [
   'prefs-remote-token-state', 'prefs-peer-shell',
   'prefs-env-scope', 'prefs-env-list', 'prefs-env-key', 'prefs-env-value',
   'prefs-env-secret', 'prefs-env-add', 'prefs-env-restore-row', 'prefs-env-restore', 'prefs-env-state',
+  'prefs-accounts-list', 'prefs-account-label', 'prefs-account-email', 'prefs-account-plan',
+  'prefs-account-dir', 'prefs-account-add', 'prefs-account-model', 'prefs-accounts-state',
   'prefs-default-mode', 'prefs-run-setup', 'prefs-discover-on-startup', 'prefs-disable-design-mcp',
   'prefs-tools-row', 'prefs-tools-list',
   'prefs-skills-row', 'prefs-skills-list',
@@ -55,7 +57,7 @@ test('every group is collapsible and named', () => {
   const groups = [...prefsMarkup().matchAll(/<details class="prefs-group" data-group="([^"]+)"/g)]
     .map((m) => m[1]);
   assert.deepStrictEqual(groups, [
-    'appearance', 'voice', 'statusline', 'new-sessions', 'env', 'traffic', 'phone', 'discovery',
+    'appearance', 'voice', 'statusline', 'new-sessions', 'env', 'accounts', 'traffic', 'phone', 'discovery',
   ], 'group set/order changed — update this list deliberately');
   // One summary per group, or a group has no header to click.
   assert.strictEqual((prefsMarkup().match(/<summary>/g) || []).length, groups.length);

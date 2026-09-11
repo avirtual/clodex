@@ -190,8 +190,13 @@ function mkManager() {
   return { m, root, persistence, spawns, stop };
 }
 
-const create = (m, name, sessionEnv) => m.create(
-  name, 'bash', os.tmpdir(), [], null, 'ws', null, false, null,
+// `bash` by default because that is the only type this fixture can carry all
+// the way to a spawn — a claude seat reaches the proxy-registration path, which
+// wants deps this manager is not given. The guard under test is claude-only
+// (t812), so the tests that assert a THROW pass `'claude'` explicitly; they
+// reject before any of that wiring runs.
+const create = (m, name, sessionEnv, type = 'bash') => m.create(
+  name, type, os.tmpdir(), [], null, 'ws', null, false, null,
   [], [], [], [], [], null, [], [], null, sessionEnv,
 );
 
@@ -201,7 +206,7 @@ test('create(): a CLAUDE_CONFIG_DIR that does not exist throws BEFORE any spawn'
   assert.strictEqual(fs.existsSync(missing), false, 'ENTER: the path really is absent');
 
   await assert.rejects(
-    () => create(m, 'doomed', { CLAUDE_CONFIG_DIR: missing }),
+    () => create(m, 'doomed', { CLAUDE_CONFIG_DIR: missing }, 'claude'),
     new RegExp(`^Error: account dir ${missing} does not exist$`),
   );
   // THE assertion. A throw after the spawn would leave a live CLI looping on
@@ -228,7 +233,7 @@ test('create(): a CLAUDE_CONFIG_DIR that is a FILE is refused too', async () => 
   const { m, root, spawns, stop } = mkManager();
   const notADir = path.join(root, 'a-file');
   fs.writeFileSync(notADir, 'not a config dir');
-  await assert.rejects(() => create(m, 'doomed', { CLAUDE_CONFIG_DIR: notADir }), /account dir .* does not exist/);
+  await assert.rejects(() => create(m, 'doomed', { CLAUDE_CONFIG_DIR: notADir }, 'claude'), /account dir .* does not exist/);
   assert.strictEqual(spawns.length, 0);
   stop('doomed');
 });
@@ -269,7 +274,7 @@ test('create(): the guard reads the MERGED env, so a GLOBAL scope var is checked
   const m = new SessionManager();
   m._sendToSession = () => {};
   m._broadcast = () => {};
-  await assert.rejects(() => create(m, 'doomed', null), /account dir .* does not exist/);
+  await assert.rejects(() => create(m, 'doomed', null, 'claude'), /account dir .* does not exist/);
   assert.strictEqual(spawns.length, 0, 'a globally-scoped bad dir is caught too');
 });
 
