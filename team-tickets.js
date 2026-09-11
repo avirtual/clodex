@@ -393,6 +393,21 @@ function humanizeAge(ms) {
   return `${Math.round(h / 24)}d`;
 }
 
+// The close-out sentence MINUS its `ticket tN accepted — ` opening, for the two
+// readers that are already saying which ticket they mean: the MERGED notice,
+// whose header is the ticket id, and the no-op reply to a `task accept` on a
+// ticket the loop finished. Re-stating the id there reads as a second event.
+//
+// Falls back to the WHOLE text when the opening is not the expected one, rather
+// than to a slice measured from a prefix that was not there: the sentence is the
+// only account of what happened to the tree, and silently dropping its head to
+// make a shape fit is how a lead reads "retired" about a seat that was kept.
+function closeOutDetail(ticketId, text) {
+  const s = String(text == null ? '' : text).trim();
+  const head = `ticket ${ticketId} accepted — `;
+  return s.startsWith(head) ? s.slice(head.length) : s;
+}
+
 // The filter vocabulary for [agent:task list [filter]]. Deliberately NOT
 // `rejected`: reject reopens a ticket (_taskReject sets state 'open'), so a
 // rejected filter would always answer none and be misread as "nothing was
@@ -1595,19 +1610,29 @@ function createTicketMethods(deps, shared) {
         const where = written.ok
           ? `Full verdict (${fullVerdict.length} bytes): ${written.path}`
           : `Full verdict (${fullVerdict.length} bytes) could NOT be saved (${written.error}) — only the summary above survives.`;
+        // An ACCEPT gets NO step and no promise of one. The loop merges, and on a
+        // green merge it now closes the ticket out itself — so the next thing the
+        // lead hears is the MERGED notice reporting a final state, and naming a
+        // verb here would invite an accept that destroys the worktree the merge is
+        // about to read. A REWORK's own body already says what to do.
         const body = [
           `${landedOn.verdict} on ticket ${ticketId} (review round ${landedOn.reviewRound}, ${mf}).`,
           `Landed on the ticket record; the board shows it via [agent:task list all].`,
           where,
-          // COLUMN 1 IS THE SAFETY here too — see _notifyMergeLanded.
-          ...(landedOn.verdict === 'ACCEPT'
-            ? [`Nothing to do yet — the loop merges; when the [ticket ${ticketId} MERGED] notice lands, emit \`[agent:task accept ${ticketId}]\` alone in a reply.`]
-            : []),
         ].join('\n');
         // Not urgent: a verdict is durable on the record before this runs, so
         // waking a busy lead buys nothing the next turn does not. A hold or a
         // park is therefore an acceptable outcome and is logged, not retried.
-        const r = this._gatedDeliver(lead, session.name, body, false, `[ticket ${ticketId} ${landedOn.verdict}]`);
+        //
+        // Sent as `ticket-loop`, NOT as the reviewer's own name, and the sender is
+        // what suppresses the dm footer. `_buildDeliveryText` attaches "(reply:
+        // start a line with [agent:dm <sender>])" whenever the sender is
+        // dm-reachable — which a live reviewer seat is, right up to the moment
+        // this handler retires it a few lines later. The footer therefore taught
+        // the lead an address that was dead on arrival. `SYSTEM_SENDERS` carries
+        // `ticket-loop` for exactly this, and the verdict is the loop's message
+        // anyway: nothing is on the other end of it once the seat is reaped.
+        const r = this._gatedDeliver(lead, 'ticket-loop', body, false, `[ticket ${ticketId} ${landedOn.verdict}]`);
         if (r && r.error) {
           log.warn('intent', `ticket ${ticketId}: verdict landed but lead ${lead} not notified — ${r.error}`);
         }
@@ -2177,8 +2202,44 @@ function createTicketMethods(deps, shared) {
         // master already had the entry, and the notice's wording is about what
         // the merge carried, so it must be measured off that.
         const changelog = await this._mergeTouchedChangelog(team, merged.headBefore, merged.sha);
+        // The teardown the lead used to owe, run HERE, on the ONE arm that has
+        // earned it: the merge landed and its suite came back green. Every other
+        // exit from this function escalates and still owes an accept — the suite
+        // went red and the merge was reverted, a MERGE FAILED stamp, a defer —
+        // and none of them reaches this line. The accept's guards are unchanged
+        // and all mechanical (branch is an ancestor, tree clean, seat one the
+        // loop minted), so on the happy path pressing the verb added a billed
+        // lead turn and latency to a decision nothing was waiting on.
+        //
+        // BEFORE the notice, not after: the notice reports the final state, and
+        // composing it first would describe a teardown that had not run yet — the
+        // exact stale claim the old "Nothing was torn down" line became whenever
+        // an accept landed in the gap. Every arm the teardown can take is
+        // reported by the notice rather than assumed.
+        //
+        // The board row is RE-READ rather than reusing the snapshot loaded at the
+        // top of this function: a whole suite has run since then, and the accept
+        // it feeds writes `closedOut` and deletes `loopStep` onto whatever array
+        // it is handed. Saving a stale one would silently revert the verdict that
+        // started this merge.
+        //
+        // WRAPPED, because this now sits between a landed merge and the only
+        // message that reports it. A throw here must not cost the lead the
+        // notice; it degrades to the notice that asks for the accept by hand,
+        // which is exactly what the lead used to get.
+        let closeOut = null;
+        try {
+          const fresh = ticketsStore.load(team.root);
+          const row = fresh.find((t) => t.id === ticketId);
+          closeOut = row
+            ? await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' })
+            : { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` };
+        } catch (e) {
+          log.error('ticket', `loop close-out for ${ticketId} failed after a green merge: ${e.message}`);
+          closeOut = { ok: false, closedOut: false, text: `the loop's close-out threw (${e.message})` };
+        }
         this._notifyMergeLanded(team, ticketId, {
-          branch, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned,
+          branch, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut,
         });
       } catch (e) {
         // A throw AFTER the merge landed is the dangerous shape: master carries
@@ -2279,12 +2340,20 @@ function createTicketMethods(deps, shared) {
     // claim — an absent measurement rendered as a measured answer. Both are the
     // default arm, which is the only arm a caller can reach by forgetting.
     // COLUMN 1 IS THE SAFETY, the same knife-edge ticketCloseLine documents and
-    // for a worse consequence: TWO lines here carry a complete, ready-to-fire
-    // `[agent:task accept <id>]` — the step line and the closing one — each inert
-    // only because prose precedes it. IntentScanner is ^-anchored, so a reflow
-    // putting either verb at a line start makes the LEAD auto-accept on receipt,
-    // destroying the worktree, which no revert undoes. Keep both prefixes.
-    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned }) {
+    // for a worse consequence: the step-owed line carries a complete,
+    // ready-to-fire `[agent:task accept <id>]`, inert only because prose
+    // precedes it. IntentScanner is ^-anchored, so a reflow putting that verb at
+    // a line start makes the LEAD auto-accept on receipt, destroying the
+    // worktree, which no revert undoes. Keep the prefix.
+    //
+    // `closeOut` is `_closeOutMergedTicket`'s result, or null where the loop did
+    // not reach it. It decides ONE line and it is the line a lead acts on, so
+    // the two flags are read apart: `ok && closedOut` is the whole teardown done
+    // and nothing owed, and every other shape — a kept tree, a standing seat, a
+    // throw, a null — falls to the step line, which is what the lead used to get
+    // unconditionally. Defaulting a forgotten argument to "closed out" would
+    // report a teardown that never ran, so the default arm is the one that asks.
+    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned, closeOut = null }) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
         // multi-line, and this body's safety property is that no line starts with
@@ -2318,16 +2387,37 @@ function createTicketMethods(deps, shared) {
           // apart rather than the scan being widened.
           : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} diff --stat ${sha}^1 ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
         const stamp = (this._loadTicket(team, ticketId) || {}).suiteRemeasured;
+        // Line 2 is either a REPORT or a STEP, never both, and which one it is
+        // is the first thing the lead reads. Closed out, the loop finished the
+        // teardown and nothing is owed; anything else and the lead still owes
+        // the accept, so the sentence keeps the shape — and the "alone in a
+        // reply" clause — it had when it was unconditional. That clause is not
+        // decoration: a lead that emitted the verb beside a tool call had it
+        // swallowed, which is why the step is spelled out rather than named.
+        //
+        // `closeOut.text` is collapsed through `oneLine` for the reason the
+        // CHANGELOG probe's error is: a close-out sentence can carry git stderr
+        // (a removal or a delete that failed), and a newline inside it would put
+        // whatever follows at column 1 — where this body's own hazard comment
+        // says nothing may go.
+        const closedOutOk = !!(closeOut && closeOut.ok && closeOut.closedOut);
+        const stepLine = closedOutOk
+          ? `Closed out: ${oneLine(closeOutDetail(ticketId, closeOut.text))}`
+          : `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it. `
+            + `The loop could not close it out: ${oneLine((closeOut && closeOut.text) || 'it did not run')}`;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
-          `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it.`,
+          stepLine,
           '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured (first run: ${oneLine(stamp.first) || 'unrecorded'}).`] : []),
           changelogLine,
-          `Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`,
+          // Dropped once the loop has closed out, because there it is false:
+          // the tree, the ref and the seat are gone. Kept on every other arm,
+          // where it is still the reassurance it always was.
+          ...(closedOutOk ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
         ].join('\n');
         this._stampMerged(team, ticketId);
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
@@ -7862,26 +7952,200 @@ function createTicketMethods(deps, shared) {
       return ticket;
     },
 
+    // Who the seat is, what it is, and which branch it carries — the three facts
+    // every arm of acceptance turns on, resolved in ONE place because
+    // `_taskAccept` and `_closeOutMergedTicket` must never answer them
+    // differently.
+    //
+    // The branch comes from the SEAT'S RECORD, never from the ticket id: the
+    // name is minted with a title slug (`_mintTicketSeat`), so the id alone
+    // cannot reconstruct it and a guessed branch name would fail the gate and
+    // report an accepted ticket as unmerged.
+    //
+    // `ephemeralSeat` — whether this is a seat the loop minted, and therefore a
+    // seat acceptance may retire — reads the RECORD's `ephemeral`, never the
+    // role def, which is agent-writable and may have been edited between
+    // dispatch and accept. No record is NOT a licence either: it is absence of
+    // evidence that the loop minted this seat, and the fail-safe direction on an
+    // irreversible teardown is to keep the seat.
+    //
+    // A STANDING seat reaches the branch-carrying arms by two ordinary lead
+    // moves, not by misuse: `_resolveAssignee` takes a live seat NAME, and when a
+    // worktree seat dies `_ticketAssigneeSeat` refuses to degrade the pin, so
+    // reassigning to a standing role carries `ticket.worktree` — and thus a
+    // branch — onto it. The merged arm's destroy() then killed the operator's
+    // persistent seat, dropped its record and force-removed its checkout, all
+    // licensed by a merge fact that speaks only about the BRANCH.
+    _acceptSeatFacts(ticket) {
+      const seatName = ticket.assignee || null;
+      let rec = null;
+      try { rec = seatName ? getPersistence().get(seatName) : null; } catch { rec = null; }
+      const branch = (rec && rec.worktree && rec.worktree.branch) || (ticket.worktree && ticket.worktree.branch) || null;
+      return { seatName, rec, branch, ephemeralSeat: !!(rec && rec.ephemeral) };
+    },
+
+    // `closedOut` is passed by the CALLING ARM, never derived here: finish()
+    // runs on every accept path and cannot tell them apart, and that is exactly
+    // the conflation this parameter exists to prevent. The arms, each carrying
+    // the reason its own terminality is what it is — the terminality
+    // enumeration; the route list above names the same five arms for a
+    // different fact, and the comments below name arms rather than re-count them:
+    //
+    //   no-branch     TERMINAL. Nothing to merge and no second accept to
+    //                 invite, so acceptance is the whole story.
+    //   !m.ok         NOT terminal. The merge fact could not be established;
+    //                 the reply reports that, and that nothing was removed.
+    //   !m.merged     NOT terminal. Its reply ends "Merge it, then
+    //                 [agent:task accept <id>] again to clean up".
+    //   veto          TERMINAL, and its own comment says why: nothing the lead
+    //                 can do to the repository clears a `mergeError`, so a
+    //                 non-terminal refusal would re-refuse for ever.
+    //   merged/dirty  TERMINAL. Terminality here is the merge fact, not the
+    //                 cleanup, so the dirty path invites a second accept
+    //                 without ceasing to be terminal.
+    //
+    // A reminder bound to the ticket is most wanted on the NOT-terminal pair,
+    // which is why finish() gates its cancellation on this flag.
+    _finishAccept(team, ticket, tickets, { by, note, seatName, msg, closedOut, complete, actedStamp }) {
+      ticket.acceptedAt = Date.now();
+      ticket.acceptedBy = by;
+      if (closedOut) ticket.closedOut = true;
+      // What makes a later `task accept` a no-op, and it is stamped ONLY where
+      // the loop left nothing to finish. `closedOut` plus `acceptedBy` cannot
+      // carry that: the dirty-tree downgrade satisfies both while its own reply
+      // asks for a second accept, and a no-op gated on those would strand that
+      // tree for ever. Carries the TEXT because the no-op reply has no other
+      // account of what happened — the tree is gone and the loop's notice was a
+      // dm the lead may have compacted away.
+      const loopClosed = complete && by === 'ticket-loop'
+        ? { at: ticket.acceptedAt, text: msg } : null;
+      if (loopClosed) ticket.loopClosedOut = loopClosed;
+      if (note) ticket.acceptNote = note;
+      ticket.lastActivityAt = ticket.acceptedAt;
+      // Accept ENDS the loop's hold, and both writes below must say so.
+      // An accept can land while a review is still out (the lead does not wait
+      // for the verdict), and this path retires the seat, removes the worktree
+      // and deletes the branch. A `loopStep` surviving that lets the late
+      // verdict through `_landVerdictOnTicket`'s done+loopStep arm, stamping a
+      // REWORK — with a bumped reviewRound — onto merged-and-deleted work,
+      // which the lead then hears about only as a summary of a stamp nobody
+      // asked for. Cleared, a late verdict cannot be placed and correctly
+      // falls through to the lead in FULL, who is the one who can act on it.
+      delete ticket.loopStep;
+      // The verify hold goes with it, on BOTH writes for the same reason. The
+      // lead accepting a ticket held at a failed check is the lead overruling
+      // that check — it is a decision, and it ends the wait. Left behind, the
+      // sweep would keep alarming that someone owes an action on work that has
+      // been accepted and whose tree is gone.
+      delete ticket.verifyHold;
+      // The merge failure goes too, but ONLY on an arm that closed the ticket
+      // out, and the split is not the one above: `mergeError` is not loop
+      // state that an accept falsifies by itself. It has no reader but the
+      // two boards, so it is a rendered claim about the REPOSITORY - branch X
+      // did not land, a human must merge it - and `!m.ok` and `!m.merged` have
+      // just re-measured that claim: unmeasurable on the first, still true on
+      // the second. Clearing there would blank the mark on the very ticket whose
+      // reply says someone still owes the merge. The gate is `closedOut`, NOT
+      // "invites another accept" - the veto and the dirty downgrade invite one
+      // too and close out anyway. It is retired on the closing arms as ANSWERED
+      // rather than as untrue: the stamp may still describe something real -
+      // `isMerged` is an ancestor test and `revert -m 1` adds a commit, so a
+      // merge reverted off master after a
+      // red suite, and one left standing deliberately, both still read merged
+      // - and an accept that ends the ticket is the lead's answer to it.
+      // COMPARE-and-clear, not an unconditional delete. The re-read below the
+      // merge gate closes the wide window, but a stamp can still land between
+      // that read and here — and this accept then neither saw it nor answered
+      // it, while deleting it outright would erase the board's only trace of a
+      // merge failure that is still true. The teardown race itself is not
+      // fixable by re-reading (a stamp can always arrive after destroy()); the
+      // silent ERASURE is. A mark that arrived mid-accept survives on the board
+      // instead of vanishing with the branch.
+      if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
+      // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site for
+      // a field whose own clear lives in `_autoMergeTicket`'s finally. That finally
+      // declines to clear on the deferring pass, so what a deferred merge waits for
+      // is a LATER pass reaching it with the flag false — and that needs the retry
+      // to wake. A crash or an [agent:reboot] inside that window freezes
+      // `(merge waiting: suite-in-flight)` onto an accepted row, and nothing
+      // re-examines the field at boot.
+      //
+      // It does not weaken the invariant that finally states: that invariant is over
+      // the EXITS OF `_autoMergeTicket`, and this clear is not one of them. Nor can a
+      // merge pass put the field back — one that has not started meets the top gate,
+      // one already past it declines to stamp at the defer arm.
+      //
+      // UNCONDITIONAL, unlike the compare-and-clear above it, and the asymmetry is
+      // deliberate: `mergeError` carries a distinguishing value, so comparing against
+      // what this accept read keeps it from erasing a DIFFERENT stamp that landed
+      // mid-accept and is still true. `mergeWaiting` has one writer writing one
+      // value, so a compare cannot tell a stamp this accept never saw from the one it
+      // did — the conditionality is not expressible for this field. A stale value is
+      // also not a claim a human must answer: the retry's own `closedOut` gate returns
+      // before any git work, so past a closing accept no `mergeWaiting` describes a
+      // merge still able to produce a commit.
+      //
+      // The gate is `closedOut` for the reason the line above it is: on `!m.ok` the
+      // merge fact could not be measured, on `!m.merged` it was measured and the
+      // branch has not landed. A retry may still land either, so clearing there
+      // would erase a claim that is live and true.
+      if (closedOut) delete ticket.mergeWaiting;
+      // Re-read: the teardown below stamped revival onto its own copy.
+      const fresh = ticketsStore.load(team.root);
+      const row = fresh.find((t) => t.id === ticket.id);
+      if (row) {
+        row.acceptedAt = ticket.acceptedAt;
+        row.acceptedBy = ticket.acceptedBy;
+        if (closedOut) row.closedOut = true;
+        if (loopClosed) row.loopClosedOut = loopClosed;
+        if (note) row.acceptNote = note;
+        row.lastActivityAt = ticket.lastActivityAt;
+        delete row.loopStep;
+        delete row.verifyHold;
+        if (closedOut && row.mergeError && String(row.mergeError) === actedStamp) delete row.mergeError;
+        // Both copies, or the board reads the one that was missed: `fresh` is
+        // what gets saved on this path, and the `ticket` snapshot is what gets
+        // saved on the else branch below.
+        if (closedOut) delete row.mergeWaiting;
+        ticketsStore.save(team.root, fresh);
+      } else {
+        ticketsStore.save(team.root, tickets);
+      }
+      // The reviewer too, and it is NOT already covered by the teardowns in the
+      // arms above: every one of those targets `seatName` — the ticket's
+      // ASSIGNEE, the hand — while a reviewer is resolved off its record's
+      // `ephemeral` + `reviewTicket` and never appears as an assignee. So this
+      // is an addition, not a second teardown of the same seat.
+      //
+      // In `finish()` rather than in one arm, because every accept arm runs it
+      // and every one deletes `loopStep`: `!m.ok` and `!m.merged` end the review
+      // round just as terminally as the arms that close out, despite inviting
+      // another accept, and a per-arm call would leak on whichever arm a later
+      // edit forgot.
+      this._retireReviewSeatsFor(team, ticket.id, 'accepted');
+      this._broadcast('ipc-message', { type: 'task', from: by, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
+      log.info('intent', `task accept ${ticket.id} by ${by}: ${msg}`);
+      // Cancellation is gated on the SAME fact the stamp is: only an accept
+      // that closed the ticket out collects its reminders. `!m.merged` replies
+      // "Merge it, then [agent:task accept <id>] again to clean up"; `!m.ok`
+      // replies that the merge check could NOT run and nothing was removed.
+      // Cancelling on either would drop "check the branch landed" in the very
+      // message saying the landing has not been shown.
+      const dropped = closedOut ? this._cancelTicketReminders(team.lead, ticket.id) : '';
+      return dropped ? `${msg} ${dropped}` : msg;
+    },
+
+
     // `[agent:task accept <id>]` — the lead's acknowledgement, and the only verb
-    // that tears anything down.
+    // that tears anything down BY HAND. The loop closes a green merge out itself
+    // through `_closeOutMergedTicket`, which this verb shares; what is left here
+    // is the validation, the no-branch arm, and the no-op for a ticket the loop
+    // has already finished with.
     //
     // NOT folded into `done`: `done` is emitted by the ASSIGNEE and carries its
     // report, so retiring on it would kill the seat the instant it reports —
     // before the lead has read a word, and before the two rework rounds a reject
     // exists to send. Acceptance is the lead's judgement and arrives later.
-    //
-    // The merge fact — `merge-base --is-ancestor` — licenses the BRANCH
-    // bookkeeping and nothing else. Once the branch is in, the tree protects
-    // nothing and a ticket seat has nothing to resume into; until then the seat
-    // is archived and tree and branch are kept. A check that could not RUN is
-    // treated as not merged: `ok:false` is absence of evidence, and inferring
-    // "merged" from it deletes unmerged work.
-    //
-    // Two further facts gate every step that touches a SEAT, because a merged
-    // branch says nothing about either. `ephemeral` on the record: acceptance
-    // may only retire a seat the loop minted, never a standing seat that merely
-    // got ticketed by name. And `isDirty` on the tree before any force-removal,
-    // the same downgrade `_handleTeamRetire` runs.
     async _taskAccept(session, team, intent, reply) {
       const note = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can accept a ticket${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
@@ -7893,186 +8157,25 @@ function createTicketMethods(deps, shared) {
       // deleted, so the state is named in the refusal rather than coerced.
       if (ticket.state !== 'done') { reply(`error: accept closes out a DONE ticket; ${intent.id} is ${ticket.state} — it has not been reported yet${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
 
-      // The branch comes from the SEAT'S RECORD, never from the ticket id: the
-      // name is minted with a title slug (`_mintTicketSeat`), so the id alone
-      // cannot reconstruct it and a guessed branch name would fail the gate and
-      // report an accepted ticket as unmerged.
-      const seatName = ticket.assignee || null;
-      let rec = null;
-      try { rec = seatName ? getPersistence().get(seatName) : null; } catch { rec = null; }
-      const branch = (rec && rec.worktree && rec.worktree.branch) || (ticket.worktree && ticket.worktree.branch) || null;
+      // The loop already did this, COMPLETELY, and re-running it would re-measure
+      // a branch that is gone and report the failure as this accept's. Not an
+      // error: the lead prompt still names the verb, and a lead that emits it
+      // after reading a MERGED notice is doing nothing wrong.
+      //
+      // Gated on `loopClosedOut`, NOT on `closedOut && acceptedBy === 'ticket-loop'`.
+      // Those two are also true of a loop close-out that hit the DIRTY-tree
+      // downgrade — which closes the ticket out, keeps the tree, and whose own
+      // reply asks the lead to commit that tree and accept AGAIN. Gating on them
+      // would turn that recovery into a no-op, permanently stranding the tree.
+      // `loopClosedOut` is stamped only where nothing is left to finish.
+      if (ticket.loopClosedOut) {
+        const at = new Date(ticket.loopClosedOut.at).toLocaleTimeString();
+        reply(`ticket ${ticket.id} was already closed out by the loop at ${at}: ${closeOutDetail(ticket.id, ticket.loopClosedOut.text)}`
+          + ` Nothing was changed.${this._spillRejectedPayload(session, 'task accept', note)}`);
+        return;
+      }
 
-      // Whether the ASSIGNEE is a seat this loop minted, and therefore a seat
-      // acceptance may retire. Read once here because every arm below reads it,
-      // by the routes named here. Before t482 only the no-branch arm resolved it,
-      // and the branch-carrying arms tore down whatever `ticket.assignee` named:
-      //
-      //   no-branch     archives on it directly
-      //   !m.ok         `archiveIfEphemeral`, and `seatClause` for the prose
-      //   !m.merged     the same two
-      //   veto          the same two
-      //   merged/dirty  gates destroy(), and the "left running" prose beside it
-      //
-      // A standing seat reaches those arms by two ordinary lead moves, not by
-      // misuse: `_resolveAssignee` takes a live seat NAME, and when a worktree
-      // seat dies `_ticketAssigneeSeat` refuses to degrade the pin, so
-      // reassigning to a standing role carries `ticket.worktree` — and thus a
-      // branch — onto it. The merged arm's destroy() then killed the operator's
-      // persistent seat, dropped its record and force-removed its checkout, all
-      // licensed by a merge fact that speaks only about the BRANCH.
-      //
-      // The RECORD's `ephemeral`, never the role def, for the reason the
-      // no-branch arm states: the role def is agent-writable and may have been
-      // edited between dispatch and accept. No record is NOT a licence either —
-      // it is absence of evidence that the loop minted this seat, and the
-      // fail-safe direction on an irreversible teardown is to keep the seat.
-      const ephemeralSeat = !!(rec && rec.ephemeral);
-
-      // `closedOut` is passed by the CALLING ARM, never derived here: finish()
-      // runs on every accept path and cannot tell them apart, and that is exactly
-      // the conflation this parameter exists to prevent. The arms, each carrying
-      // the reason its own terminality is what it is — the terminality
-      // enumeration; the route list above names the same five arms for a
-      // different fact, and the comments below name arms rather than re-count them:
-      //
-      //   no-branch     TERMINAL. Nothing to merge and no second accept to
-      //                 invite, so acceptance is the whole story.
-      //   !m.ok         NOT terminal. The merge fact could not be established;
-      //                 the reply reports that, and that nothing was removed.
-      //   !m.merged     NOT terminal. Its reply ends "Merge it, then
-      //                 [agent:task accept <id>] again to clean up".
-      //   veto          TERMINAL, and its own comment says why: nothing the lead
-      //                 can do to the repository clears a `mergeError`, so a
-      //                 non-terminal refusal would re-refuse for ever.
-      //   merged/dirty  TERMINAL. Terminality here is the merge fact, not the
-      //                 cleanup, so the dirty path invites a second accept
-      //                 without ceasing to be terminal.
-      //
-      // A reminder bound to the ticket is most wanted on the NOT-terminal pair,
-      // which is why finish() gates its cancellation on this flag.
-      // What this accept actually ACTED ON, for the compare-and-clear in finish().
-      // A plain `let` rather than a reference to `mergeStamp`, which is
-      // declared below this point and would be in its temporal dead zone on the
-      // no-branch, `!m.ok` and `!m.merged` arms, each of which calls finish()
-      // before reaching it.
-      let actedStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
-      const finish = (msg, closedOut = false) => {
-        ticket.acceptedAt = Date.now();
-        ticket.acceptedBy = session.name;
-        if (closedOut) ticket.closedOut = true;
-        if (note) ticket.acceptNote = note;
-        ticket.lastActivityAt = ticket.acceptedAt;
-        // Accept ENDS the loop's hold, and both writes below must say so.
-        // An accept can land while a review is still out (the lead does not wait
-        // for the verdict), and this path retires the seat, removes the worktree
-        // and deletes the branch. A `loopStep` surviving that lets the late
-        // verdict through `_landVerdictOnTicket`'s done+loopStep arm, stamping a
-        // REWORK — with a bumped reviewRound — onto merged-and-deleted work,
-        // which the lead then hears about only as a summary of a stamp nobody
-        // asked for. Cleared, a late verdict cannot be placed and correctly
-        // falls through to the lead in FULL, who is the one who can act on it.
-        delete ticket.loopStep;
-        // The verify hold goes with it, on BOTH writes for the same reason. The
-        // lead accepting a ticket held at a failed check is the lead overruling
-        // that check — it is a decision, and it ends the wait. Left behind, the
-        // sweep would keep alarming that someone owes an action on work that has
-        // been accepted and whose tree is gone.
-        delete ticket.verifyHold;
-        // The merge failure goes too, but ONLY on an arm that closed the ticket
-        // out, and the split is not the one above: `mergeError` is not loop
-        // state that an accept falsifies by itself. It has no reader but the
-        // two boards, so it is a rendered claim about the REPOSITORY - branch X
-        // did not land, a human must merge it - and `!m.ok` and `!m.merged` have
-        // just re-measured that claim: unmeasurable on the first, still true on
-        // the second. Clearing there would blank the mark on the very ticket whose
-        // reply says someone still owes the merge. The gate is `closedOut`, NOT
-        // "invites another accept" - the veto and the dirty downgrade invite one
-        // too and close out anyway. It is retired on the closing arms as ANSWERED
-        // rather than as untrue: the stamp may still describe something real -
-        // `isMerged` is an ancestor test and `revert -m 1` adds a commit, so a
-        // merge reverted off master after a
-        // red suite, and one left standing deliberately, both still read merged
-        // - and an accept that ends the ticket is the lead's answer to it.
-        // COMPARE-and-clear, not an unconditional delete. The re-read below the
-        // merge gate closes the wide window, but a stamp can still land between
-        // that read and here — and this accept then neither saw it nor answered
-        // it, while deleting it outright would erase the board's only trace of a
-        // merge failure that is still true. The teardown race itself is not
-        // fixable by re-reading (a stamp can always arrive after destroy()); the
-        // silent ERASURE is. A mark that arrived mid-accept survives on the board
-        // instead of vanishing with the branch.
-        if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
-        // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site for
-        // a field whose own clear lives in `_autoMergeTicket`'s finally. That finally
-        // declines to clear on the deferring pass, so what a deferred merge waits for
-        // is a LATER pass reaching it with the flag false — and that needs the retry
-        // to wake. A crash or an [agent:reboot] inside that window freezes
-        // `(merge waiting: suite-in-flight)` onto an accepted row, and nothing
-        // re-examines the field at boot.
-        //
-        // It does not weaken the invariant that finally states: that invariant is over
-        // the EXITS OF `_autoMergeTicket`, and this clear is not one of them. Nor can a
-        // merge pass put the field back — one that has not started meets the top gate,
-        // one already past it declines to stamp at the defer arm.
-        //
-        // UNCONDITIONAL, unlike the compare-and-clear above it, and the asymmetry is
-        // deliberate: `mergeError` carries a distinguishing value, so comparing against
-        // what this accept read keeps it from erasing a DIFFERENT stamp that landed
-        // mid-accept and is still true. `mergeWaiting` has one writer writing one
-        // value, so a compare cannot tell a stamp this accept never saw from the one it
-        // did — the conditionality is not expressible for this field. A stale value is
-        // also not a claim a human must answer: the retry's own `closedOut` gate returns
-        // before any git work, so past a closing accept no `mergeWaiting` describes a
-        // merge still able to produce a commit.
-        //
-        // The gate is `closedOut` for the reason the line above it is: on `!m.ok` the
-        // merge fact could not be measured, on `!m.merged` it was measured and the
-        // branch has not landed. A retry may still land either, so clearing there
-        // would erase a claim that is live and true.
-        if (closedOut) delete ticket.mergeWaiting;
-        // Re-read: the teardown below stamped revival onto its own copy.
-        const fresh = ticketsStore.load(team.root);
-        const row = fresh.find((t) => t.id === ticket.id);
-        if (row) {
-          row.acceptedAt = ticket.acceptedAt;
-          row.acceptedBy = ticket.acceptedBy;
-          if (closedOut) row.closedOut = true;
-          if (note) row.acceptNote = note;
-          row.lastActivityAt = ticket.lastActivityAt;
-          delete row.loopStep;
-          delete row.verifyHold;
-          if (closedOut && row.mergeError && String(row.mergeError) === actedStamp) delete row.mergeError;
-          // Both copies, or the board reads the one that was missed: `fresh` is
-          // what gets saved on this path, and the `ticket` snapshot is what gets
-          // saved on the else branch below.
-          if (closedOut) delete row.mergeWaiting;
-          ticketsStore.save(team.root, fresh);
-        } else {
-          ticketsStore.save(team.root, tickets);
-        }
-        // The reviewer too, and it is NOT already covered by the teardowns in the
-        // arms above: every one of those targets `seatName` — the ticket's
-        // ASSIGNEE, the hand — while a reviewer is resolved off its record's
-        // `ephemeral` + `reviewTicket` and never appears as an assignee. So this
-        // is an addition, not a second teardown of the same seat.
-        //
-        // In `finish()` rather than in one arm, because every accept arm runs it
-        // and every one deletes `loopStep`: `!m.ok` and `!m.merged` end the review
-        // round just as terminally as the arms that close out, despite inviting
-        // another accept, and a per-arm call would leak on whichever arm a later
-        // edit forgot.
-        this._retireReviewSeatsFor(team, ticket.id, 'accepted');
-        this._broadcast('ipc-message', { type: 'task', from: session.name, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
-        log.info('intent', `task accept ${ticket.id} by ${session.name}: ${msg}`);
-        // Cancellation is gated on the SAME fact the stamp is: only an accept
-        // that closed the ticket out collects its reminders. `!m.merged` replies
-        // "Merge it, then [agent:task accept <id>] again to clean up"; `!m.ok`
-        // replies that the merge check could NOT run and nothing was removed.
-        // Cancelling on either would drop "check the branch landed" in the very
-        // message saying the landing has not been shown.
-        const dropped = closedOut ? this._cancelTicketReminders(session.name, ticket.id) : '';
-        reply(dropped ? `${msg} ${dropped}` : msg);
-      };
+      const { seatName, branch, ephemeralSeat } = this._acceptSeatFacts(ticket);
 
       // No branch to reason about (a ticket worked in the main checkout): there
       // is no tree to remove and no ref to delete, so acceptance is the stamp
@@ -8081,11 +8184,7 @@ function createTicketMethods(deps, shared) {
       //
       // A `spawn` seat is the opposite case and splits this arm: it is one-shot by
       // construction, nothing will ever dispatch to it again, and no cleanup verb
-      // reaches it — so left live it accumulates dead rows in the sidebar. Told
-      // apart by the RECORD's `ephemeral` (stamped by _spawnTicketSeat), not by
-      // re-resolving the role: the role def is agent-writable and may have been
-      // edited between dispatch and accept, and the record is the fact about what
-      // was actually spawned.
+      // reaches it — so left live it accumulates dead rows in the sidebar.
       //
       // ARCHIVED, never destroyed. There is no worktree, so destroying reclaims
       // nothing, while the seat's transcript is the only record of what it did and
@@ -8105,11 +8204,60 @@ function createTicketMethods(deps, shared) {
         //
         // Terminal either way: there is no branch to merge and no second accept to
         // invite, so acceptance is the whole story for this ticket.
-        finish(archived
-          ? `ticket ${ticket.id} accepted — no ticket branch recorded (it worked in the shared checkout), so nothing was removed; ${seatName} was a one-shot seat and was ARCHIVED (resumable from the sidebar; anything it left uncommitted is still in the checkout)`
-          : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`, true);
+        reply(this._finishAccept(team, ticket, tickets, {
+          by: session.name, note, seatName, closedOut: true, complete: false,
+          actedStamp: (ticket.mergeError && String(ticket.mergeError)) || null,
+          msg: archived
+            ? `ticket ${ticket.id} accepted — no ticket branch recorded (it worked in the shared checkout), so nothing was removed; ${seatName} was a one-shot seat and was ARCHIVED (resumable from the sidebar; anything it left uncommitted is still in the checkout)`
+            : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`,
+        }));
         return;
       }
+
+      const r = await this._closeOutMergedTicket(team, ticket, tickets, { by: session.name, note });
+      reply(r.text);
+    },
+
+    // The merge fact — `merge-base --is-ancestor` — licenses the BRANCH
+    // bookkeeping and nothing else. Once the branch is in, the tree protects
+    // nothing and a ticket seat has nothing to resume into; until then the seat
+    // is archived and tree and branch are kept. A check that could not RUN is
+    // treated as not merged: `ok:false` is absence of evidence, and inferring
+    // "merged" from it deletes unmerged work.
+    //
+    // Two further facts gate every step that touches a SEAT, because a merged
+    // branch says nothing about either. `ephemeral` on the record: acceptance
+    // may only retire a seat the loop minted, never a standing seat that merely
+    // got ticketed by name. And `isDirty` on the tree before any force-removal,
+    // the same downgrade `_handleTeamRetire` runs.
+    //
+    // TWO callers, and the split between them is the whole point: the lead's
+    // `task accept` passes its own name, and the merge step passes `ticket-loop`
+    // once its post-merge suite comes back GREEN. Same teardown, same sentences,
+    // so a lead reading a MERGED notice reads the words a lead-driven accept
+    // would have produced.
+    //
+    // `{ ok, closedOut, text }`. The two flags are NOT the same question and the
+    // MERGED notice needs both apart:
+    //   closedOut  the TICKET is finished — no further accept is owed for the
+    //              merge fact. True on the veto and on the dirty downgrade too,
+    //              neither of which removed anything.
+    //   ok         the CLEANUP is finished as well: seat retired, tree gone, ref
+    //              deleted, nothing left for anyone to do. Only `ok` licenses the
+    //              notice to say "Closed out"; everything else still owes a step,
+    //              and `text` is what says which.
+    async _closeOutMergedTicket(team, ticket, tickets, { by, note = '' }) {
+      const { seatName, rec, branch, ephemeralSeat } = this._acceptSeatFacts(ticket);
+      // What this accept actually ACTED ON, for the compare-and-clear in
+      // `_finishAccept`. A plain `let` rather than a reference to `mergeStamp`,
+      // which is declared below this point and would be in its temporal dead
+      // zone on the `!m.ok` and `!m.merged` arms, each of which finishes first.
+      let actedStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
+      const finish = (msg, closedOut = false, complete = false) => ({
+        ok: !!complete,
+        closedOut: !!closedOut,
+        text: this._finishAccept(team, ticket, tickets, { by, note, seatName, msg, closedOut, complete, actedStamp }),
+      });
 
       const m = await gitWorktree.isMerged(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
 
@@ -8169,9 +8317,8 @@ function createTicketMethods(deps, shared) {
         // NOT terminal (no `closedOut`): the reply below invites another accept
         // once the merge fact can be established, so the ticket is still live
         // and any reminder bound to it is still wanted.
-        finish(`ticket ${ticket.id} accepted, but the merge check could NOT run for branch ${branch} (${m.error || 'unknown error'}) — treated as NOT merged: `
+        return finish(`ticket ${ticket.id} accepted, but the merge check could NOT run for branch ${branch} (${m.error || 'unknown error'}) — treated as NOT merged: `
           + `${seatClause('archived')}worktree and branch were KEPT. Nothing was removed.`);
-        return;
       }
 
       if (!m.merged) {
@@ -8181,10 +8328,9 @@ function createTicketMethods(deps, shared) {
         // "Merge it, then [agent:task accept <id>] again to clean up", an explicit
         // invitation to come back. Cancelling a bound reminder in the message that
         // reports the branch did NOT land is the worst possible moment for it.
-        finish(`ticket ${ticket.id} accepted, but branch ${branch} is NOT merged into ${m.base} — `
+        return finish(`ticket ${ticket.id} accepted, but branch ${branch} is NOT merged into ${m.base} — `
           + `${seatClause('archived (resumable)')}worktree and branch were KEPT. `
           + `Merge it, then [agent:task accept ${ticket.id}] again to clean up.`);
-        return;
       }
 
       // How many commits the branch actually carries — for the REPLY, and for
@@ -8382,12 +8528,11 @@ function createTicketMethods(deps, shared) {
         // informed decision rather than a refusal. Cancelling reminders bound to a ticket
         // whose reply invites another accept is the cost, paid knowingly here the
         // same way the dirty-tree arm below pays it.
-        finish(`ticket ${ticket.id} accepted — branch ${branch} is an ancestor of ${m.base}, but the merge loop stamped this ticket MERGE FAILED at "${mergeStamp}", `
+        return finish(`ticket ${ticket.id} accepted — branch ${branch} is an ancestor of ${m.base}, but the merge loop stamped this ticket MERGE FAILED at "${mergeStamp}", `
           + `${explain} `
           + `${carries} Nothing was removed: ${seatClause('archived (resumable)')}worktree and branch were KEPT. `
           + `${confirm} — because this reply ANSWERS the mark, and a second `
           + `[agent:task accept ${ticket.id}] takes the ordinary merged path.`, true);
-        return;
       }
 
       // Stamp before the teardown — destroy() drops the record the session id
@@ -8580,7 +8725,24 @@ function createTicketMethods(deps, shared) {
       // not-merged arms is knowingly broken — terminality here is the merge
       // fact, and losing a reminder about cleanup is the accepted cost of not
       // reporting merged work as unfinished. Deliberate; do not "fix" it.
-      finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true);
+      //
+      // `complete` is the SECOND flag and asks the other question: is there
+      // anything left for anyone to do? It is ROW 1 of the table and nothing
+      // else. Every other row leaves something on disk that a lead may still
+      // want to act on — a downgrade keeps the tree by design, a standing
+      // assignee keeps its checkout and its seat, a failed removal leaves a tree
+      // with only the reply naming it, a refused delete leaves a live ref — so
+      // none of them may be reported as closed out or silence a later accept.
+      //
+      // `worktreeRemoved !== false`, not `=== true`: destroy() omits the field
+      // entirely for a seat whose record carried no tree path, and there the
+      // teardown genuinely finished — the seat is retired, its record dropped,
+      // and there was never a checkout to remove. Only an explicit `false`
+      // means a removal was attempted and failed.
+      const complete = !!seatName && ephemeralSeat && !downgrade
+        && !!removed && removed.ok !== false && removed.worktreeRemoved !== false
+        && del.ok === true && !del.skipped;
+      return finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true, complete);
     },
 
     // Park an ALREADY-OPEN ticket, or the unpark direction if it is parked. A
@@ -9265,7 +9427,17 @@ function createTicketMethods(deps, shared) {
     _sweepMergedUnaccepted(team, tickets, now) {
       for (const t of tickets) {
         if (typeof t.mergedAt !== 'number' || t.mergedNudgedAt) continue;
-        if (t.acceptedAt || t.closedOut || t.state !== 'done') continue;
+        if (t.state !== 'done') continue;
+        // A close-out the LOOP ran and did not finish is the one shape where
+        // `acceptedAt` and `closedOut` are both set and a step is still owed:
+        // the dirty-tree and standing-seat arms stamp them, keep the tree, and
+        // the MERGED notice for them says `Step owed`. Reading those two fields
+        // alone would disarm this backstop on precisely the tickets it exists
+        // for — a lead who missed that dm would never hear again. A LEAD's
+        // accept is the opposite case and still suppresses unconditionally: the
+        // lead has acted, whatever the accept then removed.
+        const loopOwes = t.acceptedBy === 'ticket-loop' && !t.loopClosedOut;
+        if (!loopOwes && (t.acceptedAt || t.closedOut)) continue;
         if (t.mergeError) continue;
         if (now - t.mergedAt < MERGED_ACCEPT_NUDGE_MS) continue;
         const tid = t.id;
