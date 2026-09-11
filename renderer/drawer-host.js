@@ -699,26 +699,31 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     armChanged();
   }
 
-  // The account plan quota readout. Takes an already-decided chip (proxy-util's
-  // `quotaChip`) — null means render NOTHING, which is the normal state for most
-  // of a cycle and the reason the chip appearing is itself the signal.
+  // The account plan quota readout, one chip per account (proxy-util's
+  // `quotaChips`). An empty list means render NOTHING, which is the normal state
+  // for most of a cycle and the reason a chip appearing is itself the signal.
   //
-  // Emptying it is what hides it: the `:empty` rule in styles.css takes it out
-  // of the flex row entirely, gap included.
-  function setQuota(chip) {
+  // Emptying the host is what hides it: the `:empty` rule in styles.css takes it
+  // out of the flex row entirely, gap included. Each account gets its OWN
+  // element rather than one joined string, because level and staleness are
+  // per-account — one subscription at `rejected` must not colour the other's
+  // number loud.
+  function setQuota(chips) {
     if (!quotaEl) return;
-    if (!chip) {
-      quotaEl.textContent = '';
-      quotaEl.removeAttribute('data-level');
-      quotaEl.removeAttribute('title');
-      quotaEl.removeAttribute('data-stale');
-      return;
+    const list = Array.isArray(chips) ? chips.filter(Boolean) : (chips ? [chips] : []);
+    quotaEl.textContent = '';
+    quotaEl.removeAttribute('data-level');
+    quotaEl.removeAttribute('title');
+    quotaEl.removeAttribute('data-stale');
+    for (const chip of list) {
+      const el = document.createElement('span');
+      el.className = 'quota-chip';
+      el.textContent = chip.text;
+      el.dataset.level = chip.level;
+      el.title = chip.tip;
+      if (chip.stale) el.dataset.stale = '1';
+      quotaEl.appendChild(el);
     }
-    quotaEl.textContent = chip.text;
-    quotaEl.dataset.level = chip.level;
-    quotaEl.title = chip.tip;
-    if (chip.stale) quotaEl.dataset.stale = '1';
-    else quotaEl.removeAttribute('data-stale');
   }
 
   return {

@@ -3845,8 +3845,10 @@ html, body {
   padding: 3px 6px;
 }
 
-/* Account plan quota. Colour is the escalation the SERVER published, not a
-   threshold invented here.
+/* Account plan quota — the STRIP, holding one .quota-chip per account. It stays
+   an inline text container rather than becoming a flex row: text-overflow works
+   on inline content and would stop applying to flex items, and the ellipsis is
+   what keeps the overflow below from shoving the tabs.
    Bounded like #drawer-status and for the same reason: #drawer-tabs is the
    designated shrinker and #drawer is overflow:hidden, so an unbounded chip
    pushes the tabs and their unread badges off screen at exactly the moment the
@@ -3867,8 +3869,6 @@ html, body {
   max-width: 400px;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 2px 7px;
-  border-radius: 999px;
   cursor: default;
 }
 /* display:none, not padding:0 — #drawer-header is a flex row with gap:10px, so
@@ -3877,23 +3877,31 @@ html, body {
    rule 1 binds nodes that can contain an xterm; this span holds text, and the
    availableFor tab-button exception already establishes the boundary. */
 #drawer-quota:empty { display: none; }
+/* The pill itself. Per-chip rather than on the strip because level and
+   staleness are per ACCOUNT: one subscription at rejected must not colour the
+   other's number loud. */
+#drawer-quota .quota-chip {
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+#drawer-quota .quota-chip + .quota-chip { margin-left: 6px; }
 /* Informative, not an alarm: the operator cannot act on this faster by being
    startled, and the chip only appears at all once there is something to say.
    So severity is carried by the WORDS, and the two levels differ by emphasis
    within one calm palette — never by a red that competes with the terminal
    behind it. */
-#drawer-quota[data-level="warn"] {
+#drawer-quota .quota-chip[data-level="warn"] {
   color: var(--text-dim);
   background: color-mix(in srgb, var(--text-dim) 10%, transparent);
 }
-#drawer-quota[data-level="loud"] {
+#drawer-quota .quota-chip[data-level="loud"] {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 /* Nothing polls the API — a reading is only as fresh as the last forwarded
    turn, and rendering a stale number at full strength implies a liveness it
    does not have. */
-#drawer-quota[data-stale] { opacity: 0.5; }
+#drawer-quota .quota-chip[data-stale] { opacity: 0.5; }
 
 /* The inspector button. Dimmed to near-invisible when nothing is riding: this
    is an instrument the operator reaches for when they doubt what was sent, and

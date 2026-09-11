@@ -199,16 +199,18 @@ class QuotaStore {
 
   // Record the quota headers off a finished upstream response. Cheap enough to
   // sit on the response path: a scan of ~30 header keys.
-  note(headers, { status = null, now = Date.now() / 1000 } = {}) {
+  note(headers, { status = null, now = Date.now() / 1000, account = null } = {}) {
     // Callers pass whatever the http library handed them; normalize casing
     // once so the org lookup and the parse agree.
     const lower = {};
     for (const [k, v] of Object.entries(headers || {})) lower[String(k).toLowerCase()] = v;
-    // A response that omits the org header files under the literal 'default'
-    // and persists as its own row, so one real org that intermittently omits it
-    // reads as two accounts. Faithful to the reference and nothing surfaces the
-    // account count today — for whoever does.
-    const acct = lower['anthropic-organization-id'] || 'default';
+    // The SEAT's account label is the key when the caller could resolve one:
+    // the org header is whatever the last response happened to carry, so keying
+    // by it collapses two subscriptions into one flickering number the moment
+    // both are in use. Without a label, key by org as before — that fallback is
+    // what keeps an unresolvable agent, and the 429 branch below, correct.
+    const label = typeof account === 'string' && account ? account : null;
+    const acct = label || lower['anthropic-organization-id'] || 'default';
     const parsed = parseQuotaHeaders(lower);
     if (!parsed) {
       if (status === 429) {
@@ -217,8 +219,11 @@ class QuotaStore {
         // ATTRIBUTION: a 429 need not carry the org header either, and filing
         // it under 'default' would park it beside no reading at all — the bar
         // would show a stale percentage with no sign of the wall being hit.
-        // Fall back to the account we last read from.
-        const key = this._byAccount.has(acct) ? acct : this._lastAccount;
+        // Fall back to the account we last read from. A resolved LABEL is not a
+        // guess, so it files strictly: a refusal on one subscription must never
+        // land on the other's row.
+        const key = label != null ? label
+          : (this._byAccount.has(acct) ? acct : this._lastAccount);
         const cur = key != null ? this._byAccount.get(key) : null;
         if (cur) {
           cur.last_429 = now;
@@ -265,6 +270,25 @@ class QuotaStore {
     }
     if (acct == null) return null;
     return snapshotFrom(this._byAccount.get(acct), this._byAccount.size, now);
+  }
+
+  // Every account we hold, labelled, for a chip that renders one segment each.
+  // `default` leads because it is the seat account an unconfigured install runs
+  // on, so the row an operator with one subscription sees must not move when a
+  // second one appears beside it.
+  snapshotAll(now = Date.now() / 1000) {
+    const rows = [];
+    for (const [account, entry] of this._byAccount) {
+      const snap = snapshotFrom(entry, this._byAccount.size, now);
+      if (snap) rows.push({ account, ...snap });
+    }
+    rows.sort((a, b) => {
+      if (a.account === b.account) return 0;
+      if (a.account === 'default') return -1;
+      if (b.account === 'default') return 1;
+      return a.account < b.account ? -1 : 1;
+    });
+    return rows;
   }
 
   _persist(acct, entry) {

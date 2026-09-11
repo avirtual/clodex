@@ -749,13 +749,14 @@ function createSessionManager(deps) {
         // Client bytes first: this event fires before the response head is
         // written downstream, and the store's write is a synchronous disk sync.
         // Doing it inline puts that sync on time-to-first-token for every
-        // Claude turn. Nothing here is ordering-sensitive — the store is keyed
-        // by org and note() stamps its own timestamp — so deferring costs no
-        // accuracy.
+        // Claude turn. Nothing here is ordering-sensitive — note() stamps its
+        // own timestamp and the key comes off the seat rather than off arrival
+        // order — so deferring costs no accuracy.
         setImmediate(() => {
           try {
-            const snap = store.note(ev.headers, { status: ev.status });
-            if (snap) this._broadcast('wire-quota', snap);
+            const account = this._accountForProxyAgent(ev.agent);
+            const snap = store.note(ev.headers, { status: ev.status, account });
+            if (snap) this._broadcast('wire-quota', this._quotaPayload(store));
           } catch (e) {
             this._shadowLog({ type: 'wire-quota-error', error: e.message });
           }
@@ -1207,6 +1208,19 @@ function createSessionManager(deps) {
       return this._quotaStore;
     }
 
+    // The shape both the broadcast and the `wire:quota` pull carry, built in
+    // ONE place so a window that pulls at launch and one that is pushed to a
+    // second later cannot disagree about what a reading looks like. `latest`
+    // is the pre-t813 flat snapshot, kept for the single-reading path;
+    // `accounts` is every account the wire has seen. Null when nothing has been
+    // observed at all — "no reading" must stay distinguishable from "a reading
+    // with no accounts in it".
+    _quotaPayload(store) {
+      const latest = store.snapshot();
+      if (!latest) return null;
+      return { accounts: store.snapshotAll(), latest };
+    }
+
     // The plan quota is the ACCOUNT's, so it goes out window-wide on its own
     // channel rather than riding a per-session payload. Deliberately NOT folded
     // into the wirescope poller's `session-proxy`: that poller returns early
@@ -1216,8 +1230,8 @@ function createSessionManager(deps) {
       const store = this.quotaStore();
       if (!store) return;
       try {
-        const snap = store.snapshot();
-        if (snap) this._broadcast('wire-quota', snap);
+        const payload = this._quotaPayload(store);
+        if (payload) this._broadcast('wire-quota', payload);
       } catch (e) {
         this._shadowLog({ type: 'wire-quota-error', error: e.message });
       }
@@ -3467,6 +3481,47 @@ function createSessionManager(deps) {
       }
     }
 
+    // Building the resolver is the expensive half (accounts store reads its
+    // registry), so it is separable: list() builds ONE for the whole sweep,
+    // while the quota consumer builds one per forwarded turn.
+    _accountResolver() {
+      try {
+        const accountsStore = (getAccounts && getAccounts()) || null;
+        if (!accountsStore) return null;
+        return accountsStore.labelResolver
+          ? accountsStore.labelResolver()
+          : (d) => accountsStore.labelFor(d);
+      } catch { return null; }
+    }
+
+    // The account label a seat runs on, off its persisted CLAUDE_CONFIG_DIR.
+    // ONE implementation for the sidebar row and for the quota store's key: a
+    // second copy would let a chip be labelled with an account the row beside
+    // it does not show.
+    accountFor(name, resolve = this._accountResolver()) {
+      if (!resolve) return 'default';
+      try {
+        const entry = getPersistence().get(name);
+        const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
+        return dir ? (resolve(dir) || 'default') : 'default';
+      } catch { return 'default'; }
+    }
+
+    // The account label behind a wire `response` event's `agent`. Null, never
+    // 'default', when no live session claims it: the store's org-header keying
+    // is the honest fallback for a seat we cannot place, while a 'default' here
+    // would file an unknown seat's numbers on top of a real account's row.
+    _accountForProxyAgent(agent) {
+      if (!agent) return null;
+      let match = null;
+      for (const s of this.sessions.values()) {
+        if (s.proxyAgent === agent) { match = s; break; }
+      }
+      if (!match) match = this.sessions.get(agent) || null;
+      if (!match) return null;
+      return this.accountFor(match.name);
+    }
+
     list() {
       const teamByCwd = new Map();
       const resolvedTeamFor = (cwd) => {
@@ -3523,23 +3578,7 @@ function createSessionManager(deps) {
           return open ? open.id : null;
         } catch { return null; }
       };
-      const accountsStore = (getAccounts && getAccounts()) || null;
-      let resolveAccount = null;
-      try {
-        if (accountsStore) {
-          resolveAccount = accountsStore.labelResolver
-            ? accountsStore.labelResolver()
-            : (d) => accountsStore.labelFor(d);
-        }
-      } catch { resolveAccount = null; }
-      const accountFromPersistedEnv = (name) => {
-        if (!resolveAccount) return 'default';
-        try {
-          const entry = getPersistence().get(name);
-          const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
-          return dir ? (resolveAccount(dir) || 'default') : 'default';
-        } catch { return 'default'; }
-      };
+      const resolveAccount = this._accountResolver();
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
@@ -3556,7 +3595,7 @@ function createSessionManager(deps) {
         noWire: !!s.noWire,
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
-        account: accountFromPersistedEnv(s.name),
+        account: this.accountFor(s.name, resolveAccount),
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }
