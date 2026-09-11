@@ -100,3 +100,46 @@ test('shared row layout is a class, not repeated inline styles', () => {
   const inline = (prefsMarkup().match(/style="display: flex; align-items: center; gap: 8px;"/g) || []).length;
   assert.strictEqual(inline, 0, 'the duplicated inline flex row must be gone');
 });
+
+function accountsGroup() {
+  const m = prefsMarkup().match(/<details class="prefs-group" data-group="accounts">[\s\S]*?<\/details>/);
+  assert.ok(m, 'ENTER: the accounts group is still found by this anchor');
+  return m[0];
+}
+
+// `flex: none` plus the `width: 100%` that #prefs-dialog puts on every input and
+// select makes a field demand the whole row: its siblings collapse to ~10px and
+// the trailing button leaves the dialog. The CSS rule below is what a row select
+// takes its sizing from now, so an inline one here would be the defect again.
+test('no account field sizes itself out of its row', () => {
+  for (const tag of accountsGroup().match(/<(?:input|select)[^>]*>/g) || []) {
+    assert.ok(!/flex:\s*none/.test(tag), `an accounts field must not pin flex: none inline: ${tag}`);
+  }
+  assert.match(
+    accountsGroup(),
+    /<label for="prefs-account-model"[^>]*>/,
+    'the model select needs a <label for> — it is the row\'s only name for it',
+  );
+});
+
+// Comments are stripped first: they quote the very declarations asserted about
+// below, so a body/selector read out of the raw text matches the prose instead.
+const cssRules = css.replace(/\/\*[\s\S]*?\*\//g, '').split('}')
+  .map((chunk) => {
+    const i = chunk.indexOf('{');
+    return i < 0 ? null : { sel: chunk.slice(0, i).trim(), body: chunk.slice(i + 1).trim() };
+  })
+  .filter(Boolean);
+
+test('a select in a prefs row sizes to its content, and prefs controls are dark', () => {
+  assert.match(css, /#prefs-dialog \.prefs-row select \{[^}]*width:\s*auto/);
+  const dark = cssRules.filter((r) => /(^|,)\s*#dialog select\s*(,|$)/.test(r.sel) && /padding:\s*8px 10px/.test(r.body));
+  assert.strictEqual(dark.length, 1, 'ENTER: exactly one dark control block styles #dialog select');
+  for (const sel of ['#prefs-dialog input[type="text"]', '#prefs-dialog select']) {
+    assert.ok(dark[0].sel.includes(sel), `${sel} must share the dark control treatment: ${dark[0].sel}`);
+  }
+  assert.ok(
+    !/display:\s*block|margin-top/.test(dark[0].body),
+    `the prefs rows are flex — the stacked-field declarations must stay out of the shared block: ${dark[0].body}`,
+  );
+});

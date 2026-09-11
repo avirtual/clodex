@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- **Preferences ▸ Accounts fits the dialog**: the add form, config-dir field and
+  "Move seats on model" row lay out on their own lines with the dialog's dark
+  controls, instead of one select swallowing the row.
+
 ## 5.61.0 — 2026-09-11 — Registered subscriptions: accounts, a select on every seat, and a quota chip per account
 
 - **Registered subscriptions**: Clodex keeps a list of Claude accounts
