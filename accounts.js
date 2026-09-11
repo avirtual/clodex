@@ -191,4 +191,36 @@ function createAccounts(deps = {}) {
   };
 }
 
-module.exports = { createAccounts, modelOfArgs, modelSelects, LABEL_RE, PLANS, SHARED_LINKS };
+async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs }) {
+  const dir = configDirFor(label);
+  if (!dir) return { ok: false, error: `unknown account "${label}"`, moved: [], skipped: [] };
+
+  const moved = [];
+  const skipped = [];
+  for (const live of Array.from(liveSessions)) {
+    const name = live.name;
+    if (live.type !== 'claude') { skipped.push({ name, reason: 'not a claude session' }); continue; }
+    const entry = getEntry(name);
+    if (!modelSelects(modelOfArgs(entry && entry.extraArgs), model)) {
+      skipped.push({ name, reason: `model ${model} not selected` });
+      continue;
+    }
+    const prevEnv = (entry && entry.env && typeof entry.env === 'object') ? entry.env : {};
+    if (prevEnv.CLAUDE_CONFIG_DIR === dir) { skipped.push({ name, reason: `already on account ${label}` }); continue; }
+    if (live.activityState && live.activityState !== 'idle') {
+      skipped.push({ name, reason: 'session is mid-turn' });
+      continue;
+    }
+    const res = await applyArgs(name, {
+      extraArgs: (entry && entry.extraArgs) || [],
+      proxy: (entry && entry.proxy) ?? null,
+      env: { ...prevEnv, CLAUDE_CONFIG_DIR: dir },
+      restart: true,
+    }, entry && entry.workspaceId);
+    if (res && res.ok) moved.push(name);
+    else skipped.push({ name, reason: (res && res.error) || 'restart failed' });
+  }
+  return { ok: true, moved, skipped };
+}
+
+module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, LABEL_RE, PLANS, SHARED_LINKS };

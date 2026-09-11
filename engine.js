@@ -866,7 +866,7 @@ const { mergeClaudeSystemPrompt, mergeCodexInstructions, parseCtxFile } = requir
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, jsonlToMessages, extractText } = require('./transcript');
 const { initStores } = require('./stores');
-const { createAccounts, modelOfArgs, modelSelects } = require('./accounts');
+const { createAccounts, sweepAccountMove } = require('./accounts');
 const { restoreSessionsForWorkspace: restoreSessionsCore } = require('./session-restore');
 const { CLAUDE_TOOLS, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED, DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS } = require('./catalogs');
 
@@ -1684,44 +1684,18 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
-// Bulk "move every seat on model X to account Y". Sequential and awaited, never
-// Promise.all: each move kills and respawns a PTY, and a parallel sweep would
-// have several seats mid-kill against one persistence file.
-async function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
-  const dir = accounts.configDirFor(label);
-  if (!dir) return { ok: false, error: `unknown account "${label}"`, moved: [], skipped: [] };
-
-  const moved = [];
-  const skipped = [];
-  // Snapshot the live set before the first restart: a respawn replaces the
-  // session object mid-sweep, and iterating the live Map while it mutates would
-  // visit a seat twice or not at all.
-  for (const live of Array.from(manager.sessions.values())) {
-    const name = live.name;
-    if (live.type !== 'claude') { skipped.push({ name, reason: 'not a claude session' }); continue; }
-    const entry = persistence.get(name);
-    if (!modelSelects(modelOfArgs(entry && entry.extraArgs), model)) {
-      skipped.push({ name, reason: `model ${model} not selected` });
-      continue;
-    }
-    const prevEnv = (entry && entry.env && typeof entry.env === 'object') ? entry.env : {};
-    if (prevEnv.CLAUDE_CONFIG_DIR === dir) { skipped.push({ name, reason: `already on account ${label}` }); continue; }
-    // Restarting a seat mid-turn destroys the turn, which is the one thing this
-    // sweep must not do — the operator runs it precisely while seats are working.
-    if (live.activityState && live.activityState !== 'idle') {
-      skipped.push({ name, reason: 'session is mid-turn' });
-      continue;
-    }
-    const res = await applySessionArgs(name, {
-      extraArgs: (entry && entry.extraArgs) || [],
-      proxy: (entry && entry.proxy) ?? null,
-      env: { ...prevEnv, CLAUDE_CONFIG_DIR: dir },
-      restart: true,
-    }, entry && entry.workspaceId ? entry.workspaceId : wsId);
-    if (res && res.ok) moved.push(name);
-    else skipped.push({ name, reason: (res && res.error) || 'restart failed' });
-  }
-  return { ok: true, moved, skipped };
+function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
+  return sweepAccountMove({
+    model,
+    label,
+    // Snapshotted by sweepAccountMove before the first restart: a respawn
+    // replaces the session object mid-sweep, and iterating the live Map while it
+    // mutates would visit a seat twice or not at all.
+    liveSessions: manager.sessions.values(),
+    getEntry: (name) => persistence.get(name),
+    configDirFor: (l) => accounts.configDirFor(l),
+    applyArgs: (name, patch, entryWs) => applySessionArgs(name, patch, entryWs || wsId),
+  });
 }
 
 const SKILL_SWEEP_HEAD = 256 * 1024;
