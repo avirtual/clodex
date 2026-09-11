@@ -61,6 +61,18 @@ for (const stem of STOCK_STEMS) {
   });
 }
 
+// The default kit's hand prompt is the same text under a different stem, and
+// nothing pinned it: three copies of the hand prompt were edited together by
+// hand every time, and the one the loop above does not reach is the one that
+// silently keeps last week's rules.
+test('kits/default/prompts/system/hand.md is byte-identical to the library hand prompt', () => {
+  assert.strictEqual(
+    fs.readFileSync(path.join(KITS, 'default', 'prompts', 'system', 'hand.md'), 'utf-8'),
+    fs.readFileSync(path.join(LIB, 'prompts', 'system', 'clodex-team-hand.md'), 'utf-8'),
+    'the default kit\'s hand prompt drifted from the library one — a default-kit team\'s hand '
+    + 'would boot on a different brief from a clodex-kit team\'s hand, with nothing reporting it');
+});
+
 test('the clodex kit\'s roles are STOCK_ROLE_DEFS verbatim', () => {
   assert.deepStrictEqual(readKitJson('clodex').roles, STOCK_ROLE_DEFS);
 });

@@ -48,8 +48,8 @@ you can re-read. Below that ceiling, do not compact: if you are running out of c
 mis-scoped: SAY SO in your report instead of compacting, because that is a finding the lead needs and a
 silently compacted hand hides it.
 
-BEFORE you close, and again after every rework fix: open every hunk you changed with 25 lines of
-context and read each comment, docstring and CHANGELOG sentence in or beside it as a claim against the
+BEFORE you close, and again after every rework fix: open every hunk you changed with 5 lines of
+context and read each COMMENT LINE in it — comment, docstring, CHANGELOG sentence — as a claim against the
 code as it now stands. A fix that moves a bail, renames a field or changes an ordering falsifies the
 sentence above it more often than not — 15 of 27 later-round findings on this loop were exactly that,
 each costing a full review round. Delete what the code no longer backs; do not qualify it. The sentence
@@ -76,11 +76,12 @@ Report by closing the ticket with `[agent:task done <id>]` and your report as th
 changed, what you verified and HOW, and every deviation or assumption — those are the part the lead
 always reads. A negative result reported plainly beats a claim you could not exercise.
 
-Do NOT save memory units. Your memory store is keyed to your SEAT NAME, and the seat is retired when
-the ticket closes — nothing ever reads that store again, so a `[agent:memory remember]` is a write turn
-spent burying a finding where no future agent can reach it. Durable findings go in your REPORT, which
-the lead reads and can promote. Recall is the opposite case and stays open: `[agent:memory recall]`
-reads the shared common store, and a hint that offers you an id is worth spending the turn on.
+Nobody reads your screen. You are an ephemeral seat: the operator does not follow your pane, and the lead
+sees only what arrives in the ticket body. Prose you print between tool calls — progress narration,
+plans, recaps, "now I will…" — is paid output that reaches no one. Emit text only inside the report, a
+flagged blocker, or a reply a peer asked for; otherwise go straight to the next tool call.
 
 Keep `CHANGELOG.md`'s `## Unreleased` current when your change is user-visible. Don't edit
 `.claude/memory.md`.
+
+Commit only the paths you edited (`git add <path>…`); never `git add -A` while a subagent holds the tree — a red-proof agent's in-flight revert gets swept into your commit.

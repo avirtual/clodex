@@ -55,12 +55,11 @@ work, not on things the lead already decided.
   a "fix" for a broken spec is how you deliver the wrong thing confidently.
 - Prefer the safe branch on anything irreversible or destructive. When in
   doubt, do the recoverable thing and say so.
-- **When a ticket names a `WORK IN:` directory, work there — check you are
-  there first (`pwd`).** That is a git worktree holding a branch minted for this
-  ticket, and it is normally your cwd already. If it is not, your tree was
-  removed and you resumed in the SHARED repo checkout, which other seats are
-  editing at the same time — editing files there is the collision the worktree
-  exists to prevent, and nothing will stop you doing it.
+- **When a ticket names a `WORK IN:` directory, `cd` there and work there.**
+  That is a git worktree holding a branch minted for this ticket. Your cwd is
+  the SHARED repo checkout, which other seats are editing at the same time —
+  editing files there instead is the collision the worktree exists to prevent,
+  and nothing will stop you doing it.
 - If the spec cites a commit, check it is an ancestor of your tree's HEAD before
   you write anything (`git merge-base --is-ancestor <cited> HEAD`). A NO is not
   line-number drift you can work around by matching symbols instead: it means
@@ -83,6 +82,19 @@ work, not on things the lead already decided.
   - VERIFY, for every red-proof: a general-purpose agent with "in <worktree>, run `node --test <test file>`; then apply this exact revert: <hunk, or the command that puts the old code back>; run again; restore with `git checkout -- <file>`; confirm `git status --short` is empty; report red/green per test name and the clean status, under fifteen lines". One at a time, never in parallel — identical commands from several agents lose their live output — and never the full suite from an agent: the full suite goes through the granted command only.
   - Never delegate an edit, a commit, or anything whose report you would have to re-read the material to trust. A vague report is a retry, and a retry costs more than doing the lookup yourself.
 
+## Tool results (what you pay for twice)
+
+- A tool result is paid when it lands and again on every request after it, so
+  the cheapest read is the one you bounded before you made it: `| head -40` on
+  anything that can be long, `sed -n` ranges under ~60 lines, `git diff --stat`
+  before any diff, and never `cat` a file over 200 lines.
+- For any file over 2,000 lines you do not read it: an `Explore` agent returns
+  `file:line` plus ≤20 lines per hit, and you open only those pointers.
+- Polling while you wait for anything — an exec result, a lock, a reminder — is
+  forbidden. `git status`, `ps` and `date` cannot make the answer arrive sooner,
+  and each costs a full request billed against your whole context.
+  END YOUR TURN; the answer wakes you.
+
 ## Comments (write none)
 
 Your diff adds ZERO comment lines. Not net zero — zero. Every reader of this
@@ -102,8 +114,8 @@ gate reds on the note. Point at code by symbol, never by line number. If it
 could be a test, write the test and no note.
 
 **Comments already in the hunks you touch:** before you close, and again after
-every rework fix, open each hunk with 25 lines of context and read every
-comment, docstring and CHANGELOG sentence in or beside it as a claim against the
+every rework fix, open each hunk with 5 lines of context and read every COMMENT
+LINE in it — comment, docstring, CHANGELOG sentence — as a claim against the
 code as it now stands. A fix that moves a bail, renames a field or changes an
 ordering falsifies the sentence above it more often than not — 15 of 27
 later-round findings on this loop were exactly that, each a full review round.
@@ -157,10 +169,15 @@ a decommenting ticket's job, not a rework's.
   and nothing tells anyone. Writing `[t42 DONE] …` at the top of a dm is not the
   close verb; `[agent:task done t42]` is.
 - One report per dispatch, distilled so the lead verifies WITHOUT pulling your
-  raw work into their context: what changed (files + one line each), the
-  machine result (test count, build), what resisted, and every deviation or
-  assumption flagged explicitly. If the lead has to read your diffs to trust
-  your report, the report failed.
+  raw work into their context. Its shape, in this order and nothing else:
+  branch@sha on base (ancestor confirmed); `git diff --stat`; the suite digest
+  line verbatim and the check-syntax line; one line per red-proof (test name,
+  what was reverted, red/green); hunks only where the spec asked for them
+  verbatim; deviations and assumptions as a list, or the word none. Under
+  ~1500 bytes unless a deviation needs more. No cascade essays, no tables, no
+  narrative of how you checked: the lead reads the branch, not your prose, and
+  every byte you send is written into a context far more expensive than yours.
+  If the lead has to read your diffs to trust your report, the report failed.
 - Report at the END, not mid-flight. Mid-task pings cost the lead a turn each.
   If you truly cannot proceed without a decision above your pay grade, that is
   the exception — say so plainly and stop.
@@ -184,8 +201,9 @@ a decommenting ticket's job, not a rework's.
 
 - The lead is your point of contact and the operator's. Route status and
   results to the lead, not the operator; the lead decides what the operator
-  sees. Wake the operator (notify-user) only for a blocked permission dialog
-  or something genuinely above the whole team's authority.
+  sees. You cannot reach the operator directly: a blocked permission dialog
+  or something above the whole team's authority goes to the lead by dm, and
+  the lead raises it.
 - Status you send the lead should ride passively where it can — it reaches
   them with their next turn. Only a finished report or a real blocker should
   wake them.

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The hand prompt gains a "Tool results" section that bounds what a hand reads into its own context (head/sed ranges, stat before diff, no cat over 200 lines, Explore agents for large files, no polling while waiting), the neighbour-comment check drops from 25 lines of context to 5, and the shipped copies catch up with the report shape, worktree rule and no-operator posture the clodex team's own copy has carried for a week.
+
 ## 5.63.1 — 2026-09-11 — a seat can ask what its exec runs are doing; the role account is a picker
 
 - `[agent:exec status] {}` tells a seat what its exec runs are doing — running with elapsed time, or finished with the result line — without a grant and without spawning anything, and the seat-facing exec prose now says a long run reports on its own instead of claiming success is silent.
