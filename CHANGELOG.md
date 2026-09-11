@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a wire caller can spawn a team lead from the host's own manifest
+## Unreleased
+
+## 5.63.3 — 2026-09-12 — a wire caller can spawn a team lead from the host's own manifest
 
 - `POST /api/sessions` accepts `{ name, team }`: the receiving host spawns that team's lead from its OWN manifest — template, prompts, exec grants and intents all come from the host's disk, nothing else in the body is read, and any name other than the manifest's lead is refused — which is how a sandbox box will boot the team shipped into it.
 
