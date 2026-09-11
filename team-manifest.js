@@ -1016,7 +1016,7 @@ function retiredFieldLines(team, role) {
 
 // The label is never computed here — team-manifest is a pure leaf and warmth is a
 // wire-layer property, so it arrives as data.
-function formatRoster(team, liveSeats = [], { seat = null } = {}) {
+function formatRoster(team, liveSeats = [], { seat = null, grants = null } = {}) {
   const byRole = new Map();
   const roleless = [];
   for (const entry of liveSeats) {
@@ -1054,7 +1054,10 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
     const action = leadActionLine(team);
     if (action) lines.push(action);
   }
-  lines.push(`Ground truth on demand: ${rosterExecPayload(seat)}`);
+  lines.push(Array.isArray(grants) && !grants.includes('clodex-team')
+    ? 'Ground truth on demand: [agent:exec clodex-team] is NOT granted to this seat'
+      + ' — Edit Session ▸ Exec commands, or respawn on a template that carries it (clodex-team-lead does)'
+    : `Ground truth on demand: ${rosterExecPayload(seat)}`);
   return lines.join('\n');
 }
 

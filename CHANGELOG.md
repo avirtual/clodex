@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- The roster's "[agent:exec clodex-team]" line is printed only to a seat that
+  actually holds the grant; a seat without it is told how to get it, and
+  spawning a team's lead on a template that carries no clodex-team grant warns
+  in the spawn reply.
 - A ticket/remind/spawn/team intent swallowed as a duplicate of one earlier in
   the same reply is echoed back as "skipped: duplicate …" instead of vanishing
   into the log; the lead prompt now says acks are per-intent and asynchronous,

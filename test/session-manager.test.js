@@ -2628,6 +2628,55 @@ test('t770: lead.template naming an uninstalled stem spawns bare and SAYS so', a
   assert.ok(!/via template/.test(f.replies.at(-1)), 'and it must not claim a template was applied');
 });
 
+// --- t824: a lead spawned with no clodex-team grant is told in the reply -----
+// The roster block advertises `[agent:exec clodex-team]` to the lead, but the
+// grant lives only in the seat's persisted execCommands (from the template).
+// A lead on a template carrying none boots advertising a verb that bounces, and
+// the spawn reply is the moment the spawner can still fix it.
+test('t824: a lead spawned on a template with no execCommands carries the grant WARNING', async () => {
+  const bare = { id: 'plain-lead', name: 'plain-lead', type: 'claude' };
+  const f = mkLeadSpawn({ extraTemplates: [bare] });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot, template: 'plain-lead' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the seat really booted — the WARNING is never a refusal');
+  assert.deepStrictEqual(f.created[0][16], [], 'ENTER: and it booted with no grants, which is what is warned about');
+  const reply = f.replies.at(-1);
+  assert.match(reply, /^\[agent:spawn\] ok: spawned "acme-lead"/, 'ENTER: the ok reply is what the WARNING rides');
+  assert.match(reply, /WARNING: lead seat has no clodex-team exec grant \(template "plain-lead" carries none\); the roster verb will bounce until granted/);
+});
+
+test('t824: a lead on clodex-team-lead holds the grant, so the reply says nothing', async () => {
+  const f = mkLeadSpawn();
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.ok(f.created[0][16].includes('clodex-team'), 'ENTER: the shipped lead template really carries the grant');
+  assert.ok(!/WARNING: lead seat has no clodex-team/.test(f.replies.at(-1)),
+    `a granted lead must not be warned, got: ${f.replies.at(-1)}`);
+});
+
+test('t824: a NON-lead seat with no grants is not warned — the roster line tells it instead', async () => {
+  const bare = { id: 'plain-seat', name: 'plain-seat', type: 'claude' };
+  const f = mkLeadSpawn({ extraTemplates: [bare] });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-hand', cwd: f.projectRoot, template: 'plain-seat' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][16], [], 'ENTER: this seat has no grants either');
+  assert.ok(!/WARNING: lead seat has no clodex-team/.test(f.replies.at(-1)),
+    `only the lead's missing grant is a spawn-time warning, got: ${f.replies.at(-1)}`);
+});
+
+test('t824: a lead spawned off any team gets no WARNING — there is no team whose roster to hold', async () => {
+  const bare = { id: 'plain-lead', name: 'plain-lead', type: 'claude' };
+  const f = mkLeadSpawn({ extraTemplates: [bare] });
+  const nowhere = mkTmpRoot('t824-nowhere-');
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: nowhere, template: 'plain-lead' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.ok(!/WARNING: lead seat has no clodex-team/.test(f.replies.at(-1)),
+    `off-team spawn must not warn, got: ${f.replies.at(-1)}`);
+});
+
 test('t782 _validateSeatName: the five verdicts, with the error strings the spawn reply carries', () => {
   const m2 = mk({
     AGENT_NAME_RE: AGENT_NAME_RE_T,
@@ -4071,23 +4120,43 @@ test('composeRosterFor: renders for the NAMED seat, live or persistence-only', (
   const { m } = mkPark({
     ...teamDeps,
     peerStatusLabel: () => 'idle 12m, warm',
-    getPersistence: () => ({ get: (n) => (n === 'team-gone' ? { cwd: '/proj/z' } : null) }),
+    getPersistence: () => ({
+      get: (n) => {
+        // `team-gone` is the real store's shape for a seat with NO grants: the
+        // key is DELETED on an empty list (stores.js setExecCommands), never
+        // written as []. `team-kept` is the same persistence-only seat WITH the
+        // grant, which is what keeps the naming property below exercised.
+        if (n === 'team-gone') return { cwd: '/proj/z' };
+        if (n === 'team-kept') return { cwd: '/proj/z', execCommands: ['clodex-team'] };
+        return null;
+      },
+    }),
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
 
   const forLead = m.composeRosterFor('lead');
-  assert.match(forLead, /"agent":"lead"/, 'the exec line names the seat the digest is for');
   assert.match(forLead, /live: lead \(you\)/, 'the reading seat is marked in its own digest');
   assert.match(forLead, /live: team-dev \(idle 12m, warm\)/, 'teammates carry their warmth label');
   assert.match(forLead, /Dispatch: TWO steps\. \[agent:task add <role>\]/, 'the lead seat gets the action line');
 
   // Not in the map: the cwd comes from persistence, and the seat name must
   // still reach formatRoster.
-  const forGone = m.composeRosterFor('team-gone');
-  assert.match(forGone, /"agent":"team-gone"/, 'a persistence-only seat is still named in its own digest');
-  assert.ok(!/Dispatch:/.test(forGone), 'a non-lead seat gets no action line');
+  const forKept = m.composeRosterFor('team-kept');
+  assert.match(forKept, /"agent":"team-kept"/, 'a persistence-only seat is still named in its own digest');
+  assert.ok(!/Dispatch:/.test(forKept), 'a non-lead seat gets no action line');
   assert.strictEqual(m.composeRosterFor('nowhere'), null, 'no cwd anywhere → no roster');
+
+  // ENTER: the digest is the longest-lived of the three call sites — it is
+  // re-served on every context reset — so a seat with no grants must be told
+  // so HERE, not handed an invocation that bounces for the rest of its life.
+  const forGone = m.composeRosterFor('team-gone');
+  assert.match(forGone, /NOT granted/,
+    'ENTER: an entry with no execCommands key is a seat with NO grants, not an unknown one');
+  assert.ok(!/"agent":"team-gone"/.test(forGone), 'and it is handed no payload to copy');
+  // `lead` has no persistence entry at all in this stub: unreadable, not empty.
+  assert.match(forLead, /"agent":"lead"/,
+    'a seat with NO entry stays UNKNOWN and keeps the advertisement');
 });
 
 // MUST-FIX 1: a RESUMED codex seat has no stashed roster — _settleBoot just closes

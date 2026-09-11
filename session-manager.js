@@ -3248,6 +3248,14 @@ function createSessionManager(deps) {
       return this._teamLiveSeats(teamRoot).map((s) => s.name);
     }
 
+    _seatGrants(name) {
+      try {
+        const e = getPersistence().get(name);
+        if (!e) return null;
+        return Array.isArray(e.execCommands) ? e.execCommands : [];
+      } catch { return null; }
+    }
+
     // The roster body for `name`, or null when the seat is not on a team. Called
     // by the boot-digest writer BEFORE the session exists in the map, so the cwd
     // comes from persistence when there is no live session to read it from.
@@ -3259,7 +3267,7 @@ function createSessionManager(deps) {
       if (!cwd) return null;
       let team; try { team = resolveTeam(cwd); } catch { return null; }
       if (!team) return null;
-      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name });
+      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name, grants: this._seatGrants(name) });
     }
 
     _rebakeDigest(name) {
@@ -3399,7 +3407,7 @@ function createSessionManager(deps) {
     _injectRoster(session, team) {
       try {
         if (session.agentType === 'claude') {
-          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm');
+          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name) }), 'dm');
           // Both paths are needed and neither is redundant. setupClaudeHook
           // writes the digest BEFORE this seat exists in the map or in
           // persistence, so a fresh seat's pre-spawn digest cannot contain a
@@ -3444,7 +3452,7 @@ function createSessionManager(deps) {
           // promise chain, then the quiet gate, and an inject hold parks it for up to
           // INJECT_HOLD_TIMEOUT — all inside the boot window this function runs in,
           // where a seat that dies early hits the _dead early-returns instead.
-          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name }), 'dm',
+          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name) }), 'dm',
             '', () => this._markRosterSent(session));
         } catch (e) {
           log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);

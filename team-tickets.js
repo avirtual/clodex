@@ -604,20 +604,18 @@ function createTicketMethods(deps, shared) {
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
 
       let leadNote = '';
-      if (!tpl) {
-        let targetTeam = null;
-        try { targetTeam = resolveTeam(cwd); } catch { targetTeam = null; }
-        if (targetTeam && name === targetTeam.lead) {
-          const stem = (targetTeam.roles && targetTeam.roles.lead && targetTeam.roles.lead.template)
-            || DEFAULT_LEAD_TEMPLATE;
-          const shape = this._templateShape(stem, targetTeam);
-          if (shape && shape.tpl) {
-            tpl = shape.tpl;
-            tplLabel = tpl.name || stem;
-            leadNote = ` (lead of team ${targetTeam.name})`;
-          } else {
-            leadNote = ` — lead role template "${stem}" not installed, spawned with no template`;
-          }
+      let targetTeam = null;
+      try { targetTeam = resolveTeam(cwd); } catch { targetTeam = null; }
+      if (!tpl && targetTeam && name === targetTeam.lead) {
+        const stem = (targetTeam.roles && targetTeam.roles.lead && targetTeam.roles.lead.template)
+          || DEFAULT_LEAD_TEMPLATE;
+        const shape = this._templateShape(stem, targetTeam);
+        if (shape && shape.tpl) {
+          tpl = shape.tpl;
+          tplLabel = tpl.name || stem;
+          leadNote = ` (lead of team ${targetTeam.name})`;
+        } else {
+          leadNote = ` — lead role template "${stem}" not installed, spawned with no template`;
         }
       }
       // The branch name is validated inside createWorktree (it reaches git argv),
@@ -648,6 +646,12 @@ function createTicketMethods(deps, shared) {
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
       const plugins = (tpl && Array.isArray(tpl.plugins)) ? tpl.plugins.map(String) : null;
       const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
+
+      const seatGrants = Array.isArray(tpl && tpl.execCommands) ? tpl.execCommands : [];
+      const grantWarn = (targetTeam && name === targetTeam.lead && !seatGrants.includes('clodex-team'))
+        ? ` — WARNING: lead seat has no clodex-team exec grant (${tplLabel ? `template "${tplLabel}"` : 'no template'} carries none);`
+          + ' the roster verb will bounce until granted'
+        : '';
 
       let roleNote = '';
       {
@@ -739,6 +743,7 @@ function createTicketMethods(deps, shared) {
           reply(`ok: spawned "${name}" (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : '')
             + leadNote
             + roleNote
+            + grantWarn
             + promptWarn
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
