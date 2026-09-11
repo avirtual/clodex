@@ -68,7 +68,9 @@ visible rather than silently lost.
   Dm-ing the must-fixes and rejecting separately reopens the ticket but splits
   the dispatch from the channel, so the rework arrives somewhere the ticket
   cannot see. This is the only verb that moves a ticket backwards, and it acts
-  only on a DONE ticket — for one still open, see `respec` below.
+  only on a DONE ticket — for one still open, see `respec` below. A reject onto a
+  seat past the compact threshold replaces the seat: same branch and tree, fresh
+  context; the reply names both seats.
 
   **An ACCEPT whose nits are comment or CHANGELOG sentences is an ACCEPT:
   merge it.** The nits ride along to the next ticket that opens that file — name

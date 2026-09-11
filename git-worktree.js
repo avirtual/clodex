@@ -10,7 +10,7 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 // `code` is the process exit status, and it is not redundant with `ok`: git's
 // query commands answer NO by exiting nonzero, so a plain boolean cannot
@@ -290,6 +290,16 @@ async function headSha(dir) {
   if (!dir || !fs.existsSync(dir)) return null;
   const r = await git(dir, ['rev-parse', 'HEAD']);
   return r.ok ? (r.stdout.trim() || null) : null;
+}
+
+function headShaSync(dir) {
+  if (!dir || !fs.existsSync(dir)) return null;
+  try {
+    const out = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const sha = String(out || '').trim();
+    return /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
+  } catch { return null; }
 }
 
 async function isWorktreeRoot(dir) {
@@ -648,5 +658,5 @@ module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
   diffText, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
-  checkoutDetached, headSha,
+  checkoutDetached, headSha, headShaSync,
 };
