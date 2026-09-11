@@ -897,8 +897,9 @@ test('the console hook prunes the OLDEST records past its cap', () => {
 // A PreToolUse that emits `hookSpecificOutput.updatedInput` or exits 2 alters
 // or blocks the Bash call, which is the difference between a broken preview and
 // a broken agent. Measured against claude 2.1.260: with the hook script missing
-// entirely the Bash call still ran and the model still got its output, so the
-// risk is never absence — it is a hook that SPEAKS. These assertions keep it mute.
+// entirely the Bash call still ran and the model still got its output. These
+// assertions keep THIS hook mute; bash-guard.sh, registered behind it, speaks by
+// design and is pinned separately.
 test('the live observer is registered for Bash only, ahead of the tool call', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
