@@ -28,7 +28,7 @@ const MANIFEST_VERSION = 3;
 
 // Unmodeled keys are dropped at load with a warning, never a throw: every caller
 // resolves teams inside a best-effort catch, so a throw reads as "no team".
-const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd']);
+const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd', 'account']);
 
 const ROLE_DISPATCH_VALUES = new Set(['standing', 'spawn', 'worktree']);
 const DEFAULT_ROLE_DISPATCH = 'standing';
@@ -47,11 +47,12 @@ const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral'
 // was", never "this occurrence is honored".
 const HONORED_CUT_FIELDS = new Map([['worktree', 'dispatch: "worktree"']]);
 
-const EDITABLE_ROLE_FIELDS = ['brief', 'cwd', 'dispatch', 'prompt', 'template'];
+const EDITABLE_ROLE_FIELDS = ['account', 'brief', 'cwd', 'dispatch', 'prompt', 'template'];
 
 // team.json is agent-writable and these keys are trusted downstream: the mutators
 // must never create, destroy or rename them.
 const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
+const RESERVED_ROLE_PATCH_FIELDS = new Set(['account']);
 
 const DEFAULT_KIT = 'default';
 
@@ -93,6 +94,9 @@ function normalizeRoleDef(roleName, def, file) {
   if (def.cwd != null && typeof def.cwd !== 'string') {
     throw new Error(`role "${roleName}" cwd must be a string (${file})`);
   }
+  if (def.account != null && typeof def.account !== 'string') {
+    throw new Error(`role "${roleName}" account must be a string (${file})`);
+  }
   return {
     template: def.template ?? null,
     prompt: def.prompt ?? null,
@@ -106,6 +110,7 @@ function normalizeRoleDef(roleName, def, file) {
     // team.json point a seat at another project. Blank normalizes to null —
     // path.resolve(root, '') is root, so '' would mean what its absence means.
     cwd: (typeof def.cwd === 'string' && def.cwd.trim()) ? def.cwd.trim() : null,
+    account: (typeof def.account === 'string' && def.account.trim()) ? def.account.trim() : null,
   };
 }
 
@@ -134,10 +139,10 @@ function pickRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
   const out = {};
   for (const [k, v] of Object.entries(def)) {
-    // Trimmed so the bytes on disk are the ones assertRoleCwd validated, which
-    // checks the trimmed form. Only this field: `brief`/`prompt` are prose whose
+    // Trimmed so the bytes on disk are the ones the validators saw, which check
+    // the trimmed form. Only these two: `brief`/`prompt` are prose whose
     // whitespace is the author's.
-    if (ROLE_KEYS.has(k)) out[k] = (k === 'cwd' && typeof v === 'string') ? v.trim() : v;
+    if (ROLE_KEYS.has(k)) out[k] = ((k === 'cwd' || k === 'account') && typeof v === 'string') ? v.trim() : v;
   }
   return out;
 }
@@ -785,14 +790,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 
   function setRole(teamName, roleName, patch) {
     const team = loadManifest(teamName); // throws if the team is missing
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new Error(`setRole patch must be an object (${team.file})`);
+    }
     if (RESERVED_ROLE_KEYS.has(roleName)) {
-      throw new Error(`the "${roleName}" role is operator-owned topology; edit it via the app, not an intent/mutator (${team.file})`);
+      const outside = Object.keys(patch).filter((k) => !RESERVED_ROLE_PATCH_FIELDS.has(k));
+      if (outside.length) {
+        throw new Error(`the "${roleName}" role is operator-owned topology; edit it via the app, not an intent/mutator — only ${[...RESERVED_ROLE_PATCH_FIELDS].join(', ')} may be patched here, not ${outside.join(', ')} (${team.file})`);
+      }
     }
     if (!team.roles[roleName]) {
       throw new Error(`role "${roleName}" not found on team "${teamName}" — use addRole (${team.file})`);
-    }
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-      throw new Error(`setRole patch must be an object (${team.file})`);
     }
     const EDITABLE = EDITABLE_ROLE_FIELDS;
     const clean = {};
@@ -819,6 +827,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // Trimmed AFTER the gate: this write does not go through pickRoleKeys, so
     // without it the merge below lands untrimmed bytes assertRoleCwd never saw.
     if (typeof clean.cwd === 'string') clean.cwd = clean.cwd.trim();
+    if (typeof clean.account === 'string') clean.account = clean.account.trim();
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     // NOT picked down to the schema, unlike addRole's new role: this preserves an
@@ -828,6 +837,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // path.resolve(root, '') is the root, so '' means what its absence means.
     if ('cwd' in clean && !String(clean.cwd == null ? '' : clean.cwd).trim()) {
       delete raw.roles[roleName].cwd;
+    }
+    if ('account' in clean && !String(clean.account == null ? '' : clean.account).trim()) {
+      delete raw.roles[roleName].account;
     }
     normalizeRoleDef(roleName, raw.roles[roleName], team.file);
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
@@ -1046,7 +1058,8 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null } = {})
     const liveStr = live && live.length
       ? ` · live: ${live.join(', ')}`
       : ' · no live seat — role definition only, not addressable';
-    lines.push(`- ${role} (${cls}${tmpl})${brief}${liveStr}`);
+    const account = (def && typeof def.account === 'string' && def.account) ? ` · account: ${def.account}` : '';
+    lines.push(`- ${role} (${cls}${tmpl})${account}${brief}${liveStr}`);
     for (const l of retiredFieldLines(team, role)) lines.push(l);
   }
   if (roleless.length) lines.push(`also live, no role: ${roleless.join(', ')}`);
@@ -1073,5 +1086,5 @@ module.exports = {
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
   ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
-  ROLE_RE, RESERVED_ROLE_KEYS,
+  ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS,
 };
