@@ -116,10 +116,6 @@ const LOCK = process.env.CLODEX_TEST_LOCK_DIR
   ? path.resolve(process.env.CLODEX_TEST_LOCK_DIR)
   : path.join(ROOT, '.test-digest.lock');
 
-// Derived from LOCK rather than from ROOT, so the override moves both together:
-// the two entry points share one mutex, and an estimate kept beside a lock the
-// other runner does not take would describe a different box's suite.
-// scripts/test-digest.sh writes the same file, in the same format.
 const LAST = path.join(path.dirname(LOCK), '.test-digest.last');
 
 function lastRunMs() {
@@ -132,8 +128,6 @@ function lastRunMs() {
 }
 
 function recordRunMs(ms) {
-  // Rename, not a write in place: the reader is a CONCURRENT refusing run, and
-  // a half-written number parses as a plausible small one rather than as junk.
   const tmp = `${LAST}.tmp`;
   try {
     fs.writeFileSync(tmp, `${Math.max(1, Math.round(ms))}\n`);
@@ -148,16 +142,6 @@ function clock(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-// The nap a refused caller should take, in whole minutes, and the estimate the
-// nap is derived from. "Already going" alone tells an agent nothing about
-// whether to wait one minute or ten, so it re-emits its exec every minute or
-// two and re-bills its whole context per refusal. The last completed run is the
-// only thing on this box that knows how long a run takes.
-//
-// ROUNDED UP with a spare minute added: waking early costs another full
-// refusal, waking late costs idle time. With no recording there is no honest
-// estimate, so the suite length is omitted from the sentence rather than
-// guessed and the nap falls back to five minutes.
 function napAdvice(runningMs) {
   const total = lastRunMs();
   if (total === null) return { suiteOf: '', nap: 5 };
@@ -215,9 +199,6 @@ function acquireLock() {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
         continue;
       }
-      // The pid file's mtime is when the holder took the lock, and every entry
-      // point writes it at acquisition — so it dates a run this process never
-      // launched just as well as one it did.
       let runningMs = 0;
       try { runningMs = Math.max(0, Date.now() - fs.statSync(path.join(LOCK, 'pid')).mtimeMs); } catch {}
       const { suiteOf, nap } = napAdvice(runningMs);
@@ -319,12 +300,6 @@ if (tests === null || pass === null || fail === null) {
   die('the run produced no summary — the suite did not complete');
 }
 
-// Recorded on ANY exit code — a red run measured the same suite and took the
-// same time, so skipping it would leave the estimate stale for exactly the
-// branch most likely to be re-run — but only for a SWEEP that reached a
-// SUMMARY. A named-file run is a fraction of the suite and would collapse the
-// estimate every time the suite spawns this runner against a stub; a run with
-// no summary never got as far as measuring anything.
 if (sweeping) recordRunMs(runMs);
 
 // A filter flag that matched NOTHING is the same false green as a missing path,

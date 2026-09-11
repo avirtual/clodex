@@ -154,8 +154,8 @@ write_last_run_ms() {
 # the reasoning that ends in `rm -rf`-ing a valid lock and deadlocking two runs.
 #
 # So the three states are reported as three different sentences, and the one that
-# invites the wrong conclusion says so outright. Uses $LOCK and $waited from the
-# caller; no arguments, so the wait loop and a test can both call it.
+# invites the wrong conclusion says so outright. Uses $LOCK, $LAST and $waited
+# from the caller; no arguments, so the wait loop and a test can both call it.
 lock_refusal() {
   # Re-read AT PRINT TIME. `now` is the pid the lock names right now, which is
   # the only pid a reader can act on.

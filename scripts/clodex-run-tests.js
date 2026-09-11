@@ -97,10 +97,6 @@ const res = spawnSync(process.execPath, [runner, '--reporter=dot'], {
 
 const wallMs = Date.now() - startedAt;
 
-// The wall time of THIS wrapper's spawn, not a figure read back from the
-// runner's estimate file: the two would agree on a sweep and diverge on every
-// refusal, and a digest line that reports a duration it did not measure is the
-// kind of number a reader cannot act on. Wrapper overhead is a spawn.
 function wallShow(ms) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
@@ -138,10 +134,6 @@ const NAME_RE = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/gm;
 const hay = `${stdout}\n${stderr}`;
 for (let m = NAME_RE.exec(hay); m; m = NAME_RE.exec(hay)) names.push(m[1]);
 
-// BEFORE the names, like the keep-path in scripts/test-digest.sh and for the
-// same reason: this line is cut at 180 chars and it is precisely the run with
-// the most failing names that overruns the cap, so a trailing duration would be
-// the first thing lost on the runs most worth timing.
 emit(
   `[${LEAF}] ${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)}): ${names.join('; ')}`,
   exitCode,
