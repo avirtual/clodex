@@ -315,4 +315,4 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
   return { ok: true, moved, skipped };
 }
 
-module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, effectiveModel, trustProjects, LABEL_RE, PLANS, SHARED_LINKS };
+module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, effectiveModel, trustProjects, LABEL_RE, PLANS, SHARED_LINKS, DEFAULT_LABEL };

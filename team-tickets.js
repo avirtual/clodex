@@ -25,6 +25,7 @@ const {
   parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
+const { DEFAULT_LABEL: DEFAULT_ACCOUNT_LABEL } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
@@ -460,6 +461,7 @@ function createTicketMethods(deps, shared) {
     os,
     path,
     pathFor,
+    getAccounts,
     getPersistence,
     getRemindScheduler,
     getSandboxManager,
@@ -474,6 +476,21 @@ function createTicketMethods(deps, shared) {
     withoutPrivilegedIntentsFor,
   } = deps;
   const seedFetch = deps.fetch || ((...a) => globalThis.fetch(...a));
+  const accountConfigDir = (label) => {
+    if (!label) return null;
+    try {
+      const store = (typeof getAccounts === 'function' && getAccounts()) || null;
+      if (!store || typeof store.configDirFor !== 'function') return null;
+      return store.configDirFor(label) || null;
+    } catch { return null; }
+  };
+  const accountLabels = () => {
+    try {
+      const store = (typeof getAccounts === 'function' && getAccounts()) || null;
+      if (!store || typeof store.list !== 'function') return [];
+      return store.list().map((a) => a && a.label).filter(Boolean);
+    } catch { return []; }
+  };
   const allTemplates = () => (typeof listAllTemplates === 'function'
     ? listAllTemplates().filter((t) => t && !t.team)
     : getTemplates().list());
@@ -1113,6 +1130,10 @@ function createTicketMethods(deps, shared) {
       // seat would spawn unable to read the diff it reviews.
       if (shape.requestedTools && shape.effectiveTools.length === 0) {
         reply(`error: reviewer template "${templateName}" requests tools [${shape.requestedTools.join(', ')}], none of which are within the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — the seat would spawn with no tools at all and could not read the diff; no reviewer spawned (fix the template's "tools")`);
+        return;
+      }
+      if (shape.accountMissing) {
+        reply(`error: role reviewer names account "${shape.accountMissing}", which no longer exists`);
         return;
       }
 
@@ -2752,6 +2773,11 @@ function createTicketMethods(deps, shared) {
             };
             if (intent.dispatch) def.dispatch = intent.dispatch;
             if (intent.cwd) def.cwd = intent.cwd;
+            if (intent.account) {
+              const acct = this._resolveRoleAccount(intent.account);
+              if (!acct.ok) { reply(`error: ${acct.error}`); return; }
+              if (acct.label) def.account = acct.label;
+            }
             let addClause = '';
             let addUndo = null;
             if (intent.model) {
@@ -2783,6 +2809,11 @@ function createTicketMethods(deps, shared) {
             if (intent.template) patch.template = intent.template;
             if (intent.dispatch) patch.dispatch = intent.dispatch;
             if (intent.cwd) patch.cwd = intent.cwd;
+            if (intent.account) {
+              const acct = this._resolveRoleAccount(intent.account);
+              if (!acct.ok) { reply(`error: ${acct.error}`); return; }
+              patch.account = acct.label || '';
+            }
             let setClause = '';
             let setUndo = null;
             if (intent.model) {
@@ -4823,6 +4854,17 @@ function createTicketMethods(deps, shared) {
     // `opener` is the session doing the spawning (the lead). It is not derivable
     // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
     // is the permission posture.
+    _resolveRoleAccount(label) {
+      const want = String(label || '').trim();
+      if (!want) return { ok: true, label: null };
+      if (want === DEFAULT_ACCOUNT_LABEL) return { ok: true, label: null };
+      if (!accountConfigDir(want)) {
+        const known = accountLabels();
+        return { ok: false, error: `no account "${want}" — accounts: ${known.length ? known.join(', ') : DEFAULT_ACCOUNT_LABEL}` };
+      }
+      return { ok: true, label: want };
+    },
+
     resolveSeatShape(team, roleKey, purpose, opener, templateOverride = null) {
       // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
       // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
@@ -4849,6 +4891,13 @@ function createTicketMethods(deps, shared) {
       // ticket concept, and two copies of this call are exactly the divergence
       // this resolver exists to prevent.
       const roleCwd = this._resolveRoleCwd(team, def);
+      const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
+      const accountDir = accountLabel ? accountConfigDir(accountLabel) : null;
+      const accountMissing = (accountLabel && !accountDir) ? accountLabel : null;
+      const withAccount = (env) => {
+        if (!accountDir) return env;
+        return { ...(env || {}), CLAUDE_CONFIG_DIR: accountDir };
+      };
 
       if (!review) {
         return {
@@ -4897,7 +4946,9 @@ function createTicketMethods(deps, shared) {
           // seat keeps the living all-enabled default. Not interchangeable.
           intents: shape ? shape.intents : null,
           plugins: shape ? shape.plugins : null,
-          env: (shape && shape.sessionEnv) || null,
+          env: withAccount((shape && shape.sessionEnv) || null),
+          account: accountLabel,
+          accountMissing,
           envDropped: (shape && shape.envDropped) || [],
           envBadType: (shape && shape.envBadType) || [],
           beyondCap: [],
@@ -5038,7 +5089,9 @@ function createTicketMethods(deps, shared) {
         // the full protocol prompt it was configured not to have.
         // REVIEWER_FALLBACK.env needs no allowlist pass: it IS the shipped set the
         // allowlist was drawn from, and unlike a template it is not agent-writable.
-        env: tplSuppliedEnv ? { ...((shape && shape.sessionEnv) || {}) } : { ...REVIEWER_FALLBACK.env },
+        env: withAccount(tplSuppliedEnv ? { ...((shape && shape.sessionEnv) || {}) } : { ...REVIEWER_FALLBACK.env }),
+        account: accountLabel,
+        accountMissing,
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
         beyondCap,
@@ -5287,6 +5340,9 @@ function createTicketMethods(deps, shared) {
             if (e) linkWarn = ` — NOTE: ${e}; the seat starts without dependencies (require() and npm run build:web will fail there until the root has a node_modules)`;
           }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
+          if (shape.accountMissing) {
+            throw new Error(`role ${roleKey} names account "${shape.accountMissing}", which no longer exists`);
+          }
           // Not inside resolveSeatShape: the tree is minted above, after the shape
           // is built, and the review path shares that resolver with no tree at all.
           const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);

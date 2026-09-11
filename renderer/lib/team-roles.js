@@ -39,6 +39,7 @@ function teamRoleRows(manifest) {
   const roles = (manifest && manifest.roles) || {};
   return Object.entries(roles).map(([key, def]) => ({
     key,
+    account: (def && def.account) || '',
     brief: (def && def.brief) || '',
     // Relative to the team root; '' means the seat boots at the root itself.
     cwd: (def && def.cwd) || '',
@@ -97,6 +98,7 @@ function buildSavePatch(formValues) {
   // can undo it. Backend validates the non-blank case; a bad path is refused
   // there with the reason, so no mirror of that check belongs in this leaf.
   patch.cwd = trim(formValues && formValues.cwd);
+  patch.account = trim(formValues && formValues.account);
   return patch;
 }
 

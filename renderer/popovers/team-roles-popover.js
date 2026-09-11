@@ -48,6 +48,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   const addPrompt = document.getElementById('team-roles-add-prompt');
   const addTemplate = document.getElementById('team-roles-add-template');
   const addCwd = document.getElementById('team-roles-add-cwd');
+  const addAccount = document.getElementById('team-roles-add-account');
   const addDispatch = document.getElementById('team-roles-add-dispatch');
   const addBtn = document.getElementById('team-roles-add-btn');
   // B1: the Add Role controls live behind a disclosure now. The section wrapper
@@ -743,6 +744,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `<div class="team-role-editcap">Edit this role</div>` +
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
+          `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label>` +
           `<div class="team-role-dispatch" data-f-group="dispatch"></div>` +
           `<div class="team-role-reveal" data-reveal></div>` +
           `<div class="team-role-actions">` +
@@ -751,6 +753,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `<button type="button" data-act="remove" class="secondary">Remove</button>` +
           `</div>`;
         body.querySelector('input[data-f="brief"]').value = row.brief;
+        body.querySelector('input[data-f="account"]').value = row.account;
         // Prompt is a picker (a stem the resolver can find — free text just fails
         // at spawn time; matches the Add Role form). Options come from the same
         // rail-filtered list; a stored prompt the list does not offer still has
@@ -1104,7 +1107,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       // template — backend setRole throws NAME_RE on '' (no clear-template in v1).
       const patch = buildSavePatch({
         brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: dispatchVal(),
-        cwd: val('cwd'),
+        cwd: val('cwd'), account: val('account'),
       });
       const res = await window.api.teamSetRole(name, role, patch);
       await afterMutation(res, `role "${role}" saved`);
@@ -1157,7 +1160,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   // on the next open would read as saved state for a role that was never added.
   const resetAddForm = () => {
     addName.value = ''; addBrief.value = ''; addTemplate.value = '';
-    addPrompt.value = ''; addCwd.value = '';
+    addPrompt.value = ''; addCwd.value = ''; addAccount.value = '';
     addDispatch.value = DEFAULT_DISPATCH;
     paintAddReveal();
   };
@@ -1285,6 +1288,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // that is brand new and has no reason to carry one.
     const cwd = addCwd.value.trim();
     if (cwd && addReveal.cwd !== 'hidden') def.cwd = cwd;
+    const account = addAccount.value.trim();
+    if (account) def.account = account;
     // Only the non-default is written: absent already reads as `standing`, so an
     // explicit one would put a value on disk that means exactly what its absence
     // does (the same rule migrateRoles follows).
