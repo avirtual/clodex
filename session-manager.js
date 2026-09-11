@@ -1214,8 +1214,8 @@ function createSessionManager(deps) {
       return { accounts: store.snapshotAll(), latest };
     }
 
-    // The plan quota is the ACCOUNT's, so it goes out window-wide on its own
-    // channel rather than riding a per-session payload. Deliberately NOT folded
+    // The plan quota is the ACCOUNT's, so it goes out on its own channel to
+    // every window rather than riding a per-session payload. Deliberately NOT folded
     // into the wirescope poller's `session-proxy`: that poller returns early
     // when no session has a wirescope base, which would make the wire source —
     // the one that needs no external service — depend on one existing.
