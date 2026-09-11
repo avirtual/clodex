@@ -5183,8 +5183,7 @@ function createSessionManager(deps) {
     // makes argv-injection structurally impossible. The invoking seat's persisted
     // execCommands allowlist is the capability; the registry is read fresh at
     // invocation (no watcher, so a headless host cannot serve a stale cache).
-    // Success is SILENT (no re-bill); all three failure classes bounce loudly,
-    // because a lost exec is a lost datum.
+    // All three failure classes bounce loudly, because a lost exec is a lost datum.
     // _resolveExecDefs degrades to the bare id STRING on any read/parse failure — a
     // malformed def must never fail a spawn — and drops argv/cwd, which can carry
     // absolute paths that must never reach a prompt.
