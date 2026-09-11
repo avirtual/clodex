@@ -732,7 +732,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           body.appendChild(actions);
         }
       } else {
-        // SECURITY: brief/prompt/template/cwd are agent-writable unconstrained strings
+        // SECURITY: brief/prompt/template/cwd/account are agent-writable unconstrained strings
         // (only role KEYS are charset-gated). NEVER interpolate them into a
         // value="…" attribute — a `" onfocus="…` payload would break out of the
         // attribute and execute in this nodeIntegration renderer. Build the inputs
@@ -1087,7 +1087,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     }
     if (act === 'save') {
       const val = (f) => {
-        // prompt and template are <select>s, cwd is an <input> — match on data-f alone.
+        // prompt and template are <select>s, cwd and account are <input>s — match on data-f alone.
         const inp = rowEl.querySelector(`[data-f="${f}"]`);
         return inp ? inp.value : '';
       };

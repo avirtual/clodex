@@ -92,11 +92,11 @@ function buildSavePatch(formValues) {
   if (template) patch.template = template;
   const dispatch = trim(formValues && formValues.dispatch);
   if (DISPATCH_VALUES.includes(dispatch)) patch.dispatch = dispatch;
-  // Always sent, blank INCLUDED — unlike `template`, blank is a legitimate clear
-  // here (setRole deletes the key on an empty value), and omitting it would make
-  // "put this role back at the team root" unreachable from the only door that
-  // can undo it. Backend validates the non-blank case; a bad path is refused
-  // there with the reason, so no mirror of that check belongs in this leaf.
+  // Both always sent, blank INCLUDED — unlike `template`, blank is a legitimate
+  // clear for these two (setRole deletes the key on an empty value), and omitting
+  // one makes "back to the team root" and "back to the app's own account"
+  // unreachable from the only door that undoes them. Backend validates the
+  // non-blank cases — a bad path, an unknown label — and refuses with the reason.
   patch.cwd = trim(formValues && formValues.cwd);
   patch.account = trim(formValues && formValues.account);
   return patch;
