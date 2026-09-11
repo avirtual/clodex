@@ -701,7 +701,7 @@ function restartSessionWithReattach(name) {
     }
     if (snapType) {
       createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire, snapAccount);
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire);
       switchSession(name);
     }
   });
