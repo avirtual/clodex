@@ -4,8 +4,9 @@ async function readBody(res) {
   try { return String(await res.text()).trim().slice(0, 300); } catch { return ''; }
 }
 
-async function seedSandboxSessions({ wireUrl, token, seeds, fetch } = {}) {
+async function seedSandboxSessions({ wireUrl, token, seeds, optional, fetch } = {}) {
   const list = Array.isArray(seeds) ? seeds.filter(Boolean) : [];
+  const mayFail = new Set(Array.isArray(optional) ? optional : []);
   if (!wireUrl) return { ok: false, error: 'box has no wire port to seed over' };
   const doFetch = fetch || globalThis.fetch;
   const base = String(wireUrl).replace(/\/+$/, '');
@@ -21,18 +22,20 @@ async function seedSandboxSessions({ wireUrl, token, seeds, fetch } = {}) {
     for (const s of (body && body.sessions) || []) if (s && s.name) existing.add(s.name);
   } catch { existing = new Set(); }
 
-  const seeded = [];
+  const results = [];
   for (const seed of list) {
-    if (existing.has(seed.name)) { seeded.push(seed.name); continue; }
+    if (existing.has(seed.name)) { results.push({ name: seed.name, state: 'present' }); continue; }
     const res = await doFetch(`${base}/api/sessions`, {
       method: 'POST', headers, body: JSON.stringify(seed),
     });
-    if (res && res.status >= 200 && res.status < 300) { seeded.push(seed.name); continue; }
+    if (res && res.status >= 200 && res.status < 300) { results.push({ name: seed.name, state: 'seeded' }); continue; }
     const text = await readBody(res);
-    if (res && res.status === 400 && /name taken/i.test(text)) { seeded.push(seed.name); continue; }
-    return { ok: false, error: `seeding ${seed.name}: ${res ? res.status : 'no response'} ${text}`.trim(), seeded };
+    if (res && res.status === 400 && /name taken/i.test(text)) { results.push({ name: seed.name, state: 'present' }); continue; }
+    const why = `${res ? res.status : 'no response'} ${String(text).split('\n')[0].trim()}`.trim();
+    results.push({ name: seed.name, state: 'failed', error: why });
+    if (!mayFail.has(seed.name)) return { ok: false, error: `seeding ${seed.name}: ${why}`, results };
   }
-  return { ok: true, seeded };
+  return { ok: true, results };
 }
 
 module.exports = { seedSandboxSessions };

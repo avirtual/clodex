@@ -127,7 +127,10 @@ const SEEDS = [
 test('seeding lists first, then POSTs each seat with its literal body and the bearer', async () => {
   const net = mkNet();
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
-  assert.deepStrictEqual(out, { ok: true, seeded: ['bash', 'worker'] });
+  assert.deepStrictEqual(out, { ok: true, results: [
+    { name: 'bash', state: 'seeded' },
+    { name: 'worker', state: 'seeded' },
+  ] });
   assert.deepStrictEqual(net.requests.map((r) => [r.method, r.url]), [
     ['GET', `${WIRE}/api/sessions`],
     ['POST', `${WIRE}/api/sessions`],
@@ -144,7 +147,10 @@ test('seeding lists first, then POSTs each seat with its literal body and the be
 test('a seat that already exists is skipped, not POSTed again', async () => {
   const net = mkNet({ sessions: ['bash'] });
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
-  assert.deepStrictEqual(out.seeded, ['bash', 'worker'], 'the reply still describes what is in the box');
+  assert.deepStrictEqual(out.results, [
+    { name: 'bash', state: 'present' },
+    { name: 'worker', state: 'seeded' },
+  ], 'the reply still describes what is in the box, and distinguishes the seat it created');
   assert.deepStrictEqual(net.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['worker']);
 });
 
@@ -152,7 +158,10 @@ test('a 400 "name taken" is a skip too — the box owns the registry, not the li
   const net = mkNet({ post: (n) => (n === 'bash' ? { status: 400, body: { ok: false, error: 'name taken "bash"' } } : null) });
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
   assert.strictEqual(out.ok, true);
-  assert.deepStrictEqual(out.seeded, ['bash', 'worker']);
+  assert.deepStrictEqual(out.results, [
+    { name: 'bash', state: 'present' },
+    { name: 'worker', state: 'seeded' },
+  ]);
 });
 
 test('any other POST failure stops and names the seat, keeping the earlier ones', async () => {
@@ -160,7 +169,33 @@ test('any other POST failure stops and names the seat, keeping the earlier ones'
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
   assert.strictEqual(out.ok, false);
   assert.match(out.error, /seeding worker: 500 .*boom/);
-  assert.deepStrictEqual(out.seeded, ['bash'], 'the bash seat the box already created is still reported');
+  assert.deepStrictEqual(out.results, [
+    { name: 'bash', state: 'seeded' },
+    { name: 'worker', state: 'failed', error: '500 boom' },
+  ], 'the bash seat the box already created is still reported');
+});
+
+// t818: the worker seat is named as optional, so its failure is a RESULT rather
+// than a stop — the bash seat after it must still be attempted and reported, or
+// one unauthenticated Claude seat would silently cost the box its shell.
+test('an optional seat that fails does not stop the seats after it', async () => {
+  const net = mkNet({ post: (n) => (n === 'worker' ? { status: 500, body: 'no credentials' } : null) });
+  const seeds = [SEEDS[1], SEEDS[0]];
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds, optional: ['worker'], fetch: net.fetch });
+  assert.strictEqual(out.ok, true);
+  assert.deepStrictEqual(out.results, [
+    { name: 'worker', state: 'failed', error: '500 no credentials' },
+    { name: 'bash', state: 'seeded' },
+  ]);
+  assert.deepStrictEqual(net.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['worker', 'bash'],
+    'ENTER: bash was POSTed AFTER the worker failed — a stop-on-first-error would have skipped it');
+});
+
+// A multi-line error body reaches a one-line reply, so only the first line rides.
+test('a failed seat reports the first line of the box error, not the whole body', async () => {
+  const net = mkNet({ post: () => ({ status: 500, body: 'no credentials\n  at spawn (box.js:1)\n  at run' }) });
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['worker'], fetch: net.fetch });
+  assert.deepStrictEqual(out.results, [{ name: 'worker', state: 'failed', error: '500 no credentials' }]);
 });
 
 test('a failed list stops before any POST', async () => {
@@ -239,7 +274,7 @@ const fire = async (h, intent) => {
 
 const posts = (h) => h.requests.filter((r) => r.method === 'POST').map((r) => r.body.name);
 
-test('up with a Claude token seeds bash and worker and says so, without the token', async () => {
+test('up seeds bash and worker and says so, without the token', async () => {
   const h = mkHandler();
   await fire(h, { action: 'up' });
 
@@ -255,18 +290,41 @@ test('up with a Claude token seeds bash and worker and says so, without the toke
   assert.strictEqual(h.requests[0].auth, `Bearer ${TOKEN}`);
 
   const line = h.last();
-  assert.match(line, /healthy in 4s · seeded bash, worker/);
+  assert.match(line, /healthy in 4s · seeded bash/);
+  assert.match(line, / · worker seeded$/);
   assert.ok(!line.includes(TOKEN), `the reply leaked the token: ${line}`);
   assert.ok(line.includes(h.file), 'and still points at the file the token is in');
 });
 
-// A Claude seat with no token loops on /login forever: seeding one would look
-// like success and deliver a seat nothing can talk to.
-test('without a Claude token the worker is not POSTed, and the reply says how to fix it', async () => {
+// t818: a box can be authenticated through its claude-auth volume, which no env
+// token reflects. Pre-judging the worker on the env token left every such box
+// without one, so the handler asks the box and reports whatever it answers.
+test('with no OAuth token in the box env the worker is POSTed anyway', async () => {
   const h = mkHandler({ hasToken: false });
   await fire(h, { action: 'up' });
-  assert.deepStrictEqual(posts(h), ['bash']);
-  assert.match(h.last(), /seeded bash · token in .* · worker NOT seeded: set a Claude token on box team-clodex \(Settings ▸ Sandbox\) and run sandbox rebuild/);
+  assert.deepStrictEqual(posts(h), ['bash', 'worker'],
+    'ENTER: the worker POST appears with no token — a gate on hasAuthToken would have dropped it');
+  assert.match(h.last(), /seeded bash · token in .* · worker seeded$/);
+});
+
+// The box's own refusal is the useful message; a fabricated "set a token" line
+// would have been wrong for a box whose credentials live in the volume.
+test('a worker the box refuses is reported with the box status and reason, and up still succeeds', async () => {
+  const h = mkHandler({ hasToken: false, post: (n) => (n === 'worker' ? { status: 500, body: 'no credentials' } : null) });
+  await fire(h, { action: 'up' });
+  assert.deepStrictEqual(posts(h), ['bash', 'worker']);
+  const line = h.last();
+  assert.ok(!line.startsWith('[agent:team] error:'), `a refused worker is not a failed up: ${line}`);
+  assert.match(line, /seeded bash · token in .* · worker NOT seeded: 500 no credentials$/);
+});
+
+// rebuild over a box that kept its worker: "present" is not "seeded", and the
+// difference is the whole signal a lead reads to know whether it was recreated.
+test('a worker that already exists reads present, not seeded', async () => {
+  const h = mkHandler({ sessions: ['bash', 'worker'] });
+  await fire(h, { action: 'rebuild' });
+  assert.deepStrictEqual(posts(h), []);
+  assert.match(h.last(), /seeded bash · token in .* · worker present$/);
 });
 
 // The host root is outside every bind when the box has no workDir; the seat
@@ -281,7 +339,7 @@ test('rebuild over a box that already has bash POSTs only the worker', async () 
   const h = mkHandler({ sessions: ['bash'] });
   await fire(h, { action: 'rebuild' });
   assert.deepStrictEqual(posts(h), ['worker']);
-  assert.match(h.last(), /seeded bash, worker/);
+  assert.match(h.last(), /seeded bash · token in .* · worker seeded$/);
 });
 
 // The file is the ONLY way back to a box that boots slowly, so it must survive
@@ -294,11 +352,11 @@ test('a health timeout replies error, seeds nothing, and leaves sandbox.json in 
   assert.ok(fs.existsSync(h.file), 'the URLs and token to reach it are still on disk');
 });
 
-test('a seed failure replies error naming the seat, after the earlier seat was created', async () => {
-  const h = mkHandler({ post: (n) => (n === 'worker' ? { status: 500, body: 'kaboom' } : null) });
+test('a seed failure on a required seat replies error naming it', async () => {
+  const h = mkHandler({ post: (n) => (n === 'bash' ? { status: 500, body: 'kaboom' } : null) });
   await fire(h, { action: 'up' });
-  assert.match(h.last(), /error: seeding worker: 500 .*kaboom/);
-  assert.deepStrictEqual(posts(h), ['bash', 'worker'], 'bash was created before the worker POST failed');
+  assert.match(h.last(), /error: seeding bash: 500 .*kaboom/);
+  assert.deepStrictEqual(posts(h), ['bash'], 'the worker was never reached past the required seat');
 });
 
 // status and down are read/teardown paths: a health wait there would block a

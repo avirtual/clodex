@@ -47,9 +47,11 @@ const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
 const SANDBOX_DEFAULT_REF = 'master';
 const SANDBOX_HOME_DIR = '/home/clodex';
 const SANDBOX_WORK_DIR = '/home/clodex/work';
+const SANDBOX_WORKER_SEED = 'worker';
 
-function noWorkerClause(boxId) {
-  return ` · worker NOT seeded: set a Claude token on box ${boxId} (Settings ▸ Sandbox) and run sandbox rebuild`;
+function workerSeedClause(result) {
+  if (result && result.state !== 'failed') return ` · ${SANDBOX_WORKER_SEED} ${result.state}`;
+  return ` · ${SANDBOX_WORKER_SEED} NOT seeded: ${(result && result.error) || 'the box reported nothing for it'}`;
 }
 
 function sha8(sha) {
@@ -2879,18 +2881,24 @@ function createTicketMethods(deps, shared) {
 
       const translated = box.translateHostPath(team.root) || {};
       const workerCwd = translated.container || SANDBOX_WORK_DIR;
-      const wantsWorker = box.hasAuthToken();
-      const seeds = [{ name: 'bash', type: 'bash', cwd: SANDBOX_HOME_DIR }];
-      if (wantsWorker) seeds.push({ name: 'worker', type: 'claude', cwd: workerCwd, extraArgs: [] });
-      const seeded = await seedSandboxSessions({ wireUrl: record.wireUrl, token, seeds, fetch: seedFetch });
+      const seeds = [
+        { name: 'bash', type: 'bash', cwd: SANDBOX_HOME_DIR },
+        { name: SANDBOX_WORKER_SEED, type: 'claude', cwd: workerCwd, extraArgs: [] },
+      ];
+      const seeded = await seedSandboxSessions({
+        wireUrl: record.wireUrl, token, seeds, optional: [SANDBOX_WORKER_SEED], fetch: seedFetch,
+      });
       if (!seeded || seeded.ok === false) { reply(`error: ${(seeded && seeded.error) || 'seeding failed'}`); return; }
+      const results = seeded.results || [];
+      const worker = results.find((r) => r.name === SANDBOX_WORKER_SEED);
+      const ready = results.filter((r) => r.name !== SANDBOX_WORKER_SEED && r.state !== 'failed').map((r) => r.name);
 
       reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
         + `${sandboxPortClause({ ports })}`
         + ` · healthy in ${Math.round((health.ms || 0) / 1000)}s`
-        + ` · seeded ${seeded.seeded.join(', ')}`
+        + ` · seeded ${ready.join(', ')}`
         + ` · token in ${file}`
-        + `${wantsWorker ? '' : noWorkerClause(boxId)}`);
+        + `${workerSeedClause(worker)}`);
     },
 
     _teamFileDeps() {

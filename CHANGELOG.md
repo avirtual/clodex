@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **Sandbox worker seed no longer depends on an env token**: `team sandbox
+  up|rebuild` always tries to seed the `worker` seat and reports the box's own
+  error if it fails, so a box logged in through the claude-auth volume gets its
+  worker too.
+
 ## 5.61.1 — 2026-09-11 — The Accounts pane fits the dialog, and ticket hands cannot stage the whole tree
 
 - **Preferences ▸ Accounts fits the dialog**: the add form, config-dir field and
