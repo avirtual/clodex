@@ -31657,9 +31657,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           title: "no system prompt by this name is installed"
         };
       }
+      var DEFAULT_ACCOUNT_LABEL = "default";
       function accountOptions(accounts, stored) {
-        const want = String(stored == null ? "" : stored);
-        const labels = (Array.isArray(accounts) ? accounts : []).map((a) => a && typeof a.label === "string" ? a.label : "").filter((l) => l);
+        const raw = String(stored == null ? "" : stored);
+        const want = raw === DEFAULT_ACCOUNT_LABEL ? "" : raw;
+        const labels = (Array.isArray(accounts) ? accounts : []).map((a) => a && typeof a.label === "string" ? a.label : "").filter((l) => l && l !== DEFAULT_ACCOUNT_LABEL);
         const out = [{
           value: "",
           text: "default (the account Clodex runs on)",
@@ -32671,14 +32673,16 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         function paintAccountSelect(sel, stored) {
           if (!sel) return;
           sel.innerHTML = "";
-          for (const o of accountOptions(accountRows, stored)) {
+          const opts = accountOptions(accountRows, stored);
+          for (const o of opts) {
             const opt = document.createElement("option");
             opt.value = o.value;
             opt.textContent = o.text;
-            if (o.marked) opt.title = "not in the accounts registry \u2014 saving keeps it, but a seat booting on it will fail";
+            if (o.marked) opt.title = "Save is refused until this is set to a registered account or default";
             sel.appendChild(opt);
           }
-          sel.value = String(stored == null ? "" : stored);
+          const chosen = opts.find((o) => o.selected);
+          sel.value = chosen ? chosen.value : "";
         }
         async function openTeamRolesPopover(name, anchorEl) {
           setStatus("");

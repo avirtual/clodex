@@ -1020,14 +1020,16 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   function paintAccountSelect(sel, stored) {
     if (!sel) return;
     sel.innerHTML = '';
-    for (const o of accountOptions(accountRows, stored)) {
+    const opts = accountOptions(accountRows, stored);
+    for (const o of opts) {
       const opt = document.createElement('option');
       opt.value = o.value;
       opt.textContent = o.text;
-      if (o.marked) opt.title = 'not in the accounts registry — saving keeps it, but a seat booting on it will fail';
+      if (o.marked) opt.title = 'Save is refused until this is set to a registered account or default';
       sel.appendChild(opt);
     }
-    sel.value = String(stored == null ? '' : stored);
+    const chosen = opts.find((o) => o.selected);
+    sel.value = chosen ? chosen.value : '';
   }
 
   async function openTeamRolesPopover(name, anchorEl) {

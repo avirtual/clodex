@@ -707,8 +707,42 @@ test('accountOptions: a stored label the registry does not offer is appended, ma
     { value: 'work', text: 'work', selected: false, marked: false },
     { value: 'retired', text: 'retired (not a registered account)', selected: true, marked: true },
   ]);
-  // A stored label that IS offered must not be appended a second time.
-  assert.strictEqual(accountOptions([{ label: 'work' }], 'work').length, 2);
+  // A stored label that IS offered must not be appended a second time — and the
+  // whole list, so this also pins that the offered label is the SELECTED one.
+  assert.deepStrictEqual(accountOptions([{ label: 'work' }], 'work'), [
+    { value: '', text: 'default (the account Clodex runs on)', selected: false, marked: false },
+    { value: 'work', text: 'work', selected: true, marked: false },
+  ]);
+});
+
+// Driven by the SHAPE accounts.list() really returns — a synthetic `default` row
+// first (accounts.js:104,138), not a hand-written array of custom labels. Against
+// the round-1 helper this list rendered "default" twice, and picking the second
+// stored the literal string on the role.
+test('accountOptions: the registry\'s synthetic default row does not become a second default option', () => {
+  const real = [
+    { label: 'default', email: null, configDir: '/Users/x/.claude', plan: 'unknown', addedAt: null },
+    { label: 'work', email: 'w@x.io', configDir: '/Users/x/.claude-work', plan: 'max', addedAt: 1 },
+  ];
+  assert.deepStrictEqual(accountOptions(real, ''), [
+    { value: '', text: 'default (the account Clodex runs on)', selected: true, marked: false },
+    { value: 'work', text: 'work', selected: false, marked: false },
+  ]);
+  assert.strictEqual(accountOptions(real, '').filter((o) => o.value === '').length, 1,
+    'exactly one default option, and its value is the empty string absence is stored as');
+  assert.ok(!accountOptions(real, '').some((o) => o.value === 'default'),
+    'no option stores the literal "default" — the backend reads that as no account at all');
+});
+
+test('accountOptions: a role already carrying the literal "default" selects the default option', () => {
+  // The round-1 bug's residue on disk. resolveAccountLabel (accounts.js:54) reads
+  // 'default' as "no account", so marking it "(not a registered account)" would
+  // be a falsehood — and appending it would offer the same choice twice again.
+  const real = [{ label: 'default', configDir: '/Users/x/.claude' }, { label: 'work', configDir: '/w' }];
+  assert.deepStrictEqual(accountOptions(real, 'default'), [
+    { value: '', text: 'default (the account Clodex runs on)', selected: true, marked: false },
+    { value: 'work', text: 'work', selected: false, marked: false },
+  ]);
 });
 
 test('roleSummaries: a role with an account carries it, so the collapsed row can show it', () => {

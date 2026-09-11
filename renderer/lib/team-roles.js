@@ -175,11 +175,14 @@ function storedPromptNote(prompt, opts = {}) {
   };
 }
 
+const DEFAULT_ACCOUNT_LABEL = 'default';
+
 function accountOptions(accounts, stored) {
-  const want = String(stored == null ? '' : stored);
+  const raw = String(stored == null ? '' : stored);
+  const want = raw === DEFAULT_ACCOUNT_LABEL ? '' : raw;
   const labels = (Array.isArray(accounts) ? accounts : [])
     .map((a) => (a && typeof a.label === 'string' ? a.label : ''))
-    .filter((l) => l);
+    .filter((l) => l && l !== DEFAULT_ACCOUNT_LABEL);
   const out = [{
     value: '',
     text: 'default (the account Clodex runs on)',
