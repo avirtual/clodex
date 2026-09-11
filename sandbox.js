@@ -209,7 +209,10 @@ function yamlQuote(value) {
   return `"${escaped}"`;
 }
 
-function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname }) {
+function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir }) {
+  if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
+    throw new Error('generateCompose: stateDir must be an absolute path');
+  }
   // The container hostname IS the engine's SELF_LABEL on the peer wire, so it must
   // be UNIQUE per managed box or two boxes would both self-identify as 'sandbox'
   // and DM reply routing would collide (M6b). Defaults to the shared box's id so
@@ -246,14 +249,14 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
     L.push(`      - ${yamlQuote(authEnvFile)}`);
   }
   L.push('    volumes:');
-  L.push('      - clodex-data:/data');
-  L.push('      - clodex-dot:/home/clodex/.clodex');
+  L.push(`      - ${yamlQuote(`${path.join(stateDir, 'data')}:/data`)}`);
+  L.push(`      - ${yamlQuote(`${path.join(stateDir, 'dot')}:/home/clodex/.clodex`)}`);
   if (libDir) {
     for (const d of LIBRARY_MOUNT_DIRS) {
       L.push(`      - ${yamlQuote(`${path.join(libDir, d)}:/home/clodex/.clodex/${d}:ro`)}`);
     }
   }
-  L.push('      - claude-auth:/home/clodex/.claude');
+  L.push(`      - ${yamlQuote(`${path.join(stateDir, 'claude')}:/home/clodex/.claude`)}`);
   if (workDir) {
     // Quoted via yamlQuote, not by hand: a host path with YAML-special chars
     // (`#` truncates, leading specials can change the node type) survives
@@ -281,11 +284,10 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('      retries: 3');
   L.push('      start_period: 10s');
   L.push('');
-  L.push('volumes:');
-  L.push('  clodex-data:');
-  L.push('  clodex-dot:');
-  L.push('  claude-auth:');
-  if (!workDir) L.push('  clodex-work:');
+  if (!workDir) {
+    L.push('volumes:');
+    L.push('  clodex-work:');
+  }
   L.push('');
   return L.join('\n');
 }
@@ -452,6 +454,7 @@ function createSandbox(deps = {}) {
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
   function authEnvPath() { return path.join(sandboxDir(), 'auth.env'); }
   function srcDir() { return path.join(sandboxDir(), 'src'); }
+  function stateDir() { return path.join(registryDir, 'boxes', id); }
 
   async function syncSrcToRef(ref) {
     if (!await repoToplevel(repoRoot)) return { ok: false, error: NO_REPO_FOR_REF };
@@ -588,9 +591,12 @@ function createSandbox(deps = {}) {
     for (const d of LIBRARY_MOUNT_DIRS) {
       try { fs.mkdirSync(path.join(registryDir, d), { recursive: true }); } catch {}
     }
+    for (const d of ['data', 'dot', 'claude']) {
+      fs.mkdirSync(path.join(stateDir(), d), { recursive: true, mode: 0o700 });
+    }
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
-      libDir: registryDir, mounts: config.mounts, hostname: id,
+      libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });
@@ -743,7 +749,7 @@ function createSandbox(deps = {}) {
     waitHealthy: boxWaitHealthy,
     hasAuthToken, setAuthToken, clearAuthToken,
     remoteToken,
-    composePath, sandboxDir, srcDir,
+    composePath, sandboxDir, srcDir, stateDir,
   };
 }
 
@@ -825,9 +831,8 @@ function createSandboxManager(deps = {}) {
     return { ok: true, box: { id: boxId, label } };
   }
 
-  // Docker VOLUMES are intentionally left behind (data-preservation stance);
-  // reclaiming them needs a human `docker volume rm`. Best-effort down: a stop
-  // failure is surfaced but does not block removal of the registry row.
+  // Best-effort down: a stop failure is surfaced but does not block removal of
+  // the registry row.
   async function remove(rawId) {
     const boxId = String(rawId || '').trim();
     const box = listBoxes().find((b) => b && b.id === boxId);
@@ -837,6 +842,12 @@ function createSandboxManager(deps = {}) {
     try { const d = await inst.down(); if (d && d.ok === false) downError = d.error; }
     catch (e) { downError = String((e && e.message) || e); }
     try { if (fs.existsSync(inst.srcDir())) await removeWorktree(inst.srcDir()); } catch {}
+    if (!downError) {
+      const dir = inst.stateDir();
+      if (path.basename(path.dirname(dir)) === 'boxes' && path.basename(dir) === boxId) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      }
+    }
     inst.unregisterPeer();
     const boxes = listBoxes().filter((b) => !(b && b.id === boxId));
     getUiSettings().set({ boxes });

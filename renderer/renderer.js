@@ -6819,7 +6819,7 @@ sbDeleteBtn.addEventListener('click', async () => {
   if (sbBusy || !sbCurrentBox) return;
   const box = sbBoxes.find((b) => b.id === sbCurrentBox);
   const label = (box && box.label) || sbCurrentBox;
-  const ok = confirm(`Delete sandbox "${label}"? Its container is stopped and removed and it's dropped from the peer list. Its Docker volumes are LEFT BEHIND — reclaim them with \`docker volume rm\` if you want the data gone.`);
+  const ok = confirm(`Delete sandbox "${label}"? Its container is stopped and removed, it's dropped from the peer list, and its state folder (~/.clodex/boxes/<id>: seats, tickets, login) is deleted. The project folder is not touched.`);
   if (!ok) return;
   sbBusy = true;
   sbDeleteBtn.disabled = true;
