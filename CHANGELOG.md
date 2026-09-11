@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- **Moved seats stop asking to trust their folder**: a minted account copies the
+  default account's folder-trust answers, and Re-sync / Move refresh them, so a
+  seat restarted on another subscription opens its workspace without the trust
+  prompt. **Log in** now opens its shell in the account's own config dir.
 - **Sandbox worker seed no longer depends on an env token**: `team sandbox
   up|rebuild` always tries to seed the `worker` seat and reports the box's own
   error if it fails, so a box logged in through the claude-auth volume gets its

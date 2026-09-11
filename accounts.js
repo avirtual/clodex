@@ -18,12 +18,24 @@ function modelOfArgs(argv) {
 
 function effectiveModel(entry, { settingsModelFor } = {}) {
   if (!entry || typeof entry !== 'object') return '';
-  const e = entry;
-  const arg = modelOfArgs(e.extraArgs);
+  const arg = modelOfArgs(entry.extraArgs);
   if (arg) return arg;
+  const env = (entry.env && typeof entry.env === 'object') ? entry.env : {};
+  if (typeof env.ANTHROPIC_MODEL === 'string' && env.ANTHROPIC_MODEL) return env.ANTHROPIC_MODEL;
   if (typeof settingsModelFor !== 'function') return '';
-  const env = (e.env && typeof e.env === 'object') ? e.env : {};
   return String(settingsModelFor(env.CLAUDE_CONFIG_DIR || '') || '');
+}
+
+function trustProjects(defaultConfig) {
+  const src = (defaultConfig && typeof defaultConfig.projects === 'object' && defaultConfig.projects) || {};
+  const out = {};
+  for (const [cwd, entry] of Object.entries(src)) {
+    if (!entry || typeof entry !== 'object' || entry.hasTrustDialogAccepted !== true) continue;
+    const row = { hasTrustDialogAccepted: true };
+    if (entry.hasClaudeMdExternalIncludesApproved === true) row.hasClaudeMdExternalIncludesApproved = true;
+    out[cwd] = row;
+  }
+  return out;
 }
 
 function modelSelects(argModel, wanted) {
@@ -134,12 +146,43 @@ function createAccounts(deps = {}) {
     };
   }
 
-  function readTheme() {
+  function readDefaultConfig() {
     try {
       const obj = JSON.parse(fs.readFileSync(claudeConfigFile, 'utf-8'));
-      if (obj && typeof obj.theme === 'string' && obj.theme) return obj.theme;
-    } catch {}
+      return (obj && typeof obj === 'object') ? obj : null;
+    } catch { return null; }
+  }
+
+  function readTheme() {
+    const obj = readDefaultConfig();
+    if (obj && typeof obj.theme === 'string' && obj.theme) return obj.theme;
     return 'dark';
+  }
+
+  function writeJsonAtomic(file, body) {
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
+    try { fs.chmodSync(tmp, 0o600); } catch {}
+    fs.renameSync(tmp, file);
+  }
+
+  function mergeTrust(label) {
+    const dir = configDirFor(label);
+    if (!dir || label === DEFAULT_LABEL) return 0;
+    const trusted = trustProjects(readDefaultConfig());
+    const cwds = Object.keys(trusted);
+    if (!cwds.length) return 0;
+    const file = path.join(dir, '.claude.json');
+    let body;
+    try { body = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return 0; }
+    if (!body || typeof body !== 'object') return 0;
+    const projects = (body.projects && typeof body.projects === 'object') ? body.projects : {};
+    for (const cwd of cwds) {
+      const existing = (projects[cwd] && typeof projects[cwd] === 'object') ? projects[cwd] : {};
+      projects[cwd] = { ...existing, ...trusted[cwd] };
+    }
+    writeJsonAtomic(file, { ...body, projects });
+    return cwds.length;
   }
 
   function exists(p) {
@@ -165,7 +208,7 @@ function createAccounts(deps = {}) {
 
     const configFile = path.join(dir, '.claude.json');
     if (!exists(configFile)) {
-      const body = { hasCompletedOnboarding: true, theme: readTheme(), projects: {} };
+      const body = { hasCompletedOnboarding: true, theme: readTheme(), projects: trustProjects(readDefaultConfig()) };
       fs.writeFileSync(configFile, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
     }
     for (const name of SHARED_LINKS) {
@@ -182,7 +225,7 @@ function createAccounts(deps = {}) {
     const dir = configDirFor(label);
     if (!dir) return { ok: false, error: `unknown account "${label}"` };
     if (label === DEFAULT_LABEL) return { ok: false, error: 'the default account is the source, not a copy' };
-    return { ok: true, copied: copySettings(dir, { overwrite: true }) };
+    return { ok: true, copied: copySettings(dir, { overwrite: true }), trusted: mergeTrust(label) };
   }
 
   function add({ label, email = null, plan = 'unknown', configDir = null } = {}) {
@@ -229,13 +272,17 @@ function createAccounts(deps = {}) {
     configDirFor,
     mint,
     resync,
+    mergeTrust,
   };
 }
 
-async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs, settingsModelFor }) {
+async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs, settingsModelFor, mergeTrust }) {
   const dir = configDirFor(label);
   if (!dir) return { ok: false, error: `unknown account "${label}"`, moved: [], skipped: [] };
   const toDefault = String(label) === DEFAULT_LABEL;
+  if (!toDefault && typeof mergeTrust === 'function') {
+    try { mergeTrust(label); } catch {}
+  }
 
   const moved = [];
   const skipped = [];
@@ -268,4 +315,4 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
   return { ok: true, moved, skipped };
 }
 
-module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, effectiveModel, LABEL_RE, PLANS, SHARED_LINKS };
+module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, effectiveModel, trustProjects, LABEL_RE, PLANS, SHARED_LINKS };
