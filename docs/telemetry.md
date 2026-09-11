@@ -106,6 +106,17 @@ strip ladder) is a deployment property riding the payload; only *enabled*
 tracks the live link. The 📄 files badge latches "unseen" only on an
 increase over a known baseline (the attach seed is silent).
 
+The readout is per ACCOUNT, not per window and not window-wide: `wire-quota`
+carries `{accounts, latest}`, the store keys each reading by the SEAT's account
+label (session-manager `accountFor`, off the seat's persisted
+`CLAUDE_CONFIG_DIR`) rather than by whichever `anthropic-organization-id` header
+arrived last, and `quotaChips` runs the whole `pickQuota` selection rule once per
+label. One account renders exactly one unprefixed chip; two or more render one
+`.quota-chip` element each, `<label> · ` in text and tooltip, `default` first,
+each with its own level colour and staleness. The wirescope `/_status` fallback
+carries no label, so it files under `default` and only while the wire has said
+nothing about `default` itself.
+
 `quotaChip` (proxy-util.js) renders every window the payload carries as one
 compact bar — `5h:0% | W:76% | F:86%` — with a recent refusal appended last and
 past-tense, `· rate-limited 2m ago`, since a 429 up to five minutes old is not

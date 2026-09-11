@@ -203,6 +203,78 @@ test('snapshot: two accounts are kept apart and the latest read one wins', () =>
   assert.strictEqual(snap.primary.used_pct, 10.0);
 });
 
+// ---- keyed by the SEAT's account, not by the last org header (t813) ----
+
+// Two subscriptions is the case the whole feature exists for: watching which
+// pool empties first. Keyed by the org header these collapse into one
+// alternating number, and the numbers below are deliberately far apart so a
+// row reading off the wrong entry is unmistakable rather than plausible.
+const SUB2_HEADERS = {
+  'anthropic-organization-id': 'org-shared',
+  'anthropic-ratelimit-unified-status': 'allowed',
+  'anthropic-ratelimit-unified-representative-claim': 'five_hour',
+  'anthropic-ratelimit-unified-5h-utilization': '0.12',
+  'anthropic-ratelimit-unified-5h-status': 'allowed',
+};
+
+test('snapshotAll: an account label keys the entry, and every account gets its own row', () => {
+  const store = new QuotaStore();
+  store.note(SUB2_HEADERS, { account: 'sub-2', now: NOW });
+  store.note(LIVE_HEADERS, { account: 'default', now: NOW + 1 });
+  const rows = store.snapshotAll(NOW + 1);
+  assert.strictEqual(rows.length, 2, 'ENTER: two rows, or the per-row assertions below read the same entry twice');
+  // `default` first: the row an operator with one subscription already sees
+  // must not move when a second appears beside it.
+  assert.deepStrictEqual(rows.map((r) => r.account), ['default', 'sub-2']);
+  assert.strictEqual(rows[0].primary.used_pct, 95.0);
+  assert.strictEqual(rows[1].primary.used_pct, 12.0);
+  // Both readings carried the SAME org header. Under the old keying they were
+  // one entry, and this is the whole claim.
+  assert.strictEqual(rows[0].org_id, 'a0aca1fb-5695-4f38-854c-28911e5c20e4');
+  assert.strictEqual(rows[1].org_id, 'org-shared');
+});
+
+test('snapshotAll: labels sort alphabetically after default, so the bar does not reorder itself', () => {
+  const store = new QuotaStore();
+  for (const label of ['zed', 'alpha', 'default', 'mid']) {
+    store.note(LIVE_HEADERS, { account: label, now: NOW });
+  }
+  assert.deepStrictEqual(store.snapshotAll(NOW).map((r) => r.account),
+    ['default', 'alpha', 'mid', 'zed']);
+});
+
+test('note: a 429 with no headers lands on the GIVEN account, not on the last one read', () => {
+  // The refusal is the moment the chip most needs to be right about WHICH
+  // subscription hit the wall. Falling back to `_lastAccount` here would mark
+  // the other pool rate-limited.
+  const store = new QuotaStore();
+  store.note(LIVE_HEADERS, { account: 'default', now: NOW });
+  store.note(SUB2_HEADERS, { account: 'sub-2', now: NOW + 1 });
+  store.note(LIVE_HEADERS, { account: 'default', now: NOW + 2 });
+  assert.strictEqual(store.snapshot(NOW + 2).primary.used_pct, 95.0,
+    'ENTER: default is the last account read, so a fallback to it would be invisible below');
+  store.note({}, { status: 429, account: 'sub-2', now: NOW + 3 });
+  const rows = store.snapshotAll(NOW + 3);
+  const sub2 = rows.find((r) => r.account === 'sub-2');
+  const dflt = rows.find((r) => r.account === 'default');
+  assert.strictEqual(sub2.last_429, NOW + 3);
+  assert.strictEqual(dflt.last_429, undefined, 'the account that was NOT refused carries no refusal');
+});
+
+test('note: no account given keys by the org id exactly as before', () => {
+  // The fallback is what keeps an unresolvable seat, and every older caller,
+  // filing where they always did.
+  const store = new QuotaStore();
+  store.note(LIVE_HEADERS, { now: NOW });
+  store.note({ ...LIVE_HEADERS, 'anthropic-organization-id': 'org-b' }, { now: NOW + 1 });
+  assert.deepStrictEqual(store.snapshotAll(NOW + 1).map((r) => r.account),
+    ['a0aca1fb-5695-4f38-854c-28911e5c20e4', 'org-b']);
+});
+
+test('snapshotAll: nothing observed is an empty list, not a row of nulls', () => {
+  assert.deepStrictEqual(new QuotaStore().snapshotAll(NOW), []);
+});
+
 // ---- persistence ----
 
 test('QuotaStore: a reading survives a restart, with its absolute reset intact', () => {

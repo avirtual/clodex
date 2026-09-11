@@ -23,6 +23,9 @@ blocks a release.
   Re-sync and Remove, and "Move seats on model X here"; the new-session and edit
   dialogs gain an Account select, and a session row shows its account when it is
   not the default.
+- **One quota chip per account**: with more than one registered subscription in
+  use, the drawer shows each account's plan quota as its own labelled chip,
+  keyed by the seat's account rather than by whichever org header arrived last.
 
 ## 5.60.0 — 2026-09-11 — Team sandboxes: a box per team, built from any ref, ready with seeded seats
 
