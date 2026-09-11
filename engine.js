@@ -1782,7 +1782,7 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
   parseCtxFile, jsonlToMessages, ensureDir, homeRelativize,
   claimOutbox, listOutboxOrigins,
-  manager, proxyPoller,
+  manager, proxyPoller, loadManifest,
   restartClodex: restartHost, restartSession, peerProxyView,
   fetchProxyContext, fetchProxyReport, fetchProxyBust,
   fetchSessionFiles, fetchFilePeek, fetchFileDiff,

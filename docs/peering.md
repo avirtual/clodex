@@ -79,6 +79,13 @@ so the ops log can arbitrate perturbation reports; `onControlChange` chips
 the owner's tab — control is never silent. Bash sessions are IPC-private
 but **peer-visible** (attach/control/create work; DM and query don't).
 
+- A `POST /api/sessions` body of `{ name, team }` takes a different arm: the
+  receiving host looks `team` up in its OWN team manifest and spawns that team's
+  lead through the local spawn handler, so template, prompts, exec grants and
+  intents all come from the host's disk. Nothing else in the body is read (no
+  `cwd`, `extraArgs`, `env`, `intents`, `execCommands`), and a `name` other than
+  the manifest's lead is refused.
+
 ## 3. Consumer side (peer-client.js)
 
 **Unreachable is normal** (laptops sleep) — offline is calm, never an error.

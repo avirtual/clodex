@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `POST /api/sessions` accepts `{ name, team }`: the receiving host spawns that team's lead from its OWN manifest — template, prompts, exec grants and intents all come from the host's disk, nothing else in the body is read, and any name other than the manifest's lead is refused — which is how a sandbox box will boot the team shipped into it.
+
 ## 5.63.2 — 2026-09-12 — the hand prompt bounds what a hand reads; a box keeps its state on the host and receives its team
 
 - The hand prompt gains a "Tool results" section that bounds what a hand reads into its own context (head/sed ranges, stat before diff, no cat over 200 lines, Explore agents for large files, no polling while waiting), the neighbour-comment check drops from 25 lines of context to 5, and the shipped copies catch up with the report shape, worktree rule and no-operator posture the clodex team's own copy has carried for a week.
