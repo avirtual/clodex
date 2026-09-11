@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — loop closes out green merges; Edit Session keeps team prompts
+## Unreleased
+
+## 5.62.2 — 2026-09-11 — loop closes out green merges; Edit Session keeps team prompts
 
 - Edit Session lists the seat's team-own append prompts (the team brief among
   them) and keeps any append stem it could not draw, so saving the dialog — an
