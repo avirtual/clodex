@@ -675,7 +675,7 @@ function createSandbox(deps = {}) {
 
   async function boxWaitHealthy(timeoutMs) {
     let ports = {};
-    try { ports = parseOwnPortMap(fs.readFileSync(composePath(), 'utf8')); } catch { /* no prior file */ }
+    try { ports = parseOwnPortMap(fs.readFileSync(composePath(), 'utf8')); } catch { ports = {}; }
     const url = ports.web ? `http://127.0.0.1:${ports.web}` : null;
     return waitHealthy({ id, url, timeoutMs, fetch: deps.fetch, now: deps.now, sleep: deps.sleep });
   }
