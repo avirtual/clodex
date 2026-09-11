@@ -7,10 +7,10 @@
 //
 // lead + reviewer rows are READ-ONLY (operator-owned topology, C1): their
 // DEFINITIONS can't be edited or renamed here — the mutators bounce that anyway,
-// so we don't offer a control that only errors. What each one does grow is the
-// decision that IS the operator's: which seat fills `lead` (t420), and whether
-// the team has a `reviewer` at all (t421 — Remove, plus an add-it-back row when
-// it is absent, which re-mints Clodex's own def, never a caller-supplied one).
+// so we don't offer a control that only errors. What each grows is the decision
+// that IS the operator's: which seat fills `lead` (t420), whether the team has a
+// `reviewer` at all (t421 — Remove, plus an add-it-back row re-minting Clodex's
+// own def), and the `account:` its ephemeral seats boot on (t830).
 // Ordinary roles get inline brief/prompt/template edit
 // (→ teamSetRole), Rename (→ teamRenameRole), Remove (→ teamRemoveRole). A
 // remove/rename the backend FAIL-CLOSES (C5: a live/persisted seat or an open
