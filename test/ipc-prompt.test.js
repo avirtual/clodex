@@ -202,19 +202,23 @@ test('t808: the sandbox row is present in the literal AND in GRAMMAR_LINES', () 
   }
 });
 
-// The `]]` that t754 above used to guard rides the LAST kv, and t767 appended
-// model: after cwd:. Pinned here rather than there so the closing bracket still
-// has exactly one owner: a row whose kv list runs past the intent's `]` renders
-// a grammar no parse accepts.
-test('t767: the role-add row documents model:, closes the intent, and names the bracketed-id limit', () => {
-  const ROW = /^ {2}\[agent:team role-add <role>.*\[model:<id\|opus\|sonnet\|haiku\|fable>\]\]/m;
-  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the model: kv as the last one in the row');
+// The `]]` that t754 above used to guard rides the LAST kv, and t830 appended
+// account: after model:. Pinned here rather than there so the closing bracket
+// still has exactly one owner: a row whose kv list runs past the intent's `]`
+// renders a grammar no parse accepts.
+test('t767/t830: the role-add row documents model: and account:, closes the intent, and names the bracketed-id limit', () => {
+  const ROW = /^ {2}\[agent:team role-add <role>.*\[model:<id\|opus\|sonnet\|haiku\|fable>\] \[account:<label>\]\]/m;
+  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries account: as the last kv in the row, closing the intent');
   assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
     assert.ok(/model: derives templates\/<role>\.json from the role's template \(or clodex-team-hand\) with that --model and points the role at it/.test(src),
       'the row says what model: DOES');
     assert.ok(/a bracketed id such as claude-opus-5\[1m\] cannot be written here, use the alias/.test(src),
       'and that the family regex stops at the first ] — the reason the aliases exist');
+    assert.ok(/account: pins every seat the loop mints for the role — ticket hands, cold reviewers — to that account's config dir/.test(src),
+      'the row says what account: DOES — which seats it reaches is the whole question a lead has about it');
+    assert.ok(/an ephemeral seat cannot be edited after the fact, so this is the only way to move them/.test(src),
+      'and why it is a ROLE field: the seats it moves are gone before Edit Session could reach them');
   }
 });
 

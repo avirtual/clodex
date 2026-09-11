@@ -625,6 +625,18 @@ than the library one, so a model change keeps whatever else was edited into it. 
 bracketed id such as `claude-opus-5[1m]` cannot be written here, use the alias —
 `opus`, `sonnet`, `haiku`, `fable`.
 
+`account:` names a label from Accounts (the registry behind the quota chip), and
+every seat the LOOP mints for that role — a ticket hand, a cold reviewer, a
+one-shot `dispatch: spawn` seat — boots on that account's config dir. It is a
+role field rather than a template one because those seats are ephemeral: nobody
+can open Edit Session on a reviewer that lives six minutes, and a template cannot
+carry the key at all — template env is filtered to an allowlist that drops
+`CLAUDE_CONFIG_DIR` on purpose, since one template is shared across teams and
+must not redirect anyone's credentials. The label is checked against the registry
+when you set it; `account:default` clears the field, and a label whose account
+was deleted afterwards refuses the spawn rather than quietly booting the seat on
+the subscription the role was moved off.
+
 `lead` and `reviewer` are operator-owned topology: every role verb refuses them,
 so a team you meant to run solo still carries a reviewer definition — harmless,
 and the roster renders it as not addressable until a seat exists. `cwd:` names a
