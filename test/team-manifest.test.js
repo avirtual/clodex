@@ -182,7 +182,7 @@ test('loadManifest: a version-1 file carrying the cut keys loads clean, dropping
   // WHOLE object: a partial probe would read right past a key that survived the
   // cut in the returned shape while the schema claims it is gone.
   assert.deepStrictEqual(m.roles.reviewer, {
-    template: 'sonnet-review', prompt: null, brief: null, dispatch: 'standing', cwd: null,
+    template: 'sonnet-review', prompt: null, brief: null, dispatch: 'standing', cwd: null, account: null,
   }, 'the cut keys are absent from the normalized def, not carried as null');
   assert.strictEqual(m.version, 1, 'no version field → version 1');
   assert.strictEqual(m.watchdogMs, 600000, 'watchdogMs override still carried');
@@ -262,7 +262,7 @@ test('loadManifest: a retired role field warns even on a CURRENT-version file, a
   // Additive: the drop itself is unchanged. A warning that also started
   // preserving the field would hand a live restriction to code that ignores it.
   assert.deepStrictEqual(m.roles.reviewer, {
-    template: null, prompt: 'rev', brief: null, dispatch: 'standing', cwd: null,
+    template: null, prompt: 'rev', brief: null, dispatch: 'standing', cwd: null, account: null,
   }, 'the retired key is still dropped — the warning changed nothing about behaviour');
 });
 
@@ -298,9 +298,9 @@ test('loadManifest: every CUT_ROLE_FIELDS member warns on a current-version file
     // baseline is what the role normalizes to carrying no cut key at all, so
     // "took effect" means exactly "the def came out different".
     // Key ORDER matters here, not just membership: this is a stringify compare,
-    // and normalizeRoleDef returns a fixed-key-order literal (`cwd` last).
+    // and normalizeRoleDef returns a fixed-key-order literal (`account` last).
     const changed = JSON.stringify(m.roles.runner)
-      !== JSON.stringify({ template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null });
+      !== JSON.stringify({ template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null, account: null });
     assert.strictEqual(changed, HONORED_CUT_FIELDS.has(field),
       `ENTER: seeded as \`true\` on a plain role, "${field}" ${HONORED_CUT_FIELDS.has(field) ? 'DID' : 'did not'} change the normalized def`);
     if (changed) {
@@ -564,10 +564,10 @@ test('loadManifest: role dispatch normalizes to the enum, default standing', () 
   const tm = createTeamManifest({ fs, clodexHome: home });
   const m = tm.loadManifest('shop');
   assert.deepStrictEqual(m.roles.hand, {
-    template: null, prompt: null, brief: null, dispatch: 'worktree', cwd: null,
+    template: null, prompt: null, brief: null, dispatch: 'worktree', cwd: null, account: null,
   }, 'opted-in role def in full');
   assert.deepStrictEqual(m.roles.helper, {
-    template: null, prompt: null, brief: null, dispatch: 'standing', cwd: null,
+    template: null, prompt: null, brief: null, dispatch: 'standing', cwd: null, account: null,
   }, 'absent dispatch is the STANDING string, not undefined — undefined reads as neither value at a consumer that compares');
   // An off-enum value is a loud manifest error, not a truthy opt-in:
   // `dispatch: "no"` must never enable the thing it plainly denies, and
@@ -1376,7 +1376,7 @@ test('a hand-authored role `tools` is dropped, never stored as a restriction', (
   // addRole no longer bounces it — the def normalizes without the key at all.
   const team = tm.addRole('shop', 'runner', { brief: 'a runner', tools: ['Read'] });
   assert.deepStrictEqual(team.roles.runner, {
-    template: null, prompt: null, brief: 'a runner', dispatch: 'standing', cwd: null,
+    template: null, prompt: null, brief: 'a runner', dispatch: 'standing', cwd: null, account: null,
   }, 'the normalized def carries no tools key in any form');
 
   // ON DISK, which is the claim in this test's title and the only one that
@@ -1440,7 +1440,7 @@ test('setRole edits the editable fields, ignores everything else, preserves unmo
   // `strictEqual(x, null)` on it would fail loudly but one on `undefined` reads
   // as an absence that was never asserted.
   assert.deepStrictEqual(team.roles.runner, {
-    template: null, prompt: 'new-runner', brief: 'new brief', dispatch: 'standing', cwd: null,
+    template: null, prompt: 'new-runner', brief: 'new brief', dispatch: 'standing', cwd: null, account: null,
   }, 'only the editable fields land; the cut ones are ignored');
   // Confirm on-disk raw took none of them, and kept the unmodeled one.
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -1613,7 +1613,7 @@ test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORE
   }, { operator: true });
 
   assert.deepStrictEqual(team.roles.reviewer, {
-    ...STOCK_ROLE_DEFS.reviewer, template: null, dispatch: 'standing', cwd: null,
+    ...STOCK_ROLE_DEFS.reviewer, template: null, dispatch: 'standing', cwd: null, account: null,
   }, 'the reviewer reads back as the STOCK def — the attacker def bought nothing');
   assert.strictEqual(team.roles.reviewer.prompt, STOCK_ROLE_DEFS.reviewer.prompt,
     'specifically: the prompt is Clodex\'s, not the caller\'s');
