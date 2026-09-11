@@ -13038,12 +13038,6 @@ test('_isDmReachable: federated name@origin → true only for an ONLINE peer', (
   assert.strictEqual(m._isDmReachable('t1@unknown'), false, 'unconfigured origin');
 });
 
-// ── t839: one origin resolver — label, then id, then the announced host ──────
-// A team box registers under the label `<team> team` (a space, which
-// AGENT_NAME_RE rejects) while it answers on the wire as its box id
-// `team-<name>`, which every status already carries as `host`. So an origin has
-// to resolve against all three, everywhere, through the same function.
-
 const T839_PEERS = [
   { id: 'team-clodex', label: 'clodex team', host: 'team-clodex', online: true },
   { id: 'p2', label: 'laptop', host: 'laptop.local-less', online: true },
