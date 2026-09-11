@@ -303,7 +303,11 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs, deps,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
-    landed: () => gated.filter((g) => /MERGED/.test(g.body)),
+    // The notice's HEADER, not the word anywhere in the body: t817 gave the
+    // reviewer-ACCEPT dm a sentence naming the `[ticket <id> MERGED]` notice it
+    // tells the lead to wait for, so a substring match now counts that dm as a
+    // merge — and the poll below it releases before any merge has happened.
+    landed: () => gated.filter((g) => /^\[ticket \S+ MERGED\]/.test(g.body)),
     // Reads MASTER, not the index or a variable this file computed.
     masterHead: () => git(repo.dir, ['rev-parse', 'master']),
     masterLog: () => git(repo.dir, ['log', '--format=%s', 'master']),
@@ -704,8 +708,8 @@ test('a probe error spanning MANY LINES cannot break the no-intent-at-column-1 i
   for (const line of notes[0].body.split('\n')) {
     assert.ok(!line.startsWith('[agent:'), `no line may START with an intent: ${JSON.stringify(line)}`);
   }
-  assert.strictEqual(notes[0].body.split('\n').length, 5,
-    'the body is still the five lines the hazard comment reasons about');
+  assert.strictEqual(notes[0].body.split('\n').length, 7,
+    'the body is still the seven lines the hazard comment reasons about (t817 added the step line and its blank)');
 });
 
 test('a repo configured with diff.noprefix is still measured correctly', async () => {
