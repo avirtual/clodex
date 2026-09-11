@@ -2485,7 +2485,7 @@ test('spawn template (t297): a template whose env is entirely well-typed and all
 // every skill and plugin, zero exec grants. The resolution is off the TARGET
 // cwd's team (the seat opening a new team is usually on no team itself), so
 // these fixtures give the manager a real teams dir and a real library.
-function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null } = {}) {
+function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null, extraTemplates = [] } = {}) {
   const home = mkTmpRoot('t770-home-');
   const projectRoot = mkTmpRoot('t770-proj-');
   const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
@@ -2514,7 +2514,7 @@ function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null } 
     DEFAULT_WORKSPACE_ID: 'default',
     getPersistence: () => ({ list: () => [], get: () => null, setStripLevel() {}, setAutoCompact() {}, setPlugins() {} }),
     getTemplates: () => ({ list: () => [] }),
-    listAllTemplates: () => [{ ...shippedLead, id: 'clodex-team-lead' }],
+    listAllTemplates: () => [{ ...shippedLead, id: 'clodex-team-lead' }, ...extraTemplates],
     resolveTeam: tm.resolveTeam,
     listTeams: tm.listTeams,
     teamsDir: tm.teamsDir,
@@ -2655,6 +2655,46 @@ test('t782 _handleSpawnIntent: opts.onReply diverts the reply, and the spawner i
   assert.strictEqual(diverted.length, 1, 'exactly one reply, and it went to the callback');
   assert.match(diverted[0], /^ok: spawned "acme-lead"/);
   assert.deepStrictEqual(f.replies, [], 'and no [agent:spawn] line reached the spawner');
+});
+
+// --- t822: a seat that binds to no role is told so in the spawn reply --------
+// Binding is by NAME (matchSeatRole): `<team>-<role>`, or the team's lead. The
+// template is never consulted, so `[agent:spawn name:helm-hand template:hand]`
+// returns `ok: spawned` and then every `task start hand` bounces. The reply is
+// the first of the two moments the lead can still act on that.
+const T822_HAND_TPL = { id: 'clodex-team-hand', name: 'clodex-team-hand', type: 'claude', cwd: '${TEAM_ROOT}' };
+
+test('t822: a roleless name spawned into a team root carries the NOTE, naming the name that WOULD bind', async () => {
+  const f = mkLeadSpawn({ extraTemplates: [T822_HAND_TPL] });
+  f.m._handleSpawnIntent(f.spawner, { name: 'helm-hand', cwd: f.projectRoot, template: 'clodex-team-hand' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the seat really booted — the NOTE is a warning, never a refusal');
+  const reply = f.replies.at(-1);
+  assert.match(reply, /^\[agent:spawn\] ok: spawned "helm-hand"/, 'ENTER: and the reply is the ok one the NOTE rides');
+  assert.match(reply, /binds to NO role on team acme/);
+  // The template names the `hand` role's template, so the reply can name the
+  // role concretely instead of the `<team>-X` shape.
+  assert.match(reply, /to fill role hand name it acme-hand/);
+  assert.match(reply, /\[agent:task assign <id> helm-hand\]/, 'and the way to reach it as it stands');
+});
+
+test('t822: a seat named <team>-<role> binds, so it gets no NOTE', async () => {
+  const f = mkLeadSpawn({ extraTemplates: [T822_HAND_TPL] });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-hand', cwd: f.projectRoot, template: 'clodex-team-hand' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.match(f.replies.at(-1), /^\[agent:spawn\] ok: spawned "acme-hand"/, 'ENTER: the ok reply');
+  assert.ok(!/binds to NO role/.test(f.replies.at(-1)), `a binding name must not warn, got: ${f.replies.at(-1)}`);
+});
+
+test('t822: a spawn whose cwd is on no team carries no NOTE — there is no roster to be off', async () => {
+  const f = mkLeadSpawn({ extraTemplates: [T822_HAND_TPL] });
+  const nowhere = mkTmpRoot('t822-nowhere-');
+  f.m._handleSpawnIntent(f.spawner, { name: 'helm-hand', cwd: nowhere });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.match(f.replies.at(-1), /^\[agent:spawn\] ok: spawned "helm-hand"/, 'ENTER: the ok reply');
+  assert.ok(!/binds to NO role/.test(f.replies.at(-1)), `off-team spawn must not warn, got: ${f.replies.at(-1)}`);
 });
 
 // --- Mid-flight DM delivery: park-on-busy (piece 2) + idle-edge drain (piece 3) -
