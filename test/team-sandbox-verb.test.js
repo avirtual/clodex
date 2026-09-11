@@ -23,8 +23,8 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 
-function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, config = {} } = {}) {
-  const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0 };
+function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, hasToken = true, config = {} } = {}) {
+  const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
   // The box's config is REAL state here, not a spy log: the handler reads it back
   // (to decide whether to seed a default ref) and the "config survives" subjects
@@ -50,6 +50,9 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult
       return statusResult || { state: 'running', ref: config.ref || null, sha: 'abcdef1234567890', ports };
     },
     remoteToken: () => TOKEN,
+    async waitHealthy() { calls.waitHealthy++; return healthResult || { ok: true, polls: 1, ms: 4000 }; },
+    hasAuthToken: () => hasToken,
+    translateHostPath: () => ({ container: '/home/clodex/work' }),
   });
   const instances = new Map();
   const manager = {
@@ -68,6 +71,28 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult
   return { manager, calls };
 }
 
+// The seeding half is driven through a fake fetch that RECORDS every request —
+// url, method, headers and the literal body — because what the handler must get
+// right is the request sequence, not a return value it could fake past.
+function mkFakeFetch({ sessions = [], post } = {}) {
+  const requests = [];
+  const reply = (status, body) => ({
+    status,
+    async json() { return body; },
+    async text() { return JSON.stringify(body); },
+  });
+  const fetch = async (url, init = {}) => {
+    const method = (init.method || 'GET').toUpperCase();
+    requests.push({ url, method, headers: init.headers || {}, body: init.body ? JSON.parse(init.body) : null });
+    if (method === 'GET') return reply(200, { ok: true, sessions: sessions.map((name) => ({ name })) });
+    const name = requests[requests.length - 1].body.name;
+    const out = post ? post(name) : null;
+    if (out) return reply(out.status, out.body);
+    return reply(200, { ok: true, name });
+  };
+  return { fetch, requests };
+}
+
 function mkBox(opts = {}) {
   const home = mkTmpRoot('t808-');
   const teamsDir = path.join(home, 'teams');
@@ -81,6 +106,7 @@ function mkBox(opts = {}) {
     roles: { lead: { brief: 'the lead' }, hand: { brief: 'the hand' } },
   };
   const fake = opts.noManager ? null : mkFakeManager(opts);
+  const net = mkFakeFetch(opts);
   const methods = createTicketMethods({
     fs,
     path,
@@ -89,6 +115,7 @@ function mkBox(opts = {}) {
     resolveTeam: (cwd) => (cwd === '/proj' ? team : null),
     refreshAppMenu: () => {},
     getSandboxManager: () => (fake ? fake.manager : null),
+    fetch: net.fetch,
     log: { info() {}, warn() {}, error() {} },
   }, {});
   const injected = [];
@@ -103,13 +130,18 @@ function mkBox(opts = {}) {
     hand: { name: 'clodex-hand', agentType: 'claude', cwd: '/proj' },
     last: () => injected[injected.length - 1] || '',
     box: () => fake.manager.get('team-clodex'),
+    requests: net.requests,
     file: path.join(teamsDir, 'clodex', 'sandbox.json'),
   };
 }
 
 // _handleTeam dispatches the async handler and returns; every subject awaits
-// this so the assertions read the state the docker steps actually left.
-const settle = () => new Promise((r) => setImmediate(() => setImmediate(r)));
+// this so the assertions read the state the docker, health and seeding steps
+// actually left. Rounds, not one tick: each is a macrotask boundary that drains
+// every microtask queued by the await chain before it.
+const settle = async () => {
+  for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
+};
 
 const fire = async (b, session, intent) => {
   b.m._handleTeam(session, { type: 'team', sub: 'sandbox', action: 'up', ref: null, body: '', ...intent });

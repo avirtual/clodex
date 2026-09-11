@@ -291,10 +291,12 @@ test('mkFixture injects every dep team-tickets.js reads', (t) => {
     // typeof, because a headless host wires no Electron menu at all.
       // getSandboxManager is optional in that same sense: it is read only by
       // _handleTeam's sandbox case, which no subject here drives — and a fixture
-      // that DID inject one would have to fake docker to say anything.
+      // that DID inject one would have to fake docker to say anything. `fetch`
+      // rides with it for the same reason: the only reader is that case seeding
+      // the box's starting seats over its wire port.
     optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
       'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
-        'getSandboxManager'],
+        'getSandboxManager', 'fetch'],
   });
 });
 

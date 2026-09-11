@@ -41,9 +41,16 @@ const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { BOX_ID_RE } = require('./sandbox');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
+const { seedSandboxSessions } = require('./sandbox-seeds');
 
 const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
 const SANDBOX_DEFAULT_REF = 'master';
+const SANDBOX_HOME_DIR = '/home/clodex';
+const SANDBOX_WORK_DIR = '/home/clodex/work';
+
+function noWorkerClause(boxId) {
+  return ` · worker NOT seeded: set a Claude token on box ${boxId} (Settings ▸ Sandbox) and run sandbox rebuild`;
+}
 
 function sha8(sha) {
   const s = String(sha == null ? '' : sha);
@@ -449,6 +456,7 @@ function createTicketMethods(deps, shared) {
     log,
     withoutPrivilegedIntentsFor,
   } = deps;
+  const seedFetch = deps.fetch || ((...a) => globalThis.fetch(...a));
   const allTemplates = () => (typeof listAllTemplates === 'function'
     ? listAllTemplates().filter((t) => t && !t.team)
     : getTemplates().list());
@@ -2865,8 +2873,24 @@ function createTicketMethods(deps, shared) {
       };
       ensureDirMode700(path.dirname(file));
       atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+
+      const health = await box.waitHealthy();
+      if (!health || health.ok === false) { reply(`error: ${(health && health.error) || 'health check failed'}`); return; }
+
+      const translated = box.translateHostPath(team.root) || {};
+      const workerCwd = translated.container || SANDBOX_WORK_DIR;
+      const wantsWorker = box.hasAuthToken();
+      const seeds = [{ name: 'bash', type: 'bash', cwd: SANDBOX_HOME_DIR }];
+      if (wantsWorker) seeds.push({ name: 'worker', type: 'claude', cwd: workerCwd, extraArgs: [] });
+      const seeded = await seedSandboxSessions({ wireUrl: record.wireUrl, token, seeds, fetch: seedFetch });
+      if (!seeded || seeded.ok === false) { reply(`error: ${(seeded && seeded.error) || 'seeding failed'}`); return; }
+
       reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
-        + `${sandboxPortClause({ ports })} · token in ${file}`);
+        + `${sandboxPortClause({ ports })}`
+        + ` · healthy in ${Math.round((health.ms || 0) / 1000)}s`
+        + ` · seeded ${seeded.seeded.join(', ')}`
+        + ` · token in ${file}`
+        + `${wantsWorker ? '' : noWorkerClause(boxId)}`);
     },
 
     _teamFileDeps() {
