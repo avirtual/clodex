@@ -649,6 +649,27 @@ function createTicketMethods(deps, shared) {
       const plugins = (tpl && Array.isArray(tpl.plugins)) ? tpl.plugins.map(String) : null;
       const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
 
+      let roleNote = '';
+      {
+        let seatTeam = null;
+        try { seatTeam = resolveTeam(cwd); } catch { seatTeam = null; }
+        if (seatTeam && matchSeatRole(seatTeam, name) === null) {
+          const roles = seatTeam.roles || {};
+          const has = (k) => Object.prototype.hasOwnProperty.call(roles, k);
+          let concrete = null;
+          if (tplLabel) {
+            if (has(tplLabel)) concrete = tplLabel;
+            else concrete = Object.keys(roles).find((k) => roles[k] && roles[k].template === tplLabel) || null;
+          }
+          roleNote = ` — NOTE: "${name}" binds to NO role on team ${seatTeam.name}`
+            + ' (roles bind by seat name, not template): '
+            + (concrete
+              ? `to fill role ${concrete} name it ${seatTeam.name}-${concrete}`
+              : `a seat for role X is named ${seatTeam.name}-X`)
+            + `; tickets reach this seat only by name ([agent:task assign <id> ${name}])`;
+        }
+      }
+
       setImmediate(async () => {
         // Declared OUTSIDE the try: the catch below removes the worktree, and a
         // binding scoped to the try is invisible there.
@@ -717,6 +738,7 @@ function createTicketMethods(deps, shared) {
           const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
           reply(`ok: spawned "${name}" (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : '')
             + leadNote
+            + roleNote
             + promptWarn
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
@@ -4128,8 +4150,19 @@ function createTicketMethods(deps, shared) {
       ticketsStore.save(team.root, tickets);
     },
 
-    _ticketDeliverySuffix(d, assignee) {
-      if (d.undelivered) return ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
+    _ticketDeliverySuffix(d, assignee, team = null, ticket = null) {
+      if (d.undelivered) {
+        const role = team && team.roles
+          && Object.prototype.hasOwnProperty.call(team.roles, assignee) ? team.roles[assignee] : null;
+        if (role) {
+          const tmpl = typeof role.template === 'string' && role.template ? role.template : '<tmpl>';
+          const id = (ticket && ticket.id) || '<id>';
+          return ` — NOTE: no live seat for "${assignee}" yet; spec not delivered.`
+            + ` A seat takes role ${assignee} by NAME: [agent:spawn name:${team.name}-${assignee} template:${tmpl}];`
+            + ` or [agent:task assign ${id} <seat>] sends it to a seat by name`;
+        }
+        return ` — NOTE: no live seat for "${assignee}" yet; spec not delivered (reassign or wait for it to spawn)`;
+      }
       if (d.held) return ` — NOTE: spec NOT delivered (${d.reason || 'held'}); the seat cannot be parked for, so it has not seen the spec — re-send when it clears`;
       if (d.parked) return ` — NOTE: spec parked, not injected (${d.reason || 'held'}); it drains on the seat's next turn`;
       return '';
@@ -5248,8 +5281,8 @@ function createTicketMethods(deps, shared) {
           // says is the failure this line exists to make visible.
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           reply(isSpawn
-            ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}`
-            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}`);
+            ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}`
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -5523,7 +5556,7 @@ function createTicketMethods(deps, shared) {
       ticketsStore.save(team.root, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
       this._recordUndeliveredDispatch(team, tickets, ticket, d);
-      const suffix = this._ticketDeliverySuffix(d, roleKey);
+      const suffix = this._ticketDeliverySuffix(d, roleKey, team, ticket);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
       log.info('intent', `task start by ${session.name}: ${ticket.id} → ${ticket.assignee}${wasParked ? ' (unparked)' : ''}`);
@@ -5641,7 +5674,7 @@ function createTicketMethods(deps, shared) {
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: ownSeat, body: `ticket ${ticket.id} re-sent` });
         log.info('intent', `task assign by ${session.name}: ${ticket.id} re-sent to its own seat ${ownSeat}`);
-        reply(`ticket ${ticket.id} → ${ownSeat}${wasParked ? ' (unparked)' : ''} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat)}`);
+        reply(`ticket ${ticket.id} → ${ownSeat}${wasParked ? ' (unparked)' : ''} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat, team, ticket)}`);
         return;
       }
       if (oneShot) {
@@ -5670,7 +5703,7 @@ function createTicketMethods(deps, shared) {
       ticketsStore.save(team.root, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true, false, false, null, !prev);
       this._recordUndeliveredDispatch(team, tickets, ticket, d);
-      const suffix = this._ticketDeliverySuffix(d, assignee);
+      const suffix = this._ticketDeliverySuffix(d, assignee, team, ticket);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
       log.info('intent', `task assign by ${session.name}: ${ticket.id} ${prev || '(backlog)'}${wasParked ? ' (parked)' : ''} → ${assignee}`);
@@ -7703,7 +7736,7 @@ function createTicketMethods(deps, shared) {
         ? ` (parked — spec replaced, NOT dispatched; ${sendVerb} sends it)`
         : !dispatched
           ? ` (not started — spec replaced, NOT dispatched; ${sendVerb} sends it)`
-          : this._ticketDeliverySuffix(d, target);
+          : this._ticketDeliverySuffix(d, target, team, ticket);
       // Surfaced, not silent: the loop hard-fails later on a ticket with no task dir
       // and routes the lead to `reject`, three steps downstream of the respec that
       // dropped it. Cheaper to learn here, while the spec is still in hand.

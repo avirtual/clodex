@@ -320,6 +320,34 @@ test('start on a role with nobody live keeps the ticket on the role and says so'
     'the lead must learn the spec did not land — believing it started is what leaves a ticket silently unworked');
 });
 
+// t822: "no live seat" is true but not actionable — a lead that spawns a seat
+// under any name it likes gets one that binds to no role and never receives the
+// ticket. The role's seat name is `<team>-<role>`, so the note names the spawn.
+test('t822: the undelivered note for a ROLE names the spawn that binds, with the role\'s template', () => {
+  const f = mkStart();
+  f.team.roles.hand.template = 'clodex-team-hand';
+  f.seat('lead');   // no team-hand
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.deepStrictEqual(f.gated, [], 'ENTER: nothing was delivered — this is the undelivered arm');
+  assert.match(f.notes(), /\[agent:spawn name:team-hand template:clodex-team-hand\]/,
+    'the seat name that BINDS, not the template — a seat named anything else is off the roster');
+  assert.match(f.notes(), /\[agent:task assign t1 <seat>\]/, 'and the escape hatch for a seat already up under another name');
+});
+
+test('t822: an undelivered ticket addressed to a SEAT NAME keeps the generic sentence — there is no role to spawn into', () => {
+  const f = mkStart();
+  f.seat('lead'); f.seat('team-desk');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-desk', id: null, body: 'spec' });
+  assert.strictEqual(f.one('t1').assignee, 'team-desk', 'ENTER: the assignee is a seat NAME, not a role key');
+  f.m.sessions.delete('team-desk');   // the seat exits between add and start
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.deepStrictEqual(f.gated, [], 'ENTER: nothing was delivered — this is the undelivered arm');
+  assert.match(f.notes(), /no live seat for "team-desk" yet; spec not delivered \(reassign or wait for it to spawn\)/);
+  assert.ok(!/agent:spawn name:/.test(f.notes()),
+    `a seat name is not a role, so there is no <team>-<role> to name: ${f.notes()}`);
+});
+
 // The ticket is still open and still assigned after a refusal, so a lead that
 // fixes the cause can start it. A refusal that half-mutated would leave the
 // board describing a dispatch that never happened.

@@ -18,6 +18,9 @@ blocks a release.
   into the log; the lead prompt now says acks are per-intent and asynchronous,
   so a missing ack is not a dropped verb (gathered teams: re-gather to pick up
   the prompt change).
+- A seat spawned into a team's root under a name that binds to no role is told
+  so in the spawn reply, with the name that would bind; an undelivered ticket
+  dispatch names that spawn line too.
 - **The sandbox worker is a fixture, not a full agent**: the `worker` seat that
   `team sandbox up|rebuild` seeds runs without Bash, file-editing, web or
   subagent tools and with a fixture prompt, so it can answer intent probes but

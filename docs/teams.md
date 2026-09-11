@@ -53,6 +53,10 @@ recorded on the role has no `lead.template` line and reaches the same file by
 default. Want another shape: set `lead.template` in the app's team editor, or
 pass an explicit `template:` on the spawn, which always wins.
 
+A seat binds to a role by its NAME — `<team>-<role>`, or the team's `lead` — and
+the template is a shape, not a binding: spawning `helm-hand` on the `hand`
+template leaves it off the roster, and the spawn reply says so.
+
 With that file alone you have a working loop: the lead writes a ticket with
 `[agent:task add hand] <spec>`, `[agent:task start <id>]` mints a branch and a
 worktree, spawns a hand seat in it and delivers the spec; the hand commits and
