@@ -175,9 +175,10 @@ function parseTeam(cleaned) {
   const dispatchM = argStr.match(/\bdispatch:(\S+)/);
   const cwdM = argStr.match(/\bcwd:(\S+)/);
   const modelM = argStr.match(/\bmodel:(\S+)/);
+  const accountM = argStr.match(/\baccount:(\S+)/);
   const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
   if (sub === 'role-add' || sub === 'role-set') {
-    return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, body };
+    return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, body };
   }
   if (sub === 'role-rm' || sub === 'set-lead') return { type: 'team', sub, name: positional[0] || null, body: '' };
   if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };

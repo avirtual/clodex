@@ -346,6 +346,7 @@ function mkLoop({
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,
+    getAccounts: () => ({ list: () => [{ label: 'default', configDir: '/home/u/.claude' }], configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null) }),
     getTemplates: () => ({ list: () => [SHIPPED_REVIEWER_TEMPLATE] }),
     listAllTemplates: () => [SHIPPED_REVIEWER_TEMPLATE],
     notifyOS: () => {},

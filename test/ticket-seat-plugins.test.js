@@ -169,6 +169,7 @@ function mkWorld({ tplPlugins } = {}) {
     ensureDir,
     AGENT_NAME_RE, DEFAULT_WORKSPACE_ID,
     getPersistence: () => persistence,
+    getAccounts: () => ({ list: () => [{ label: 'default', configDir: '/home/u/.claude' }], configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null) }),
     getTemplates: () => ({ list: () => [handTpl, rvTpl] }),
     listAllTemplates: () => [handTpl, rvTpl],
     getRemoteServer: () => null,
