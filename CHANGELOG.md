@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Move-by-model sees every Fable seat, moved seats keep their folder trust, and the loop says what the lead owes
+## Unreleased
+
+## 5.62.0 — 2026-09-11 — Move-by-model sees every Fable seat, moved seats keep their folder trust, and the loop says what the lead owes
 
 - **Moved seats stop asking to trust their folder**: a minted account copies the
   default account's folder-trust answers, and Re-sync / Move refresh them, so a
