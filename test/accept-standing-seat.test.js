@@ -129,7 +129,6 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => persistence,
-    getAccounts: () => ({ list: () => [{ label: 'default', configDir: '/home/u/.claude' }], configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null) }),
     getTemplates: () => ({ list: () => [] }),
     listAllTemplates: () => [],
     notifyOS: () => {},

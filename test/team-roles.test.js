@@ -39,13 +39,13 @@ test('teamRoleRows: one row per role in key order, reserved keys marked read-onl
   // Descriptive fields surfaced; missing ones normalize to ''. WHOLE row: the
   // legibility test pins this model's keys against the schema, and a partial
   // probe here would let a field the row shows but nothing sets slip through.
-  assert.deepStrictEqual(rows[2], { key: 'runner', account: '', brief: 'runs things', prompt: 'p', template: 'fable-lead', dispatch: 'worktree', cwd: '', readOnly: false });
+  assert.deepStrictEqual(rows[2], { key: 'runner', brief: 'runs things', prompt: 'p', template: 'fable-lead', dispatch: 'worktree', cwd: '', readOnly: false });
   // `dispatch` normalizes to 'standing', NOT to '': absent IS standing on disk,
   // and a blank would leave the row's picker with no selected option, which
   // buildSavePatch then drops — a Save that silently declines to save.
   // `cwd` normalizes to '' (unlike dispatch): absent means "the team root", and
   // the row's control is a free-text input whose empty state says exactly that.
-  assert.deepStrictEqual(rows[3], { key: 'bare', account: '', brief: '', prompt: '', template: '', dispatch: 'standing', cwd: '', readOnly: false });
+  assert.deepStrictEqual(rows[3], { key: 'bare', brief: '', prompt: '', template: '', dispatch: 'standing', cwd: '', readOnly: false });
 });
 
 test('teamRoleRows: a role cwd reaches the row it belongs to', () => {
@@ -84,17 +84,17 @@ test('buildSavePatch: sends brief/prompt (blank clears) but OMITS a blank templa
   // re-validates `template` as a NAME whenever the key is present, so '' throws and
   // every Save on a template-less role (the common case) would fail.
   const p = buildSavePatch({ brief: 'b', prompt: 'p', template: '' });
-  assert.deepStrictEqual(p, { brief: 'b', prompt: 'p', cwd: '', account: '' });
+  assert.deepStrictEqual(p, { brief: 'b', prompt: 'p', cwd: '' });
   assert.ok(!('template' in p), 'blank template omitted, not sent as ""/null');
   // A non-blank template is included; all values trimmed.
   assert.deepStrictEqual(
     buildSavePatch({ brief: '  b  ', prompt: '  p  ', template: '  fable-lead  ' }),
-    { brief: 'b', prompt: 'p', template: 'fable-lead', cwd: '', account: '' },
+    { brief: 'b', prompt: 'p', template: 'fable-lead', cwd: '' },
   );
   // Blank brief/prompt ARE sent (backend stores '' — a legitimate clear); missing
   // form values normalize to '' without throwing.
-  assert.deepStrictEqual(buildSavePatch({ brief: '', prompt: '', template: '' }), { brief: '', prompt: '', cwd: '', account: '' });
-  assert.deepStrictEqual(buildSavePatch({}), { brief: '', prompt: '', cwd: '', account: '' });
+  assert.deepStrictEqual(buildSavePatch({ brief: '', prompt: '', template: '' }), { brief: '', prompt: '', cwd: '' });
+  assert.deepStrictEqual(buildSavePatch({}), { brief: '', prompt: '', cwd: '' });
 });
 
 test('buildSavePatch: a blank `cwd` IS sent — unlike template, blank is a real clear', () => {
@@ -107,7 +107,7 @@ test('buildSavePatch: a blank `cwd` IS sent — unlike template, blank is a real
   assert.strictEqual(cleared.cwd, '');
   assert.deepStrictEqual(
     buildSavePatch({ brief: 'b', prompt: 'p', cwd: '  api  ' }),
-    { brief: 'b', prompt: 'p', cwd: 'api', account: '' },
+    { brief: 'b', prompt: 'p', cwd: 'api' },
     'trimmed like every other value',
   );
 });
@@ -120,7 +120,7 @@ test('buildSavePatch: a blank `cwd` IS sent — unlike template, blank is a real
 test('buildSavePatch: `spawn` survives the mirror gate', () => {
   assert.deepStrictEqual(
     buildSavePatch({ brief: 'b', prompt: 'p', dispatch: 'spawn' }),
-    { brief: 'b', prompt: 'p', dispatch: 'spawn', cwd: '', account: '' },
+    { brief: 'b', prompt: 'p', dispatch: 'spawn', cwd: '' },
     'the third value is forwarded — a mirror missing it drops the operator\'s choice in silence',
   );
   // The mirror is a mirror: it must carry exactly what the manifest accepts, and
@@ -256,11 +256,11 @@ test('buildSavePatch: sends `dispatch` for BOTH enum values, drops an off-enum o
   // worktree → standing unreachable from the only door that can undo it.
   assert.deepStrictEqual(
     buildSavePatch({ brief: 'b', prompt: 'p', dispatch: 'standing' }),
-    { brief: 'b', prompt: 'p', dispatch: 'standing', cwd: '', account: '' },
+    { brief: 'b', prompt: 'p', dispatch: 'standing', cwd: '' },
   );
   assert.deepStrictEqual(
     buildSavePatch({ brief: 'b', prompt: 'p', dispatch: '  worktree  ' }),
-    { brief: 'b', prompt: 'p', dispatch: 'worktree', cwd: '', account: '' },
+    { brief: 'b', prompt: 'p', dispatch: 'worktree', cwd: '' },
     'trimmed like every other value',
   );
   // A value the backend would throw on is dropped rather than forwarded — the
@@ -268,7 +268,7 @@ test('buildSavePatch: sends `dispatch` for BOTH enum values, drops an off-enum o
   for (const bad of ['', 'sometimes', undefined]) {
     const p = buildSavePatch({ brief: 'b', prompt: 'p', dispatch: bad });
     assert.ok(!('dispatch' in p), `off-enum dispatch ${JSON.stringify(bad)} is omitted`);
-    assert.deepStrictEqual(p, { brief: 'b', prompt: 'p', cwd: '', account: '' }, 'and the rest of the patch is unharmed');
+    assert.deepStrictEqual(p, { brief: 'b', prompt: 'p', cwd: '' }, 'and the rest of the patch is unharmed');
   }
 });
 

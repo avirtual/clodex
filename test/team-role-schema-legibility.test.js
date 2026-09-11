@@ -79,7 +79,7 @@ function addRoleWritableFields() {
   tm.createTeam({ name: 'shop', root, lead: 'shop-lead' });
   tm.addRole('shop', 'runner', {
     // The full surviving schema...
-    template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree', cwd: 'api', account: 'work',
+    template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree', cwd: 'api',
     // ...every field a version bump cut EXCEPT `worktree`, which addRole now
     // refuses loudly rather than dropping (pinned in team-manifest.test.js):
     // pickRoleKeys would drop it without emitting a `dispatch`, so a def
@@ -151,11 +151,10 @@ test('legibility: the popover row model shows exactly the editable fields', () =
 // The union check above is true of any set that happens to add up. This pins the
 // membership itself, so a swap (drop `brief`, add `standing`) that keeps the
 // count cannot pass, and re-adding a cut field has to come through here.
-test('legibility: the schema is exactly the six surviving fields', () => {
-  assert.deepStrictEqual(sorted(ROLE_KEYS), ['account', 'brief', 'cwd', 'dispatch', 'prompt', 'template'],
-    'the role schema is six fields: the seat\'s shape source, its standing instructions, '
-    + 'the human label, what dispatching a ticket to the role does, where in the team its seats work, '
-    + 'and which account the seats the loop mints for it boot on');
+test('legibility: the schema is exactly the five surviving fields', () => {
+  assert.deepStrictEqual(sorted(ROLE_KEYS), ['brief', 'cwd', 'dispatch', 'prompt', 'template'],
+    'the role schema is five fields: the seat\'s shape source, its standing instructions, '
+    + 'the human label, what dispatching a ticket to the role does, and where in the team its seats work');
   // Membership pin FIRST, then the real constant: iterating CUT_ROLE_FIELDS
   // alone would silently stop checking a field someone removed from it, and the
   // literal alone stops checking a field someone adds. `worktree` is a cut field

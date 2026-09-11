@@ -23,12 +23,7 @@ const { createTicketsStore } = require('../tickets-store');
 // A team on disk plus the handler map, wired to the REAL manifest module.
 // `roles` is the team.json as authored; the returned `read()` re-reads the file
 // so assertions see what was WRITTEN, not what the handler returned.
-const DOOR_ACCOUNTS = [
-  { label: 'default', configDir: '/home/u/.claude' },
-  { label: 'work', configDir: '/home/u/.clodex/accounts/work' },
-];
-
-function mkDoor(roles, { accounts = DOOR_ACCOUNTS } = {}) {
+function mkDoor(roles) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-team-home-'));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-team-root-'));
   const dir = path.join(home, 'teams', 't');
@@ -44,15 +39,9 @@ function mkDoor(roles, { accounts = DOOR_ACCOUNTS } = {}) {
     log: { info() {}, error() {}, warn() {} },
     loadManifest: tm.loadManifest,
     addRole: tm.addRole,
-    setRole: tm.setRole,
-    accounts: {
-      list: () => accounts,
-      configDirFor: (label) => (accounts.find((a) => a.label === label) || {}).configDir || null,
-    },
   });
   return {
     addRole: (role, def) => handlers.get('team:addRole')(null, 't', role, def),
-    setRole: (role, patch) => handlers.get('team:setRole')(null, 't', role, patch),
     read: () => JSON.parse(fs.readFileSync(file, 'utf-8')).roles,
     cleanup: () => {
       fs.rmSync(home, { recursive: true, force: true });
@@ -136,47 +125,6 @@ test('team:addRole leaves an EXISTING role alone — the stock def cannot rewrit
     // Nothing was written: the file still holds the team's own (empty) def, and
     // the stock prompt did NOT arrive behind the operator's back.
     assert.deepStrictEqual(d.read().hand, {}, 'the team\'s own definition is untouched');
-  } finally { d.cleanup(); }
-});
-
-// --- t830: the GUI is a set-time door for `account` and must check it too -----
-//
-// The registry check shipped on the INTENT path only, which the popover never
-// goes through, so this door saved a typo'd label silently and the first symptom
-// arrived minutes later as a ticket spawn refusing on a label that had never
-// existed. Driven through the real handler and the real manifest: a stub of
-// either would let this assert an intent the other half declines.
-
-test('t830: team:setRole refuses an unknown account label and writes nothing', () => {
-  const d = mkDoor({ ...LEAD_ONLY, hand: { brief: 'the hand' } });
-  try {
-    const before = JSON.stringify(d.read());
-    const res = d.setRole('hand', { account: 'wrok' });
-    assert.strictEqual(res.ok, false, 'a label the registry does not know is refused HERE');
-    assert.match(res.error, /no account "wrok" — accounts: default, work/,
-      'and the reason names the accounts that do exist, since the operator typed this from memory');
-    assert.strictEqual(JSON.stringify(d.read()), before, 'nothing landed');
-  } finally { d.cleanup(); }
-});
-
-test('t830: team:setRole accepts a registered label, and a blank one clears', () => {
-  const d = mkDoor({ ...LEAD_ONLY, hand: { brief: 'the hand' } });
-  try {
-    assert.strictEqual(d.setRole('hand', { account: 'work' }).ok, true);
-    assert.strictEqual(d.read().hand.account, 'work', 'the good label reached disk');
-    assert.strictEqual(d.setRole('hand', { account: '' }).ok, true,
-      'blank is a CLEAR, not an unknown label — refusing it would make the pin one-way');
-    assert.ok(!('account' in d.read().hand), 'and the key is gone');
-  } finally { d.cleanup(); }
-});
-
-test('t830: team:addRole refuses an unknown account label and mints no role', () => {
-  const d = mkDoor({ ...LEAD_ONLY });
-  try {
-    const res = d.addRole('runner', { brief: 'b', account: 'wrok' });
-    assert.strictEqual(res.ok, false, `expected a refusal, got: ${JSON.stringify(res)}`);
-    assert.match(res.error, /no account "wrok"/);
-    assert.ok(!d.read().runner, 'and the role does not exist');
   } finally { d.cleanup(); }
 });
 

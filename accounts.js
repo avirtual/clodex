@@ -47,42 +47,6 @@ function modelSelects(argModel, wanted) {
   return fableish(have) && fableish(want);
 }
 
-const ACCOUNT_UNREADABLE = 'the accounts registry could not be read';
-
-function resolveAccountLabel(store, label) {
-  const want = String(label == null ? '' : label).trim();
-  if (!want || want === DEFAULT_LABEL) return { ok: true, label: null, configDir: null, reason: null };
-  let configDir = null;
-  let labels = [];
-  try {
-    if (!store || typeof store.configDirFor !== 'function') {
-      return { ok: false, label: want, configDir: null, reason: 'unreadable', error: ACCOUNT_UNREADABLE };
-    }
-    configDir = store.configDirFor(want) || null;
-    labels = (typeof store.list === 'function' ? store.list() : [])
-      .map((a) => a && a.label).filter(Boolean);
-  } catch {
-    return { ok: false, label: want, configDir: null, reason: 'unreadable', error: ACCOUNT_UNREADABLE };
-  }
-  if (!configDir) {
-    return {
-      ok: false,
-      label: want,
-      configDir: null,
-      reason: 'absent',
-      error: `no account "${want}" — accounts: ${labels.length ? labels.join(', ') : DEFAULT_LABEL}`,
-    };
-  }
-  return { ok: true, label: want, configDir, reason: null };
-}
-
-function accountMissingError(roleKey, miss) {
-  const why = (miss && miss.reason === 'unreadable')
-    ? 'but the accounts registry could not be read'
-    : 'which is not in the accounts registry';
-  return `role ${roleKey} names account "${miss ? miss.label : ''}", ${why}`;
-}
-
 function createAccounts(deps = {}) {
   const fs = deps.fs || require('fs');
   const path = deps.path || require('path');
@@ -351,4 +315,4 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
   return { ok: true, moved, skipped };
 }
 
-module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, effectiveModel, trustProjects, resolveAccountLabel, accountMissingError, LABEL_RE, PLANS, SHARED_LINKS, DEFAULT_LABEL, ACCOUNT_UNREADABLE };
+module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, effectiveModel, trustProjects, LABEL_RE, PLANS, SHARED_LINKS };

@@ -431,13 +431,7 @@ cwd IS a worktree is still on the team.
 - The brief: `[agent:team prompt-save append team-project]` with the whole
   brief as the body — it replaces the file every seat composes at boot.
 - A role's system prompt: `[agent:team prompt-save system <role>]`. Its model:
-  `[agent:team role-set <role> model:<alias>]`. Its account:
-  `[agent:team role-set <role> account:<label>]` — `account:` pins every seat the
-  loop mints for the role — ticket hands, cold reviewers — to that account's
-  config dir; an ephemeral seat cannot be edited after the fact, so this is the
-  only way to move them. It is also the ONE field `reviewer` takes from a role
-  verb, and only alone: `account:` beside a brief, or any other key on a
-  reserved role, is still refused as operator-owned topology.
+  `[agent:team role-set <role> model:<alias>]`.
 - An edit reaches seats spawned AFTER the save, never one already running.
 
 ## First turn on a fresh team

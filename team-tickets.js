@@ -25,7 +25,6 @@ const {
   parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
-const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
@@ -462,7 +461,6 @@ function createTicketMethods(deps, shared) {
     os,
     path,
     pathFor,
-    getAccounts,
     getPersistence,
     getRemindScheduler,
     getSandboxManager,
@@ -478,11 +476,6 @@ function createTicketMethods(deps, shared) {
     withoutPrivilegedIntentsFor,
   } = deps;
   const seedFetch = deps.fetch || ((...a) => globalThis.fetch(...a));
-  const accountStore = () => {
-    try { return (typeof getAccounts === 'function' && getAccounts()) || null; }
-    catch { return null; }
-  };
-  const resolveAccount = (label) => resolveAccountLabel(accountStore(), label);
   const allTemplates = () => (typeof listAllTemplates === 'function'
     ? listAllTemplates().filter((t) => t && !t.team)
     : getTemplates().list());
@@ -1122,10 +1115,6 @@ function createTicketMethods(deps, shared) {
       // seat would spawn unable to read the diff it reviews.
       if (shape.requestedTools && shape.effectiveTools.length === 0) {
         reply(`error: reviewer template "${templateName}" requests tools [${shape.requestedTools.join(', ')}], none of which are within the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — the seat would spawn with no tools at all and could not read the diff; no reviewer spawned (fix the template's "tools")`);
-        return;
-      }
-      if (shape.accountMissing) {
-        reply(`error: ${accountMissingError('reviewer', shape.accountMissing)}`);
         return;
       }
 
@@ -2765,11 +2754,6 @@ function createTicketMethods(deps, shared) {
             };
             if (intent.dispatch) def.dispatch = intent.dispatch;
             if (intent.cwd) def.cwd = intent.cwd;
-            if (intent.account) {
-              const acct = this._resolveRoleAccount(intent.account);
-              if (!acct.ok) { reply(`error: ${acct.error}`); return; }
-              if (acct.label) def.account = acct.label;
-            }
             let addClause = '';
             let addUndo = null;
             if (intent.model) {
@@ -2801,11 +2785,6 @@ function createTicketMethods(deps, shared) {
             if (intent.template) patch.template = intent.template;
             if (intent.dispatch) patch.dispatch = intent.dispatch;
             if (intent.cwd) patch.cwd = intent.cwd;
-            if (intent.account) {
-              const acct = this._resolveRoleAccount(intent.account);
-              if (!acct.ok) { reply(`error: ${acct.error}`); return; }
-              patch.account = acct.label || '';
-            }
             let setClause = '';
             let setUndo = null;
             if (intent.model) {
@@ -4836,10 +4815,6 @@ function createTicketMethods(deps, shared) {
       return { cwd: resolved, fallback: null };
     },
 
-    _resolveRoleAccount(label) {
-      return resolveAccount(label);
-    },
-
     // The ONE seat shape both team spawn paths pass to create(). They diverged
     // silently twice — the review path hand-rolled a second copy of the env
     // allowlist filter against the same constant, so either copy could be edited
@@ -4875,14 +4850,6 @@ function createTicketMethods(deps, shared) {
       // ticket concept, and two copies of this call are exactly the divergence
       // this resolver exists to prevent.
       const roleCwd = this._resolveRoleCwd(team, def);
-      const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
-      const acct = accountLabel ? resolveAccount(accountLabel) : { ok: true, configDir: null };
-      const accountDir = acct.ok ? (acct.configDir || null) : null;
-      const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
-      const withAccount = (env) => {
-        if (!accountDir) return env;
-        return { ...(env || {}), CLAUDE_CONFIG_DIR: accountDir };
-      };
 
       if (!review) {
         return {
@@ -4931,9 +4898,7 @@ function createTicketMethods(deps, shared) {
           // seat keeps the living all-enabled default. Not interchangeable.
           intents: shape ? shape.intents : null,
           plugins: shape ? shape.plugins : null,
-          env: withAccount((shape && shape.sessionEnv) || null),
-          account: accountLabel,
-          accountMissing,
+          env: (shape && shape.sessionEnv) || null,
           envDropped: (shape && shape.envDropped) || [],
           envBadType: (shape && shape.envBadType) || [],
           beyondCap: [],
@@ -5074,9 +5039,7 @@ function createTicketMethods(deps, shared) {
         // the full protocol prompt it was configured not to have.
         // REVIEWER_FALLBACK.env needs no allowlist pass: it IS the shipped set the
         // allowlist was drawn from, and unlike a template it is not agent-writable.
-        env: withAccount(tplSuppliedEnv ? { ...((shape && shape.sessionEnv) || {}) } : { ...REVIEWER_FALLBACK.env }),
-        account: accountLabel,
-        accountMissing,
+        env: tplSuppliedEnv ? { ...((shape && shape.sessionEnv) || {}) } : { ...REVIEWER_FALLBACK.env },
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
         beyondCap,
@@ -5325,9 +5288,6 @@ function createTicketMethods(deps, shared) {
             if (e) linkWarn = ` — NOTE: ${e}; the seat starts without dependencies (require() and npm run build:web will fail there until the root has a node_modules)`;
           }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
-          if (shape.accountMissing) {
-            throw new Error(accountMissingError(roleKey, shape.accountMissing));
-          }
           // Not inside resolveSeatShape: the tree is minted above, after the shape
           // is built, and the review path shares that resolver with no tree at all.
           const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);

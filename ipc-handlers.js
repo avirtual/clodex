@@ -9,7 +9,6 @@ const { nameConflict } = require('./session-manager');
 // from a second one would drift from the delivery it is supposed to agree with.
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS, defaultLeadSeat } = require('./team-manifest');
-const { resolveAccountLabel } = require('./accounts');
 const { teamPreflight } = require('./team-preflight');
 const {
   teamPromptFile, readTeamJson, teamTemplateSave, teamTemplateRemove,
@@ -181,18 +180,9 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  const accountPatchError = (def) => {
-    if (!def || typeof def !== 'object' || !('account' in def)) return null;
-    const res = resolveAccountLabel(accounts, def.account);
-    return res.ok ? null : res.error;
-  };
-
   handle('team:setRole', (_e, team, role, patch) => {
-    try {
-      const bad = accountPatchError(patch);
-      if (bad) return { ok: false, error: bad };
-      return { ok: true, team: setRole(team, role, patch) };
-    } catch (err) { return { ok: false, error: err.message }; }
+    try { return { ok: true, team: setRole(team, role, patch) }; }
+    catch (err) { return { ok: false, error: err.message }; }
   });
 
   // `{operator: true}`: this channel IS the operator (the renderer), so it may
@@ -384,8 +374,6 @@ function registerIpcHandlers(deps) {
       let absent = false;
       try { absent = !loadManifest(team).roles[role]; } catch { absent = false; }
       const d = absent && isEmptyDef(def) && STOCK_ROLE_DEFS[role] ? { ...STOCK_ROLE_DEFS[role] } : def;
-      const bad = accountPatchError(d);
-      if (bad) return { ok: false, error: bad };
       return { ok: true, team: addRole(team, role, d, { operator: true }) };
     } catch (err) { return { ok: false, error: err.message }; }
   });
