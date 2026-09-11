@@ -5328,7 +5328,6 @@ function createSessionManager(deps) {
             + 'Do not poll, do not re-emit — END YOUR TURN. '
             + `A status line arrives every ${everyLabel} and the result when it ends.`);
           statusTimer = setInterval(() => {
-            if (done) return;
             const elapsed = Math.max(0, Date.now() - startedAt);
             const mins = Math.floor(elapsed / 60000);
             const secs = String(Math.floor((elapsed % 60000) / 1000)).padStart(2, '0');
