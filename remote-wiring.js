@@ -19,6 +19,14 @@ const { sanitizeFlat } = require('./env-scopes');
 // renderer so the three cannot disagree about what the operator granted.
 const { shellCapGranted } = require('./peer-shell');
 
+const WIRE_PROMPT_MAX_BYTES = 4096;
+
+function wirePromptBody(value) {
+  if (typeof value !== 'string') return null;
+  if (Buffer.byteLength(value, 'utf8') > WIRE_PROMPT_MAX_BYTES) return null;
+  return value;
+}
+
 function createRemoteWiring(deps) {
   const {
     path, fs, os, log,
@@ -164,7 +172,7 @@ function createRemoteWiring(deps) {
               b.extraArgs || [],
               b.resumeId || null,
               DEFAULT_WORKSPACE_ID,
-              null,            // systemPromptBody — F2
+              wirePromptBody(b.systemPromptBody),
               !!b.fork,
               b.proxy ?? null,
               b.agents || [],

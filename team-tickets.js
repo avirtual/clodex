@@ -48,6 +48,10 @@ const SANDBOX_DEFAULT_REF = 'master';
 const SANDBOX_HOME_DIR = '/home/clodex';
 const SANDBOX_WORK_DIR = '/home/clodex/work';
 const SANDBOX_WORKER_SEED = 'worker';
+const SANDBOX_WORKER_TOOLS_OFF = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent'];
+const SANDBOX_WORKER_PROMPT = 'You are a test fixture seeded on a sandbox by the team lead.'
+  + ' When asked for an intent, emit it verbatim on its own line and nothing else.'
+  + ' Do not edit files, run commands, or start work on your own.';
 
 function workerSeedClause(result) {
   if (result && result.state !== 'failed') return ` · ${SANDBOX_WORKER_SEED} ${result.state}`;
@@ -2890,7 +2894,15 @@ function createTicketMethods(deps, shared) {
       const workerCwd = translated.container || SANDBOX_WORK_DIR;
       const seeds = [
         { name: 'bash', type: 'bash', cwd: SANDBOX_HOME_DIR },
-        { name: SANDBOX_WORKER_SEED, type: 'claude', cwd: workerCwd, extraArgs: [] },
+        {
+          name: SANDBOX_WORKER_SEED,
+          type: 'claude',
+          cwd: workerCwd,
+          extraArgs: [],
+          disabledTools: SANDBOX_WORKER_TOOLS_OFF,
+          disabledSkills: ['*'],
+          systemPromptBody: SANDBOX_WORKER_PROMPT,
+        },
       ];
       const seeded = await seedSandboxSessions({
         wireUrl: record.wireUrl, token, seeds, optional: [SANDBOX_WORKER_SEED], fetch: seedFetch,

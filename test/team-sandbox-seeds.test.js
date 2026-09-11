@@ -121,7 +121,10 @@ function mkNet({ sessions = [], post, listStatus = 200 } = {}) {
 
 const SEEDS = [
   { name: 'bash', type: 'bash', cwd: '/home/clodex' },
-  { name: 'worker', type: 'claude', cwd: '/home/clodex/work', extraArgs: [] },
+  {
+    name: 'worker', type: 'claude', cwd: '/home/clodex/work', extraArgs: [],
+    disabledTools: ['Bash'], disabledSkills: ['*'], systemPromptBody: 'be a fixture',
+  },
 ];
 
 test('seeding lists first, then POSTs each seat with its literal body and the bearer', async () => {
@@ -137,7 +140,10 @@ test('seeding lists first, then POSTs each seat with its literal body and the be
     ['POST', `${WIRE}/api/sessions`],
   ]);
   assert.deepStrictEqual(net.requests[1].body, { name: 'bash', type: 'bash', cwd: '/home/clodex' });
-  assert.deepStrictEqual(net.requests[2].body, { name: 'worker', type: 'claude', cwd: '/home/clodex/work', extraArgs: [] });
+  assert.deepStrictEqual(net.requests[2].body, {
+    name: 'worker', type: 'claude', cwd: '/home/clodex/work', extraArgs: [],
+    disabledTools: ['Bash'], disabledSkills: ['*'], systemPromptBody: 'be a fixture',
+  }, 'the seat object crosses WHOLE — a name/type/cwd whitelist would drop the lockdown silently');
   for (const r of net.requests) assert.strictEqual(r.auth, `Bearer ${TOKEN}`, 'every request carries the box token');
 });
 
@@ -198,6 +204,22 @@ test('a failed seat reports the first line of the box error, not the whole body'
   assert.deepStrictEqual(out.results, [{ name: 'worker', state: 'failed', error: '500 no credentials' }]);
 });
 
+// The box answers a refused create with `{ok:false,error}`, not a bare string, so
+// the raw text is JSON punctuation wrapped around the one sentence a lead needs.
+test('a JSON error body is unwrapped to its error text', async () => {
+  const net = mkNet({ post: () => ({ status: 500, body: { ok: false, error: 'no credentials' } }) });
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['worker'], fetch: net.fetch });
+  assert.deepStrictEqual(out.results, [{ name: 'worker', state: 'failed', error: '500 no credentials' }]);
+});
+
+// Not every non-2xx body is JSON — a proxy or a crashed box answers in plain
+// text, and unwrapping must not swallow it.
+test('a non-JSON error body still rides verbatim', async () => {
+  const net = mkNet({ post: () => ({ status: 502, body: 'bad gateway' }) });
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['worker'], fetch: net.fetch });
+  assert.deepStrictEqual(out.results, [{ name: 'worker', state: 'failed', error: '502 bad gateway' }]);
+});
+
 test('a failed list stops before any POST', async () => {
   const net = mkNet({ listStatus: 401 });
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
@@ -208,7 +230,7 @@ test('a failed list stops before any POST', async () => {
 
 // ------------------------------------------------------------- the handler
 
-function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult, hasToken = true, translated = { container: '/proj-in-box' } } = {}) {
+function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult, translated = { container: '/proj-in-box' } } = {}) {
   const calls = { waitHealthy: 0 };
   const config = {};
   const box = {
@@ -221,7 +243,6 @@ function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult, hasTok
     async status() { return { state: 'running', ref: config.ref || null, sha: 'abcdef1234567890', ports }; },
     remoteToken: () => TOKEN,
     async waitHealthy() { calls.waitHealthy += 1; return healthResult || { ok: true, polls: 3, ms: 4000 }; },
-    hasAuthToken: () => hasToken,
     translateHostPath: () => translated,
   };
   return { calls, manager: { get: () => box, create: () => ({ ok: true }) } };
@@ -284,9 +305,16 @@ test('up seeds bash and worker and says so, without the token', async () => {
     ['POST', `${WIRE}/api/sessions`],
     ['POST', `${WIRE}/api/sessions`],
   ]);
-  assert.deepStrictEqual(h.requests[1].body, { name: 'bash', type: 'bash', cwd: '/home/clodex' });
-  assert.deepStrictEqual(h.requests[2].body, { name: 'worker', type: 'claude', cwd: '/proj-in-box', extraArgs: [] },
-    'the worker starts in the team root as the BOX sees it, not the host path');
+  assert.deepStrictEqual(h.requests[1].body, { name: 'bash', type: 'bash', cwd: '/home/clodex' },
+    'the shell seat carries NO lockdown — it is the box\'s hands, and a fixture list leaking onto it would disarm the shell');
+  assert.deepStrictEqual(h.requests[2].body, {
+    name: 'worker', type: 'claude', cwd: '/proj-in-box', extraArgs: [],
+    disabledTools: ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent'],
+    disabledSkills: ['*'],
+    systemPromptBody: 'You are a test fixture seeded on a sandbox by the team lead.'
+      + ' When asked for an intent, emit it verbatim on its own line and nothing else.'
+      + ' Do not edit files, run commands, or start work on your own.',
+  }, 'the worker starts in the team root as the BOX sees it, locked to the fixture tool set');
   assert.strictEqual(h.requests[0].auth, `Bearer ${TOKEN}`);
 
   const line = h.last();
@@ -296,21 +324,11 @@ test('up seeds bash and worker and says so, without the token', async () => {
   assert.ok(line.includes(h.file), 'and still points at the file the token is in');
 });
 
-// t818: a box can be authenticated through its claude-auth volume, which no env
-// token reflects. Pre-judging the worker on the env token left every such box
-// without one, so the handler asks the box and reports whatever it answers.
-test('with no OAuth token in the box env the worker is POSTed anyway', async () => {
-  const h = mkHandler({ hasToken: false });
-  await fire(h, { action: 'up' });
-  assert.deepStrictEqual(posts(h), ['bash', 'worker'],
-    'ENTER: the worker POST appears with no token — a gate on hasAuthToken would have dropped it');
-  assert.match(h.last(), /seeded bash · token in .* · worker seeded$/);
-});
-
 // The box's own refusal is the useful message; a fabricated "set a token" line
-// would have been wrong for a box whose credentials live in the volume.
+// would have been wrong for a box whose credentials live in the volume. The box
+// answers in JSON, and the reply must carry the sentence, not the punctuation.
 test('a worker the box refuses is reported with the box status and reason, and up still succeeds', async () => {
-  const h = mkHandler({ hasToken: false, post: (n) => (n === 'worker' ? { status: 500, body: 'no credentials' } : null) });
+  const h = mkHandler({ post: (n) => (n === 'worker' ? { status: 500, body: { ok: false, error: 'no credentials' } } : null) });
   await fire(h, { action: 'up' });
   assert.deepStrictEqual(posts(h), ['bash', 'worker']);
   const line = h.last();
