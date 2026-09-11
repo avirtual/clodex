@@ -13,8 +13,6 @@ const path = require('node:path');
 // A throwaway userData dir for the tests that let writeComposeFile actually
 // write; removed on process exit.
 const TMP_USERDATA = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-sandbox-'));
-// A throwaway host ~/.clodex for the factory: box state dirs are created (and
-// on remove deleted) under <registryDir>/boxes, which must never be the real one.
 const TMP_REGISTRY = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-registry-'));
 process.on('exit', () => { try { fs.rmSync(TMP_USERDATA, { recursive: true, force: true }); } catch {} });
 process.on('exit', () => { try { fs.rmSync(TMP_REGISTRY, { recursive: true, force: true }); } catch {} });
@@ -172,16 +170,10 @@ test('generateCompose: read-only host library binds layered on clodex-dot (M5 De
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/skills:\/home\/clodex\/\.clodex\/skills:ro"/);
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/agents:\/home\/clodex\/\.clodex\/agents:ro"/);
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/library:\/home\/clodex\/\.clodex\/library:ro"/);
-  // Layered AFTER the state `dot` bind (shadowing its subpaths) and BEFORE the
-  // `claude` one; the dot bind itself stays — the box still writes run/,
-  // messages/, pending/ into it underneath the read-only library binds.
   assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){3} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"/);
   // One `library` bind covers prompts + exec — no separate exec mount.
   assert.doesNotMatch(yaml, /\/exec:ro/);
-  // The headless userData rides the same state dir.
   assert.ok(yaml.includes('- "/h/.clodex/boxes/x/data:/data"'));
-  // None of the three named volumes is declared any more; clodex-work is the
-  // only one left, still only when workDir is absent.
   assert.doesNotMatch(yaml, /^ {2}(clodex-data|clodex-dot|claude-auth):$/m);
   assert.match(yaml, /^ {2}clodex-work:$/m);
 });
@@ -1154,8 +1146,6 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   await sb.writeComposeFile();
   const base = path.join(reg, 'boxes', SANDBOX_PEER_ID);
   assert.strictEqual(sb.stateDir(), base);
-  // Created before the compose is generated, so docker never binds a missing
-  // source, and private to the operator: the box's login lives here.
   for (const d of ['data', 'dot', 'claude']) {
     const dir = path.join(base, d);
     assert.ok(fs.existsSync(dir), `${d} created`);
