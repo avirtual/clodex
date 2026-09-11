@@ -720,6 +720,19 @@ body {
 .session-ctx:empty {
   display: none;
 }
+.session-account {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  line-height: 14px;
+  white-space: nowrap;
+  color: var(--accent, #6aa6ff);
+  background: color-mix(in srgb, var(--accent, #6aa6ff) 14%, transparent);
+}
+.session-account:empty {
+  display: none;
+}
 @keyframes mentionPulse {
   0% {
     background: transparent;
@@ -3979,6 +3992,46 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.prefs-account-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.prefs-account-row .prefs-account-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prefs-account-row .prefs-account-email {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prefs-account-row .prefs-account-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prefs-account-row .prefs-account-seats {
+  flex: none;
+}
+.prefs-account-row button {
+  flex: none;
+}
+.prefs-account-plan {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .prefs-check {
   display: flex;
   align-items: center;
@@ -7136,6 +7189,10 @@ body {
         </label>
         <details id="env-section" class="dialog-section">
           <summary>Environment variables</summary>
+          <label id="account-row">Account
+            <select id="input-account"></select>
+            <span class="hint-text">Which registered Claude subscription this seat spawns on. Writes <code>CLAUDE_CONFIG_DIR</code> into the box below — that line is the selection, so editing it by hand moves this picker too. Manage accounts in Preferences ▸ Accounts.</span>
+          </label>
           <label id="env-row">
             <textarea id="input-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
             <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Applied at spawn; persisted so a restart/resume reuses them.</span>
@@ -7320,6 +7377,10 @@ body {
       </details>
       <details id="args-env-section" class="dialog-section">
         <summary>Environment variables</summary>
+        <label id="args-account-row">Account
+          <select id="args-account"></select>
+          <span class="hint-text">Which registered Claude subscription this seat spawns on. Writes <code>CLAUDE_CONFIG_DIR</code> into the box below — that line is the selection, so editing it by hand moves this picker too.</span>
+        </label>
         <label id="args-env-row">
           <textarea id="args-env" rows="3" spellcheck="false" autocomplete="off" placeholder="KEY=value, one per line — e.g. AWS_PROFILE=my-role"></textarea>
           <span class="hint-text">Extra environment variables for this session's process, one <code>KEY=value</code> per line (applies to claude, codex, and bash). Merged over the machine environment and any Global/workspace vars (Preferences ▸ Environment variables) — this session's values win. Clear the box to remove all session vars. <code>#</code> comments and blank lines are ignored. <code>CLODEX_REMOTE_TOKEN</code> is reserved and dropped. Changes take effect on the next spawn — tick "Restart session now" below to apply them immediately.</span>
@@ -7485,6 +7546,32 @@ body {
           <button id="prefs-env-restore" class="secondary" type="button" style="flex: none;" title="Bring back any of Clodex's shipped defaults you deleted. Values you edited are left alone.">Restore shipped defaults</button>
         </div>
         <span id="prefs-env-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+      </details>
+      <details class="prefs-group" data-group="accounts">
+        <summary><h4>Accounts</h4><span class="prefs-group-sub">Your registered Claude subscriptions, and which seats run on them</span></summary>
+        <p class="hint-text">Each account is a label plus the <code>CLAUDE_CONFIG_DIR</code> a seat on it spawns with; <code>default</code> is <code>~/.claude</code> and is never stored. Adding an account with no config dir mints one that shares transcripts, plugins and skills with the default. A seat picks its account in the New Session and Edit Session dialogs.</p>
+        <div id="prefs-accounts-list" style="margin-top: 8px;"></div>
+        <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
+          <input type="text" id="prefs-account-label" placeholder="label" spellcheck="false" autocomplete="off" style="flex: 1;">
+          <input type="text" id="prefs-account-email" placeholder="email (optional)" spellcheck="false" autocomplete="off" style="flex: 2;">
+          <select id="prefs-account-plan" style="flex: none;">
+            <option value="pro">pro</option>
+            <option value="max">max</option>
+            <option value="team">team</option>
+            <option value="api">api</option>
+            <option value="unknown" selected>unknown</option>
+          </select>
+          <button id="prefs-account-add" class="secondary" type="button" style="flex: none;">Add</button>
+        </div>
+        <div class="prefs-row" style="gap: 6px; margin-top: 6px;">
+          <input type="text" id="prefs-account-dir" placeholder="config dir (optional — minted when blank)" spellcheck="false" autocomplete="off" style="flex: 1;">
+        </div>
+        <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
+          <span>Move seats on model</span>
+          <select id="prefs-account-model" style="flex: none;"></select>
+          <span class="hint-text" style="margin: 0;">to an account with its <strong>Move</strong> button. Restarts every matching seat.</span>
+        </div>
+        <span id="prefs-accounts-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </details>
       <details class="prefs-group" data-group="traffic">
         <summary><h4>Traffic optimization</h4><span class="prefs-group-sub">Wirescope, and the transcript bake and memory hints that run on it</span></summary>
@@ -23036,6 +23123,191 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/account-select.js
+  var require_account_select = __commonJS({
+    "renderer/lib/account-select.js"(exports, module) {
+      "use strict";
+      var os = require_os_shim();
+      var { parseEnvLines } = require_env_edit();
+      var ENV_KEY = "CLAUDE_CONFIG_DIR";
+      var DEFAULT_LABEL = "default";
+      var CUSTOM_LABEL = "custom";
+      function normDir(p) {
+        const s = String(p == null ? "" : p);
+        if (!s) return "";
+        return s.length > 1 ? s.replace(/\/+$/, "") : s;
+      }
+      function abbrevHome(p, home = os.homedir()) {
+        const s = String(p == null ? "" : p);
+        if (!s || !home) return s;
+        if (s === home) return "~";
+        return s.startsWith(`${home}/`) ? `~${s.slice(home.length)}` : s;
+      }
+      function rowsOf(accounts) {
+        return Array.isArray(accounts) ? accounts.filter((a) => a && typeof a === "object") : [];
+      }
+      function accountFromEnv(envText, accounts) {
+        const dir = normDir(parseEnvLines(envText).env[ENV_KEY]);
+        if (!dir) return DEFAULT_LABEL;
+        const hit = rowsOf(accounts).find((a) => normDir(a.configDir) === dir);
+        return hit ? String(hit.label) : CUSTOM_LABEL;
+      }
+      function isAssignTo(line, key) {
+        const lead = String(line).replace(/^\s+/, "");
+        if (!lead || lead[0] === "#") return false;
+        const eq = line.indexOf("=");
+        return eq >= 0 && line.slice(0, eq).trim() === key;
+      }
+      function envWithAccount(envText, label, accounts) {
+        const text = String(envText == null ? "" : envText);
+        const want = String(label == null ? "" : label);
+        if (want === CUSTOM_LABEL) return text;
+        let dir = "";
+        if (want !== DEFAULT_LABEL) {
+          const hit = rowsOf(accounts).find((a) => String(a.label) === want);
+          if (!hit) return text;
+          dir = String(hit.configDir || "");
+          if (!dir) return text;
+        }
+        const lines = text.split("\n");
+        let at = -1;
+        const kept = [];
+        for (const line of lines) {
+          if (isAssignTo(line, ENV_KEY)) {
+            if (at < 0) at = kept.length;
+            continue;
+          }
+          kept.push(line);
+        }
+        if (!dir) {
+          if (at < 0) return text;
+          if (kept.length === 1 && kept[0] === "") return "";
+          return kept.join("\n");
+        }
+        const assign = `${ENV_KEY}=${dir}`;
+        if (at >= 0) {
+          kept.splice(at, 0, assign);
+          return kept.join("\n");
+        }
+        if (kept.length === 1 && kept[0] === "") return assign;
+        if (kept[kept.length - 1] === "") kept.splice(kept.length - 1, 0, assign);
+        else kept.push(assign);
+        return kept.join("\n");
+      }
+      function optionText(row, home) {
+        const label = String(row.label);
+        if (label === DEFAULT_LABEL) return `${label} \u2014 ${row.email || abbrevHome(row.configDir, home)}`;
+        const who = row.email || abbrevHome(row.configDir, home);
+        return `${label} \u2014 ${who} (${row.plan || "unknown"})`;
+      }
+      function accountOptions(accounts, current, home = os.homedir()) {
+        const cur = current && typeof current === "object" ? current : { label: current, configDir: "" };
+        const curLabel = String(cur.label == null ? DEFAULT_LABEL : cur.label);
+        const rows = rowsOf(accounts);
+        const out = [];
+        const def = rows.find((a) => String(a.label) === DEFAULT_LABEL) || { label: DEFAULT_LABEL, email: null, configDir: `${home}/.claude` };
+        out.push({ value: DEFAULT_LABEL, text: optionText(def, home), selected: curLabel === DEFAULT_LABEL });
+        for (const row of rows) {
+          if (String(row.label) === DEFAULT_LABEL) continue;
+          out.push({ value: String(row.label), text: optionText(row, home), selected: curLabel === String(row.label) });
+        }
+        if (curLabel === CUSTOM_LABEL) {
+          out.push({ value: CUSTOM_LABEL, text: `${CUSTOM_LABEL} \u2014 ${abbrevHome(cur.configDir, home)}`, selected: true });
+        }
+        return out;
+      }
+      function loginSeat(label, account, { reserved = [], home = os.homedir(), bump = null } = {}) {
+        const want = String(label == null ? DEFAULT_LABEL : label);
+        const base = `login-${want}`;
+        const taken = reserved instanceof Set ? reserved : new Set(reserved || []);
+        let name = base;
+        if (typeof bump === "function" && taken.has(base)) name = bump(`${base}-2`, taken);
+        const params = { name, type: "bash", cwd: home, env: null };
+        if (want !== DEFAULT_LABEL) {
+          const dir = String(account && account.configDir || "");
+          if (!dir) return null;
+          params.env = { [ENV_KEY]: dir };
+        }
+        return params;
+      }
+      module.exports = {
+        ENV_KEY,
+        DEFAULT_LABEL,
+        CUSTOM_LABEL,
+        abbrevHome,
+        accountFromEnv,
+        envWithAccount,
+        accountOptions,
+        loginSeat
+      };
+    }
+  });
+
+  // renderer/lib/account-row.js
+  var require_account_row = __commonJS({
+    "renderer/lib/account-row.js"(exports, module) {
+      "use strict";
+      var { DEFAULT_LABEL, abbrevHome } = require_account_select();
+      function accountRowView(account, seats, home) {
+        const a = account && typeof account === "object" ? account : {};
+        const label = String(a.label == null ? "" : a.label);
+        const isDefault = label === DEFAULT_LABEL;
+        const n = Number.isFinite(seats) ? seats : 0;
+        return {
+          label,
+          isDefault,
+          email: a.email ? String(a.email) : "\u2014",
+          plan: isDefault ? "" : String(a.plan || "unknown"),
+          dir: abbrevHome(a.configDir, home),
+          seats: n === 1 ? "1 seat" : `${n} seats`,
+          dirTitle: String(a.configDir || "")
+        };
+      }
+      function buildAccountRow(doc, view) {
+        const row = doc.createElement("div");
+        row.className = "prefs-account-row";
+        row.dataset.label = view.label;
+        const name = doc.createElement("code");
+        name.className = "prefs-account-name";
+        name.textContent = view.label;
+        row.appendChild(name);
+        const email = doc.createElement("span");
+        email.className = "hint-text prefs-account-email";
+        email.textContent = view.email;
+        row.appendChild(email);
+        if (view.plan) {
+          const plan = doc.createElement("span");
+          plan.className = "prefs-account-plan";
+          plan.textContent = view.plan;
+          row.appendChild(plan);
+        }
+        const dir = doc.createElement("span");
+        dir.className = "hint-text prefs-account-dir";
+        dir.textContent = view.dir;
+        dir.title = view.dirTitle;
+        row.appendChild(dir);
+        const seats = doc.createElement("span");
+        seats.className = "hint-text prefs-account-seats";
+        seats.textContent = view.seats;
+        row.appendChild(seats);
+        const mk = (cls, text) => {
+          const b = doc.createElement("button");
+          b.className = `secondary ${cls}`;
+          b.type = "button";
+          b.textContent = text;
+          row.appendChild(b);
+          return b;
+        };
+        const login = mk("prefs-account-login", "Log in");
+        const move = view.isDefault ? null : mk("prefs-account-move", "Move");
+        const resync = view.isDefault ? null : mk("prefs-account-resync", "Re-sync settings");
+        const remove = view.isDefault ? null : mk("prefs-account-remove", "Remove");
+        return { row, login, move, resync, remove };
+      }
+      module.exports = { accountRowView, buildAccountRow };
+    }
+  });
+
   // renderer/lib/placement.js
   var require_placement = __commonJS({
     "renderer/lib/placement.js"(exports, module) {
@@ -35705,6 +35977,8 @@ ${detail}` });
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
+      var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require_account_select();
+      var { accountRowView, buildAccountRow } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
@@ -35856,7 +36130,40 @@ ${detail}` });
       function refreshEnvHint() {
         renderEnvHint(inputEnv, envHint);
       }
+      var inputAccount = document.getElementById("input-account");
+      var dialogAccounts = null;
+      async function fetchAccounts() {
+        try {
+          const res = await window.api.accountsList();
+          return res && res.ok && Array.isArray(res.accounts) ? res.accounts : [];
+        } catch {
+          return [];
+        }
+      }
+      function paintAccountSelect(sel, envText, accounts) {
+        if (!sel) return;
+        const rows = accounts || [];
+        const label = accountFromEnv(envText, rows);
+        const current = label === "custom" ? { label, configDir: parseEnvLines(envText).env.CLAUDE_CONFIG_DIR || "" } : { label, configDir: "" };
+        sel.textContent = "";
+        for (const opt of accountOptions(rows, current)) {
+          const el = document.createElement("option");
+          el.value = opt.value;
+          el.textContent = opt.text;
+          if (opt.selected) el.selected = true;
+          sel.appendChild(el);
+        }
+      }
+      function bindAccountSelect(sel, textarea, getAccounts) {
+        if (!sel || !textarea) return;
+        sel.addEventListener("change", () => {
+          textarea.value = envWithAccount(textarea.value, sel.value, getAccounts() || []);
+          textarea.dispatchEvent(new Event("input"));
+        });
+        textarea.addEventListener("input", () => paintAccountSelect(sel, textarea.value, getAccounts() || []));
+      }
       if (inputEnv) inputEnv.addEventListener("input", refreshEnvHint);
+      bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
       var inputModel = document.getElementById("input-model");
       var modelRow = document.getElementById("model-row");
       var argsHint = document.getElementById("args-hint");
@@ -36201,7 +36508,7 @@ ${detail}` });
           showToast(`Worktree removal failed: ${res.error}`, { kind: "warn", duration: 12e3, name });
         }
       }
-      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false) {
+      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null) {
         const item = document.createElement("div");
         item.className = "session-item";
         item.dataset.name = name;
@@ -36210,8 +36517,10 @@ ${detail}` });
         if (backend) item.dataset.backend = backend;
         if (team) item.dataset.team = team;
         if (noWire) item.dataset.noWire = "1";
+        if (account && account !== ACCOUNT_DEFAULT) item.dataset.account = account;
         const displayName = label || name;
         const cwdLabel = cwd ? esc(baseName(cwd)) : "";
+        const accountChip = account && account !== ACCOUNT_DEFAULT ? esc(account) : "";
         item.innerHTML = `
     <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ""}>${typeGlyph(type, backend)}</span>
     <div class="session-info">
@@ -36221,6 +36530,7 @@ ${detail}` });
         <span class="session-badges">
           ${noWire ? '<span class="session-nowire" data-tip="Wire off \u2014 no ANTHROPIC_BASE_URL: no tee, no warmth/wire telemetry. Intents and touched files still work; subagent attribution does not.">\u2298</span>' : ""}
           ${type === "claude" ? '<span class="session-pending" data-tip="Parked messages waiting \u2014 click to deliver now"></span>' : ""}
+          <span class="session-account"${accountChip ? ` data-tip="account ${esc(account)}"` : ""}>${accountChip}</span>
           <span class="session-think"></span>
           <span class="session-warm"></span>
           <span class="session-ctx"></span>
@@ -36714,6 +37024,11 @@ ${detail}` });
         } catch {
         } finally {
           metaRefreshInFlight = false;
+        }
+        try {
+          const live = await window.api.listSessions();
+          if (Array.isArray(live)) for (const s of live) applyAccountChip(s.name, s.account || null);
+        } catch {
         }
         refreshSidebarView();
         pluginBar.renderFooterButtons();
@@ -37813,6 +38128,8 @@ ${detail}` });
         if (advancedSection) advancedSection.open = !!prefill;
         if (inputEnv) inputEnv.value = "";
         refreshEnvHint();
+        dialogAccounts = await fetchAccounts();
+        paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : "", dialogAccounts);
         applyTypeDefaults();
         paintNameField(nameFieldEls(), { ok: true, kind: "free", message: "" });
         const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -38417,6 +38734,18 @@ ${detail}` });
         applyCtxBadge(name, pct);
         if (name === activeSession) renderProxyBar();
       });
+      function applyAccountChip(name, label) {
+        const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        if (!el) return;
+        const chip = el.querySelector(".session-account");
+        if (!chip) return;
+        const show = label && label !== ACCOUNT_DEFAULT ? String(label) : "";
+        if (show) el.dataset.account = show;
+        else delete el.dataset.account;
+        chip.textContent = show;
+        if (show) chip.dataset.tip = `account ${show}`;
+        else delete chip.dataset.tip;
+      }
       function applyPendingBadge(name, count) {
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
@@ -39875,6 +40204,194 @@ Click for live activity`;
         setPrefsEnvState("");
         refreshPrefsEnv();
       });
+      var prefsAccountsList = document.getElementById("prefs-accounts-list");
+      var prefsAccountLabel = document.getElementById("prefs-account-label");
+      var prefsAccountEmail = document.getElementById("prefs-account-email");
+      var prefsAccountPlan = document.getElementById("prefs-account-plan");
+      var prefsAccountDir = document.getElementById("prefs-account-dir");
+      var prefsAccountAdd = document.getElementById("prefs-account-add");
+      var prefsAccountModel = document.getElementById("prefs-account-model");
+      var prefsAccountsState = document.getElementById("prefs-accounts-state");
+      var MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
+      function setPrefsAccountsState(msg, kind) {
+        if (!prefsAccountsState) return;
+        prefsAccountsState.textContent = msg || "";
+        prefsAccountsState.style.color = kind === "error" ? "var(--warn, #d9a55b)" : "var(--muted, #8b949e)";
+      }
+      async function liveClaudeModels(live) {
+        const out = new Set(MODEL_ALIASES);
+        for (const s of live) {
+          if (s.type !== "claude") continue;
+          try {
+            const res = await window.api.getSessionArgs(s.name);
+            if (!res || !res.ok) continue;
+            const { model } = splitModelArg(res.extraArgs || []);
+            if (model) out.add(model);
+          } catch {
+          }
+        }
+        return [...out];
+      }
+      async function refreshPrefsAccounts() {
+        if (!prefsAccountsList) return;
+        let res;
+        try {
+          res = await window.api.accountsList();
+        } catch {
+          res = null;
+        }
+        prefsAccountsList.textContent = "";
+        if (!res || res.ok === false) {
+          setPrefsAccountsState(res && res.error || "Accounts are unavailable on this host.", "error");
+          if (prefsAccountModel) prefsAccountModel.textContent = "";
+          return;
+        }
+        setPrefsAccountsState("");
+        const accounts = res.accounts || [];
+        let live = [];
+        try {
+          const l = await window.api.listSessions();
+          if (Array.isArray(l)) live = l;
+        } catch {
+        }
+        const seatsBy = /* @__PURE__ */ new Map();
+        for (const s of live) {
+          const key = s.account || ACCOUNT_DEFAULT;
+          seatsBy.set(key, (seatsBy.get(key) || 0) + 1);
+        }
+        if (prefsAccountModel) {
+          const models = await liveClaudeModels(live);
+          const keep = prefsAccountModel.value;
+          prefsAccountModel.textContent = "";
+          for (const m of models) {
+            const opt = document.createElement("option");
+            opt.value = m;
+            opt.textContent = m;
+            prefsAccountModel.appendChild(opt);
+          }
+          if (models.includes(keep)) prefsAccountModel.value = keep;
+        }
+        for (const account of accounts) {
+          const view = accountRowView(account, seatsBy.get(account.label) || 0);
+          const { row, login, move, resync, remove } = buildAccountRow(document, view);
+          login.addEventListener("click", () => startLoginSeat(account));
+          if (move) {
+            move.addEventListener("click", async () => {
+              const model = prefsAccountModel ? prefsAccountModel.value : "";
+              if (!model) {
+                setPrefsAccountsState("Pick a model to move first.", "error");
+                return;
+              }
+              if (!confirm(`Move every live claude seat on model "${model}" to account "${account.label}"? Each one restarts.`)) return;
+              const r = await window.api.accountsMoveByModel({ model, label: account.label });
+              if (!r || r.ok === false) {
+                setPrefsAccountsState(r && r.error || "Move failed.", "error");
+                return;
+              }
+              const skipped = (r.skipped || []).map((s) => `${s.name} (${s.reason})`).join(", ");
+              setPrefsAccountsState(`moved ${(r.moved || []).length}${skipped ? ` \xB7 skipped: ${skipped}` : ""}`);
+              refreshPrefsAccounts();
+            });
+          }
+          if (resync) {
+            resync.addEventListener("click", async () => {
+              const r = await window.api.accountsResync({ label: account.label });
+              if (!r || r.ok === false) {
+                setPrefsAccountsState(r && r.error || "Re-sync failed.", "error");
+                return;
+              }
+              setPrefsAccountsState(r.copied ? `Copied settings.json into ${account.label}.` : `Nothing to copy for ${account.label}.`);
+            });
+          }
+          if (remove) {
+            remove.addEventListener("click", async () => {
+              if (!confirm(`Remove account "${account.label}"? Its config dir and login are left on disk.`)) return;
+              const r = await window.api.accountsRemove({ label: account.label });
+              if (!r || r.ok === false) {
+                setPrefsAccountsState(r && r.error || "Remove failed.", "error");
+                return;
+              }
+              refreshPrefsAccounts();
+            });
+          }
+          prefsAccountsList.appendChild(row);
+        }
+      }
+      async function startLoginSeat(account) {
+        let reserved = [];
+        try {
+          const r = await window.api.reservedSessionNames();
+          reserved = reservedUnion(reservedSets(r));
+        } catch {
+        }
+        const params = loginSeat(account.label, account, { reserved, bump: bumpDefaultName });
+        if (!params) {
+          setPrefsAccountsState(`Account "${account.label}" has no config dir.`, "error");
+          return;
+        }
+        const result = await window.api.createSession(
+          params.name,
+          params.type,
+          params.cwd,
+          [],
+          null,
+          null,
+          false,
+          null,
+          [],
+          [],
+          [],
+          [],
+          [],
+          null,
+          null,
+          [],
+          [],
+          null,
+          params.env,
+          false,
+          null
+        );
+        if (!result || !result.ok) {
+          setPrefsAccountsState(result && result.error || "Could not open a login shell.", "error");
+          return;
+        }
+        closePrefs();
+        createTerminal(params.name);
+        addSessionToSidebar(
+          params.name,
+          params.type,
+          params.cwd,
+          null,
+          result.session && result.session.backend || null,
+          result.session && result.session.team || null,
+          (result.session && result.session.noWire) === true,
+          account.label
+        );
+        switchSession(params.name);
+        window.api.writeToSession(params.name, "claude /login\n");
+      }
+      async function addPrefsAccount() {
+        const label = (prefsAccountLabel.value || "").trim();
+        const email = (prefsAccountEmail.value || "").trim();
+        const plan = prefsAccountPlan ? prefsAccountPlan.value : "unknown";
+        const configDir = (prefsAccountDir.value || "").trim();
+        if (!label) {
+          setPrefsAccountsState("Enter a label first.", "error");
+          return;
+        }
+        const res = await window.api.accountsAdd({ label, email: email || null, plan, configDir: configDir || null });
+        if (!res || res.ok === false) {
+          setPrefsAccountsState(res && res.error || "Add failed.", "error");
+          return;
+        }
+        prefsAccountLabel.value = "";
+        prefsAccountEmail.value = "";
+        prefsAccountDir.value = "";
+        setPrefsAccountsState(`Added ${label} at ${abbrevHome(res.account && res.account.configDir)}.`);
+        refreshPrefsAccounts();
+      }
+      if (prefsAccountAdd) prefsAccountAdd.addEventListener("click", addPrefsAccount);
       function renderRemoteTokenState(hasToken) {
         prefsRemoteTokenState.textContent = hasToken ? "A token is configured \u2713 \u2014 paste a new one to replace it, or Clear to remove." : "No token set \u2014 phone access is open to anyone who can reach the port.";
         prefsRemoteTokenState.style.color = hasToken ? "var(--ok, #3fb950)" : "var(--warn, #d9a55b)";
@@ -42020,6 +42537,11 @@ ${res.stderr}` : "");
         if (prefsEnvSecret) prefsEnvSecret.checked = false;
         setPrefsEnvState("");
         refreshPrefsEnv();
+        if (prefsAccountLabel) prefsAccountLabel.value = "";
+        if (prefsAccountEmail) prefsAccountEmail.value = "";
+        if (prefsAccountDir) prefsAccountDir.value = "";
+        setPrefsAccountsState("");
+        refreshPrefsAccounts();
         setClaudeToolsCache(s.claudeTools || []);
         renderToolChecklist(prefsToolsList, new Set(s.defaultToolDeny || []), {});
         await renderPrefsSkillDefaults(s.defaultSkillDeny || []);
@@ -42218,7 +42740,10 @@ ${res.stderr}` : "");
       var argsEnvSection = document.getElementById("args-env-section");
       var argsEnv = document.getElementById("args-env");
       var argsEnvHint = document.getElementById("args-env-hint");
+      var argsAccount = document.getElementById("args-account");
+      var argsAccounts = null;
       if (argsEnv) argsEnv.addEventListener("input", () => renderEnvHint(argsEnv, argsEnvHint));
+      bindAccountSelect(argsAccount, argsEnv, () => argsAccounts);
       wireBulkToggles(argsToolsRow, argsToolsList);
       wireBulkToggles(argsSkillsRow, argsSkillsList);
       var argsEditingName = null;
@@ -42343,6 +42868,8 @@ ${res.stderr}` : "");
         if (isEnvEditable) {
           argsEnv.value = formatEnvLines(res.env || {});
           renderEnvHint(argsEnv, argsEnvHint);
+          argsAccounts = await fetchAccounts();
+          paintAccountSelect(argsAccount, argsEnv.value, argsAccounts);
         } else {
           argsEnv.value = "";
           renderEnvHint(argsEnv, argsEnvHint);
