@@ -4,8 +4,8 @@
 # registry entry (replyStderr: true): the exec dispatcher returns only the
 # LAST stderr line (200-char slice) on both the success and failure paths, so
 # the whole digest lives on a single bounded line.
-#   pass: "[wb-wrap-ui] 811/811 green"
-#   fail: "[wb-wrap-ui] 798/811 green, 13 failing (~/.clodex/test-failures/last.txt): name1; …"
+#   pass: "[wb-wrap-ui] 811/811 green (1m 14s)"
+#   fail: "[wb-wrap-ui] 798/811 green, 13 failing (~/.clodex/test-failures/last.txt) (1m 14s): name1; …"
 # Dependency-free: sh + awk + git only. The TAP reporter is forced so the
 # summary grammar ("# pass N") doesn't shift with TTY detection across node
 # versions.
@@ -118,6 +118,30 @@ fi
 # the real lock held forever. Same split as the ticket loop's
 # CLODEX_TEST_LOCK_DIR (session-manager.js), expressed in sh.
 LOCK="$root/.test-digest.lock"
+LAST="$root/.test-digest.last"
+
+last_run_ms() {
+  v=$(cat "$LAST" 2>/dev/null)
+  case "$v" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$v" -gt 0 ] || return 1
+  printf '%s' "$v"
+}
+
+etime_seconds() {
+  printf '%s' "$1" | awk -F'[-:]' '{
+    mult[1] = 1; mult[2] = 60; mult[3] = 3600; mult[4] = 86400;
+    total = 0; slot = 1;
+    for (i = NF; i >= 1 && slot <= 4; i--) { total += $i * mult[slot]; slot++ }
+    print total
+  }'
+}
+
+write_last_run_ms() {
+  printf '%s\n' "$1" > "$LAST.tmp" 2>/dev/null || { rm -f "$LAST.tmp" 2>/dev/null; return 1; }
+  mv "$LAST.tmp" "$LAST" 2>/dev/null || { rm -f "$LAST.tmp" 2>/dev/null; return 1; }
+}
 
 # The refusal message, and it RE-READS the lock rather than reporting the pid the
 # wait loop happened to be holding in a variable.
@@ -140,7 +164,7 @@ lock_refusal() {
     # Released in the instant between giving up and reporting. Nothing here is
     # wedged and there is no pid worth naming — telling the caller to re-run is
     # the whole content of the message.
-    printf 'another suite run held the lock for the whole %ss wait and released it just as we gave up - nothing is wedged, re-run to take it\n' \
+    printf 'another suite run held the lock for the whole %ss wait and released it just as we gave up - nothing is wedged, re-run to take it. Re-run now, no wait.\n' \
       "$waited" 1>&2
     return
   fi
@@ -149,8 +173,42 @@ lock_refusal() {
     # this script never launched (npm test takes the same lock), so the process
     # table is the only source that knows when it actually began.
     started=$(ps -o etime= -p "$now" 2>/dev/null | tr -d ' ')
-    printf 'another suite run is already going (pid %s, running %s) - waited %ss, not starting a second\n' \
-      "$now" "${started:-unknown}" "$waited" 1>&2
+    # A wait the caller can ACT on. "Already going" alone tells a hand nothing
+    # about whether to wait one minute or ten, so it re-emits the exec every
+    # minute or two and re-bills its whole context for each refusal — three of
+    # them across an hour, observed. The suite's own last wall time is the only
+    # thing on this box that knows how long a run takes, so the nap is derived
+    # from it and handed over as the literal line to emit.
+    #
+    # ROUNDED UP, and with a further minute added, because an early wake costs
+    # a whole second refusal while a late one costs only idle time. No recorded
+    # duration means no honest estimate: the suite length is then left out of
+    # the sentence entirely rather than guessed, and the nap falls back to 5
+    # minutes.
+    suite_of=
+    nap=5
+    if total_ms=$(last_run_ms); then
+      suite_of=$(awk -v ms="$total_ms" 'BEGIN { printf "%d", (ms + 59999) / 60000 }')
+      elapsed=0
+      case "$started" in
+        '' | *[!0-9:-]*) ;;
+        *) elapsed=$(etime_seconds "$started") ;;
+      esac
+      nap=$(awk -v ms="$total_ms" -v el="$elapsed" 'BEGIN {
+        left = ms / 1000 - el;
+        k = int((left + 59) / 60) + 1;
+        print (k < 2 ? 2 : k)
+      }')
+      suite_of=" of a ~${suite_of} min suite"
+    fi
+    # The `(pid %s, running %s)` fragment is byte-for-byte what it always was,
+    # and the suite estimate rides INSIDE the second field rather than after the
+    # closing paren: test/test-digest-lock.test.js pins that fragment against
+    # this source, and a parenthesis moved one character breaks the pin without
+    # changing a word a reader sees.
+    running_show="${started:-unknown}$suite_of"
+    printf 'another suite run is already going (pid %s, running %s) - waited %ss, not starting a second. Do not re-emit: emit [agent:remind in %sm] re-run the suite, END YOUR TURN.\n' \
+      "$now" "$running_show" "$waited" "$nap" 1>&2
     return
   fi
   # HELD, but its pid file does not name a live process. Reported WITHOUT
@@ -255,8 +313,32 @@ if [ "$measure" != "$root" ] && [ ! -e "$measure/node_modules" ] \
   ln -s "$root/node_modules" "$measure/node_modules" 2>/dev/null
 fi
 
+wall_start=$(date '+%s' 2>/dev/null)
 out=$(node --test --test-reporter=tap 2>&1)
 code=$?
+wall_end=$(date '+%s' 2>/dev/null)
+
+# Recorded on ANY exit code: a red run measured the same suite and took the same
+# time, so excluding it would leave the estimate stale for exactly the branch
+# most likely to be re-run. Written before the digest so the refusal a queued
+# caller reads is already derived from this run.
+#
+# FLOORED AT 1, never 0. The unit is milliseconds but `date` here resolves to
+# whole seconds — sh has no portable sub-second clock, and node is not available
+# to borrow one from, since node is the thing being measured. A sub-second run
+# would therefore record 0, which every reader treats as "no recording" and
+# which is indistinguishable from a run that never wrote the file at all.
+wall_ms=0
+case "$wall_start$wall_end" in
+  '' | *[!0-9]*) ;;
+  *) wall_ms=$(( (wall_end - wall_start) * 1000 )) ;;
+esac
+[ "$wall_ms" -gt 0 ] || wall_ms=1
+write_last_run_ms "$wall_ms"
+wall_show=$(awk -v ms="$wall_ms" 'BEGIN {
+  s = int(ms / 1000);
+  printf "%dm %02ds", int(s / 60), s % 60
+}')
 
 pass=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="pass" {n=$3} END{print n+0}')
 tests=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="tests" {n=$3} END{print n+0}')
@@ -402,7 +484,7 @@ if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ]; then
   # Only the green arm: a refusal measured nothing, so it must not destroy the
   # last real failure.
   rm -f "$keep" 2>/dev/null
-  printf '[%s] %s/%s green\n' "$tree" "$pass" "$tests" 1>&2
+  printf '[%s] %s/%s green (%s)\n' "$tree" "$pass" "$tests" "$wall_show" 1>&2
   exit 0
 fi
 
@@ -417,6 +499,6 @@ names=$(printf '%s\n' "$out" | awk 'sub(/^[ \t]*not ok [0-9]+ - /, "") {printf "
 # one that overruns the cap — that has the most evidence worth pointing at.
 at=
 save_failing_output tap && at=" ($keep_show)"
-printf '%.180s\n' "[$tree] $pass/$tests green, $fail failing$at: $names" 1>&2
+printf '%.180s\n' "[$tree] $pass/$tests green, $fail failing$at ($wall_show): $names" 1>&2
 [ "$code" -eq 0 ] && exit 1
 exit "$code"

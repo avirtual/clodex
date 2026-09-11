@@ -267,16 +267,29 @@ test('lock: the refusal names the holder and how long it has been running', () =
 // would add two minutes to the suite to exercise four printf branches. The
 // function is EXTRACTED FROM THE SHIPPED FILE by anchor, the same discipline
 // lockHarness uses, so a rename fails loudly instead of testing a paraphrase.
-function refusalFor(state) {
-  const src = fs.readFileSync(SCRIPT, 'utf-8');
-  const start = src.indexOf('lock_refusal() {');
+function shellFunction(src, name) {
+  const start = src.indexOf(`${name}() {`);
   const end = src.indexOf('\n}\n', start);
   assert.ok(start > 0 && end > start,
-    'lock_refusal() was not found in test-digest.sh — this test extracts it by anchor and that anchor has moved');
-  const fn = src.slice(start, end + 3);
+    `${name}() was not found in test-digest.sh — this test extracts it by anchor and that anchor has moved`);
+  return src.slice(start, end + 3);
+}
+
+// `lastMs`, when given, is what a previous run recorded — the whole input to
+// the nap the refusal hands over. Omit it for the case where nothing has been
+// recorded yet.
+function refusalFor(state, lastMs) {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  // The refusal reads the recorded duration through these two, so the harness
+  // carries them too. Extracted, not stubbed: a hand-written last_run_ms would
+  // make every assertion below a statement about the fixture's arithmetic.
+  const fn = ['last_run_ms', 'etime_seconds', 'lock_refusal']
+    .map((name) => shellFunction(src, name)).join('\n');
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-refusal-'));
   const lock = path.join(dir, '.test-digest.lock');
+  const last = path.join(dir, '.test-digest.last');
+  if (lastMs !== undefined) fs.writeFileSync(last, `${lastMs}\n`);
   if (state !== 'released') {
     fs.mkdirSync(lock);
     // OUR OWN pid for the live case: alive by construction, and no process is
@@ -286,7 +299,8 @@ function refusalFor(state) {
     // state 'nopid' writes nothing: the window between mkdir and the pid write.
   }
   const sh = path.join(dir, 'drive.sh');
-  fs.writeFileSync(sh, `#!/bin/sh\n${fn}\nLOCK="${lock}"\nwaited=30\nlock_refusal\n`, { mode: 0o755 });
+  fs.writeFileSync(sh,
+    `#!/bin/sh\n${fn}\nLOCK="${lock}"\nLAST="${last}"\nwaited=30\nlock_refusal\n`, { mode: 0o755 });
   const res = spawnSync('/bin/sh', [sh], { encoding: 'utf-8' });
   fs.rmSync(dir, { recursive: true, force: true });
   return (res.stderr || '').trim();
@@ -343,13 +357,100 @@ test('lock: every refusal line fits the 200-char slice the exec dispatcher deliv
   // that dropped "Do NOT clear it" would leave a reader holding a dead pid, no
   // warning, and the obvious wrong conclusion. It shipped at 204 chars while
   // being written, which is how this subject came to exist.
+  //
+  // The live branch is measured BOTH ways. It is the only one that grows with
+  // its inputs — a recorded duration adds the suite estimate and a longer nap —
+  // so a subject that only ever drove the unrecorded case would pass over the
+  // longest line the dispatcher can be handed. 99 hours and a 7-digit pid are
+  // past anything real and still have to fit.
   for (const state of ['live', 'dead', 'nopid', 'released']) {
-    const out = refusalFor(state);
-    assert.ok(out.length > 0, `ENTER: the ${state} branch printed nothing — nothing is being measured`);
-    assert.ok(out.length <= 200,
-      `the ${state} refusal is ${out.length} chars and the dispatcher delivers 200 — the tail, `
-      + `which is where the actionable half lives, would be cut: ${JSON.stringify(out)}`);
+    for (const lastMs of [undefined, 359999000]) {
+      const out = refusalFor(state, lastMs);
+      assert.ok(out.length > 0, `ENTER: the ${state} branch printed nothing — nothing is being measured`);
+      assert.ok(out.length <= 200,
+        `the ${state} refusal is ${out.length} chars and the dispatcher delivers 200 — the tail, `
+        + `which is where the actionable half lives, would be cut: ${JSON.stringify(out)}`);
+    }
   }
+});
+
+// ── the refusal's NAP (t829) ────────────────────────────────────────────────
+// "Already going" told a caller nothing about how long to wait, so a refused
+// hand re-emitted its exec every minute or two — three refusals across an hour,
+// each re-billing a 230k context — against a suite it could not know took five
+// minutes. The refusal now derives the wait from the last completed run and
+// hands over the literal reminder line to emit.
+
+// A holder whose elapsed time is KNOWN and near zero, so the nap is arithmetic
+// rather than a race against however long this suite has been running. The
+// child is reaped before the assertions read its refusal.
+function refusalAgainstFreshHolder(lastMs) {
+  const holder = spawn('/bin/sh', ['-c', 'sleep 30'], { stdio: 'ignore' });
+  try {
+    const src = fs.readFileSync(SCRIPT, 'utf-8');
+    const fn = ['last_run_ms', 'etime_seconds', 'lock_refusal']
+      .map((name) => shellFunction(src, name)).join('\n');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-nap-'));
+    try {
+      const lock = path.join(dir, '.test-digest.lock');
+      const last = path.join(dir, '.test-digest.last');
+      fs.mkdirSync(lock);
+      fs.writeFileSync(path.join(lock, 'pid'), String(holder.pid));
+      if (lastMs !== undefined) fs.writeFileSync(last, `${lastMs}\n`);
+      const sh = path.join(dir, 'drive.sh');
+      fs.writeFileSync(sh,
+        `#!/bin/sh\n${fn}\nLOCK="${lock}"\nLAST="${last}"\nwaited=30\nlock_refusal\n`, { mode: 0o755 });
+      return (spawnSync('/bin/sh', [sh], { encoding: 'utf-8' }).stderr || '').trim();
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { holder.kill('SIGKILL'); }
+}
+
+test('nap: a recorded run makes the refusal name the suite length and the exact wait', () => {
+  // 300000ms recorded against a holder ~0s in: five minutes left, rounded up to
+  // 5 and given a spare minute, so the caller is told to sleep 6.
+  const out = refusalAgainstFreshHolder(300000);
+  assert.match(out, /another suite run is already going/,
+    `ENTER: the live branch did not run, so nothing below is about a refusal; got ${JSON.stringify(out)}`);
+  assert.match(out, /of a ~5 min suite/,
+    `the refusal must say how long a run here takes, or the caller cannot size its own wait; got ${JSON.stringify(out)}`);
+  assert.match(out, /\[agent:remind in 6m\]/,
+    `the refusal must hand over the LITERAL reminder line to emit — a caller told to "wait a bit" `
+    + `re-emits the exec instead, which is the whole cost this replaces; got ${JSON.stringify(out)}`);
+  assert.match(out, /END YOUR TURN/,
+    'and it must say to end the turn: a hand that naps without ending its turn is still billed for it');
+});
+
+test('nap: with NOTHING recorded the refusal guesses no suite length and falls back to 5m', () => {
+  // A fresh box, or a lock taken before any run completed. An invented suite
+  // length would be worse than none: the caller acts on it exactly as if it
+  // were measured.
+  const out = refusalAgainstFreshHolder(undefined);
+  assert.match(out, /another suite run is already going/,
+    `ENTER: the live branch did not run; got ${JSON.stringify(out)}`);
+  assert.match(out, /\[agent:remind in 5m\]/,
+    `with no recording the nap must fall back to a stated 5m; got ${JSON.stringify(out)}`);
+  assert.ok(!/min suite/.test(out),
+    `nothing was recorded, so the line must not claim a suite length; got ${JSON.stringify(out)}`);
+});
+
+test('nap: an unparsable recording is treated as no recording, never as zero', () => {
+  // A truncated or garbage file must not read as "0ms", which would render a
+  // ~0 min suite and a 2-minute nap — a confident number derived from junk.
+  const out = refusalAgainstFreshHolder('not-a-number');
+  assert.match(out, /\[agent:remind in 5m\]/,
+    `an unparsable recording must take the unknown path; got ${JSON.stringify(out)}`);
+  assert.ok(!/min suite/.test(out), `and must claim no suite length; got ${JSON.stringify(out)}`);
+});
+
+test('nap: a holder already past the recorded duration still gets a real wait, never 0', () => {
+  // The overrun case: the suite is slower than last time, or the holder is
+  // wedged. `[agent:remind in 0m]` is not a schedulable interval and reads as
+  // "re-emit now", which is the retry loop this whole message replaces.
+  const out = refusalAgainstFreshHolder(1000);
+  const m = /\[agent:remind in (\d+)m\]/.exec(out);
+  assert.ok(m, `ENTER: the refusal named no nap at all, so there is no floor to check; got ${JSON.stringify(out)}`);
+  assert.ok(Number(m[1]) >= 2,
+    `a nap under 2m re-bills the caller's whole context for a refusal it was told to expect; got ${m[1]}m`);
 });
 
 // ── the OTHER entry point ───────────────────────────────────────────────────
@@ -366,7 +467,7 @@ const ROOT = path.join(__dirname, '..');
 // suite run that already holds the real one. So the child gets a throwaway root
 // (a copy of the runner + its one require) and the assertions never touch the
 // lock of the run they are part of.
-function withFakeLock(holderPid, check) {
+function withFakeLock(holderPid, check, { lastMs } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -375,6 +476,10 @@ function withFakeLock(holderPid, check) {
   const lockDir = path.join(root, '.test-digest.lock');
   fs.mkdirSync(lockDir);
   fs.writeFileSync(path.join(lockDir, 'pid'), holderPid);
+  // `lastMs` is what a previous run recorded here — the input the refusal's nap
+  // is derived from. The pid file's mtime is the holder's start time, so the
+  // holder reads as ~0s in and the nap is arithmetic rather than a race.
+  if (lastMs !== undefined) fs.writeFileSync(path.join(root, '.test-digest.last'), `${lastMs}\n`);
   const stub = path.join(root, 'stub.test.js');
   fs.writeFileSync(stub, "require('node:test').test('stub', () => {});\n");
   try {
@@ -390,8 +495,16 @@ function withFakeLock(holderPid, check) {
       process.execPath, [path.join(root, 'scripts', 'run-tests.js')],
       { encoding: 'utf-8', cwd: root, timeout: 120000, env },
     ));
-    check(`${res.stdout || ''}${res.stderr || ''}`, lockDir);
+    check(`${res.stdout || ''}${res.stderr || ''}`, lockDir, root);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+// The estimate file, as the runner leaves it. Returns null for absent, and the
+// RAW text for present — the format is the pin, so a reader that parsed it
+// would hide a file the other entry point cannot read.
+function lastRecording(root) {
+  const p = path.join(root, '.test-digest.last');
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
 }
 
 test('lock: npm test and the digest share ONE lock dir, or the mutex is not a mutex', () => {
@@ -423,6 +536,89 @@ test('lock: npm test REFUSES while another run holds it, and says how to clear i
       'and the message must name the holder and how to clear it, or the next reflex is to raise a timeout');
     assert.ok(!/TOTALS:/.test(out), 'the refused run must not have executed the suite');
   });
+});
+
+// ── the nap, at the OTHER entry point (t829) ────────────────────────────────
+// Both runners take the same lock, so both refuse, so both must hand over the
+// same wait. A nap that existed only on the digest path would leave every
+// `npm test` caller retrying exactly as before.
+
+test('nap: a completed sweep records its wall time for the next refusal to read', () => {
+  // The whole mechanism rests on this file: with nothing recorded, every
+  // refusal falls back to a guess. A run that measures the suite and then says
+  // nothing about how long it took leaves the next caller as blind as before.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  try {
+    fs.mkdirSync(path.join(root, 'scripts'));
+    for (const f of ['run-tests.js', 'test-escapes.js']) {
+      fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+    }
+    fs.writeFileSync(path.join(root, 'stub.test.js'),
+      "require('node:test').test('stub', () => {});\n");
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    const res = withRetry('the recording sweep', () => spawnSync(
+      process.execPath, [path.join(root, 'scripts', 'run-tests.js')],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    ));
+    assert.match(`${res.stdout || ''}`, /TOTALS:/,
+      'ENTER: the sweep never completed, so a missing recording below would say nothing about the writer');
+    const raw = lastRecording(root);
+    assert.ok(raw !== null, 'a completed sweep must leave .test-digest.last, or no refusal can size a wait');
+    assert.match(raw, /^\d+\n?$/,
+      `the recording is read by a sh script with no JSON: one decimal line, nothing else; got ${JSON.stringify(raw)}`);
+    assert.ok(Number(raw.trim()) > 0,
+      'a recorded 0 is indistinguishable from no recording at all, and renders as a ~0 min suite');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('nap: npm test\'s refusal names the suite length and the exact reminder to emit', () => {
+  withFakeLock(String(process.pid), (out) => {
+    assert.match(out, /another suite run is already going/,
+      'ENTER: the run was not refused, so the refusal text below is about nothing');
+    assert.match(out, /of a ~5 min suite/,
+      `the refusal must say how long a run here takes; got ${JSON.stringify(out)}`);
+    assert.match(out, /\[agent:remind in 6m\]/,
+      'the caller must be handed the LITERAL line to emit — "wait for it" is what produced the '
+      + `retry-every-two-minutes loop this replaces; got ${JSON.stringify(out)}`);
+    assert.match(out, /END YOUR TURN/,
+      'and it must say to end the turn, or the caller naps while still being billed');
+  }, { lastMs: 300000 });
+});
+
+test('nap: with no recording npm test still refuses, guessing no suite length', () => {
+  withFakeLock(String(process.pid), (out) => {
+    assert.match(out, /\[agent:remind in 5m\]/,
+      `with nothing recorded the nap falls back to a stated 5m; got ${JSON.stringify(out)}`);
+    assert.ok(!/min suite/.test(out),
+      `nothing was recorded, so the line must not claim a suite length; got ${JSON.stringify(out)}`);
+  });
+});
+
+test('nap: a named-file run records nothing — it never measured the suite', () => {
+  // The suite spawns this runner against explicit files (test-escapes.test.js,
+  // and these subjects), and those runs are a fraction of it. Recording them
+  // would drive the estimate to a couple of seconds every single sweep, and the
+  // refusal would then tell a caller to nap 2m against a 5-minute suite.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  try {
+    fs.mkdirSync(path.join(root, 'scripts'));
+    for (const f of ['run-tests.js', 'test-escapes.js']) {
+      fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+    }
+    const stub = path.join(root, 'stub.test.js');
+    fs.writeFileSync(stub, "require('node:test').test('stub', () => {});\n");
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    const res = withRetry('the named-file run', () => spawnSync(
+      process.execPath, [path.join(root, 'scripts', 'run-tests.js'), stub],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    ));
+    assert.match(`${res.stdout || ''}`, /TOTALS:/,
+      'ENTER: the named-file run never completed, so an absent recording proves nothing');
+    assert.strictEqual(lastRecording(root), null,
+      'a named-file run wrote an estimate: the next refusal would size a whole suite from a stub');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 // The regression this file could NOT catch until now: these tests and
@@ -602,6 +798,7 @@ function runDigest({
   };
   delete env.NODE_TEST_CONTEXT;
   const keep = path.join(home, 'test-failures', 'last.txt');
+  const lastFile = path.join(root, '.test-digest.last');
   if (seed !== undefined) {
     fs.mkdirSync(path.dirname(keep), { recursive: true });
     fs.writeFileSync(keep, seed);
@@ -619,8 +816,26 @@ function runDigest({
       code: res.status,
       keep,
       kept: fs.existsSync(keep) ? fs.readFileSync(keep, 'utf-8') : null,
+      last: fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf-8') : null,
     };
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+// The digest carries the run's own wall time, which is elapsed real time and so
+// cannot be a literal in a fixture. WALL stands in for it and expands to a
+// SHAPE — everything else in the line is still matched byte for byte, anchored
+// at both ends. Relaxing these subjects to a substring check instead would give
+// up exactly what they exist to pin: a line that lost its counts, its tree
+// marker or its failing names would still pass.
+const WALL = '<WALL>';
+const WALL_RE = '\\d+m \\d{2}s';
+
+function assertDigest(actual, expected, message) {
+  const pattern = expected
+    .split(WALL)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join(WALL_RE);
+  assert.match(String(actual), new RegExp(`^${pattern}$`), message);
 }
 
 const PASS_CASE = {
@@ -628,7 +843,7 @@ const PASS_CASE = {
   tap: ['TAP version 13', 'ok 1 - a case', '1..1', '# tests 3', '# pass 3', '# fail 0'].join('\n'),
   exit: 0,
   code: 0,
-  digest: (t) => `[${t}] 3/3 green`,
+  digest: (t) => `[${t}] 3/3 green (${WALL})`,
 };
 
 const DIGEST_CASES = [
@@ -639,7 +854,7 @@ const DIGEST_CASES = [
       '# tests 3', '# pass 2', '# fail 1'].join('\n'),
     exit: 1,
     code: 1,
-    digest: (t, k) => `[${t}] 2/3 green, 1 failing (${k}): a failing case`,
+    digest: (t, k) => `[${t}] 2/3 green, 1 failing (${k}) (${WALL}): a failing case`,
   },
   {
     // No summary at all — the runner died before producing one. The path that
@@ -661,11 +876,41 @@ test('digest: every line the digest can emit names the tree it measured', () => 
     // that never ran, which every assertion below would then be about nothing.
     assert.ok(r.lines.length > 0,
       `ENTER: ${c.what}: the script wrote nothing to stderr, so there is no digest to check`);
-    assert.strictEqual(r.digest, c.digest(r.tree, r.keep),
+    assertDigest(r.digest, c.digest(r.tree, r.keep),
       `${c.what}: the whole digest line, tree marker included — a number with no statement of `
       + 'what it measured is the false-green this marker exists to prevent');
     assert.strictEqual(r.code, c.code,
       `${c.what}: the script still exits with node's code; the marker must not change the verdict`);
+  }
+});
+
+test('nap: the digest line CARRIES the run\'s wall time, on both verdicts', () => {
+  // The recording sizes the next caller's nap; this number tells the CURRENT
+  // caller what it just paid, which is what makes "10k tests is not the same
+  // wait as 1k" checkable rather than folklore. Pinned as its own subject
+  // because the whole-line assertions elsewhere match it through a shape and
+  // would pass over a duration that had quietly become part of the path.
+  for (const c of DIGEST_CASES.filter((x) => x.what !== 'suite did not run')) {
+    const r = runDigest(c);
+    assert.ok(r.lines.length > 0, `ENTER: ${c.what}: the script wrote nothing, so it did not run`);
+    assert.match(r.digest, new RegExp(`\\(${WALL_RE}\\)`),
+      `${c.what}: the digest names no wall time; got ${JSON.stringify(r.digest)}`);
+  }
+});
+
+test('nap: a completed digest run records its wall time, whatever the verdict', () => {
+  // BOTH arms. A recording written only on green leaves the estimate stale for
+  // exactly the branch being re-run most — the red one — and the refusal a
+  // queued hand reads would then be sized from whenever the tree last passed.
+  for (const c of DIGEST_CASES.filter((x) => x.what !== 'suite did not run')) {
+    const r = runDigest(c);
+    assert.ok(r.lines.length > 0, `ENTER: ${c.what}: the script wrote nothing, so it did not run`);
+    assert.ok(r.last !== null,
+      `${c.what}: no .test-digest.last after a completed run — every later refusal then guesses`);
+    assert.match(r.last, /^\d+\n?$/,
+      `${c.what}: the recording is read by both runners as one decimal line; got ${JSON.stringify(r.last)}`);
+    assert.ok(Number(r.last.trim()) > 0,
+      `${c.what}: a recorded 0 reads as "nothing recorded" and renders as a ~0 min suite`);
   }
 });
 
@@ -676,7 +921,7 @@ test("digest: the tree named is the script's own checkout, not the caller's cwd"
   try {
     const r = runDigest({ ...PASS_CASE, cwd: caller });
     assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
-    assert.strictEqual(r.digest, `[${r.tree}] 3/3 green`);
+    assertDigest(r.digest, `[${r.tree}] 3/3 green (${WALL})`);
     assert.ok(!r.digest.includes(path.basename(caller)),
       'the digest must name the tree that ran, never the one that asked — the caller reading its '
       + 'own basename back would confirm exactly the run it cannot distinguish');
@@ -821,8 +1066,8 @@ test('keep: the digest NAMES the preserved file, or nobody can find it', () => {
   assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
   // The WHOLE line. A substring check for the path would also pass on a line
   // that lost the failing NAMES to it — and the names are the half worth more.
-  assert.strictEqual(r.digest,
-    `[${r.tree}] 2/4 green, 2 failing (${r.keep}): the failing subtest; outer suite`,
+  assertDigest(r.digest,
+    `[${r.tree}] 2/4 green, 2 failing (${r.keep}) (${WALL}): the failing subtest; outer suite`,
     'the digest must name the file AND keep the failing names — a file nothing points at is '
     + 'as good as discarded, and a path that evicts the names makes the line worse');
   assert.strictEqual(r.code, 1, 'preserving the output must not change the verdict');
@@ -830,8 +1075,8 @@ test('keep: the digest NAMES the preserved file, or nobody can find it', () => {
 
 test('keep: a GREEN run writes nothing at all', () => {
   const r = runDigest(PASS_CASE);
-  assert.strictEqual(r.digest, `[${r.tree}] 3/3 green`,
-    'the green line must stay exactly as it was — no path, nothing to point at');
+  assertDigest(r.digest, `[${r.tree}] 3/3 green (${WALL})`,
+    'the green line must carry its counts and its wall time and nothing else — no path, nothing to point at');
   assert.strictEqual(r.kept, null,
     'a green run wrote a failure dump: the file would then be a LIE the next reader trusts, '
     + 'showing a failure that is not current');
@@ -845,7 +1090,7 @@ test('keep: a green run removes the dump an earlier failure left', () => {
   // about the run it just made and reads a regression that is already fixed —
   // twice on t654/t655. The green arm is where the file stops being true.
   const r = runDigest({ ...PASS_CASE, seed: SENTINEL });
-  assert.strictEqual(r.digest, `[${r.tree}] 3/3 green`,
+  assertDigest(r.digest, `[${r.tree}] 3/3 green (${WALL})`,
     'ENTER: the green arm did not run, so nothing below is about a green run');
   assert.strictEqual(r.kept, null,
     'a green run left the older failure dump in place, which the next reader takes for evidence '
@@ -923,8 +1168,8 @@ test('keep: the dump lands outside the measured tree, even when that is a worktr
     const keep = path.join(home, 'test-failures', 'last.txt');
     assert.ok(fs.existsSync(keep),
       'ENTER: nothing was preserved when measuring a worktree, so the assertions below are vacuous');
-    assert.strictEqual(r.digest,
-      `[${path.basename(wt)}] 2/4 green, 2 failing (${keep}): the failing subtest; outer suite`);
+    assertDigest(r.digest,
+      `[${path.basename(wt)}] 2/4 green, 2 failing (${keep}) (${WALL}): the failing subtest; outer suite`);
     const kept = fs.readFileSync(keep, 'utf-8');
     assert.match(kept, /^ *not ok 1 - the failing subtest$/m,
       'ENTER: the failing row did not survive, so the header check below proves nothing');
@@ -969,8 +1214,8 @@ test('keep: an unwritable destination costs the dump, never the digest', () => {
     ));
     const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
     assert.ok(lines.length > 0, 'ENTER: the script wrote no stderr at all');
-    assert.strictEqual(lines[lines.length - 1],
-      `[${path.basename(root)}] 2/4 green, 2 failing: the failing subtest; outer suite`,
+    assertDigest(lines[lines.length - 1],
+      `[${path.basename(root)}] 2/4 green, 2 failing (${WALL}): the failing subtest; outer suite`,
       'when the dump cannot be written the digest must be exactly the old line — and must NOT '
       + 'name a file that is not there, which sends the reader looking for evidence that does '
       + 'not exist');
@@ -1136,8 +1381,8 @@ test('keep: the digest shows the home-relative path a reader can actually type',
     ));
     const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
     assert.ok(lines.length > 0, 'ENTER: the script wrote nothing to stderr');
-    assert.strictEqual(lines[lines.length - 1],
-      `[${path.basename(root)}] 2/4 green, 2 failing (~/.clodex/test-failures/last.txt): `
+    assertDigest(lines[lines.length - 1],
+      `[${path.basename(root)}] 2/4 green, 2 failing (~/.clodex/test-failures/last.txt) (${WALL}): `
       + 'the failing subtest; outer suite',
       'under $HOME the digest must abbreviate to ~ — it is the only form users see, and the raw '
       + 'form spends ~20 more chars of a 180-char line that the failing names are competing for');
@@ -1240,7 +1485,7 @@ test('tree: a `tree` payload measures THAT worktree, and the digest names it', (
     // The WHOLE line: a substring check for the worktree basename would also
     // match a spawn error naming the fixture path, i.e. pass in the case where
     // nothing was measured at all.
-    assert.strictEqual(r.digest, `[${path.basename(wt)}] 3/3 green`,
+    assertDigest(r.digest, `[${path.basename(wt)}] 3/3 green (${WALL})`,
       'the digest must name the requested worktree — naming the root here is the original bug, '
       + 'and it is indistinguishable from a real pass');
     assert.strictEqual(r.code, 0);
@@ -1255,7 +1500,7 @@ test('tree: no `tree` field still measures the team root, unchanged', () => {
   try {
     const r = runWithPayload(root, '{}', env);
     assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
-    assert.strictEqual(r.digest, `[${path.basename(root)}] 3/3 green`);
+    assertDigest(r.digest, `[${path.basename(root)}] 3/3 green (${WALL})`);
   } finally { fs.rmSync(base, { recursive: true, force: true }); }
 });
 

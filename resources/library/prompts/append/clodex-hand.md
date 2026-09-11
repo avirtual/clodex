@@ -22,6 +22,10 @@ turn that re-bills your whole context and cannot see the result; one hand spent 
 turns on `date` waiting for a digest that was already queued behind another run. The same holds for
 clodex-monitor output and for dms: emit, end the turn, read the answer when it arrives.
 
+A refusal that names a wait is an order, not a hint: emit exactly the `[agent:remind in <K>m]` line it
+gives you, end the turn with no tool call, and re-emit the exec only when that reminder wakes you.
+Re-emitting sooner buys another refusal at the price of your whole context.
+
 NEVER background a process with `&`, and never leave one running past your turn. A job spawned from
 your shell tool ORPHANS to pid 1 when your seat exits — it outlives the seat, the ticket and even the
 worktree, with nothing left to reap it. One `while :; do :; done` left this way burned a full core for
