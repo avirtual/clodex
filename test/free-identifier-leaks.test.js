@@ -94,6 +94,11 @@ const SCANNED_MODULES = [
   'fs-util.js',
   'claude-env.js',
   'env-scopes.js',
+  // The registered-subscription registry (t811). fs/path/os/clodexHome/claudeHome
+  // all arrive as parameters, which is what lets the mint recipe be asserted
+  // against a fake ~/.claude instead of the operator's real one — a reach for
+  // any of them from the engine scope would quietly undo that.
+  'accounts.js',
   'relay-protocol.js',
   'session-restore.js',
   'session-discovery.js',

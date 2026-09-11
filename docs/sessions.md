@@ -122,6 +122,34 @@ here from a baked constant in session-manager.js (t676), so it now sits ABOVE
 `process.env` rather than below it, and a seat spawned through create()'s
 scope-store-unreachable degrade path does not carry it.
 
+**Accounts (accounts.js).** A registered Claude subscription is a label plus the
+`CLAUDE_CONFIG_DIR` a seat on it spawns with. The registry is
+`~/.clodex/accounts.json` (`0600`, `{ accounts: [{ label, email, configDir, plan,
+addedAt }] }`); labels match `[a-z0-9][a-z0-9-]{0,31}` and are unique. The
+`default` account is IMPLICIT — label `default`, configDir `~/.claude`, never
+written to the file, always first in `list()` — so an unconfigured seat is the
+absence of the var, not a stored row. Adding an account with no `configDir`
+MINTS one at `~/.clodex/accounts/<label>/`: mode 0700, a fresh minimal
+`.claude.json` (`hasCompletedOnboarding`, the theme from `~/.claude.json`, empty
+`projects` — never a copy of the real 700KB file), symlinks for `projects`,
+`plugins`, `skills`, `agents` and `commands` into `~/.claude` so transcripts and
+the roster are shared, and a copy of `settings.json` (re-copied on demand by
+`accounts:resync`). Minting is idempotent, so the login a dir accumulates
+survives; `accounts:remove` drops the registry row and never the dir.
+Selection is per SEAT through the ordinary session env, so a move is an env edit
+plus a restart: `accounts:move-by-model` does that in bulk for every live claude
+seat whose `--model` selects the given model (`fable` matches any
+`claude-fable-*` id and back), one at a time and awaited, skipping — with a
+literal reason — a seat that is not claude, is on another model, is already on
+that account, or is MID-TURN. Every `session:list` row carries `account`, read
+off the persisted entry's env (a dir outside the registry shows as its basename,
+so a hand-typed `~/sub-2` still reads `sub-2`). `create()` refuses to spawn when
+the merged env names a `CLAUDE_CONFIG_DIR` that is not a directory — the CLI
+would otherwise mint an empty config there and loop on onboarding silently. Like
+session env and exec grants the whole family is LOCAL-only, and by the
+registration-is-the-capability rule: the `accounts:*` handlers register only
+under `enableAccounts`, which web-host.js declines.
+
 **Library scoping (skills + agents).** The `~/.clodex/{skills,agents}/*.md`
 libraries stay FLAT; two OPTIONAL frontmatter keys scope a file:
 `workspace: <name>` (visible only in that workspace — matched on its DISPLAY

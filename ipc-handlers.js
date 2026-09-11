@@ -69,7 +69,8 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
-    enableDrawerServices, enableLocalTerminal, enableConsole, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
+    enableDrawerServices, enableLocalTerminal, enableConsole, enableAccounts, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
+    accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
   } = deps;
@@ -1191,6 +1192,48 @@ function registerIpcHandlers(deps) {
       return { ok: false, error: String((e && e.message) || e) };
     }
   });
+
+  if (enableAccounts) {
+    handle('accounts:list', () => {
+      if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
+      return { ok: true, accounts: accounts.list() };
+    });
+    handle('accounts:add', (_e, params) => {
+      if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
+      const p = params || {};
+      try {
+        return { ok: true, account: accounts.add({ label: p.label, email: p.email, plan: p.plan, configDir: p.configDir }) };
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      }
+    });
+    handle('accounts:remove', (_e, params) => {
+      if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
+      try {
+        const removed = accounts.remove((params || {}).label);
+        return removed ? { ok: true } : { ok: false, error: `unknown account "${(params || {}).label}"` };
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      }
+    });
+    handle('accounts:resync', (_e, params) => {
+      if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
+      try {
+        return accounts.resync((params || {}).label);
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      }
+    });
+    handle('accounts:move-by-model', async (_e, params) => {
+      if (!moveAccountByModel) return { ok: false, error: 'accounts not supported on this host' };
+      const p = params || {};
+      try {
+        return await moveAccountByModel(p.model, p.label, workspaceOfSender(_e));
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e), moved: [], skipped: [] };
+      }
+    });
+  }
 
   handle('envDefaults:get', () => {
     if (!envDefaults) return { ok: false, error: 'env defaults not supported on this host' };

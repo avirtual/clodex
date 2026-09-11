@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- **Registered subscriptions**: Clodex keeps a list of Claude accounts
+  (`~/.clodex/accounts.json`), mints an isolated config dir per account that
+  shares transcripts, plugins and skills with `~/.claude`, labels every session
+  row with its account, and can move every seat on a given model to another
+  account in one step. The Preferences pane and dialog selectors land next.
+
 ## 5.60.0 — 2026-09-11 — Team sandboxes: a box per team, built from any ref, ready with seeded seats
 
 - **Team templates keep their brief when edited**: the template editor now lists the owning team's own append prompts (e.g. `team-project`) as a checked section, so saving a team template no longer silently empties `appendPromptFiles`.

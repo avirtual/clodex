@@ -195,6 +195,8 @@ function createEngine({ userDataPath, seams = {}, log }) {
 
   const enableConsole = seams.enableConsole !== false;
 
+  const enableAccounts = seams.enableAccounts !== false;
+
   // The browser frontend's host, for peers that want to REACH it (t30). A
   // GETTER, not a value: web-host.js is started by headless-main.js AFTER
   // createEngine returns, so there is nothing to pass at construction time.
@@ -859,6 +861,7 @@ const { mergeClaudeSystemPrompt, mergeCodexInstructions, parseCtxFile } = requir
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, jsonlToMessages, extractText } = require('./transcript');
 const { initStores } = require('./stores');
+const { createAccounts, sweepAccountMove } = require('./accounts');
 const { restoreSessionsForWorkspace: restoreSessionsCore } = require('./session-restore');
 const { CLAUDE_TOOLS, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED, DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS } = require('./catalogs');
 
@@ -1312,6 +1315,7 @@ const SessionManager = createSessionManager({
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,
   getEnvScopes: () => envScopes,
+  getAccounts: () => accounts,
   getPromptLibrary: () => promptLibrary,
   getAgentLibrary: () => agentLibrary,
   getRemoteServer: () => remoteServer,
@@ -1673,6 +1677,17 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
+}
+
+function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
+  return sweepAccountMove({
+    model,
+    label,
+    liveSessions: manager.sessions.values(),
+    getEntry: (name) => persistence.get(name),
+    configDirFor: (l) => accounts.configDirFor(l),
+    applyArgs: (name, patch, entryWs) => applySessionArgs(name, patch, entryWs || wsId),
+  });
 }
 
 const SKILL_SWEEP_HEAD = 256 * 1024;
@@ -2122,6 +2137,8 @@ const toolCache = createToolCache({ whichBin });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
 
+  const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
+
   try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();
@@ -2318,6 +2335,7 @@ const toolCache = createToolCache({ whichBin });
     enableDrawerServices,
     enableLocalTerminal,
     enableConsole,
+    enableAccounts,
     syncTerminalReports,
     getCtlService: () => ctlService,
     getBashLive: () => bashLive,
@@ -2341,6 +2359,7 @@ const toolCache = createToolCache({ whichBin });
     fetchSessionFiles, fetchFilePeek, fetchFileDiff, writeFilePeek, resolveFilePath,
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
+    accounts, moveAccountByModel,
     sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode,
     readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,

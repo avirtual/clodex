@@ -497,7 +497,7 @@ function createSessionManager(deps) {
     writeBundlePlugins,
     getPluginBundles,
     readSystemPromptBody,
-    getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
+    getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
   } = deps;
@@ -1271,6 +1271,13 @@ function createSessionManager(deps) {
         });
       } catch {
         mergedEnv = { ...baseEnv };
+      }
+
+      const accountDir = mergedEnv.CLAUDE_CONFIG_DIR;
+      if (accountDir) {
+        let ok = false;
+        try { ok = fs.statSync(accountDir).isDirectory(); } catch { ok = false; }
+        if (!ok) throw new Error(`account dir ${accountDir} does not exist`);
       }
 
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
@@ -3516,6 +3523,15 @@ function createSessionManager(deps) {
           return open ? open.id : null;
         } catch { return null; }
       };
+      const accountsStore = (getAccounts && getAccounts()) || null;
+      const accountFromPersistedEnv = (name) => {
+        if (!accountsStore) return 'default';
+        try {
+          const entry = getPersistence().get(name);
+          const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
+          return dir ? (accountsStore.labelFor(dir) || 'default') : 'default';
+        } catch { return 'default'; }
+      };
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
@@ -3532,6 +3548,7 @@ function createSessionManager(deps) {
         noWire: !!s.noWire,
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
+        account: accountFromPersistedEnv(s.name),
         pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }

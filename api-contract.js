@@ -462,6 +462,11 @@ const API_CONTRACT = [
   { name: 'envScopesDelete', kind: 'invoke', channel: 'envScopes:delete' },
   { name: 'envDefaultsGet', kind: 'invoke', channel: 'envDefaults:get' },
   { name: 'envDefaultsRestore', kind: 'invoke', channel: 'envDefaults:restore' },
+  { name: 'accountsList', kind: 'invoke', channel: 'accounts:list' },
+  { name: 'accountsAdd', kind: 'invoke', channel: 'accounts:add' },
+  { name: 'accountsRemove', kind: 'invoke', channel: 'accounts:remove' },
+  { name: 'accountsResync', kind: 'invoke', channel: 'accounts:resync' },
+  { name: 'accountsMoveByModel', kind: 'invoke', channel: 'accounts:move-by-model' },
   // Plugin transport. EXACTLY these five rows —
   // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
   // multiplexed channel over an engine-owned dispatch Map: the injected

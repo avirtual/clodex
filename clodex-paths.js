@@ -49,7 +49,7 @@
 // targets ~/.clodex/notices/<name>/queue.jsonl, and for the same reason: a
 // notice is typically enqueued at the spawn AFTER the exit that rm -rf'd the
 // run dir, and must survive the next one too),
-// agents/, skills/, library/,
+// agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
 // bootstrap like every other entry in this list), clodex.log,

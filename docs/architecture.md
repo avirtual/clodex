@@ -250,6 +250,13 @@ bundle), whose packaged form is the Docker image under
   does pick up an external write — it reads the mode through a live selector and
   watches the settings directory. The legacy `voiceEnabled` sibling is reported
   and never merged.
+- **accounts.js** — the registered-subscription registry (`~/.clodex/accounts.json`,
+  0600) plus the mint recipe for `~/.clodex/accounts/<label>/`, the isolated
+  `CLAUDE_CONFIG_DIR` a seat on that account spawns with. The `default` account is
+  implicit — label `default`, configDir `~/.claude`, never stored, always first in
+  `list()`. `labelFor(configDir)` is what puts an `account` on every `session:list`
+  row. Deps injected (fs/path/os/clodexHome/claudeHome), so it unit-tests under
+  plain node; no electron.
 - **env-scopes.js** — merges the GUI-managed environment scopes over the base
   process env for a wrapper PTY, and is the single source for the canonical
   precedence. Pure fs/path, no electron.
