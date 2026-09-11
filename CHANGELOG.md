@@ -16,6 +16,7 @@ blocks a release.
 - **Preferences ▸ Accounts fits the dialog**: the add form, config-dir field and
   "Move seats on model" row lay out on their own lines with the dialog's dark
   controls, instead of one select swallowing the row.
+- **Ticket hands cannot stage the whole tree**: a generated hook denies `git add -A`/`--all`/`.`/`-u` and `git commit -a` on a ticket seat, with a reason telling the hand to add the paths it edited; every other seat is unaffected.
 
 ## 5.61.0 — 2026-09-11 — Registered subscriptions: accounts, a select on every seat, and a quota chip per account
 

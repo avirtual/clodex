@@ -177,6 +177,85 @@ JSEOF
 exit 0
 `, { mode: 0o700 });
 
+    const guardScriptPath = pathFor(REGISTRY_DIR, name, 'bashGuardScript');
+    fs.writeFileSync(guardScriptPath, `#!/bin/bash
+[ -n "$CLODEX_TICKET" ] || exit 0
+IN="$(cat)"
+${INTERP} - "$CLODEX_TICKET" "$IN" <<'JSEOF' 2>/dev/null
+try {
+  const ticket = process.argv[2];
+  if (!ticket) process.exit(0);
+  let d = null;
+  try { d = JSON.parse(process.argv[3]); } catch (e) { process.exit(0); }
+  const cmd = d && d.tool_input && d.tool_input.command;
+  if (typeof cmd !== "string" || !cmd) process.exit(0);
+  const BS = String.fromCharCode(92);
+  const segs = [[]];
+  let tok = "";
+  let had = false;
+  let q = null;
+  const push = () => { if (had) segs[segs.length - 1].push(tok); tok = ""; had = false; };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd.charAt(i);
+    if (q) {
+      if (c === q) { q = null; continue; }
+      if (q === '"' && c === BS && i + 1 < cmd.length) { i++; tok += cmd.charAt(i); had = true; continue; }
+      tok += c; had = true; continue;
+    }
+    if (c === "'" || c === '"') { q = c; had = true; continue; }
+    if (c === BS && i + 1 < cmd.length) { i++; tok += cmd.charAt(i); had = true; continue; }
+    if (c === String.fromCharCode(10)) { push(); segs.push([]); continue; }
+    if (c <= " ") { push(); continue; }
+    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}") { push(); segs.push([]); continue; }
+    tok += c; had = true;
+  }
+  push();
+  const ADD_DENY = ["-A", "--all", "--no-ignore-removal", "-u", "--update"];
+  const ADD_PATHS = [".", "./", ":/", "*"];
+  const TAKES_ARG = "mcCFt";
+  const PREFIX = ["command", "exec", "env"];
+  let bad = false;
+  for (const seg of segs) {
+    let i = 0;
+    while (i < seg.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i]) || PREFIX.indexOf(seg[i]) >= 0)) i++;
+    if (!seg[i] || seg[i].split("/").pop() !== "git") continue;
+    i++;
+    while (i < seg.length) {
+      const t = seg[i];
+      if (t === "-C" || t === "-c") { i += 2; continue; }
+      if (t.charAt(0) === "-") { i++; continue; }
+      break;
+    }
+    const sub = seg[i];
+    const rest = seg.slice(i + 1);
+    if (sub === "add") {
+      for (const t of rest) {
+        if (ADD_DENY.indexOf(t) >= 0 || ADD_PATHS.indexOf(t) >= 0) { bad = true; break; }
+        if (/^-[^-]+$/.test(t) && /[Au]/.test(t)) { bad = true; break; }
+      }
+    } else if (sub === "commit") {
+      for (const t of rest) {
+        if (t === "--all") { bad = true; break; }
+        if (!/^-[^-]+$/.test(t)) continue;
+        let hit = false;
+        for (const ch of t.slice(1)) {
+          if (ch === "a") { hit = true; break; }
+          if (TAKES_ARG.indexOf(ch) >= 0) break;
+        }
+        if (hit) { bad = true; break; }
+      }
+    }
+    if (bad) break;
+  }
+  if (!bad) process.exit(0);
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: {
+    hookEventName: "PreToolUse", permissionDecision: "deny",
+    permissionDecisionReason: "ticket " + ticket + ": stage only the paths you edited (git add <path>…) — a whole-tree add sweeps a subagent's in-flight revert into your commit." } }));
+} catch (e) {}
+JSEOF
+exit 0
+`, { mode: 0o700 });
+
     const ackPath = pathFor(REGISTRY_DIR, name, 'acks');
     const ackScriptPath = pathFor(REGISTRY_DIR, name, 'acksScript');
     fs.writeFileSync(ackScriptPath, `#!/bin/bash
@@ -485,6 +564,7 @@ JSEOF
           matcher: 'Bash',
           hooks: [
             { type: 'command', command: liveScriptPath },
+            { type: 'command', command: guardScriptPath },
           ]
         }],
         PostToolUse: [{

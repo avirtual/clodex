@@ -897,8 +897,9 @@ test('the console hook prunes the OLDEST records past its cap', () => {
 // A PreToolUse that emits `hookSpecificOutput.updatedInput` or exits 2 alters
 // or blocks the Bash call, which is the difference between a broken preview and
 // a broken agent. Measured against claude 2.1.260: with the hook script missing
-// entirely the Bash call still ran and the model still got its output, so the
-// risk is never absence — it is a hook that SPEAKS. These assertions keep it mute.
+// entirely the Bash call still ran and the model still got its output. These
+// assertions keep THIS hook mute; bash-guard.sh, registered behind it, speaks by
+// design and is pinned separately.
 test('the live observer is registered for Bash only, ahead of the tool call', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
@@ -906,10 +907,55 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
   const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'settings'), 'utf-8'));
   const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'bashLiveScript');
 
+  const guardPath = pathFor(REGISTRY_DIR, 'agent1', 'bashGuardScript');
+
+  // The ORDER is the assertion, not merely the membership: the observer records
+  // what a seat TRIED, so a guard that denied first would drop the denied call
+  // out of the live console and leave the deny unexplainable from the preview.
   assert.deepStrictEqual(settings.hooks.PreToolUse, [{
     matcher: 'Bash',
-    hooks: [{ type: 'command', command: scriptPath }],
+    hooks: [
+      { type: 'command', command: scriptPath },
+      { type: 'command', command: guardPath },
+    ],
   }], 'a matcher-less entry here would run this before EVERY tool call, not just Bash');
+});
+
+// ─── The ticket-seat whole-tree `git add` guard ───────────────────────────
+// The SECOND PreToolUse Bash hook, and the one that is allowed to speak: it
+// returns a `permissionDecision: deny` for a whole-tree stage on a ticket seat.
+// Hands 811 and 812 each swept a red-proof subagent's in-flight revert into a
+// commit with `git add -A`; the hand prompt forbids it, this enforces it.
+// The runtime table lives in test/bash-guard.test.js — this pins the generated
+// bytes and the gate that keeps every NON-ticket seat untouched.
+test('the git-add guard is generated, gated on CLODEX_TICKET, and exits 0', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const guardPath = pathFor(REGISTRY_DIR, 'agent1', 'bashGuardScript');
+  const body = fs.readFileSync(guardPath, 'utf-8');
+
+  // The gate is the FIRST line, before `cat`: a lead, an ios-lead or a bash tab
+  // carries no CLODEX_TICKET, and must not even pay the stdin read — let alone
+  // reach a code path that can emit a deny.
+  assert.match(body.split('\n')[1], /^\[ -n "\$CLODEX_TICKET" \] \|\| exit 0$/,
+    'the ticket gate must be the first statement, ahead of the stdin read');
+  assert.match(body, /exit 0\n$/, 'ends on exit 0 — a nonzero PreToolUse is a different, cruder refusal');
+  assert.ok(!/require\('\.\//.test(body), 'no relative require inside a generated body');
+  assert.match(body, /"permissionDecision": *"deny"|permissionDecision: "deny"/,
+    'the deny shape is the contract with the CLI, not an exit code');
+
+  const payload = JSON.stringify({
+    hook_event_name: 'PreToolUse', tool_name: 'Bash',
+    tool_input: { command: 'git add -A' },
+  });
+  const unticketed = cp.spawnSync('bash', [guardPath], {
+    input: payload, encoding: 'utf-8',
+    env: { ...process.env, CLODEX_TICKET: '' },
+  });
+  assert.strictEqual(unticketed.status, 0);
+  assert.strictEqual(unticketed.stdout, '',
+    'a seat with no ticket marker gets NO deny, on the very command a ticket seat is refused');
 });
 
 test('the live observer emits nothing, exits 0, and records the call it is about to see', () => {

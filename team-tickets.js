@@ -5173,7 +5173,7 @@ function createTicketMethods(deps, shared) {
             // is agent-writable, and honoring it would let one silently blind the
             // wire that measures what this seat costs. It also cannot be dropped —
             // the plugin list after it is positional.
-            shape.env, true,
+            { ...shape.env, CLODEX_TICKET: ticket.id }, true,
             false, shape.plugins,
           );
           this._applyTemplatePersistence(seat.name, shape.tpl);
