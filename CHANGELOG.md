@@ -17,6 +17,12 @@ blocks a release.
   them) and keeps any append stem it could not draw, so saving the dialog — an
   account change, a tool toggle — no longer silently strips the team brief from
   a lead's record.
+- A ticket whose merge came back green is closed out by the loop itself (seat
+  retired, worktree removed, branch deleted) and the MERGED notice reports that
+  final state in one message; `task accept` is only owed where the loop could
+  not close out, and is a no-op on a ticket it already did. Verdict notices no
+  longer end with a step or a reply address for a reviewer seat that is already
+  gone.
 
 ## 5.62.1 — 2026-09-11 — teams protocol: role binding by name, duplicate-intent echo, exec-grant honesty, locked-down sandbox worker
 
