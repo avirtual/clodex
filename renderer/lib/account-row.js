@@ -2,6 +2,18 @@
 
 const { DEFAULT_LABEL, abbrevHome } = require('./account-select');
 
+const MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'];
+
+function modelOptions(rows) {
+  const out = new Set(MODEL_ALIASES);
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!r || typeof r !== 'object' || r.type !== 'claude') continue;
+    const m = String(r.model == null ? '' : r.model);
+    if (m) out.add(m);
+  }
+  return [...out];
+}
+
 function accountRowView(account, seats, home) {
   const a = (account && typeof account === 'object') ? account : {};
   const label = String(a.label == null ? '' : a.label);
@@ -68,4 +80,4 @@ function buildAccountRow(doc, view) {
   return { row, login, move, resync, remove };
 }
 
-module.exports = { accountRowView, buildAccountRow };
+module.exports = { accountRowView, buildAccountRow, modelOptions, MODEL_ALIASES };

@@ -138,12 +138,18 @@ the roster are shared, and a copy of `settings.json` (re-copied on demand by
 survives; `accounts:remove` drops the registry row and never the dir.
 Selection is per SEAT through the ordinary session env, so a move is an env edit
 plus a restart: `accounts:move-by-model` does that in bulk for every live claude
-seat whose `--model` selects the given model (`fable` matches any
+seat whose EFFECTIVE model selects the given model (`fable` matches any
 `claude-fable-*` id and back), one at a time and awaited, skipping — with a
 literal reason — a seat that is not claude, is on another model, is already on
-that account, or is MID-TURN. Every `session:list` row carries `account`, read
+that account, or is MID-TURN. Effective means the `--model` flag when there is
+one and otherwise the `model` key of the seat's CURRENT config dir's
+`settings.json` (read once per dir per sweep), so a seat carrying only
+`--dangerously-skip-permissions` is selected by the model it actually runs
+rather than skipped as model-less; a seat with neither says so in its reason.
+Every `session:list` row carries `account`, read
 off the persisted entry's env (a dir outside the registry shows as its basename,
-so a hand-typed `~/sub-2` still reads `sub-2`). `create()` refuses to spawn when
+so a hand-typed `~/sub-2` still reads `sub-2`), and a claude row also carries
+`model` — that same effective model, `null` on a non-claude row. `create()` refuses to spawn when
 the merged env names a `CLAUDE_CONFIG_DIR` that is not a directory — the CLI
 would otherwise mint an empty config there and loop on onboarding silently. Like
 session env and exec grants the whole family is LOCAL-only, and by the
@@ -161,7 +167,7 @@ account's `CLAUDE_CONFIG_DIR`, then sends `claude /login` through the
 inject-queue like `openInstallSession` does — which is why `create()`'s
 missing-dir guard is claude-only: refusing that bash spawn would make an
 unminted dir unfixable from the UI. **Move** takes its model from a select of
-the `--model` seen on live claude seats plus the four aliases, and reports
+the `model` on live claude `session:list` rows plus the four aliases, and reports
 `moved N · skipped: name (reason), …` behind a confirm, since every matching
 seat restarts. Each restart kills the PTY, which drops the sidebar row, so the
 sweep pushes a `reattach` context-action per MOVED seat exactly as every other

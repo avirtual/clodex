@@ -24,7 +24,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createAccounts, modelOfArgs, modelSelects } = require('../accounts');
+const { createAccounts, modelOfArgs, modelSelects, effectiveModel, sweepAccountMove } = require('../accounts');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A fake home with the shape the mint recipe reads: ~/.claude/{projects,
@@ -390,4 +390,106 @@ test('labelResolver(): one registry read answers many dirs, with labelFor\'s ans
   fs.rmSync(path.join(accounts.registryFile));
   assert.strictEqual(resolve('/tmp/registered-2'), 'sub-2', 'the map was built up front');
   assert.strictEqual(accounts.labelFor('/tmp/registered-2'), 'registered-2', 'ENTER: labelFor really does re-read');
+});
+
+// --- t816: the EFFECTIVE model ------------------------------------------------
+//
+// A seat with no `--model` flag is not model-less: it runs whatever its config
+// dir's settings.json names, and that is the shape the operator's own seats
+// have. Selecting on the flag alone silently skipped them while reporting a
+// reason ("model fable not selected") that read like a deliberate exclusion.
+
+test('settingsModelResolver(): the `model` key of a dir\'s settings.json, memoized per dir', () => {
+  const { accounts, clodexHome, claudeHome } = fixture();
+  const sub = path.join(clodexHome, 'accounts', 'sub-2');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(path.join(sub, 'settings.json'), JSON.stringify({ model: 'claude-fable-5-1[1m]' }));
+  fs.writeFileSync(path.join(claudeHome, 'settings.json'), JSON.stringify({ model: 'claude-opus-5' }));
+
+  const resolve = accounts.settingsModelResolver();
+  assert.strictEqual(resolve(sub), 'claude-fable-5-1[1m]');
+  // The empty dir is the DEFAULT account: a seat carrying no CLAUDE_CONFIG_DIR
+  // runs out of ~/.claude, so '' must not mean "no model".
+  assert.strictEqual(resolve(''), 'claude-opus-5');
+  assert.strictEqual(resolve('/nope/missing'), '', 'an unreadable settings.json is no model, not a throw');
+
+  // Read at most once per dir: the sweep asks for the same dir once per seat on
+  // it, and a per-seat read would be one stat+parse per row.
+  fs.writeFileSync(path.join(sub, 'settings.json'), JSON.stringify({ model: 'claude-haiku-5' }));
+  assert.strictEqual(resolve(sub), 'claude-fable-5-1[1m]', 'the memo answered, not the file');
+  assert.strictEqual(
+    accounts.settingsModelResolver()(sub), 'claude-haiku-5',
+    'ENTER: a FRESH resolver really does re-read — the line above was a memo hit, not a dead file',
+  );
+});
+
+test('settingsModelResolver(): a settings.json with no `model` key, and a non-string one, are both \'\'', () => {
+  const { accounts, claudeHome } = fixture();
+  // fixture()'s settings.json is `{"defaultMode":"acceptEdits"}` — a real file,
+  // parsed fine, with no model in it.
+  assert.strictEqual(accounts.settingsModelResolver()(claudeHome), '');
+  fs.writeFileSync(path.join(claudeHome, 'settings.json'), JSON.stringify({ model: { id: 'opus' } }));
+  assert.strictEqual(accounts.settingsModelResolver()(claudeHome), '');
+  fs.writeFileSync(path.join(claudeHome, 'settings.json'), 'not json at all');
+  assert.strictEqual(accounts.settingsModelResolver()(claudeHome), '');
+});
+
+test('effectiveModel: the flag WINS over settings.json, and settings.json answers when there is no flag', () => {
+  const settingsModelFor = (dir) => (dir === '/minted/sub-2' ? 'claude-fable-5-1[1m]' : 'claude-opus-5');
+  const of = (entry) => effectiveModel(entry, { settingsModelFor });
+
+  assert.strictEqual(of({ extraArgs: ['--model', 'claude-opus-5'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } }), 'claude-opus-5');
+  assert.strictEqual(of({ extraArgs: ['--dangerously-skip-permissions'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } }), 'claude-fable-5-1[1m]');
+  // No env → the default account's settings.json, which the resolver reaches
+  // through the empty dir.
+  assert.strictEqual(of({ extraArgs: [] }), 'claude-opus-5');
+  // The dir read is the seat's CURRENT account, not the one it was minted on: a
+  // minted dir copies settings.json once and drifts from then on.
+  assert.strictEqual(of({ extraArgs: [], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } }), 'claude-fable-5-1[1m]');
+
+  // No persisted entry at all is NOT "on the default account": there is no
+  // respawn recipe to read a config dir out of, so it stays unselectable rather
+  // than inheriting ~/.claude's model and being swept into a move.
+  assert.strictEqual(effectiveModel(null, { settingsModelFor }), '');
+  assert.strictEqual(effectiveModel({ extraArgs: [] }), '', 'no resolver → the flag alone, never a throw');
+});
+
+// The sweep's selection, as a table. It lives here rather than beside the other
+// sweepAccountMove scenarios in accounts-ipc.test.js because the claim is about
+// effectiveModel above, not about the sweep's restart bookkeeping.
+test('sweep selects on the EFFECTIVE model: flag, else the config dir\'s settings.json', async () => {
+  const rows = [
+    { name: 'flag-fable', extraArgs: ['--model', 'claude-fable-5-1[1m]'], settings: 'claude-opus-5', moves: true },
+    { name: 'settings-fable', extraArgs: [], settings: 'claude-fable-5-1[1m]', moves: true },
+    { name: 'no-model-anywhere', extraArgs: [], settings: '', moves: false,
+      reason: 'model fable not selected (no --model flag and no settings.json model)' },
+    { name: 'flag-opus', extraArgs: ['--model', 'claude-opus-5'], settings: 'fable', moves: false,
+      reason: 'model fable not selected' },
+  ];
+  // Each row gets its OWN config dir, so `settings` is a per-seat literal and
+  // the resolver is keyed the way the real one is.
+  const entries = {};
+  const settings = {};
+  for (const r of rows) {
+    entries[r.name] = { extraArgs: r.extraArgs, env: { CLAUDE_CONFIG_DIR: `/minted/${r.name}` } };
+    settings[`/minted/${r.name}`] = r.settings;
+  }
+  const restarted = [];
+  const res = await sweepAccountMove({
+    model: 'fable',
+    label: 'sub-2',
+    liveSessions: rows.map((r) => ({ name: r.name, type: 'claude', activityState: 'idle' })),
+    getEntry: (n) => entries[n],
+    configDirFor: () => '/minted/sub-2',
+    settingsModelFor: (dir) => settings[dir] || '',
+    applyArgs: async (name) => { restarted.push(name); return { ok: true, restarted: true }; },
+  });
+
+  assert.deepStrictEqual(res.moved, ['flag-fable', 'settings-fable']);
+  // ENTER, and the whole ticket: the seat with no --model flag, running fable
+  // through settings.json, is the one the flag-only sweep reported as "model
+  // fable not selected" and left behind.
+  assert.ok(res.moved.includes('settings-fable'), 'the unpinned fable seat moved');
+  assert.deepStrictEqual(res.skipped, rows.filter((r) => !r.moves).map((r) => ({ name: r.name, reason: r.reason })));
+  assert.deepStrictEqual(restarted, ['flag-fable', 'settings-fable'], 'and only those two PTYs were killed');
 });

@@ -16,6 +16,16 @@ function modelOfArgs(argv) {
   return '';
 }
 
+function effectiveModel(entry, { settingsModelFor } = {}) {
+  if (!entry || typeof entry !== 'object') return '';
+  const e = entry;
+  const arg = modelOfArgs(e.extraArgs);
+  if (arg) return arg;
+  if (typeof settingsModelFor !== 'function') return '';
+  const env = (e.env && typeof e.env === 'object') ? e.env : {};
+  return String(settingsModelFor(env.CLAUDE_CONFIG_DIR || '') || '');
+}
+
 function modelSelects(argModel, wanted) {
   const have = String(argModel || '');
   const want = String(wanted || '');
@@ -104,6 +114,24 @@ function createAccounts(deps = {}) {
   function labelResolver() {
     const rows = load();
     return (configDir) => resolveLabel(rows, configDir);
+  }
+
+  function readSettingsModel(configDir) {
+    const dir = String(configDir || '') || claudeHome;
+    try {
+      const obj = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf-8'));
+      if (obj && typeof obj.model === 'string') return obj.model;
+    } catch {}
+    return '';
+  }
+
+  function settingsModelResolver() {
+    const memo = new Map();
+    return (configDir) => {
+      const key = String(configDir || '');
+      if (!memo.has(key)) memo.set(key, readSettingsModel(key));
+      return memo.get(key);
+    };
   }
 
   function readTheme() {
@@ -197,13 +225,14 @@ function createAccounts(deps = {}) {
     remove,
     labelFor,
     labelResolver,
+    settingsModelResolver,
     configDirFor,
     mint,
     resync,
   };
 }
 
-async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs }) {
+async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs, settingsModelFor }) {
   const dir = configDirFor(label);
   if (!dir) return { ok: false, error: `unknown account "${label}"`, moved: [], skipped: [] };
   const toDefault = String(label) === DEFAULT_LABEL;
@@ -214,8 +243,10 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
     const name = live.name;
     if (live.type !== 'claude') { skipped.push({ name, reason: 'not a claude session' }); continue; }
     const entry = getEntry(name);
-    if (!modelSelects(modelOfArgs(entry && entry.extraArgs), model)) {
-      skipped.push({ name, reason: `model ${model} not selected` });
+    const have = effectiveModel(entry, { settingsModelFor });
+    if (!modelSelects(have, model)) {
+      const why = have ? '' : ' (no --model flag and no settings.json model)';
+      skipped.push({ name, reason: `model ${model} not selected${why}` });
       continue;
     }
     const prevEnv = (entry && entry.env && typeof entry.env === 'object') ? entry.env : {};
@@ -237,4 +268,4 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
   return { ok: true, moved, skipped };
 }
 
-module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, LABEL_RE, PLANS, SHARED_LINKS };
+module.exports = { createAccounts, sweepAccountMove, modelOfArgs, modelSelects, effectiveModel, LABEL_RE, PLANS, SHARED_LINKS };

@@ -16,7 +16,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { accountRowView, buildAccountRow } = require('../renderer/lib/account-row');
+const { accountRowView, buildAccountRow, modelOptions, MODEL_ALIASES } = require('../renderer/lib/account-row');
 
 const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
 
@@ -130,4 +130,45 @@ test('the row classes the builder sets exist in the stylesheet', () => {
   }
   const rowRule = css.slice(css.indexOf('.prefs-account-row {'));
   assert.match(rowRule.slice(0, 120), /display: flex/, 'the row lays out horizontally');
+});
+
+// --- the Move model list (t816) ----------------------------------------------
+//
+// The list the "Move seats on model" select offers. It is built from the
+// `model` column on `session:list` rows — the EFFECTIVE model, so a seat whose
+// model comes from its settings.json rather than a `--model` flag appears. The
+// renderer used to parse `--model` out of each seat's args itself, one
+// getSessionArgs IPC per seat, and could not see that case at all.
+
+const rows = (...xs) => xs.map((x) => (typeof x === 'string' ? { type: 'claude', model: x } : x));
+
+test('modelOptions: the four aliases lead, then each live claude seat\'s model', () => {
+  assert.deepStrictEqual(
+    modelOptions(rows('claude-opus-5', 'claude-fable-5-1[1m]')),
+    ['fable', 'opus', 'sonnet', 'haiku', 'claude-opus-5', 'claude-fable-5-1[1m]'],
+  );
+  assert.deepStrictEqual(modelOptions([]), MODEL_ALIASES);
+  assert.deepStrictEqual(modelOptions(null), MODEL_ALIASES);
+});
+
+test('modelOptions: deduped — twenty seats on one model are one option', () => {
+  assert.deepStrictEqual(
+    modelOptions(rows('claude-opus-5', 'claude-opus-5', 'claude-opus-5')),
+    [...MODEL_ALIASES, 'claude-opus-5'],
+  );
+  // A seat literally on the alias adds nothing, rather than a duplicate entry
+  // the operator cannot tell apart.
+  assert.deepStrictEqual(modelOptions(rows('fable')), MODEL_ALIASES);
+});
+
+test('modelOptions: a non-claude row, a model-less row and junk contribute nothing', () => {
+  assert.deepStrictEqual(modelOptions(rows(
+    { type: 'bash', model: 'claude-opus-5' },
+    { type: 'codex', model: 'gpt-6' },
+    { type: 'claude', model: '' },
+    { type: 'claude', model: null },
+    { type: 'claude' },
+    null,
+    'claude-haiku-4',
+  )), [...MODEL_ALIASES, 'claude-haiku-4'], 'ENTER: the one real claude row still landed');
 });
