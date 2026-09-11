@@ -200,10 +200,10 @@ const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` m
 //      parseAndValidate rejects an empty body BEFORE consulting the schema, so
 //      every command needs at least `{}`. The old text implied otherwise, and
 //      because most commands take no fields it read as confirmed until it wasn't.
-//   3. "Output returns in your input" — stdout is DROPPED; a clean exit is
-//      silent unless the def sets replyStderr, and then it is one 200-char line
-//      of stderr — or, if the def also sets replyMaxBytes, whole lines from the
-//      top of stderr up to that budget (session-manager _handleExecIntent).
+//   3. "Output returns in your input" — stdout is DROPPED. What comes back on a
+//      clean exit is one 200-char line of stderr for a def with replyStderr —
+//      or, with replyMaxBytes too, whole lines from the top of stderr up to that
+//      budget (session-manager _handleExecIntent).
 // Payload forms are DERIVED from each def's schema by exec-schema.commandLines —
 // never hand-written per command, or they rot the moment a schema changes.
 function execSection(execCommands) {
@@ -213,7 +213,8 @@ function execSection(execCommands) {
   if (!lines) return '';
   return `EXEC COMMANDS:
 Your operator granted this seat a set of named shell commands, listed below with the JSON payload each takes: \`[agent:exec <name>] {"key":value}\` on one line. The name selects a pre-registered command — you never write the command line itself, and your payload never becomes part of it, but most commands DO take arguments through that JSON. A payload is always required: even a command with no fields needs a literal \`{}\`, or it bounces with "payload: empty (expected JSON)". Values shown as \`a|b|c\` are the only ones accepted.
-Success is SILENT — nothing returns and no news is good news. A failure (unknown command, payload rejected, nonzero exit, timeout) always comes back as an \`[agent:exec]\` line in your input, and some commands also return one short line on success. Command stdout is never returned to you.
+A run shorter than a minute returns nothing on success — no news is good news. A longer one acknowledges its start with a run number, reports that it is still running every few minutes, and delivers its result as input when it ends. A failure (unknown command, payload rejected, nonzero exit, timeout) always comes back as an \`[agent:exec]\` line in your input, and some commands also return one short line on success. Command stdout is never returned to you.
+\`[agent:exec status] {}\` is a reserved query that tells you what your own runs are doing — running with elapsed time, or finished with their result line; it needs no grant, runs nothing, and takes \`{"seq":N}\` to ask about one run. So never poll the filesystem and never re-emit a command while its run is alive: END YOUR TURN and read the answer when it wakes you.
 A granted command is your operator's PREFERRED route for the job it names, not an alternative to keep in reserve: it was registered because the equivalent shell command is long, easy to get wrong, or returns far more output than you need. When a listed command covers what you are about to do, use it INSTEAD of assembling the same thing with your shell tool — reaching past it is a mistake even when your version works, and running both is strictly worse than either.
 Read the list BEFORE you plan a job, not after your own version disappoints — the value of a grant is the turn you never spend. Never sit blocking on slow work a granted command would run for you and report back on. A tool in your own harness with a similar NAME is a different thing that does not use this registry, so match on what a command DOES, never on what it is called.
 Some of these wrap a command that is UNSAFE to run twice at once — a suite that binds real ports, a build that writes shared output. The registered version takes the lock; the raw command you would have typed does not, and running it CONCURRENTLY WITH the registered one deadlocks both. So when a command exists for the job, the raw form is not a fallback you may reach for when the command is slow or refuses — a refusal is information, and the right response is to find out why, never to route around it.

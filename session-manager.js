@@ -34,6 +34,60 @@ const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
 const EXEC_RUN_RECORD_CAP = 20;
+const EXEC_STATUS_QUERY_CMD = 'status';
+const EXEC_STATUS_REPLY_MAX = 400;
+const EXEC_STATUS_REPLY_RUNS = 3;
+const EXEC_STATUS_REPLY_CLOSING = ' Do not poll; a running run reports every few minutes'
+  + ' and delivers its result as input.';
+
+function execElapsedLabel(ms) {
+  const elapsed = Math.max(0, ms);
+  const mins = Math.floor(elapsed / 60000);
+  const secs = String(Math.floor((elapsed % 60000) / 1000)).padStart(2, '0');
+  return `${mins}m ${secs}s`;
+}
+
+function execRunStatusReply(execRuns, rawBody, now) {
+  const runs = Array.isArray(execRuns) ? execRuns : [];
+  let wanted = null;
+  try {
+    const payload = JSON.parse(String(rawBody == null ? '' : rawBody).trim() || '{}');
+    if (payload && typeof payload.seq === 'number') wanted = payload.seq;
+  } catch { wanted = null; }
+
+  let shown;
+  if (wanted !== null) {
+    const one = runs.find((r) => r && r.seq === wanted);
+    if (!one) return `status: no run #${wanted} on this seat.`;
+    shown = [one];
+  } else {
+    if (!runs.length) return 'status: no exec runs on this seat yet.';
+    shown = runs.slice(-EXEC_STATUS_REPLY_RUNS).reverse();
+  }
+
+  const heads = shown.map((r) => {
+    const head = `run #${r.seq} ${r.cmd} ${r.state} `;
+    if (r.state === 'running') {
+      return `${head}${execElapsedLabel(now - r.startedAt)} so far, ceiling ${r.ceilingMin}m`;
+    }
+    return `${head}at ${execElapsedLabel((r.endedAt == null ? now : r.endedAt) - r.startedAt)}`;
+  });
+  const tails = shown.map((r) => (r.state === 'running' ? '' : String(r.tail || '')));
+  const render = () => `status: ${heads.map((h, i) => (tails[i] ? `${h}: ${tails[i]}` : h)).join('; ')}`
+    + EXEC_STATUS_REPLY_CLOSING;
+
+  let over = render().length - EXEC_STATUS_REPLY_MAX;
+  while (over > 0) {
+    let longest = -1;
+    for (let i = 0; i < tails.length; i++) {
+      if (longest < 0 || tails[i].length > tails[longest].length) longest = i;
+    }
+    if (longest < 0 || !tails[longest].length) break;
+    tails[longest] = tails[longest].slice(0, -1);
+    over -= 1;
+  }
+  return render();
+}
 
 const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
@@ -5217,6 +5271,11 @@ function createSessionManager(deps) {
         this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `err: ${msg}` });
       };
 
+      if (cmd === EXEC_STATUS_QUERY_CMD) {
+        reply(execRunStatusReply(session.execRuns, rawBody, Date.now()));
+        return;
+      }
+
       if (!isFilenameToken(cmd)) {
         fail('invalid command id');
         return;
@@ -5311,14 +5370,16 @@ function createSessionManager(deps) {
         let record = null;
         let runTag = '';
         if (tracked) {
+          const ceilingMin = Math.ceil(timeoutMs / 60000);
           const runs = session.execRuns || (session.execRuns = []);
           const seq = runs.length ? runs[runs.length - 1].seq + 1 : 1;
           runTag = `run #${seq} `;
-          record = { seq, cmd, pid: child.pid, startedAt, endedAt: null, state: 'running', tail: '' };
+          record = {
+            seq, cmd, pid: child.pid, startedAt, endedAt: null, state: 'running', tail: '', ceilingMin,
+          };
           runs.push(record);
           while (runs.length > EXEC_RUN_RECORD_CAP) runs.shift();
 
-          const ceilingMin = Math.ceil(timeoutMs / 60000);
           const statusEveryMs = (typeof entry.statusEveryMs === 'number'
             && entry.statusEveryMs >= EXEC_STATUS_MIN_MS)
             ? Math.floor(entry.statusEveryMs) : EXEC_STATUS_DEFAULT_MS;
@@ -5328,11 +5389,8 @@ function createSessionManager(deps) {
             + 'Do not poll, do not re-emit — END YOUR TURN. '
             + `A status line arrives every ${everyLabel} and the result when it ends.`);
           statusTimer = setInterval(() => {
-            const elapsed = Math.max(0, Date.now() - startedAt);
-            const mins = Math.floor(elapsed / 60000);
-            const secs = String(Math.floor((elapsed % 60000) / 1000)).padStart(2, '0');
-            reply(`${cmd}: still running — ${mins}m ${secs}s of a ${ceilingMin}m ceiling `
-              + `(run #${seq}). Do not poll; END YOUR TURN.`);
+            reply(`${cmd}: still running — ${execElapsedLabel(Date.now() - startedAt)} `
+              + `of a ${ceilingMin}m ceiling (run #${seq}). Do not poll; END YOUR TURN.`);
           }, statusEveryMs);
           if (statusTimer && typeof statusTimer.unref === 'function') statusTimer.unref();
         }
