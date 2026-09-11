@@ -10,7 +10,7 @@
 // left to integration + Bogdan's GUI smoke test.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createSessionManager, deniedBodyDisposition, isStaleRegistration, nameConflict } = require('../session-manager');
+const { createSessionManager, deniedBodyDisposition, findPeerByOrigin, isStaleRegistration, nameConflict, peerOriginSuffix } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
 const { mkTmpRoot, trackTmpRoot } = require('./lib/tmp-roots');
 const { mk, mkPark, mkTeamCreate } = require('./lib/session-fixtures');
@@ -13036,6 +13036,95 @@ test('_isDmReachable: federated name@origin → true only for an ONLINE peer', (
   assert.strictEqual(m._isDmReachable('T1@LAPTOP'), true, 'origin match is case-insensitive');
   assert.strictEqual(m._isDmReachable('t1@server'), false, 'offline peer → reply would bounce');
   assert.strictEqual(m._isDmReachable('t1@unknown'), false, 'unconfigured origin');
+});
+
+const T839_PEERS = [
+  { id: 'team-clodex', label: 'clodex team', host: 'team-clodex', online: true },
+  { id: 'p2', label: 'laptop', host: 'laptop.local-less', online: true },
+];
+
+test('t839 findPeerByOrigin: label, then id, then host — case-insensitive, missing fields never match', () => {
+  const box = T839_PEERS[0];
+  const p2 = T839_PEERS[1];
+  assert.strictEqual(findPeerByOrigin(T839_PEERS, 'laptop'), p2, 'configured label');
+  assert.strictEqual(findPeerByOrigin(T839_PEERS, 'p2'), p2, 'peer id — nothing else on p2 is "p2"');
+  assert.strictEqual(findPeerByOrigin(T839_PEERS, 'laptop.local-less'), p2, 'announced host — label and id both miss');
+  assert.strictEqual(findPeerByOrigin(T839_PEERS, 'team-clodex'), box, 'the box by id, the name it answers to');
+  assert.strictEqual(findPeerByOrigin(T839_PEERS, 'TEAM-CLODEX'), box, 'case-insensitive');
+  assert.strictEqual(findPeerByOrigin(T839_PEERS, 'clodex team'), box, 'its configured label still resolves');
+  assert.strictEqual(findPeerByOrigin(T839_PEERS, 'nowhere'), undefined);
+  assert.strictEqual(
+    findPeerByOrigin([{ id: 'laptop', label: 'other' }, { label: 'laptop' }], 'laptop').label, 'laptop',
+    'label beats a different peer\'s id',
+  );
+  const bare = [{ label: 'x' }];
+  assert.strictEqual(findPeerByOrigin(bare, 'x'), bare[0]);
+  assert.strictEqual(findPeerByOrigin(bare, undefined), undefined, 'an absent id/host is not matched by an absent origin');
+  assert.strictEqual(peerOriginSuffix(box), 'team-clodex', 'the space-bearing label is skipped for the host');
+  assert.strictEqual(peerOriginSuffix({ label: 'a b', host: 'c d', id: 'e f' }), null, 'nothing typeable → no suffix');
+});
+
+test('t839 _isDmReachable: a box answers on its announced host, and only while online', () => {
+  const online = mkReach({ peers: T839_PEERS });
+  assert.strictEqual(online._isDmReachable('lead@team-clodex'), true);
+  const offline = mkReach({ peers: [{ ...T839_PEERS[0], online: false }] });
+  assert.strictEqual(offline._isDmReachable('lead@team-clodex'), false, 'offline box → the reply would bounce');
+});
+
+function mkFed(peers) {
+  const injected = [];
+  const dms = [];
+  const m = mk({
+    AGENT_NAME_RE: AGENT_NAME_RE_T,
+    getPeerManager: () => ({
+      statuses: () => peers,
+      get: (id) => (id === 'team-clodex'
+        ? { dm: (payload, cb) => { dms.push(payload); cb({ ok: true, delivered: true }); } }
+        : null),
+    }),
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  return { m, injected, dms };
+}
+
+test('t839 _routeFederatedDm: lead@team-clodex reaches the box conn; lead@clodex team bounces at the name gate', async () => {
+  const box = { ...T839_PEERS[0], caps: ['dm'] };
+  const { m, injected, dms } = mkFed([box]);
+
+  await m._handleIntent('a', { type: 'dm', target: 'lead@team-clodex', body: 'hi' });
+  assert.strictEqual(dms.length, 1, `expected one wire dm, got ${JSON.stringify(dms)} / ${JSON.stringify(injected)}`);
+  assert.strictEqual(dms[0].to, 'lead');
+  assert.strictEqual(dms[0].from, 'a');
+  assert.strictEqual(dms[0].body, 'hi');
+
+  await m._handleIntent('a', { type: 'dm', target: 'lead@clodex team', body: 'hi' });
+  assert.strictEqual(dms.length, 1, 'the display label with a space never reaches the wire');
+  assert.strictEqual(
+    injected[injected.length - 1],
+    '[agent:dm] can\'t route "lead@clodex team" — a federated target is name@peer, both plain names.',
+  );
+});
+
+test('t839 who: a box whose display label has a space is listed under the host it answers to', async () => {
+  const injected = [];
+  const m = mk({
+    AGENT_NAME_RE: AGENT_NAME_RE_T,
+    registry: { listPeers: () => [] },
+    peerStatusLabel: () => 'idle',
+    getPeerManager: () => ({ statuses: () => [{
+      ...T839_PEERS[0], caps: ['dm'], sessions: [{ name: 'lead', type: 'claude' }],
+    }] }),
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+
+  await m._handleIntent('a', { type: 'who' });
+
+  assert.strictEqual(injected.length, 1);
+  assert.strictEqual(injected[0], '[agent:peers] lead@team-clodex');
 });
 
 test('_buildDeliveryText trailer: present only when sender reachable AND receiver dm-enabled', () => {

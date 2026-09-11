@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - `[agent:team sandbox up]` boots the team's lead inside the box (posted as `{ name, team }`, so the box spawns it from the manifest shipped into it) in place of the old `worker` fixture, reports `lead <name> seeded|present|NOT seeded: …` — with a rebuild hint when the box image predates the team arm — and a failed team copy no longer skips writing sandbox.json.
+- A `name@origin` dm address now resolves against a peer's configured label, its id, or the host label it announced when it connected — in that order, through one resolver — so a sandbox box's seats can be reached as `<seat>@team-<name>`, which is also how they answer; `[agent:who]` lists such peers under that suffix instead of dropping them because their display label has a space.
 
 ## 5.63.3 — 2026-09-12 — a wire caller can spawn a team lead from the host's own manifest
 

@@ -275,11 +275,15 @@ for the operator. The nudge is cleared by the turn edge and by kill, gives up at
 - Parked deliveries are deleted only on explicit user-kill (`_cleanup` gates
   the rmrf on `_userKilled`); restarts and quits keep them.
 
-## 4. DM federation (`name@peerlabel`)
+## 4. DM federation (`name@origin`)
 
 The tunnel is one-way — the consumer dials the box, never the reverse — so
 the two directions use different transports (full wire detail in
 [peering.md](peering.md)):
+
+An `@origin` matches a peer's configured label, its id, or the host label it
+announced in hello — in that order, case-insensitively, through the one
+`findPeerByOrigin` resolver every site calls.
 
 - **Consumer → box**: `_routeFederatedDm` matches `@origin` against a
   configured online peer advertising the `dm` cap and POSTs `/api/dm`; the

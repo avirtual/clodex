@@ -407,6 +407,27 @@ function keepwarmPingBody(pings, r) {
   return `${head} — ${parts.join(', ')}`;
 }
 
+const { AGENT_NAME_RE: ORIGIN_NAME_RE } = require('./catalogs');
+
+function findPeerByOrigin(peers, origin) {
+  if (!origin) return undefined;
+  const want = String(origin).toLowerCase();
+  const list = Array.isArray(peers) ? peers : [];
+  for (const field of ['label', 'id', 'host']) {
+    const hit = list.find((p) => p && p[field] && String(p[field]).toLowerCase() === want);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function peerOriginSuffix(p, nameRe = ORIGIN_NAME_RE) {
+  if (!p) return null;
+  for (const v of [p.label, p.host, p.id]) {
+    if (v && nameRe.test(String(v))) return String(v);
+  }
+  return null;
+}
+
 const { speakable } = require('./speakable');
 const { expandSkillsOff } = require('./skills-off');
 
@@ -4672,10 +4693,11 @@ function createSessionManager(deps) {
           const remoteNames = [];
           for (const st of (getPeerManager() ? getPeerManager().statuses() : [])) {
             if (!st.online || !(st.caps || []).includes('dm')) continue;
-            if (!st.label || !AGENT_NAME_RE.test(st.label)) continue;
+            const suffix = peerOriginSuffix(st, AGENT_NAME_RE);
+            if (!suffix) continue;
             for (const rs of (st.sessions || [])) {
               if (rs && (rs.type === 'claude' || rs.type === 'codex')) {
-                remoteNames.push({ name: `${rs.name}@${st.label}`, label: null });
+                remoteNames.push({ name: `${rs.name}@${suffix}`, label: null });
               }
             }
           }
@@ -6383,7 +6405,7 @@ function createSessionManager(deps) {
         return;
       }
       const peers = getPeerManager() ? getPeerManager().statuses() : [];
-      const match = peers.find((p) => p.label && p.label.toLowerCase() === origin.toLowerCase());
+      const match = findPeerByOrigin(peers, origin);
       if (match) {
         if (!match.online) { bounce(`peer '${origin}' is offline — try again when it's awake.`); return; }
         if (!(match.caps || []).includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
@@ -6462,15 +6484,14 @@ function createSessionManager(deps) {
       const destName = m.finalTarget.slice(0, at);
       const destOrigin = m.finalTarget.slice(at + 1);
       const peers = getUiSettings().get().peers || [];
-      const destCfg = peers.find((p) => p && (p.label || '').toLowerCase() === destOrigin.toLowerCase());
+      const destCfg = findPeerByOrigin(peers, destOrigin);
       const srcAllowed = !!(srcCfg && srcCfg.relayAllowed);
       const destAllowed = !!(destCfg && destCfg.relayAllowed);
       if (!srcAllowed || !destAllowed) {
         this._bounceRelaySender(srcId, m, `relay to ${m.finalTarget} not permitted (peer not relay-enabled)`);
         return drop('relay not permitted (relayAllowed gate)');
       }
-      const dest = (getPeerManager() ? getPeerManager().statuses() : [])
-        .find((st) => st.label && st.label.toLowerCase() === destOrigin.toLowerCase());
+      const dest = findPeerByOrigin(getPeerManager() ? getPeerManager().statuses() : [], destOrigin);
       if (!dest || !dest.online) return drop(`destination peer '${destOrigin}' offline`);
       if (!(dest.caps || []).includes('dm')) return drop(`destination peer '${destOrigin}' predates dm federation`);
       const conn = getPeerManager().get(dest.id);
@@ -6500,7 +6521,8 @@ function createSessionManager(deps) {
       if (at > 0) {
         const origin = senderName.slice(at + 1);
         const peers = getPeerManager() ? getPeerManager().statuses() : [];
-        if (peers.some((p) => p.online && p.label && p.label.toLowerCase() === origin.toLowerCase())) return true;
+        const hit = findPeerByOrigin(peers.filter((p) => p && p.online), origin);
+        if (hit) return true;
         return this._relayViaForOrigin(origin) != null;
       }
       const s = this.sessions.get(senderName);
@@ -7080,4 +7102,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, deniedBodyDisposition, exitDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };
+module.exports = { createSessionManager, deniedBodyDisposition, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };
