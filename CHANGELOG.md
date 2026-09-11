@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The role Account field in the team popover is a picker of the registered account labels (with "default" first) instead of a free-text box that only accepted those labels anyway, and a collapsed role row shows its account beside the dispatch chip.
+
 ## 5.63.0 — 2026-09-11 — roles carry an account; rework seats replaced past the compact threshold; execs report their runs
 
 - A granted exec run longer than a minute acknowledges its start with the run number and ceiling, injects a "still running" line every few minutes (`statusEveryMs`, default 3m), and stamps the result with the same run number, so a seat never has to poll to learn whether its suite is alive.

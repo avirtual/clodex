@@ -175,6 +175,26 @@ function storedPromptNote(prompt, opts = {}) {
   };
 }
 
+function accountOptions(accounts, stored) {
+  const want = String(stored == null ? '' : stored);
+  const labels = (Array.isArray(accounts) ? accounts : [])
+    .map((a) => (a && typeof a.label === 'string' ? a.label : ''))
+    .filter((l) => l);
+  const out = [{
+    value: '',
+    text: 'default (the account Clodex runs on)',
+    selected: !want,
+    marked: false,
+  }];
+  for (const label of labels) {
+    out.push({ value: label, text: label, selected: label === want, marked: false });
+  }
+  if (want && !labels.includes(want)) {
+    out.push({ value: want, text: `${want} (not a registered account)`, selected: true, marked: true });
+  }
+  return out;
+}
+
 // One-line, newcomer-facing explanation of WHY a reserved (Clodex-managed) role is
 // locked, shown on its read-only row (Slice 4 C2). Conveys (a) nothing to do here
 // and (b) the reason. lead/reviewer are the only reserved keys today; an unknown
@@ -456,8 +476,9 @@ function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
     const raw = (def && def.dispatch) || DEFAULT_DISPATCH;
     const dispatch = DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH;
     const readOnly = RESERVED_ROLE_KEYS.has(key);
+    const account = (def && def.account) || '';
     if (act && key === 'reviewer') {
-      return { key, readOnly, seats: { total, working, names }, reviewer: true, note: reviewerNote(act.reviewer, now) };
+      return { key, account, readOnly, seats: { total, working, names }, reviewer: true, note: reviewerNote(act.reviewer, now) };
     }
     const perTicket = act
       && dispatch !== DEFAULT_DISPATCH
@@ -473,6 +494,7 @@ function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
       : { total, working, names };
     return {
       key,
+      account,
       dispatch,
       readOnly,
       seats,
@@ -658,7 +680,7 @@ function usesByRole(planItems, roleKeys) {
 
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole, usesByRole,
-  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, accountOptions,
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,

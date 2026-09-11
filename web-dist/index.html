@@ -6905,7 +6905,7 @@ body {
         <label class="team-role-field" title="System-prompt name from the library — sets how this teammate behaves"><span>prompt</span><select id="team-roles-add-prompt"></select></label>
         <label class="team-role-field" data-field="template"><span>template</span><input type="text" id="team-roles-add-template" placeholder="optional: spawn template name"></label>
         <label class="team-role-field" data-field="cwd" title="Relative to the team root — where seats holding this role start. Blank = the team root."><span>cwd</span><input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory (e.g. api)"></label>
-        <label class="team-role-field" data-field="account" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" id="team-roles-add-account" placeholder="optional: account label"></label>
+        <label class="team-role-field" data-field="account" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select id="team-roles-add-account"></select></label>
         <span class="team-roles-add-actions"><button type="button" id="team-roles-add-btn">Add</button><button type="button" id="team-roles-newrole-cancel" class="secondary">Cancel</button></span>
       </div>
       </div>
@@ -31657,6 +31657,23 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           title: "no system prompt by this name is installed"
         };
       }
+      function accountOptions(accounts, stored) {
+        const want = String(stored == null ? "" : stored);
+        const labels = (Array.isArray(accounts) ? accounts : []).map((a) => a && typeof a.label === "string" ? a.label : "").filter((l) => l);
+        const out = [{
+          value: "",
+          text: "default (the account Clodex runs on)",
+          selected: !want,
+          marked: false
+        }];
+        for (const label of labels) {
+          out.push({ value: label, text: label, selected: label === want, marked: false });
+        }
+        if (want && !labels.includes(want)) {
+          out.push({ value: want, text: `${want} (not a registered account)`, selected: true, marked: true });
+        }
+        return out;
+      }
       function reservedRoleNote(key) {
         if (key === "lead") return "Runs the team. Its role is fixed so the team always has one.";
         if (key === "reviewer") return "Independently checks the lead's work \u2014 locked so a lead can never rewrite its own reviewer.";
@@ -31808,8 +31825,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const raw = def && def.dispatch || DEFAULT_DISPATCH;
           const dispatch = DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH;
           const readOnly = RESERVED_ROLE_KEYS.has(key);
+          const account = def && def.account || "";
           if (act && key === "reviewer") {
-            return { key, readOnly, seats: { total, working, names }, reviewer: true, note: reviewerNote(act.reviewer, now) };
+            return { key, account, readOnly, seats: { total, working, names }, reviewer: true, note: reviewerNote(act.reviewer, now) };
           }
           const perTicket = act && dispatch !== DEFAULT_DISPATCH && act.roles && Object.prototype.hasOwnProperty.call(act.roles, key);
           const liveSeats = perTicket && Array.isArray(act.roles[key].live) ? act.roles[key].live : null;
@@ -31820,6 +31838,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           } : { total, working, names };
           return {
             key,
+            account,
             dispatch,
             readOnly,
             seats,
@@ -31906,6 +31925,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         storedPromptNote,
         templateOptionGroups,
         templateRowFor,
+        accountOptions,
         reservedRemovalWarning,
         parseDuration,
         formatDuration,
@@ -31962,7 +31982,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         promptOptionGroups,
         storedPromptNote,
         templateOptionGroups,
-        templateRowFor
+        templateRowFor,
+        accountOptions
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = {}) {
@@ -32295,6 +32316,13 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             chip.title = "What dispatching a ticket to this role does";
             head.appendChild(chip);
           }
+          if (summary.account) {
+            const acct = document.createElement("span");
+            acct.className = "team-role-chip team-role-account";
+            acct.textContent = summary.account;
+            acct.title = "Account every seat the loop mints for this role boots on";
+            head.appendChild(acct);
+          }
           if (owed && owed.length) {
             const warns = owed.filter((f) => f.level === "warn").length;
             const mark = document.createElement("span");
@@ -32439,8 +32467,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             el.appendChild(body);
             if (row.readOnly) {
               el.classList.add("read-only");
-              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label><div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
-              body.querySelector('input[data-f="account"]').value = row.account;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
+              paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
               if (row.key === "lead" && stage === "normal") body.appendChild(buildLeadSeatBlock(manifest));
               if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
                 const rm = document.createElement("button");
@@ -32452,9 +32480,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 body.querySelector(".team-role-actions").appendChild(rm);
               }
             } else {
-              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label><div class="team-role-dispatch" data-f-group="dispatch"></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-dispatch" data-f-group="dispatch"></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               body.querySelector('input[data-f="brief"]').value = row.brief;
-              body.querySelector('input[data-f="account"]').value = row.account;
+              paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
               const sel = body.querySelector('select[data-f="prompt"]');
               {
                 const none = document.createElement("option");
@@ -32630,12 +32658,36 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           templateRows = Array.isArray(rows) ? rows : [];
         }
+        let accountRows = [];
+        async function populateAccountOptions() {
+          let res;
+          try {
+            res = await window.api.accountsList();
+          } catch {
+            res = null;
+          }
+          accountRows = res && res.ok && Array.isArray(res.accounts) ? res.accounts : [];
+        }
+        function paintAccountSelect(sel, stored) {
+          if (!sel) return;
+          sel.innerHTML = "";
+          for (const o of accountOptions(accountRows, stored)) {
+            const opt = document.createElement("option");
+            opt.value = o.value;
+            opt.textContent = o.text;
+            if (o.marked) opt.title = "not in the accounts registry \u2014 saving keeps it, but a seat booting on it will fail";
+            sel.appendChild(opt);
+          }
+          sel.value = String(stored == null ? "" : stored);
+        }
         async function openTeamRolesPopover(name, anchorEl) {
           setStatus("");
           helpPanel.classList.add("hidden");
           resetDrag(popover);
           await populatePromptOptions(name);
           await populateTemplateOptions();
+          await populateAccountOptions();
+          paintAccountSelect(addAccount, "");
           expandedRole = null;
           setAddPanel(false);
           closeGatherPanel();
@@ -32746,7 +32798,7 @@ You can add it back from this popover.` : "";
           addTemplate.value = "";
           addPrompt.value = "";
           addCwd.value = "";
-          addAccount.value = "";
+          paintAccountSelect(addAccount, "");
           addDispatch.value = DEFAULT_DISPATCH;
           paintAddReveal();
         };

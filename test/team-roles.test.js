@@ -15,6 +15,7 @@ const {
   leadSeatCandidates, leadResolution,
   reservedRemovalWarning,
   teamStage, roleSummaries, activityTime, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  accountOptions,
   reconcileReveal, clearableFields,
   REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS, DISPATCH_VALUES,
 } = require('../renderer/lib/team-roles');
@@ -662,6 +663,7 @@ test('roleSummaries: a zero-seat role SCOPES its "no seat" note to this window',
   const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], { lead: 'shop-lead' });
   assert.deepStrictEqual(out, [{
     key: 'hand',
+    account: '',
     dispatch: 'standing',
     readOnly: false,
     seats: { total: 0, working: 0, names: [] },
@@ -669,11 +671,61 @@ test('roleSummaries: a zero-seat role SCOPES its "no seat" note to this window',
   }]);
 });
 
+// ── The account picker's option list ─────────────────────────────────────────
+// Whole objects throughout: `selected` and `marked` are the two bits that decide
+// what the operator sees pre-picked, and a per-key probe would pass on a list
+// that offered the right labels with nothing chosen.
+test('accountOptions: no registered accounts offers the default alone', () => {
+  // The honest offer when the registry is empty or its listing failed — the
+  // popover collapses both to []. Dropping this option would leave a picker with
+  // no way back to "the account Clodex runs on".
+  assert.deepStrictEqual(accountOptions([], ''), [
+    { value: '', text: 'default (the account Clodex runs on)', selected: true, marked: false },
+  ]);
+  assert.deepStrictEqual(accountOptions(null, ''), [
+    { value: '', text: 'default (the account Clodex runs on)', selected: true, marked: false },
+  ], 'a missing list is the same offer, not a crash');
+});
+
+test('accountOptions: registered labels follow the default, in list order, with the stored one selected', () => {
+  const accounts = [{ label: 'work' }, { label: 'personal' }];
+  assert.deepStrictEqual(accountOptions(accounts, 'personal'), [
+    { value: '', text: 'default (the account Clodex runs on)', selected: false, marked: false },
+    { value: 'work', text: 'work', selected: false, marked: false },
+    { value: 'personal', text: 'personal', selected: true, marked: false },
+  ]);
+  // Blank stored → the default is what is pre-picked, and no label is.
+  assert.deepStrictEqual(accountOptions(accounts, '').map((o) => o.selected), [true, false, false]);
+});
+
+test('accountOptions: a stored label the registry does not offer is appended, marked and selected', () => {
+  // Not a hypothetical: an account can be removed from the registry while a role
+  // still names it. Blanking it here would make a Save that never touched the
+  // field silently clear the role's account.
+  assert.deepStrictEqual(accountOptions([{ label: 'work' }], 'retired'), [
+    { value: '', text: 'default (the account Clodex runs on)', selected: false, marked: false },
+    { value: 'work', text: 'work', selected: false, marked: false },
+    { value: 'retired', text: 'retired (not a registered account)', selected: true, marked: true },
+  ]);
+  // A stored label that IS offered must not be appended a second time.
+  assert.strictEqual(accountOptions([{ label: 'work' }], 'work').length, 2);
+});
+
+test('roleSummaries: a role with an account carries it, so the collapsed row can show it', () => {
+  // The chip is built from this key. A role whose seats boot on a named account
+  // says so without being expanded, beside the dispatch chip.
+  const manifest = { name: 'shop', roles: { hand: { account: 'work' }, bare: {} } };
+  const out = roleSummaries(manifest, [], {});
+  assert.deepStrictEqual(out.map((r) => [r.key, r.account]), [['hand', 'work'], ['bare', '']],
+    'the account as stored, and "" for a role that has none');
+});
+
 test('roleSummaries: a one-seat role reads the bare seat NAME, not a count', () => {
   const sessions = [{ name: 'shop-hand', role: 'hand', team: 'shop', activity: 'idle' }];
   const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, sessions, {});
   assert.deepStrictEqual(out, [{
     key: 'hand',
+    account: '',
     dispatch: 'standing',
     readOnly: false,
     seats: { total: 1, working: 0, names: ['shop-hand'] },
@@ -690,6 +742,7 @@ test('roleSummaries: multi-seat counts WORKING as not-idle, in the order given',
   const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, sessions, {});
   assert.deepStrictEqual(out, [{
     key: 'hand',
+    account: '',
     dispatch: 'standing',
     readOnly: false,
     seats: { total: 3, working: 2, names: ['shop-hand', 'shop-hand2', 'shop-hand3'] },
@@ -744,7 +797,7 @@ test('roleSummaries: keys are EXACTLY the summary shape — it must not grow int
   // This model is separate precisely so presentation can vary without touching
   // that gate; asserting the whole key set is what keeps the two from converging.
   const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], {});
-  assert.deepStrictEqual(Object.keys(out[0]).sort(), ['dispatch', 'key', 'note', 'readOnly', 'seats']);
+  assert.deepStrictEqual(Object.keys(out[0]).sort(), ['account', 'dispatch', 'key', 'note', 'readOnly', 'seats']);
 });
 
 // ── B: the note says what the role is DOING, from team:activity ───────────────
@@ -771,6 +824,7 @@ test('roleSummaries: one live per-ticket seat names its seat AND its ticket, wit
   // working" beside a note naming the seat that is working right now.
   assert.deepStrictEqual(out, [{
     key: 'hand',
+    account: '',
     dispatch: 'worktree',
     readOnly: false,
     seats: { total: 1, working: 1, names: ['shop-hand-783'] },
@@ -835,6 +889,7 @@ test('roleSummaries: a STANDING role keeps its seat-count note even with activit
   const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], { lead: 'shop-lead', activity: act, now: NOW });
   assert.deepStrictEqual(out, [{
     key: 'hand',
+    account: '',
     dispatch: 'standing',
     readOnly: false,
     seats: { total: 0, working: 0, names: [] },
@@ -852,6 +907,7 @@ test('roleSummaries: the reviewer row states it is spawned per round and drops t
   const live = roleSummaries(manifest, [], { activity: rev({ live: [{ ticket: 't783', round: 1, seat: 'shop-reviewer-783-r1' }], last: null }), now: NOW });
   assert.deepStrictEqual(live, [{
     key: 'reviewer',
+    account: '',
     readOnly: true,
     seats: { total: 0, working: 0, names: [] },
     reviewer: true,
@@ -870,8 +926,8 @@ test('roleSummaries: activity ABSENT or ok:false leaves every row exactly as it 
   const manifest = { name: 'shop', roles: { reviewer: {}, hand: { dispatch: 'worktree' } } };
   const sessions = [{ name: 'shop-hand', role: 'hand', team: 'shop', activity: 'working' }];
   const expected = [
-    { key: 'reviewer', dispatch: 'standing', readOnly: true, seats: { total: 0, working: 0, names: [] }, note: 'no seat in this window' },
-    { key: 'hand', dispatch: 'worktree', readOnly: false, seats: { total: 1, working: 1, names: ['shop-hand'] }, note: 'shop-hand' },
+    { key: 'reviewer', account: '', dispatch: 'standing', readOnly: true, seats: { total: 0, working: 0, names: [] }, note: 'no seat in this window' },
+    { key: 'hand', account: '', dispatch: 'worktree', readOnly: false, seats: { total: 1, working: 1, names: ['shop-hand'] }, note: 'shop-hand' },
   ];
   assert.deepStrictEqual(roleSummaries(manifest, sessions, {}), expected, 'no activity option at all');
   assert.deepStrictEqual(roleSummaries(manifest, sessions, { activity: { ok: false, error: 'boom' } }), expected, 'a failed read');
