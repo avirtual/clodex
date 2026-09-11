@@ -453,7 +453,7 @@ test('the lead is told the merge landed, and that a repo with NO changelog owes 
   }
 });
 
-test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and never accepts the ticket', async () => {
+test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and removes no tree it may not', async () => {
   const repo = mkRepo();
   // A CHANGELOG on master, so "untouched" is a real observation rather than a
   // statement about a file that never existed. Only the branch here touches the
@@ -473,12 +473,20 @@ test('a merge that does not CONFLICT leaves CHANGELOG.md byte-untouched, and nev
   assert.strictEqual(fsReal.readFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), 'utf8'), '# Changelog\n\n## Unreleased\n',
     'CHANGELOG.md is byte-untouched — it stays the lead\'s');
   const t = f.one();
-  // Accept retires the seat and DESTROYS the worktree. A merge is undoable by a
-  // revert; a destroyed worktree is not, so that call stays the lead's.
-  assert.ok(!('acceptedAt' in t), 'the ticket is not auto-accepted');
+  // A green merge now runs the accept itself, so the ticket IS closed out here.
+  // What the close-out may not do is the part a revert cannot undo, and the gate
+  // is the same one a lead-driven accept passes through: `team-hand` has no
+  // persistence record marking it a seat the loop minted, so it is treated as
+  // the operator's — seat left alone, checkout untouched. Absence of evidence is
+  // not a licence to destroy.
+  assert.ok(t.closedOut, 'the loop closed the merged ticket out');
+  assert.strictEqual(t.acceptedBy, 'ticket-loop', 'and it is the loop, not a lead, that did it');
   assert.deepStrictEqual(t.worktree, { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha },
-    'and the worktree record is untouched');
+    'the worktree record is untouched — nothing here licensed removing that tree');
   assert.ok(f.m.sessions.has('team-hand'), 'the hand seat survives the merge');
+  assert.ok(!('loopClosedOut' in t),
+    'and the close-out is NOT stamped complete: a kept tree still owes the lead a step, so `task accept` '
+    + 'must stay live rather than becoming a no-op over a checkout nothing else reaches');
 });
 
 // ── the CHANGELOG claim is MEASURED: four outcomes, none collapsible ────────
