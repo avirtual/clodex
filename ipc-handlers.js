@@ -1227,6 +1227,9 @@ function registerIpcHandlers(deps) {
     handle('accounts:move-by-model', async (_e, params) => {
       if (!moveAccountByModel) return { ok: false, error: 'accounts not supported on this host' };
       const p = params || {};
+      if (!p.model || !p.label) {
+        return { ok: false, error: 'move needs both a model and an account label', moved: [], skipped: [] };
+      }
       try {
         return await moveAccountByModel(p.model, p.label, workspaceOfSender(_e));
       } catch (e) {

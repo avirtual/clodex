@@ -1273,7 +1273,7 @@ function createSessionManager(deps) {
         mergedEnv = { ...baseEnv };
       }
 
-      const accountDir = mergedEnv.CLAUDE_CONFIG_DIR;
+      const accountDir = type === 'claude' ? mergedEnv.CLAUDE_CONFIG_DIR : null;
       if (accountDir) {
         let ok = false;
         try { ok = fs.statSync(accountDir).isDirectory(); } catch { ok = false; }
@@ -3524,12 +3524,20 @@ function createSessionManager(deps) {
         } catch { return null; }
       };
       const accountsStore = (getAccounts && getAccounts()) || null;
+      let resolveAccount = null;
+      try {
+        if (accountsStore) {
+          resolveAccount = accountsStore.labelResolver
+            ? accountsStore.labelResolver()
+            : (d) => accountsStore.labelFor(d);
+        }
+      } catch { resolveAccount = null; }
       const accountFromPersistedEnv = (name) => {
-        if (!accountsStore) return 'default';
+        if (!resolveAccount) return 'default';
         try {
           const entry = getPersistence().get(name);
           const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
-          return dir ? (accountsStore.labelFor(dir) || 'default') : 'default';
+          return dir ? (resolveAccount(dir) || 'default') : 'default';
         } catch { return 'default'; }
       };
       return Array.from(this.sessions.values()).map(s => ({

@@ -1686,7 +1686,23 @@ function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
     liveSessions: manager.sessions.values(),
     getEntry: (name) => persistence.get(name),
     configDirFor: (l) => accounts.configDirFor(l),
-    applyArgs: (name, patch, entryWs) => applySessionArgs(name, patch, entryWs || wsId),
+    applyArgs: async (name, patch, entryWs) => {
+      const res = await applySessionArgs(name, patch, entryWs || wsId);
+      if (res && res.ok && res.restarted) {
+        const entry = persistence.get(name) || {};
+        const live = manager.sessions.get(name) || {};
+        manager._sendToSession(name, 'session:context-action', {
+          action: 'reattach',
+          name,
+          type: entry.type,
+          cwd: manager.resumeCwdOf(entry),
+          backend: live.backend || null,
+          noWire: !!live.noWire,
+          background: true,
+        });
+      }
+      return res;
+    },
   });
 }
 

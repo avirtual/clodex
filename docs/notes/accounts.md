@@ -17,9 +17,10 @@ directory, which is worse than an absent one.
 
 ## save
 
-`fs.writeFileSync`'s `mode` option applies only when the call CREATES the file,
-so the explicit `chmodSync` afterwards is what keeps an already-existing
-registry at 0600.
+`fs.writeFileSync`'s `mode` applies only when the call CREATES the file, so the
+explicit `chmodSync` is what keeps a `.tmp` left behind by an earlier crash at
+0600. `renameSync` carries that mode onto the registry, which is therefore never
+chmod'd in place.
 
 ## modelSelects
 

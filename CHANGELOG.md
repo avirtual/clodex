@@ -17,7 +17,12 @@ blocks a release.
   (`~/.clodex/accounts.json`), mints an isolated config dir per account that
   shares transcripts, plugins and skills with `~/.claude`, labels every session
   row with its account, and can move every seat on a given model to another
-  account in one step. The Preferences pane and dialog selectors land next.
+  account in one step.
+- **Accounts in the UI**: Preferences ▸ Accounts lists your registered Claude
+  subscriptions with Add, Log in (opens a shell on that account for `/login`),
+  Re-sync and Remove, and "Move seats on model X here"; the new-session and edit
+  dialogs gain an Account select, and a session row shows its account when it is
+  not the default.
 
 ## 5.60.0 — 2026-09-11 — Team sandboxes: a box per team, built from any ref, ready with seeded seats
 

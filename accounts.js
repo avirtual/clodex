@@ -71,8 +71,10 @@ function createAccounts(deps = {}) {
 
   function save(rows) {
     try { fs.mkdirSync(clodexHome, { recursive: true }); } catch {}
-    fs.writeFileSync(registryFile, `${JSON.stringify({ accounts: rows }, null, 2)}\n`, { mode: 0o600 });
-    try { fs.chmodSync(registryFile, 0o600); } catch {}
+    const tmp = `${registryFile}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify({ accounts: rows }, null, 2)}\n`, { mode: 0o600 });
+    try { fs.chmodSync(tmp, 0o600); } catch {}
+    fs.renameSync(tmp, registryFile);
   }
 
   function list() {
@@ -86,13 +88,22 @@ function createAccounts(deps = {}) {
     return hit ? hit.configDir : null;
   }
 
-  function labelFor(configDir) {
+  function resolveLabel(rows, configDir) {
     const dir = norm(configDir);
     if (!dir) return null;
     if (dir === norm(claudeHome)) return DEFAULT_LABEL;
-    const hit = load().find((a) => norm(a.configDir) === dir);
+    const hit = rows.find((a) => norm(a.configDir) === dir);
     if (hit) return hit.label;
     return path.basename(dir);
+  }
+
+  function labelFor(configDir) {
+    return resolveLabel(load(), configDir);
+  }
+
+  function labelResolver() {
+    const rows = load();
+    return (configDir) => resolveLabel(rows, configDir);
   }
 
   function readTheme() {
@@ -185,6 +196,7 @@ function createAccounts(deps = {}) {
     add,
     remove,
     labelFor,
+    labelResolver,
     configDirFor,
     mint,
     resync,
@@ -194,6 +206,7 @@ function createAccounts(deps = {}) {
 async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs }) {
   const dir = configDirFor(label);
   if (!dir) return { ok: false, error: `unknown account "${label}"`, moved: [], skipped: [] };
+  const toDefault = String(label) === DEFAULT_LABEL;
 
   const moved = [];
   const skipped = [];
@@ -206,7 +219,8 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
       continue;
     }
     const prevEnv = (entry && entry.env && typeof entry.env === 'object') ? entry.env : {};
-    if (prevEnv.CLAUDE_CONFIG_DIR === dir) { skipped.push({ name, reason: `already on account ${label}` }); continue; }
+    const already = prevEnv.CLAUDE_CONFIG_DIR ? prevEnv.CLAUDE_CONFIG_DIR === dir : toDefault;
+    if (already) { skipped.push({ name, reason: `already on account ${label}` }); continue; }
     if (live.activityState && live.activityState !== 'idle') {
       skipped.push({ name, reason: 'session is mid-turn' });
       continue;

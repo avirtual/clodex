@@ -344,6 +344,16 @@ const RENDERER_SCANNED_MODULES = [
   // reaching for renderer.js's ambient `document` instead would put it straight
   // back out of reach of a test.
   'renderer/lib/env-row.js',
+  // The account <-> env-text projection (t812). It is read from THREE DOM-bound
+  // call sites in renderer.js (both dialogs and the prefs pane), where
+  // `inputEnv`, `inputAccount` and `dialogAccounts` are all in easy reach — and
+  // a leaf that read the dialog's textarea instead of its argument would pass
+  // every unit test it has while silently governing the wrong field.
+  'renderer/lib/account-select.js',
+  // The Preferences ▸ Accounts row builder (t812). Same reason as env-row.js: it
+  // takes `document` as a parameter so the row's classes and per-kind button set
+  // are assertable without a browser.
+  'renderer/lib/account-row.js',
   // The Manage Plugins origin classification (t758). A pure function of one
   // status row, read only from renderPluginsDialog — where `plugins`, `status`
   // and `p` are all in easy reach, and a classifier that read the loop's `p`

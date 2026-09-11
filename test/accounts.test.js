@@ -291,3 +291,103 @@ test('modelSelects: `fable` matches a dated claude-fable-* id in BOTH directions
   // A prefix that merely starts the same is a different model, not a fable.
   assert.strictEqual(modelSelects('claude-fabulous-1', 'fable'), false);
 });
+
+// --- t812 riders -------------------------------------------------------------
+
+test('save() NEVER writes the registry in place — it writes elsewhere and RENAMES', () => {
+  // The claim is about the moment DURING the write, which no after-the-fact
+  // check can see: "no .tmp left behind" and "the content is right" are both
+  // satisfied by a plain writeFileSync onto the registry, and that shape is
+  // exactly the bug — writeFileSync truncates first, so a crash between the
+  // truncate and the last byte leaves a partial file, load()'s JSON.parse catch
+  // turns it into an EMPTY list, and every registered account is silently gone.
+  // So the pin is on the fs CALLS: the registry path may only ever appear as a
+  // rename destination.
+  const { clodexHome, claudeHome } = fixture();
+  const calls = [];
+  const spyFs = new Proxy(fs, {
+    get(t, prop) {
+      const v = t[prop];
+      if (prop !== 'writeFileSync' && prop !== 'renameSync') return v;
+      return (...args) => { calls.push({ op: prop, to: args[prop === 'renameSync' ? 1 : 0], from: args[0] }); return v.apply(t, args); };
+    },
+  });
+  const accounts = createAccounts({ fs: spyFs, path, os: require('node:os'), clodexHome, claudeHome });
+  const file = path.join(clodexHome, 'accounts.json');
+
+  accounts.add({ label: 'sub-2', plan: 'max', configDir: '/tmp/registered-2' });
+  const writes = calls.filter((c) => c.op === 'writeFileSync' && c.to === file);
+  assert.deepStrictEqual(writes, [], 'the registry is never the target of a direct write');
+  const renames = calls.filter((c) => c.op === 'renameSync' && c.to === file);
+  assert.strictEqual(renames.length, 1, 'it is published by exactly one rename');
+  assert.strictEqual(renames[0].from, `${file}.tmp`, 'from the scratch file beside it');
+  // ENTER: the spy really did see the scratch write, so the assertions above are
+  // about WHERE the bytes went and not about an fs that was never called.
+  assert.ok(
+    calls.some((c) => c.op === 'writeFileSync' && c.to === `${file}.tmp`),
+    'the content was written to the scratch path first',
+  );
+
+  // And the aftermath is still correct: renamed away, right content, right mode.
+  assert.strictEqual(fs.existsSync(`${file}.tmp`), false, 'the scratch file does not survive');
+  const obj = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.deepStrictEqual(obj.accounts.map((a) => a.label), ['sub-2']);
+  assert.strictEqual(obj.accounts[0].configDir, '/tmp/registered-2');
+  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'the mode survives the rename');
+
+  // A SECOND save, now OVER an existing registry — the case the direct write
+  // actually destroys, since the first one only ever created the file.
+  calls.length = 0;
+  accounts.add({ label: 'sub-3', plan: 'pro', configDir: '/tmp/registered-3' });
+  assert.deepStrictEqual(
+    calls.filter((c) => c.op === 'writeFileSync' && c.to === file), [],
+    'still no in-place write when the registry already exists',
+  );
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(file, 'utf-8')).accounts.map((a) => a.label),
+    ['sub-2', 'sub-3'],
+  );
+});
+
+test('save(): a write that FAILS leaves the previous registry readable, not truncated', () => {
+  // The failure the rename exists for, driven rather than described. The scratch
+  // write throws (a full disk); the registry on disk must be exactly what the
+  // last successful save left, because nothing touched it.
+  const { clodexHome, claudeHome } = fixture();
+  const file = path.join(clodexHome, 'accounts.json');
+  let boom = false;
+  const flakyFs = new Proxy(fs, {
+    get(t, prop) {
+      if (prop !== 'writeFileSync') return t[prop];
+      return (...args) => {
+        if (boom && String(args[0]).startsWith(file)) throw new Error('ENOSPC: no space left on device');
+        return t.writeFileSync(...args);
+      };
+    },
+  });
+  const accounts = createAccounts({ fs: flakyFs, path, os: require('node:os'), clodexHome, claudeHome });
+  accounts.add({ label: 'sub-2', plan: 'max', configDir: '/tmp/registered-2' });
+  const before = fs.readFileSync(file, 'utf-8');
+
+  boom = true;
+  assert.throws(() => accounts.add({ label: 'sub-3', plan: 'pro', configDir: '/tmp/registered-3' }), /ENOSPC/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before, 'the registry is byte-identical — the failed save never reached it');
+  assert.deepStrictEqual(accounts.list().map((a) => a.label), ['default', 'sub-2'], 'and it still parses');
+});
+
+test('labelResolver(): one registry read answers many dirs, with labelFor\'s answers', () => {
+  const { accounts, claudeHome } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'max', configDir: '/tmp/registered-2' });
+  const resolve = accounts.labelResolver();
+  assert.strictEqual(resolve(claudeHome), 'default');
+  assert.strictEqual(resolve('/tmp/registered-2'), 'sub-2');
+  assert.strictEqual(resolve('/Users/someone/sub-9'), 'sub-9');
+  assert.strictEqual(resolve(''), null);
+
+  // The point of the resolver is that the file is read ONCE. Deleting the
+  // registry after it is built must not change its answers — a per-call
+  // labelFor would start saying `registered-2` (the basename fallback) here.
+  fs.rmSync(path.join(accounts.registryFile));
+  assert.strictEqual(resolve('/tmp/registered-2'), 'sub-2', 'the map was built up front');
+  assert.strictEqual(accounts.labelFor('/tmp/registered-2'), 'registered-2', 'ENTER: labelFor really does re-read');
+});
