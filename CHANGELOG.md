@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- A rework is never handed to a ticket seat whose context is past the compact
+  threshold (default 175k tokens): the loop archives that seat, spawns a fresh one
+  onto the same branch and worktree, delivers the must-fixes there, and the reject
+  reply names the replacement.
+
 ## 5.62.2 — 2026-09-11 — loop closes out green merges; Edit Session keeps team prompts
 
 - Edit Session lists the seat's team-own append prompts (the team brief among
