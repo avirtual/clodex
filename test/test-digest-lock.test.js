@@ -481,8 +481,9 @@ function withFakeLock(holderPid, check, { lastMs, agedMs } = {}) {
   fs.mkdirSync(lockDir);
   fs.writeFileSync(path.join(lockDir, 'pid'), holderPid);
   // `lastMs` is what a previous run recorded here — the input the refusal's nap
-  // is derived from. The pid file's mtime is the holder's start time, so the
-  // holder reads as ~0s in and the nap is arithmetic rather than a race.
+  // is derived from. The other input is the pid file's mtime, which the runner
+  // reads as the holder's start time: freshly written it is ~0s, so the nap is
+  // arithmetic rather than a race.
   if (lastMs !== undefined) fs.writeFileSync(path.join(root, '.test-digest.last'), `${lastMs}\n`);
   // `agedMs` backdates that mtime, which is the ONLY way to make the runner see
   // a holder already past the recorded duration: the subtraction has to go
