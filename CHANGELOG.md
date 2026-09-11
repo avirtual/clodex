@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Registered subscriptions: accounts, a select on every seat, and a quota chip per account
 
 - **Registered subscriptions**: Clodex keeps a list of Claude accounts
   (`~/.clodex/accounts.json`), mints an isolated config dir per account that
