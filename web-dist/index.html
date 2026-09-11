@@ -6905,6 +6905,7 @@ body {
         <label class="team-role-field" title="System-prompt name from the library — sets how this teammate behaves"><span>prompt</span><select id="team-roles-add-prompt"></select></label>
         <label class="team-role-field" data-field="template"><span>template</span><input type="text" id="team-roles-add-template" placeholder="optional: spawn template name"></label>
         <label class="team-role-field" data-field="cwd" title="Relative to the team root — where seats holding this role start. Blank = the team root."><span>cwd</span><input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory (e.g. api)"></label>
+        <label class="team-role-field" data-field="account" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" id="team-roles-add-account" placeholder="optional: account label"></label>
         <span class="team-roles-add-actions"><button type="button" id="team-roles-add-btn">Add</button><button type="button" id="team-roles-newrole-cancel" class="secondary">Cancel</button></span>
       </div>
       </div>
@@ -25399,9 +25400,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const dispatchM = argStr.match(/\bdispatch:(\S+)/);
         const cwdM = argStr.match(/\bcwd:(\S+)/);
         const modelM = argStr.match(/\bmodel:(\S+)/);
+        const accountM = argStr.match(/\baccount:(\S+)/);
         const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
         if (sub === "role-add" || sub === "role-set") {
-          return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, body };
+          return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, body };
         }
         if (sub === "role-rm" || sub === "set-lead") return { type: "team", sub, name: positional[0] || null, body: "" };
         if (sub === "role-rename") return { type: "team", sub, name: positional[0] || null, to: positional[1] || null, body: "" };
@@ -31556,6 +31558,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const roles = manifest && manifest.roles || {};
         return Object.entries(roles).map(([key, def]) => ({
           key,
+          account: def && def.account || "",
           brief: def && def.brief || "",
           // Relative to the team root; '' means the seat boots at the root itself.
           cwd: def && def.cwd || "",
@@ -31588,6 +31591,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const dispatch = trim(formValues && formValues.dispatch);
         if (DISPATCH_VALUES.includes(dispatch)) patch.dispatch = dispatch;
         patch.cwd = trim(formValues && formValues.cwd);
+        patch.account = trim(formValues && formValues.account);
         return patch;
       }
       function promptOptionGroups(names, teamOwned, team) {
@@ -31970,6 +31974,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const addPrompt = document.getElementById("team-roles-add-prompt");
         const addTemplate = document.getElementById("team-roles-add-template");
         const addCwd = document.getElementById("team-roles-add-cwd");
+        const addAccount = document.getElementById("team-roles-add-account");
         const addDispatch = document.getElementById("team-roles-add-dispatch");
         const addBtn = document.getElementById("team-roles-add-btn");
         const addToggle = document.getElementById("team-roles-newrole-toggle");
@@ -32449,8 +32454,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 body.appendChild(actions);
               }
             } else {
-              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><div class="team-role-dispatch" data-f-group="dispatch"></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><input type="text" data-f="account" placeholder="optional: account label"></label><div class="team-role-dispatch" data-f-group="dispatch"></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               body.querySelector('input[data-f="brief"]').value = row.brief;
+              body.querySelector('input[data-f="account"]').value = row.account;
               const sel = body.querySelector('select[data-f="prompt"]');
               {
                 const none = document.createElement("option");
@@ -32705,7 +32711,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               prompt: val("prompt"),
               template: val("template"),
               dispatch: dispatchVal(),
-              cwd: val("cwd")
+              cwd: val("cwd"),
+              account: val("account")
             });
             const res = await window.api.teamSetRole(name, role, patch);
             await afterMutation(res, `role "${role}" saved`);
@@ -32741,6 +32748,7 @@ You can add it back from this popover.` : "";
           addTemplate.value = "";
           addPrompt.value = "";
           addCwd.value = "";
+          addAccount.value = "";
           addDispatch.value = DEFAULT_DISPATCH;
           paintAddReveal();
         };
@@ -32849,6 +32857,8 @@ You can add it back from this popover.` : "";
           if (brief) def.brief = brief;
           const cwd = addCwd.value.trim();
           if (cwd && addReveal.cwd !== "hidden") def.cwd = cwd;
+          const account = addAccount.value.trim();
+          if (account) def.account = account;
           if (addDispatch.value !== DEFAULT_DISPATCH && DISPATCH_VALUES.includes(addDispatch.value)) {
             def.dispatch = addDispatch.value;
           }
