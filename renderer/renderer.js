@@ -677,12 +677,18 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   scheduleSidebarRelayout();
 }
 
+function accountOfRow(name) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  return item ? item.dataset.account || null : null;
+}
+
 // Handle context menu actions from main process
 // Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
 // metadata first because the kill+respawn wipes the tab via session-exit (same
 // dance as the Edit Session save path).
 function restartSessionWithReattach(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapAccount = accountOfRow(name);
   const snapType = item ? item.dataset.type || null : null;
   const snapCwd = item ? item.dataset.cwd : null;
   const snapBackend = item ? item.dataset.backend || null : null;
@@ -695,7 +701,7 @@ function restartSessionWithReattach(name) {
     }
     if (snapType) {
       createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire);
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire, snapAccount);
       switchSession(name);
     }
   });
@@ -707,6 +713,7 @@ function moveSessionWithPicker(name) {
   const snapType = item ? item.dataset.type || null : null;
   const snapBackend = item ? item.dataset.backend || null : null;
   const snapNoWire = item ? item.dataset.noWire === '1' : false;
+  const snapAccount = accountOfRow(name);
   return window.api.selectDirectory().then((dir) => {
     if (!dir) return;
     return window.api.moveSession(name, dir).then((res) => {
@@ -728,7 +735,7 @@ function moveSessionWithPicker(name) {
       }
       if (snapType || res.type) {
         createTerminal(name);
-        addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire);
+        addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
         switchSession(name);
       }
       showToast(`${name} moved to ${res.cwd}, restarting`, { name });
@@ -749,8 +756,9 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
       break;
     case 'reattach':
       if (type) {
+        const snapAccount = accountOfRow(name);
         createTerminal(name);
-        addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true);
+        addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true, snapAccount);
         // `background` marks the agent-initiated emitters (ticket seat, spawn
         // intent, reviewer). The reload respawn sends no flag and keeps focus.
         switchToNewSession(name, { agentInitiated: background === true });
@@ -848,6 +856,7 @@ function startRename(item, nameEl, sessionName) {
     if (!wanted) return;
     const snapType = item ? item.dataset.type || null : null;
     const snapBackend = item ? item.dataset.backend || null : null;
+    const snapAccount = accountOfRow(sessionName);
     window.api.renameSession(sessionName, wanted).then((res) => {
       if (!res || !res.ok) {
         if (res && res.kept) {
@@ -871,7 +880,7 @@ function startRename(item, nameEl, sessionName) {
       }
       removeSession(sessionName, { keepPersisted: true });
       createTerminal(res.name);
-      addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true);
+      addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
       switchSession(res.name);
       showToast(`${sessionName} renamed to ${res.name}, restarting`, { name: res.name });
     });
@@ -7450,6 +7459,12 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // applySessionArgs replays the PERSISTED value), so the rebuilt row must carry
   // the flag forward or an unrelated edit silently un-marks a wire-off seat.
   const snapNoWire = existing ? existing.dataset.noWire === '1' : false;
+  // Not the ROW's account like the other restart paths: this dialog can CHANGE it,
+  // so the row is the pre-edit value. `env === undefined` is the peer row, which
+  // leaves env untouched and keeps whatever the row had.
+  const snapAccount = env === undefined
+    ? accountOfRow(name)
+    : accountFromEnv(formatEnvLines(env), argsAccounts || []);
   closeArgsDialog();
   // systemPrompt (legacy inline) passes undefined so a pre-library inline body
   // survives; disabledSkills/injectSkills likewise (handler preserves on undefined).
@@ -7470,7 +7485,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     if (source) source.onRestarted();
     else if (snapType) {
       createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire);
+      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire, snapAccount);
       switchSession(name);
     }
   }
