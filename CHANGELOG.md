@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — the box boots its team's lead, and a dm reaches a box seat by its id
+## Unreleased
+
+## 5.63.4 — 2026-09-12 — the box boots its team's lead, and a dm reaches a box seat by its id
 
 - `[agent:team sandbox up]` boots the team's lead inside the box (posted as `{ name, team }`, so the box spawns it from the manifest shipped into it) in place of the old `worker` fixture, reports `lead <name> seeded|present|NOT seeded: …` — with a rebuild hint when the box image predates the team arm — and a failed team copy no longer skips writing sandbox.json.
 - A `name@origin` dm address now resolves against a peer's configured label, its id, or the host label it announced when it connected — in that order, through one resolver — so a sandbox box's seats can be reached as `<seat>@team-<name>`, which is also how they answer; `[agent:who]` lists such peers under that suffix instead of dropping them because their display label has a space.
