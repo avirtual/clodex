@@ -264,12 +264,6 @@ test('createSession: execCommands are stripped inbound and forced [] into create
   assert.deepStrictEqual(createCalls[0][IDX.execCommands], [], 'exec grants never reach create()');
 });
 
-// ── t837: `{ name, team }` spawns the lead from the HOST's manifest ──────────
-// The security property under test: the body carries a name and a team and
-// nothing else is read from it. Grants come from the receiving host's manifest
-// via _handleSpawnIntent, never from the wire, and only the manifest's lead may
-// be spawned this way.
-
 const LEAD_MANIFEST = { lead: 'clodex-lead', root: '/r' };
 const leadDeps = (over = {}) => makeDeps({ loadManifest: () => LEAD_MANIFEST, ...over });
 
