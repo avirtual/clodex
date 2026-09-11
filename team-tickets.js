@@ -36,6 +36,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
+const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
@@ -464,6 +465,7 @@ function createTicketMethods(deps, shared) {
     getRemindScheduler,
     getSandboxManager,
     getTemplates,
+    getUiSettings,
     listAllTemplates,
     getUserDataPath,
     gitWorktree,
@@ -3243,7 +3245,11 @@ function createTicketMethods(deps, shared) {
     // not stamped on the ticket — a flag that reached disk would resurface on a
     // replay months later and tell a seat the board said "start" about a state
     // long gone.
-    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false, respec = false, onWrite = null, fromBacklog = false) {
+    // `prelude` leads the BODY, ahead of the `[ticket tN]` head every dispatch opens
+    // with. One caller passes one — the rework replacement — and it must be first
+    // because it is the only line that tells the seat the tree already holds work
+    // that is not its own. Read after the spec, that instruction arrives too late.
+    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false, respec = false, onWrite = null, fromBacklog = false, prelude = '') {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true }; // self-assign — the lead just wrote it
@@ -3422,7 +3428,7 @@ function createTicketMethods(deps, shared) {
       // attached", which would put the close verb behind the very turn this line
       // exists to save. The verb is safe here for the same reason as in the body:
       // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
-      const r = this._gatedDeliver(seat, fromName, `${head}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${prelude}${head}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -5079,7 +5085,13 @@ function createTicketMethods(deps, shared) {
     // rather than by a caller-name special case: `_taskStart` refuses a backlog
     // ticket outright (`!ticket.assignee` → "use assign"), so nothing reaching a
     // start dispatch was backlog a moment earlier.
-    _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree', fromBacklog = false) {
+    // `prelude` is text that must reach the seat AHEAD of the spec, in the SAME
+    // write. Only `_reworkSeatFor` passes one, and it has to ride this dispatch
+    // rather than a second delivery for two reasons: the seat is not live until
+    // the deferred create() below lands (a caller's own _gatedDeliver resolves to
+    // "no such agent"), and two writes into a booting seat destroy the first one's
+    // draft. Defaults to '' so every other caller is unchanged by construction.
+    _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree', fromBacklog = false, prelude = '') {
       const isSpawn = mode === 'spawn';
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
@@ -5326,7 +5338,7 @@ function createTicketMethods(deps, shared) {
             background: true,
           });
           const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, false, false,
-            () => this._stampSpecDelivered(team, ticket.id, this.sessions.get(seat.name), { repin: false }), fromBacklog);
+            () => this._stampSpecDelivered(team, ticket.id, this.sessions.get(seat.name), { repin: false }), fromBacklog, prelude);
           this._broadcast('ipc-message', {
             type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt ? wt.path : shape.cwd}`,
           });
@@ -6720,6 +6732,146 @@ function createTicketMethods(deps, shared) {
       return out;
     },
 
+    // HEAD of a worktree, read synchronously — the three reject handlers are sync
+    // and the rework prefix below names the sha. `gitWorktree.headSha` is the
+    // async twin and cannot be reached from here.
+    _treeHeadShaSync(treePath) {
+      if (!treePath) return null;
+      try {
+        const out = childProcess.execFileSync('git', ['-C', treePath, 'rev-parse', 'HEAD'],
+          { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+        const sha = String(out || '').trim();
+        return /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
+      } catch { return null; }
+    },
+
+    // The next free name for a seat REPLACING one on the same ticket.
+    //
+    // `-r<N>`, not the plain numeric suffix `_mintTicketSeat` derives: matchSeatRole
+    // strips `/-r\d+$/` BEFORE its `[-_]?\d+$` strip, so `team-hand-827-r2` still
+    // decomposes to the role `hand` while `team-hand-827-2` decomposes to
+    // `hand-827` and resolves to no role at all. Every reader that answers "which
+    // role is this seat" — the roster, the ticket resolver, the cost rollup — goes
+    // through that function, so the shape is not cosmetic.
+    _reworkSeatName(team, roleKey, ticket) {
+      const n = String(ticket.id).replace(/^t/, '');
+      for (let k = 2; k <= 20; k += 1) {
+        const name = `${team.name}-${roleKey}-${n}-r${k}`;
+        if (!AGENT_NAME_RE.test(name)) return null;
+        let taken = this.sessions.has(name);
+        if (!taken) { try { taken = !!getPersistence().get(name); } catch { taken = true; } }
+        if (!taken) return name;
+      }
+      return null;
+    },
+
+    // A rework is never delivered into a ticket seat whose context is past the
+    // compact threshold: that seat is archived and a FRESH one takes over the same
+    // branch and the same worktree.
+    //
+    // The reasoning the ephemeral ctxwarn suppression rests on (session-manager,
+    // the ctx tick) inverts exactly here, and only here. That suppression is right
+    // while the seat is finishing its own ticket — a compact would cost it the
+    // context its close needs. At the moment new work arrives it is wrong: what the
+    // rework needs is the BRANCH (the commits and JOURNAL.md in the tree), which a
+    // fresh seat can read, and not the transcript, which it re-bills every turn.
+    // So the suppression stays and this is its counterweight on the one path where
+    // a heavy seat is handed a new round.
+    //
+    // `deliveryText` is the reject body the unreplaced path would have delivered.
+    // It rides the fresh seat's SPEC dispatch rather than a second write, because a
+    // replacement seat is not live yet — `_spawnTicketSeat` calls `create()` inside
+    // a `setImmediate` and these three handlers are synchronous, so a `_gatedDeliver`
+    // here resolves to "no such agent". One write also keeps the displaced-latch
+    // rule: two writes into a booting seat destroy the first one's draft.
+    //
+    // Four conditions beyond the threshold, each of which makes the replacement a
+    // LOSS rather than a saving:
+    //   - not ephemeral: a standing seat is the operator's own long-lived session,
+    //     not the loop's to archive.
+    //   - no `ctxInfo`: the seat has never reported a context size (a codex seat, or
+    //     one that has not taken a turn). Unknown is not "heavy".
+    //   - no worktree: the prefix promises commits on a branch, and a spawn seat has
+    //     neither — its work is uncommitted in the shared checkout and replacing it
+    //     would discard exactly that.
+    //   - no live lead: `_spawnTicketSeat` needs an opener for its seat shape and
+    //     its reply. With none there is nothing to spawn onto, so the heavy seat
+    //     keeps the work rather than the ticket losing its seat.
+    _reworkSeatFor(team, ticket, seat, deliveryText) {
+      const unchanged = { seat, replaced: false };
+      try {
+        if (!seat || !team || !ticket || seat === team.lead) return unchanged;
+        const s = this.sessions.get(seat);
+        if (!s || !s.agentType || s._dead) return unchanged;
+        if (!s.ctxInfo || typeof s.ctxInfo.tok !== 'number') return unchanged;
+        let rec = null;
+        try { rec = getPersistence().get(seat); } catch { rec = null; }
+        if (!rec || rec.ephemeral !== true) return unchanged;
+        const wt = ticket.worktree;
+        if (!wt || !wt.path || !wt.branch) return unchanged;
+        // Read at decision time, never memoized: the same read the ctx watcher
+        // makes, so an operator's edited threshold governs this gate too without a
+        // restart. A failed read resolves to the shipped default, never to no gate.
+        let overrides = null;
+        try { overrides = getUiSettings().get().ctxReminderThresholds; } catch { overrides = null; }
+        const nudge = ctxThresholdsFor(s.ctxInfo.model || null, overrides).nudge;
+        if (!(s.ctxInfo.tok >= nudge)) return unchanged;
+        const roleKey = ticket.role || matchSeatRole(team, seat);
+        if (!roleKey || !(team.roles && Object.prototype.hasOwnProperty.call(team.roles, roleKey))) return unchanged;
+        const opener = this.sessions.get(team.lead);
+        if (!opener || !opener.agentType) return unchanged;
+        const fresh = this._reworkSeatName(team, roleKey, ticket);
+        if (!fresh) return unchanged;
+        const tokens = s.ctxInfo.tok;
+        const head = this._treeHeadShaSync(wt.path);
+        const range = wt.baseSha ? `git log --oneline ${wt.baseSha}..HEAD` : 'git log --oneline -20';
+        const prefix = `REWORK on a FRESH seat: the previous seat (${seat}) was replaced at ~${Math.round(tokens / 1000)}k `
+          + `tokens. Your branch ${wt.branch}${head ? ` at ${head}` : ''} carries its commits; read \`${range}\`, `
+          + `the diff, and JOURNAL.md in your tree before touching anything. Then:\n${deliveryText || ''}\n`;
+        // BEFORE the archive, and synchronously. `_ticketTreeHolder` reads occupancy
+        // off the RECORD, and archive() leaves the session in `this.sessions` until
+        // its pty exits — so a pointer left here makes `_existingTicketTree` see the
+        // tree as held, refuse the reuse, and send the spawn to createWorktree for a
+        // branch that is already checked out. The fresh seat's own `claimTree` would
+        // clear it a moment too late.
+        try { getPersistence().setWorktree(seat, null); } catch { /* best-effort */ }
+        // Archive, never kill or destroy: the tree must survive (it IS the work) and
+        // the record must stay resumable, which is the same disposition the accept
+        // downgrade arms take for the same reason. Not awaited — these handlers are
+        // sync, and archive()'s record write lands before it yields.
+        Promise.resolve(this.archive(seat)).catch((e) => {
+          log.error('intent', `rework seat replacement: archiving ${seat} failed: ${e.message}`);
+        });
+        // Written directly rather than through `_repinTicketToSeat`: that helper
+        // resolves the destination through `_ticketAssigneeSeat`, which can only see
+        // a LIVE seat, and the replacement does not exist until the deferred spawn
+        // runs. Same two fields `_taskStart` writes on its own one-shot dispatch.
+        ticket.role = roleKey;
+        ticket.assignee = fresh;
+        const stamps = Array.isArray(ticket.seatReplacements) ? ticket.seatReplacements : [];
+        ticket.seatReplacements = [...stamps, { at: Date.now(), prev: seat, next: fresh, tokens }];
+        this._spawnTicketSeat(opener, team, ticket, roleKey,
+          { name: fresh, branch: wt.branch }, 'worktree', false, prefix);
+        return { seat: fresh, replaced: true, tokens, prevSeat: seat, threshold: nudge };
+      } catch (e) {
+        // The rework still has to reach SOMEBODY. A throw here leaves the original
+        // seat holding it, which is the state this gate improves on rather than the
+        // state it is required to reach.
+        log.error('intent', `rework seat gate failed for ${ticket && ticket.id}: ${e.message}`);
+        return unchanged;
+      }
+    },
+
+    // The clause every reader of a replacement gets: the lead's reply, the loop's
+    // log line and the ipc broadcast. One renderer, because three wordings for one
+    // event is how the lead's reply and the log stop agreeing about which seat holds
+    // the ticket.
+    _seatReplacedClause(r) {
+      if (!r || !r.replaced) return '';
+      return ` — seat ${r.prevSeat} replaced by ${r.seat} (context ~${Math.round(r.tokens / 1000)}k, `
+        + `past the ${Math.round(r.threshold / 1000)}k compact threshold); same branch and tree`;
+    },
+
     // Reject a ticket back to its seat from inside the loop.
     //
     // NOT `_taskReject`: that one is an intent handler — it is lead-only, needs a
@@ -6758,6 +6910,18 @@ function createTicketMethods(deps, shared) {
         // pair this header calls never-diverging.
         appendReworkReason(ticket, { round: ticket.reworkRound, by: 'ticket-loop', reason });
         delete ticket.loopStep;
+        // Spent for every LATER round once a round has been nudged, because the
+        // sweep gates on the stamp's mere presence. A ticket rejected after its
+        // round-1 nudge, merged again and left unaccepted would then never be
+        // nudged again — and the backstop is most needed on exactly those later
+        // rounds. Beside the accept stamps for the same reason they are deleted
+        // here: all of them describe a round that this reopen has ended.
+        delete ticket.mergedNudgedAt;
+        // Resolves the seat the rework is actually delivered to, and mutates the
+        // ticket's pin when it replaces one — so it runs ABOVE the save, and its
+        // delivery text is what the unreplaced path would have sent.
+        const rework = this._reworkSeatFor(team, ticket, seat,
+          this._redirectDeliveryText(ticket.id, 'rejected', reason));
         ticketsStore.save(team.root, tickets);
         // The reviewer goes with the step, exactly as it does in `_taskReject`.
         // This pair is documented as never diverging (see the header), so the
@@ -6777,24 +6941,33 @@ function createTicketMethods(deps, shared) {
         // its rejection keeps working the version that was just rejected, and the
         // stall sweep then reports it as a stalled seat — the wrong cause, which
         // sends the lead looking at the seat instead of at the delivery.
-        const r = this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
-          `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
-          (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
-            { label: 'rejected', reason, from: 'ticket-loop' }));
+        // On a REPLACEMENT the rework has already been written — it rides the fresh
+        // seat's spec dispatch (see `_reworkSeatFor`), which is the only write that
+        // can reach a seat still booting. Delivering here too would be a second
+        // write into that boot, which destroys the first one's draft. `queued`
+        // stands in for it so the undelivered escalation below reads the same on
+        // both arms.
+        const r = rework.replaced
+          ? { queued: true }
+          : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
+            `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
+            (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
+              { label: 'rejected', reason, from: 'ticket-loop' }));
+        const replaced = this._seatReplacedClause(rework);
         this._reconcileTickets(team);
-        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || seat, body: `ticket ${ticket.id} rejected: suite red` });
-        log.info('intent', `ticket ${ticket.id} rejected by the loop (suite red) → ${seat}`);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} rejected: suite red${replaced}` });
+        log.info('intent', `ticket ${ticket.id} rejected by the loop (suite red) → ${rework.seat}${replaced}`);
         // Undelivered is still reopened: the board is correct and the watchdog
         // sees an open ticket, which is recoverable. Reporting it lets the caller
         // escalate so the lead learns the hand was never told.
         if (!(r && (r.queued || r.parked))) {
-          return { ok: false, error: `the ticket was reopened but the rework message did not reach ${seat} (${(r && (r.error || r.held)) || 'unknown delivery failure'})` };
+          return { ok: false, error: `the ticket was reopened but the rework message did not reach ${rework.seat} (${(r && (r.error || r.held)) || 'unknown delivery failure'})` };
         }
         // The DELIVERED arm only. The undelivered one above returns an error the
         // call site already escalates on, and firing both would report one
         // rejection to the lead twice, by two channels, as two events.
-        this._notifyLeadOfLoopRejection(team, ticket, seat, reason);
-        return { ok: true, error: null, seat };
+        this._notifyLeadOfLoopRejection(team, ticket, rework.seat, reason, replaced);
+        return { ok: true, error: null, seat: rework.seat, replaced: rework.replaced ? rework : null };
       } catch (e) {
         return { ok: false, error: e.message };
       }
@@ -6814,7 +6987,7 @@ function createTicketMethods(deps, shared) {
     // reopen is durable before this runs, so a hold or a park is an acceptable
     // outcome. Wrapped, and called AFTER the save: a throw here must never
     // unwind the rejection. Ordering is the invariant; do not hoist it.
-    _notifyLeadOfLoopRejection(team, ticket, seat, reason) {
+    _notifyLeadOfLoopRejection(team, ticket, seat, reason, replacedClause = '') {
       try {
         if (!team.lead) return;
         const round = Number(ticket.reworkRound) || 1;
@@ -6822,7 +6995,7 @@ function createTicketMethods(deps, shared) {
         // is the failing-test dump, which is deliberately not forwarded.
         const firstLine = String(reason || '').split('\n')[0].trim().slice(0, 300);
         const body = [
-          `[ticket ${ticket.id} REJECTED by the loop] sent back to ${seat} for rework (round ${round}).`,
+          `[ticket ${ticket.id} REJECTED by the loop] sent back to ${seat} for rework (round ${round})${replacedClause}.`,
           '',
           `WHY: ${firstLine || 'the test suite failed on the branch'}`,
           '',
@@ -6880,16 +7053,27 @@ function createTicketMethods(deps, shared) {
           + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
         return;
       }
-      const r = this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
-        `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
-        (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
-          { label: 'more must-fixes', reason, from: session.name }));
+      // A follow-up is new work for the seat exactly as a reopen is, so the same
+      // gate applies: a seat already past the compact threshold is replaced rather
+      // than handed another round on top of the context that earned the must-fixes.
+      // On a replacement the text rides the fresh seat's spec dispatch, so there is
+      // nothing left to deliver here — `queued` stands in so the failure arm below
+      // reads the same on both.
+      const rework = this._reworkSeatFor(team, ticket, seat,
+        this._redirectDeliveryText(ticket.id, 'more must-fixes', reason));
+      const r = rework.replaced
+        ? { queued: true }
+        : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
+          `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
+          (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
+            { label: 'more must-fixes', reason, from: session.name }));
       if (!(r && (r.queued || r.parked))) {
-        reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${seat} `
+        reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${rework.seat} `
           + `(${(r && (r.error || r.held)) || 'unknown delivery failure'})`
           + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
         return;
       }
+      const replaced = this._seatReplacedClause(rework);
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       // The CURRENT round, not a bumped one: this path opens no round (see this
@@ -6904,10 +7088,10 @@ function createTicketMethods(deps, shared) {
       // the next reviewer looking for a fix that was never asked for.
       appendReworkReason(ticket, { round: Number(ticket.reworkRound) || 1, by: session.name, reason });
       ticketsStore.save(team.root, tickets);
-      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || seat, body: `ticket ${ticket.id} follow-up must-fixes` });
-      log.info('intent', `task reject ${ticket.id} by ${session.name} → follow-up to ${seat} (already open for rework)`);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} follow-up must-fixes${replaced}` });
+      log.info('intent', `task reject ${ticket.id} by ${session.name} → follow-up to ${rework.seat} (already open for rework)${replaced}`);
       reply(`ticket ${ticket.id} was already open for rework (round ${Number(ticket.reworkRound) || 1}) — `
-        + `your must-fixes were delivered to ${seat} as a follow-up, not as a new reopen`);
+        + `your must-fixes were delivered to ${rework.seat} as a follow-up, not as a new reopen${replaced}`);
     },
 
     _loadTicket(team, ticketId) {
@@ -7685,6 +7869,19 @@ function createTicketMethods(deps, shared) {
       // it — and a stamp outliving the hold would alarm about a pending escalation
       // on a ticket that is being worked, in a body that tells the hand to re-close.
       delete ticket.verifyHold;
+      // Spent for every LATER round once a round has been nudged, because
+      // `_sweepMergedUnaccepted` gates on the stamp's mere presence. A ticket
+      // rejected after its round-1 nudge, merged again and left unaccepted would
+      // then never be nudged again — and the backstop is most needed on exactly
+      // those later rounds. Beside the accept stamps for the same reason they are
+      // deleted here: all of them describe a round this reopen has ended.
+      delete ticket.mergedNudgedAt;
+      // Above the save: on a replacement this re-pins the ticket to the fresh seat,
+      // and the pin has to reach disk with the rest of the reopen.
+      const seat = this._ticketAssigneeSeat(team, ticket);
+      const rework = (seat && seat !== team.lead)
+        ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason))
+        : { seat, replaced: false };
       ticketsStore.save(team.root, tickets);
       // The reviewer of the round this reject ends goes with the step it was
       // spawned under. AFTER the save, so the board is already correct if the
@@ -7693,21 +7890,25 @@ function createTicketMethods(deps, shared) {
       // seat, and this handler's gate accepts exactly that — so the prescribed
       // way out of a wedged review was itself the way into a stranded seat.
       this._retireReviewSeatsFor(team, ticket.id, 'rejected');
-      const seat = this._ticketAssigneeSeat(team, ticket);
       // Same rework reasoning as the loop's reject. This call passed NO tag before,
       // which was harmless while the body was short enough to arrive inline; adding
       // the close line spills it, and an untagged pointer names neither the ticket
       // nor the verb. So the tag is added here rather than left to default.
-      if (seat && seat !== team.lead) {
+      //
+      // Skipped on a REPLACEMENT: the must-fixes ride the fresh seat's spec
+      // dispatch, which is the only write that reaches a seat still booting, and a
+      // second write into that boot destroys the first one's draft.
+      if (seat && seat !== team.lead && !rework.replaced) {
         this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
           `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
             { label: 'rejected', reason, from: session.name }));
       }
+      const replaced = this._seatReplacedClause(rework);
       this._reconcileTickets(team);
-      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
-      log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened`);
-      reply(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}`);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected${replaced}` });
+      log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened${replaced}`);
+      reply(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}`);
     },
 
     // Replace an OPEN ticket's spec and re-dispatch it. The correction path for a
