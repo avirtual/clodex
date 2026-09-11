@@ -189,3 +189,9 @@ allow — a seat with `exec` but not the command id is refused, and vice versa.
 - **Passive needs the new core** (`delivery:'passive'` in `_onIncoming` +
   the passive park class in pending-store). An older core ignores the field and
   wakes per event — degraded to noisy, never to dropped.
+- **A long run is no longer silent.** A def whose `timeoutMs` is at least 60 000
+  injects one start line naming the run number, the child pid and the ceiling,
+  then a "still running" line with the elapsed time every `statusEveryMs`
+  (optional def field, integer ≥ 30 000, default 3m), and stamps its result with
+  the same `run #<seq>`. Shorter runs stay silent whatever the def says, so a
+  10-second command pays no prompt tax to say it started.

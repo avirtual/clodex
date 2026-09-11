@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- A granted exec run longer than a minute acknowledges its start with the run number and ceiling, injects a "still running" line every few minutes (`statusEveryMs`, default 3m), and stamps the result with the same run number, so a seat never has to poll to learn whether its suite is alive.
 - The hand prompt tells a ticket hand to add no comment lines at all and to
   check only the comments its own hunks touch, instead of commenting and
   trimming back to net zero and sweeping the whole file; two hands in a row
