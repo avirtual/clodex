@@ -36581,8 +36581,13 @@ ${detail}` });
         sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, lastActivityTs: Date.now() });
         scheduleSidebarRelayout();
       }
+      function accountOfRow(name) {
+        const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        return item ? item.dataset.account || null : null;
+      }
       function restartSessionWithReattach(name) {
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        const snapAccount = accountOfRow(name);
         const snapType = item ? item.dataset.type || null : null;
         const snapCwd = item ? item.dataset.cwd : null;
         const snapBackend = item ? item.dataset.backend || null : null;
@@ -36595,7 +36600,7 @@ ${detail}` });
           }
           if (snapType) {
             createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire);
+            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire, snapAccount);
             switchSession(name);
           }
         });
@@ -36606,6 +36611,7 @@ ${detail}` });
         const snapType = item ? item.dataset.type || null : null;
         const snapBackend = item ? item.dataset.backend || null : null;
         const snapNoWire = item ? item.dataset.noWire === "1" : false;
+        const snapAccount = accountOfRow(name);
         return window.api.selectDirectory().then((dir) => {
           if (!dir) return;
           return window.api.moveSession(name, dir).then((res) => {
@@ -36631,7 +36637,7 @@ ${detail}` });
             }
             if (snapType || res.type) {
               createTerminal(name);
-              addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire);
+              addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
               switchSession(name);
             }
             showToast(`${name} moved to ${res.cwd}, restarting`, { name });
@@ -36651,8 +36657,9 @@ ${detail}` });
             break;
           case "reattach":
             if (type) {
+              const snapAccount = accountOfRow(name);
               createTerminal(name);
-              addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true);
+              addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true, snapAccount);
               switchToNewSession(name, { agentInitiated: background === true });
             }
             break;
@@ -36743,6 +36750,7 @@ ${detail}` });
           if (!wanted) return;
           const snapType = item ? item.dataset.type || null : null;
           const snapBackend = item ? item.dataset.backend || null : null;
+          const snapAccount = accountOfRow(sessionName);
           window.api.renameSession(sessionName, wanted).then((res) => {
             if (!res || !res.ok) {
               if (res && res.kept) {
@@ -36770,7 +36778,7 @@ ${detail}` });
             }
             removeSession(sessionName, { keepPersisted: true });
             createTerminal(res.name);
-            addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true);
+            addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
             switchSession(res.name);
             showToast(`${sessionName} renamed to ${res.name}, restarting`, { name: res.name });
           });
@@ -40368,8 +40376,8 @@ Click for live activity`;
           (result.session && result.session.noWire) === true,
           account.label
         );
-        switchSession(params.name);
-        window.api.writeToSession(params.name, "claude /login\n");
+        await switchToNewSession(params.name, { agentInitiated: false });
+        window.api.injectPrompt(params.name, "claude /login");
       }
       async function addPrefsAccount() {
         const label = (prefsAccountLabel.value || "").trim();
@@ -42926,6 +42934,7 @@ ${res.stderr}` : "");
         const snapCwd = existing ? existing.dataset.cwd : null;
         const snapBackend = existing ? existing.dataset.backend || null : null;
         const snapNoWire = existing ? existing.dataset.noWire === "1" : false;
+        const snapAccount = env === void 0 ? accountOfRow(name) : accountFromEnv(formatEnvLines(env), argsAccounts || []);
         closeArgsDialog();
         const res = source ? await source.save({
           // Peer save NEVER carries execCommands: the key is omitted entirely (not even []),
@@ -42952,7 +42961,7 @@ ${res.stderr}` : "");
           if (source) source.onRestarted();
           else if (snapType) {
             createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire);
+            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire, snapAccount);
             switchSession(name);
           }
         }

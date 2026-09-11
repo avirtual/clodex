@@ -4849,8 +4849,8 @@ async function startLoginSeat(account) {
     (result.session && result.session.team) || null,
     (result.session && result.session.noWire) === true,
     account.label);
-  switchSession(params.name);
-  window.api.writeToSession(params.name, 'claude /login\n');
+  await switchToNewSession(params.name, { agentInitiated: false });
+  window.api.injectPrompt(params.name, 'claude /login');
 }
 
 async function addPrefsAccount() {
@@ -7459,9 +7459,6 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // applySessionArgs replays the PERSISTED value), so the rebuilt row must carry
   // the flag forward or an unrelated edit silently un-marks a wire-off seat.
   const snapNoWire = existing ? existing.dataset.noWire === '1' : false;
-  // Not the ROW's account like the other restart paths: this dialog can CHANGE it,
-  // so the row is the pre-edit value. `env === undefined` is the peer row, which
-  // leaves env untouched and keeps whatever the row had.
   const snapAccount = env === undefined
     ? accountOfRow(name)
     : accountFromEnv(formatEnvLines(env), argsAccounts || []);
