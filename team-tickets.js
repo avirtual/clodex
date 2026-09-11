@@ -369,6 +369,8 @@ const TICKET_STALL_MS = 30 * 60 * 1000;
 // been burned by three times.
 const WAKE_GRACE_MS = 5 * 60 * 1000;
 
+const MERGED_ACCEPT_NUDGE_MS = 10 * 60 * 1000;
+
 // The branch an accepted ticket lands on. A literal, matching what
 // scripts/release.sh's preflight demands, and deliberately NOT
 // gitWorktree.defaultBranch(): that prefers origin/HEAD, which answers about a
@@ -1566,6 +1568,10 @@ function createTicketMethods(deps, shared) {
           `${landedOn.verdict} on ticket ${ticketId} (review round ${landedOn.reviewRound}, ${mf}).`,
           `Landed on the ticket record; the board shows it via [agent:task list all].`,
           where,
+          // COLUMN 1 IS THE SAFETY here too — see _notifyMergeLanded.
+          ...(landedOn.verdict === 'ACCEPT'
+            ? [`Nothing to do yet — the loop merges; when the [ticket ${ticketId} MERGED] notice lands, emit \`[agent:task accept ${ticketId}]\` alone in a reply.`]
+            : []),
         ].join('\n');
         // Not urgent: a verdict is durable on the record before this runs, so
         // waking a busy lead buys nothing the next turn does not. A hold or a
@@ -2242,13 +2248,11 @@ function createTicketMethods(deps, shared) {
     // claim — an absent measurement rendered as a measured answer. Both are the
     // default arm, which is the only arm a caller can reach by forgetting.
     // COLUMN 1 IS THE SAFETY, the same knife-edge ticketCloseLine documents and
-    // for a worse consequence: the last line carries a complete, ready-to-fire
-    // `[agent:task accept <id>]`, inert only because `Nothing was torn down: `
-    // precedes it. IntentScanner's parse is ^-anchored, so a reflow putting the
-    // verb at the start of a line makes the LEAD auto-accept on receipt —
-    // retiring the seat and destroying the worktree, the one thing this whole
-    // step promises not to do, and the one action here that no revert undoes.
-    // Keep the prefix.
+    // for a worse consequence: TWO lines here carry a complete, ready-to-fire
+    // `[agent:task accept <id>]` — the step line and the closing one — each inert
+    // only because prose precedes it. IntentScanner is ^-anchored, so a reflow
+    // putting either verb at a line start makes the LEAD auto-accept on receipt,
+    // destroying the worktree, which no revert undoes. Keep both prefixes.
     _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned }) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
@@ -2286,12 +2290,15 @@ function createTicketMethods(deps, shared) {
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
+          `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it.`,
+          '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured (first run: ${oneLine(stamp.first) || 'unrecorded'}).`] : []),
           changelogLine,
           `Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`,
         ].join('\n');
+        this._stampMerged(team, ticketId);
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
         if (!(r && (r.queued || r.parked))) {
           log.error('ticket', `ticket ${ticketId} merged as ${sha} but ${team.lead} was NOT told (${(r && (r.error || r.held)) || 'unknown delivery failure'})`);
@@ -6900,6 +6907,18 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    _stampMerged(team, ticketId) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        rec.mergedAt = Date.now();
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `merged stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
     _setLoopStep(team, ticketId, step) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -9193,6 +9212,29 @@ function createTicketMethods(deps, shared) {
       return worst;
     },
 
+    _sweepMergedUnaccepted(team, tickets, now) {
+      for (const t of tickets) {
+        if (typeof t.mergedAt !== 'number' || t.mergedNudgedAt) continue;
+        if (t.acceptedAt || t.closedOut || t.state !== 'done') continue;
+        if (t.mergeError) continue;
+        if (now - t.mergedAt < MERGED_ACCEPT_NUDGE_MS) continue;
+        const tid = t.id;
+        const body = `[ticket ${tid} merged ${humanizeAge(now - t.mergedAt)} ago, not accepted] Step owed: \`[agent:task accept ${tid}]\`.`;
+        this._gatedDeliver(team.lead, 'ticket-watchdog', body, false,
+          `[ticket ${tid} merged, not accepted]`,
+          () => {
+            try {
+              const fresh = ticketsStore.load(team.root);
+              const rec = fresh.find((x) => x.id === tid);
+              if (!rec) return;
+              if (rec.mergedNudgedAt) return;     // another sweep won
+              rec.mergedNudgedAt = now;
+              ticketsStore.save(team.root, fresh);
+            } catch (e) { log.error('ticket', `merged nudge stamp for ${tid} failed: ${e.message}`); }
+          });
+      }
+    },
+
     // Async since t322: the alarm body carries git facts, and git is async. The
     // caller (_sweepTickets) does not await — a slow probe must not delay the
     // reconcile pass behind it — so overlapping sweeps are possible and
@@ -9200,6 +9242,9 @@ function createTicketMethods(deps, shared) {
     async _sweepTeamTickets(team, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(team.root);
+      try { this._sweepMergedUnaccepted(team, tickets, now); } catch (e) {
+        log.error('ticket', `merged-unaccepted sweep failed: ${e.message}`);
+      }
       // Walked ONCE for the whole board, not once per ticket: the orphan test below
       // asks `_ticketAssigneeSeat` about every eligible ticket and each resolution
       // would otherwise re-walk the run directory. Same reason `_touchTicketActivity`

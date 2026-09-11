@@ -20,6 +20,7 @@ blocks a release.
 - **Move-by-model sees the settings default**: a seat that runs a model through
   `settings.json` rather than a `--model` flag is now selected by "Move seats on
   model", and the model list offers that default.
+- **The ticket loop says what the lead owes**: a reviewer ACCEPT and the MERGED notice both name the `task accept` step, and a merged ticket left unaccepted for ten minutes gets one reminder.
 
 ## 5.61.1 — 2026-09-11 — The Accounts pane fits the dialog, and ticket hands cannot stage the whole tree
 
