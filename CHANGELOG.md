@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — roles carry an account; rework seats replaced past the compact threshold; execs report their runs
 
 - A granted exec run longer than a minute acknowledges its start with the run number and ceiling, injects a "still running" line every few minutes (`statusEveryMs`, default 3m), and stamps the result with the same run number, so a seat never has to poll to learn whether its suite is alive.
 - **Teams:** a role can name an `account:` label (`team role-add`/`role-set`),
