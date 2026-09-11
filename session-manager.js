@@ -3528,10 +3528,18 @@ function createSessionManager(deps) {
         } catch { return null; }
       };
       const accountsStore = (getAccounts && getAccounts()) || null;
-      // One registry read for the whole list, not one per row.
-      const resolveAccount = accountsStore
-        ? (accountsStore.labelResolver ? accountsStore.labelResolver() : (d) => accountsStore.labelFor(d))
-        : null;
+      // One registry read for the whole list, not one per row. Built inside a
+      // try for the same reason the per-row read below has one: list() is a
+      // render path, and a store that throws while building the map would take
+      // the whole sidebar with it rather than costing one row its label.
+      let resolveAccount = null;
+      try {
+        if (accountsStore) {
+          resolveAccount = accountsStore.labelResolver
+            ? accountsStore.labelResolver()
+            : (d) => accountsStore.labelFor(d);
+        }
+      } catch { resolveAccount = null; }
       const accountFromPersistedEnv = (name) => {
         if (!resolveAccount) return 'default';
         try {
