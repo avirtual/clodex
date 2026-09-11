@@ -30,6 +30,11 @@ const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
+const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
+const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
+const EXEC_STATUS_MIN_MS = 30 * 1000;
+const EXEC_RUN_RECORD_CAP = 20;
+
 const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 // Retry-with-a-ceiling, NOT confirmed delivery — the distinction is the whole
@@ -5178,8 +5183,7 @@ function createSessionManager(deps) {
     // makes argv-injection structurally impossible. The invoking seat's persisted
     // execCommands allowlist is the capability; the registry is read fresh at
     // invocation (no watcher, so a headless host cannot serve a stale cache).
-    // Success is SILENT (no re-bill); all three failure classes bounce loudly,
-    // because a lost exec is a lost datum.
+    // All three failure classes bounce loudly, because a lost exec is a lost datum.
     // _resolveExecDefs degrades to the bare id STRING on any read/parse failure — a
     // malformed def must never fail a spawn — and drops argv/cwd, which can carry
     // absolute paths that must never reach a prompt.
@@ -5300,7 +5304,52 @@ function createSessionManager(deps) {
         let done = false;
         let stderr = '';
         let stderrTruncated = false;
-        const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); fn(); };
+
+        const tracked = timeoutMs >= EXEC_ACK_MIN_TIMEOUT_MS;
+        const startedAt = Date.now();
+        let statusTimer = null;
+        let record = null;
+        let runTag = '';
+        if (tracked) {
+          const runs = session.execRuns || (session.execRuns = []);
+          const seq = runs.length ? runs[runs.length - 1].seq + 1 : 1;
+          runTag = `run #${seq} `;
+          record = { seq, cmd, pid: child.pid, startedAt, endedAt: null, state: 'running', tail: '' };
+          runs.push(record);
+          while (runs.length > EXEC_RUN_RECORD_CAP) runs.shift();
+
+          const ceilingMin = Math.ceil(timeoutMs / 60000);
+          const statusEveryMs = (typeof entry.statusEveryMs === 'number'
+            && entry.statusEveryMs >= EXEC_STATUS_MIN_MS)
+            ? Math.floor(entry.statusEveryMs) : EXEC_STATUS_DEFAULT_MS;
+          const everyLabel = statusEveryMs % 60000 === 0
+            ? `${statusEveryMs / 60000}m` : `${Math.round(statusEveryMs / 1000)}s`;
+          reply(`${cmd}: started (run #${seq}, pid ${child.pid}, ceiling ${ceilingMin}m). `
+            + 'Do not poll, do not re-emit — END YOUR TURN. '
+            + `A status line arrives every ${everyLabel} and the result when it ends.`);
+          statusTimer = setInterval(() => {
+            const elapsed = Math.max(0, Date.now() - startedAt);
+            const mins = Math.floor(elapsed / 60000);
+            const secs = String(Math.floor((elapsed % 60000) / 1000)).padStart(2, '0');
+            reply(`${cmd}: still running — ${mins}m ${secs}s of a ${ceilingMin}m ceiling `
+              + `(run #${seq}). Do not poll; END YOUR TURN.`);
+          }, statusEveryMs);
+          if (statusTimer && typeof statusTimer.unref === 'function') statusTimer.unref();
+        }
+        const endRun = (state, tail) => {
+          if (!record) return;
+          record.state = state;
+          record.endedAt = Date.now();
+          record.tail = tail;
+        };
+
+        const finish = (fn) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+          fn();
+        };
         const timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch {}
           // A TIMEOUT IS NOT A FAILURE, and telling the two apart is the caller's
@@ -5321,9 +5370,13 @@ function createSessionManager(deps) {
           const ceiling = timeoutMs >= 1000
             ? `${Math.round(timeoutMs / 1000)}s (${timeoutMs}ms)`
             : `${timeoutMs}ms`;
-          finish(() => fail(`TIMED OUT after ${ceiling} — no result was returned. `
-            + 'This is not a failure report: the command was killed at its ceiling, so it may have '
-            + 'succeeded and lost only its output, and any work it started may still be running.'));
+          finish(() => {
+            const body = `${runTag}TIMED OUT after ${ceiling} — no result was returned. `
+              + 'This is not a failure report: the command was killed at its ceiling, so it may have '
+              + 'succeeded and lost only its output, and any work it started may still be running.';
+            endRun('timeout', body);
+            fail(body);
+          });
         }, timeoutMs);
         if (child.stderr) {
           // setEncoding, not d.toString(): a chunk boundary inside a multi-byte
@@ -5335,7 +5388,11 @@ function createSessionManager(deps) {
             else stderrTruncated = true;   // makes the clamp's count honest
           });
         }
-        child.on('error', (e) => finish(() => fail(`run failed (${e.message})`)));
+        child.on('error', (e) => finish(() => {
+          const body = `${runTag}run failed (${e.message})`;
+          endRun('failed', body);
+          fail(body);
+        }));
         child.on('exit', (code, signal) => finish(() => {
           if (code === 0) {
             // A widened def (replyMaxBytes) returns stderr from the TOP, not the
@@ -5346,8 +5403,9 @@ function createSessionManager(deps) {
             const body = entry.replyStderr !== true ? ''
               : replyMax ? clamp(stderr, replyMax, { truncated: stderrTruncated })
                 : (stderr.trim().split('\n').pop() || '').slice(0, 200);
+            endRun('ok', body ? `${runTag}${body}` : '');
             if (body) {
-              reply(`${cmd}: ${body}`);
+              reply(`${cmd}: ${runTag}${body}`);
               log.info('intent', `exec ${cmd} by ${who}: ok (stderr replied)`);
               const shown = body.length > 200 ? `${body.slice(0, 200)}…` : body;
               this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `ok: ${shown}` });
@@ -5359,7 +5417,9 @@ function createSessionManager(deps) {
           }
           const how = signal ? `killed (${signal})` : `exit ${code}`;
           const tail = stderr.trim().split('\n').pop() || '';
-          fail(tail ? `${how}: ${tail.slice(0, 200)}` : how);
+          const body = `${runTag}${tail ? `${how}: ${tail.slice(0, 200)}` : how}`;
+          endRun('failed', body);
+          fail(body);
         }));
         try {
           if (child.stdin) { child.stdin.write(payloadJson); child.stdin.end(); }

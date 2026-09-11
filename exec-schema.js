@@ -213,6 +213,11 @@ function validateExecDef(entry, name) {
       && !(typeof entry.replyMaxBytes === 'number' && entry.replyMaxBytes > 0)) {
     return { ok: false, error: 'replyMaxBytes: must be a positive number' };
   }
+  if ('statusEveryMs' in entry
+      && !(typeof entry.statusEveryMs === 'number' && Number.isInteger(entry.statusEveryMs)
+        && entry.statusEveryMs >= 30000)) {
+    return { ok: false, error: 'statusEveryMs: must be an integer of at least 30000 ms' };
+  }
   // Optional one-line prose rendered into the granted seat's EXEC prompt section
   // (t81): what the command is for, so an agent can pick one without firing it to
   // find out. Type-checked because it reaches a PROMPT — a number would render as
