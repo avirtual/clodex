@@ -1,8 +1,4 @@
 'use strict';
-// team-sandbox-seeds.test.js — t810: `[agent:team sandbox up|rebuild]` waits for
-// the box's health check and seeds a `bash` seat plus a Claude `worker` before
-// it replies, so the reply means "ready, here is what is in it".
-//
 // No docker and no socket: the sandbox MANAGER is the t808 fake and `fetch` is a
 // recorder. That recorder is the subject of most assertions — what this feature
 // has to get right is the REQUEST SEQUENCE (which URL, which method, which body,
@@ -121,10 +117,7 @@ function mkNet({ sessions = [], post, listStatus = 200 } = {}) {
 
 const SEEDS = [
   { name: 'bash', type: 'bash', cwd: '/home/clodex' },
-  {
-    name: 'worker', type: 'claude', cwd: '/home/clodex/work', extraArgs: [],
-    disabledTools: ['Bash'], disabledSkills: ['*'], systemPromptBody: 'be a fixture',
-  },
+  { name: 'clodex-lead', team: 'clodex' },
 ];
 
 test('seeding lists first, then POSTs each seat with its literal body and the bearer', async () => {
@@ -132,7 +125,7 @@ test('seeding lists first, then POSTs each seat with its literal body and the be
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
   assert.deepStrictEqual(out, { ok: true, results: [
     { name: 'bash', state: 'seeded' },
-    { name: 'worker', state: 'seeded' },
+    { name: 'clodex-lead', state: 'seeded' },
   ] });
   assert.deepStrictEqual(net.requests.map((r) => [r.method, r.url]), [
     ['GET', `${WIRE}/api/sessions`],
@@ -140,10 +133,8 @@ test('seeding lists first, then POSTs each seat with its literal body and the be
     ['POST', `${WIRE}/api/sessions`],
   ]);
   assert.deepStrictEqual(net.requests[1].body, { name: 'bash', type: 'bash', cwd: '/home/clodex' });
-  assert.deepStrictEqual(net.requests[2].body, {
-    name: 'worker', type: 'claude', cwd: '/home/clodex/work', extraArgs: [],
-    disabledTools: ['Bash'], disabledSkills: ['*'], systemPromptBody: 'be a fixture',
-  }, 'the seat object crosses WHOLE — a name/type/cwd whitelist would drop the lockdown silently');
+  assert.deepStrictEqual(net.requests[2].body, { name: 'clodex-lead', team: 'clodex' },
+    'the seat object crosses WHOLE — a name/type/cwd whitelist would drop the team key silently');
   for (const r of net.requests) assert.strictEqual(r.auth, `Bearer ${TOKEN}`, 'every request carries the box token');
 });
 
@@ -155,9 +146,9 @@ test('a seat that already exists is skipped, not POSTed again', async () => {
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
   assert.deepStrictEqual(out.results, [
     { name: 'bash', state: 'present' },
-    { name: 'worker', state: 'seeded' },
+    { name: 'clodex-lead', state: 'seeded' },
   ], 'the reply still describes what is in the box, and distinguishes the seat it created');
-  assert.deepStrictEqual(net.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['worker']);
+  assert.deepStrictEqual(net.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['clodex-lead']);
 });
 
 test('a 400 "name taken" is a skip too — the box owns the registry, not the list', async () => {
@@ -166,58 +157,55 @@ test('a 400 "name taken" is a skip too — the box owns the registry, not the li
   assert.strictEqual(out.ok, true);
   assert.deepStrictEqual(out.results, [
     { name: 'bash', state: 'present' },
-    { name: 'worker', state: 'seeded' },
+    { name: 'clodex-lead', state: 'seeded' },
   ]);
 });
 
 test('any other POST failure stops and names the seat, keeping the earlier ones', async () => {
-  const net = mkNet({ post: (n) => (n === 'worker' ? { status: 500, body: 'boom' } : null) });
+  const net = mkNet({ post: (n) => (n === 'clodex-lead' ? { status: 500, body: 'boom' } : null) });
   const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: SEEDS, fetch: net.fetch });
   assert.strictEqual(out.ok, false);
-  assert.match(out.error, /seeding worker: 500 .*boom/);
+  assert.match(out.error, /seeding clodex-lead: 500 .*boom/);
   assert.deepStrictEqual(out.results, [
     { name: 'bash', state: 'seeded' },
-    { name: 'worker', state: 'failed', error: '500 boom' },
+    { name: 'clodex-lead', state: 'failed', error: '500 boom' },
   ], 'the bash seat the box already created is still reported');
 });
 
-// t818: the worker seat is named as optional, so its failure is a RESULT rather
-// than a stop — the bash seat after it must still be attempted and reported, or
-// one unauthenticated Claude seat would silently cost the box its shell.
 test('an optional seat that fails does not stop the seats after it', async () => {
-  const net = mkNet({ post: (n) => (n === 'worker' ? { status: 500, body: 'no credentials' } : null) });
+  const net = mkNet({ post: (n) => (n === 'clodex-lead' ? { status: 500, body: 'no credentials' } : null) });
   const seeds = [SEEDS[1], SEEDS[0]];
-  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds, optional: ['worker'], fetch: net.fetch });
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds, optional: ['clodex-lead'], fetch: net.fetch });
   assert.strictEqual(out.ok, true);
   assert.deepStrictEqual(out.results, [
-    { name: 'worker', state: 'failed', error: '500 no credentials' },
+    { name: 'clodex-lead', state: 'failed', error: '500 no credentials' },
     { name: 'bash', state: 'seeded' },
   ]);
-  assert.deepStrictEqual(net.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['worker', 'bash'],
-    'ENTER: bash was POSTed AFTER the worker failed — a stop-on-first-error would have skipped it');
+  assert.deepStrictEqual(net.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['clodex-lead', 'bash'],
+    'ENTER: bash was POSTed AFTER the lead seat failed — a stop-on-first-error would have skipped it');
 });
 
 // A multi-line error body reaches a one-line reply, so only the first line rides.
 test('a failed seat reports the first line of the box error, not the whole body', async () => {
   const net = mkNet({ post: () => ({ status: 500, body: 'no credentials\n  at spawn (box.js:1)\n  at run' }) });
-  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['worker'], fetch: net.fetch });
-  assert.deepStrictEqual(out.results, [{ name: 'worker', state: 'failed', error: '500 no credentials' }]);
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['clodex-lead'], fetch: net.fetch });
+  assert.deepStrictEqual(out.results, [{ name: 'clodex-lead', state: 'failed', error: '500 no credentials' }]);
 });
 
 // The box answers a refused create with `{ok:false,error}`, not a bare string, so
 // the raw text is JSON punctuation wrapped around the one sentence a lead needs.
 test('a JSON error body is unwrapped to its error text', async () => {
   const net = mkNet({ post: () => ({ status: 500, body: { ok: false, error: 'no credentials' } }) });
-  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['worker'], fetch: net.fetch });
-  assert.deepStrictEqual(out.results, [{ name: 'worker', state: 'failed', error: '500 no credentials' }]);
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['clodex-lead'], fetch: net.fetch });
+  assert.deepStrictEqual(out.results, [{ name: 'clodex-lead', state: 'failed', error: '500 no credentials' }]);
 });
 
 // Not every non-2xx body is JSON — a proxy or a crashed box answers in plain
 // text, and unwrapping must not swallow it.
 test('a non-JSON error body still rides verbatim', async () => {
   const net = mkNet({ post: () => ({ status: 502, body: 'bad gateway' }) });
-  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['worker'], fetch: net.fetch });
-  assert.deepStrictEqual(out.results, [{ name: 'worker', state: 'failed', error: '502 bad gateway' }]);
+  const out = await seedSandboxSessions({ wireUrl: WIRE, token: TOKEN, seeds: [SEEDS[1]], optional: ['clodex-lead'], fetch: net.fetch });
+  assert.deepStrictEqual(out.results, [{ name: 'clodex-lead', state: 'failed', error: '502 bad gateway' }]);
 });
 
 test('a failed list stops before any POST', async () => {
@@ -230,7 +218,7 @@ test('a failed list stops before any POST', async () => {
 
 // ------------------------------------------------------------- the handler
 
-function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult, translated = { container: '/proj-in-box' } } = {}) {
+function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult } = {}) {
   const calls = { waitHealthy: 0 };
   const config = {};
   const box = {
@@ -243,7 +231,7 @@ function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult, transl
     async status() { return { state: 'running', ref: config.ref || null, sha: 'abcdef1234567890', ports }; },
     remoteToken: () => TOKEN,
     async waitHealthy() { calls.waitHealthy += 1; return healthResult || { ok: true, polls: 3, ms: 4000 }; },
-    translateHostPath: () => translated,
+    translateHostPath: () => ({ container: '/proj-in-box' }),
   };
   return { calls, manager: { get: () => box, create: () => ({ ok: true }) } };
 }
@@ -255,7 +243,7 @@ function mkHandler(opts = {}) {
   const team = {
     name: 'clodex',
     root: '/proj',
-    lead: 'lead',
+    lead: 'clodex-lead',
     file: path.join(teamsDir, 'clodex', 'team.json'),
     dir: path.join(teamsDir, 'clodex'),
     roles: { lead: { brief: 'the lead' } },
@@ -288,14 +276,14 @@ function mkHandler(opts = {}) {
 const settle = async () => { for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r)); };
 
 const fire = async (h, intent) => {
-  h.m._handleTeam({ name: 'lead', agentType: 'claude', cwd: '/proj' },
+  h.m._handleTeam({ name: 'clodex-lead', agentType: 'claude', cwd: '/proj' },
     { type: 'team', sub: 'sandbox', action: 'up', ref: null, body: '', ...intent });
   await settle();
 };
 
 const posts = (h) => h.requests.filter((r) => r.method === 'POST').map((r) => r.body.name);
 
-test('up seeds bash and worker and says so, without the token', async () => {
+test('up seeds bash and clodex-lead and says so, without the token', async () => {
   const h = mkHandler();
   await fire(h, { action: 'up' });
 
@@ -307,19 +295,15 @@ test('up seeds bash and worker and says so, without the token', async () => {
   ]);
   assert.deepStrictEqual(h.requests[1].body, { name: 'bash', type: 'bash', cwd: '/home/clodex' },
     'the shell seat carries NO lockdown — it is the box\'s hands, and a fixture list leaking onto it would disarm the shell');
-  assert.deepStrictEqual(h.requests[2].body, {
-    name: 'worker', type: 'claude', cwd: '/proj-in-box', extraArgs: [],
-    disabledTools: ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent'],
-    disabledSkills: ['*'],
-    systemPromptBody: 'You are a test fixture seeded on a sandbox by the team lead.'
-      + ' When asked for an intent, emit it verbatim on its own line and nothing else.'
-      + ' Do not edit files, run commands, or start work on your own.',
-  }, 'the worker starts in the team root as the BOX sees it, locked to the fixture tool set');
+  assert.deepStrictEqual(h.requests[2].body, { name: 'clodex-lead', team: 'clodex' },
+    'EXACTLY two keys — the box spawns the lead from the manifest shipped into it, so a cwd or a tool list here would be the host guessing at a box-side seat');
+  assert.deepStrictEqual(posts(h), ['bash', 'clodex-lead'],
+    'ENTER: two seats were POSTed, so requests[2] above is the lead body and not a missing request');
   assert.strictEqual(h.requests[0].auth, `Bearer ${TOKEN}`);
 
   const line = h.last();
   assert.match(line, /healthy in 4s · seeded bash/);
-  assert.match(line, / · worker seeded$/);
+  assert.match(line, / · lead clodex-lead seeded$/);
   assert.ok(!line.includes(TOKEN), `the reply leaked the token: ${line}`);
   assert.ok(line.includes(h.file), 'and still points at the file the token is in');
 });
@@ -328,37 +312,42 @@ test('up seeds bash and worker and says so, without the token', async () => {
 // token reflects, so the handler asks the box rather than pre-judging it — and
 // the box's own refusal is the useful message. The box answers in JSON, and the
 // reply must carry the sentence, not the punctuation.
-test('a worker the box refuses is reported with the box status and reason, and up still succeeds', async () => {
-  const h = mkHandler({ post: (n) => (n === 'worker' ? { status: 500, body: { ok: false, error: 'no credentials' } } : null) });
+test('a clodex-lead the box refuses is reported with the box status and reason, and up still succeeds', async () => {
+  const h = mkHandler({ post: (n) => (n === 'clodex-lead' ? { status: 500, body: { ok: false, error: 'no credentials' } } : null) });
   await fire(h, { action: 'up' });
-  assert.deepStrictEqual(posts(h), ['bash', 'worker']);
+  assert.deepStrictEqual(posts(h), ['bash', 'clodex-lead']);
   const line = h.last();
-  assert.ok(!line.startsWith('[agent:team] error:'), `a refused worker is not a failed up: ${line}`);
-  assert.match(line, /seeded bash · token in .* · worker NOT seeded: 500 no credentials$/);
+  assert.ok(!line.startsWith('[agent:team] error:'), `a refused clodex-lead is not a failed up: ${line}`);
+  assert.match(line, /seeded bash · token in .* · lead clodex-lead NOT seeded: 500 no credentials$/);
 });
 
-// rebuild over a box that kept its worker: "present" is not "seeded", and the
-// difference is the whole signal a lead reads to know whether it was recreated.
-test('a worker that already exists reads present, not seeded', async () => {
-  const h = mkHandler({ sessions: ['bash', 'worker'] });
+test('a clodex-lead that already exists reads present, not seeded', async () => {
+  const h = mkHandler({ sessions: ['bash', 'clodex-lead'] });
   await fire(h, { action: 'rebuild' });
   assert.deepStrictEqual(posts(h), []);
-  assert.match(h.last(), /seeded bash · token in .* · worker present$/);
+  assert.match(h.last(), /seeded bash · token in .* · lead clodex-lead present$/);
 });
 
-// The host root is outside every bind when the box has no workDir; the seat
-// still needs a cwd that exists in the box.
-test('a team root the box cannot reach falls back to the box work dir', async () => {
-  const h = mkHandler({ translated: { reachable: false } });
+test('a box image that predates the team arm is reported with the rebuild hint', async () => {
+  const h = mkHandler({ post: (n) => (n === 'clodex-lead' ? { status: 400, body: { ok: false, error: 'invalid type "undefined" — must be claude, codex, or bash' } } : null) });
   await fire(h, { action: 'up' });
-  assert.deepStrictEqual(h.requests[2].body.cwd, '/home/clodex/work');
+  const line = h.last();
+  assert.ok(!line.startsWith('[agent:team] error:'), `an old image is not a failed up: ${line}`);
+  assert.match(line, /seeded bash · token in .* · lead clodex-lead NOT seeded: 400 invalid type "undefined" — must be claude, codex, or bash \(the box image predates the team arm — rebuild it\)$/);
 });
 
-test('rebuild over a box that already has bash POSTs only the worker', async () => {
+test('a lead the box already has by name reads present, not NOT seeded', async () => {
+  const h = mkHandler({ post: (n) => (n === 'clodex-lead' ? { status: 400, body: { ok: false, error: 'name taken "clodex-lead"' } } : null) });
+  await fire(h, { action: 'up' });
+  assert.deepStrictEqual(posts(h), ['bash', 'clodex-lead']);
+  assert.match(h.last(), /seeded bash · token in .* · lead clodex-lead present$/);
+});
+
+test('rebuild over a box that already has bash POSTs only the clodex-lead', async () => {
   const h = mkHandler({ sessions: ['bash'] });
   await fire(h, { action: 'rebuild' });
-  assert.deepStrictEqual(posts(h), ['worker']);
-  assert.match(h.last(), /seeded bash · token in .* · worker seeded$/);
+  assert.deepStrictEqual(posts(h), ['clodex-lead']);
+  assert.match(h.last(), /seeded bash · token in .* · lead clodex-lead seeded$/);
 });
 
 // The file is the ONLY way back to a box that boots slowly, so it must survive
@@ -375,7 +364,7 @@ test('a seed failure on a required seat replies error naming it', async () => {
   const h = mkHandler({ post: (n) => (n === 'bash' ? { status: 500, body: 'kaboom' } : null) });
   await fire(h, { action: 'up' });
   assert.match(h.last(), /error: seeding bash: 500 .*kaboom/);
-  assert.deepStrictEqual(posts(h), ['bash'], 'the worker was never reached past the required seat');
+  assert.deepStrictEqual(posts(h), ['bash'], 'the clodex-lead was never reached past the required seat');
 });
 
 // status and down are read/teardown paths: a health wait there would block a

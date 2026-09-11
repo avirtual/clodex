@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team sandbox up]` boots the team's lead inside the box (posted as `{ name, team }`, so the box spawns it from the manifest shipped into it) in place of the old `worker` fixture, reports `lead <name> seeded|present|NOT seeded: …` — with a rebuild hint when the box image predates the team arm — and a failed team copy no longer skips writing sandbox.json.
+
 ## 5.63.3 — 2026-09-12 — a wire caller can spawn a team lead from the host's own manifest
 
 - `POST /api/sessions` accepts `{ name, team }`: the receiving host spawns that team's lead from its OWN manifest — template, prompts, exec grants and intents all come from the host's disk, nothing else in the body is read, and any name other than the manifest's lead is refused — which is how a sandbox box will boot the team shipped into it.
