@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **Teams:** a role can name an `account:` label (`team role-add`/`role-set`),
+  and every seat the loop mints for it — ticket hands, cold reviewers, one-shot
+  spawns — boots on that account's config dir. Ephemeral seats could not be moved
+  to a second subscription before: they live too briefly for Edit Session, and
+  reviewer template env drops `CLAUDE_CONFIG_DIR` by design.
 - The hand prompt tells a ticket hand to add no comment lines at all and to
   check only the comments its own hunks touch, instead of commenting and
   trimming back to net zero and sweeping the whole file; two hands in a row
