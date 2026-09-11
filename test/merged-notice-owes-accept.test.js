@@ -182,6 +182,12 @@ test('the step line precedes every fact the notice reports', () => {
   // Position is the fix, not the wording: the old notice mentioned the verb only
   // in its closing sentence, under the suite line and the CHANGELOG line, and two
   // leads read the whole thing as a report and acted on none of it.
+  //
+  // The ENTER is load-bearing and was ADDED after a red-proof: `indexOf` answers
+  // -1 for an absent line, and -1 precedes every real offset, so all three
+  // comparisons below pass VACUOUSLY on a notice with no step line at all.
+  assert.ok(body.includes('Step owed:'),
+    'ENTER: the step line is in the body — without this every comparison below is satisfied by its absence');
   assert.ok(body.indexOf('Step owed:') < body.indexOf('Review rounds:'),
     'the step must sit above the review/suite report');
   assert.ok(body.indexOf('Step owed:') < body.indexOf('CHANGELOG.md'),

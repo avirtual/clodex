@@ -367,10 +367,6 @@ const TICKET_STALL_MS = 30 * 60 * 1000;
 // been burned by three times.
 const WAKE_GRACE_MS = 5 * 60 * 1000;
 
-// How long a MERGED ticket may sit unaccepted before the lead is reminded once.
-// Short next to TICKET_STALL_MS on purpose: nothing is stuck — the branch is on
-// master and the only cost of waiting is a worktree and a seat — so this is a
-// nudge about a step, not an alarm about a stall.
 const MERGED_ACCEPT_NUDGE_MS = 10 * 60 * 1000;
 
 // The branch an accepted ticket lands on. A literal, matching what
@@ -1570,12 +1566,7 @@ function createTicketMethods(deps, shared) {
           `${landedOn.verdict} on ticket ${ticketId} (review round ${landedOn.reviewRound}, ${mf}).`,
           `Landed on the ticket record; the board shows it via [agent:task list all].`,
           where,
-          // ACCEPT only: a REWORK owes the hand a reject, so this advice is for
-          // the other verdict entirely. COLUMN 1 IS THE SAFETY, the knife-edge
-          // _notifyMergeLanded documents — the verb is complete and inert only
-          // because prose precedes it; a reflow opening a line with it makes the
-          // LEAD accept on receipt, destroying the worktree before the merge
-          // this sentence tells it to wait for.
+          // COLUMN 1 IS THE SAFETY here too — see _notifyMergeLanded.
           ...(landedOn.verdict === 'ACCEPT'
             ? [`Nothing to do yet — the loop merges; when the [ticket ${ticketId} MERGED] notice lands, emit \`[agent:task accept ${ticketId}]\` alone in a reply.`]
             : []),
@@ -2255,13 +2246,11 @@ function createTicketMethods(deps, shared) {
     // claim — an absent measurement rendered as a measured answer. Both are the
     // default arm, which is the only arm a caller can reach by forgetting.
     // COLUMN 1 IS THE SAFETY, the same knife-edge ticketCloseLine documents and
-    // for a worse consequence: the last line carries a complete, ready-to-fire
-    // `[agent:task accept <id>]`, inert only because `Nothing was torn down: `
-    // precedes it. IntentScanner's parse is ^-anchored, so a reflow putting the
-    // verb at the start of a line makes the LEAD auto-accept on receipt —
-    // retiring the seat and destroying the worktree, the one thing this whole
-    // step promises not to do, and the one action here that no revert undoes.
-    // Keep the prefix.
+    // for a worse consequence: TWO lines here carry a complete, ready-to-fire
+    // `[agent:task accept <id>]` — the step line and the closing one — each inert
+    // only because prose precedes it. IntentScanner is ^-anchored, so a reflow
+    // putting either verb at a line start makes the LEAD auto-accept on receipt,
+    // destroying the worktree, which no revert undoes. Keep both prefixes.
     _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned }) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
@@ -2299,10 +2288,6 @@ function createTicketMethods(deps, shared) {
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
-          // FIRST, above the report: twice a lead read this notice as information
-          // and never emitted the verb, because the only mention of it sat in the
-          // closing sentence under the CHANGELOG line. `Step owed: ` is also what
-          // keeps this copy of the verb off column 1 — see the hazard above.
           `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it.`,
           '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
@@ -2311,10 +2296,6 @@ function createTicketMethods(deps, shared) {
           changelogLine,
           `Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`,
         ].join('\n');
-        // BEFORE the delivery, and deliberately: the stamp arms the ten-minute
-        // nudge, and a notice that never reached the lead is the case that needs
-        // it most. Stamping off the delivery result would leave a held notice
-        // silent in both channels.
         this._stampMerged(team, ticketId);
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
         if (!(r && (r.queued || r.parked))) {
@@ -6918,11 +6899,6 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    // When the merge landed, so the sweep can tell a ticket waiting on the lead's
-    // `task accept` from one that never merged at all. NOT `lastActivityAt`: that
-    // times the stall ladder, and a merged ticket is out of flight — writing it
-    // here would move a clock nothing reads and hide the merge instant behind a
-    // field five other writers also set.
     _stampMerged(team, ticketId) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -9228,42 +9204,16 @@ function createTicketMethods(deps, shared) {
       return worst;
     },
 
-    // Async since t322: the alarm body carries git facts, and git is async. The
-    // caller (_sweepTickets) does not await — a slow probe must not delay the
-    // reconcile pass behind it — so overlapping sweeps are possible and
-    // `_stallProbing` is what keeps them from double-nudging.
-    // ONE reminder that the lead still owes `task accept` on a ticket the loop
-    // merged, and never a second: the notice already said it, and a ticket the
-    // lead is deliberately leaving open to keep the worktree is a decision, not a
-    // stall. Its own pass rather than a branch inside the stall loop below —
-    // `ticketInFlight` is FALSE by the time a merge lands (`_landVerdictOnTicket`
-    // deleted `loopStep`), so every gate there excludes exactly these tickets.
-    //
-    // Wrapped by its caller: a throw here must not cost the stall pass.
     _sweepMergedUnaccepted(team, tickets, now) {
       for (const t of tickets) {
         if (typeof t.mergedAt !== 'number' || t.mergedNudgedAt) continue;
-        // The lead ALREADY acted. `closedOut` is the merged arm's stamp and
-        // `acceptedAt` covers the arms that accept without closing out — either
-        // one means the step this nudge names has been taken.
         if (t.acceptedAt || t.closedOut || t.state !== 'done') continue;
-        // MERGE FAILED owes a DIFFERENT step: that arm's escalation already told
-        // the lead what to decide first, and `[agent:task accept]` there answers
-        // the mark rather than retiring a clean merge. Nudging it would send the
-        // lead past the decision the escalation asked for.
         if (t.mergeError) continue;
         if (now - t.mergedAt < MERGED_ACCEPT_NUDGE_MS) continue;
         const tid = t.id;
-        // Measured, not the literal ten minutes: a machine asleep through the
-        // window wakes and sweeps at whatever age it reaches, and a fixed "10m"
-        // there is a number the lead can check and find false.
         const body = `[ticket ${tid} merged ${humanizeAge(now - t.mergedAt)} ago, not accepted] Step owed: \`[agent:task accept ${tid}]\`.`;
         this._gatedDeliver(team.lead, 'ticket-watchdog', body, false,
           `[ticket ${tid} merged, not accepted]`,
-          // Stamped from the WRITE, like the stall nudge: a held delivery reached
-          // nobody, and burning the one reminder on it is the silent deletion
-          // this sweep exists to prevent. Re-loads rather than mutating `t`,
-          // which is this pass's snapshot and is never saved.
           () => {
             try {
               const fresh = ticketsStore.load(team.root);
@@ -9277,6 +9227,10 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    // Async since t322: the alarm body carries git facts, and git is async. The
+    // caller (_sweepTickets) does not await — a slow probe must not delay the
+    // reconcile pass behind it — so overlapping sweeps are possible and
+    // `_stallProbing` is what keeps them from double-nudging.
     async _sweepTeamTickets(team, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(team.root);
