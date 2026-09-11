@@ -338,3 +338,32 @@ test('sweep: the equivalence is DEFAULT-only — a seat with no var still moves 
   assert.deepStrictEqual(res.moved, ['fable-idle']);
   assert.strictEqual(fx.restarts.length, 1);
 });
+
+test('sweep: the target account gets the default\'s trust ONCE, before the first restart', async () => {
+  const fx = sweepFixture();
+  const log = [];
+  const res = await fx.run({
+    mergeTrust: (l) => log.push(`merge:${l}`),
+    applyArgs: async (name) => { log.push(`apply:${name}`); return { ok: true, restarted: true }; },
+  });
+  assert.deepStrictEqual(res.moved, ['fable-idle']);
+  // Once, with the TARGET label, and ahead of the restart — a seat respawned
+  // before the merge lands reads the old file and asks for the folder anyway.
+  assert.deepStrictEqual(log, ['merge:sub-2', 'apply:fable-idle']);
+});
+
+test('sweep: a move to `default` merges no trust — it is the source, not a copy', async () => {
+  const fx = sweepFixture();
+  const log = [];
+  await fx.run({
+    label: 'default',
+    configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null),
+    mergeTrust: (l) => log.push(l),
+  });
+  assert.deepStrictEqual(log, []);
+  // ENTER: the same recorder DOES fill on a registered target, so the empty
+  // list above is the skip and not a seam that was never wired.
+  const other = sweepFixture();
+  await other.run({ mergeTrust: (l) => log.push(l) });
+  assert.deepStrictEqual(log, ['sub-2']);
+});

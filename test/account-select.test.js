@@ -122,14 +122,14 @@ test('accountOptions: a host with NO accounts still offers default alone', () =>
 test('loginSeat: default gets NO env — the absence of the var is the default account', () => {
   assert.deepStrictEqual(
     loginSeat('default', { label: 'default', configDir: `${HOME}/.claude` }, { home: HOME }),
-    { name: 'login-default', type: 'bash', cwd: HOME, env: null },
+    { name: 'login-default', type: 'bash', cwd: `${HOME}/.claude`, env: null },
   );
 });
 
 test('loginSeat: a registered account sets exactly CLAUDE_CONFIG_DIR', () => {
   assert.deepStrictEqual(
     loginSeat('sub-2', ACCOUNTS[1], { home: HOME }),
-    { name: 'login-sub-2', type: 'bash', cwd: HOME, env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } },
+    { name: 'login-sub-2', type: 'bash', cwd: '/minted/sub-2', env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } },
   );
 });
 

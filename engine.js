@@ -1687,6 +1687,7 @@ function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
     getEntry: (name) => persistence.get(name),
     configDirFor: (l) => accounts.configDirFor(l),
     settingsModelFor: accounts.settingsModelResolver(),
+    mergeTrust: (l) => accounts.mergeTrust(l),
     applyArgs: async (name, patch, entryWs) => {
       const res = await applySessionArgs(name, patch, entryWs || wsId);
       if (res && res.ok && res.restarted) {

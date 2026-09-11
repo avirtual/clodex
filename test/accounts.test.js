@@ -24,13 +24,24 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createAccounts, modelOfArgs, modelSelects, effectiveModel, sweepAccountMove } = require('../accounts');
+const { createAccounts, modelOfArgs, modelSelects, effectiveModel, trustProjects, sweepAccountMove } = require('../accounts');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+
+const DEFAULT_PROJECTS = {
+  '/w/both': { hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: true, lastCost: 3 },
+  '/w/trusted': { hasTrustDialogAccepted: true, allowedTools: ['Bash(rm:*)'], mcpServers: { x: 1 } },
+  '/w/untrusted': { hasTrustDialogAccepted: false, allowedTools: ['Bash(curl:*)'] },
+};
+const TRUSTED_LITERAL = {
+  '/w/both': { hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: true },
+  '/w/trusted': { hasTrustDialogAccepted: true },
+};
 
 // A fake home with the shape the mint recipe reads: ~/.claude/{projects,
 // skills,agents,commands}/ + settings.json, and the sibling ~/.claude.json the
-// theme is lifted from. `plugins` is DELIBERATELY absent — the dangling-link
-// case has its own test and needs a claudeHome that is missing one.
+// theme and the folder-trust answers are lifted from. `plugins` is DELIBERATELY
+// absent — the dangling-link case has its own test and needs a claudeHome that
+// is missing one.
 function fixture({ withPlugins = false } = {}) {
   const root = mkTmpRoot('clx-accounts-');
   const clodexHome = path.join(root, 'clodex');
@@ -41,7 +52,7 @@ function fixture({ withPlugins = false } = {}) {
     fs.mkdirSync(path.join(claudeHome, d), { recursive: true });
   }
   fs.writeFileSync(path.join(claudeHome, 'settings.json'), '{"defaultMode":"acceptEdits"}\n');
-  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ theme: 'light', projects: { a: 1 } }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ theme: 'light', projects: DEFAULT_PROJECTS }));
   const accounts = createAccounts({ fs, path, os: require('node:os'), clodexHome, claudeHome });
   return { root, clodexHome, claudeHome, accounts };
 }
@@ -132,11 +143,11 @@ test('mint: dir is 0700, .claude.json is the literal recipe, settings.json is by
   assert.strictEqual(dir, path.join(clodexHome, 'accounts', 'sub-2'));
   assert.strictEqual(fs.statSync(dir).mode & 0o777, 0o700, 'the dir holds credentials');
 
-  // The literal, asserted whole: `projects: {}` rather than a copy is the whole
-  // point of the recipe (the real ~/.claude.json is ~700KB of project state),
-  // and `theme` is lifted from the operator's own file.
+  // The literal, asserted whole: `projects` carries the trust answers and
+  // nothing else (the real ~/.claude.json is ~700KB of session state), and
+  // `theme` is lifted from the operator's own file.
   const body = JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf8'));
-  assert.deepStrictEqual(body, { hasCompletedOnboarding: true, theme: 'light', projects: {} });
+  assert.deepStrictEqual(body, { hasCompletedOnboarding: true, theme: 'light', projects: TRUSTED_LITERAL });
 
   assert.deepStrictEqual(
     fs.readFileSync(path.join(dir, 'settings.json')),
@@ -217,8 +228,59 @@ test('resync re-copies settings.json over an edited one; mint alone does not', (
   accounts.mint('sub-2');
   assert.strictEqual(fs.readFileSync(dest, 'utf8'), '{"defaultMode":"plan"}\n', 'mint does not clobber');
 
-  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true });
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2 });
   assert.deepStrictEqual(fs.readFileSync(dest), fs.readFileSync(path.join(claudeHome, 'settings.json')));
+});
+
+test('trustProjects: only the trusted entries, only the trust keys', () => {
+  const got = trustProjects({ projects: DEFAULT_PROJECTS });
+  // ENTER: the untrusted project WAS in the input, so its absence is a filter
+  // and not an empty read.
+  assert.deepStrictEqual(Object.keys(DEFAULT_PROJECTS), ['/w/both', '/w/trusted', '/w/untrusted']);
+  assert.deepStrictEqual(got, TRUSTED_LITERAL);
+  assert.strictEqual(JSON.stringify(got).includes('allowedTools'), false, 'permissions are the new account\'s own');
+  assert.deepStrictEqual(trustProjects(null), {});
+  assert.deepStrictEqual(trustProjects({ projects: { '/w': 'not an object' } }), {});
+});
+
+test('resync MERGES trust into the account\'s own projects, keeping every other key', () => {
+  const { accounts } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'max' });
+  const file = path.join(accounts.configDirFor('sub-2'), '.claude.json');
+  // The account's own accumulated state: one project it has worked in, with a
+  // session stat and a permission the default account must not dictate.
+  fs.writeFileSync(file, JSON.stringify({
+    hasCompletedOnboarding: true,
+    oauthAccount: 'live',
+    projects: { '/w/both': { lastCost: 1, allowedTools: ['Bash(ls:*)'] } },
+  }));
+
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2 });
+
+  const body = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.strictEqual(body.oauthAccount, 'live', 'the login the dir carries survived');
+  assert.deepStrictEqual(body.projects, {
+    '/w/both': {
+      lastCost: 1,
+      allowedTools: ['Bash(ls:*)'],
+      hasTrustDialogAccepted: true,
+      hasClaudeMdExternalIncludesApproved: true,
+    },
+    '/w/trusted': { hasTrustDialogAccepted: true },
+  });
+  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'the file names every folder the operator works in');
+  assert.strictEqual(fs.existsSync(`${file}.tmp`), false, 'the atomic write renamed its tmp away');
+});
+
+test('resync leaves an unparseable account .claude.json alone rather than rewriting it', () => {
+  // Rewriting it would drop the credentials beside the corruption; a zero count
+  // is how the caller learns nothing was carried.
+  const { accounts } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'max' });
+  const file = path.join(accounts.configDirFor('sub-2'), '.claude.json');
+  fs.writeFileSync(file, 'not json at all');
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 0 });
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'not json at all');
 });
 
 test('resync refuses an unknown label and the default account', () => {
@@ -434,12 +496,16 @@ test('settingsModelResolver(): a settings.json with no `model` key, and a non-st
   assert.strictEqual(accounts.settingsModelResolver()(claudeHome), '');
 });
 
-test('effectiveModel: the flag WINS over settings.json, and settings.json answers when there is no flag', () => {
+test('effectiveModel: flag > ANTHROPIC_MODEL > settings.json', () => {
   const settingsModelFor = (dir) => (dir === '/minted/sub-2' ? 'claude-fable-5-1[1m]' : 'claude-opus-5');
   const of = (entry) => effectiveModel(entry, { settingsModelFor });
 
   assert.strictEqual(of({ extraArgs: ['--model', 'claude-opus-5'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } }), 'claude-opus-5');
   assert.strictEqual(of({ extraArgs: ['--dangerously-skip-permissions'], env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } }), 'claude-fable-5-1[1m]');
+  // flag > ANTHROPIC_MODEL > settings.json: the env var is what the CLI runs
+  // when there is no flag, so settings.json must not answer over it.
+  assert.strictEqual(of({ extraArgs: [], env: { ANTHROPIC_MODEL: 'claude-haiku-5', CLAUDE_CONFIG_DIR: '/minted/sub-2' } }), 'claude-haiku-5');
+  assert.strictEqual(of({ extraArgs: ['--model', 'claude-opus-5'], env: { ANTHROPIC_MODEL: 'claude-haiku-5' } }), 'claude-opus-5');
   // No env → the default account's settings.json, which the resolver reaches
   // through the empty dir.
   assert.strictEqual(of({ extraArgs: [] }), 'claude-opus-5');

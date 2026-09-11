@@ -108,10 +108,11 @@ function loginSeat(label, account, { reserved = [], home = os.homedir(), bump = 
   const taken = reserved instanceof Set ? reserved : new Set(reserved || []);
   let name = base;
   if (typeof bump === 'function' && taken.has(base)) name = bump(`${base}-2`, taken);
-  const params = { name, type: 'bash', cwd: home, env: null };
+  const params = { name, type: 'bash', cwd: `${home}/.claude`, env: null };
   if (want !== DEFAULT_LABEL) {
     const dir = String((account && account.configDir) || '');
     if (!dir) return null;
+    params.cwd = dir;
     params.env = { [ENV_KEY]: dir };
   }
   return params;

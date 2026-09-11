@@ -130,11 +130,19 @@ addedAt }] }`); labels match `[a-z0-9][a-z0-9-]{0,31}` and are unique. The
 written to the file, always first in `list()` — so an unconfigured seat is the
 absence of the var, not a stored row. Adding an account with no `configDir`
 MINTS one at `~/.clodex/accounts/<label>/`: mode 0700, a fresh minimal
-`.claude.json` (`hasCompletedOnboarding`, the theme from `~/.claude.json`, empty
-`projects` — never a copy of the real 700KB file), symlinks for `projects`,
+`.claude.json` (`hasCompletedOnboarding`, the theme from `~/.claude.json`, and
+`projects` = the default account's FOLDER-TRUST answers alone — never a copy of
+the real 700KB file), symlinks for `projects`,
 `plugins`, `skills`, `agents` and `commands` into `~/.claude` so transcripts and
 the roster are shared, and a copy of `settings.json` (re-copied on demand by
-`accounts:resync`). Minting is idempotent, so the login a dir accumulates
+`accounts:resync`). A mint and a Re-sync carry exactly two things: `settings.json`
+and the `hasTrustDialogAccepted` / `hasClaudeMdExternalIncludesApproved` flags of
+every folder the default account trusts — never `allowedTools`, since permissions
+are each account's own — so a seat moved to the account does not re-ask "do you
+trust this folder". Re-sync merges them into the account's own `projects` rather
+than replacing it (its session stats and permissions survive) and reports
+`trusted: <count>`; a Move does the same merge for the target account before it
+restarts a single seat. Minting is idempotent, so the login a dir accumulates
 survives; `accounts:remove` drops the registry row and never the dir.
 Selection is per SEAT through the ordinary session env, so a move is an env edit
 plus a restart: `accounts:move-by-model` does that in bulk for every live claude
@@ -142,7 +150,8 @@ seat whose EFFECTIVE model selects the given model (`fable` matches any
 `claude-fable-*` id and back), one at a time and awaited, skipping — with a
 literal reason — a seat that is not claude, is on another model, is already on
 that account, or is MID-TURN. Effective means the `--model` flag when there is
-one and otherwise the `model` key of the seat's CURRENT config dir's
+one, else the seat's own `ANTHROPIC_MODEL`, else the `model` key of the seat's
+CURRENT config dir's
 `settings.json` (read once per dir per sweep), so a seat carrying only
 `--dangerously-skip-permissions` is selected by the model it actually runs
 rather than skipped as model-less; a seat with neither says so in its reason.
@@ -162,7 +171,8 @@ email, plan, config dir and live-seat count, plus **Log in** (every row),
 and **Move**, **Re-sync settings** and **Remove** on registered rows only; the
 default row has none of the latter three, because it is implicit, it is the
 source Re-sync copies FROM, and there is no registry row to drop. **Log in**
-spawns a `bash` seat named `login-<label>` in `$HOME` carrying only that
+spawns a `bash` seat named `login-<label>` in that account's config dir
+(`~/.claude` for the default row) carrying only that
 account's `CLAUDE_CONFIG_DIR`, then sends `claude /login` through the
 inject-queue like `openInstallSession` does — which is why `create()`'s
 missing-dir guard is claude-only: refusing that bash spawn would make an
