@@ -320,6 +320,31 @@ function parseOwnPortMap(yamlText) {
   return out;
 }
 
+const HEALTH_POLL_MS = 2000;
+const HEALTH_TIMEOUT_MS = 180000;
+
+async function waitHealthy({ id, url, timeoutMs, fetch, now, sleep } = {}) {
+  const boxId = id || SANDBOX_PEER_ID;
+  if (!url) return { ok: false, error: `box ${boxId} has no web port to health-check` };
+  const doFetch = fetch || globalThis.fetch;
+  const clock = now || Date.now;
+  const nap = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const limit = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : HEALTH_TIMEOUT_MS;
+  const started = clock();
+  const target = `${String(url).replace(/\/+$/, '')}/healthz`;
+  for (let polls = 1; ; polls += 1) {
+    let res = null;
+    try { res = await doFetch(target); } catch { res = null; }
+    if (res && res.status >= 200 && res.status < 300) {
+      return { ok: true, polls, ms: clock() - started };
+    }
+    if (clock() - started >= limit) {
+      return { ok: false, error: `box ${boxId} not healthy after ${Math.round(limit / 1000)}s`, polls };
+    }
+    await nap(HEALTH_POLL_MS);
+  }
+}
+
 // `docker compose ps --format json` emits EITHER a single JSON array OR
 // newline-delimited JSON objects (version-dependent). Parse both, tolerant of
 // partial/garbage lines.
@@ -648,6 +673,13 @@ function createSandbox(deps = {}) {
     return { ok: true };
   }
 
+  async function boxWaitHealthy(timeoutMs) {
+    let ports = {};
+    try { ports = parseOwnPortMap(fs.readFileSync(composePath(), 'utf8')); } catch { /* no prior file */ }
+    const url = ports.web ? `http://127.0.0.1:${ports.web}` : null;
+    return waitHealthy({ id, url, timeoutMs, fetch: deps.fetch, now: deps.now, sleep: deps.sleep });
+  }
+
   async function status() {
     const statusConfig = getConfig();
     const trackedRef = (statusConfig.ref && !statusConfig.image) ? statusConfig.ref : null;
@@ -708,6 +740,7 @@ function createSandbox(deps = {}) {
     id, label: boxLabel,
     detect, getConfig, setConfig, writeComposeFile, translateHostPath,
     up, rebuild, down, status, logsTail, registerPeer, unregisterPeer,
+    waitHealthy: boxWaitHealthy,
     hasAuthToken, setAuthToken, clearAuthToken,
     remoteToken,
     composePath, sandboxDir, srcDir,
@@ -830,7 +863,7 @@ module.exports = {
   // Pure parts, exported for the unit suite.
   createDetectCache, dockerUnavailableError,
   resolveImage, resolvePorts, nextFreePort, generateCompose,
-  parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState, defaultIsPortInUse,
+  parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,
   DEFAULT_CONFIG, DEFAULT_PORTS, CONTAINER_PORTS, RESERVED_MOUNT_TARGETS, WORK_CONTAINER_DIR,
   SANDBOX_PEER_ID, SANDBOX_PEER_LABEL, BOX_ID_RE, RESERVED_BOX_IDS,

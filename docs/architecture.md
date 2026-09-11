@@ -713,6 +713,10 @@ accept teardown removes.
   every Start). Electron-free and deps-injected so the unit suite drives it with
   spawn/docker mocked; `<userData>/<subdir>/compose.yaml` is regenerated from
   config on every Start and is never the source of truth.
+- **sandbox-seeds.js** — `seedSandboxSessions`: create a box's starting seats
+  over its peer-wire API (`GET /api/sessions`, then one `POST` per missing
+  name), so `[agent:team sandbox up]` can reply with a box that is already
+  usable. A leaf so `team-tickets.js` never grows a fetch dependency.
 - **tool-doctor.js** — external-tool presence detection: probe a list of tool
   specs via an INJECTED `whichBin`, return a presence report plus pure UI copy.
   The app warns or gates on this BEFORE a user spawns a session whose CLI is

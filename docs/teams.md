@@ -490,6 +490,15 @@ box reads the file. `down` deletes it; `status` never writes it.
 override set in the GUI wins over `ref:`, and the file then carries `null` for
 both rather than advertising a ref the box is not running.
 
+`up` and `rebuild` then wait for the box's own health check (up to 180s) and
+seed it with two seats before replying: a `bash` shell in `/home/clodex`, and a
+Claude seat named `worker` in the team root as the box sees it. `worker` is
+seeded only when the box has a Claude token — a Claude seat without one loops on
+`/login` — and the reply says so when it was skipped. Seats that already exist
+are left alone, so a `rebuild` does not duplicate them. If the box never gets
+healthy the reply is an error and `sandbox.json` stays put, because that file is
+how you reach a box that is merely slow.
+
 ## Scaling the team
 
 Roles are cheap. Add one in the roles popover — click your team in the sidebar —

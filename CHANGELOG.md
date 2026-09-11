@@ -23,6 +23,9 @@ blocks a release.
   box while the desktop keeps running. Only `up`/`rebuild` reconfigure the box
   (a box with no ref yet starts on `master`); a later `status` or `down` leaves
   the tracked ref alone.
+- **A team box comes up ready**: `[agent:team sandbox up|rebuild]` now waits for
+  the box's health check, seeds a `bash` shell and a Claude `worker` (when the
+  box has a Claude token), and replies only when the team can send to it.
 
 ## 5.59.0 — 2026-09-11 — Cost on every ticket, the Inbox on the phone, and honest standing-seat attribution
 
