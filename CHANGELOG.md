@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a seat can ask what its exec runs are doing; the role account is a picker
 
 - `[agent:exec status] {}` tells a seat what its exec runs are doing — running with elapsed time, or finished with the result line — without a grant and without spawning anything, and the seat-facing exec prose now says a long run reports on its own instead of claiming success is silent.
 - The role Account field in the team popover is a picker of the registered account labels (with "default" first) instead of a free-text box that only accepted those labels anyway, and a collapsed role row shows its account beside the dispatch chip.
