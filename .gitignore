@@ -32,6 +32,7 @@ docs/design/
 plugin-context.md
 plugin-context.lean.md
 .test-digest.lock/
+.test-digest.last*
 
 # Team task artifacts. These live in ~/.clodex/projects/<leaf>-<hash>/tasks/
 # now (clodex-paths.taskDirFor) — Clodex never writes a user project file, and

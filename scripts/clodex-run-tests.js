@@ -83,6 +83,7 @@ if (!fs.existsSync(runner)) {
   );
 }
 
+const startedAt = Date.now();
 const res = spawnSync(process.execPath, [runner, '--reporter=dot'], {
   cwd: measure,
   env: {
@@ -93,6 +94,25 @@ const res = spawnSync(process.execPath, [runner, '--reporter=dot'], {
   maxBuffer: 64 * 1024 * 1024,
   encoding: 'utf8',
 });
+
+const wallMs = Date.now() - startedAt;
+
+function wallShow(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+const TURN_END = 'END YOUR TURN.';
+
+function lockRefusal(lines) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!/another suite run is already going/.test(lines[i])) continue;
+    const order = lines[i].replace(/^run-tests: /, '');
+    const cut = order.indexOf(TURN_END);
+    return cut === -1 ? order : order.slice(0, cut + TURN_END.length);
+  }
+  return null;
+}
 
 const stdout = res.stdout || '';
 const stderr = res.stderr || '';
@@ -106,6 +126,8 @@ for (let m = TOTALS_RE.exec(stdout); m; m = TOTALS_RE.exec(stdout)) totals = m;
 if (!totals) {
   const combined = `${stdout}\n${stderr}${res.error ? `\n${res.error.message}` : ''}`;
   const lines = combined.split('\n').map((l) => l.trim()).filter(Boolean);
+  const refusal = lockRefusal(lines);
+  if (refusal) emit(refusal, 1, 200);
   const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
   emit(
     `[${LEAF}] no TOTALS summary from scripts/run-tests.js (exit ${code}) — last line: ${last}`,
@@ -119,11 +141,15 @@ const tests = Number(totals[3]);
 
 if (tests === 0) emit(`[${LEAF}] runner executed ZERO tests (exit ${code})`, 1);
 
-if (code === 0 && fail === 0) emit(`[${LEAF}] ${pass}/${tests} green`, 0);
+if (code === 0 && fail === 0) emit(`[${LEAF}] ${pass}/${tests} green (${wallShow(wallMs)})`, 0);
 
 const names = [];
 const NAME_RE = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/gm;
 const hay = `${stdout}\n${stderr}`;
 for (let m = NAME_RE.exec(hay); m; m = NAME_RE.exec(hay)) names.push(m[1]);
 
-emit(`[${LEAF}] ${pass}/${tests} green, ${fail} failing: ${names.join('; ')}`, exitCode, 180);
+emit(
+  `[${LEAF}] ${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)}): ${names.join('; ')}`,
+  exitCode,
+  180,
+);

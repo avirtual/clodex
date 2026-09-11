@@ -21,6 +21,11 @@ blocks a release.
   threshold (default 175k tokens): the loop archives that seat, spawns a fresh one
   onto the same branch and worktree, delivers the must-fixes there, and the reject
   reply names the replacement.
+- A suite-lock refusal now says how long the running suite has left, hands the
+  caller the exact `[agent:remind in <K>m]` line to emit, and tells it to end
+  its turn; the digest line carries the run's wall time. A refused hand used to
+  retry every minute or two against a 5-minute suite, re-billing its whole
+  context each time.
 
 ## 5.62.2 — 2026-09-11 — loop closes out green merges; Edit Session keeps team prompts
 

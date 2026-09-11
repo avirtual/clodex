@@ -62,6 +62,23 @@ function stubRecord(root) {
   return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null;
 }
 
+// The digest carries the run's own wall time, which is elapsed real time and so
+// cannot be a literal in a fixture. WALL stands in for it and expands to a
+// SHAPE — everything else in the line is still matched byte for byte, anchored
+// at both ends. Relaxing these subjects to a substring check instead would give
+// up exactly what they exist to pin: a line that lost its counts, its tree
+// marker or its failing names would still pass.
+const WALL = '<WALL>';
+const WALL_RE = '\\d+m \\d{2}s';
+
+function assertDigest(actual, expected, message) {
+  const pattern = expected
+    .split(WALL)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join(WALL_RE);
+  assert.match(String(actual), new RegExp(`^${pattern}$`), message);
+}
+
 test('no scripts/run-tests.js: refuses and names the file the merge gate needs', () => {
   const root = mkRoot();
   try {
@@ -79,7 +96,7 @@ test('a green run: the digest counts, exit 0, and --reporter=dot reached the run
   try {
     writeStub(root, { body: "console.log('TOTALS: 3 pass, 0 fail, 3 tests');", exit: 0 });
     const r = run(root, '{}');
-    assert.strictEqual(r.digest, `[${path.basename(root)}] 3/3 green`);
+    assertDigest(r.digest, `[${path.basename(root)}] 3/3 green (${WALL})`);
     assert.strictEqual(r.code, 0);
     const rec = stubRecord(root);
     // ENTER: without the record the argv assertion below would pass vacuously
@@ -101,7 +118,7 @@ test('a red run: the failing NAMES ride the digest and the exit code survives', 
       exit: 1,
     });
     const r = run(root, '{}');
-    assert.strictEqual(r.digest, `[${path.basename(root)}] 2/3 green, 1 failing: alpha`);
+    assertDigest(r.digest, `[${path.basename(root)}] 2/3 green, 1 failing (${WALL}): alpha`);
     assert.strictEqual(r.code, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -160,6 +177,36 @@ test('a runner that prints no TOTALS is reported as "nothing measured", never as
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a lock refusal reaches the seat WHOLE — the order is what the exec exists to deliver', () => {
+  // A refused run produces no TOTALS, so it used to fall into the "no TOTALS
+  // summary … last line:" wrapper, which slices the runner's line at 160 with a
+  // 79-char prefix in front of it. `[agent:remind in <K>m]` sits at char 149+
+  // of the refusal (run-tests.js's die() prefixes `run-tests: `), so the cut
+  // landed inside the fragment and the dispatcher's own 200-slice then left the
+  // caller "…not starting a s". The entire deliverable was lost on this path,
+  // and a seat that cannot read the wait retries every two minutes — the loop
+  // the refusal was written to stop.
+  const root = mkRoot();
+  try {
+    const refusal = 'run-tests: another suite run is already going (pid 1234567, running 2:05 of a'
+      + ' ~9 min suite) - waited 30s, not starting a second. Do not re-emit: emit'
+      + ' [agent:remind in 6m] re-run the suite, END YOUR TURN. Parts of this suite bind real'
+      + ' ports, so a second run deadlocks both; if it is wedged: kill 1234567 && rm -rf /x/y';
+    writeStub(root, { body: `console.error(${JSON.stringify(refusal)});`, exit: 1 });
+    const r = run(root, '{}');
+    assert.strictEqual(r.code, 1, 'a refusal is not a green');
+    assert.ok(r.digest.includes('[agent:remind in 6m]'),
+      `the literal line the caller must emit has to survive; got ${JSON.stringify(r.digest)}`);
+    assert.ok(r.digest.includes('END YOUR TURN'),
+      `and the instruction to stop being billed; got ${JSON.stringify(r.digest)}`);
+    assert.ok(r.digest.length <= 200,
+      `the dispatcher delivers 200 chars of the last stderr line, so anything past that never `
+      + `arrives; got ${r.digest.length}`);
+    assert.ok(!r.digest.startsWith(`[${path.basename(root)}] no TOTALS summary`),
+      `the refusal must not be wrapped as an unexplained failure; got ${JSON.stringify(r.digest)}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('a runner that executed ZERO tests is a failure, not a 0/0 green', () => {
   const root = mkRoot();
   try {
@@ -184,7 +231,7 @@ test('a long failing list is CUT, so the digest fits what the dispatcher returns
     const r = run(root, '{}');
     assert.strictEqual(r.code, 1);
     assert.strictEqual(r.digest.length, 180, `the failing line is cut to 180, got ${r.digest.length}`);
-    assert.ok(r.digest.startsWith(`[${path.basename(root)}] 0/40 green, 40 failing: failing-test-name-0`),
+    assert.ok(new RegExp(`^\\[${path.basename(root)}\\] 0/40 green, 40 failing \\(${WALL_RE}\\): failing-test-name-0`).test(r.digest),
       'the counts and the first names survive the cut — they are the head of the line');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -201,6 +248,6 @@ test('the runner\'s stdout is never forwarded — the seat gets one stderr line'
     });
     const r = run(root, '{}');
     assert.strictEqual(r.stdout, '', 'forwarding the runner\'s stdout would blow the def\'s maxBytes');
-    assert.strictEqual(r.digest, `[${path.basename(root)}] 2/2 green`);
+    assertDigest(r.digest, `[${path.basename(root)}] 2/2 green (${WALL})`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

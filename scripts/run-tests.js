@@ -116,6 +116,41 @@ const LOCK = process.env.CLODEX_TEST_LOCK_DIR
   ? path.resolve(process.env.CLODEX_TEST_LOCK_DIR)
   : path.join(ROOT, '.test-digest.lock');
 
+const LAST = path.join(path.dirname(LOCK), '.test-digest.last');
+
+function lastRunMs() {
+  try {
+    const raw = fs.readFileSync(LAST, 'utf8').trim();
+    if (!/^\d+$/.test(raw)) return null;
+    const ms = Number(raw);
+    return ms > 0 ? ms : null;
+  } catch { return null; }
+}
+
+function recordRunMs(ms) {
+  const tmp = `${LAST}.tmp`;
+  try {
+    fs.writeFileSync(tmp, `${Math.max(1, Math.round(ms))}\n`);
+    fs.renameSync(tmp, LAST);
+  } catch {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
+}
+
+function clock(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function napAdvice(runningMs) {
+  const total = lastRunMs();
+  if (total === null) return { suiteOf: '', nap: 5 };
+  return {
+    suiteOf: ` of a ~${Math.ceil(total / 60000)} min suite`,
+    nap: Math.max(2, Math.ceil((total - runningMs) / 60000) + 1),
+  };
+}
+
 // Refuse-vs-wait, defaulting to REFUSE so an unset environment behaves exactly
 // as before (a human at a prompt wants the reason now). The loop sets a wait: it
 // is not at a prompt, nothing is billed while it blocks, and a ticket that
@@ -164,11 +199,14 @@ function acquireLock() {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
         continue;
       }
-      die(`another suite run is already going (pid ${holder}).\n`
-        + '  Parts of this suite bind real ports, so a second run deadlocks both.\n'
-        + `${LOCK_WAIT_MS ? `  Waited ${LOCK_WAIT_MS}ms for it to finish.\n` : ''}`
-        + '  Wait for it, or if it is wedged: kill '
-        + `${holder} && rm -rf ${LOCK}`);
+      let runningMs = 0;
+      try { runningMs = Math.max(0, Date.now() - fs.statSync(path.join(LOCK, 'pid')).mtimeMs); } catch {}
+      const { suiteOf, nap } = napAdvice(runningMs);
+      die(`another suite run is already going (pid ${holder}, running ${clock(runningMs)}${suiteOf})`
+        + ` - waited ${Math.round(LOCK_WAIT_MS / 1000)}s, not starting a second.`
+        + ` Do not re-emit: emit [agent:remind in ${nap}m] re-run the suite, END YOUR TURN.`
+        + ` Parts of this suite bind real ports, so a second run deadlocks both;`
+        + ` if it is wedged: kill ${holder} && rm -rf ${LOCK}`);
     }
     try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
     if (++reclaims >= 2) die('could not take the suite lock after reclaiming a stale one');
@@ -231,12 +269,14 @@ const childEnv = { ...process.env };
 delete childEnv.CLODEX_TEST_LOCK_DIR;
 delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
 
+const runStart = Date.now();
 const run = spawnSync(process.execPath, [
   '--test',
   `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
   '--test-reporter=tap', `--test-reporter-destination=${tapFile}`,
   ...passthrough,
 ], { cwd: ROOT, stdio: 'inherit', env: childEnv });
+const runMs = Date.now() - runStart;
 
 if (run.error) die(`could not start node --test: ${run.error.message}`);
 
@@ -259,6 +299,8 @@ const fail = counter('fail');
 if (tests === null || pass === null || fail === null) {
   die('the run produced no summary — the suite did not complete');
 }
+
+if (sweeping) recordRunMs(runMs);
 
 // A filter flag that matched NOTHING is the same false green as a missing path,
 // reached through a door no counter watches. Measured on node 25.8.1 over a
