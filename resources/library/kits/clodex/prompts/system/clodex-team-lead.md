@@ -173,6 +173,12 @@ visible rather than silently lost.
   `[agent:task list done]`, `list cancelled`, or `list all`. Reject is not a
   state (it reopens a ticket), so there is no `rejected` filter; an unknown one
   bounces with the valid set rather than quietly showing you the default.
+- Every intent in a reply is executed and acked SEPARATELY, and acks are
+  injected asynchronously: the second verb's ack can land a turn after the
+  first's, and out of order. A missing ack is not a dropped verb. Before
+  re-emitting anything, end the turn, read the board (`[agent:task list]`) and
+  act on what it shows; a re-sent start bounces "already started" and that
+  bounce names the holder.
 - Tickets you `add` without an assignee sit as backlog. A ticket assigned to a
   live seat that goes quiet past the stall window nudges you once — that nudge
   is your cue to check the seat or reassign.

@@ -15088,7 +15088,9 @@ async function wireRig(text) {
   const { m, warns } = mkRecovery();
   const fired = [];
   const errors = [];
+  const injected = [];
   m._handleIntent = (_agent, intent) => { fired.push(`${intent.type}:${intent.sub}:${intent.id || intent.name || ''}`); };
+  m._injectText = (sess, msg) => { injected.push([sess && sess.name, msg]); };
   m._broadcast = () => {};
   m._publishAgentText = () => {};
   m._maybeDeliverDigest = () => {};
@@ -15105,7 +15107,7 @@ async function wireRig(text) {
     // The handler body is wrapped in a try that only shadow-logs: a throw would
     // leave `fired` empty and every assertion below would read as "deduped".
     assert.deepStrictEqual(errors, [], 'ENTER: the wire handler ran to completion, so the fire counts below are real');
-    return { fired, warns };
+    return { fired, warns, injected };
   } finally {
     await wire.close();
     if (m._holdKeeper) m._holdKeeper.stop();
@@ -15175,6 +15177,74 @@ test('t313: a double-pasted dm still dedupes, and urgent still splits the identi
   assert.deepStrictEqual(esc.fired, ['dm:undefined:', 'dm:undefined:'],
     'the urgent resend of a held dm must dispatch, not be swallowed as a duplicate');
   assert.deepStrictEqual(esc.warns, []);
+});
+
+// ── t823: the swallowed verb is echoed back to the seat ─────────────────────
+//
+// The drop above was a log.warn and nothing else, so the emitting seat saw the
+// same silence a LATE ack produces. A lead read that silence as "only the first
+// task verb per turn runs", re-sent `task start`, and got "already started".
+// The echo is what separates the two: a verb that really was swallowed now says
+// so on the seat's own channel.
+//
+// The dup half and the distinct-id half are pinned together because a change
+// that echoed on every intent would satisfy the first alone — and an echo on a
+// pair of GENUINE siblings is a false "not re-run" about a command that did run,
+// which is worse than the silence it replaces.
+
+test('t823: a swallowed duplicate `task start` echoes ONE skipped line to the seat', async () => {
+  const { fired, injected } = await wireRig('[agent:task start t1]\n[agent:task start t1]');
+  assert.deepStrictEqual(fired, ['task:start:t1'],
+    'ENTER: the second was swallowed — otherwise there is no drop for the echo to report');
+  assert.strictEqual(injected.length, 1, 'one echo per swallowed intent, not one per intent');
+  assert.strictEqual(injected[0][0], 'a', 'delivered to the emitting seat');
+  assert.match(injected[0][1], /^\[agent:task\] skipped: duplicate of an intent earlier in this same reply/);
+  assert.match(injected[0][1], /\(same task t1\)/, 'and names what identified it as the same emission');
+  assert.match(injected[0][1], /not re-run/);
+});
+
+test('t823: two `task start` with distinct ids echo NOTHING (both really ran)', async () => {
+  const { fired, injected } = await wireRig('[agent:task start t1]\n[agent:task start t2]');
+  assert.deepStrictEqual(fired, ['task:start:t1', 'task:start:t2'],
+    'ENTER: both dispatched, so an echo here would be a lie about a command that ran');
+  assert.deepStrictEqual(injected, []);
+});
+
+test('t823: a double-pasted dm is swallowed SILENTLY (echoing one is noise)', async () => {
+  const { fired, warns, injected } = await wireRig('[agent:dm bob] ping\n[agent:dm bob] ping');
+  assert.deepStrictEqual(fired, ['dm:undefined:'], 'ENTER: the repeat was swallowed');
+  assert.deepStrictEqual(warns, ['intra-turn dup dm a — swallowed'], 'and the log still records it');
+  assert.deepStrictEqual(injected, [], 'but the seat is not told: a repeated message is not a lost command');
+});
+
+// The dedupe-CLAIM drop is a different layer with a different cause: it fires on
+// the tee-recovery replay, whose text belongs to a turn the seat has already
+// finished. An echo there would arrive on the wrong turn describing an intent
+// the seat cannot place, so that arm stays silent.
+test('t823: the cross-path claim drop stays silent — only the intra-turn Set echoes', async () => {
+  const { m } = mkRecovery();
+  const injected = [];
+  m._handleIntent = () => {};
+  m._injectText = (_s, msg) => { injected.push(msg); };
+  m._broadcast = () => {};
+  m._publishAgentText = () => {};
+  m._maybeDeliverDigest = () => {};
+  m._maybeRearmHold = () => {};
+  m._maybeFireCompactLatch = () => {};
+
+  const wire = await m._ensureWire();
+  try {
+    m.sessions.set('a', { name: 'a', intentSource: 'wire', sessionId: 'sid-1' });
+    const key = require('../intent-scanner').shadowIntentKey('a', parseIntentReal('[agent:task start t1]'));
+    assert.strictEqual(m._intentDeduper.claim('a', key, 'recovery').ok, true,
+      'ENTER: recovery holds the claim, so the wire turn below is rejected by claim and not by the Set');
+    wire.emit('turn.completed', { agent: 'a', text: '[agent:task start t1]', reqId: 'r1', sessionId: 'sid-1', stop: { is_turn: true } });
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(injected, []);
+  } finally {
+    await wire.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+  }
 });
 
 // --- spawn into a git worktree ------------------------------------------------
