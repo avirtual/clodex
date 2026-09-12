@@ -284,10 +284,14 @@ test("sandbox registerPeer marks its own box inbox: 'claim', on a fresh row and 
 
 test('two overlapping triggers deliver each note exactly ONCE — no duplicate toast, no double remove', async () => {
   await withPeer(async (emits, state) => {
+    // The notes appear only AFTER the startup hello has claimed an empty box.
+    // Seeding them before `start()` would let that hello drain them before the
+    // frames below ever arrive — no overlap would form and this subject would
+    // pass against the unserialized code it exists to red.
+    state.notes = NOTES.map((n) => ({ ...n }));
     // Two `added` frames in ONE write: both reach the SSE handler in the same
     // tick, so an unserialized path issues both GETs before either claim's
-    // removes have been sent, and both read the same undrained inbox. The
-    // seeded notes make the first hello's claim a third overlapping trigger.
+    // removes have been sent, and both read the same undrained inbox.
     state.streams[0].write(
       'event: inbox\ndata: {"kind":"added","unread":1}\n\n'
       + 'event: inbox\ndata: {"kind":"added","unread":2}\n\n',
@@ -304,7 +308,7 @@ test('two overlapping triggers deliver each note exactly ONCE — no duplicate t
     const seen = inboxEmits(emits).flatMap((e) => e[2].map((n) => n.id));
     assert.deepStrictEqual(seen, ['n1', 'n2'], 'each note delivered exactly once across every claim');
     assert.strictEqual(state.removes.length, 2, 'one remove per note — a repeat claim would 404 a second set');
-  }, { claimInbox: true }, NOTES);
+  }, { claimInbox: true });
 });
 
 test('the hello tick claims on its own — a note raised while the SSE feed was down still arrives', async () => {
