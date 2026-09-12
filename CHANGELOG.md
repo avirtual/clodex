@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Edit Session gets its Skills section; the tab bar stops wrapping; the phone transcript cursor survives a mid-turn re-merge and drops harness blocks
+## Unreleased
+
+## 5.63.12 — 2026-09-12 — Edit Session gets its Skills section; the tab bar stops wrapping; the phone transcript cursor survives a mid-turn re-merge and drops harness blocks
 
 - The Edit Session dialog now shows its Skills section for a local seat too (it was peer-only), and saving it writes both the disabled-skills and injected-skills lists — the same section the new-seat dialog and the default preferences already have.
 - The bottom-panel tab bar no longer wraps "IPC Traffic" or crushes a tab's count badge into its Clear button when the quota chip is long: the tabs, badges and action buttons keep their width and the chip is what shortens (its full text stays in the tooltip).
