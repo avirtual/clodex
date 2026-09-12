@@ -378,8 +378,8 @@ function registerIpcHandlers(deps) {
 
   handle('team:stockRoles', () => {
     const roles = {};
-    for (const key of Object.keys(STOCK_ROLE_DEFS)) {
-      roles[key] = { dispatch: STOCK_ROLE_DEFS[key].dispatch != null ? STOCK_ROLE_DEFS[key].dispatch : null };
+    for (const [key, def] of Object.entries(STOCK_ROLE_DEFS)) {
+      roles[key] = { dispatch: def.dispatch != null ? def.dispatch : null };
     }
     return { ok: true, roles };
   });
