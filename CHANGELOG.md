@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a box seat's note really lands, and its dm names a typeable origin
+## Unreleased
+
+## 5.63.7 — 2026-09-12 — a box seat's note really lands, and its dm names a typeable origin
 
 - The `inbox: 'claim'` mark a sandbox writes on its box's peer entry now survives the settings sanitizer, so a box seat's `[agent:notify-user]` really reaches the desktop inbox — before this the mark was stripped on save and the 5.63.5 forwarding never ran.
 - A dm claimed from a sandbox box is now tagged `<seat>@<origin>` using the same label-or-host-or-id rule as `[agent:who]`, so the reply hint names an address the receiver can actually type (`lead@team-<name>`), instead of the box's display label with its space.
