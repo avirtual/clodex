@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Delete Session… clears a row whose seat already died
 
 - Delete Session… on a row whose seat already died (e.g. a resume that exited during launch) removes the row immediately instead of leaving a ghost until the next relaunch.
 
