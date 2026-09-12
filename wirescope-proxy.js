@@ -135,6 +135,11 @@ const ProxyClient = {
     return this._req(base, `/_hint?${qs.toString()}`, 'POST', 2000);
   },
 
+  async registerAccount(base, configDir) {
+    const qs = new URLSearchParams({ config_dir: configDir });
+    return this._req(base, `/_accounts?${qs.toString()}`, 'POST', 2000);
+  },
+
   // Keyed by transcript PATH so it works on a COLD session the proxy no longer
   // holds in memory. Backs up (.bak-<ts>), atomic-renames, integrity-gates; on any
   // !ok the caller MUST resume the ORIGINAL transcript untouched.

@@ -4490,8 +4490,9 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null } = {}) {
   const root = mkTmpRoot('clodex-hint-');
+  const registered = [];
   const hints = [];
   const order = [];
   const warns = [];
@@ -4539,10 +4540,15 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     resolveProxyAgentId: ({ name }) => `clodex-${name}-rt`,
     normalizeProxyBase: (v) => v,
     lastTranscriptWrite,
+    ...(claudeHome ? { claudeHome } : {}),
     ProxyClient: ProxyClient || {
       spawnerHint: (base, agent, opts) => {
         hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 });
       },
+      probe: () => Promise.resolve(probeAnswer),
+      registerAccount: registerAccount || ((base, dir) => {
+        registered.push({ base, dir }); return Promise.resolve({ status: 200 });
+      }),
     },
     registry: registry || { register: () => {}, unregister: () => {} },
     Transport: class {
@@ -4590,7 +4596,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
       );
     } finally { stopWatchers(name); }
   };
-  return { m, hints, order, warns, upserts, spawn, root };
+  return { m, hints, order, warns, upserts, spawn, root, registered };
 }
 
 test('spawner-hint (t151): CLODEX_SPAWNER_HINT=off POSTs on:false on the seat route, BEFORE the PTY spawn', async () => {

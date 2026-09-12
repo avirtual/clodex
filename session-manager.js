@@ -637,6 +637,8 @@ function createSessionManager(deps) {
     speak: () => false, stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
   };
 
+  const claudeHome = deps.claudeHome || (() => path.join(os.homedir(), '.claude'));
+
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain.
   // The first mode-2004 (which latches _bootReadySeen) is Claude ANNOUNCING
@@ -1402,6 +1404,13 @@ function createSessionManager(deps) {
       // nulls it.
       const wireOff = noWire === true;
       if (wireOff) proxyBase = null;
+
+      if (accountDir && proxyBase && accountDir !== claudeHome()) {
+        Promise.resolve().then(() => ProxyClient.probe(proxyBase)).then((probe) => {
+          if (!probe || !probe.capabilities || !probe.capabilities.accounts) return;
+          return ProxyClient.registerAccount(proxyBase, accountDir);
+        }).catch((e) => log.warn('session', `account register ${accountDir} skipped: ${e.message}`));
+      }
 
       let cmd, args;
       const shell = process.env.SHELL || '/bin/bash';
