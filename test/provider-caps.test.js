@@ -106,11 +106,31 @@ test('t749: the Edit dialog gates plugins and skills on caps, not on isClaude', 
   assert.ok(!/isSkillsEditable = isClaude/.test(body));
   assert.match(body, /const isPluginsEditable = caps\.plugins && !argsSource/,
     'plugins keeps its peer-row hide while widening to codex');
-  assert.match(body, /const isSkillsEditable = \(caps\.injectSkills \|\| caps\.skillRoster\) && !!argsSource && !!skillCatalog/);
+  assert.match(body, /const isSkillsEditable = \(caps\.injectSkills \|\| caps\.skillRoster\) && !!skillCatalog;/);
   assert.match(body, /argsSkillsRow\.style\.display = \(isSkillsEditable && caps\.skillRoster\) \?/,
     'the roster checklist inside the section stays claude-only');
   assert.match(body, /argsToolsSection\.style\.display = caps\.tools \?/);
   assert.match(body, /argsAgentsRow\.style\.display = caps\.agents \?/);
+});
+
+test('the Edit dialog shows Skills for a LOCAL seat and saves both lists', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('async function openArgsDialog(');
+  assert.ok(at > 0, 'ENTER: openArgsDialog was located');
+  const body = src.slice(at, src.indexOf('\nfunction closeArgsDialog', at));
+
+  assert.match(body, /window\.api\.getSkillCatalog\(name\),/,
+    'the local Promise.all fetches the skill catalog');
+  assert.match(body, /skillCatalog = \(sc && sc\.ok\) \? sc : null;/,
+    'the local arm stores the catalog the gate reads');
+  assert.ok(!/!!argsSource && !!skillCatalog/.test(body),
+    'the gate no longer excludes a local seat');
+
+  const sat = src.indexOf("document.getElementById('btn-args-save')");
+  assert.ok(sat > 0, 'ENTER: the Edit save handler was located');
+  const save = src.slice(sat, src.indexOf('alert(`Save settings failed', sat));
+  assert.match(save, /setSessionArgs\(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile/,
+    'the local save sends both skill lists at positions 9 and 10');
 });
 
 // The Skills section opens for any provider whose caps row has injectSkills OR

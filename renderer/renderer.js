@@ -7301,13 +7301,16 @@ async function openArgsDialog(name, argsSource = null) {
     if (!r || !r.ok) { alert(r && r.error ? r.error : 'Session not found.'); return; }
     ({ res, settings, promptLib, agentLib, skillCatalog } = r);
   } else {
-    [res, settings, promptLib] = await Promise.all([
+    let sc;
+    [res, settings, promptLib, sc] = await Promise.all([
       window.api.getSessionArgs(name),
       window.api.getSettings(),
       window.api.listPrompts(),
+      window.api.getSkillCatalog(name),
     ]);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
     agentLib = res.agentCatalog || [];
+    skillCatalog = (sc && sc.ok) ? sc : null;
   }
   argsEditingSource = argsSource;
   setAgentLibCache(agentLib || []);
@@ -7367,7 +7370,7 @@ async function openArgsDialog(name, argsSource = null) {
     setExecLibCache((await window.api.listExecCommands()) || []);
     renderExecChecklist(argsExecList, new Set(res.execCommands || []));
   }
-  const isSkillsEditable = (caps.injectSkills || caps.skillRoster) && !!argsSource && !!skillCatalog;
+  const isSkillsEditable = (caps.injectSkills || caps.skillRoster) && !!skillCatalog;
   argsSkillsSection.style.display = isSkillsEditable ? '' : 'none';
   argsSkillsRow.style.display = (isSkillsEditable && caps.skillRoster) ? '' : 'none';
   if (isSkillsEditable) {
@@ -7471,7 +7474,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     : accountFromEnv(formatEnvLines(env), argsAccounts || []);
   closeArgsDialog();
   // systemPrompt (legacy inline) passes undefined so a pre-library inline body
-  // survives; disabledSkills/injectSkills likewise (handler preserves on undefined).
+  // survives.
   const res = source
     ? await source.save({
             // Peer save NEVER carries execCommands: the key is omitted entirely (not even []),
@@ -7480,7 +7483,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, undefined, undefined, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins);
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
