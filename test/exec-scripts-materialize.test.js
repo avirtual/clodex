@@ -102,6 +102,16 @@ test('clodex-run-tests: the described `tree` field matches the script\'s guard',
   assert.match(desc, /scripts\/run-tests\.js/, 'the description names the file the project must supply');
 });
 
+test('.dockerignore re-includes exactly the EXEC_SCRIPTS the image must ship', () => {
+  assert.ok(EXEC_SCRIPTS.length >= 3,
+    'ENTER: EXEC_SCRIPTS still names at least three helpers — the list this pins against');
+  const lines = fs.readFileSync(path.join(ROOT, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim());
+  const reincluded = lines.filter((l) => l.startsWith('!scripts/')).sort();
+  const expected = EXEC_SCRIPTS.map((f) => `!${f}`).sort();
+  assert.deepStrictEqual(reincluded, expected,
+    'every EXEC_SCRIPTS entry must be negated back in, or the image ships without it and the exec dies as module-not-found');
+});
+
 test('the seeded exec-defs carry the ${CLODEX_BIN} placeholder, not an absolute path', () => {
   for (const name of ['clodex-team', 'clodex-monitor']) {
     const def = JSON.parse(fs.readFileSync(path.join(ROOT, 'resources', 'library', 'exec', `${name}.json`), 'utf8'));
