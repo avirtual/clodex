@@ -9,11 +9,6 @@
 // cannot replace it. A duplicate nobody pins drifts, so the first block below
 // is the drift gate: it compares BYTES, not parsed objects, since a reformat is
 // exactly the kind of divergence a deepStrictEqual would wave through.
-//
-// The `default` kit is the same three roles with every restriction lifted. What
-// "lifted" MEANS is not a matter of taste per key — it is whatever the resolver
-// reads as "no restriction", and for `plugins` that is an ABSENT key rather
-// than `[]`. Those literals are pinned here against the resolvers themselves.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -77,24 +72,25 @@ test('the clodex kit\'s roles are STOCK_ROLE_DEFS verbatim', () => {
   assert.deepStrictEqual(readKitJson('clodex').roles, STOCK_ROLE_DEFS);
 });
 
-// ── kit `default`: the lifted restrictions, by their resolver's literal ─────
+for (const kit of ['clodex', 'default']) {
+  test(`the ${kit} kit's hand is dispatched per ticket into its own worktree`, () => {
+    assert.strictEqual(readKitJson(kit).roles.hand.dispatch, 'worktree');
+  });
+}
 
-test('the default kit lifts every restriction, and `lifted` means what each resolver reads', () => {
+test('the default kit lifts the plugin and builtin restrictions, and keeps the skill/tool denials', () => {
   for (const stem of ['lead', 'hand']) {
     const tpl = readTpl('default', stem);
     const stock = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', `clodex-team-${stem}.json`), 'utf-8'));
 
-    // ENTER: the stock template really restricts, so the lifts below are a
-    // contrast rather than a restatement of a template that never denied.
     assert.ok(stock.disabledTools.length > 20, `ENTER: stock ${stem} must deny a real tool list`);
     assert.deepStrictEqual(stock.disabledSkills, ['*'], `ENTER: stock ${stem} must disable every skill`);
     assert.deepStrictEqual(stock.plugins, [], `ENTER: stock ${stem} must carry the empty plugin list`);
 
-    // DENYLISTS — cli-hooks renders each into settings.permissions.deny /
-    // skillOverrides, and an EMPTY list renders nothing. `[]` is the literal.
-    assert.deepStrictEqual(tpl.disabledTools, []);
-    assert.deepStrictEqual(tpl.disabledSkills, []);
     assert.deepStrictEqual(tpl.denyBuiltins, []);
+
+    assert.deepStrictEqual(tpl.disabledSkills, ['*'],
+      `${stem}: a default-kit seat must not boot with every host skill`);
 
     // `agents` is NOT a denylist and has no widening value: session-manager's
     // effectiveInjectedAgents unions the seat's list with the `sessions:`-scoped
@@ -118,6 +114,12 @@ test('the default kit lifts every restriction, and `lifted` means what each reso
     assert.strictEqual(tpl.spawnerHint, stock.spawnerHint);
     assert.strictEqual(tpl.name, stem, 'a template `name` that is not its stem names a file nothing resolves');
   }
+
+  const libHand = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-hand.json'), 'utf-8'));
+  assert.ok(libHand.disabledTools.length > 10,
+    'ENTER: the library hand must deny a real list, or the copy below pins nothing');
+  assert.deepStrictEqual(readTpl('default', 'hand').disabledTools, libHand.disabledTools);
+  assert.deepStrictEqual(readTpl('default', 'lead').disabledTools, []);
 });
 
 test('the resolvers themselves agree with the literals pinned above', () => {
@@ -131,12 +133,10 @@ test('the resolvers themselves agree with the literals pinned above', () => {
   assert.strictEqual(seatHasPlugin('builder', [], true), false,
     'and [] must be the restriction — otherwise the absent key above proves nothing');
 
-  // disabledSkills: [] expands to [] (nothing overridden); ['*'] expands to the
-  // whole known set, which is the restriction being lifted.
-  assert.deepStrictEqual(expandSkillsOff(hand.disabledSkills, { known: ['a', 'b'] }), [],
-    'an empty disabledSkills must disable nothing');
-  assert.deepStrictEqual(expandSkillsOff(['*'], { known: ['a', 'b'] }), ['a', 'b'],
-    'and "*" must be the restriction — otherwise the contrast is empty');
+  assert.deepStrictEqual(expandSkillsOff(hand.disabledSkills, { known: ['a', 'b'] }), ['a', 'b'],
+    'the default hand\'s disabledSkills must expand to every known skill');
+  assert.deepStrictEqual(expandSkillsOff([], { known: ['a', 'b'] }), [],
+    'and [] must be the lift — otherwise the expansion above proves nothing');
 });
 
 test('the default kit\'s reviewer carries a prompt only, and no reviewer template ships with it', () => {
@@ -179,11 +179,12 @@ function mkHome() {
 const readTeamTpl = (home, team, stem) => JSON.parse(
   fs.readFileSync(path.join(home, 'teams', team, 'templates', `${stem}.json`), 'utf-8'));
 
-test('createTeam with kit:default writes the LIFTED hand template, whole', () => {
+test('createTeam with kit:default writes the default hand template, whole', () => {
   const home = mkHome();
   const tm = createTeamManifest({ fs, clodexHome: home });
   const team = tm.createTeam({ name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead', kit: 'default' });
 
+  const libTools = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-hand.json'), 'utf-8')).disabledTools;
   // The whole object, per CLAUDE.md: a key-subset check reads around a key the
   // copy dropped, which is the whole class of defect a copy path produces.
   assert.deepStrictEqual(readTeamTpl(home, 'x', 'hand'), {
@@ -196,8 +197,8 @@ test('createTeam with kit:default writes the LIFTED hand template, whole', () =>
     execCommands: ['clodex-team', 'clodex-monitor', 'clodex-run-tests'],
     intents: ['dm', 'who', 'context', 'memory', 'file', 'resend', 'exec', 'remind', 'notify-user'],
     denyBuiltins: [],
-    disabledTools: [],
-    disabledSkills: [],
+    disabledTools: libTools,
+    disabledSkills: ['*'],
     injectSkills: [],
     stripLevel: 2,
     systemPromptFile: null,
@@ -218,7 +219,8 @@ test('createTeam with kit:clodex writes the AGGRESSIVE hand template', () => {
   const stock = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-hand.json'), 'utf-8'));
   assert.deepStrictEqual(copied, { ...stock, name: 'hand' });
   // The CONTRAST, on one fixture: the two kits must not produce the same file.
-  assert.ok(copied.disabledTools.length > 20, 'the clodex kit keeps the denylist the default kit lifts');
+  assert.ok(copied.denyBuiltins.length > 0, 'the clodex kit keeps the builtin denials the default kit lifts');
+  assert.deepStrictEqual(copied.plugins, [], 'and withholds every shipped bundle');
 });
 
 test('the kit\'s reviewer prompt reaches the team even though the kit is the copy SOURCE', () => {
@@ -236,8 +238,18 @@ test('createTeam defaults to the default kit when the caller names none', () => 
   const tm = createTeamManifest({ fs, clodexHome: home });
   const team = tm.createTeam({ name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead' });
   assert.strictEqual(team.kit, 'default');
-  assert.deepStrictEqual(readTeamTpl(home, 'x', 'hand').disabledTools, [],
+  assert.ok(!('plugins' in readTeamTpl(home, 'x', 'hand')),
     'a kitless create takes the mundane profile, not the aggressive one');
+});
+
+test('a BRIEFLESS create — roles undefined, the dialog\'s path — writes a worktree hand to disk', () => {
+  const home = mkHome();
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const team = tm.createTeam({ name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead', kit: 'default' });
+
+  const onDisk = JSON.parse(fs.readFileSync(team.file, 'utf-8')).roles;
+  assert.ok(onDisk.hand, 'ENTER: the briefless create seeded a hand role');
+  assert.strictEqual(onDisk.hand.dispatch, 'worktree');
 });
 
 test('an unknown kit throws, lists what IS available, and writes nothing', () => {
@@ -262,7 +274,7 @@ test('a caller `roles` object wins over the kit\'s roles, but the kit stays the 
   });
   assert.strictEqual(team.roles.hand.dispatch, 'worktree', 'the caller\'s role def is honored');
   assert.ok(!('reviewer' in team.roles), 'and the kit\'s third role is NOT merged in');
-  assert.deepStrictEqual(readTeamTpl(home, 'x', 'hand').disabledTools, [],
+  assert.ok(!('plugins' in readTeamTpl(home, 'x', 'hand')),
     'while the bytes still came from the kit named on the call');
 });
 
@@ -279,7 +291,7 @@ test('addRole copies from the team\'s OWN kit, not from whatever the library hol
     'ENTER: the hand role does not exist yet, so the file below is one THIS call wrote');
 
   tm.addRole('x', 'hand', { prompt: 'hand', template: 'hand' });
-  assert.deepStrictEqual(readTeamTpl(home, 'x', 'hand').disabledTools, [],
+  assert.ok(!('plugins' in readTeamTpl(home, 'x', 'hand')),
     'a role added later must take the same profile the team was created from');
 });
 
@@ -392,9 +404,9 @@ test('[agent:team create kit:default] records the kit and says so in the reply',
   assert.ok(f.injected.some((t) => t.includes('created from kit default')),
     `the reply names the kit — got: ${JSON.stringify(f.injected)}`);
   assert.strictEqual(f.readTeam('shop').kit, 'default');
-  assert.deepStrictEqual(
-    JSON.parse(fs.readFileSync(path.join(f.home, 'teams', 'shop', 'templates', 'hand.json'), 'utf-8')).disabledTools,
-    [], 'and the LIFTED template is what landed on disk');
+  assert.ok(
+    !('plugins' in JSON.parse(fs.readFileSync(path.join(f.home, 'teams', 'shop', 'templates', 'hand.json'), 'utf-8'))),
+    'and the default kit\'s template is what landed on disk');
 });
 
 test('[agent:team create kit:clodex] with a brief takes the kit\'s roles, worktree hand and all', async () => {
@@ -411,11 +423,11 @@ test('[agent:team create kit:clodex] with a brief takes the kit\'s roles, worktr
   const team = f.readTeam('shop');
   assert.strictEqual(team.kit, 'clodex');
   assert.strictEqual(team.roles.hand.dispatch, 'worktree', 'the per-ticket hand survives the kit');
-  assert.ok(JSON.parse(fs.readFileSync(path.join(f.home, 'teams', 'shop', 'templates', 'hand.json'), 'utf-8'))
-    .disabledTools.length > 20, 'and the aggressive template is what the kit supplied');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(f.home, 'teams', 'shop', 'templates', 'hand.json'), 'utf-8'))
+    .plugins, [], 'and the aggressive template is what the kit supplied');
 });
 
-test('a brief create with kit:default gets the LIFTED hand — the contrast, same path', async () => {
+test('a brief create with kit:default gets the default hand — the contrast, same path', async () => {
   const f = mkTeamCreate({ makeRepo: true });
   seedKits(f.home);
 
@@ -425,9 +437,8 @@ test('a brief create with kit:default gets the LIFTED hand — the contrast, sam
 
   const team = f.readTeam('shop');
   assert.strictEqual(team.roles.hand.dispatch, 'worktree');
-  assert.deepStrictEqual(
-    JSON.parse(fs.readFileSync(path.join(f.home, 'teams', 'shop', 'templates', 'hand.json'), 'utf-8')).disabledTools,
-    []);
+  assert.ok(
+    !('plugins' in JSON.parse(fs.readFileSync(path.join(f.home, 'teams', 'shop', 'templates', 'hand.json'), 'utf-8'))));
 });
 
 test('the briefed-create reply names the template the lead REALLY booted on', async () => {

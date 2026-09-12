@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - `task done` on a ticket that records no branch now says it closed WITHOUT review, instead of a plain "closed (done)" that reads as if the cold reviewer ran.
+- A team created from the Create Team dialog gets a hand role dispatched per ticket into its own worktree, so `task start` mints a seat and every `task done` reaches the cold reviewer; the default kit's lead and hand seats no longer boot with every host skill and, for the hand, every tool.
 - Delete Team… on a sandboxed team also stops and removes its box, its state under `~/.clodex/boxes/team-<name>/` and its peer entry, so a throwaway sandboxed team leaves nothing behind; a box that cannot be reached blocks the delete instead of orphaning it.
 
 ## 5.64.1 — 2026-09-12 — first fixes from a sandboxed team's feedback

@@ -369,19 +369,19 @@ test('r1 MF1: only `cwd` is clearable — a blank `template` never reaches the b
   assert.ok(!('template' in blanked), 'a blank template is omitted — so a Clear there would be a lie');
 });
 
-test('r1 MF1: the stock `hand` role is exactly the shape that exposed the dead Clear', () => {
+test('r1 MF1: the stock `lead` role is exactly the shape that exposed the dead Clear', () => {
   // Not an edge case, which is why this pins the SHAPE and not just the leaf:
-  // STOCK_ROLE_DEFS.hand carries a template and no dispatch, so it is standing,
-  // so its template is stale — a default team's `hand` row hits this the first
-  // time anyone expands it.
+  // STOCK_ROLE_DEFS.lead carries a template and no dispatch — a reserved role
+  // is refused one — so it is standing, so its template is stale. A default
+  // team's `lead` row hits this the first time anyone expands it.
   const { STOCK_ROLE_DEFS } = require('../team-manifest');
-  const hand = STOCK_ROLE_DEFS.hand;
-  assert.ok(hand, 'ENTER: the stock hand def exists — a rename would leave every assertion below vacuous');
-  assert.ok(hand.template, 'the stock hand names a template');
-  assert.strictEqual(hand.dispatch, undefined, 'and no dispatch, so it is standing');
-  const reveal = fieldReveal(hand.dispatch, { cwd: hand.cwd, template: hand.template });
+  const lead = STOCK_ROLE_DEFS.lead;
+  assert.ok(lead, 'ENTER: the stock lead def exists — a rename would leave every assertion below vacuous');
+  assert.ok(lead.template, 'the stock lead names a template');
+  assert.strictEqual(lead.dispatch, undefined, 'and no dispatch, so it is standing');
+  const reveal = fieldReveal(lead.dispatch, { cwd: lead.cwd, template: lead.template });
   assert.strictEqual(reveal.template, 'stale',
-    'so a default team shows a stale template on `hand` — which must therefore not carry a Clear');
+    'so a default team shows a stale template on `lead` — which must therefore not carry a Clear');
   assert.ok(!clearableFields().includes('template'),
     'the field a default team shows stale is the one field whose Clear cannot work');
 });
