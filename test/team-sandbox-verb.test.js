@@ -24,7 +24,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 
 function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null } = {}) {
-  const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0 };
+  const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0, unregisterPeer: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
   // The box's config is REAL state here, not a spy log: the handler reads it back
   // (to decide whether to seed a default ref) and the "config survives" subjects
@@ -41,6 +41,7 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult
     async up() { calls.up++; return upResult || { ok: true, ports }; },
     async rebuild() { calls.rebuild++; return upResult || { ok: true, ports }; },
     async down() { calls.down++; return downResult || { ok: true }; },
+    unregisterPeer() { calls.unregisterPeer++; },
     // `ref` is read back off config, exactly as the real status() derives it from
     // getConfig(). Hardcoding it would make this fake report a ref the box is not
     // configured with, and the "tracked ref survives" subjects would then be
@@ -240,6 +241,19 @@ test('down stops the box and deletes sandbox.json', async () => {
   assert.strictEqual(b.calls.down, 1);
   assert.ok(!exists(b.file), 'the token file is gone once the box is down');
   assert.match(b.last(), /sandbox team-clodex down/);
+  assert.strictEqual(b.calls.unregisterPeer, 1);
+  assert.match(b.last(), /peer entry team-clodex unregistered/);
+});
+
+test('down that fails leaves the peer entry registered', async () => {
+  const b = mkBox({ downResult: { ok: false, error: 'compose exploded' } });
+  await fire(b, b.lead, { action: 'up' });
+  assert.ok(exists(b.file));
+  await fire(b, b.lead, { action: 'down' });
+  assert.strictEqual(b.calls.down, 1);
+  assert.strictEqual(b.calls.unregisterPeer, 0);
+  assert.match(b.last(), /^\[agent:team\] error: compose exploded/);
+  assert.ok(exists(b.file), 'a failed down leaves the token file in place');
 });
 
 test('status writes nothing and reports the state', async () => {

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team sandbox down]` now also removes the box's `team-<name>` peer entry from settings, so a torn-down box stops being dialled; a `down` that fails leaves the entry in place.
+
 ## 5.63.7 — 2026-09-12 — a box seat's note really lands, and its dm names a typeable origin
 
 - The `inbox: 'claim'` mark a sandbox writes on its box's peer entry now survives the settings sanitizer, so a box seat's `[agent:notify-user]` really reaches the desktop inbox — before this the mark was stripped on save and the 5.63.5 forwarding never ran.
