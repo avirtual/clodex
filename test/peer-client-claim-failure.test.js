@@ -180,3 +180,18 @@ test('claimOutbox documents the zero-delivery arm and the case it holds in', () 
   assert.match(tail, /crash|dropped connection/i, 'names the case the loss holds in');
   assert.match(tail, /response|flush/i, 'and locates it against the response');
 });
+
+const OVERSIZE = () => JSON.stringify({ ok: true, pad: 'x'.repeat(1024 * 1024 + 64) });
+
+test('a claim reply past the 1MB guard reports an error instead of losing the callback', async () => {
+  await withPeer(OVERSIZE, async (emits, state, conn) => {
+    const calls = [];
+    conn.claimDms((r) => { calls.push(r); });
+    await waitFor('the oversize claim callback to resolve at all', () => calls.length >= 1);
+    await new Promise((r) => setTimeout(r, 150));
+    assert.strictEqual(calls.length, 1,
+      `ENTER: the guard must resolve the callback exactly once, got ${calls.length} calls`);
+    assert.deepStrictEqual(calls[0], { ok: false, error: 'response too large' },
+      'the aborted oversize response must reach the caller as an error, not as silence');
+  });
+});
