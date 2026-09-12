@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Team popover: the offer card for a stock role the team lacks shows that role's real dispatch (the stock hand runs per ticket in its own worktree), instead of a fixed "standing".
+- Join team as `hand` (or any role that runs per ticket) no longer spawns a standing seat the ticket loop would never deliver to; the reply says the role runs per ticket and how to dispatch to it.
 
 ## 5.64.2 — 2026-09-13 — a fresh team reviews its own tickets, and a sandboxed team can be deleted
 
