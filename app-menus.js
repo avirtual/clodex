@@ -76,6 +76,12 @@ function deleteTeamDetail(dir, check) {
     return `The manifest under ${tildePath(dir)} does not load (${check.error}), so seats and tickets cannot be checked. `
       + 'Removes the directory; nothing else is touched.';
   }
+  if (check.sandboxed) {
+    return `Removes ${tildePath(dir)} (the pointer manifest), stops and removes box ${check.boxId}, `
+      + `its state under ~/.clodex/boxes/${check.boxId}/ (every seat that lived in the box, their session `
+      + "records, messages and the team's ticket history) and its peer entry. "
+      + `Keeps: the project at ${check.root}.`;
+  }
   const base = `Removes ${tildePath(dir)} (its manifest, prompts and templates). Keeps: the project at ${check.root}, `
     + "its ticket history and task artifacts under ~/.clodex/projects, and every seat's session record";
   if (!check.saved) return `${base}.`;
@@ -627,8 +633,16 @@ function createAppMenus(deps) {
       detail: deleteTeamDetail(dir, check),
     });
     if (result.response !== 0) return;
-    const r = teams.deleteTeam(name);
+    const r = await teams.deleteTeam(name);
     if (!r.ok) { dialog.showErrorBox('Delete team failed', r.error); return; }
+    if (r.box && r.box.downError) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['OK'],
+        message: `Box ${r.box.id} did not stop cleanly`,
+        detail: `${r.box.downError}. Its state under ~/.clodex/boxes/${r.box.id}/ was kept; run docker compose down there by hand.`,
+      });
+    }
     refreshAppMenu();
     refreshTrayMenu();
   }

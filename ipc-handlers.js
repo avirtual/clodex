@@ -245,9 +245,9 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
 
-  handle('team:delete', (_e, team) => {
+  handle('team:delete', async (_e, team) => {
     try {
-      const r = teamDeleteGated(team);
+      const r = await teamDeleteGated(team);
       if (r.ok) { refreshAppMenu(); refreshTrayMenu(); }
       return r;
     } catch (err) { return { ok: false, error: err.message }; }

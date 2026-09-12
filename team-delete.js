@@ -1,6 +1,6 @@
 'use strict';
 
-function createTeamDelete({ loadManifest, deleteTeam, getManager }) {
+function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxManager }) {
   function deleteCheck(name) {
     let team;
     try {
@@ -9,6 +9,7 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager }) {
       return { ok: true, loaded: false, error: err.message };
     }
     const used = getManager()._teamInUse(team);
+    const sandboxed = team.sandboxed === true;
     return {
       ok: true,
       loaded: true,
@@ -16,10 +17,12 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager }) {
       tickets: used.tickets,
       saved: used.saved,
       root: team.root,
+      sandboxed,
+      ...(sandboxed ? { boxId: `team-${name}` } : {}),
     };
   }
 
-  function deleteGated(name) {
+  async function deleteGated(name) {
     const check = deleteCheck(name);
     if (check.loaded && (check.seats.length || check.tickets.length)) {
       return {
@@ -28,13 +31,33 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager }) {
         blockedBy: { seats: check.seats, tickets: check.tickets },
       };
     }
+    let box;
+    if (check.sandboxed) {
+      const mgr = getSandboxManager ? getSandboxManager() : null;
+      if (!mgr) {
+        return {
+          ok: false,
+          error: `sandboxes are disabled on this host, so box ${check.boxId} cannot be removed; delete nothing`,
+        };
+      }
+      let r;
+      try {
+        r = await mgr.remove(check.boxId);
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+      if (r && r.ok === false && !/^no such sandbox: /.test(r.error || '')) {
+        return { ok: false, error: r.error };
+      }
+      box = { id: check.boxId, removed: true, downError: r && r.downError };
+    }
     try {
       deleteTeam(name);
     } catch (err) {
       return { ok: false, error: err.message };
     }
     if (check.root) getManager()._forgetTeam(name, check.root);
-    return { ok: true };
+    return box ? { ok: true, box } : { ok: true };
   }
 
   return { deleteCheck, deleteGated };
