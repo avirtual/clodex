@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — first fixes from a sandboxed team's feedback
 
 - The sandbox image now ships `clodex-run-tests.js`, so the `clodex-run-tests` exec grant works inside a box instead of failing with a module-not-found that the one-line stderr tail hid as `Node.js v22`.
 - Inside a sandbox box `[agent:memory remember]` works: the host library is mounted read-only per catalogue directory, so the box's agent memory dirs stay on its own writable state volume instead of under the read-only mount.
