@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a box seat's notify-user reaches the desktop inbox
+## Unreleased
+
+## 5.63.5 — 2026-09-12 — a box seat's notify-user reaches the desktop inbox
 
 - A peer reply larger than the 1MB response guard now reports `response too large` to the caller instead of silently dropping the callback, so a dm or inbox claim against an oversize page fails loudly and the next claim still runs.
 
