@@ -129,17 +129,6 @@ function registerIpcHandlers(deps) {
     return res;
   });
 
-  // The manifest write with NO spawn (t288): the Teams menu creates a team before
-  // any seat exists, so there is nothing to adopt as lead. `lead` is a seat NAME
-  // the manifest records, and the default `<team>-lead` names a seat that has
-  // never existed — which is NOT the state a team is in when its lead is merely
-  // stopped: a stopped lead has a persisted record and restarts by name, while
-  // this one resolves to nothing until something creates it. The team popover's
-  // lead row (team:setLead) is that something; without a front door this default
-  // is an orphan pointer the operator can only fix by hand-editing team.json.
-  // `root` is forwarded verbatim so createTeam's absolute-path refusal is the
-  // single gate; resolving it here would silently accept a relative root against
-  // whatever cwd the main process happens to have.
   async function createBareTeamBox(team, mgr, boxId, lines) {
     let box = mgr.get(boxId);
     if (!box) {
@@ -157,6 +146,17 @@ function registerIpcHandlers(deps) {
     return { ok: true, team, webUrl: r.webUrl || null, lines };
   }
 
+  // The manifest write with NO spawn (t288): the Teams menu creates a team before
+  // any seat exists, so there is nothing to adopt as lead. `lead` is a seat NAME
+  // the manifest records, and the default `<team>-lead` names a seat that has
+  // never existed — which is NOT the state a team is in when its lead is merely
+  // stopped: a stopped lead has a persisted record and restarts by name, while
+  // this one resolves to nothing until something creates it. The team popover's
+  // lead row (team:setLead) is that something; without a front door this default
+  // is an orphan pointer the operator can only fix by hand-editing team.json.
+  // `root` is forwarded verbatim so createTeam's absolute-path refusal is the
+  // single gate; resolving it here would silently accept a relative root against
+  // whatever cwd the main process happens to have.
   handle('team:createBare', (_e, spec) => {
     const { name, root, lead, kit, sandboxed } = spec || {};
     const mgr = sandboxed ? getSandboxManager() : null;
