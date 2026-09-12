@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a box survives spawning its first seat
+## Unreleased
+
+## 5.63.6 — 2026-09-12 — a box survives spawning its first seat
 
 - A sandbox box mounts its per-agent runtime dir (`~/.clodex/run`) as a tmpfs instead of leaving it on the host-bound state dir, so spawning a seat inside the box no longer dies on the `chmod` of its socket (Docker Desktop's file sharing refuses `chmod` on a socket inode, which crashed the box and left `team sandbox up` reporting `fetch failed`).
 
