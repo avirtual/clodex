@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The `inbox: 'claim'` mark a sandbox writes on its box's peer entry now survives the settings sanitizer, so a box seat's `[agent:notify-user]` really reaches the desktop inbox — before this the mark was stripped on save and the 5.63.5 forwarding never ran.
+- A dm claimed from a sandbox box is now tagged `<seat>@<origin>` using the same label-or-host-or-id rule as `[agent:who]`, so the reply hint names an address the receiver can actually type (`lead@team-<name>`), instead of the box's display label with its space.
 
 ## 5.63.6 — 2026-09-12 — a box survives spawning its first seat
 

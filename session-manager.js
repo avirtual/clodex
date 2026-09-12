@@ -6460,10 +6460,14 @@ function createSessionManager(deps) {
     _deliverClaimedDms(peerId, messages) {
       const cfg = (getUiSettings().get().peers || []).find((p) => p && p.id === peerId);
       const peerLabel = (cfg && cfg.label) || String(peerId);
+      const st = (getPeerManager() ? getPeerManager().statuses() : []).find((p) => p && p.id === peerId);
+      const origin = (st && peerOriginSuffix(st, AGENT_NAME_RE))
+        || peerOriginSuffix({ label: peerLabel, id: peerId }, AGENT_NAME_RE)
+        || String(peerId);
       for (const m of (Array.isArray(messages) ? messages : [])) {
         if (!m || typeof m.to !== 'string') continue;
         if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m); continue; }
-        const senderTag = `${m.from || 'peer'}@${peerLabel}`;
+        const senderTag = `${m.from || 'peer'}@${origin}`;
         const local = this.sessions.get(m.to);
         if (!local || !local.agentType) {
           this._broadcast('ipc-message', { type: 'dm', from: senderTag, to: m.to, body: `WIRE←${peerLabel} DROPPED (no local agent "${m.to}"): ${m.body || ''}` });
