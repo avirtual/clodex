@@ -151,6 +151,7 @@ function mkBox(opts = {}) {
     hand: { name: 'clodex-hand', agentType: 'claude', cwd: '/proj' },
     last: () => injected[injected.length - 1] || '',
     box: () => fake.manager.get('team-clodex'),
+    mgr: fake ? fake.manager : null,
     requests: net.requests,
     file: path.join(teamsDir, 'clodex', 'sandbox.json'),
     srcDir: dir,
@@ -453,4 +454,56 @@ test('a setConfig refusal stops the verb before docker and writes nothing', asyn
   assert.match(b.last(), /error: Track git ref may only contain .* \(no "\.\."\): \.\.\/etc/);
   assert.strictEqual(b.calls.up, 0, 'a refused ref never reaches docker');
   assert.ok(!exists(b.file));
+});
+
+test('_bringUpTeamBox runs the whole box-side half with no intent, and passes the patch through untouched', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  const replies = [];
+  const out = await b.m._bringUpTeamBox(b.team, {
+    mgr: b.mgr,
+    box: b.box(),
+    boxId: 'team-clodex',
+    patch: { workDir: b.team.root },
+    action: 'up',
+    reply: (line) => replies.push(line),
+  });
+
+  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj' }]);
+  assert.strictEqual(b.calls.up, 1);
+  assert.strictEqual(b.calls.waitHealthy, 1);
+  assert.strictEqual(fs.readFileSync(path.join(b.shipped, 'templates', 'y.json'), 'utf-8'), '{"type":"claude"}\n');
+  assert.deepStrictEqual(b.requests.filter((r) => r.method === 'POST').map((r) => r.body.name), ['bash', 'lead']);
+  assert.ok(exists(b.file), 'sandbox.json landed');
+
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.webUrl, 'http://127.0.0.1:7810');
+  const { startedAt, ...fields } = out.record;
+  assert.ok(!Number.isNaN(Date.parse(startedAt)));
+  assert.deepStrictEqual(fields, {
+    boxId: 'team-clodex',
+    ref: null,
+    sha: 'abcdef1234567890',
+    webUrl: 'http://127.0.0.1:7810',
+    wireUrl: 'http://127.0.0.1:7820',
+    token: TOKEN,
+    teamDir: b.shipped,
+  });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.file, 'utf-8')), out.record);
+  assert.strictEqual(b.injected.length, 0, 'nothing went out through the intent reply path');
+  assert.ok(replies.some((l) => l.includes('team clodex shipped into the box (teams/clodex)')));
+  assert.match(replies[replies.length - 1], /^sandbox team-clodex up @ abcdef12/);
+});
+
+test('_shipTeamIntoBox drops `sandboxed` — inside the box the team is real, not a pointer', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  const src = JSON.parse(fs.readFileSync(b.team.file, 'utf-8'));
+  src.sandboxed = true;
+  fs.writeFileSync(b.team.file, `${JSON.stringify(src, null, 2)}\n`);
+  assert.strictEqual(JSON.parse(fs.readFileSync(b.team.file, 'utf-8')).sandboxed, true, 'ENTER: the host manifest is a pointer');
+
+  b.m._shipTeamIntoBox(b.team, b.mgr.get('team-clodex'));
+
+  const obj = JSON.parse(fs.readFileSync(path.join(b.shipped, 'team.json'), 'utf-8'));
+  assert.strictEqual('sandboxed' in obj, false);
+  assert.strictEqual(obj.name, 'clodex');
 });
