@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The Edit Session dialog now shows its Skills section for a local seat too (it was peer-only), and saving it writes both the disabled-skills and injected-skills lists — the same section the new-seat dialog and the default preferences already have.
+
 ## 5.63.11 — 2026-09-12 — the phone transcript gains a cursor; a second-account seat registers its login with the proxy
 
 - `GET /api/transcript/:name?since=<seq>` returns only the messages from that ordinal on (inclusive, so a growing reply is replaced rather than duplicated); each message now carries `seq`, the response carries `cursor` and `complete`, the peer hello announces `transcript-since`, the host caches the parsed transcript by file size and mtime so an idle poll no longer re-parses the JSONL, and the phone page uses the cursor.
