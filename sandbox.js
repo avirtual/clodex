@@ -597,9 +597,6 @@ function createSandbox(deps = {}) {
     const busy = await buildBusySet(config, ownPorts);
     const ports = resolvePorts(config, (p) => busy.has(p));
     const authFile = fs.existsSync(authEnvPath()) ? authEnvPath() : null;
-    // Ensure the host library source dirs exist — docker errors on a bind whose
-    // source is missing (a fresh install may not have authored them yet).
-    // Idempotent: recursive mkdir no-ops when they exist.
     for (const d of LIBRARY_MOUNT_DIRS) {
       if (d.startsWith('library/')) continue;
       try { fs.mkdirSync(path.join(registryDir, d), { recursive: true }); } catch {}
