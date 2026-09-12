@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a fresh team reviews its own tickets, and a sandboxed team can be deleted
+## Unreleased
+
+## 5.64.2 — 2026-09-13 — a fresh team reviews its own tickets, and a sandboxed team can be deleted
 
 - `task done` on a ticket that records no branch now says it closed WITHOUT review, instead of a plain "closed (done)" that reads as if the cold reviewer ran.
 - A team created from the Create Team dialog gets a hand role dispatched per ticket into its own worktree, so `task start` mints a seat and every `task done` reaches the cold reviewer; the default kit's lead and hand seats no longer boot with every host skill and, for the hand, every tool.
