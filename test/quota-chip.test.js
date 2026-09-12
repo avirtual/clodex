@@ -537,6 +537,8 @@ test('the drawer tabs are rigid and the quota chip is the header\'s shrinker', (
     'a tab that shrinks is a tab whose label and badge get crushed together');
   assert.strictEqual(lastDeclaration(/^\.drawer-tab$/, 'white-space'), 'nowrap',
     '"IPC Traffic" wraps onto two lines inside a squeezed tab without this');
+  assert.strictEqual(lastDeclaration(/^#drawer-tabs$/, 'flex-shrink'), '0',
+    'an explicit min-width:0 on the strip makes it the shrinker regardless of how rigid its tabs are, and the tabs then overflow it');
   assert.strictEqual(lastDeclaration(/^\.drawer-badge$/, 'flex-shrink'), '0');
   assert.strictEqual(lastDeclaration(/^#drawer-actions$/, 'flex-shrink'), '0');
   assert.strictEqual(lastDeclaration(/^\.drawer-action-group$/, 'flex-shrink'), '0');
