@@ -4490,8 +4490,9 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null } = {}) {
   const root = mkTmpRoot('clodex-hint-');
+  const registered = [];
   const hints = [];
   const order = [];
   const warns = [];
@@ -4539,10 +4540,15 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     resolveProxyAgentId: ({ name }) => `clodex-${name}-rt`,
     normalizeProxyBase: (v) => v,
     lastTranscriptWrite,
+    ...(claudeHome ? { claudeHome } : {}),
     ProxyClient: ProxyClient || {
       spawnerHint: (base, agent, opts) => {
         hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 });
       },
+      probe: () => Promise.resolve(probeAnswer),
+      registerAccount: registerAccount || ((base, dir) => {
+        registered.push({ base, dir }); return Promise.resolve({ status: 200 });
+      }),
     },
     registry: registry || { register: () => {}, unregister: () => {} },
     Transport: class {
@@ -4590,7 +4596,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
       );
     } finally { stopWatchers(name); }
   };
-  return { m, hints, order, warns, upserts, spawn, root };
+  return { m, hints, order, warns, upserts, spawn, root, registered };
 }
 
 test('spawner-hint (t151): CLODEX_SPAWNER_HINT=off POSTs on:false on the seat route, BEFORE the PTY spawn', async () => {
@@ -4739,6 +4745,58 @@ test('spawner-hint (t151): a hint failure NEVER fails the spawn (sync throw and 
   // An uncaught rejection here would not fail this assertion, it would kill the
   // whole test PROCESS on the next tick. Give it that tick.
   await new Promise((r) => setImmediate(r));
+});
+
+test('t848: spawn registers a non-default CLAUDE_CONFIG_DIR with a proxy that has capabilities.accounts', async () => {
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.67', capabilities: { accounts: true } },
+  });
+  const dir = pathReal.join(probe.root, 'acct-sub-2');
+  fsReal.mkdirSync(dir, { recursive: true });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: dir });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(probe.registered, [{ base: 'http://127.0.0.1:7811', dir }]);
+});
+
+test('t848: spawn registers nothing when the proxy lacks capabilities.accounts', async () => {
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.60', capabilities: { strip_mcp: { available: true, servers: [] } } },
+  });
+  const dir = pathReal.join(probe.root, 'acct-sub-2');
+  fsReal.mkdirSync(dir, { recursive: true });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: dir });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.ok(probe.m.sessions.get('seat'), 'create ran');
+  assert.deepStrictEqual(probe.registered, []);
+});
+
+test('t848: spawn registers nothing for the default dir', async () => {
+  const home = mkTmpRoot('clodex-home-');
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.67', capabilities: { accounts: true } },
+    claudeHome: () => home,
+  });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: home });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.ok(probe.m.sessions.get('seat'), 'create ran');
+  assert.deepStrictEqual(probe.registered, []);
+});
+
+test('t848: a register failure never fails the spawn', async () => {
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.67', capabilities: { accounts: true } },
+    registerAccount: () => Promise.reject(new Error('boom')),
+  });
+  const dir = pathReal.join(probe.root, 'acct-sub-2');
+  fsReal.mkdirSync(dir, { recursive: true });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: dir });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.ok(probe.m.sessions.get('seat'), 'create ran');
+  assert.strictEqual(probe.warns.filter((w) => /account register .* skipped: boom/.test(w)).length, 1);
 });
 
 test('spawner-hint (t151): kill() of a seat that SET the hint clears its route row', (t) => {

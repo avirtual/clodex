@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - `GET /api/transcript/:name?since=<seq>` returns only the messages from that ordinal on (inclusive, so a growing reply is replaced rather than duplicated); each message now carries `seq`, the response carries `cursor` and `complete`, the peer hello announces `transcript-since`, the host caches the parsed transcript by file size and mtime so an idle poll no longer re-parses the JSONL, and the phone page uses the cursor.
+- A seat spawned on a non-default account (`CLAUDE_CONFIG_DIR`) now registers that credential store with the proxy at spawn (`POST /_accounts`, only when the proxy announces `capabilities.accounts`), so the proxy refreshes that account's OAuth token on its own and an idle keep-warm seat on a second subscription no longer lapses after ~8 hours.
 
 ## 5.63.10 — 2026-09-12 — the keep-warm ping uses the seat's own login; wirescope v0.6.67
 
