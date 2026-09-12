@@ -147,8 +147,12 @@ test('an inbox doorbell on a claim-marked peer emits the notes ONCE, then remove
     assert.strictEqual(notes[0].body, 'need a ruling on the merge');
 
     // The emit is what writes the note into the desktop store; the removes are
-    // what make it unrecoverable from the box. Emitting second would mean a
-    // window where the note exists nowhere.
+    // what make it unrecoverable from the box. What this discriminates is an
+    // implementation that emits from the removes' CALLBACKS — there the box has
+    // already dropped the note when the claim dies mid-flight, and it exists
+    // nowhere. (A bare statement swap that still emits in the same synchronous
+    // step is NOT distinguishable here, and loses nothing: no socket has been
+    // written when the emit runs either way.)
     assert.deepStrictEqual(state.order, ['emit', 'remove:n1', 'remove:n2']);
 
     // Drained: the box now serves an empty inbox, so a later claim is a no-op
