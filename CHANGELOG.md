@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `GET /api/transcript/:name?since=<seq>` returns only the messages from that ordinal on (inclusive, so a growing reply is replaced rather than duplicated); each message now carries `seq`, the response carries `cursor` and `complete`, the peer hello announces `transcript-since`, the host caches the parsed transcript by file size and mtime so an idle poll no longer re-parses the JSONL, and the phone page uses the cursor.
+
 ## 5.63.10 — 2026-09-12 — the keep-warm ping uses the seat's own login; wirescope v0.6.67
 
 - The keep-warm ping now re-reads the OAuth bearer from the SEAT's own credential store (its `CLAUDE_CONFIG_DIR`'s `.credentials.json`, or the Keychain item the CLI derives from that dir) instead of the default account's, so a seat on a second subscription no longer pings as the first one — which had been every ping a 429 on the wrong quota while the hold showed armed.

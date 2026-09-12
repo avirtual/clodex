@@ -31,7 +31,7 @@ function createRemoteWiring(deps) {
   const {
     path, fs, os, log,
     DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
-    parseCtxFile, jsonlToMessages, ensureDir, homeRelativize,
+    parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
     claimOutbox, listOutboxOrigins,
     manager, proxyPoller, loadManifest,
     restartClodex, restartSession, peerProxyView,
@@ -153,14 +153,14 @@ function createRemoteWiring(deps) {
                 },
               };
             }),
-        getTranscript: (name, limit) => {
+        getTranscript: (name, limit, since) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType) return { ok: false, error: 'Session not found' };
           const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
           let jsonlPath;
           try { jsonlPath = fs.realpathSync(linkPath); }
           catch { return { ok: true, messages: [] }; } // no transcript yet
-          try { return { ok: true, messages: jsonlToMessages(jsonlPath, limit) }; }
+          try { return { ok: true, ...sliceSince(cachedMessages(jsonlPath), since, limit) }; }
           catch (e) { return { ok: false, error: e.message }; }
         },
         send: (name, text) => {
