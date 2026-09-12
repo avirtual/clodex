@@ -2994,8 +2994,9 @@ function createTicketMethods(deps, shared) {
       if (action === 'down') {
         const r = await box.down();
         if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
+        if (typeof box.unregisterPeer === 'function') box.unregisterPeer();
         try { fs.unlinkSync(file); } catch {}
-        reply(`sandbox ${boxId} down — ${file} removed`);
+        reply(`sandbox ${boxId} down — ${file} removed, peer entry ${boxId} unregistered`);
         return;
       }
       if (action === 'status') {
