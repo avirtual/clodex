@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The sandbox image now ships `clodex-run-tests.js`, so the `clodex-run-tests` exec grant works inside a box instead of failing with a module-not-found that the one-line stderr tail hid as `Node.js v22`.
+
 ## 5.64.0 — 2026-09-12 — a team can be created straight into its own sandbox box
 
 - (internal) the box-side half of `team sandbox up` is a method the desktop can call without an intent, in preparation for teams created straight into a box.
