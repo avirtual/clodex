@@ -17,6 +17,7 @@ const {
 } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
+const { BOX_ID_RE } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
@@ -161,6 +162,13 @@ function registerIpcHandlers(deps) {
     const { name, root, lead, kit, sandboxed } = spec || {};
     const mgr = sandboxed ? getSandboxManager() : null;
     if (sandboxed && !mgr) return { ok: false, error: 'sandboxes are disabled on this host' };
+    const boxId = `team-${name}`;
+    if (sandboxed && !BOX_ID_RE.test(boxId)) {
+      return {
+        ok: false,
+        error: `a sandboxed team needs a name that fits a box id: ${boxId} must match ${BOX_ID_RE} — rename the team`,
+      };
+    }
     let team;
     try {
       team = createTeam({ name, root, lead: defaultLeadSeat(name, lead), kit, sandboxed: !!sandboxed });
@@ -175,7 +183,7 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     if (!sandboxed) return { ok: true, team };
     const lines = [];
-    return createBareTeamBox(team, mgr, `team-${name}`, lines)
+    return createBareTeamBox(team, mgr, boxId, lines)
       .catch((err) => ({ ok: false, team, webUrl: null, lines, error: lines[lines.length - 1] || err.message }));
   });
 

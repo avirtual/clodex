@@ -372,6 +372,24 @@ test('a sandboxed create on a host with sandboxes off writes NOTHING', async () 
   assert.deepStrictEqual(listTeams(), []);
 });
 
+test('a team name that cannot be a box id is refused BEFORE the pointer is written', async () => {
+  const home = mkHome();
+  const { handlers, createArgs, upCalls, listTeams } = sandboxHandlers(home);
+
+  const res = await handlers['team:createBare']({}, { name: 'Shop', root: '/proj/shop', sandboxed: true });
+
+  assert.strictEqual(res.ok, false,
+    '`Shop` is a legal TEAM name and an illegal BOX id (BOX_ID_RE is lowercase only) — the two namespaces disagree exactly here');
+  assert.match(res.error, /team-Shop/, 'the message names the box id the operator cannot see');
+  assert.deepStrictEqual(createArgs, [],
+    'refused after the write, the operator holds a pointer naming a box that can never be built and the retry bounces off "already exists"');
+  assert.deepStrictEqual(listTeams(), []);
+  assert.deepStrictEqual(upCalls, []);
+
+  const ok = await handlers['team:createBare']({}, { name: 'Shop', root: '/proj/shop' });
+  assert.strictEqual(ok.ok, true, 'the SAME name unsandboxed is untouched by this gate — it needs no box id');
+});
+
 test('a box phase that fails carries the reply stream as the error — _bringUpTeamBox returns a bare {ok:false}', async () => {
   const home = mkHome();
   const { handlers } = sandboxHandlers(home, {
@@ -430,9 +448,8 @@ test('the dialog carries the sandboxed checkbox and passes it through', () => {
   assert.ok(end > 0, 'ENTER: the end of openCreateTeamDialog was found');
   const body = rest.slice(0, end);
 
-  // The MARKUP, not the querySelector that reads it: a pin on the bare attribute
-  // matches the lookup line too and stays green with the input itself misspelt.
-  assert.match(body, /<input type="checkbox" data-f="sandboxed">/, 'the checkbox itself');
+  assert.match(body, /<input type="checkbox" data-f="sandboxed">/,
+    'the checkbox markup itself — a bare attribute pin also matches the lookup line, and so stays green with the input misspelt');
   assert.match(body, /querySelector\('\[data-f="sandboxed"\]'\)/, 'and the lookup that finds it');
   assert.match(body, /sandboxed: sandboxedInput\.checked/, 'and it is what teamCreateBare is told');
   assert.match(body, /Creating…/, 'a box takes minutes, so OK says so while the invoke is pending');
@@ -564,19 +581,17 @@ test('a sandboxed team is listed as "name — sandboxed" and opens its box web U
     [], {}, { openExternal: (u) => opened.push(u) });
 
   const rows = menus.buildTeamsMenu().submenu.filter((i) => i.type !== 'separator');
-  // ENTER: pin the whole row set first — a listTeams that stopped reaching one of
-  // the three would make the per-row assertions below vacuous.
   assert.deepStrictEqual(rows.map((r) => r.label),
-    ['boxed — sandboxed', 'cold — sandboxed', 'local', 'Create Team…', 'Delete Team…']);
+    ['boxed — sandboxed', 'cold — sandboxed', 'local', 'Create Team…', 'Delete Team…'],
+    'ENTER: all three teams reached the menu — one that listTeams stopped reaching would make the per-row assertions below vacuous');
 
   rows[0].click();
   assert.deepStrictEqual(opened, ['http://127.0.0.1:7812'],
     'the operator works with a sandboxed team through the box, so the row leaves the desktop');
   assert.deepStrictEqual(sent, [], 'and emphatically NOT the local roles popover');
 
-  // A never-started (or torn-down) box has no sandbox.json, so there is no URL to
-  // open — the row still appears, disabled, exactly like a broken manifest.
-  assert.strictEqual(rows[1].enabled, false);
+  assert.strictEqual(rows[1].enabled, false,
+    'a never-started or torn-down box has no sandbox.json, so there is no URL to open — the row still appears, disabled, like a broken manifest');
   assert.strictEqual(typeof rows[1].click, 'undefined');
 
   rows[2].click();
