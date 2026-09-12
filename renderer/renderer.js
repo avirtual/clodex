@@ -589,6 +589,10 @@ async function deleteSessionRow(name) {
   if (res && res.error) {
     showToast(`Worktree removal failed: ${res.error}`, { kind: 'warn', duration: 12000, name });
   }
+  if (res && res.live === false) {
+    removeSession(name);
+    refreshSidebarView();
+  }
 }
 
 function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null) {
