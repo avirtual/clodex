@@ -780,7 +780,7 @@ test('destroy() drops a dead seat\'s record when there is no worktree to remove'
 
   const r = await f.m.destroy('plain');
 
-  assert.deepStrictEqual(r, { ok: true }, 'destroy reports the no-tree shape');
+  assert.deepStrictEqual(r, { ok: true, live: false }, 'destroy reports the no-tree shape');
   assert.strictEqual(f.persistence.get('plain'), null,
     'and the record is dropped: with no tree to lose there is nothing to strand, which is the r1 fix this ordering must not regress');
 });
@@ -924,8 +924,8 @@ test('t486: the source pin actually discriminates — the edits that must redden
   // 3. r1's original bug, once more, through the new scanner: hoisting the drop
   //    above the removal leaves the two calls collapsed into one early one.
   const hoisted = real
-    .replace('      if (!worktree) { dropRecord(); return { ok: true }; }',
-      '      dropRecord();\n      if (!worktree) { return { ok: true }; }')
+    .replace('      if (!worktree) { dropRecord(); return { ok: true, live: wasLive }; }',
+      '      dropRecord();\n      if (!worktree) { return { ok: true, live: wasLive }; }')
     .replace('        dropRecord();\n        log.info', '        log.info');
   assert.ok(hoisted !== real, 'ENTER: the hoist really applied');
   assert.strictEqual(scanDestroy(hoisted).calls.length, 1,
@@ -938,8 +938,8 @@ test('t486: the source pin actually discriminates — the edits that must redden
   //    false because the call missed a 40-byte window before the return; the span
   //    check sees it wherever on the failure path it sits.
   const movedOntoFailurePath = real
-    .replace('      if (!worktree) { dropRecord(); return { ok: true }; }',
-      '      if (!worktree) { return { ok: true }; }')
+    .replace('      if (!worktree) { dropRecord(); return { ok: true, live: wasLive }; }',
+      '      if (!worktree) { return { ok: true, live: wasLive }; }')
     .replace("      const error = (r && r.error) || 'unknown error';",
       "      dropRecord();\n      const error = (r && r.error) || 'unknown error';");
   assert.ok(movedOntoFailurePath !== real, 'ENTER: the move really applied');

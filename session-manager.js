@@ -2873,13 +2873,13 @@ function createSessionManager(deps) {
       await this.kill(name);
       // No tree to lose, so nothing can strand: this is the r1 case the drop
       // exists for, and it must keep dropping.
-      if (!worktree) { dropRecord(); return { ok: true }; }
+      if (!worktree) { dropRecord(); return { ok: true, live: wasLive }; }
       await this._waitForExit(name);
       const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
       if (r && r.ok) {
         dropRecord();
         log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after destroying ${name}`);
-        return { ok: true, worktreeRemoved: true };
+        return { ok: true, worktreeRemoved: true, live: wasLive };
       }
       const error = (r && r.error) || 'unknown error';
       log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
@@ -2887,7 +2887,7 @@ function createSessionManager(deps) {
       // tree is still on disk and this record is the only thing naming it. The
       // path rides the result so the caller's failure sentence can tell the
       // operator what to remove by hand.
-      return { ok: true, worktreeRemoved: false, error, path: worktree.path };
+      return { ok: true, worktreeRemoved: false, error, path: worktree.path, live: wasLive };
     }
 
     async archive(name) {

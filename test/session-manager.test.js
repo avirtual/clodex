@@ -18473,3 +18473,61 @@ test('team-review (t791): an EXPLICITLY named template keeps its own prompt, ove
   assert.strictEqual(created[0][14], 'clodex-team-reviewer-shell',
     'the NAMED template\'s prompt rides — a shell seat briefed by the no-shell prompt is the mismatch this prevents');
 });
+
+test('destroy on a seat that is not live reports live:false so the renderer removes the row itself', async () => {
+  const records = new Map([['ghost', { name: 'ghost', cwd: '/proj' }]]);
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [...records.values()],
+      get: (n) => records.get(n) || null,
+      remove: (n) => { records.delete(n); },
+    }),
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  assert.strictEqual(m.sessions.has('ghost'), false, 'ENTER: the seat is not live, so no exit event will ever arrive');
+  assert.ok(records.get('ghost'), 'ENTER: the persistence record exists');
+
+  assert.deepStrictEqual(await m.destroy('ghost'), { ok: true, live: false },
+    'live:false rides the result: no exit event is coming, so deleteSessionRow must remove the row itself or it is a ghost until the next relaunch');
+
+  records.set('alive', { name: 'alive', cwd: '/proj' });
+  m.sessions.set('alive', { name: 'alive', pty: { pid: 0, kill: () => { m.sessions.delete('alive'); } } });
+  assert.deepStrictEqual(await m.destroy('alive'), { ok: true, live: true },
+    'a live seat reports live:true — its exit event removes the row, and a second removal from deleteSessionRow would race it');
+});
+
+test('destroy reports live on the worktree arms too, so a ticket seat row is not left behind either', async () => {
+  const records = new Map([['ghost-wt', { name: 'ghost-wt', cwd: '/wt/t900', worktree: { path: '/wt/t900', branch: 't900' } }]]);
+  const removals = [];
+  const mkMgr = (removeResult) => mk({
+    getPersistence: () => ({
+      list: () => [...records.values()],
+      get: (n) => records.get(n) || null,
+      remove: (n) => { records.delete(n); },
+    }),
+    gitWorktree: { removeWorktree: async (p) => { removals.push(p); return removeResult; } },
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+
+  assert.deepStrictEqual(await mkMgr({ ok: true }).destroy('ghost-wt'), { ok: true, worktreeRemoved: true, live: false },
+    'the removal-succeeded return carries live too');
+
+  records.set('ghost-wt', { name: 'ghost-wt', cwd: '/wt/t900', worktree: { path: '/wt/t900', branch: 't900' } });
+  assert.deepStrictEqual(await mkMgr({ ok: false, error: 'busy' }).destroy('ghost-wt'),
+    { ok: true, worktreeRemoved: false, error: 'busy', path: '/wt/t900', live: false },
+    'and so does the failure return: the row must go whether or not the tree did');
+  assert.deepStrictEqual(removals, ['/wt/t900', '/wt/t900'], 'both arms really reached the removal');
+});
+
+test('renderer deleteSessionRow removes the row itself when destroy reports live:false', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const fn = src.match(/async function deleteSessionRow\(name\)\s*\{[\s\S]*?\n\}\n/);
+  assert.ok(fn, 'ENTER: deleteSessionRow is still found by this anchor');
+  const body = fn[0];
+  assert.ok(/window\.api\.killSession\(name\)/.test(body), 'ENTER: the function still goes through killSession, whose result carries live');
+
+  const arm = body.match(/res && res\.live === false\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(arm, 'the live:false arm exists — without it a dead seat\'s row waits for an exit event that never comes');
+  assert.ok(/removeSession\(name\)/.test(arm[1]), 'the arm removes the session, which is what drops the sidebar row');
+  assert.ok(/refreshSidebarView\(\)/.test(arm[1]), 'and relayouts the sidebar, or the group headers keep counting the row that went');
+});
