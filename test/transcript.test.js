@@ -8,7 +8,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const {
-  jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText,
+  jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, cachedMessages, sliceSince, extractText,
 } = require('../transcript');
 
 function writeJsonl(lines) {
@@ -190,6 +190,62 @@ test('jsonlToMessages: respects the limit (keeps the newest)', () => {
     assert.strictEqual(msgs.length, 2);
     assert.strictEqual(msgs[1].text, 'm4');
   } finally { fs.unlinkSync(p); }
+});
+
+function alternatingEntries(n) {
+  return Array.from({ length: n }, (_, i) => (
+    i % 2 === 0
+      ? { type: 'user', message: { content: `m${i}` } }
+      : { type: 'assistant', message: { content: [{ type: 'text', text: `m${i}` }] } }
+  ));
+}
+
+test('jsonlToMessages: seq is the ordinal in the FULL list and survives the tail slice', () => {
+  const p = writeJsonl(alternatingEntries(5));
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p, 2).map(m => m.seq), [3, 4]);
+    assert.deepStrictEqual(jsonlToMessages(p, Infinity).map(m => m.seq), [0, 1, 2, 3, 4]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('sliceSince: since is INCLUSIVE and the cursor is the last seq returned', () => {
+  const all = Array.from({ length: 5 }, (_, i) => ({ seq: i }));
+
+  const from3 = sliceSince(all, 3, 100);
+  assert.deepStrictEqual(from3.messages.map(m => m.seq), [3, 4]);
+  assert.strictEqual(from3.cursor, 4);
+  assert.strictEqual(from3.complete, true);
+
+  const from5 = sliceSince(all, 5, 100);
+  assert.deepStrictEqual(from5.messages, []);
+  assert.strictEqual(from5.cursor, 4);
+
+  assert.deepStrictEqual(sliceSince(all, 0, 2).messages.map(m => m.seq), [3, 4]);
+
+  assert.deepStrictEqual(sliceSince(all, null, 2), { messages: [{ seq: 3 }, { seq: 4 }] });
+});
+
+test('cachedMessages: an unchanged file is not re-parsed; a grown file is', () => {
+  const p = writeJsonl(alternatingEntries(3));
+  try {
+    const a = cachedMessages(p);
+    const b = cachedMessages(p);
+    assert.strictEqual(a === b, true);
+
+    fs.appendFileSync(p, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'later' }] } }) + '\n');
+    const bumped = new Date(Date.now() + 2000);
+    fs.utimesSync(p, bumped, bumped);
+
+    const c = cachedMessages(p);
+    assert.strictEqual(c !== a, true);
+    assert.strictEqual(c.length, a.length + 1);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('hello advertises transcript-since and the endpoint threads since through', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf-8');
+  assert.match(src, /caps = \['transcript', 'transcript-since', 'send'\]/);
+  assert.match(src, /this\._getTranscript\(name, limit, since\)/);
 });
 
 test('extractText: Claude assistant text', () => {

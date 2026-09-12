@@ -127,6 +127,8 @@
 
   let sessions = [];
   let open = null;           // name of the open session, or null
+  let chat = [];
+  let cursor = null;
   let fetching = false;
   let pending = [];          // sent texts not yet visible in the transcript
   let burstTimers = [];
@@ -171,9 +173,18 @@
     if (!open || fetching) return;
     fetching = true;
     try {
-      const r = await fetch('api/transcript/' + encodeURIComponent(open));
+      const r = await fetch('api/transcript/' + encodeURIComponent(open) + (cursor == null ? '' : '?since=' + cursor));
       const j = await r.json();
-      if (j.ok && open) renderChat(j.messages);
+      if (j.ok && open) {
+        if (cursor == null || !j.messages.length || j.messages[0].seq == null || j.messages[0].seq < cursor) {
+          chat = j.messages;
+        } else {
+          const from = j.messages[0].seq;
+          chat = chat.filter(m => m.seq == null || m.seq < from).concat(j.messages);
+        }
+        renderChat(chat);
+        cursor = j.cursor ?? (chat.length ? chat[chat.length - 1].seq : null);
+      }
     } catch {}
     fetching = false;
   }
@@ -279,6 +290,8 @@
 
   function openSession(name) {
     open = name;
+    chat = [];
+    cursor = null;
     titleEl.textContent = name;
     listEl.style.display = 'none';
     chatEl.style.display = 'block';
@@ -293,6 +306,8 @@
 
   function closeSession() {
     open = null;
+    chat = [];
+    cursor = null;
     titleEl.textContent = 'Clodex';
     chatEl.style.display = 'none';
     composer.style.display = 'none';

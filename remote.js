@@ -517,7 +517,9 @@ class RemoteServer {
       const name = decodeURIComponent(p.slice('/api/transcript/'.length));
       if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
       const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 100, 500);
-      const out = this._getTranscript(name, limit);
+      const sinceRaw = url.searchParams.get('since');
+      const since = sinceRaw == null ? null : Math.max(parseInt(sinceRaw, 10) || 0, 0);
+      const out = this._getTranscript(name, limit, since);
       return this._json(res, out.ok ? 200 : 404, out);
     }
     if (req.method === 'GET' && p === '/api/events') {
@@ -527,7 +529,7 @@ class RemoteServer {
     // Identity comes from response content, never from the port — SSH
     // tunnels make every peer look like localhost.
     if (req.method === 'GET' && p === '/api/peer/hello') {
-      const caps = ['transcript', 'send'];
+      const caps = ['transcript', 'transcript-since', 'send'];
       if (this._getAttachInfo) caps.push('attach');
       if (this._sendInput) caps.push('control');
       if (this._query) caps.push('query');

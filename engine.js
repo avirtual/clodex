@@ -859,7 +859,7 @@ const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler } = require('./remind-scheduler');
 const { mergeClaudeSystemPrompt, mergeCodexInstructions, parseCtxFile } = require('./argv-merge');
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
-const { jsonlToMarkdown, jsonlToMessages, extractText } = require('./transcript');
+const { jsonlToMarkdown, cachedMessages, sliceSince, extractText } = require('./transcript');
 const { initStores } = require('./stores');
 const { createAccounts, sweepAccountMove } = require('./accounts');
 const { restoreSessionsForWorkspace: restoreSessionsCore } = require('./session-restore');
@@ -1780,7 +1780,7 @@ const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemot
 const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   path, fs, os, log,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
-  parseCtxFile, jsonlToMessages, ensureDir, homeRelativize,
+  parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
   claimOutbox, listOutboxOrigins,
   manager, proxyPoller, loadManifest,
   restartClodex: restartHost, restartSession, peerProxyView,

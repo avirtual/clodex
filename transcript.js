@@ -201,7 +201,26 @@ function jsonlToMessages(jsonlPath, limit = 100) {
     }
   }
 
+  for (let i = 0; i < messages.length; i++) messages[i].seq = i;
+
   return messages.slice(-limit);
+}
+
+let messageCache = null;
+function cachedMessages(jsonlPath) {
+  const st = fs.statSync(jsonlPath);
+  const key = `${jsonlPath}\0${st.size}\0${st.mtimeMs}`;
+  if (messageCache && messageCache.key === key) return messageCache.messages;
+  const messages = jsonlToMessages(jsonlPath, Infinity);
+  messageCache = { key, messages };
+  return messages;
+}
+
+function sliceSince(all, since, limit) {
+  if (since == null) return { messages: all.slice(-limit) };
+  const page = all.filter((m) => m.seq >= since).slice(-limit);
+  const cursor = page.length ? page[page.length - 1].seq : since - 1;
+  return { messages: page, cursor, complete: true };
 }
 
 // Does THIS entry end the agent's main-line turn? The discriminator the
@@ -264,4 +283,4 @@ function extractText(obj) {
   return msg && msg.role === 'assistant' ? msg.text : '';
 }
 
-module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply };
+module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, cachedMessages, sliceSince, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply };
