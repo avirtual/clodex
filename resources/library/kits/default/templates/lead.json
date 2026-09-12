@@ -24,7 +24,9 @@
   ],
   "denyBuiltins": [],
   "disabledTools": [],
-  "disabledSkills": [],
+  "disabledSkills": [
+    "*"
+  ],
   "injectSkills": [],
   "stripLevel": 2,
   "systemPromptFile": null,

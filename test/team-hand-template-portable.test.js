@@ -149,9 +149,9 @@ test('t789: a team created against the SHIPPED library owns a copy of this templ
     'unexpanded in the copy — expanding here would hardcode a root into the team\'s own file');
 });
 
-test('the stock hand def stays inside the role schema (template/prompt/brief only)', () => {
+test('the stock hand def stays inside the role schema (template/prompt/brief/dispatch only)', () => {
   // A role field no resolver reads is how the five cut fields were born.
-  assert.deepStrictEqual(Object.keys(STOCK_ROLE_DEFS.hand).sort(), ['brief', 'prompt', 'template']);
+  assert.deepStrictEqual(Object.keys(STOCK_ROLE_DEFS.hand).sort(), ['brief', 'dispatch', 'prompt', 'template']);
 });
 
 test('it seeds into a fresh registry byte-exact and surfaces through the templates store', () => {

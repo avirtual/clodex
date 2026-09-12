@@ -9,7 +9,8 @@
     "hand": {
       "prompt": "hand",
       "brief": "implementer; executes a spec to done, one distilled report per task.",
-      "template": "hand"
+      "template": "hand",
+      "dispatch": "worktree"
     },
     "reviewer": {
       "prompt": "reviewer",
