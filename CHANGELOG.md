@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- The sandbox image trusts `/home/clodex/work` (and worktrees under it) for git, so a box seat no longer hits the dubious-ownership refusal on the mounted project folder.
+- The sandbox image trusts every git repo inside the box, so a box seat no longer hits the dubious-ownership refusal on the mounted project folder or on the ticket worktrees beside it.
 
 ## 5.64.0 — 2026-09-12 — a team can be created straight into its own sandbox box
 

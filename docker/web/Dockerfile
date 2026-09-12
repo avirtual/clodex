@@ -88,7 +88,7 @@ COPY --from=builder /build/web-dist ./web-dist
 # means every recreate starts onboarded + trusted.
 RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/work \
  && printf '{"hasCompletedOnboarding": true, "projects": {"/": {"hasTrustDialogAccepted": true}}}' > /home/clodex/.claude.json \
- && printf '[safe]\n\tdirectory = /home/clodex/work\n\tdirectory = /home/clodex/work/*\n' > /home/clodex/.gitconfig \
+ && printf '[safe]\n\tdirectory = *\n' > /home/clodex/.gitconfig \
  && chown -R clodex:clodex /app /data /home/clodex
 
 ENV HOME=/home/clodex \

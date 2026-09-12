@@ -21,17 +21,14 @@ function instructions(text) {
   return out;
 }
 
-test('the image bakes /home/clodex/.gitconfig trusting the work dir and worktrees under it', () => {
+test('the image bakes /home/clodex/.gitconfig trusting every repo in the box', () => {
   const writes = instructions(DOCKERFILE).filter((i) => i.includes('/home/clodex/.gitconfig'));
   assert.strictEqual(writes.length, 1, 'exactly one instruction should write /home/clodex/.gitconfig');
   const instr = writes[0];
   assert.match(instr, /^(RUN|COPY)\b/);
-  assert.ok(instr.includes('[safe]'), 'the baked gitconfig needs a [safe] section');
-  assert.ok(instr.includes('directory = /home/clodex/work'), 'missing the work-dir safe.directory');
-  assert.ok(instr.includes('directory = /home/clodex/work/*'), 'missing the worktree glob safe.directory');
-  assert.strictEqual(
-    instr.split('directory = /home/clodex/work').length - 1,
-    2,
-    'both the work dir and its worktree glob must be listed',
+  assert.match(
+    instr,
+    /\[safe\](?:\\n|\n)(?:\\t|\t| +)directory = \*(?:\\n|\n|'|"|$)/,
+    'the baked gitconfig needs a [safe] section whose next entry is exactly `directory = *`',
   );
 });
