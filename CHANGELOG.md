@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — the Account picker is a Claude-only control
 
 - New Session and Edit Session no longer offer the Account picker on a Codex seat — it selects a Claude credential store, which Codex does not read.
 
