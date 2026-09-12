@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — the keep-warm ping uses the seat's own login; wirescope v0.6.67
+## Unreleased
+
+## 5.63.10 — 2026-09-12 — the keep-warm ping uses the seat's own login; wirescope v0.6.67
 
 - The keep-warm ping now re-reads the OAuth bearer from the SEAT's own credential store (its `CLAUDE_CONFIG_DIR`'s `.credentials.json`, or the Keychain item the CLI derives from that dir) instead of the default account's, so a seat on a second subscription no longer pings as the first one — which had been every ping a 429 on the wrong quota while the hold showed armed.
 - wirescope is vendored at v0.6.67: the proxy keeps one credential store per `CLAUDE_CONFIG_DIR` (`POST /_accounts?config_dir=`), refreshes each account's OAuth token on its own schedule, and reports the account a session's requests carry in `/_status`. Clodex does not register accounts with it yet; that lands next.
