@@ -4832,16 +4832,20 @@ function createSessionManager(deps) {
       }
 
       const rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
-      const preview = previewLine(text, 200);
+      this._raiseNote(who, text);
+      log.info('intent', `notify-user by ${who}: ${rec.id}`);
+    }
+
+    _raiseNote(from, body) {
+      const preview = previewLine(body, 200);
       try {
         notifyOS({
-          title: who,
+          title: from,
           body: preview || 'wants your attention',
           silent: false,
         });
       } catch {}
-      this._broadcast('ipc-message', { type: 'notify', from: who, to: 'user', body: preview });
-      log.info('intent', `notify-user by ${who}: ${rec.id}`);
+      this._broadcast('ipc-message', { type: 'notify', from, to: 'user', body: preview });
     }
 
     _handleRebootIntent(session, body) {
@@ -6468,6 +6472,24 @@ function createSessionManager(deps) {
         }
         this._gatedDeliver(m.to, senderTag, m.body || '', m.urgent === true);
         this._broadcast('ipc-message', { type: 'dm', from: senderTag, to: m.to, body: `WIRE←${peerLabel}: ${m.body || ''}` });
+      }
+    }
+
+    _deliverClaimedInbox(peerId, notes) {
+      const store = getNotifications && getNotifications();
+      if (!store) return;
+      const st = (getPeerManager() ? getPeerManager().statuses() : []).find((p) => p && p.id === peerId);
+      const origin = (st && peerOriginSuffix(st, AGENT_NAME_RE)) || String(peerId);
+      const ordered = (Array.isArray(notes) ? notes : [])
+        .map((n, i) => ({ n, i }))
+        .sort((a, b) => ((a.n && a.n.createdAt) || 0) - ((b.n && b.n.createdAt) || 0) || b.i - a.i)
+        .map((e) => e.n);
+      for (const note of ordered) {
+        if (!note || typeof note.body !== 'string') continue;
+        const from = `${note.from || 'peer'}@${origin}`;
+        const rec = store.add({ from, workspaceId: null, body: note.body });
+        this._raiseNote(from, note.body);
+        log.info('peer', `claimed note from ${from}: ${rec.id}`);
       }
     }
 

@@ -111,7 +111,7 @@ function isSecureBase(raw) {
 }
 
 class PeerConnection {
-  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes }) {
+  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes, claimInbox }) {
     this.id = id;
     this.label = label;
     this.url = url.replace(/\/+$/, '');
@@ -121,6 +121,9 @@ class PeerConnection {
     // peer restart (PeerManager.sync), so it's fixed for a connection's lifetime.
     this._token = (typeof token === 'string' && token) ? token : null;
     this._emit = emit;
+    this._claimInbox = !!claimInbox;
+    this._inboxClaiming = false;
+    this._inboxClaimAgain = false;
     this._computeRoster = computeRoster || null;
     this._helloIntervalMs = helloIntervalMs || HELLO_INTERVAL_MS;
     this._staleMs = Number.isInteger(staleMs) ? staleMs : STALE_MS;
@@ -266,6 +269,7 @@ class PeerConnection {
         if (this._selfLabel && Array.isArray(body.dmOrigins) && body.dmOrigins.includes(this._selfLabel)) {
           this._claimAndEmit();
         }
+        this._claimInboxIfBox();
 // Only push when the spoke advertised the 'relay' cap — else it 501s.
         if (this._computeRoster && Array.isArray(next.caps) && next.caps.includes('relay')) {
           let roster = null;
@@ -319,6 +323,8 @@ class PeerConnection {
           this._emit('peer-activity', this.id, data.name, data.state);
         } else if (event === 'dm-mail' && data && data.origin === this._selfLabel) {
           this._claimAndEmit();
+        } else if (event === 'inbox' && data && data.kind === 'added') {
+          this._claimInboxIfBox();
         }
       },
       onOpen: (req) => {
@@ -741,6 +747,36 @@ class PeerConnection {
     });
   }
 
+  claimInbox(cb) {
+    const done = (r) => { if (cb) cb(r); };
+    this._request('GET', '/api/inbox?limit=200', null, (err, resp) => {
+      if (err || !resp || !resp.ok || !Array.isArray(resp.notes) || !resp.notes.length) {
+        return done(err ? { ok: false, error: err.message } : resp || { ok: false });
+      }
+      this._emit('peer-inbox', this.id, resp.notes);
+      const ids = resp.notes.filter((n) => n && n.id != null).map((n) => String(n.id));
+      if (!ids.length) return done(resp);
+      let left = ids.length;
+      for (const id of ids) {
+        this._request('POST', `/api/inbox/remove/${encodeURIComponent(id)}`, null, () => {
+          if (--left === 0) done(resp);
+        });
+      }
+    });
+  }
+
+  _claimInboxIfBox() {
+    if (!this._claimInbox) return;
+    if (this._inboxClaiming) { this._inboxClaimAgain = true; return; }
+    this._inboxClaiming = true;
+    this.claimInbox(() => {
+      this._inboxClaiming = false;
+      if (!this._inboxClaimAgain) return;
+      this._inboxClaimAgain = false;
+      this._claimInboxIfBox();
+    });
+  }
+
   pushRoster(roster, cb) {
     this._request('POST', '/api/peer/roster',
       { rv: RELAY_ENVELOPE_V, via: this._selfLabel, roster: Array.isArray(roster) ? roster : [] },
@@ -909,9 +945,9 @@ class PeerManager {
     this._peers = new Map();          // id -> PeerConnection
   }
 
-  // peers: [{ id, label, url, token }] from ui-settings. Reconcile: keep matching,
-  // drop removed, start added. URL/label/TOKEN change = restart that peer (the
-  // Bearer header is fixed at construction, so a re-auth needs a fresh connection).
+  // Reconcile the ui-settings peer rows: keep matching, drop removed, start added.
+  // A config edit restarts that peer — the Bearer header is fixed at construction,
+  // so a re-auth needs a fresh connection.
   sync(peers) {
     const wanted = new Map();
     for (const p of Array.isArray(peers) ? peers : []) {
@@ -919,14 +955,16 @@ class PeerManager {
       wanted.set(String(p.id), {
         id: String(p.id), label: String(p.label || p.id), url: String(p.url),
         token: (typeof p.token === 'string' && p.token) ? p.token : null,
+        claimInbox: p.inbox === 'claim',
       });
     }
     for (const [id, conn] of this._peers) {
       const w = wanted.get(id);
-      if (!w || w.url !== conn.url || w.label !== conn.label || (w.token || null) !== (conn._token || null)) {
+      if (!w || w.url !== conn.url || w.label !== conn.label || (w.token || null) !== (conn._token || null)
+        || w.claimInbox !== conn._claimInbox) {
         conn.stop();
         this._peers.delete(id);
-        // Announce the drop even on a URL/label/token edit — attachments died
+        // Announce the drop even on a mere config edit — attachments died
         // with the old connection, so the UI must shed its tabs; the new
         // connection re-announces via peer-state.
         this._emit('peer-removed', id);

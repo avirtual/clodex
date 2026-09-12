@@ -729,12 +729,12 @@ test('registerPeer: first call adds the sandbox row', () => {
   let synced = 0;
   const sb = createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, syncPeerManager: () => { synced++; } });
   sb.registerPeer(7820);
-  assert.deepStrictEqual(settings._state().peers, [{ id: 'sandbox', label: 'sandbox', url: 'http://127.0.0.1:7820' }]);
+  assert.deepStrictEqual(settings._state().peers, [{ id: 'sandbox', label: 'sandbox', url: 'http://127.0.0.1:7820', inbox: 'claim' }]);
   assert.strictEqual(synced, 1);
 });
 
 test('registerPeer: an unchanged url writes nothing (no reconcile churn)', () => {
-  const settings = fakeSettings({ peers: [{ id: SANDBOX_PEER_ID, label: 'sandbox', url: 'http://127.0.0.1:7820' }] });
+  const settings = fakeSettings({ peers: [{ id: SANDBOX_PEER_ID, label: 'sandbox', url: 'http://127.0.0.1:7820', inbox: 'claim' }] });
   let synced = 0;
   const sb = createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, syncPeerManager: () => { synced++; } });
   sb.registerPeer(7820);
@@ -813,7 +813,7 @@ test('up: a docker-gone failure maps to the friendly message, invalidates the ca
 });
 
 test('down: succeeds and leaves the peer row in place (offline affordance)', async () => {
-  const settings = fakeSettings({ peers: [{ id: SANDBOX_PEER_ID, label: 'sandbox', url: 'http://127.0.0.1:7820' }] });
+  const settings = fakeSettings({ peers: [{ id: SANDBOX_PEER_ID, label: 'sandbox', url: 'http://127.0.0.1:7820', inbox: 'claim' }] });
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
     spawn: fakeSpawn({ code: 0 }),
     getUiSettings: () => settings,

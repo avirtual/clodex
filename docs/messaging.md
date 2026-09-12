@@ -319,6 +319,10 @@ announced in hello — in that order, case-insensitively, through the one
 - Accepted asymmetries: a park on the mailbox leg sends the remote sender
   no notice; the claim endpoint is origin-unauthenticated (tunnel-trust,
   same posture as control acquisition).
+- **`[agent:notify-user]` from a box seat** rides the same pull: the note
+  lands in the BOX's inbox, and the desktop claims it onto its own inbox as
+  `<seat>@<origin>` (toast and badge included), removing it from the box —
+  see [peering.md](peering.md) for the `inbox: 'claim'` mark that gates it.
 
 ## 4a. Hub-relay federation (spoke ↔ hub ↔ spoke)
 

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A `[agent:notify-user]` raised by a seat inside a sandbox box now lands in the desktop operator's inbox as `<seat>@<box origin>` (toast and inbox badge included): the desktop claims the box's notes over the wire the way it claims box dms, and removes them from the box. Only peer entries the sandbox marks `inbox: 'claim'` are drained — a laptop peer's inbox stays its own operator's.
+
 ## 5.63.4 — 2026-09-12 — the box boots its team's lead, and a dm reaches a box seat by its id
 
 - `[agent:team sandbox up]` boots the team's lead inside the box (posted as `{ name, team }`, so the box spawns it from the manifest shipped into it) in place of the old `worker` fixture, reports `lead <name> seeded|present|NOT seeded: …` — with a rebuild hint when the box image predates the team arm — and a failed team copy no longer skips writing sandbox.json.
