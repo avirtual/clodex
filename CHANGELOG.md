@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- `task done` on a ticket that records no branch now says it closed WITHOUT review, instead of a plain "closed (done)" that reads as if the cold reviewer ran.
 - Delete Team… on a sandboxed team also stops and removes its box, its state under `~/.clodex/boxes/team-<name>/` and its peer entry, so a throwaway sandboxed team leaves nothing behind; a box that cannot be reached blocks the delete instead of orphaning it.
 
 ## 5.64.1 — 2026-09-12 — first fixes from a sandboxed team's feedback

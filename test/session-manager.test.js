@@ -7394,6 +7394,8 @@ test('task done: the LEAD closes a BACKLOG ticket — the case nobody could clos
   assert.ok(f.injected.some((x) => /ticket t1 closed \(done\)/.test(x)));
   assert.ok(!f.injected.some((x) => /report delivered to/.test(x)),
     'and the reply must not claim a delivery that did not happen');
+  assert.ok(f.injected.some((x) => /ticket t1 closed \(done\) — closed WITHOUT review/.test(x)),
+    'a backlog ticket records no branch, so the loop had nothing to verify — a plain "closed (done)" reads as if the cold reviewer ran, and a lead who believes it waits for a review that can never come');
 });
 
 test('task done: the LEAD closes a ticket assigned to SOMEONE ELSE (retired seat)', () => {
@@ -7458,6 +7460,8 @@ test('task done: the ASSIGNEE path is unchanged — delivery, and the keep-open 
   assert.deepStrictEqual(f.gated, [{ target: 'lead', sender: 'team-hand', body: '[ticket t1 done] shipped it' }],
     'the assignee`s report still rides to the lead');
   assert.ok(f.injected.some((x) => /closed \(done\) — report delivered to lead/.test(x)));
+  assert.ok(f.injected.some((x) => /closed \(done\) — report delivered to lead — closed WITHOUT review/.test(x)),
+    'and the delivered-report reply says no review ran: this ticket has no branch, so the verify/review loop was never entered');
 });
 
 test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee kept', () => {
@@ -17969,6 +17973,33 @@ test('task done on a spawn ticket: no loop step, no reviewer, done stays termina
     'no loop step — every check in the loop is a question about a branch, and there is none');
   assert.deepStrictEqual(created, [],
     'and no reviewer is spawned: there is no diff to review');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('task done on a worktree ticket: the reply carries no WITHOUT-review clause', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  const replies = [];
+  f.m._injectText = (_s, text) => { replies.push(text); };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._runTicketLoop = () => {};
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+
+  replies.length = 0;
+  f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+
+  const t = f.one('t1');
+  assert.ok(t.worktree && t.worktree.branch && t.worktree.baseSha,
+    'ENTER: the ticket records a branch and a fork point, which is what the gate reads');
+  assert.strictEqual(t.loopStep, 'verify',
+    'ENTER: so the close entered the loop — without this the absence below is the ineligible case again');
+  const reply = replies.find((r) => /closed \(done\)/.test(r));
+  assert.ok(reply, `ENTER: the close reply must have landed, got: ${JSON.stringify(replies)}`);
+  assert.ok(!/WITHOUT review/.test(reply),
+    'a review IS coming, so the clause must not appear — a lead told otherwise would accept unreviewed work');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
