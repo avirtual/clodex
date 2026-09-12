@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a team box borrows a Claude login
 
 - `[agent:team sandbox up|rebuild]` seeds the team box's Claude login from a box that already has one (`shared` first, then the legacy `sandbox`, then any other), so a team lead no longer boots "Not logged in"; the reply says which box it borrowed from, or says `NO CLAUDE TOKEN` and how to paste one. A token pasted for the box in Settings ▸ Sandboxes still wins — a box that has one is left alone.
 
