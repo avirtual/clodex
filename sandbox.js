@@ -56,7 +56,11 @@ const CONTAINER_PORTS = { web: 8080, wirescope: 7800, wire: 7900 };
 // Read-only host binds layered on top of the clodex-dot volume, deliberately
 // SHADOWING these subpaths: the box reads host libraries live while still
 // writing messages/, pending/, registry into the volume underneath.
-const LIBRARY_MOUNT_DIRS = ['skills', 'agents', 'library'];
+const LIBRARY_MOUNT_DIRS = [
+  'skills', 'agents',
+  'library/prompts', 'library/templates', 'library/kits',
+  'library/teams', 'library/plugins', 'library/exec',
+];
 
 const GHCR_REPO = 'ghcr.io/avirtual/clodex';
 
@@ -255,7 +259,9 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'dot')}:/home/clodex/.clodex`)}`);
   if (libDir) {
     for (const d of LIBRARY_MOUNT_DIRS) {
-      L.push(`      - ${yamlQuote(`${path.join(libDir, d)}:/home/clodex/.clodex/${d}:ro`)}`);
+      const src = path.join(libDir, d);
+      if (d.startsWith('library/') && !fs.existsSync(src)) continue;
+      L.push(`      - ${yamlQuote(`${src}:/home/clodex/.clodex/${d}:ro`)}`);
     }
   }
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'claude')}:/home/clodex/.claude`)}`);
@@ -591,11 +597,8 @@ function createSandbox(deps = {}) {
     const busy = await buildBusySet(config, ownPorts);
     const ports = resolvePorts(config, (p) => busy.has(p));
     const authFile = fs.existsSync(authEnvPath()) ? authEnvPath() : null;
-    // Ensure the host library source dirs exist — docker errors on a bind whose
-    // source is missing (a fresh install may not have authored them yet). Cheap
-    // and keeps the mount set unconditional (deterministic bytes) rather than
-    // config-dependent. Idempotent: recursive mkdir no-ops when they exist.
     for (const d of LIBRARY_MOUNT_DIRS) {
+      if (d.startsWith('library/')) continue;
       try { fs.mkdirSync(path.join(registryDir, d), { recursive: true }); } catch {}
     }
     for (const d of ['data', 'dot', 'claude']) {
