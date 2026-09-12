@@ -312,11 +312,12 @@ test('team:join still MINTS the hand role when the team has none', async () => {
   // The guard must not turn join into a no-op for the case it was written for.
   const { join, calls } = joinFixture({ existingHand: null });
   const res = await join({ team: 'fresh', role: 'hand', name: 'fresh-hand-1', type: 'claude' });
-  assert.strictEqual(res.ok, true, `expected a successful join (got: ${res.error})`);
   assert.strictEqual(calls.addRole.length, 1, 'an absent role is minted');
   assert.strictEqual(calls.addRole[0][2].template, 'clodex-team-hand',
     'and it is minted with the portable template');
-  assert.strictEqual(calls.spawned, 1);
+  assert.strictEqual(res.ok, false, 'the stock hand runs per ticket, so no standing seat');
+  assert.match(res.error, /runs per ticket/);
+  assert.strictEqual(calls.spawned, 0);
 });
 
 test('team:join adopts an existing CUSTOM role without rewriting its prompt', async () => {

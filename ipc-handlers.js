@@ -205,6 +205,10 @@ function registerIpcHandlers(deps) {
           : { prompt: prompt || null };
         addRole(team, role, def);
       }
+      const dispatch = (loadManifest(team).roles[role] || {}).dispatch;
+      if (dispatch === 'spawn' || dispatch === 'worktree') {
+        return { ok: false, error: `team ${team}: the ${role} role runs per ticket (dispatch: ${dispatch}) — the ticket loop mints a seat for each ticket, so a standing seat would never receive one; no session was created. Dispatch work with [agent:task add ${role}] from the lead, or set the role's dispatch to standing in the Roles popover to hold a live seat.` };
+      }
       return await spawnFromParams(e, p);
     } catch (err) {
       return { ok: false, error: err.message };

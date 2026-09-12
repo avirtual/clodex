@@ -75,35 +75,56 @@ test('team:create reaches createTeam with {name,root,lead} then spawns', async (
   assert.deepStrictEqual(writes, [['createTeam', { name: 'shop2', root: '/proj2', lead: 'clodex2', kit: undefined }]]);
 });
 
-test('team:join reaches addRole (hand = stock def) then spawns', async () => {
+function joinSeam(seedRoles = {}) {
   const created = [];
   const writes = [];
+  const roles = { ...seedRoles };
   const handlers = registerWith({
     manager: fakeManager(created),
-    addRole: (team, role, def) => { writes.push([team, role, def]); return {}; },
+    loadManifest: (name) => ({ name, roles }),
+    addRole: (team, role, def) => { writes.push([team, role, def]); roles[role] = def; return {}; },
     agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
+  return { handlers, created, writes };
+}
+
+test('team:join MINTS the hand role (stock def) then REFUSES the standing seat', async () => {
+  const { handlers, created, writes } = joinSeam();
   const res = await handlers['team:join']({}, { team: 'shop', role: 'hand', name: 'shop-hand', type: 'claude', cwd: '/proj/sub' });
   assert.strictEqual(writes.length, 1, 'addRole reached');
   assert.strictEqual(writes[0][0], 'shop');
   assert.strictEqual(writes[0][1], 'hand');
   assert.strictEqual(writes[0][2].prompt, 'clodex-team-hand', 'stock hand def forwarded');
-  assert.strictEqual(res.ok, true);
-  assert.strictEqual(created.length, 1, 'falls through to the spawn');
+  assert.strictEqual(res.ok, false, 'a per-ticket role gets no standing seat');
+  assert.match(res.error, /runs per ticket \(dispatch: worktree\)/);
+  assert.match(res.error, /task add hand/, 'and the reply says how to dispatch instead');
+  assert.strictEqual(created.length, 0, 'the spawn seam was NOT reached');
+});
+
+test('team:join as hand STILL SPAWNS when the manifest role carries no dispatch', async () => {
+  const { handlers, created, writes } = joinSeam({
+    hand: { prompt: 'clodex-team-hand', template: 'clodex-team-hand' },
+  });
+  const res = await handlers['team:join']({}, { team: 'old', role: 'hand', name: 'old-hand', type: 'claude', cwd: '/proj/sub' });
+  assert.strictEqual(writes.length, 0, 'an existing role is adopted, not minted');
+  assert.strictEqual(res.ok, true, `expected the seam's ok (got: ${res.error})`);
+  assert.strictEqual(created.length, 1, 'the spawn seam ran once');
+});
+
+test('team:join refuses a CUSTOM role the manifest marks dispatch: spawn', async () => {
+  const { handlers, created } = joinSeam({
+    analyst: { prompt: 'my-analyst', dispatch: 'spawn' },
+  });
+  const res = await handlers['team:join']({}, { team: 'shop', role: 'analyst', name: 'shop-analyst', type: 'claude', cwd: '/proj/sub' });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /dispatch: spawn/);
+  assert.strictEqual(created.length, 0, 'the spawn seam was NOT reached');
 });
 
 test('team:join custom role forwards the picked prompt into the role def', async () => {
-  const created = [];
-  const writes = [];
-  const handlers = registerWith({
-    manager: fakeManager(created),
-    addRole: (team, role, def) => { writes.push([team, role, def]); return {}; },
-    agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
-    persistence: { setStripLevel: () => {}, get: () => null },
-    workspaceOfSender: () => 'ws1',
-  });
+  const { handlers, writes } = joinSeam();
   await handlers['team:join']({}, { team: 'shop', role: 'analyst', prompt: 'my-analyst', name: 'shop-analyst', type: 'claude', cwd: '/proj/sub' });
   assert.strictEqual(writes[0][1], 'analyst');
   assert.deepStrictEqual(writes[0][2], { prompt: 'my-analyst' });
