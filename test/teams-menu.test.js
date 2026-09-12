@@ -627,7 +627,7 @@ test('the Teams menu survives a team reader that is not there yet', () => {
 // in-process (main.js has no IPC to itself). The check and the delete are the
 // REAL engine leaf over the REAL manifest, so a menu that stopped matching the
 // backend fails here rather than passing against a stub of itself.
-function deletableTeamsOnDisk(spec, { seats = [], tickets = [], saved = 0 } = {}) {
+function deletableTeamsOnDisk(spec, { seats = [], tickets = [], saved = 0, removeResult = { ok: true } } = {}) {
   const home = mkHome();
   for (const [name, body] of Object.entries(spec)) {
     fs.mkdirSync(path.join(home, 'teams', name, 'prompts'), { recursive: true });
@@ -644,14 +644,16 @@ function deletableTeamsOnDisk(spec, { seats = [], tickets = [], saved = 0 } = {}
     _forgetTeam: (name, root) => { forgotten.push([name, root]); },
   };
   const { createTeamDelete } = require('../team-delete');
+  const removed = [];
   const { deleteCheck, deleteGated } = createTeamDelete({
     loadManifest: tm.loadManifest, deleteTeam: tm.deleteTeam, getManager: () => manager,
+    getSandboxManager: () => ({ remove: async (id) => { removed.push(id); return removeResult; } }),
   });
   const getTeams = () => ({
     listTeams: tm.listTeams, loadManifest: tm.loadManifest, teamsDir: tm.teamsDir,
     deleteCheck, deleteTeam: deleteGated,
   });
-  return { getTeams, home, forgotten, dirOf: (n) => path.join(home, 'teams', n) };
+  return { getTeams, home, forgotten, removed, dirOf: (n) => path.join(home, 'teams', n) };
 }
 
 // A dialog that records what it was shown and answers with a scripted response.
@@ -738,6 +740,46 @@ test('confirming deletes the team for real and refreshes the menus', async () =>
   assert.deepStrictEqual(menus.buildTeamsMenu().submenu.filter((i) => i.type !== 'separator').map((r) => r.label),
     ['(no teams)', 'Create Team…', 'Delete Team…'],
     'the rebuilt menu no longer offers it');
+});
+
+test('t863: a SANDBOXED team\'s confirm names the box teardown, and confirming removes the box', async () => {
+  const { getTeams, dirOf, removed } = deletableTeamsOnDisk(
+    { boxed: { root: '/proj/boxed', lead: 'boss', sandboxed: true, roles: { lead: {} } } },
+  );
+  const dialog = mkDialog(0);
+  const { menus } = menusWith(getTeams, [], dialog);
+  const del = menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…');
+  await del.submenu.find((r) => r.label === 'boxed').click();
+
+  const opts = dialog.shown[0];
+  assert.match(opts.detail, /\(the pointer manifest\), stops and removes box team-boxed/,
+    'the confirm says the box goes too — a pointer-only sentence would understate what the button does');
+  assert.match(opts.detail, /its state under ~\/\.clodex\/boxes\/team-boxed\//);
+  assert.match(opts.detail, /Keeps: the project at \/proj\/boxed\./);
+  assert.ok(!/its manifest, prompts and templates/.test(opts.detail), 'the plain-team sentence is not also shown');
+
+  assert.deepStrictEqual(removed, ['team-boxed'], 'and the box really was removed');
+  assert.ok(!fs.existsSync(dirOf('boxed')));
+  assert.deepStrictEqual(dialog.shown.length, 1, 'a clean stop shows no second dialog');
+});
+
+test('t863: a box that did not stop cleanly warns once, after the delete went through', async () => {
+  const { getTeams, dirOf } = deletableTeamsOnDisk(
+    { boxed: { root: '/proj/boxed', lead: 'boss', sandboxed: true, roles: { lead: {} } } },
+    { removeResult: { ok: true, downError: 'compose exited 1' } },
+  );
+  const dialog = mkDialog(0);
+  const { menus } = menusWith(getTeams, [], dialog);
+  const del = menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…');
+  await del.submenu.find((r) => r.label === 'boxed').click();
+
+  assert.strictEqual(dialog.shown.length, 2, 'the confirm, then the warning');
+  const warn = dialog.shown[1];
+  assert.strictEqual(warn.message, 'Box team-boxed did not stop cleanly');
+  assert.deepStrictEqual(warn.buttons, ['OK']);
+  assert.match(warn.detail, /compose exited 1\. Its state under ~\/\.clodex\/boxes\/team-boxed\/ was kept/);
+  assert.deepStrictEqual(dialog.errors, [], 'a dirty stop is a warning, not a failed delete');
+  assert.ok(!fs.existsSync(dirOf('boxed')), 'and the team is gone regardless');
 });
 
 test('a team with a live seat gets the ERROR dialog naming both lists, and is not deleted', async () => {

@@ -1332,7 +1332,7 @@ const SessionManager = createSessionManager({
 });
 const manager = new SessionManager();
 const { deleteCheck: teamDeleteCheck, deleteGated: teamDeleteGated } = createTeamDelete({
-  loadManifest, deleteTeam, getManager: () => manager,
+  loadManifest, deleteTeam, getManager: () => manager, getSandboxManager: () => sandboxManager,
 });
 speakerBusyBroadcast = (busy) => { try { manager._broadcast('speaker-busy', busy); } catch {} };
 const proxyPoller = new ProxyPoller(manager);

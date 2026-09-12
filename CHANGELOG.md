@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Delete Team… on a sandboxed team also stops and removes its box, its state under `~/.clodex/boxes/team-<name>/` and its peer entry, so a throwaway sandboxed team leaves nothing behind; a box that cannot be reached blocks the delete instead of orphaning it.
+
 ## 5.64.1 — 2026-09-12 — first fixes from a sandboxed team's feedback
 
 - The sandbox image now ships `clodex-run-tests.js`, so the `clodex-run-tests` exec grant works inside a box instead of failing with a module-not-found that the one-line stderr tail hid as `Node.js v22`.

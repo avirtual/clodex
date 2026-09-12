@@ -187,14 +187,17 @@ test('t830: team:addRole refuses an unknown account label and mints no role', ()
 // removal are one decision, and stubbing either lets the handler assert an
 // intent the other half quietly declines to honour.
 
-function mkDeleteDoor({ manifest = 'ok', sessions = [], tickets = [], persisted = [] } = {}) {
+function mkDeleteDoor({
+  manifest = 'ok', sessions = [], tickets = [], persisted = [],
+  sandboxed = false, removeResult = { ok: true }, sandboxManager,
+} = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-del-home-'));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-del-root-'));
   const dir = path.join(home, 'teams', 't');
   fs.mkdirSync(path.join(dir, 'prompts'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'prompts', 'lead.md'), '# lead');
   fs.writeFileSync(path.join(dir, 'team.json'), manifest === 'ok'
-    ? JSON.stringify({ root, lead: 'l', roles: { lead: {}, hand: {} } }, null, 2)
+    ? JSON.stringify({ root, lead: 'l', ...(sandboxed ? { sandboxed: true } : {}), roles: { lead: {}, hand: {} } }, null, 2)
     : manifest);
 
   const tm = createTeamManifest({ fs, clodexHome: home });
@@ -217,8 +220,13 @@ function mkDeleteDoor({ manifest = 'ok', sessions = [], tickets = [], persisted 
     _forgetTeam: methods._forgetTeam,
   };
 
+  const calls = [];
+  const mgr = sandboxManager === undefined
+    ? { remove: async (id) => { calls.push(id); return removeResult; } }
+    : sandboxManager;
   const { deleteCheck, deleteGated } = createTeamDelete({
     loadManifest: tm.loadManifest, deleteTeam: tm.deleteTeam, getManager: () => manager,
+    getSandboxManager: () => mgr,
   });
   const refreshed = [];
   const handlers = new Map();
@@ -234,7 +242,7 @@ function mkDeleteDoor({ manifest = 'ok', sessions = [], tickets = [], persisted 
     refreshTrayMenu: () => refreshed.push('tray'),
   });
   return {
-    root, dir, manager, refreshed,
+    root, dir, manager, refreshed, calls, sandboxManager: mgr,
     check: () => handlers.get('team:deleteCheck')(null, 't'),
     del: () => handlers.get('team:delete')(null, 't'),
     exists: () => fs.existsSync(dir),
@@ -245,10 +253,10 @@ function mkDeleteDoor({ manifest = 'ok', sessions = [], tickets = [], persisted 
   };
 }
 
-test('team:delete refuses a team with a LIVE seat, names it in blockedBy, and removes nothing', () => {
+test('team:delete refuses a team with a LIVE seat, names it in blockedBy, and removes nothing', async () => {
   const d = mkDeleteDoor({ sessions: [{ name: 't-hand-1', agentType: 'claude' }] });
   try {
-    const res = d.del();
+    const res = await d.del();
     assert.strictEqual(res.ok, false, 'refused');
     assert.match(res.error, /team "t" is in use/);
     assert.deepStrictEqual(res.blockedBy, { seats: ['t-hand-1'], tickets: [] });
@@ -257,17 +265,17 @@ test('team:delete refuses a team with a LIVE seat, names it in blockedBy, and re
   } finally { d.cleanup(); }
 });
 
-test('team:delete refuses a team with an OPEN ticket', () => {
+test('team:delete refuses a team with an OPEN ticket', async () => {
   const d = mkDeleteDoor({ tickets: [{ id: 't7', assignee: 'hand', state: 'open' }] });
   try {
-    const res = d.del();
+    const res = await d.del();
     assert.strictEqual(res.ok, false);
     assert.deepStrictEqual(res.blockedBy, { seats: [], tickets: ['t7'] });
     assert.ok(d.exists(), 'nothing removed');
   } finally { d.cleanup(); }
 });
 
-test('team:delete succeeds on a clean team: the directory is GONE and both menus refresh', () => {
+test('team:delete succeeds on a clean team: the directory is GONE and both menus refresh', async () => {
   const d = mkDeleteDoor({
     // Present but non-blocking, so this proves the gate discriminates rather
     // than that the fixture happens to be empty.
@@ -276,21 +284,21 @@ test('team:delete succeeds on a clean team: the directory is GONE and both menus
   });
   try {
     assert.ok(d.exists(), 'ENTER: the directory exists before the delete');
-    const res = d.del();
+    const res = await d.del();
     assert.deepStrictEqual(res, { ok: true });
     assert.ok(!d.exists(), 'the team directory and its prompts are gone');
     assert.deepStrictEqual(d.refreshed, ['app', 'tray'], 'both menus were rebuilt');
   } finally { d.cleanup(); }
 });
 
-test('team:delete succeeds on a team whose manifest does not load', () => {
+test('team:delete succeeds on a team whose manifest does not load', async () => {
   const d = mkDeleteDoor({ manifest: 'not json at all' });
   try {
     const chk = d.check();
     assert.strictEqual(chk.ok, true);
     assert.strictEqual(chk.loaded, false, 'the check reports the manifest, it does not throw');
     assert.ok(chk.error, 'and carries the load error for the dialog to print');
-    assert.deepStrictEqual(d.del(), { ok: true });
+    assert.deepStrictEqual(await d.del(), { ok: true });
     assert.ok(!d.exists(), 'the unloadable team is gone');
   } finally { d.cleanup(); }
 });
@@ -312,14 +320,68 @@ test('team:deleteCheck reports the root, the saved count and what blocks — wit
   } finally { d.cleanup(); }
 });
 
-test('team:delete forgets the deleted team\'s ticket watches', () => {
+test('team:delete forgets the deleted team\'s ticket watches', async () => {
   const d = mkDeleteDoor();
   try {
     d.manager._ticketWatch.set('t-hand-1', { root: d.root, role: 'hand' });
     d.manager._ticketWatch.set('other-1', { root: '/elsewhere', role: 'hand' });
-    assert.strictEqual(d.del().ok, true);
+    assert.strictEqual((await d.del()).ok, true);
     assert.deepStrictEqual([...d.manager._ticketWatch.keys()], ['other-1'],
       "the deleted team's watch is dropped and another team's is not");
+  } finally { d.cleanup(); }
+});
+
+test('t863: deleting a SANDBOXED team removes its box once, then the pointer dir', async () => {
+  const d = mkDeleteDoor({ sandboxed: true });
+  try {
+    assert.ok(d.exists(), 'ENTER: the pointer dir exists before the delete');
+    const res = await d.del();
+    assert.deepStrictEqual(res, { ok: true, box: { id: 'team-t', removed: true, downError: undefined } });
+    assert.deepStrictEqual(d.calls, ['team-t'], 'the box was removed exactly once, under its derived id');
+    assert.ok(!d.exists(), 'and the pointer manifest is gone');
+  } finally { d.cleanup(); }
+});
+
+test('t863: a box that cannot be removed BLOCKS the delete — the pointer survives', async () => {
+  const d = mkDeleteDoor({ sandboxed: true, removeResult: { ok: false, error: 'docker unreachable' } });
+  try {
+    const res = await d.del();
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(res.error, 'docker unreachable', 'the manager\'s reason reaches the operator verbatim');
+    assert.ok(d.exists(), 'a box nobody could look at must not be orphaned by a deleted pointer');
+    assert.deepStrictEqual(d.refreshed, [], 'and no menu refresh was claimed');
+  } finally { d.cleanup(); }
+});
+
+test('t863: an ALREADY-GONE box does not block — the pointer is the leftover', async () => {
+  const d = mkDeleteDoor({ sandboxed: true, removeResult: { ok: false, error: 'no such sandbox: team-t' } });
+  try {
+    const res = await d.del();
+    assert.strictEqual(res.ok, true, `expected the delete to proceed (got: ${JSON.stringify(res)})`);
+    assert.deepStrictEqual(d.calls, ['team-t']);
+    assert.ok(!d.exists(), 'the pointer dir is gone');
+  } finally { d.cleanup(); }
+});
+
+test('t863: a PLAIN team never touches the sandbox manager', async () => {
+  const d = mkDeleteDoor();
+  try {
+    assert.strictEqual(typeof d.sandboxManager.remove, 'function',
+      'ENTER: the recording fake IS installed, so an empty call list means "not called", not "not wired"');
+    assert.deepStrictEqual(await d.del(), { ok: true });
+    assert.deepStrictEqual(d.calls, [], 'no box removal for a team that has none');
+    assert.ok(!d.exists());
+  } finally { d.cleanup(); }
+});
+
+test('t863: sandboxes disabled on this host refuses a sandboxed delete and keeps everything', async () => {
+  const d = mkDeleteDoor({ sandboxed: true, sandboxManager: null });
+  try {
+    const res = await d.del();
+    assert.strictEqual(res.ok, false);
+    assert.match(res.error, /disabled/);
+    assert.match(res.error, /team-t/, 'and names the box that would have been left behind');
+    assert.ok(d.exists(), 'the pointer dir stays');
   } finally { d.cleanup(); }
 });
 
