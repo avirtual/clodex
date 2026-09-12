@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — the roles popover and Join team tell the truth about a per-ticket role
 
 - Team popover: the offer card for a stock role the team lacks shows that role's real dispatch (the stock hand runs per ticket in its own worktree), instead of a fixed "standing".
 - Join team as `hand` (or any role that runs per ticket) no longer spawns a standing seat the ticket loop would never deliver to; the reply says the role runs per ticket and how to dispatch to it.
