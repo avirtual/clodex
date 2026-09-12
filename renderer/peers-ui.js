@@ -794,7 +794,7 @@ function initPeersUi({
     fileView: {
       label: 'shared a file',
       detail: (args) => (args && args.path ? args.path.split('/').pop() : 'a file'),
-      present: (key, args) => { if (args && args.path) openFilePeek(key, args.path); },
+      present: (key, args) => { if (args && args.path) openFilePeek(key, args.path, null, null, false, key); },
     },
   };
 

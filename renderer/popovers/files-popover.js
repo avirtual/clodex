@@ -143,6 +143,7 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   const filePeekOverlay = document.getElementById('file-peek-overlay');
   const filePeekModal = document.getElementById('file-peek-modal');
   const filePeekPath = document.getElementById('file-peek-path');
+  const filePeekBy = document.getElementById('file-peek-by');
   const filePeekBody = document.getElementById('file-peek-body');
   const filePeekTabDiff = document.getElementById('file-peek-tab-diff');
   const filePeekTabFile = document.getElementById('file-peek-tab-file');
@@ -151,7 +152,6 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   const filePeekSave = document.getElementById('file-peek-save');
   const filePeekDirty = document.getElementById('file-peek-dirty');
   const peekBackBtn = document.getElementById('file-peek-back');
-  // { path, name, tab, diffRes, peekRes, line, baseline, mtime }
   let filePeek = null;
   // Where a path-click came FROM, so following one is not a dead end. Cleared
   // whenever the peek is opened from outside itself (a row, an intent, a
@@ -268,12 +268,12 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   // `keepHistory` distinguishes a step WITHIN a peek (following a path, going
   // back) from a fresh open by a row / intent / terminal click. Only the latter
   // resets the back stack — otherwise every navigation would erase its own trail.
-  async function openFilePeek(name, filePath, forceTab = null, line = null, keepHistory = false) {
+  async function openFilePeek(name, filePath, forceTab = null, line = null, keepHistory = false, pushedBy = null) {
     if (!confirmDiscardPeekEdit()) return;
     if (!keepHistory) peekBack = [];
     const api = popoverApi(name);
     filePeek = {
-      path: filePath, name, tab: 'diff', diffRes: null, peekRes: null, line,
+      path: filePath, name, tab: 'diff', diffRes: null, peekRes: null, line, by: pushedBy,
       editable: !api.remote, baseline: null, mtime: null,
     };
     filePeekEditor.value = '';
@@ -281,6 +281,8 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
     filePeekSave.disabled = true;
     filePeekPath.textContent = filePath;
     filePeekPath.title = filePath;
+    filePeekBy.textContent = pushedBy ? `pushed by ${pushedBy}` : '';
+    filePeekBy.hidden = !pushedBy;
     // A remote file has no local path to hand to an editor — Open is owner-only.
     // The browser frontend (window.__CLODEX_WEB__) likewise has no external editor
     // to escape to, and the file is already shown in-page, so hide Open there too.
@@ -380,19 +382,19 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
       showToast((res && res.error) || `Can't find "${el.dataset.path}"`, { kind: 'warn', duration: 4000 });
       return;
     }
-    peekBack.push({ path: from, line: filePeek.line, tab: filePeek.tab });
+    peekBack.push({ path: from, line: filePeek.line, tab: filePeek.tab, by: filePeek.by });
     openFilePeek(name, res.path, 'file', el.dataset.goto ? Number(el.dataset.goto) : null, true);
   });
   peekBackBtn.addEventListener('click', () => {
     const prev = peekBack.pop();
     if (!prev || !filePeek) return;
-    openFilePeek(filePeek.name, prev.path, prev.tab, prev.line, true);
+    openFilePeek(filePeek.name, prev.path, prev.tab, prev.line, true, prev.by || null);
   });
   document.getElementById('file-peek-close').addEventListener('click', closeFilePeek);
   // [agent:file view] — main already vetted the path and focused this window;
   // reuse the touched-files peek modal wholesale (diff tab included, since the
   // name pins the git cwd).
-  window.api.onSessionFileView((name, filePath) => { openFilePeek(name, filePath); });
+  window.api.onSessionFileView((name, filePath) => { openFilePeek(name, filePath, null, null, false, name); });
   filePeekOverlay.addEventListener('mousedown', (e) => { if (e.target === filePeekOverlay) closeFilePeek(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !filePeekOverlay.classList.contains('hidden')) closeFilePeek();
