@@ -216,10 +216,14 @@ function cachedMessages(jsonlPath) {
   return messages;
 }
 
+function turnStart(all) {
+  for (let i = all.length - 1; i >= 0; i--) if (all[i].role === 'user') return all[i].seq;
+  return 0;
+}
+
 function sliceSince(all, since, limit) {
-  if (since == null) return { messages: all.slice(-limit) };
-  const page = all.filter((m) => m.seq >= since).slice(-limit);
-  const cursor = page.length ? page[page.length - 1].seq : since - 1;
+  const cursor = turnStart(all);
+  const page = since == null ? all.slice(-limit) : all.filter((m) => m.seq >= since).slice(-limit);
   return { messages: page, cursor, complete: true };
 }
 

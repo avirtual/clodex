@@ -208,21 +208,59 @@ test('jsonlToMessages: seq is the ordinal in the FULL list and survives the tail
   } finally { fs.unlinkSync(p); }
 });
 
-test('sliceSince: since is INCLUSIVE and the cursor is the last seq returned', () => {
-  const all = Array.from({ length: 5 }, (_, i) => ({ seq: i }));
+test('sliceSince: since is INCLUSIVE and the cursor is the start of the last turn', () => {
+  const all = [
+    { seq: 0, role: 'user' },
+    { seq: 1, role: 'assistant' },
+    { seq: 2, role: 'assistant' },
+    { seq: 3, role: 'user' },
+    { seq: 4, role: 'assistant' },
+  ];
 
   const from3 = sliceSince(all, 3, 100);
   assert.deepStrictEqual(from3.messages.map(m => m.seq), [3, 4]);
-  assert.strictEqual(from3.cursor, 4);
+  assert.strictEqual(from3.cursor, 3);
   assert.strictEqual(from3.complete, true);
 
   const from5 = sliceSince(all, 5, 100);
   assert.deepStrictEqual(from5.messages, []);
-  assert.strictEqual(from5.cursor, 4);
+  assert.strictEqual(from5.cursor, 3);
 
   assert.deepStrictEqual(sliceSince(all, 0, 2).messages.map(m => m.seq), [3, 4]);
 
-  assert.deepStrictEqual(sliceSince(all, null, 2), { messages: [{ seq: 3 }, { seq: 4 }] });
+  assert.deepStrictEqual(sliceSince(all, null, 2), { messages: [all[3], all[4]], cursor: 3, complete: true });
+
+  assert.deepStrictEqual(sliceSince([], null, 5), { messages: [], cursor: 0, complete: true });
+});
+
+test('sliceSince: a tail that re-merges mid-turn is re-sent from the turn start, never skipped', () => {
+  const p = writeJsonl([
+    { type: 'user', message: { content: 'first' } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'one' }], stop_reason: 'end_turn' } },
+    { type: 'user', message: { content: 'hi' } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'thinking' }], stop_reason: 'tool_use' } },
+    { type: 'user', message: { content: [{ type: 'tool_result', content: 'x' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'final answer' }], stop_reason: 'end_turn' } },
+  ]);
+  try {
+    const a = jsonlToMessages(p, Infinity);
+    assert.strictEqual(a.length, 5);
+    assert.strictEqual(sliceSince(a, null, 100).cursor, 2);
+
+    fs.appendFileSync(p, [
+      { type: 'user', message: { content: '<system-reminder>injected</system-reminder>' } },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'more' }], stop_reason: 'tool_use' } },
+    ].map(l => JSON.stringify(l)).join('\n') + '\n');
+
+    const b = jsonlToMessages(p, Infinity);
+    assert.strictEqual(b.length, 4);
+
+    const page = sliceSince(b, 2, 100);
+    assert.deepStrictEqual(page.messages.map(m => m.seq), [2, 3]);
+    assert.strictEqual(page.cursor, 2);
+    assert.strictEqual(page.messages[1].text, 'thinking\n\nfinal answer\n\nmore');
+    assert.strictEqual(page.messages[1].interim, true);
+  } finally { fs.unlinkSync(p); }
 });
 
 test('cachedMessages: an unchanged file is not re-parsed; a grown file is', () => {
@@ -246,6 +284,10 @@ test('hello advertises transcript-since and the endpoint threads since through',
   const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf-8');
   assert.match(src, /caps = \['transcript', 'transcript-since', 'send'\]/);
   assert.match(src, /this\._getTranscript\(name, limit, since\)/);
+
+  const remote = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'remote.html'), 'utf-8');
+  assert.match(remote, /if \(j\.messages\.length\) \{/);
+  assert.doesNotMatch(remote, /!j\.messages\.length \|\|/);
 });
 
 test('extractText: Claude assistant text', () => {
