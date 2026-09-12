@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team sandbox up|rebuild]` seeds the team box's Claude login from a box that already has one (`shared` first, then the legacy `sandbox`, then any other), so a team lead no longer boots "Not logged in"; the reply says which box it borrowed from, or says `NO CLAUDE TOKEN` and how to paste one. A token pasted for the box in Settings ▸ Sandboxes still wins — a box that has one is left alone.
+
 ## 5.63.8 — 2026-09-12 — a torn-down team box stops being dialled
 
 - `[agent:team sandbox down]` now also removes the box's `team-<name>` peer entry from settings, so a torn-down box stops being dialled; a `down` that fails leaves the entry in place.

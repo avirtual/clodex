@@ -218,22 +218,30 @@ test('a failed list stops before any POST', async () => {
 
 // ------------------------------------------------------------- the handler
 
-function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult } = {}) {
-  const calls = { waitHealthy: 0 };
+function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult, hasToken = false, boxes = [], donors = {} } = {}) {
+  const calls = { waitHealthy: 0, setAuthToken: [], tokenAtUp: null };
   const config = {};
+  let owned = hasToken;
   const box = {
     id: 'team-clodex',
     getConfig: () => ({ ...config }),
     setConfig: (patch) => { Object.assign(config, patch); return { ...config }; },
-    async up() { return { ok: true, ports }; },
-    async rebuild() { return { ok: true, ports }; },
+    async up() { calls.tokenAtUp = calls.setAuthToken.length; return { ok: true, ports }; },
+    async rebuild() { calls.tokenAtUp = calls.setAuthToken.length; return { ok: true, ports }; },
     async down() { return { ok: true }; },
     async status() { return { state: 'running', ref: config.ref || null, sha: 'abcdef1234567890', ports }; },
     remoteToken: () => TOKEN,
+    hasAuthToken: () => owned,
+    setAuthToken: (tok) => { calls.setAuthToken.push(tok); owned = true; return { ok: true, hasToken: true }; },
     async waitHealthy() { calls.waitHealthy += 1; return healthResult || { ok: true, polls: 3, ms: 4000 }; },
     translateHostPath: () => ({ container: '/proj-in-box' }),
   };
-  return { calls, manager: { get: () => box, create: () => ({ ok: true }) } };
+  const manager = {
+    get: (id) => (id && id !== box.id ? { authToken: () => donors[id] || null } : box),
+    list: () => boxes.map((id) => ({ id, label: id })),
+    create: () => ({ ok: true }),
+  };
+  return { calls, manager };
 }
 
 function mkHandler(opts = {}) {
@@ -375,4 +383,39 @@ test('status and down neither wait for health nor seed', async () => {
   await fire(h, { action: 'down' });
   assert.strictEqual(h.calls.waitHealthy, 0);
   assert.strictEqual(h.requests.length, 0);
+});
+
+test('up borrows the Claude token from the shared box when the team box has none', async () => {
+  const opts = { boxes: ['shared', 'sandbox'], donors: { shared: 'sk-ant-oat01-SHARED', sandbox: 'sk-ant-oat01-LEGACY' }, hasToken: false };
+  const h = mkHandler(opts);
+  await fire(h, { action: 'up' });
+
+  assert.deepStrictEqual(h.calls.setAuthToken, ['sk-ant-oat01-SHARED']);
+  assert.strictEqual(h.calls.tokenAtUp, 1, 'the token was on disk before compose read auth.env at bring-up');
+  const line = h.last();
+  assert.match(line, / · claude token seeded from shared · lead clodex-lead/);
+  assert.ok(!line.includes('sk-ant-oat01-SHARED'), `the reply leaked the borrowed token: ${line}`);
+  assert.ok(!line.includes('sk-ant-oat01-LEGACY'), `the reply leaked a donor token: ${line}`);
+  assert.deepStrictEqual(posts(h), ['bash', 'clodex-lead']);
+
+  const h2 = mkHandler(opts);
+  await fire(h2, { action: 'rebuild' });
+  assert.deepStrictEqual(h2.calls.setAuthToken, ['sk-ant-oat01-SHARED']);
+  assert.strictEqual(h2.calls.tokenAtUp, 1);
+});
+
+test('up with no box to borrow from reports NO CLAUDE TOKEN and still succeeds', async () => {
+  const h = mkHandler({ boxes: ['sandbox'], donors: {} });
+  await fire(h, { action: 'up' });
+  assert.deepStrictEqual(h.calls.setAuthToken, []);
+  const line = h.last();
+  assert.ok(!line.startsWith('[agent:team] error:'), `a box with no donor is not a failed up: ${line}`);
+  assert.match(line, / · NO CLAUDE TOKEN: no box has one to borrow — .* · lead clodex-lead/);
+});
+
+test('a team box that already has a token is left alone', async () => {
+  const h = mkHandler({ hasToken: true, boxes: ['shared'], donors: { shared: 'sk-ant-oat01-SHARED' } });
+  await fire(h, { action: 'up' });
+  assert.deepStrictEqual(h.calls.setAuthToken, []);
+  assert.ok(!/claude token/.test(h.last()), `an owned token was reported on: ${h.last()}`);
 });

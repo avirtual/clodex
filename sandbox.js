@@ -533,6 +533,9 @@ function createSandbox(deps = {}) {
   function hasAuthToken() {
     try { return !!readAuthEnv().CLAUDE_CODE_OAUTH_TOKEN; } catch { return false; }
   }
+  function authToken() {
+    try { return readAuthEnv().CLAUDE_CODE_OAUTH_TOKEN || null; } catch { return null; }
+  }
   function setAuthToken(token) {
     const t = String(token == null ? '' : token).trim();
     if (!t) return { ok: false, error: 'empty token' };
@@ -752,7 +755,7 @@ function createSandbox(deps = {}) {
     detect, getConfig, setConfig, writeComposeFile, translateHostPath,
     up, rebuild, down, status, logsTail, registerPeer, unregisterPeer,
     waitHealthy: boxWaitHealthy,
-    hasAuthToken, setAuthToken, clearAuthToken,
+    hasAuthToken, authToken, setAuthToken, clearAuthToken,
     remoteToken,
     composePath, sandboxDir, srcDir, stateDir,
   };
