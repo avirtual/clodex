@@ -722,11 +722,12 @@ function createSandbox(deps = {}) {
     const peers = (store.get().peers || []).map((p) => ({ ...p }));
     const existing = peers.find((p) => p && p.id === id);
     if (existing) {
-      if (existing.url === url && (existing.token || null) === (token || null)) return;
+      if (existing.url === url && (existing.token || null) === (token || null) && existing.inbox === 'claim') return;
       existing.url = url;
+      existing.inbox = 'claim';
       if (token) existing.token = token; else delete existing.token;
     } else {
-      const entry = { id, label: boxLabel, url };
+      const entry = { id, label: boxLabel, url, inbox: 'claim' };
       if (token) entry.token = token;
       peers.push(entry);
     }

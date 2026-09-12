@@ -61,6 +61,10 @@ Inbox changes push an `inbox` SSE event on `/api/events`:
 `{kind:'added'|'read'|'read-all'|'removed', id?, unread, note?}` (`added`
 carries the full note). It is emitted from the STORE's `onChange`, not from the
 routes, so a desktop-side mark-read moves the phone's badge and vice versa.
+A peer entry marked `inbox: 'claim'` (set by the sandbox on its OWN box, and on
+nothing else — a laptop peer's inbox belongs to its own operator) has its notes
+claimed onto the local inbox as `<seat>@<origin>` on that `added` event and on
+every hello, then removed from the box.
 
 Fan-out from the session manager (cheap no-ops when unattached):
 `pushOutput` (4MB backpressure → destroy the stream — a half-open tunnel

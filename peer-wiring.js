@@ -86,6 +86,10 @@ function createPeerWiring(deps) {
             try { manager._deliverClaimedDms(args[0], args[1]); } catch (e) { log.error('peer', `claimed dm delivery failed: ${e.message}`); }
             return;
           }
+          if (channel === 'peer-inbox') {
+            try { manager._deliverClaimedInbox(args[0], args[1]); } catch (e) { log.error('peer', `claimed inbox delivery failed: ${e.message}`); }
+            return;
+          }
           try { manager._broadcast(channel, ...args); } catch {}
           // Keep the Window > Peers menu's indicators + session lists fresh.
           if (channel === 'peer-state' || channel === 'peer-removed') scheduleAppMenuRefresh();
@@ -200,9 +204,9 @@ function createPeerWiring(deps) {
       // has to keep the connection object alive.
       if (p.sshHost || hasCloudTransport(p)) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
-        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token });
+        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox });
       } else {
-        resolved.push({ id: p.id, label: p.label, url: p.url, token });
+        resolved.push({ id: p.id, label: p.label, url: p.url, token, inbox: p.inbox });
       }
     }
     getPeerManager().sync(resolved);

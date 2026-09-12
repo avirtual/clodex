@@ -12882,6 +12882,54 @@ test('_handleNotifyUserIntent: missing workspaceId stores null (does not crash)'
   assert.strictEqual(added[0].workspaceId, null);
 });
 
+// --- _deliverClaimedInbox — a box seat's note, claimed onto THIS inbox -------
+// A seat inside a sandbox box raises [agent:notify-user] against the BOX's
+// session-manager, so the note lands in the box's own store — headless, unread
+// by anyone. peer-client claims it over the same wire it claims box dms on and
+// hands it here. What this seam owes the operator is exactly what a local note
+// gets: a store row, a toast, and the ipc line the inbox island listens on —
+// under an address they can reply to, `<seat>@<origin>`.
+function mkClaimedInbox(peers) {
+  const added = [], toasts = [], ipc = [];
+  const m = mk({
+    getNotifications: () => ({ add: (rec) => { added.push(rec); return { id: 'nt09', ...rec }; } }),
+    getPeerManager: () => ({ statuses: () => peers }),
+    notifyOS: (opts) => toasts.push(opts),
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  m._broadcast = (_c, msg) => ipc.push(msg);
+  return { m, added, toasts, ipc };
+}
+
+const BOX_STATUS = [{ id: 'team-clodex', label: 'clodex team', host: 'team-clodex', online: true }];
+
+test('_deliverClaimedInbox: a claimed box note is stored, toasted and broadcast as seat@origin', () => {
+  const { m, added, toasts, ipc } = mkClaimedInbox(BOX_STATUS);
+  m._deliverClaimedInbox('team-clodex', [{ id: 'n1', from: 'lead', body: 'need a ruling' }]);
+  // The origin is the HOST label, not the display label 'clodex team' — the
+  // suffix has to be a dm-able address, and a label with a space is not one.
+  assert.deepStrictEqual(added, [{ from: 'lead@team-clodex', workspaceId: null, body: 'need a ruling' }]);
+  assert.strictEqual(toasts.length, 1);
+  assert.strictEqual(toasts[0].title, 'lead@team-clodex');
+  assert.strictEqual(toasts[0].body, 'need a ruling');
+  assert.strictEqual(ipc.at(-1).type, 'notify');
+  assert.strictEqual(ipc.at(-1).from, 'lead@team-clodex');
+  assert.strictEqual(ipc.at(-1).to, 'user');
+});
+
+test('_deliverClaimedInbox: an unknown peer id falls back to the id as the suffix', () => {
+  const { m, added } = mkClaimedInbox([]);
+  m._deliverClaimedInbox('ghost-box', [{ id: 'n1', from: 'hand-9', body: 'still an address' }]);
+  assert.strictEqual(added[0].from, 'hand-9@ghost-box');
+});
+
+test('_deliverClaimedInbox: a bodyless note is skipped, not stored as undefined', () => {
+  const { m, added, toasts } = mkClaimedInbox(BOX_STATUS);
+  m._deliverClaimedInbox('team-clodex', [{ id: 'n1', from: 'lead' }, null, { id: 'n2', from: 'lead', body: 'real' }]);
+  assert.deepStrictEqual(added.map((r) => r.body), ['real']);
+  assert.strictEqual(toasts.length, 1);
+});
+
 // --- _deliverReminder — durable fire routing (live / park-offline / drop) ----
 // The reminder deliver seam: a fired self-reminder must never be silently lost
 // the way a plain dm to an absent target is. Live → the DM path; offline but
