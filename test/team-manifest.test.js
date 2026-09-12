@@ -2242,3 +2242,43 @@ test('t751 defaultLeadSeat: the 64-char seat limit binds on the MINTED default, 
   assert.throws(() => defaultLeadSeat('a'.repeat(60), null), /is too long/,
     'one character more and the seat name is 65');
 });
+
+test('t857 createTeam/loadManifest: `sandboxed: true` is written and carried; without it the key is absent', () => {
+  const home = mkHome();
+  const boxedRoot = mkTmpRoot('boxed-');
+  const plainRoot = mkTmpRoot('plain-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+
+  const boxed = tm.createTeam({ name: 'boxed', root: boxedRoot, lead: 'boxed-lead', sandboxed: true });
+  assert.strictEqual(boxed.sandboxed, true, 'the create result carries the flag');
+  const boxedDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'boxed', 'team.json'), 'utf-8'));
+  assert.strictEqual(boxedDisk.sandboxed, true, 'and it reached team.json');
+  assert.strictEqual(tm.loadManifest('boxed').sandboxed, true, 'and survives a fresh load');
+
+  const plain = tm.createTeam({ name: 'plain', root: plainRoot, lead: 'plain-lead' });
+  assert.strictEqual(plain.sandboxed, false, 'an unflagged create loads as not sandboxed');
+  const plainDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'plain', 'team.json'), 'utf-8'));
+  assert.ok(!('sandboxed' in plainDisk), 'the key is ABSENT from an unflagged manifest, not written false');
+  assert.strictEqual(tm.loadManifest('plain').sandboxed, false, 'and loads as a literal false, never undefined');
+});
+
+test('t857 resolveTeam: a sandboxed team never owns a desktop cwd, a plain one at the same depth still does', () => {
+  const home = mkHome();
+  const boxedRoot = mkTmpRoot('boxed-');
+  const plainRoot = mkTmpRoot('plain-');
+  mkTeam(home, 'boxed', { ...validManifest(boxedRoot), sandboxed: true });
+  mkTeam(home, 'plain', validManifest(plainRoot));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+
+  assert.strictEqual(tm.loadManifest('boxed').sandboxed, true,
+    'ENTER: both manifests load, so a null below is the skip and not a broken fixture');
+  assert.strictEqual(tm.loadManifest('plain').sandboxed, false);
+
+  assert.strictEqual(tm.resolveTeam(path.join(boxedRoot, 'src', 'deep')), null,
+    'a seat sitting inside the sandboxed root belongs to no desktop team');
+  assert.strictEqual(tm.resolveTeam(boxedRoot), null, 'the root itself resolves to nothing too');
+  assert.strictEqual(tm.resolveTeam(path.join(plainRoot, 'src', 'deep')).name, 'plain',
+    'the same cwd shape one root over still resolves');
+  assert.strictEqual(tm.findProjectRoot(path.join(boxedRoot, 'src')), null,
+    'and the resolution every caller goes through agrees');
+});

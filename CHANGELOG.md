@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - (internal) the box-side half of `team sandbox up` is a method the desktop can call without an intent, in preparation for teams created straight into a box.
+- A team manifest can carry `sandboxed: true`: the desktop then holds only a pointer to a team that runs inside its own sandbox box, and no desktop seat in that folder is treated as a member.
 
 ## 5.63.15 — 2026-09-12 — the Account picker is a Claude-only control
 
