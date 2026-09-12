@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The keep-warm ping now re-reads the OAuth bearer from the SEAT's own credential store (its `CLAUDE_CONFIG_DIR`'s `.credentials.json`, or the Keychain item the CLI derives from that dir) instead of the default account's, so a seat on a second subscription no longer pings as the first one — which had been every ping a 429 on the wrong quota while the hold showed armed.
+
 ## 5.63.9 — 2026-09-12 — a team box borrows a Claude login
 
 - `[agent:team sandbox up|rebuild]` seeds the team box's Claude login from a box that already has one (`shared` first, then the legacy `sandbox`, then any other), so a team lead no longer boots "Not logged in"; the reply says which box it borrowed from, or says `NO CLAUDE TOKEN` and how to paste one. A token pasted for the box in Settings ▸ Sandboxes still wins — a box that has one is left alone.

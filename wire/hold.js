@@ -193,6 +193,7 @@ class HoldKeeper extends EventEmitter {
     this._now = opts.now || (() => Date.now() / 1000);
     this._request = opts.request || postJson;
     this._auth = opts.auth || readClaudeAuth;
+    this._configDirFor = opts.configDirFor || (() => null);
     this._entryStore = opts.entryStore || null;
     for (const k of Object.keys(DEFAULTS)) this[k] = opts[k] ?? DEFAULTS[k];
     this._entries = new Map(); // sessionId → { obj, headers, url, ts }
@@ -400,7 +401,7 @@ class HoldKeeper extends EventEmitter {
     // stays due for the rest of its margin window and then goes cold on its own.
     const authKey = Object.keys(headers).find((k) => k.toLowerCase() === 'authorization');
     if (authKey && /^Bearer\s+sk-ant-oat/i.test(headers[authKey] || '')) {
-      const { accessToken, expiresAt } = this._auth();
+      const { accessToken, expiresAt } = this._auth(this._configDirFor(sessionId) || null);
       if (!accessToken) {
         return { ok: true, warmed: false, skipped: 'no-credential', session: sessionId,
           hash: hFull, note: 'could not read the current Claude OAuth token; declined rather than replaying a stale bearer' };
