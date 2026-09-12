@@ -624,11 +624,13 @@ test('offerDispatchLine names the dispatch CONCEPT on a role the team does not h
   // Hiding field density is the point of the redesign; hiding the app's
   // differentiator is not. An operator who only ever sees offer cards must still
   // learn that dispatch exists.
-  assert.match(offerDispatchLine(), /standing/);
-  // A FIXED string, not a value read off a def: no stock def ships a `dispatch`,
-  // so anything "read" here would be invented. Pinned so a later edit that starts
-  // interpolating a mode has to come through this assertion.
-  assert.strictEqual(offerDispatchLine(), offerDispatchLine());
+  assert.match(offerDispatchLine(undefined), /standing/);
+  assert.strictEqual(offerDispatchLine(null), offerDispatchLine(undefined));
+  assert.strictEqual(offerDispatchLine('standing'), offerDispatchLine(undefined));
+  assert.match(offerDispatchLine('worktree'), /worktree/);
+  assert.match(offerDispatchLine('worktree'), /branch, tree and seat/);
+  assert.doesNotMatch(offerDispatchLine('worktree'), /standing/);
+  assert.match(offerDispatchLine('spawn'), /one-shot seat/);
 });
 
 // ── A1: the three-way stage ──────────────────────────────────────────────────

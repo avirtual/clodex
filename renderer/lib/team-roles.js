@@ -536,11 +536,13 @@ function absentStockNote(key) {
   return 'Not on this team.';
 }
 
-// How tickets would reach a role this team does not have yet (R2: the dispatch
-// CONCEPT stays visible even where its field is not). A FIXED string, not a value
-// read off a def: no stock role ships a `dispatch`, so there is nothing to read —
-// inventing one here would put a mode on screen that the mint does not write.
-function offerDispatchLine() {
+function offerDispatchLine(dispatch) {
+  if (dispatch === 'worktree') {
+    return 'Runs as: worktree — every ticket gets its own branch, tree and seat.';
+  }
+  if (dispatch === 'spawn') {
+    return 'Runs as: spawn — every ticket gets a one-shot seat.';
+  }
   return 'Runs as: standing — the live seat holding this role gets the spec.';
 }
 

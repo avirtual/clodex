@@ -230,19 +230,7 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
     // rewritten when the key exists'. So re-pointing a stock def still cannot
     // rewrite or refuse a role any live team already has.
     'team-manifest.js': 6,
-    // import + team:join's mint-if-absent branch, and (t426) team:addRole's
-    // stock-def substitution for an empty def — the offer card's Enable button,
-    // which posts `{}` and would otherwise write a `hand` with no prompt.
-    //
-    // Those two new sites were checked against the question this message asks and
-    // are still seed-only: the substitution is gated on `!loadManifest().roles[role]`,
-    // the same absence check team:join uses, so a live team's role never reaches
-    // it and the stock def can neither rewrite nor refuse one. Without that gate
-    // it could REFUSE: addRole is exact-match-or-throw, so substituting a stock
-    // def for an existing role turns a no-op re-add into "already exists with a
-    // different definition". Pinned in ipc-handlers-team.test.js, 'team:addRole
-    // leaves an EXISTING role alone'.
-    'ipc-handlers.js': 4,
+    'ipc-handlers.js': 5,
     // t803: import + ONE fallback. _handleTeamCreate still builds the three role
     // defaults it hands to createTeam on a kickstart brief, but it now reads
     // them from the named KIT and falls back to this constant only for a home

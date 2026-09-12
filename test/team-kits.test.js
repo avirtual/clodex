@@ -270,9 +270,9 @@ test('a caller `roles` object wins over the kit\'s roles, but the kit stays the 
   const tm = createTeamManifest({ fs, clodexHome: home });
   const team = tm.createTeam({
     name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead', kit: 'default',
-    roles: { lead: { prompt: 'lead', template: 'lead' }, hand: { prompt: 'hand', template: 'hand', dispatch: 'worktree' } },
+    roles: { lead: { prompt: 'lead', template: 'lead' }, hand: { prompt: 'hand', template: 'hand', dispatch: 'spawn' } },
   });
-  assert.strictEqual(team.roles.hand.dispatch, 'worktree', 'the caller\'s role def is honored');
+  assert.strictEqual(team.roles.hand.dispatch, 'spawn', 'the caller\'s role def is honored');
   assert.ok(!('reviewer' in team.roles), 'and the kit\'s third role is NOT merged in');
   assert.ok(!('plugins' in readTeamTpl(home, 'x', 'hand')),
     'while the bytes still came from the kit named on the call');

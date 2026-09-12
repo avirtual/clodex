@@ -19,7 +19,7 @@ const PINNED_NAMES = [
   // Teams front door (teams-design.md [internal design doc, not in this repo]) — added with the front-door build.
   'teamCreate', 'teamCreateBare', 'teamJoin', 'teamForCwd', 'teamNames', 'teamRolePrompts',
   // Team-management GUI (T29 Layer A Slice 3).
-  'teamGet', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog',
+  'teamGet', 'teamStockRoles', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog',
   // Which SEAT is the team's lead (t420) — the manifest pointer, not the role.
   'teamSetLead',
   // The manifest preflight the roles popover renders as a per-role checklist (t414).
@@ -248,7 +248,7 @@ test('no duplicate names and no duplicate channels', () => {
 });
 
 test('contract covers exactly the pinned 300-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 300, 'pinned list is the full 300-method surface');
+  assert.equal(PINNED_NAMES.length, 301, 'pinned list is the full 301-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -272,7 +272,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 300, 'window.api has exactly 300 methods');
+    assert.equal(generated.length, 301, 'window.api has exactly 301 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
