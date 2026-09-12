@@ -242,6 +242,10 @@ def _restore_state():
     # Account quota: stale-but-stamped beats blank (age_s makes it legible).
     from proxylab import quota as quota_mod
     _RESTORED["quota_accounts"] = quota_mod.restore()
+    # Credential stores beyond ~/.claude (per-account seats): the refresh loop
+    # must know every store to keep alive from the first tick after a restart.
+    from proxylab import accounts as accounts_mod
+    _RESTORED["credential_stores"] = accounts_mod.load()
     print(f"[restore] holds={_RESTORED['holds']} "
           f"last_requests={_RESTORED['last_requests']} (auth-less until live "
           f"traffic) totals={'reloaded' if _RESTORED['totals'] else 'fresh'} "

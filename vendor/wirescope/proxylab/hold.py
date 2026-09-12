@@ -1,10 +1,12 @@
 import asyncio
+import functools
 import os
 import re
 import threading
 import time
 import uuid
 
+from proxylab import accounts as accounts_mod
 from proxylab import meta as meta_mod
 from proxylab import pinger as pinger_mod
 from proxylab import transforms as transforms_mod
@@ -63,6 +65,22 @@ _AUTH_BOOTSTRAP_COOLDOWN = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_COOLDOWN", 
 _AUTH_BOOTSTRAP_RESET = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_RESET", "3600"))
 _AUTH_BOOTSTRAP = {"attempts": 0, "last_ts": 0.0, "inflight": False,
                    "last_reason": None, "spawns": 0}
+# PER CREDENTIAL STORE (2026-09-12): a box can run seats under several
+# CLAUDE_CONFIG_DIRs (clodex's per-account seats), each with its own OAuth
+# token that lapses on its own clock. The budget, the refresh state and the
+# spawn's env are therefore keyed by store (None = the default ~/.claude); the
+# two module-level dicts above/below stay the DEFAULT store's state so every
+# existing reader keeps reading the default. See proxylab/accounts.py.
+_AUTH_BOOTSTRAP_STORES = {None: _AUTH_BOOTSTRAP}
+
+
+def _bootstrap_state(config_dir=None):
+    st = _AUTH_BOOTSTRAP_STORES.get(config_dir)
+    if st is None:
+        st = _AUTH_BOOTSTRAP_STORES[config_dir] = {
+            "attempts": 0, "last_ts": 0.0, "inflight": False,
+            "last_reason": None, "spawns": 0}
+    return st
 
 # PROACTIVE AUTH REFRESH (2026-09-07). The bootstrap above is REACTIVE: it fires
 # from this module's hold driver after a replay 401s. A consumer that runs its
@@ -89,41 +107,25 @@ _AUTH_BOOTSTRAP = {"attempts": 0, "last_ts": 0.0, "inflight": False,
 WARMTH_AUTH_REFRESH = os.environ.get(
     "WARMTH_AUTH_REFRESH", "1") not in ("0", "no", "off", "false")
 WARMTH_AUTH_REFRESH_LEAD = int(os.environ.get("WARMTH_AUTH_REFRESH_LEAD", "0"))
-_CLI_CRED_FILE = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
-_CLI_KEYCHAIN_SERVICE = "Claude Code-credentials"
 _AUTH_REFRESH = {"expires_at": None, "checked_ts": 0.0, "read_error": None,
                  "last_trigger_ts": 0.0, "last_outcome": None, "refreshed": 0}
+_AUTH_REFRESH_STORES = {None: _AUTH_REFRESH}   # config_dir -> state (see above)
 
 
-def _cli_token_expiry():
-    """`expiresAt` (epoch SECONDS) of the CLI's OAuth access token, or None.
-    Reads the plaintext file if present, else the login keychain — the same two
-    stores, same order, the CLI itself uses. Returns ONLY the expiry; the token
-    string is dropped on the floor here and never logged, stored, or returned.
-    A locked keychain would block on a GUI dialog, hence the timeout."""
-    import json
-    import subprocess
-    raw = None
-    try:
-        if os.path.exists(_CLI_CRED_FILE):
-            with open(_CLI_CRED_FILE, encoding="utf-8") as f:
-                raw = json.load(f)
-    except Exception:
-        raw = None
-    if raw is None:
-        try:
-            out = subprocess.run(
-                ["/usr/bin/security", "find-generic-password",
-                 "-s", _CLI_KEYCHAIN_SERVICE, "-w"],
-                capture_output=True, text=True, timeout=5, check=True)
-            raw = json.loads(out.stdout)
-        except Exception as e:
-            raise RuntimeError(f"credential store unreadable: {type(e).__name__}") from e
-    o = (raw or {}).get("claudeAiOauth") or {}
-    exp = o.get("expiresAt")
-    if not isinstance(exp, (int, float)):
-        return None
-    return exp / 1000.0    # the CLI writes epoch milliseconds
+def _refresh_state(config_dir=None):
+    st = _AUTH_REFRESH_STORES.get(config_dir)
+    if st is None:
+        st = _AUTH_REFRESH_STORES[config_dir] = {
+            "expires_at": None, "checked_ts": 0.0, "read_error": None,
+            "last_trigger_ts": 0.0, "last_outcome": None, "refreshed": 0}
+    return st
+
+
+def _cli_token_expiry(config_dir=None):
+    """`expiresAt` (epoch SECONDS) of one store's OAuth access token, or None.
+    The reader itself lives in accounts.py (plaintext file, else that store's
+    keychain item); this keeps the historical name for the default store."""
+    return accounts_mod.read_expiry(config_dir)
 
 
 def _auth_refresh_decision(expires_at, now=None, state=None, lead=None):
@@ -141,13 +143,16 @@ def _auth_refresh_decision(expires_at, now=None, state=None, lead=None):
     return True, "token lapsed" if expires_at <= now else "token within lead"
 
 
-async def _auth_refresh_tick(now=None, reader=None, bootstrap=None):
-    """One pass of the proactive refresh: read expiry → maybe spawn → verify.
-    `reader`/`bootstrap` are injection points for the offline suite."""
+async def _auth_refresh_tick(now=None, reader=None, bootstrap=None, config_dir=None):
+    """One pass of the proactive refresh FOR ONE STORE: read expiry → maybe
+    spawn → verify. `reader`/`bootstrap` are zero-arg/one-arg injection points
+    for the offline suite; by default both are bound to `config_dir` (None =
+    the default ~/.claude store, whose state is the module-level dicts)."""
     now = now or time.time()
-    reader = reader or _cli_token_expiry
-    bootstrap = bootstrap or _auth_bootstrap
-    st = _AUTH_REFRESH
+    reader = reader or functools.partial(accounts_mod.read_expiry, config_dir)
+    bootstrap = bootstrap or functools.partial(_auth_bootstrap, config_dir=config_dir)
+    st = _refresh_state(config_dir)
+    label = "default store" if config_dir is None else config_dir
     try:
         exp = await asyncio.to_thread(reader)
         st["read_error"] = None
@@ -159,13 +164,13 @@ async def _auth_refresh_tick(now=None, reader=None, bootstrap=None):
     go, why = _auth_refresh_decision(exp, now)
     if not go:
         return why
-    go2, why2 = _bootstrap_decision(None, now)
+    go2, why2 = _bootstrap_decision(None, now, state=_bootstrap_state(config_dir))
     if not go2:
         st["last_outcome"] = f"blocked: {why2}"
         return st["last_outcome"]
     st["last_trigger_ts"] = now
     print(f"[auth] refresh: CLI access {why} (expiresAt "
-          f"{time.strftime('%H:%M:%S', time.localtime(exp))}); spawning a "
+          f"{time.strftime('%H:%M:%S', time.localtime(exp))}, {label}); spawning a "
           f"bootstrap turn so the CLI performs the refresh-token exchange", flush=True)
     await bootstrap(None)
     try:
@@ -178,23 +183,37 @@ async def _auth_refresh_tick(now=None, reader=None, bootstrap=None):
         st["refreshed"] += 1
         st["last_outcome"] = "refreshed"
         print(f"[auth] refresh: token expiresAt moved to "
-              f"{time.strftime('%H:%M:%S', time.localtime(new_exp))}", flush=True)
+              f"{time.strftime('%H:%M:%S', time.localtime(new_exp))} ({label})",
+              flush=True)
     else:
         st["last_outcome"] = "not refreshed"
-        print("[auth] refresh: expiresAt did NOT move after the bootstrap turn "
-              "(refresh token dead? CLI not on PATH?) — will retry within budget",
-              flush=True)
+        print(f"[auth] refresh: expiresAt did NOT move after the bootstrap turn "
+              f"({label}; refresh token dead? CLI not on PATH?) — will retry "
+              "within budget", flush=True)
     return st["last_outcome"]
 
 
-def _auth_refresh_snapshot(now=None):
-    now = now or time.time()
-    st = dict(_AUTH_REFRESH)
+async def _auth_refresh_all(now=None):
+    """The hold-loop entry: one refresh tick per known credential store (the
+    default plus every dir registered via /_accounts). Stores are independent —
+    one lapsing never waits on another's budget or cooldown."""
+    out = {}
+    for s in accounts_mod.stores():
+        d = s["config_dir"]
+        try:
+            out[d] = await _auth_refresh_tick(now=now, config_dir=d)
+        except Exception as e:
+            out[d] = f"error: {e}"
+            print(f"[auth] refresh tick error ({d or 'default store'}): {e}", flush=True)
+    return out
+
+
+def _store_refresh_view(config_dir, now):
+    st = _refresh_state(config_dir)
     exp = st["expires_at"]
     lapsed = exp is not None and exp <= now
-    bst = _bootstrap_snapshot(now)
-    return {"enabled": WARMTH_AUTH_REFRESH, "lead_s": WARMTH_AUTH_REFRESH_LEAD,
-            "token_expires_at": exp,
+    bst = _bootstrap_snapshot(now, config_dir=config_dir)
+    return {"token_expires_at": exp,
             "token_expires_in_s": round(exp - now, 1) if exp is not None else None,
             "token_lapsed": lapsed,
             "checked_ts": st["checked_ts"] or None,
@@ -205,6 +224,25 @@ def _auth_refresh_snapshot(now=None):
             # lapsed AND nothing left to try: the refresh token itself is dead
             # (or `claude` is not spawnable) — a human login is the only fix
             "stalled": bool(lapsed and bst["budget_spent"])}
+
+
+def _auth_refresh_snapshot(now=None):
+    """The /_status `proxy.auth_refresh` block. Top-level token fields are the
+    DEFAULT store's (unchanged shape); `stores[]` carries every known store
+    with its account, and `stalled` is true when ANY store is stalled — a human
+    login is owed somewhere, and the consumer should say where (`stalled_stores`)."""
+    now = now or time.time()
+    stores = []
+    for s in accounts_mod.stores():
+        stores.append({**{k: s[k] for k in ("config_dir", "default", "account_uuid", "email")},
+                       **_store_refresh_view(s["config_dir"], now)})
+    default = _store_refresh_view(None, now)
+    stalled = [s["config_dir"] or "default" for s in stores if s["stalled"]]
+    return {"enabled": WARMTH_AUTH_REFRESH, "lead_s": WARMTH_AUTH_REFRESH_LEAD,
+            **{k: v for k, v in default.items() if k != "stalled"},
+            "stalled": bool(stalled) or default["stalled"],
+            "stalled_stores": stalled,
+            "stores": stores}
 
 
 def _bootstrap_decision(account, now=None, state=None):
@@ -245,12 +283,12 @@ def _bootstrap_decision(account, now=None, state=None):
     return True, "go"
 
 
-def _bootstrap_snapshot(now=None):
+def _bootstrap_snapshot(now=None, config_dir=None):
     """Observability for the half of the defect that made it hard to see: a hold
     reporting `armed:true` while the bootstrap that would revive it is spent.
     `budget_spent` answers 'is anything still going to happen here?'."""
     now = now or time.time()
-    st = dict(_AUTH_BOOTSTRAP)
+    st = dict(_bootstrap_state(config_dir))
     stale = bool(st["attempts"]) and (now - st["last_ts"]) >= _AUTH_BOOTSTRAP_RESET
     return {"enabled": WARMTH_AUTH_BOOTSTRAP,
             "attempts": st["attempts"], "spawns": st["spawns"],
@@ -261,23 +299,32 @@ def _bootstrap_snapshot(now=None):
             "max": _AUTH_BOOTSTRAP_MAX, "reset_s": _AUTH_BOOTSTRAP_RESET}
 
 
-async def _auth_bootstrap(account=None):
+async def _auth_bootstrap(account=None, config_dir=None):
     """Spawn the minimal donor turn (see section comment). The spawned CLI is
     pointed at THIS proxy, so its request flows through the normal handler and
-    populates _ACCOUNT_AUTH as a side effect — nothing here touches secrets."""
-    go, why = _bootstrap_decision(account)
-    _AUTH_BOOTSTRAP["last_reason"] = why
+    populates _ACCOUNT_AUTH as a side effect — nothing here touches secrets.
+
+    The turn runs under the credential STORE that holds the wanted account:
+    `config_dir` when given, else the registered store whose `.claude.json`
+    names `account`, else the default. A `claude` spawned under the proxy's own
+    env can only ever donate the default account's headers, which is why a
+    restored stash for a second-subscription seat used to sit `awaiting_auth`
+    for good (2026-09-12)."""
+    if config_dir is None and account:
+        config_dir = accounts_mod.store_for_account(account)
+    st = _bootstrap_state(config_dir)
+    go, why = _bootstrap_decision(account, state=st)
+    st["last_reason"] = why
     if not go:
         return
     now = time.time()
-    if (_AUTH_BOOTSTRAP["attempts"]
-            and now - _AUTH_BOOTSTRAP["last_ts"] >= _AUTH_BOOTSTRAP_RESET):
+    if st["attempts"] and now - st["last_ts"] >= _AUTH_BOOTSTRAP_RESET:
         # the earlier burst belongs to a finished outage — see _bootstrap_decision
-        _AUTH_BOOTSTRAP["attempts"] = 0
-    _AUTH_BOOTSTRAP["inflight"] = True
-    _AUTH_BOOTSTRAP["attempts"] += 1
-    _AUTH_BOOTSTRAP["spawns"] += 1
-    _AUTH_BOOTSTRAP["last_ts"] = now
+        st["attempts"] = 0
+    st["inflight"] = True
+    st["attempts"] += 1
+    st["spawns"] += 1
+    st["last_ts"] = now
     port = os.environ.get("PORT", "7800")
     # Pre-chosen session id, tagged kind=bootstrap BEFORE the spawn: every
     # request of this session (incl. the title side-call) arrives already
@@ -288,11 +335,12 @@ async def _auth_bootstrap(account=None):
                          model=WARMTH_AUTH_BOOTSTRAP_MODEL)
     print(f"[auth] bootstrap: spawning a minimal {WARMTH_AUTH_BOOTSTRAP_MODEL} "
           f"turn through :{port} as {sid[:8]}… to re-acquire account "
-          f"credentials (attempt {_AUTH_BOOTSTRAP['attempts']}/"
-          f"{_AUTH_BOOTSTRAP_MAX})", flush=True)
+          f"credentials ({config_dir or 'default store'}; attempt "
+          f"{st['attempts']}/{_AUTH_BOOTSTRAP_MAX})", flush=True)
     proc = None
     try:
-        env = {**os.environ, "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}"}
+        env = accounts_mod.spawn_env(config_dir)
+        env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
         # prompt must come BEFORE --tools: the flag is variadic and would
         # swallow a trailing positional as another tool name (the CLI then
         # exits 1 with "Input must be provided" before any API call)
@@ -325,7 +373,7 @@ async def _auth_bootstrap(account=None):
                 pass
         print(f"[auth] bootstrap failed: {e}", flush=True)
     finally:
-        _AUTH_BOOTSTRAP["inflight"] = False
+        st["inflight"] = False
 
 _HOLD_RE = re.compile(r"<proxy:warm-cache\s+hours=([0-9.]+|off)\s*>")
 _HOLD_STATE = {}   # sid -> {until, armed_at, pings, failures, last_ping_ts, last_result}
@@ -635,7 +683,7 @@ async def _hold_loop():
         # any proxy-side hold being armed (see WARMTH_AUTH_REFRESH)
         if WARMTH_AUTH_REFRESH and WARMTH_AUTH_BOOTSTRAP:
             try:
-                await _auth_refresh_tick()
+                await _auth_refresh_all()
             except Exception as e:
                 print(f"[auth] refresh tick error: {e}", flush=True)
 

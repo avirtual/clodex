@@ -3,6 +3,7 @@ import json
 import re
 import time
 
+from proxylab import accounts as accounts_mod
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
 from proxylab import core as core_mod
@@ -79,6 +80,12 @@ def _identity():
             # decline a dead bearer) keep pinging through idle nights. Account
             # scoped; readout on /_status proxy.auth_refresh.
             "auth_refresh": hold_mod.WARMTH_AUTH_REFRESH and hold_mod.WARMTH_AUTH_BOOTSTRAP,
+            # per-account credential stores: /_accounts registers a seat's
+            # CLAUDE_CONFIG_DIR so the refresh covers that subscription's token
+            # too, and /_status sessions[].account names the account a session
+            # runs on. Without it a second-subscription seat's token lapses
+            # unrefreshed and its restored stash never re-auths.
+            "accounts": True,
             "stats": True,                # /_status is always served
             "session_view": True,         # /_session HTML
             "context_view": True,         # /_context tool-roster JSON
@@ -192,6 +199,7 @@ def _identity():
             "warm": "/_warm",
             "ping": "/_ping",
             "hold": "/_hold",
+            "accounts": "/_accounts",
             "end": "/_end",
             "admin": "/_admin",
             "session": "/_session",
@@ -226,8 +234,12 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
     now = time.time()
     with pinger_mod._LAST_REQUEST_LOCK:
         last_real = {sid: (e["ts"], bool(e.get("needs_auth")),
-                           codex_mod._is_openai_body(e.get("obj")))
+                           codex_mod._is_openai_body(e.get("obj")),
+                           e.get("account"))
                      for sid, e in pinger_mod._LAST_REQUEST.items()}
+    # account_uuid -> email, one pass over the (tiny) store registry per call
+    acct_labels = {s["account_uuid"]: s["email"] for s in accounts_mod.stores()
+                   if s["account_uuid"]}
     holds = hold_mod._hold_snapshot()
     meta_rows, meta_err = {}, None
     try:
@@ -316,6 +328,12 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
             # awaiting auth (nothing is ever replayed on that wire)
             "pingable": bool(lr and not lr[1] and not lr[2]),
             "awaiting_auth": bool(lr and lr[1] and not lr[2]),
+            # which subscription this session's requests carry (the CLI's
+            # metadata account_uuid); `email` only when a registered store
+            # names it. A consumer pinging from its own port must use THIS
+            # account's credential store, not the box default.
+            "account": ({"uuid": lr[3], "email": acct_labels.get(lr[3])}
+                        if lr and lr[3] else None),
             "warmth": {"state": ("warm" if wq.get("warm")
                                  else "cold" if wq.get("found") else "absent"),
                        "remaining_s": wq.get("remaining_s"),

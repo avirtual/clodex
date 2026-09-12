@@ -11,6 +11,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket
 
+from proxylab import accounts as accounts_mod
 from proxylab import billing as billing_mod
 from proxylab import canary as canary_mod
 from proxylab import codex as codex_mod
@@ -950,6 +951,37 @@ async def handler(request: Request) -> Response:
               f"armed={rec.get('armed')} reason={rec.get('reason')}", flush=True)
         return Response(json.dumps({"ok": True, "ack": ack, **rec}),
                         media_type="application/json")
+
+    # ---- credential stores (per-account seats) ---------------------------------
+    # GET    /_accounts                          -> every known store + its account
+    # POST   /_accounts?config_dir=<abs path>    -> register a CLAUDE_CONFIG_DIR
+    # DELETE /_accounts?config_dir=<abs path>    -> forget it
+    # The consumer that launches seats is the only thing on the box that knows
+    # which config dir (= which subscription) a seat runs under; telling the
+    # proxy lets the auth refresh keep THAT store's token alive too and lets
+    # the bootstrap turn run under it. No registration = default store only,
+    # exactly the pre-v0.6.67 behaviour. See proxylab/accounts.py.
+    if request.url.path.rstrip("/") == "/_accounts":
+        q = request.query_params
+        if request.method == "GET":
+            return Response(json.dumps({"ok": True, "stores": accounts_mod.stores()},
+                                       indent=2), media_type="application/json")
+        cd = q.get("config_dir")
+        if not cd:
+            return Response(json.dumps({"ok": False, "reason": "missing ?config_dir="}),
+                            status_code=400, media_type="application/json")
+        try:
+            if request.method == "DELETE":
+                res = accounts_mod.unregister(cd)
+            else:
+                res = accounts_mod.register(cd)
+        except ValueError as e:
+            return Response(json.dumps({"ok": False, "reason": str(e)}),
+                            status_code=400, media_type="application/json")
+        print(f"[accounts] {request.method} {cd} -> "
+              f"{res.get('email') or res.get('account_uuid') or res.get('reason')}",
+              flush=True)
+        return Response(json.dumps(res), media_type="application/json")
 
     # ---- keep-warm pinger: replay a session's cached last request -------------
     # POST/GET /_ping?session=<id>[&force=1] — intercepted, never forwarded as a

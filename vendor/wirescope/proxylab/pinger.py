@@ -3,6 +3,7 @@ import os
 import threading
 import time
 
+from proxylab import accounts as accounts_mod
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
 from proxylab import core as core_mod
@@ -100,8 +101,11 @@ def _cache_last_request(session_id, obj, fwd_headers, upstream_path,
             _ACCOUNT_AUTH[account_uuid] = auth
             # fresh credentials close the auth gap: the bootstrap budget is
             # per OUTAGE (2 consecutive failed spawns), not per process — a
-            # long hold may legitimately need a refresh every OAuth expiry
-            hold_mod._AUTH_BOOTSTRAP["attempts"] = 0
+            # long hold may legitimately need a refresh every OAuth expiry.
+            # Per credential STORE: only the store that just proved itself
+            # alive gets its budget back.
+            hold_mod._bootstrap_state(
+                accounts_mod.store_for_account(account_uuid))["attempts"] = 0
         _LAST_REQUEST[session_id] = {"obj": obj, "headers": headers,
                                      "path": upstream_path, "ts": ts,
                                      "account": account_uuid,
