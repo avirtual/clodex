@@ -122,6 +122,8 @@ class PeerConnection {
     this._token = (typeof token === 'string' && token) ? token : null;
     this._emit = emit;
     this._claimInbox = !!claimInbox;
+    this._inboxClaiming = false;
+    this._inboxClaimAgain = false;
     this._computeRoster = computeRoster || null;
     this._helloIntervalMs = helloIntervalMs || HELLO_INTERVAL_MS;
     this._staleMs = Number.isInteger(staleMs) ? staleMs : STALE_MS;
@@ -746,22 +748,33 @@ class PeerConnection {
   }
 
   claimInbox(cb) {
+    const done = (r) => { if (cb) cb(r); };
     this._request('GET', '/api/inbox?limit=200', null, (err, resp) => {
       if (err || !resp || !resp.ok || !Array.isArray(resp.notes) || !resp.notes.length) {
-        if (cb) cb(err ? { ok: false, error: err.message } : resp || { ok: false });
-        return;
+        return done(err ? { ok: false, error: err.message } : resp || { ok: false });
       }
       this._emit('peer-inbox', this.id, resp.notes);
-      for (const n of resp.notes) {
-        if (!n || n.id == null) continue;
-        this._request('POST', `/api/inbox/remove/${encodeURIComponent(String(n.id))}`, null, () => {});
+      const ids = resp.notes.filter((n) => n && n.id != null).map((n) => String(n.id));
+      if (!ids.length) return done(resp);
+      let left = ids.length;
+      for (const id of ids) {
+        this._request('POST', `/api/inbox/remove/${encodeURIComponent(id)}`, null, () => {
+          if (--left === 0) done(resp);
+        });
       }
-      if (cb) cb(resp);
     });
   }
 
   _claimInboxIfBox() {
-    if (this._claimInbox) this.claimInbox(() => {});
+    if (!this._claimInbox) return;
+    if (this._inboxClaiming) { this._inboxClaimAgain = true; return; }
+    this._inboxClaiming = true;
+    this.claimInbox(() => {
+      this._inboxClaiming = false;
+      if (!this._inboxClaimAgain) return;
+      this._inboxClaimAgain = false;
+      this._claimInboxIfBox();
+    });
   }
 
   pushRoster(roster, cb) {

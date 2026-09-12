@@ -25,12 +25,18 @@
 //      renderer fan-out — note bodies are operator mail, not an ipc event,
 //   5. sandbox's own peer row carries the mark, on a fresh row AND backfilled
 //      onto a row written before this existed (without the backfill every
-//      already-registered box stays silent until someone deletes its row).
+//      already-registered box stays silent until someone deletes its row),
+//   6. OVERLAPPING triggers deliver each note exactly once. The box has no
+//      atomic claim — the dm path gets one from the outbox's whole-dir rename,
+//      this path has nothing — so two GETs issued before the first claim's
+//      removes land both return the same notes, and the operator is told twice.
+//      A seat raising two notes in one turn is enough: the box emits one
+//      `added` frame per store write.
 //
-// The hello interval is deliberately long throughout: hello ALSO claims (so
-// notes raised while the SSE feed was down are drained on the next tick), and a
-// short interval would race the doorbell for the same batch and make the emit
-// count non-deterministic.
+// Hello ALSO claims, so notes raised while the SSE feed was down are drained on
+// the next tick. That second trigger is why subject 6 exists: two triggers over
+// one un-atomic inbox is a duplicate delivery unless the connection serializes
+// them itself.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -96,9 +102,10 @@ function waitFor(label, pred, ms = 5000) {
   });
 }
 
-async function withPeer(fn, connOpts = {}) {
+async function withPeer(fn, connOpts = {}, seed = null) {
   const { server, state } = inboxServer();
   const port = await listen(server);
+  if (seed) state.notes = seed.map((n) => ({ ...n }));
   const emits = [];
   const conn = new PeerConnection({
     id: 'box', label: 'box', url: `http://127.0.0.1:${port}`, selfLabel: SELF,
@@ -273,4 +280,40 @@ test("sandbox registerPeer marks its own box inbox: 'claim', on a fresh row and 
   assert.strictEqual(old._state().peers[0].inbox, 'claim');
   assert.strictEqual(old._state().peers.length, 1, 'backfilled in place, never duplicated');
   assert.strictEqual(synced, 1, 'the peer manager is told, or the mark takes effect only after a restart');
+});
+
+test('two overlapping triggers deliver each note exactly ONCE — no duplicate toast, no double remove', async () => {
+  await withPeer(async (emits, state) => {
+    // Two `added` frames in ONE write: both reach the SSE handler in the same
+    // tick, so an unserialized path issues both GETs before either claim's
+    // removes have been sent, and both read the same undrained inbox. The
+    // seeded notes make the first hello's claim a third overlapping trigger.
+    state.streams[0].write(
+      'event: inbox\ndata: {"kind":"added","unread":1}\n\n'
+      + 'event: inbox\ndata: {"kind":"added","unread":2}\n\n',
+    );
+    await waitFor('the box to be drained', () => state.notes.length === 0);
+
+    // ENTER: there must be at least one emit — an implementation that claimed
+    // NOTHING would satisfy every "exactly once" assertion below vacuously.
+    assert.ok(inboxEmits(emits).length >= 1, 'the notes were claimed at all');
+
+    // The operator-facing invariant: flattened across ALL emits, each note
+    // appears once. _deliverClaimedInbox stores and toasts per note per emit,
+    // so a repeat here is a duplicate row and a duplicate toast in the inbox.
+    const seen = inboxEmits(emits).flatMap((e) => e[2].map((n) => n.id));
+    assert.deepStrictEqual(seen, ['n1', 'n2'], 'each note delivered exactly once across every claim');
+    assert.strictEqual(state.removes.length, 2, 'one remove per note — a repeat claim would 404 a second set');
+  }, { claimInbox: true }, NOTES);
+});
+
+test('the hello tick claims on its own — a note raised while the SSE feed was down still arrives', async () => {
+  await withPeer(async (emits, state) => {
+    // No doorbell is ever written here. The ONLY trigger is the hello path, so
+    // deleting that call site reds this and nothing else — without it the
+    // "drained on the next hello" promise in docs/peering.md is unpinned.
+    await waitFor('the seeded note to be claimed', () => inboxEmits(emits).length === 1);
+    await waitFor('it to be removed from the box', () => state.removes.length === 1);
+    assert.deepStrictEqual(inboxEmits(emits)[0][2].map((n) => n.id), ['n1']);
+  }, { claimInbox: true }, [NOTES[0]]);
 });
