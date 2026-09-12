@@ -17,6 +17,7 @@
 
 const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('electron');
 const os = require('os');
+const fs = require('fs');
 const { categoryMenu } = require('./library-menu-shape');
 
 const CLODEX_REPO_URL = 'https://github.com/avirtual/clodex';
@@ -564,10 +565,11 @@ function createAppMenus(deps) {
       // plugins menu's `problems` rows. Omitting it would make a broken team
       // invisible in the one surface that is supposed to enumerate teams, and
       // resolveTeam already skips it, so nothing else would ever mention it.
-      let ok = false;
-      try { teams.loadManifest(name); ok = true; } catch {}
-      if (ok) submenu.push({ label: name, click: () => sendToFocused('request-open-team-roles', name) });
-      else submenu.push({ label: `${name} — not loaded`, enabled: false });
+      let m = null;
+      try { m = teams.loadManifest(name); } catch {}
+      if (!m) submenu.push({ label: `${name} — not loaded`, enabled: false });
+      else if (m.sandboxed) submenu.push(sandboxedTeamRow(name, m.dir));
+      else submenu.push({ label: name, click: () => sendToFocused('request-open-team-roles', name) });
     }
     if (!names.length) submenu.push({ label: '(no teams)', enabled: false });
     submenu.push(
@@ -576,6 +578,21 @@ function createAppMenus(deps) {
       buildDeleteTeamRow(teams, names)
     );
     return { label: 'Teams', submenu };
+  }
+
+  function sandboxedTeamWebUrl(dir) {
+    if (!dir) return null;
+    try {
+      const rec = JSON.parse(fs.readFileSync(path.join(dir, 'sandbox.json'), 'utf-8'));
+      return (rec && typeof rec.webUrl === 'string' && rec.webUrl) || null;
+    } catch { return null; }
+  }
+
+  function sandboxedTeamRow(name, dir) {
+    const label = `${name} — sandboxed`;
+    const url = sandboxedTeamWebUrl(dir);
+    if (!url) return { label, enabled: false };
+    return { label, click: () => shell.openExternal(url) };
   }
 
   function buildDeleteTeamRow(teams, names) {
