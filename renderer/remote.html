@@ -176,13 +176,15 @@
       const r = await fetch('api/transcript/' + encodeURIComponent(open) + (cursor == null ? '' : '?since=' + cursor));
       const j = await r.json();
       if (j.ok && open) {
-        if (cursor == null || !j.messages.length || j.messages[0].seq == null || j.messages[0].seq < cursor) {
-          chat = j.messages;
-        } else {
-          const from = j.messages[0].seq;
-          chat = chat.filter(m => m.seq == null || m.seq < from).concat(j.messages);
+        if (j.messages.length) {
+          if (cursor == null || j.messages[0].seq == null || j.messages[0].seq < cursor) {
+            chat = j.messages;
+          } else {
+            const from = j.messages[0].seq;
+            chat = chat.filter(m => m.seq == null || m.seq < from).concat(j.messages);
+          }
+          renderChat(chat);
         }
-        renderChat(chat);
         cursor = j.cursor ?? (chat.length ? chat[chat.length - 1].seq : null);
       }
     } catch {}
