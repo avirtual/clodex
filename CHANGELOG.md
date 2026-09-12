@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A dm claimed from a sandbox box is now tagged `<seat>@<origin>` using the same label-or-host-or-id rule as `[agent:who]`, so the reply hint names an address the receiver can actually type (`lead@team-<name>`), instead of the box's display label with its space.
+
 ## 5.63.6 — 2026-09-12 — a box survives spawning its first seat
 
 - A sandbox box mounts its per-agent runtime dir (`~/.clodex/run`) as a tmpfs instead of leaving it on the host-bound state dir, so spawning a seat inside the box no longer dies on the `chmod` of its socket (Docker Desktop's file sharing refuses `chmod` on a socket inode, which crashed the box and left `team sandbox up` reporting `fetch failed`).

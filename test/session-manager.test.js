@@ -13191,6 +13191,47 @@ test('t839 who: a box whose display label has a space is listed under the host i
   assert.strictEqual(injected[0], '[agent:peers] lead@team-clodex');
 });
 
+function mkClaimed(statuses) {
+  const delivered = [];
+  const broadcasts = [];
+  const m = mk({
+    AGENT_NAME_RE: AGENT_NAME_RE_T,
+    getUiSettings: () => ({ get: () => ({ peers: [{ id: 'team-clodex', label: 'clodex team', url: 'http://x' }] }) }),
+    getPeerManager: () => ({ statuses: () => statuses }),
+  });
+  m._gatedDeliver = (to, from, body) => { delivered.push({ to, from, body }); };
+  m._broadcast = (channel, payload) => { broadcasts.push({ channel, payload }); };
+  m.sessions.set('a1', { name: 'a1', agentType: 'claude', workspaceId: 'ws1' });
+  return { m, delivered, broadcasts };
+}
+
+test('t844 _deliverClaimedDms: a dm from the box is tagged seat@<typeable origin>, not the spaced display label', () => {
+  const { m, delivered, broadcasts } = mkClaimed([T839_PEERS[0]]);
+
+  m._deliverClaimedDms('team-clodex', [{ from: 'lead', to: 'a1', body: 'hi' }]);
+
+  assert.strictEqual(delivered.length, 1, 'ENTER: one delivery recorded, or the tag is never exercised');
+  assert.strictEqual(delivered[0].to, 'a1');
+  assert.strictEqual(delivered[0].from, 'lead@team-clodex',
+    'the reply hint must name an address the receiver can type back');
+  assert.strictEqual(delivered[0].body, 'hi');
+  const wire = broadcasts.find((b) => b.channel === 'ipc-message');
+  assert.ok(wire, 'ENTER: the ipc-message broadcast must fire');
+  assert.strictEqual(wire.payload.body, 'WIRE←clodex team: hi',
+    'the ipc log keeps the human-facing display label');
+  assert.strictEqual(wire.payload.from, 'lead@team-clodex');
+});
+
+test('t844 _deliverClaimedDms: no status for the peer → the tag falls back to the peer id', () => {
+  const { m, delivered } = mkClaimed([]);
+
+  m._deliverClaimedDms('team-clodex', [{ from: 'lead', to: 'a1', body: 'hi' }]);
+
+  assert.strictEqual(delivered.length, 1);
+  assert.strictEqual(delivered[0].from, 'lead@team-clodex',
+    'the configured label has a space, so the id is what survives the name gate');
+});
+
 test('_buildDeliveryText trailer: present only when sender reachable AND receiver dm-enabled', () => {
   const target = { name: 'rcv', agentType: 'claude' };
   const RE = /\(reply: start a line with \[agent:dm .+?\], close the body with a bare \[agent:end\] line\)/;
