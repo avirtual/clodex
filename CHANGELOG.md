@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The sandbox image trusts `/home/clodex/work` (and worktrees under it) for git, so a box seat no longer hits the dubious-ownership refusal on the mounted project folder.
+
 ## 5.64.0 — 2026-09-12 — a team can be created straight into its own sandbox box
 
 - (internal) the box-side half of `team sandbox up` is a method the desktop can call without an intent, in preparation for teams created straight into a box.
