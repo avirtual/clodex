@@ -6766,7 +6766,7 @@ function createTicketMethods(deps, shared) {
       const totals = all.length ? all[all.length - 1] : null;
       if (!totals) {
         const last = text.trim().split('\n').filter((l) => l.trim()).pop() || '(no output)';
-        out.error = `the runner produced no TOTALS summary (exit ${res.code}) — last line: ${last.slice(0, 300)}`;
+        out.error = `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — last stdout line: ${last.slice(0, 300)}`;
         out.output = text;
         return out;
       }

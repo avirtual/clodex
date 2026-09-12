@@ -1540,7 +1540,7 @@ test('a re-measure that could not RUN still rejects on the first run`s red', asy
     'with the first run`s names, unchanged — there is no second set to compare against');
   assert.ok(!/FAILING \(run 2\)/.test(sent[0].body),
     'and no run-2 line, which would claim a measurement that never happened');
-  assert.match(sent[0].body, /A re-measure was attempted and could not run: .*no TOTALS summary/,
+  assert.match(sent[0].body, /A re-measure was attempted and could not run: .*no "TOTALS: <n> pass, <n> fail, <n> tests" line/,
     'the hand is told the re-measure was tried, so a single set is not read as a loop that skipped it');
   assert.strictEqual(f.created.length, 0, 'no reviewer');
 });
@@ -1625,7 +1625,8 @@ test('a suite that cannot run at all ESCALATES rather than rejecting', async () 
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
   assert.match(esc[0].body, /verify: suite/, 'the escalation names the step it stopped at');
-  assert.match(esc[0].body, /no TOTALS summary/, 'and says the run never completed, not that tests failed');
+  assert.match(esc[0].body, /no "TOTALS: <n> pass, <n> fail, <n> tests" line/,
+    'and says the run never completed, naming the shape it wanted, not that tests failed');
   assert.strictEqual(esc[0].target, 'lead');
   assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
     'and the hand is NOT sent rework it cannot act on');
@@ -1652,7 +1653,7 @@ test('a runner that exits 0 printing NOTHING is not accepted as green', async ()
   assert.strictEqual(f.created.length, 0, 'exit 0 without evidence of a run must not reach a reviewer');
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
-  assert.match(esc[0].body, /no TOTALS summary/);
+  assert.match(esc[0].body, /no "TOTALS: <n> pass, <n> fail, <n> tests" line/);
 });
 
 test('a branch with no test runner escalates, naming the missing runner', async () => {
@@ -3526,7 +3527,7 @@ test('t375: a run that produced no TOTALS carries its capture, not just a last l
   const r = await f.m._runTicketSuite(f.team, f.one());
 
   assert.strictEqual(r.ran, false, 'ENTER: this really is the never-ran arm, not a red suite');
-  assert.match(r.error, /no TOTALS summary/, 'ENTER: and it is the missing-summary path specifically');
+  assert.match(r.error, /no "TOTALS: <n> pass, <n> fail, <n> tests" line/, 'ENTER: and it is the missing-summary path specifically');
   assert.match(r.output, /SyntaxError: Unexpected end of input/,
     'the captured text comes out whole, for a caller that can preserve it');
 });

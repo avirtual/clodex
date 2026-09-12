@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- The team lead and hand prompts state the exact suite-summary line the merge gate reads (`TOTALS: <n> pass, <n> fail, <n> tests`, stdout, last match), and a runner that prints anything else escalates with a message naming that shape instead of "no TOTALS summary" while quoting one.
 - Delete Team… on a sandboxed team also stops and removes its box, its state under `~/.clodex/boxes/team-<name>/` and its peer entry, so a throwaway sandboxed team leaves nothing behind; a box that cannot be reached blocks the delete instead of orphaning it.
 
 ## 5.64.1 — 2026-09-12 — first fixes from a sandboxed team's feedback

@@ -7,7 +7,9 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_TEAMLEAD = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system', 'clodex-team-lead.md');
+const KIT_DEFAULT_LEAD = path.join(__dirname, '..', 'resources', 'library', 'kits', 'default', 'prompts', 'system', 'lead.md');
 const HEADING = '## First turn on a fresh team';
+const TOTALS_SHAPE = 'TOTALS: <n> pass, <n> fail, <n> tests';
 
 function read() {
   return fs.readFileSync(REPO_TEAMLEAD, 'utf-8');
@@ -63,8 +65,16 @@ test('the NEW arm names the empty-suite contract and the question budget', () =>
   const end = body.indexOf('**TAKEOVER**');
   assert.ok(start !== -1 && end > start, 'NEW arm is bounded by the TAKEOVER arm');
   const arm = body.slice(start, end);
-  assert.ok(arm.includes('TOTALS:'), 'names TOTALS:');
+  assert.ok(arm.includes(TOTALS_SHAPE), `names the literal ${TOTALS_SHAPE}`);
   assert.ok(arm.includes('at most three'), 'names at most three');
+});
+
+test('the default kit lead states the same summary shape, which nothing else pins', () => {
+  const body = section(fs.readFileSync(KIT_DEFAULT_LEAD, 'utf-8'));
+  const start = body.indexOf('**NEW**');
+  const end = body.indexOf('**TAKEOVER**');
+  assert.ok(start !== -1 && end > start, 'NEW arm is bounded by the TAKEOVER arm');
+  assert.ok(body.slice(start, end).includes(TOTALS_SHAPE), `names the literal ${TOTALS_SHAPE}`);
 });
 
 // t795. The opener sent on a `mode:interview` create names the INTERVIEW arm of
