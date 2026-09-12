@@ -175,6 +175,7 @@ function renderEnvHint(textarea, hint) {
 }
 function refreshEnvHint() { renderEnvHint(inputEnv, envHint); }
 const inputAccount = document.getElementById('input-account');
+const accountRow = document.getElementById('account-row');
 
 let dialogAccounts = null;
 
@@ -1658,6 +1659,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (stripRow) stripRow.style.display = caps.strip ? '' : 'none';
   if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? '' : 'none';
   if (noWireRow) noWireRow.style.display = caps.noWire ? '' : 'none';
+  if (accountRow) accountRow.style.display = caps.accounts ? '' : 'none';
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
   if (!skipAsyncRefresh) {
@@ -7271,6 +7273,7 @@ const argsEnvSection = document.getElementById('args-env-section');
 const argsEnv = document.getElementById('args-env');
 const argsEnvHint = document.getElementById('args-env-hint');
 const argsAccount = document.getElementById('args-account');
+const argsAccountRow = document.getElementById('args-account-row');
 let argsAccounts = null;
 if (argsEnv) argsEnv.addEventListener('input', () => renderEnvHint(argsEnv, argsEnvHint));
 bindAccountSelect(argsAccount, argsEnv, () => argsAccounts);
@@ -7336,6 +7339,7 @@ async function openArgsDialog(name, argsSource = null) {
   argsAppendSection.style.display = isAgent ? '' : 'none';
   const isClaude = res.type === 'claude';
   const caps = capsFor(res.type);
+  argsAccountRow.style.display = caps.accounts ? '' : 'none';
   argsAgentsRow.style.display = caps.agents ? '' : 'none';
   argsOtherSection.style.display = isClaude ? '' : 'none';
   // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section

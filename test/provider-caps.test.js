@@ -21,6 +21,7 @@ test('t749: claude is the full row', () => {
     strip: true,
     autoCompact: true,
     noWire: true,
+    accounts: true,
   });
 });
 
@@ -34,6 +35,7 @@ test('t749: codex gets exactly the two settings it honours', () => {
     strip: false,
     autoCompact: false,
     noWire: false,
+    accounts: false,
   });
 });
 
@@ -78,6 +80,22 @@ test('t749: the caps table is the only thing the dialogs gate these sections on'
   assert.match(fn, /stripRow\.style\.display = caps\.strip \?/);
   assert.match(fn, /autoCompactRow\.style\.display = caps\.autoCompact \?/);
   assert.match(fn, /noWireRow\.style\.display = caps\.noWire \?/);
+});
+
+test('the account picker row is gated on caps.accounts in both dialogs', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const nat = src.indexOf('function applyTypeDefaults(');
+  assert.ok(nat > 0, 'ENTER: applyTypeDefaults was located');
+  const fn = src.slice(nat, src.indexOf('\nlet lastToolCheck', nat));
+  assert.match(fn, /accountRow\.style\.display = caps\.accounts \?/,
+    'New Session hides the Account picker for a provider that cannot read it');
+
+  const eat = src.indexOf('async function openArgsDialog(');
+  assert.ok(eat > 0, 'ENTER: openArgsDialog was located');
+  const body = src.slice(eat, src.indexOf('\nfunction closeArgsDialog', eat));
+  assert.match(body, /const caps = capsFor\(res\.type\);/, 'ENTER: the caps lookup the gate reads');
+  assert.match(body, /argsAccountRow\.style\.display = caps\.accounts \?/,
+    'Edit Session hides the Account picker for a provider that cannot read it');
 });
 
 test('t749: a widened section is repainted for the type that widened it', () => {

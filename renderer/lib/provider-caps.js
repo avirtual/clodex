@@ -1,6 +1,6 @@
 'use strict';
 
-const CAP_KEYS = ['injectSkills', 'skillRoster', 'plugins', 'agents', 'tools', 'strip', 'autoCompact', 'noWire'];
+const CAP_KEYS = ['injectSkills', 'skillRoster', 'plugins', 'agents', 'tools', 'strip', 'autoCompact', 'noWire', 'accounts'];
 
 const PROVIDER_CAPS = {
   claude: {
@@ -12,6 +12,7 @@ const PROVIDER_CAPS = {
     strip: true,
     autoCompact: true,
     noWire: true,
+    accounts: true,
   },
   codex: {
     injectSkills: true,
@@ -22,6 +23,7 @@ const PROVIDER_CAPS = {
     strip: false,
     autoCompact: false,
     noWire: false,
+    accounts: false,
   },
 };
 
