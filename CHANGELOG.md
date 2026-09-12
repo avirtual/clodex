@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Inside a sandbox box `[agent:memory remember]` works: the host library is mounted read-only per catalogue directory, so the box's agent memory dirs stay on its own writable state volume instead of under the read-only mount.
+
 ## 5.64.0 — 2026-09-12 — a team can be created straight into its own sandbox box
 
 - (internal) the box-side half of `team sandbox up` is a method the desktop can call without an intent, in preparation for teams created straight into a box.

@@ -166,13 +166,10 @@ test('generateCompose: read-only host library binds layered on clodex-dot (M5 De
   const yaml = generateCompose({
     image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, libDir: '/Users/me/.clodex',
   });
-  // Three ro binds: skills, agents, and one `library` dir (covers prompts+exec).
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/skills:\/home\/clodex\/\.clodex\/skills:ro"/);
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/agents:\/home\/clodex\/\.clodex\/agents:ro"/);
-  assert.match(yaml, /- "\/Users\/me\/\.clodex\/library:\/home\/clodex\/\.clodex\/library:ro"/);
-  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){3} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"/);
-  // One `library` bind covers prompts + exec — no separate exec mount.
-  assert.doesNotMatch(yaml, /\/exec:ro/);
+  assert.doesNotMatch(yaml, /- "[^"]*\/library:\/home\/clodex\/\.clodex\/library:ro"/);
+  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){2} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"/);
   assert.ok(yaml.includes('- "/h/.clodex/boxes/x/data:/data"'));
   assert.doesNotMatch(yaml, /^ {2}(clodex-data|clodex-dot|claude-auth):$/m);
   assert.match(yaml, /^ {2}clodex-work:$/m);
@@ -207,6 +204,55 @@ test('generateCompose: no library binds when libDir is absent (guard for none-pa
   const yaml = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
   assert.doesNotMatch(yaml, /:ro"/);
   assert.doesNotMatch(yaml, /home\/clodex\/\.clodex\/skills/);
+});
+
+function roBinds(yaml) {
+  return yaml.split('\n')
+    .filter((l) => /^ {6}- ".*:ro"$/.test(l))
+    .map((l) => l.replace(/^ {6}- "/, '').replace(/"$/, ''));
+}
+
+function libFixture(dirs) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-lib-'));
+  process.on('exit', () => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  for (const d of dirs) fs.mkdirSync(path.join(root, d), { recursive: true });
+  return root;
+}
+
+test('generateCompose: the host library is bound per catalogue dir, never over library/ itself', () => {
+  const lib = libFixture([
+    'library/prompts', 'library/templates', 'library/kits',
+    'library/teams', 'library/plugins', 'library/exec',
+    'library/memory', 'library/memory-loadlog', 'library/common-memory',
+    'skills', 'agents',
+  ]);
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, libDir: lib,
+  });
+  assert.deepStrictEqual(roBinds(yaml), [
+    `${lib}/skills:/home/clodex/.clodex/skills:ro`,
+    `${lib}/agents:/home/clodex/.clodex/agents:ro`,
+    `${lib}/library/prompts:/home/clodex/.clodex/library/prompts:ro`,
+    `${lib}/library/templates:/home/clodex/.clodex/library/templates:ro`,
+    `${lib}/library/kits:/home/clodex/.clodex/library/kits:ro`,
+    `${lib}/library/teams:/home/clodex/.clodex/library/teams:ro`,
+    `${lib}/library/plugins:/home/clodex/.clodex/library/plugins:ro`,
+    `${lib}/library/exec:/home/clodex/.clodex/library/exec:ro`,
+  ]);
+  assert.doesNotMatch(yaml, /:\/home\/clodex\/\.clodex\/library:ro"/);
+  assert.doesNotMatch(yaml, /library\/memory/);
+});
+
+test('generateCompose: a catalogue dir the host lacks emits no bind (docker errors on a missing source)', () => {
+  const lib = libFixture(['library/prompts']);
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, libDir: lib,
+  });
+  assert.deepStrictEqual(roBinds(yaml), [
+    `${lib}/skills:/home/clodex/.clodex/skills:ro`,
+    `${lib}/agents:/home/clodex/.clodex/agents:ro`,
+    `${lib}/library/prompts:/home/clodex/.clodex/library/prompts:ro`,
+  ]);
 });
 
 test('generateCompose: hostname defaults to `sandbox`, overridable per box (M6b P1)', () => {
@@ -1122,17 +1168,18 @@ test('writeComposeFile: ensure-dirs the host library sources and binds them read
     registryDir: reg,
     isPortInUse: () => Promise.resolve(false),
   });
+  fs.mkdirSync(path.join(reg, 'library', 'prompts'), { recursive: true });
   await sb.writeComposeFile();
-  // The three source dirs were created under the injected host registry root,
-  // so docker never binds a missing source.
-  for (const d of ['skills', 'agents', 'library']) {
+  for (const d of ['skills', 'agents']) {
     assert.ok(fs.existsSync(path.join(reg, d)), `${d} ensure-dir'd`);
   }
-  // And the compose bytes bind them read-only into the box.
+  assert.strictEqual(fs.existsSync(path.join(reg, 'library', 'templates')), false);
   const yaml = fs.readFileSync(sb.composePath(), 'utf8');
   assert.ok(yaml.includes(`- "${path.join(reg, 'skills')}:/home/clodex/.clodex/skills:ro"`));
   assert.ok(yaml.includes(`- "${path.join(reg, 'agents')}:/home/clodex/.clodex/agents:ro"`));
-  assert.ok(yaml.includes(`- "${path.join(reg, 'library')}:/home/clodex/.clodex/library:ro"`));
+  assert.ok(yaml.includes(`- "${path.join(reg, 'library', 'prompts')}:/home/clodex/.clodex/library/prompts:ro"`));
+  assert.ok(!yaml.includes(`- "${path.join(reg, 'library')}:/home/clodex/.clodex/library:ro"`));
+  assert.ok(!yaml.includes('library/templates'));
 });
 
 test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxes/<id> and binds them', async () => {
