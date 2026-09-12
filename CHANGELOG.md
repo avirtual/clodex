@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A peer reply larger than the 1MB response guard now reports `response too large` to the caller instead of silently dropping the callback, so a dm or inbox claim against an oversize page fails loudly and the next claim still runs.
+
 - A `[agent:notify-user]` raised by a seat inside a sandbox box now lands in the desktop operator's inbox as `<seat>@<box origin>` (toast and inbox badge included): the desktop claims the box's notes over the wire the way it claims box dms, and removes them from the box. Only peer entries the sandbox marks `inbox: 'claim'` are drained — a laptop peer's inbox stays its own operator's.
 
 ## 5.63.4 — 2026-09-12 — the box boots its team's lead, and a dm reaches a box seat by its id

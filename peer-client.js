@@ -827,8 +827,15 @@ class PeerConnection {
       },
     }, (res) => {
       let buf = '';
-      res.on('data', (c) => { buf += c; if (buf.length > 1024 * 1024) req.destroy(); });
+      let tooLarge = false;
+      res.on('data', (c) => {
+        buf += c;
+        if (tooLarge || buf.length <= 1024 * 1024) return;
+        tooLarge = true;
+        req.destroy(new Error('response too large'));
+      });
       res.on('end', () => {
+        if (tooLarge) return;
         try { cb(null, JSON.parse(buf)); }
         catch { cb(new Error('bad response')); }
       });
