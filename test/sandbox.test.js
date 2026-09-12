@@ -23,7 +23,7 @@ const {
   resolveImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState,
   normalizeMounts, translatePath, composeProjectName,
-  DEFAULT_CONFIG, CONTAINER_PORTS, SANDBOX_PEER_ID,
+  DEFAULT_CONFIG, CONTAINER_PORTS, SANDBOX_PEER_ID, RESERVED_MOUNT_TARGETS,
 } = require('../sandbox');
 
 // Compose calls are now `['compose','-p',<project>,'-f',<path>, <sub…>]` — the
@@ -170,7 +170,7 @@ test('generateCompose: read-only host library binds layered on clodex-dot (M5 De
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/skills:\/home\/clodex\/\.clodex\/skills:ro"/);
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/agents:\/home\/clodex\/\.clodex\/agents:ro"/);
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/library:\/home\/clodex\/\.clodex\/library:ro"/);
-  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){3} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"/);
+  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n {6}- type: tmpfs\n {8}target: \/home\/clodex\/\.clodex\/run\n {8}tmpfs:\n {10}mode: 1777\n( +- "[^\n]*:ro"\n){3} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"/);
   // One `library` bind covers prompts + exec — no separate exec mount.
   assert.doesNotMatch(yaml, /\/exec:ro/);
   assert.ok(yaml.includes('- "/h/.clodex/boxes/x/data:/data"'));
@@ -192,7 +192,9 @@ test('generateCompose: blast radius — no bind exposes $HOME, ~/.clodex or an a
   const lines = yaml.split('\n');
   const hosts = [];
   for (let i = lines.indexOf('    volumes:') + 1; i < lines.length && lines[i].startsWith('      '); i++) {
+    if (!/^ {6}- /.test(lines[i])) continue;
     const entry = lines[i].replace(/^ +- /, '').replace(/^"|"$/g, '');
+    if (entry.startsWith('type: ')) continue;
     hosts.push(entry.split(':')[0]);
   }
   assert.ok(hosts.length >= 6, `expected every bind host, collected ${hosts.length}`);
@@ -306,15 +308,16 @@ test('generateCompose: a newline in any interpolated path cannot split the docum
   assert.strictEqual(hostile.split('\n').length, plain.split('\n').length,
     'a path containing a newline added lines to the compose document');
 
-  // …and the volumes block in particular holds only list items, never a
-  // fragment left behind by a broken entry.
   const lines = hostile.split('\n');
   const block = [];
   for (let i = lines.indexOf('    volumes:') + 1; i < lines.length && lines[i].startsWith('      '); i++) {
     block.push(lines[i]);
   }
   assert.ok(block.length >= 5, `the volumes block did not form: ${block.length} lines`);
-  for (const l of block) assert.match(l, /^ {6}- /, `orphan line under volumes: ${JSON.stringify(l)}`);
+  for (const l of block) {
+    assert.match(l, /^ {6}- |^ {8}(?:target: |tmpfs:$)|^ {10}mode: /,
+      `orphan line under volumes: ${JSON.stringify(l)}`);
+  }
 });
 
 test('generateCompose: a mount shadowing a reserved path THROWS (no broken box)', () => {
@@ -1156,6 +1159,45 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   assert.ok(yaml.includes(`- "${path.join(base, 'data')}:/data"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'dot')}:/home/clodex/.clodex"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'claude')}:/home/clodex/.claude"`));
+});
+
+test('generateCompose: the per-agent run dir is a tmpfs, nested inside the dot bind and before the library binds', () => {
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, libDir: '/h/lib',
+  });
+  const block = [
+    '      - type: tmpfs',
+    '        target: /home/clodex/.clodex/run',
+    '        tmpfs:',
+    '          mode: 1777',
+  ].join('\n');
+  const at = yaml.indexOf(block);
+  assert.ok(at >= 0, `the run tmpfs block is absent from:\n${yaml}`);
+  assert.strictEqual(yaml.indexOf(block, at + 1), -1, 'the run tmpfs block is emitted more than once');
+
+  const dotAt = yaml.indexOf(`- "${path.join(STATE_DIR, 'dot')}:/home/clodex/.clodex"`);
+  const roAt = yaml.indexOf(':ro"');
+  assert.ok(dotAt >= 0, 'the dot bind line is absent');
+  assert.ok(roAt >= 0, 'no read-only library bind was emitted');
+  assert.ok(dotAt < at, 'the tmpfs must follow the dot bind it nests inside');
+  assert.ok(at < roAt, 'the tmpfs must precede the read-only library binds');
+});
+
+test('generateCompose: a user mount at the run tmpfs target, or under it, is refused', () => {
+  assert.ok(RESERVED_MOUNT_TARGETS.includes('/home/clodex/.clodex/run'),
+    'the run tmpfs target is not in the reserved set');
+  for (const target of ['/home/clodex/.clodex/run', '/home/clodex/.clodex/run/lead']) {
+    assert.match(normalizeMounts([{ host: '/h', container: target }]).error || '', /shadow/,
+      `target ${target} must be refused`);
+    assert.throws(() => generateCompose({
+      image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null,
+      mounts: [{ host: '/h', container: target }],
+    }), /would shadow/, `target ${target} must throw`);
+  }
+  assert.deepStrictEqual(
+    normalizeMounts([{ host: '/h', container: '/home/clodex/runs' }]).mounts,
+    [{ host: '/h', container: '/home/clodex/runs', ro: false }],
+  );
 });
 
 test('source shape: every factory call in this file injects a registryDir (never the real ~/.clodex)', () => {

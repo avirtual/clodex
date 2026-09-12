@@ -43,7 +43,8 @@ function normalizeRef(raw) {
   return { ref: s };
 }
 
-const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.claude'];
+const RUN_TMPFS_TARGET = '/home/clodex/.clodex/run';
+const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', RUN_TMPFS_TARGET, '/home/clodex/.claude'];
 const MOUNT_TARGET_ROOT = '/home/clodex';
 const WORK_CONTAINER_DIR = '/home/clodex/work';
 
@@ -53,7 +54,7 @@ const CONTAINER_PORTS = { web: 8080, wirescope: 7800, wire: 7900 };
 
 // Read-only host binds layered on top of the clodex-dot volume, deliberately
 // SHADOWING these subpaths: the box reads host libraries live while still
-// writing run/, messages/, pending/, registry into the volume underneath.
+// writing messages/, pending/, registry into the volume underneath.
 const LIBRARY_MOUNT_DIRS = ['skills', 'agents', 'library'];
 
 const GHCR_REPO = 'ghcr.io/avirtual/clodex';
@@ -251,6 +252,10 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('    volumes:');
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'data')}:/data`)}`);
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'dot')}:/home/clodex/.clodex`)}`);
+  L.push('      - type: tmpfs');
+  L.push(`        target: ${RUN_TMPFS_TARGET}`);
+  L.push('        tmpfs:');
+  L.push('          mode: 1777');
   if (libDir) {
     for (const d of LIBRARY_MOUNT_DIRS) {
       L.push(`      - ${yamlQuote(`${path.join(libDir, d)}:/home/clodex/.clodex/${d}:ro`)}`);
