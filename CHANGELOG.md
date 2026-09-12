@@ -15,6 +15,7 @@ blocks a release.
 
 - The sandbox image now ships `clodex-run-tests.js`, so the `clodex-run-tests` exec grant works inside a box instead of failing with a module-not-found that the one-line stderr tail hid as `Node.js v22`.
 - Inside a sandbox box `[agent:memory remember]` works: the host library is mounted read-only per catalogue directory, so the box's agent memory dirs stay on its own writable state volume instead of under the read-only mount.
+- The sandbox image trusts every git repo inside the box, so a box seat no longer hits the dubious-ownership refusal on the mounted project folder or on the ticket worktrees beside it.
 
 ## 5.64.0 — 2026-09-12 — a team can be created straight into its own sandbox box
 
