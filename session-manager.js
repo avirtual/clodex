@@ -6480,7 +6480,11 @@ function createSessionManager(deps) {
       if (!store) return;
       const st = (getPeerManager() ? getPeerManager().statuses() : []).find((p) => p && p.id === peerId);
       const origin = (st && peerOriginSuffix(st, AGENT_NAME_RE)) || String(peerId);
-      for (const note of (Array.isArray(notes) ? notes : [])) {
+      const ordered = (Array.isArray(notes) ? notes : [])
+        .map((n, i) => ({ n, i }))
+        .sort((a, b) => ((a.n && a.n.createdAt) || 0) - ((b.n && b.n.createdAt) || 0) || b.i - a.i)
+        .map((e) => e.n);
+      for (const note of ordered) {
         if (!note || typeof note.body !== 'string') continue;
         const from = `${note.from || 'peer'}@${origin}`;
         const rec = store.add({ from, workspaceId: null, body: note.body });

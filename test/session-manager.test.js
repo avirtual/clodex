@@ -12923,6 +12923,22 @@ test('_deliverClaimedInbox: an unknown peer id falls back to the id as the suffi
   assert.strictEqual(added[0].from, 'hand-9@ghost-box');
 });
 
+// `/api/inbox` pages NEWEST-FIRST (stores.js page()), so a burst arrives here in
+// reverse of the order the box seat raised it. Stored as-is it sorts inverted in
+// the operator's inbox and toasts backwards. Two notes raised in one turn share a
+// millisecond, which is exactly the burst case — so createdAt alone cannot order
+// them and the page's own position breaks the tie.
+test('_deliverClaimedInbox: a newest-first page is stored oldest-first, ties included', () => {
+  const { m, added, toasts } = mkClaimedInbox(BOX_STATUS);
+  m._deliverClaimedInbox('team-clodex', [
+    { id: 'n3', from: 'lead', body: 'third', createdAt: 200 },
+    { id: 'n2', from: 'lead', body: 'second', createdAt: 100 },
+    { id: 'n1', from: 'lead', body: 'first', createdAt: 100 },
+  ]);
+  assert.deepStrictEqual(added.map((r) => r.body), ['first', 'second', 'third']);
+  assert.deepStrictEqual(toasts.map((t) => t.body), ['first', 'second', 'third']);
+});
+
 test('_deliverClaimedInbox: a bodyless note is skipped, not stored as undefined', () => {
   const { m, added, toasts } = mkClaimedInbox(BOX_STATUS);
   m._deliverClaimedInbox('team-clodex', [{ id: 'n1', from: 'lead' }, null, { id: 'n2', from: 'lead', body: 'real' }]);
