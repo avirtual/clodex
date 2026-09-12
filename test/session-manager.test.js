@@ -4747,6 +4747,58 @@ test('spawner-hint (t151): a hint failure NEVER fails the spawn (sync throw and 
   await new Promise((r) => setImmediate(r));
 });
 
+test('t848: spawn registers a non-default CLAUDE_CONFIG_DIR with a proxy that has capabilities.accounts', async () => {
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.67', capabilities: { accounts: true } },
+  });
+  const dir = pathReal.join(probe.root, 'acct-sub-2');
+  fsReal.mkdirSync(dir, { recursive: true });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: dir });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(probe.registered, [{ base: 'http://127.0.0.1:7811', dir }]);
+});
+
+test('t848: spawn registers nothing when the proxy lacks capabilities.accounts', async () => {
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.60', capabilities: { strip_mcp: { available: true, servers: [] } } },
+  });
+  const dir = pathReal.join(probe.root, 'acct-sub-2');
+  fsReal.mkdirSync(dir, { recursive: true });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: dir });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.ok(probe.m.sessions.get('seat'), 'create ran');
+  assert.deepStrictEqual(probe.registered, []);
+});
+
+test('t848: spawn registers nothing for the default dir', async () => {
+  const home = mkTmpRoot('clodex-home-');
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.67', capabilities: { accounts: true } },
+    claudeHome: () => home,
+  });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: home });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.ok(probe.m.sessions.get('seat'), 'create ran');
+  assert.deepStrictEqual(probe.registered, []);
+});
+
+test('t848: a register failure never fails the spawn', async () => {
+  const probe = mkHintProbe({
+    probeAnswer: { product: 'wirescope', version: 'v0.6.67', capabilities: { accounts: true } },
+    registerAccount: () => Promise.reject(new Error('boom')),
+  });
+  const dir = pathReal.join(probe.root, 'acct-sub-2');
+  fsReal.mkdirSync(dir, { recursive: true });
+  await probe.spawn('seat', { CLAUDE_CONFIG_DIR: dir });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.ok(probe.m.sessions.get('seat'), 'create ran');
+  assert.strictEqual(probe.warns.filter((w) => /account register .* skipped: boom/.test(w)).length, 1);
+});
+
 test('spawner-hint (t151): kill() of a seat that SET the hint clears its route row', (t) => {
   // kill() arms a 5s SIGKILL-fallback timer — mock it so the test process doesn't
   // hold open on it (the timer is production-correct; we just don't want to wait).
