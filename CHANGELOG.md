@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a team can be created straight into its own sandbox box
 
 - (internal) the box-side half of `team sandbox up` is a method the desktop can call without an intent, in preparation for teams created straight into a box.
 - A team manifest can carry `sandboxed: true`: the desktop then holds only a pointer to a team that runs inside its own sandbox box, and no desktop seat in that folder is treated as a member.
