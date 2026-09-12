@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a torn-down team box stops being dialled
 
 - `[agent:team sandbox down]` now also removes the box's `team-<name>` peer entry from settings, so a torn-down box stops being dialled; a `down` that fails leaves the entry in place.
 
