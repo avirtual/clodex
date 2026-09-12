@@ -103,6 +103,23 @@ test('the init sites this ordering protects still query at module scope', () => 
   }
 });
 
+test('the file peek names the seat that pushed it, and only then', () => {
+  const popover = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'files-popover.js'), 'utf8');
+  const peers = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'peers-ui.js'), 'utf8');
+  assert.match(popover, /async function openFilePeek\(/,
+    'ENTER: files-popover.js no longer declares openFilePeek — the pins below match nothing and would pass by vacuity');
+  assert.match(popover, /async function openFilePeek\(name, filePath, forceTab = null, line = null, keepHistory = false, pushedBy = null\)/,
+    'openFilePeek lost its pushedBy parameter — a pushed viewer can no longer say who pushed it');
+  assert.match(popover, /filePeekBy\.hidden = !pushedBy;/,
+    'the #file-peek-by span is no longer hidden when there is no pusher — an operator-opened viewer would show an empty label');
+  assert.match(popover, /onSessionFileView\(\(name, filePath\) => \{ openFilePeek\(name, filePath, null, null, false, name\); \}\)/,
+    'the [agent:file view] listener no longer passes the sending session as the pusher');
+  assert.match(peers, /openFilePeek\(key, args\.path, null, null, false, key\)/,
+    'the peer fileView mirror no longer passes its name@peer key as the pusher');
+  assert.match(HTML, /<span id="file-peek-by" hidden><\/span>/,
+    '#file-peek-by is gone from the peek title bar — the label has nowhere to render');
+});
+
 test('#main still creates the stacking context this test guards against', () => {
   // If #main ever stops being position:fixed the trap disappears and this whole
   // file is obsolete. Pinning it means the test fails loudly when the premise

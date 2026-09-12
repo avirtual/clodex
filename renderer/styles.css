@@ -1958,6 +1958,7 @@ html, body {
 }
 #file-peek-modal .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 10px; flex: none; }
 #file-peek-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; min-width: 0; }
+#file-peek-by { flex: none; white-space: nowrap; font-weight: 400; color: var(--text-dim); }
 .file-peek-controls { display: flex; align-items: center; gap: 6px; flex: none; }
 .file-peek-tab, .file-peek-open {
   font-size: 10px; padding: 2px 10px; border-radius: 4px; cursor: pointer;
