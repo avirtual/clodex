@@ -424,8 +424,12 @@ operator is waiting on it, and a second note before they answer is noise.
 commit and nothing else):
 - Read the brief. Decide the first ticket. It is almost always the suite
   runner: the merge gate runs `scripts/run-tests.js` at the root, and a repo
-  without one cannot pass a single ticket. A runner that finds no tests must
-  exit 0 with a `TOTALS:` line, not refuse.
+  without one cannot pass a single ticket.
+  The merge gate reads ONE line from the runner's stdout, the last match of exactly
+  `TOTALS: <n> pass, <n> fail, <n> tests` (e.g. `TOTALS: 22 pass, 0 fail, 22 tests`);
+  any other summary shape, or the line on stderr, is "no summary" and the ticket
+  escalates without a reviewer. A runner that finds no tests must print
+  `TOTALS: 0 pass, 0 fail, 0 tests` and exit 0, not refuse.
 - Your note confirms the plan in two or three sentences, then either lists
   the questions that BLOCK the first ticket (at most three; anything else
   waits) or reports the ticket you already filed.

@@ -142,6 +142,7 @@ const SUITE_STUBS = {
   crash: 'console.error("SyntaxError: Unexpected end of input");\nprocess.exit(1);\n',
   // Ran, exited 0, but never printed a summary. The false green this guards.
   silent: 'process.exit(0);\n',
+  totalsOnStderrOnly: 'console.error("TOTALS: 22 pass, 0 fail, 22 tests");\nprocess.exit(0);\n',
   // A sweep that discovered NO test files: node prints a valid summary and exits
   // 0, so this satisfies exit-0 and fail-0 both. It is a run that verified
   // nothing, which is the one thing that must never reach a reviewer.
@@ -1540,7 +1541,7 @@ test('a re-measure that could not RUN still rejects on the first run`s red', asy
     'with the first run`s names, unchanged — there is no second set to compare against');
   assert.ok(!/FAILING \(run 2\)/.test(sent[0].body),
     'and no run-2 line, which would claim a measurement that never happened');
-  assert.match(sent[0].body, /A re-measure was attempted and could not run: .*no TOTALS summary/,
+  assert.match(sent[0].body, /A re-measure was attempted and could not run: .*no "TOTALS: <n> pass, <n> fail, <n> tests" line/,
     'the hand is told the re-measure was tried, so a single set is not read as a loop that skipped it');
   assert.strictEqual(f.created.length, 0, 'no reviewer');
 });
@@ -1625,7 +1626,8 @@ test('a suite that cannot run at all ESCALATES rather than rejecting', async () 
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
   assert.match(esc[0].body, /verify: suite/, 'the escalation names the step it stopped at');
-  assert.match(esc[0].body, /no TOTALS summary/, 'and says the run never completed, not that tests failed');
+  assert.match(esc[0].body, /no "TOTALS: <n> pass, <n> fail, <n> tests" line/,
+    'and says the run never completed, naming the shape it wanted, not that tests failed');
   assert.strictEqual(esc[0].target, 'lead');
   assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
     'and the hand is NOT sent rework it cannot act on');
@@ -1652,7 +1654,25 @@ test('a runner that exits 0 printing NOTHING is not accepted as green', async ()
   assert.strictEqual(f.created.length, 0, 'exit 0 without evidence of a run must not reach a reviewer');
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
-  assert.match(esc[0].body, /no TOTALS summary/);
+  assert.match(esc[0].body, /no "TOTALS: <n> pass, <n> fail, <n> tests" line/);
+});
+
+test('a correct TOTALS line on STDERR escalates quoting the stdout side, not that line', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'totalsOnStderrOnly' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'a summary on the wrong stream is no summary, and reaches no reviewer');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.match(esc[0].body, /last stdout line: \(no stdout\)/,
+    'the quoted line comes from the stream the message names');
+  assert.ok(!/22 pass/.test(esc[0].body),
+    'so the escalation cannot quote the very line it says was never printed on stdout');
 });
 
 test('a branch with no test runner escalates, naming the missing runner', async () => {
@@ -3526,7 +3546,9 @@ test('t375: a run that produced no TOTALS carries its capture, not just a last l
   const r = await f.m._runTicketSuite(f.team, f.one());
 
   assert.strictEqual(r.ran, false, 'ENTER: this really is the never-ran arm, not a red suite');
-  assert.match(r.error, /no TOTALS summary/, 'ENTER: and it is the missing-summary path specifically');
+  assert.match(r.error, /no "TOTALS: <n> pass, <n> fail, <n> tests" line/, 'ENTER: and it is the missing-summary path specifically');
+  assert.match(r.error, /last stdout line: \(no stdout\)/,
+    'the error quotes the stdout side only — this fixture wrote its one line to stderr');
   assert.match(r.output, /SyntaxError: Unexpected end of input/,
     'the captured text comes out whole, for a caller that can preserve it');
 });
