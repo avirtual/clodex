@@ -493,7 +493,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
-    return { name, root: path.resolve(root), lead, roles, kit, file, dir: path.dirname(file), watchdogMs, version, droppedFields };
+    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, version, droppedFields };
   }
 
   function containsPath(root, cwd) {
@@ -605,6 +605,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       } catch {
         continue; // broken/invalid team — not a candidate
       }
+      if (m.sandboxed) continue;
       if (!cwdInProject(cwd, m.root)) continue;
       if (!best || m.root.length > best.root.length) best = m;
     }
@@ -628,7 +629,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
   }
 
-  function createTeam({ name, root, lead, roles, kit } = {}) {
+  function createTeam({ name, root, lead, roles, kit, sandboxed } = {}) {
     assertTeamName(name);
     const resolvedKit = resolveKit(kit);
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
@@ -681,6 +682,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       version: MANIFEST_VERSION,
       lead,
       root: resolvedRoot,
+      ...(sandboxed === true ? { sandboxed: true } : {}),
       ...(resolvedKit ? { kit: resolvedKit.name } : {}),
       roles: seedRoles,
     };

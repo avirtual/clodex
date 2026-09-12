@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A team manifest can carry `sandboxed: true`: the desktop then holds only a pointer to a team that runs inside its own sandbox box, and no desktop seat in that folder is treated as a member.
+
 ## 5.63.15 — 2026-09-12 — the Account picker is a Claude-only control
 
 - New Session and Edit Session no longer offer the Account picker on a Codex seat — it selects a Claude credential store, which Codex does not read.

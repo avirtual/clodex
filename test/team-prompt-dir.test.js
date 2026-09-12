@@ -239,6 +239,7 @@ test('t699: loadManifest and resolveTeam both carry `dir`, the directory holding
   assert.deepStrictEqual(m, {
     name: 't',
     root: repo,
+    sandboxed: false,
     lead: 't-lead',
     roles: m.roles,
     // The fixture seeds the real shipped library, kits included, so this create
