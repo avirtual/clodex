@@ -162,9 +162,7 @@ test('an inbox doorbell on a claim-marked peer emits the notes ONCE, then remove
     // written when the emit runs either way.)
     assert.deepStrictEqual(state.order, ['emit', 'remove:n1', 'remove:n2']);
 
-    // Drained: the box now serves an empty inbox, so a later claim is a no-op
-    // rather than a redelivery.
-    assert.deepStrictEqual(state.notes, []);
+    assert.deepStrictEqual(state.notes, [], 'the box is drained, so a later claim is a no-op and not a redelivery');
   }, { claimInbox: true });
 });
 
@@ -247,9 +245,10 @@ test('peer-wiring routes a peer-inbox emit to the session manager and never to t
 
     capturedEmit('peer-inbox', 'box', NOTES);
     assert.deepStrictEqual(delivered, [['box', NOTES]]);
-    // Note BODIES are operator mail. Putting them on the generic ipc fan-out
-    // would print a box seat's private note into every renderer log line.
-    assert.ok(!broadcasts.some((b) => b[0] === 'peer-inbox'));
+    assert.ok(
+      !broadcasts.some((b) => b[0] === 'peer-inbox'),
+      'note bodies are operator mail — on the generic ipc fan-out they print into every renderer log line',
+    );
   } finally {
     peerMod.PeerManager = origCtor;
   }
@@ -272,8 +271,9 @@ test("sandbox registerPeer marks its own box inbox: 'claim', on a fresh row and 
   createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => fresh, syncPeerManager: () => {} }).registerPeer(7820);
   assert.strictEqual(fresh._state().peers[0].inbox, 'claim');
 
-  // A row written before this feature existed: url and token already match, so
-  // the idempotence early-return used to fire and the box stayed silent forever.
+  // Url and token already match on this row, so the idempotence early-return
+  // used to fire before the mark was ever written — every box registered before
+  // this feature existed stayed silent forever.
   const old = fakeSettings({ peers: [{ id: SANDBOX_PEER_ID, label: 'sandbox', url: 'http://127.0.0.1:7820' }] });
   let synced = 0;
   createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => old, syncPeerManager: () => { synced++; } }).registerPeer(7820);
