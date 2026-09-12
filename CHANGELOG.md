@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a file viewer an agent pushes names the seat that pushed it
+## Unreleased
+
+## 5.63.13 — 2026-09-12 — a file viewer an agent pushes names the seat that pushed it
 
 - A file viewer an agent pushes onto the operator's screen with `[agent:file view]` now says which seat pushed it ("pushed by <name>", or "pushed by <name>@<peer>" for a box or peer seat) next to the path in its title bar; a viewer the operator opens themselves carries no label.
 
