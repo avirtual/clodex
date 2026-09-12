@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A seat spawned on a non-default account (`CLAUDE_CONFIG_DIR`) now registers that credential store with the proxy at spawn (`POST /_accounts`, only when the proxy announces `capabilities.accounts`), so the proxy refreshes that account's OAuth token on its own and an idle keep-warm seat on a second subscription no longer lapses after ~8 hours.
+
 ## 5.63.10 — 2026-09-12 — the keep-warm ping uses the seat's own login; wirescope v0.6.67
 
 - The keep-warm ping now re-reads the OAuth bearer from the SEAT's own credential store (its `CLAUDE_CONFIG_DIR`'s `.credentials.json`, or the Keychain item the CLI derives from that dir) instead of the default account's, so a seat on a second subscription no longer pings as the first one — which had been every ping a 429 on the wrong quota while the hold showed armed.
