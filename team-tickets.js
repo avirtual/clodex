@@ -51,6 +51,29 @@ const SANDBOX_HOME_DIR = '/home/clodex';
 const SANDBOX_WORK_DIR = '/home/clodex/work';
 const SANDBOX_TEAM_SUBDIRS = ['prompts', 'templates', 'exec'];
 
+function seedClaudeToken(mgr, box) {
+  if (typeof box.hasAuthToken !== 'function' || box.hasAuthToken()) return { state: 'present' };
+  const ids = (mgr.list ? mgr.list() : []).map((b) => b && b.id).filter((id) => id && id !== box.id);
+  const order = ['shared', 'sandbox', ...ids.filter((id) => id !== 'shared' && id !== 'sandbox')];
+  for (const id of order) {
+    if (!ids.includes(id)) continue;
+    const donor = mgr.get(id);
+    const tok = donor && typeof donor.authToken === 'function' ? donor.authToken() : null;
+    if (!tok) continue;
+    const r = box.setAuthToken(tok);
+    if (r && r.ok === false) return { state: 'failed', from: id, error: r.error };
+    return { state: 'seeded', from: id };
+  }
+  return { state: 'none' };
+}
+
+function claudeSeedClause(seed, boxId) {
+  if (!seed || seed.state === 'present') return '';
+  if (seed.state === 'seeded') return ` · claude token seeded from ${seed.from}`;
+  if (seed.state === 'failed') return ` · claude token from ${seed.from} NOT written: ${seed.error}`;
+  return ` · NO CLAUDE TOKEN: no box has one to borrow — paste a \`claude setup-token\` for ${boxId} in Settings ▸ Sandboxes, or log in inside the box`;
+}
+
 function leadSeedClause(result, leadName) {
   if (result && result.state !== 'failed') return ` · lead ${leadName} ${result.state}`;
   const error = (result && result.error) || 'the box reported nothing for it';
@@ -3011,6 +3034,8 @@ function createTicketMethods(deps, shared) {
       const saved = box.setConfig(patch);
       if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
 
+      const seed = seedClaudeToken(mgr, box);
+
       const r = action === 'rebuild' ? await box.rebuild() : await box.up();
       if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
       const st = await box.status();
@@ -3056,6 +3081,7 @@ function createTicketMethods(deps, shared) {
         + ` · healthy in ${Math.round((health.ms || 0) / 1000)}s`
         + ` · seeded ${ready.join(', ')}`
         + ` · token in ${file}`
+        + `${claudeSeedClause(seed, boxId)}`
         + `${leadSeedClause(leadResult, team.lead)}`);
     },
 
