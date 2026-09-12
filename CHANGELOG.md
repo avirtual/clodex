@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The bottom-panel tab bar no longer wraps "IPC Traffic" or crushes a tab's count badge into its Clear button when the quota chip is long: the tabs, badges and action buttons keep their width and the chip is what shortens (its full text stays in the tooltip).
+
 ## 5.63.11 — 2026-09-12 — the phone transcript gains a cursor; a second-account seat registers its login with the proxy
 
 - `GET /api/transcript/:name?since=<seq>` returns only the messages from that ordinal on (inclusive, so a growing reply is replaced rather than duplicated); each message now carries `seq`, the response carries `cursor` and `complete`, the peer hello announces `transcript-since`, the host caches the parsed transcript by file size and mtime so an idle poll no longer re-parses the JSONL, and the phone page uses the cursor.

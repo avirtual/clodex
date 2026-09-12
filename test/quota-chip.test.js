@@ -515,6 +515,35 @@ test('#drawer-quota max-width fits the longest string quotaChip can emit', () =>
     `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 389px) — the trailing refusal is what gets cut`);
 });
 
+test('the drawer tabs are rigid and the quota chip is the header\'s shrinker', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = (selectorRe) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, sel]) => sel.split(',').some((s) => selectorRe.test(s.trim())))
+    .map(([, sel, body]) => ({ sel: sel.trim(), body }));
+  const lastDeclaration = (selectorRe, prop) => {
+    let value = null;
+    for (const r of rules(selectorRe)) {
+      const m = r.body.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`));
+      if (m) value = m[1].trim();
+    }
+    return value;
+  };
+
+  assert.ok(rules(/^\.drawer-tab$/).length >= 1, 'ENTER: the .drawer-tab rule was found');
+  assert.ok(rules(/^#drawer-quota$/).length >= 1, 'ENTER: the #drawer-quota rule was found');
+
+  assert.strictEqual(lastDeclaration(/^\.drawer-tab$/, 'flex-shrink'), '0',
+    'a tab that shrinks is a tab whose label and badge get crushed together');
+  assert.strictEqual(lastDeclaration(/^\.drawer-tab$/, 'white-space'), 'nowrap',
+    '"IPC Traffic" wraps onto two lines inside a squeezed tab without this');
+  assert.strictEqual(lastDeclaration(/^\.drawer-badge$/, 'flex-shrink'), '0');
+  assert.strictEqual(lastDeclaration(/^#drawer-actions$/, 'flex-shrink'), '0');
+  assert.strictEqual(lastDeclaration(/^\.drawer-action-group$/, 'flex-shrink'), '0');
+  assert.strictEqual(lastDeclaration(/^#drawer-quota$/, 'min-width'), '0',
+    'flex-shrink:1 with the default min-width:auto never yields for nowrap text, so the chip pushes the tabs instead of ellipsising');
+});
+
 test('fmtQuotaReset: minutes, hours and days; nothing for absent or elapsed', () => {
   assert.strictEqual(fmtQuotaReset(90), '1m');
   assert.strictEqual(fmtQuotaReset(3600), '1h');

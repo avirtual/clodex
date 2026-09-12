@@ -3754,6 +3754,8 @@ html, body {
   font-family: inherit;
   cursor: pointer;
   padding: 0 10px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .drawer-tab:hover {
@@ -3781,6 +3783,7 @@ html, body {
   padding: 1px 7px;
   min-width: 18px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .drawer-badge.zero {
@@ -3798,11 +3801,13 @@ html, body {
   margin-left: auto;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .drawer-action-group {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 #drawer-header button:not(.drawer-tab) {
@@ -3886,6 +3891,7 @@ html, body {
   font-size: 10px;
   white-space: nowrap;
   flex-shrink: 1;
+  min-width: 0;
   max-width: 400px;
   overflow: hidden;
   text-overflow: ellipsis;
