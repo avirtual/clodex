@@ -144,7 +144,8 @@ function jsonlToMessages(jsonlPath, limit = 100) {
         text = content.filter(b => b && b.type === 'text' && b.text).map(b => b.text).join('\n');
       }
       // local slash-command echoes and injected context aren't conversation
-      text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+      text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+        .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '').trim();
       if (text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>')) text = '';
       // panel/phone sends carry the delivery label; the phone view is the
       // sender's own chat, so render them clean (peer labels stay visible).

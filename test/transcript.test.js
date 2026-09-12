@@ -96,6 +96,25 @@ test('jsonlToMessages: scrubs control chars, delivery label, and slash-command e
   } finally { fs.unlinkSync(p); }
 });
 
+test('jsonlToMessages: a harness task-notification block is not conversation and does not split the reply', () => {
+  const p = writeJsonl([
+    { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'checking' }] } },
+    { type: 'user', message: { content: [{ type: 'text', text: '<task-notification>\n<task-id>abc</task-id>\n<output-file>/tmp/x</output-file>\nresult body\n</task-notification>' }] } },
+    { type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] } },
+    { type: 'user', message: { content: [{ type: 'text', text: 'thanks <id> placeholder\n<task-notification>\n<task-id>def</task-id>\n</task-notification>' }] } },
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.strictEqual(msgs.length, 3);
+    assert.deepStrictEqual(msgs.map(m => [m.role, m.text, m.interim]), [
+      ['assistant', 'checking', true],
+      ['assistant', 'done', false],
+      ['user', 'thanks <id> placeholder', false],
+    ]);
+    assert.deepStrictEqual(msgs.map(m => m.seq), [0, 1, 2]);
+  } finally { fs.unlinkSync(p); }
+});
+
 test('jsonlToMessages: consecutive same-role entries merge into one bubble', () => {
   const p = writeJsonl([
     { type: 'assistant', message: { content: [{ type: 'text', text: 'part one' }] } },
