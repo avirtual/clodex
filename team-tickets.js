@@ -6765,7 +6765,7 @@ function createTicketMethods(deps, shared) {
       const all = [...String(res.stdout || '').matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
       const totals = all.length ? all[all.length - 1] : null;
       if (!totals) {
-        const last = text.trim().split('\n').filter((l) => l.trim()).pop() || '(no output)';
+        const last = String(res.stdout || '').trim().split('\n').filter((l) => l.trim()).pop() || '(no stdout)';
         out.error = `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — last stdout line: ${last.slice(0, 300)}`;
         out.output = text;
         return out;
