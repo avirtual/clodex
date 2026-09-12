@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The `inbox: 'claim'` mark a sandbox writes on its box's peer entry now survives the settings sanitizer, so a box seat's `[agent:notify-user]` really reaches the desktop inbox — before this the mark was stripped on save and the 5.63.5 forwarding never ran.
+
 ## 5.63.6 — 2026-09-12 — a box survives spawning its first seat
 
 - A sandbox box mounts its per-agent runtime dir (`~/.clodex/run`) as a tmpfs instead of leaving it on the host-bound state dir, so spawning a seat inside the box no longer dies on the `chmod` of its socket (Docker Desktop's file sharing refuses `chmod` on a socket inode, which crashed the box and left `team sandbox up` reporting `fetch failed`).
