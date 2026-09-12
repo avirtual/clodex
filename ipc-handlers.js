@@ -17,6 +17,7 @@ const {
 } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
+const { BOX_ID_RE } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
@@ -129,6 +130,23 @@ function registerIpcHandlers(deps) {
     return res;
   });
 
+  async function createBareTeamBox(team, mgr, boxId, lines) {
+    let box = mgr.get(boxId);
+    if (!box) {
+      const made = mgr.create(boxId, `${team.name} team`);
+      if (made && made.ok === false) return { ok: false, team, webUrl: null, lines, error: made.error };
+      box = mgr.get(boxId);
+      if (!box) return { ok: false, team, webUrl: null, lines, error: `sandbox ${boxId} could not be created` };
+    }
+    const r = await manager._bringUpTeamBox(team, {
+      mgr, box, boxId, patch: { workDir: team.root }, action: 'up', reply: (l) => lines.push(l),
+    });
+    if (!r || !r.ok) {
+      return { ok: false, team, webUrl: null, lines, error: lines[lines.length - 1] || `sandbox ${boxId} could not be brought up` };
+    }
+    return { ok: true, team, webUrl: r.webUrl || null, lines };
+  }
+
   // The manifest write with NO spawn (t288): the Teams menu creates a team before
   // any seat exists, so there is nothing to adopt as lead. `lead` is a seat NAME
   // the manifest records, and the default `<team>-lead` names a seat that has
@@ -141,10 +159,19 @@ function registerIpcHandlers(deps) {
   // single gate; resolving it here would silently accept a relative root against
   // whatever cwd the main process happens to have.
   handle('team:createBare', (_e, spec) => {
-    const { name, root, lead, kit } = spec || {};
+    const { name, root, lead, kit, sandboxed } = spec || {};
+    const mgr = sandboxed ? getSandboxManager() : null;
+    if (sandboxed && !mgr) return { ok: false, error: 'sandboxes are disabled on this host' };
+    const boxId = `team-${name}`;
+    if (sandboxed && !BOX_ID_RE.test(boxId)) {
+      return {
+        ok: false,
+        error: `a sandboxed team needs a name that fits a box id: ${boxId} must match ${BOX_ID_RE} — rename the team`,
+      };
+    }
     let team;
     try {
-      team = createTeam({ name, root, lead: defaultLeadSeat(name, lead), kit });
+      team = createTeam({ name, root, lead: defaultLeadSeat(name, lead), kit, sandboxed: !!sandboxed });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -154,7 +181,10 @@ function registerIpcHandlers(deps) {
     // (create, then use the menu) still shows (no teams). A throwing rebuild must
     // not turn the landed write into {ok:false}; the retry would hit "already exists".
     refreshAppMenu();
-    return { ok: true, team };
+    if (!sandboxed) return { ok: true, team };
+    const lines = [];
+    return createBareTeamBox(team, mgr, boxId, lines)
+      .catch((err) => ({ ok: false, team, webUrl: null, lines, error: lines[lines.length - 1] || err.message }));
   });
 
   handle('team:join', async (e, spec) => {

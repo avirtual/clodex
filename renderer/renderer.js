@@ -3900,6 +3900,7 @@ function openCreateTeamDialog() {
           <label>Team name</label>
           <input type="text" data-f="name" spellcheck="false">
         </div>
+        <label class="team-create-check"><input type="checkbox" data-f="sandboxed"> Run this team in a sandbox box</label>
         <div class="team-create-error hidden"></div>
         <div class="dialog-actions">
           <div style="flex:1;"></div>
@@ -3909,7 +3910,9 @@ function openCreateTeamDialog() {
       </div>`;
     const rootInput = overlay.querySelector('[data-f="root"]');
     const nameInput = overlay.querySelector('[data-f="name"]');
+    const sandboxedInput = overlay.querySelector('[data-f="sandboxed"]');
     const errEl = overlay.querySelector('.team-create-error');
+    const okBtn = overlay.querySelector('[data-act="ok"]');
     document.body.appendChild(overlay);
 
     // The name follows the root's basename until the operator takes it over —
@@ -3926,22 +3929,37 @@ function openCreateTeamDialog() {
 
     const done = (val) => { overlay.remove(); resolve(val); };
     const submit = async () => {
+      if (okBtn.disabled) return;
       errEl.classList.add('hidden');
-      const res = await window.api.teamCreateBare({
-        name: nameInput.value.trim(),
-        root: rootInput.value.trim(),
-      });
+      const name = nameInput.value.trim();
+      okBtn.disabled = true;
+      okBtn.textContent = 'Creating…';
+      let res;
+      try {
+        res = await window.api.teamCreateBare({
+          name,
+          root: rootInput.value.trim(),
+          sandboxed: sandboxedInput.checked,
+        });
+      } finally {
+        okBtn.disabled = false;
+        okBtn.textContent = 'Create';
+      }
       if (!res || !res.ok) {
         errEl.textContent = (res && res.error) || 'could not create the team';
         errEl.classList.remove('hidden');
         return;
       }
       done(res.team);
+      if (res.webUrl) {
+        showToast(`team ${name} is up in its box — ${res.webUrl}`, { kind: 'info', duration: 15000 });
+        return;
+      }
       // Land somewhere useful: the new team's roles popover, the surface the
       // operator came here to reach, rather than a dismissed dialog.
-      openTeamRolesPopover(nameInput.value.trim(), null);
+      openTeamRolesPopover(name, null);
     };
-    overlay.querySelector('[data-act="ok"]').addEventListener('click', submit);
+    okBtn.addEventListener('click', submit);
     overlay.querySelector('[data-act="cancel"]').addEventListener('click', () => done(null));
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(null); });
     for (const inp of [rootInput, nameInput]) {

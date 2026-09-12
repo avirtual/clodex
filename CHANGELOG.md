@@ -15,6 +15,7 @@ blocks a release.
 
 - (internal) the box-side half of `team sandbox up` is a method the desktop can call without an intent, in preparation for teams created straight into a box.
 - A team manifest can carry `sandboxed: true`: the desktop then holds only a pointer to a team that runs inside its own sandbox box, and no desktop seat in that folder is treated as a member.
+- Create Team has a "Run this team in a sandbox box" checkbox: the folder and a pointer manifest are created on the desktop, the box `team-<name>` is built from the released image with that folder mounted as its work dir, the team is shipped in and its lead boots inside — so the team keeps working while the desktop reboots. The Teams menu lists it as "<name> — sandboxed" and opens the box's web UI.
 
 ## 5.63.15 — 2026-09-12 — the Account picker is a Claude-only control
 
