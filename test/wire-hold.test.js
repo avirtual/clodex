@@ -3,6 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { HoldKeeper, holdDecision, pingOutcome, rearmPlan } = require('../wire/hold');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { WireProxy } = require('../wire/proxy');
@@ -754,4 +757,66 @@ test('a perpetual hold survives an idle-seat token refresh gap and pings again a
   assert.equal(sent.length, 1, 'the tick after the refresh replays');
   assert.equal(sent[0].headers.authorization, 'Bearer sk-ant-oat01-refreshed');
   assert.equal(keeper.holds()[SID].lastResult, 'warmed');
+});
+
+test('ping: the bearer is re-read from the SEAT\'s credential store', async () => {
+  const seen = [];
+  const auth = (dir) => {
+    seen.push(dir);
+    return { accessToken: 'sk-ant-oat01-fresh', expiresAt: Date.now() + 3600_000 };
+  };
+  const { store, keeper, sent } = rig({ auth, configDirFor: (sid) => (sid === SID ? '/tmp/acct-x' : null) });
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, { authorization: OAT }, 'http://up/v1/messages');
+  stampWarm(store, obj);
+
+  const res = await keeper.ping(SID);
+  assert.equal(res.warmed, true, 'ENTER: the ping reached the wire');
+  assert.deepStrictEqual(seen, ['/tmp/acct-x']);
+  assert.equal(sent[0].headers.authorization, 'Bearer sk-ant-oat01-fresh');
+});
+
+test('ping: a seat with no config dir re-reads the default store', async () => {
+  for (const [label, opts] of [
+    ['resolver returns null', (auth) => ({ auth, configDirFor: () => null })],
+    ['no resolver at all', (auth) => ({ auth })],
+  ]) {
+    const seen = [];
+    const auth = (dir) => {
+      seen.push(dir);
+      return { accessToken: 'sk-ant-oat01-fresh', expiresAt: Date.now() + 3600_000 };
+    };
+    const { store, keeper, sent } = rig(opts(auth));
+    const obj = makeObj();
+    keeper.noteRequest(SID, obj, { authorization: OAT }, 'http://up/v1/messages');
+    stampWarm(store, obj);
+
+    const res = await keeper.ping(SID);
+    assert.equal(res.warmed, true, `${label}: ENTER: the ping reached the wire`);
+    assert.deepStrictEqual(seen, [null], label);
+    assert.equal(sent[0].headers.authorization, 'Bearer sk-ant-oat01-fresh', label);
+  }
+});
+
+test('keychainServiceFor derives the CLI\'s suffixed item name', () => {
+  const { keychainServiceFor, readClaudeAuth } = require('../wire/claude-auth');
+
+  for (const [dir, expected] of [
+    [undefined, 'Claude Code-credentials'],
+    ['/Users/bogdan/.claude', 'Claude Code-credentials-2358b87d'],
+    ['/Users/bogdan/.clodex/accounts/opsguru', 'Claude Code-credentials-6f0dcb4b'],
+    ['/Users/bogdan/.clodex/accounts/opsguru/', 'Claude Code-credentials-f9530948'],
+  ]) {
+    assert.equal(keychainServiceFor(dir), expected, String(dir));
+  }
+
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'wire-hold-cred-'));
+  fs.writeFileSync(path.join(tmpdir, '.credentials.json'),
+    '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-file","expiresAt":9999999999999}}');
+  assert.equal(readClaudeAuth(tmpdir).accessToken, 'sk-ant-oat01-file');
+
+  if (process.platform !== 'darwin') {
+    assert.deepStrictEqual(readClaudeAuth(path.join(tmpdir, 'absent')),
+      { accessToken: null, expiresAt: null });
+  }
 });

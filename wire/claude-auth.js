@@ -21,6 +21,7 @@
 // DECLINE its ping, never send the stale one: a decline costs no failure
 // strike, and the 2-strike rule still has to mean "this credential is dead".
 
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -38,14 +39,21 @@ function shape(raw) {
   };
 }
 
-function readClaudeAuth() {
+function keychainServiceFor(configDir) {
+  if (!configDir) return KEYCHAIN_SERVICE;
+  const h = crypto.createHash('sha256').update(String(configDir)).digest('hex').slice(0, 8);
+  return `${KEYCHAIN_SERVICE}-${h}`;
+}
+
+function readClaudeAuth(configDir) {
+  const credFile = configDir ? path.join(String(configDir), '.credentials.json') : CRED_FILE;
   try {
-    if (fs.existsSync(CRED_FILE)) return shape(JSON.parse(fs.readFileSync(CRED_FILE, 'utf8')));
+    if (fs.existsSync(credFile)) return shape(JSON.parse(fs.readFileSync(credFile, 'utf8')));
   } catch { /* fall through to the keychain */ }
   if (process.platform !== 'darwin') return { accessToken: null, expiresAt: null };
   try {
     const out = execFileSync('/usr/bin/security',
-      ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
+      ['find-generic-password', '-s', keychainServiceFor(configDir), '-w'],
       { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
     return shape(JSON.parse(out));
   } catch {
@@ -53,4 +61,4 @@ function readClaudeAuth() {
   }
 }
 
-module.exports = { readClaudeAuth, CRED_FILE, KEYCHAIN_SERVICE };
+module.exports = { readClaudeAuth, keychainServiceFor, CRED_FILE, KEYCHAIN_SERVICE };

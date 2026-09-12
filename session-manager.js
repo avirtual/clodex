@@ -807,7 +807,19 @@ function createSessionManager(deps) {
             // the shadow log must never gain a line holding either.
             onError: (message) => this._shadowLog({ type: 'wire-hold-store-error', error: message }),
           });
-          hold = new HoldKeeper({ warmth, entryStore });
+          hold = new HoldKeeper({
+            warmth,
+            entryStore,
+            configDirFor: (sid) => {
+              for (const s of this.sessions.values()) {
+                if (s.sessionId !== sid) continue;
+                const entry = getPersistence().get(s.name);
+                const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
+                return dir || null;
+              }
+              return null;
+            },
+          });
           hold.on('hold', (ev) => this._shadowLog({ type: 'wire-hold', ...ev }));
           hold.on('hold', (ev) => this._onHoldLifecycle(ev)); // operator-facing subset → clodex.log
           hold.start();
