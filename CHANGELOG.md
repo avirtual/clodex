@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A sandbox box mounts its per-agent runtime dir (`~/.clodex/run`) as a tmpfs instead of leaving it on the host-bound state dir, so spawning a seat inside the box no longer dies on the `chmod` of its socket (Docker Desktop's file sharing refuses `chmod` on a socket inode, which crashed the box and left `team sandbox up` reporting `fetch failed`).
+
 ## 5.63.5 — 2026-09-12 — a box seat's notify-user reaches the desktop inbox
 
 - A peer reply larger than the 1MB response guard now reports `response too large` to the caller instead of silently dropping the callback, so a dm or inbox claim against an oversize page fails loudly and the next claim still runs.

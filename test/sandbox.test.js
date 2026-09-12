@@ -23,7 +23,7 @@ const {
   resolveImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState,
   normalizeMounts, translatePath, composeProjectName,
-  DEFAULT_CONFIG, CONTAINER_PORTS, SANDBOX_PEER_ID,
+  DEFAULT_CONFIG, CONTAINER_PORTS, SANDBOX_PEER_ID, RESERVED_MOUNT_TARGETS,
 } = require('../sandbox');
 
 // Compose calls are now `['compose','-p',<project>,'-f',<path>, <sub…>]` — the
@@ -376,7 +376,7 @@ test('normalizeMounts: reserved-path shadow is refused in both nesting direction
 // The enumerations elsewhere in this file can only ever check MEMBERS of
 // RESERVED_MOUNT_TARGETS and paths that visibly nest under one. What they
 // structurally exclude is the class of targets that DOMINATE the whole set — a
-// target does not have to resemble any reserved path to shadow all four, and
+// target does not have to resemble any reserved path to shadow all five, and
 // `/` is that class's extreme. It was the one value the guard admitted, because
 // the old prefix test built `'//'` and nothing starts with that. A seventh
 // entry in the enumeration could never have caught this; the defect lives in
@@ -1156,6 +1156,43 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   assert.ok(yaml.includes(`- "${path.join(base, 'data')}:/data"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'dot')}:/home/clodex/.clodex"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'claude')}:/home/clodex/.claude"`));
+});
+
+test('generateCompose: the per-agent run dir is an exec,mode=1777 tmpfs on the service tmpfs key', () => {
+  const yaml = generateCompose({
+    image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, libDir: '/h/lib',
+    mounts: [{ host: '/h/extra' }],
+  });
+  const block = '    tmpfs:\n      - /home/clodex/.clodex/run:exec,mode=1777\n';
+  const at = yaml.indexOf(block);
+  assert.ok(at >= 0, `the run tmpfs key is absent from:\n${yaml}`);
+  assert.strictEqual(yaml.indexOf(block, at + 1), -1, 'the run tmpfs key is emitted more than once');
+  assert.doesNotMatch(yaml, /type: tmpfs/);
+
+  const lines = yaml.split('\n');
+  const vols = lines.indexOf('    volumes:');
+  let last = vols + 1;
+  while (last < lines.length && lines[last].startsWith('      ')) last++;
+  assert.ok(vols >= 0 && last - vols > 6, `the volumes block did not form: ${last - vols} lines`);
+  assert.strictEqual(lines[last], '    tmpfs:', 'the tmpfs key must follow the last volumes entry');
+  assert.strictEqual(lines[last + 1], '      - /home/clodex/.clodex/run:exec,mode=1777');
+});
+
+test('generateCompose: a user mount at the run tmpfs target, or under it, is refused', () => {
+  assert.ok(RESERVED_MOUNT_TARGETS.includes('/home/clodex/.clodex/run'),
+    'the run tmpfs target is not in the reserved set');
+  for (const target of ['/home/clodex/.clodex/run', '/home/clodex/.clodex/run/lead']) {
+    assert.match(normalizeMounts([{ host: '/h', container: target }]).error || '', /shadow/,
+      `target ${target} must be refused`);
+    assert.throws(() => generateCompose({
+      image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null,
+      mounts: [{ host: '/h', container: target }],
+    }), /would shadow/, `target ${target} must throw`);
+  }
+  assert.deepStrictEqual(
+    normalizeMounts([{ host: '/h', container: '/home/clodex/runs' }]).mounts,
+    [{ host: '/h', container: '/home/clodex/runs', ro: false }],
+  );
 });
 
 test('source shape: every factory call in this file injects a registryDir (never the real ~/.clodex)', () => {

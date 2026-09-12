@@ -43,7 +43,9 @@ function normalizeRef(raw) {
   return { ref: s };
 }
 
-const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.claude'];
+const RUN_TMPFS_TARGET = '/home/clodex/.clodex/run';
+const RUN_TMPFS_OPTIONS = 'exec,mode=1777';
+const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', RUN_TMPFS_TARGET, '/home/clodex/.claude'];
 const MOUNT_TARGET_ROOT = '/home/clodex';
 const WORK_CONTAINER_DIR = '/home/clodex/work';
 
@@ -53,7 +55,7 @@ const CONTAINER_PORTS = { web: 8080, wirescope: 7800, wire: 7900 };
 
 // Read-only host binds layered on top of the clodex-dot volume, deliberately
 // SHADOWING these subpaths: the box reads host libraries live while still
-// writing run/, messages/, pending/, registry into the volume underneath.
+// writing messages/, pending/, registry into the volume underneath.
 const LIBRARY_MOUNT_DIRS = ['skills', 'agents', 'library'];
 
 const GHCR_REPO = 'ghcr.io/avirtual/clodex';
@@ -109,7 +111,7 @@ function defaultMountTarget(hostPath) {
 // as surely as one nested inside it.
 // The parent's separator is appended only when it is not already there. Without
 // that, `/` built the prefix `'//'`, which no reserved path starts with, so the
-// single target that dominates all four — root — was the one value this guard
+// single target that dominates all five — root — was the one value this guard
 // admitted. Every enumerated reserved path was refused correctly; the value that
 // is not a member but a prefix of every member was not.
 function mountTargetsConflict(a, b) {
@@ -275,6 +277,8 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   for (const mnt of resolvedMounts.mounts) {
     L.push(`      - ${yamlQuote(`${mnt.host}:${mnt.container}${mnt.ro ? ':ro' : ''}`)}`);
   }
+  L.push('    tmpfs:');
+  L.push(`      - ${RUN_TMPFS_TARGET}:${RUN_TMPFS_OPTIONS}`);
   L.push('    init: true');
   L.push('    restart: always');
   L.push('    healthcheck:');
