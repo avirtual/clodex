@@ -430,7 +430,10 @@ test('the dialog carries the sandboxed checkbox and passes it through', () => {
   assert.ok(end > 0, 'ENTER: the end of openCreateTeamDialog was found');
   const body = rest.slice(0, end);
 
-  assert.match(body, /data-f="sandboxed"/, 'the checkbox itself');
+  // The MARKUP, not the querySelector that reads it: a pin on the bare attribute
+  // matches the lookup line too and stays green with the input itself misspelt.
+  assert.match(body, /<input type="checkbox" data-f="sandboxed">/, 'the checkbox itself');
+  assert.match(body, /querySelector\('\[data-f="sandboxed"\]'\)/, 'and the lookup that finds it');
   assert.match(body, /sandboxed: sandboxedInput\.checked/, 'and it is what teamCreateBare is told');
   assert.match(body, /Creating…/, 'a box takes minutes, so OK says so while the invoke is pending');
   assert.match(body, /res\.webUrl/, 'and a box that came up routes to its web UI, not the local roles popover');
