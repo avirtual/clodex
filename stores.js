@@ -227,6 +227,7 @@ function sanitizePeers(raw, prior) {
       // survives; truthy-but-not-true is dropped.
       ...(p.disabled === true ? { disabled: true } : {}),
       ...(p.relayAllowed === true ? { relayAllowed: true } : {}),
+      ...(p.inbox === 'claim' ? { inbox: 'claim' } : {}),
       // No `shellAllowed` here on purpose: the peer-terminal grant is a
       // SERVING-side setting (top-level `peerShellEnabled`) and never belonged
       // on an outbound record. legacyShellGrant below reads the raw input for

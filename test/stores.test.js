@@ -328,6 +328,31 @@ test('uiSettings: peer relayAllowed + disabled survive the sanitize round-trip (
   } finally { cleanup(); }
 });
 
+test("uiSettings: a peer's inbox:'claim' mark survives the sanitize round-trip (presence-encoded)", () => {
+  const { userData, registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.uiSettings.set({ peers: [
+      { id: 'box', label: 'B', url: 'http://b', inbox: 'claim' },
+      { id: 'other', label: 'O', url: 'http://o', inbox: 'yes' },
+    ] });
+    const claimed = { id: 'box', label: 'B', url: 'http://b', sshHost: null,
+      remotePort: 7900, deployFolder: null, inbox: 'claim' };
+    const plain = { id: 'other', label: 'O', url: 'http://o', sshHost: null,
+      remotePort: 7900, deployFolder: null };
+    assert.deepStrictEqual(stores.uiSettings.get().peers, [claimed, plain],
+      "inbox:'claim' survives sanitizePeers; any other value is dropped");
+    stores.uiSettings.set({ theme: stores.uiSettings.get().theme });
+    assert.deepStrictEqual(stores.uiSettings.get().peers, [claimed, plain],
+      'and survives a later unrelated set() (no clobber)');
+    const reopened = initStores(userData, { log: console, registryDir,
+      resourcesDir: path.join(registryDir, '__no_seed__'),
+      skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+      envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json') });
+    assert.deepStrictEqual(reopened.uiSettings.get().peers, [claimed, plain],
+      'the mark is on DISK, so a fresh process still claims the box inbox');
+  } finally { cleanup(); }
+});
+
 test('uiSettings: peer auth token — set, trim, cap 256, and absence stays absent', () => {
   const { stores, cleanup } = freshStores();
   try {
