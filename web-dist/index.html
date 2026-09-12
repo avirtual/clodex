@@ -3518,6 +3518,16 @@ body {
   font-size: 11px;
   opacity: 0.7;
 }
+.team-create-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.team-create-check input {
+  margin: 0;
+}
 .team-create-error {
   color: var(--error);
   font-size: 12px;
@@ -39653,6 +39663,7 @@ Click for live activity`;
           <label>Team name</label>
           <input type="text" data-f="name" spellcheck="false">
         </div>
+        <label class="team-create-check"><input type="checkbox" data-f="sandboxed"> Run this team in a sandbox box</label>
         <div class="team-create-error hidden"></div>
         <div class="dialog-actions">
           <div style="flex:1;"></div>
@@ -39662,7 +39673,9 @@ Click for live activity`;
       </div>`;
           const rootInput = overlay.querySelector('[data-f="root"]');
           const nameInput = overlay.querySelector('[data-f="name"]');
+          const sandboxedInput = overlay.querySelector('[data-f="sandboxed"]');
           const errEl = overlay.querySelector(".team-create-error");
+          const okBtn = overlay.querySelector('[data-act="ok"]');
           document.body.appendChild(overlay);
           let nameTouched = false;
           nameInput.addEventListener("input", () => {
@@ -39678,20 +39691,35 @@ Click for live activity`;
             resolve(val);
           };
           const submit = async () => {
+            if (okBtn.disabled) return;
             errEl.classList.add("hidden");
-            const res = await window.api.teamCreateBare({
-              name: nameInput.value.trim(),
-              root: rootInput.value.trim()
-            });
+            const name = nameInput.value.trim();
+            okBtn.disabled = true;
+            okBtn.textContent = "Creating\u2026";
+            let res;
+            try {
+              res = await window.api.teamCreateBare({
+                name,
+                root: rootInput.value.trim(),
+                sandboxed: sandboxedInput.checked
+              });
+            } finally {
+              okBtn.disabled = false;
+              okBtn.textContent = "Create";
+            }
             if (!res || !res.ok) {
               errEl.textContent = res && res.error || "could not create the team";
               errEl.classList.remove("hidden");
               return;
             }
             done(res.team);
-            openTeamRolesPopover(nameInput.value.trim(), null);
+            if (res.webUrl) {
+              showToast(`team ${name} is up in its box \u2014 ${res.webUrl}`, { kind: "info", duration: 15e3 });
+              return;
+            }
+            openTeamRolesPopover(name, null);
           };
-          overlay.querySelector('[data-act="ok"]').addEventListener("click", submit);
+          okBtn.addEventListener("click", submit);
           overlay.querySelector('[data-act="cancel"]').addEventListener("click", () => done(null));
           overlay.addEventListener("mousedown", (e) => {
             if (e.target === overlay) done(null);

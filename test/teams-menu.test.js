@@ -74,6 +74,48 @@ function fakeManager(created, live = []) {
   };
 }
 
+function sandboxHandlers(home, {
+  mgrBoxes = ['team-shop'], noManager = false, bringUp, createMade,
+} = {}) {
+  const real = createTeamManifest({ fs, clodexHome: home });
+  const createArgs = [];
+  const createTeam = (spec) => { createArgs.push(spec); return real.createTeam(spec); };
+  const boxes = new Map(mgrBoxes.map((id) => [id, { id }]));
+  const mgrCalls = [];
+  const mgr = {
+    get: (id) => boxes.get(id) || null,
+    create: (id, label) => {
+      mgrCalls.push([id, label]);
+      if (createMade) return createMade;
+      boxes.set(id, { id });
+      return { ok: true, box: { id, label } };
+    },
+  };
+  const upCalls = [];
+  const manager = {
+    sessions: new Map(),
+    list: () => [],
+    create: async () => { throw new Error('a sandboxed create must not spawn a local seat'); },
+    _bringUpTeamBox: async (team, opts) => {
+      upCalls.push([team.name, { patch: opts.patch, action: opts.action, boxId: opts.boxId }]);
+      return bringUp ? bringUp(team, opts) : (opts.reply('sandbox team-shop up @ abcdef12'),
+        { ok: true, record: {}, webUrl: 'http://127.0.0.1:7812' });
+    },
+  };
+  const handlers = registerWith({
+    manager,
+    createTeam,
+    listTeams: real.listTeams,
+    loadManifest: real.loadManifest,
+    getSandboxManager: () => (noManager ? null : mgr),
+    refreshAppMenu: () => {},
+    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    persistence: { setStripLevel: () => {}, get: () => null },
+    workspaceOfSender: () => 'ws1',
+  });
+  return { handlers, createArgs, upCalls, mgrCalls, listTeams: real.listTeams };
+}
+
 function bareHandlers(home, created, { live = [] } = {}) {
   const { createTeam, listTeams, loadManifest } = createTeamManifest({ fs, clodexHome: home });
   // The app menu is a rebuilt TEMPLATE with no open-time hook, so every write
@@ -297,11 +339,108 @@ test('the 64-character seat limit binds at exactly the boundary, both sides', as
   assert.match(over.error, /too long/);
 });
 
+test('a sandboxed bare create writes a POINTER manifest and brings its box up', async () => {
+  const home = mkHome();
+  const { handlers, createArgs, upCalls } = sandboxHandlers(home);
+
+  const res = await handlers['team:createBare']({}, { name: 'shop', root: '/proj/shop', sandboxed: true });
+
+  assert.deepStrictEqual(createArgs, [{
+    name: 'shop', root: '/proj/shop', lead: 'shop-lead', kit: undefined, sandboxed: true,
+  }], 'the checkbox reaches the WRITER — that boolean is what makes the manifest a pointer');
+  assert.deepStrictEqual(upCalls, [['shop', {
+    boxId: 'team-shop', action: 'up', patch: { workDir: '/proj/shop' },
+  }]], 'the host folder is mounted as the box work dir, and NO ref: a packaged app resolves the released image');
+  assert.deepStrictEqual(res, {
+    ok: true,
+    team: res.team,
+    webUrl: 'http://127.0.0.1:7812',
+    lines: ['sandbox team-shop up @ abcdef12'],
+  });
+  assert.strictEqual(res.team.sandboxed, true);
+});
+
+test('a sandboxed create on a host with sandboxes off writes NOTHING', async () => {
+  const home = mkHome();
+  const { handlers, createArgs, listTeams } = sandboxHandlers(home, { noManager: true });
+
+  const res = await handlers['team:createBare']({}, { name: 'shop', root: '/proj/shop', sandboxed: true });
+
+  assert.deepStrictEqual(res, { ok: false, error: 'sandboxes are disabled on this host' });
+  assert.deepStrictEqual(createArgs, [],
+    'the manager check precedes the write: a pointer manifest for a box that can never be built is unretryable');
+  assert.deepStrictEqual(listTeams(), []);
+});
+
+test('a box phase that fails carries the reply stream as the error — _bringUpTeamBox returns a bare {ok:false}', async () => {
+  const home = mkHome();
+  const { handlers } = sandboxHandlers(home, {
+    bringUp: (_t, opts) => {
+      opts.reply('team shop shipped into the box (teams/shop)');
+      opts.reply('error: health check failed');
+      return { ok: false };
+    },
+  });
+
+  const res = await handlers['team:createBare']({}, { name: 'shop', root: '/proj/shop', sandboxed: true });
+
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error, 'error: health check failed',
+    'the only reason lives in the reply stream, so the last line is the message');
+  assert.deepStrictEqual(res.lines, [
+    'team shop shipped into the box (teams/shop)',
+    'error: health check failed',
+  ]);
+  assert.strictEqual(res.team.name, 'shop', 'the team was written before the box phase and still exists');
+});
+
+test('a THROWING box phase is reported, not propagated to the renderer as a rejection', async () => {
+  const home = mkHome();
+  const { handlers } = sandboxHandlers(home, {
+    bringUp: () => { throw new Error('docker is not running'); },
+  });
+
+  const res = await handlers['team:createBare']({}, { name: 'shop', root: '/proj/shop', sandboxed: true });
+
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error, 'docker is not running',
+    'box.up() rejecting is a real path, and an unhandled rejection would leave the dialog stuck on Creating…');
+  assert.deepStrictEqual(res.lines, []);
+});
+
+test('an unsandboxed create never reaches the sandbox manager', async () => {
+  const home = mkHome();
+  const { handlers, upCalls, mgrCalls, createArgs } = sandboxHandlers(home);
+
+  const res = await handlers['team:createBare']({}, { name: 'shop', root: '/proj/shop' });
+
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual('webUrl' in res, false, "today's shape is unchanged, so the dialog still opens the roles popover");
+  assert.deepStrictEqual(createArgs[0].sandboxed, false);
+  assert.deepStrictEqual(upCalls, []);
+  assert.deepStrictEqual(mgrCalls, []);
+});
+
+test('the dialog carries the sandboxed checkbox and passes it through', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('function openCreateTeamDialog()');
+  assert.ok(at > 0, 'ENTER: openCreateTeamDialog was found — a rename makes every assertion below vacuous');
+  const rest = src.slice(at);
+  const end = rest.search(/\n\}/);
+  assert.ok(end > 0, 'ENTER: the end of openCreateTeamDialog was found');
+  const body = rest.slice(0, end);
+
+  assert.match(body, /data-f="sandboxed"/, 'the checkbox itself');
+  assert.match(body, /sandboxed: sandboxedInput\.checked/, 'and it is what teamCreateBare is told');
+  assert.match(body, /Creating…/, 'a box takes minutes, so OK says so while the invoke is pending');
+  assert.match(body, /res\.webUrl/, 'and a box that came up routes to its web UI, not the local roles popover');
+});
+
 // ── The desktop Teams menu ──────────────────────────────────────────────────
 
 // app-menus.js requires('electron') at module scope. Load it with a stub whose
 // focused window RECORDS what the menu sends, so a click is observable.
-function loadAppMenus(sent, dialog = {}) {
+function loadAppMenus(sent, dialog = {}, shell = {}) {
   const win = { webContents: { send: (ch, ...a) => sent.push([ch, ...a]) } };
   const stub = {
     app: { getName: () => 'Clodex', getVersion: () => '0.0.0', setAboutPanelOptions: () => {} },
@@ -311,7 +450,7 @@ function loadAppMenus(sent, dialog = {}) {
     // app-menus destructures `dialog` at module scope, so this object IS the one
     // a click handler reaches later — no stub needs to stay installed for the
     // dialog to be observable at fire time, unlike Module._load itself.
-    dialog, shell: {}, nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
+    dialog, shell, nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
   };
   const origLoad = Module._load;
   Module._load = function (request, ...rest) {
@@ -327,8 +466,8 @@ function loadAppMenus(sent, dialog = {}) {
   }
 }
 
-function menusWith(getTeams, sent = [], dialog = {}) {
-  const createAppMenus = loadAppMenus(sent, dialog);
+function menusWith(getTeams, sent = [], dialog = {}, shell = {}) {
+  const createAppMenus = loadAppMenus(sent, dialog, shell);
   const nothing = () => ({ list: () => [], get: () => ({}), sortedByRecent: () => [], statuses: () => [] });
   const menus = createAppMenus({
     DEFAULT_WORKSPACE_ID: 'default', LOG_FILE: '/dev/null', THEME_KEYS: [], path,
@@ -399,6 +538,61 @@ test('the Teams menu lists a broken team disabled rather than hiding it', () => 
   rows.find((r) => r.label === 'Create Team…').click();
   assert.deepStrictEqual(sent[1], ['request-open-team-create']);
   assert.ok(ON_CHANNELS.has('request-open-team-create'), 'and so is this one');
+});
+
+test('a sandboxed team is listed as "name — sandboxed" and opens its box web UI', () => {
+  const home = mkHome();
+  const write = (name, body, sandbox) => {
+    fs.mkdirSync(path.join(home, 'teams', name), { recursive: true });
+    fs.writeFileSync(path.join(home, 'teams', name, 'team.json'), JSON.stringify(body));
+    if (sandbox !== undefined) {
+      fs.writeFileSync(path.join(home, 'teams', name, 'sandbox.json'),
+        typeof sandbox === 'string' ? sandbox : JSON.stringify(sandbox));
+    }
+  };
+  write('boxed', { root: '/proj/boxed', lead: 'boss', sandboxed: true, roles: { lead: {} } },
+    { boxId: 'team-boxed', webUrl: 'http://127.0.0.1:7812' });
+  write('cold', { root: '/proj/cold', lead: 'boss', sandboxed: true, roles: { lead: {} } });
+  write('local', { root: '/proj/local', lead: 'boss', roles: { lead: {} } });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const opened = [];
+  const { menus, sent } = menusWith(
+    () => ({ listTeams: tm.listTeams, loadManifest: tm.loadManifest }),
+    [], {}, { openExternal: (u) => opened.push(u) });
+
+  const rows = menus.buildTeamsMenu().submenu.filter((i) => i.type !== 'separator');
+  // ENTER: pin the whole row set first — a listTeams that stopped reaching one of
+  // the three would make the per-row assertions below vacuous.
+  assert.deepStrictEqual(rows.map((r) => r.label),
+    ['boxed — sandboxed', 'cold — sandboxed', 'local', 'Create Team…', 'Delete Team…']);
+
+  rows[0].click();
+  assert.deepStrictEqual(opened, ['http://127.0.0.1:7812'],
+    'the operator works with a sandboxed team through the box, so the row leaves the desktop');
+  assert.deepStrictEqual(sent, [], 'and emphatically NOT the local roles popover');
+
+  // A never-started (or torn-down) box has no sandbox.json, so there is no URL to
+  // open — the row still appears, disabled, exactly like a broken manifest.
+  assert.strictEqual(rows[1].enabled, false);
+  assert.strictEqual(typeof rows[1].click, 'undefined');
+
+  rows[2].click();
+  assert.deepStrictEqual(sent, [['request-open-team-roles', 'local']],
+    'an ordinary team is untouched by any of this');
+});
+
+test('a sandboxed team whose sandbox.json is unparseable is disabled, not a crash', () => {
+  const home = mkHome();
+  fs.mkdirSync(path.join(home, 'teams', 'boxed'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'teams', 'boxed', 'team.json'),
+    JSON.stringify({ root: '/proj/boxed', lead: 'boss', sandboxed: true, roles: { lead: {} } }));
+  fs.writeFileSync(path.join(home, 'teams', 'boxed', 'sandbox.json'), 'half-written{');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const { menus } = menusWith(() => ({ listTeams: tm.listTeams, loadManifest: tm.loadManifest }));
+
+  const row = menus.buildTeamsMenu().submenu.find((r) => r.label === 'boxed — sandboxed');
+  assert.ok(row, 'the team is still listed');
+  assert.strictEqual(row.enabled, false);
 });
 
 test('the Teams menu survives a team reader that is not there yet', () => {
