@@ -2987,6 +2987,7 @@ function createTicketMethods(deps, shared) {
       for (const role of Object.values(obj.roles || {})) {
         if (role && typeof role === 'object') delete role.account;
       }
+      delete obj.sandboxed;
       atomicWriteFileSync(manifest, `${JSON.stringify(obj, null, 2)}\n`);
       return { dir: dest, line: `team ${team.name} shipped into the box (teams/${team.name})` };
     },
@@ -3031,13 +3032,18 @@ function createTicketMethods(deps, shared) {
       const patch = { workDir: team.root };
       if (intent.ref) patch.ref = intent.ref;
       else if (!box.getConfig().ref) patch.ref = SANDBOX_DEFAULT_REF;
+      return this._bringUpTeamBox(team, { mgr, box, boxId, patch, action, reply });
+    },
+
+    async _bringUpTeamBox(team, { mgr, box, boxId, patch, action, reply }) {
+      const file = this._teamSandboxFile(team);
       const saved = box.setConfig(patch);
-      if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
+      if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return { ok: false }; }
 
       const seed = seedClaudeToken(mgr, box);
 
       const r = action === 'rebuild' ? await box.rebuild() : await box.up();
-      if (r && r.ok === false) { reply(`error: ${r.error}`); return; }
+      if (r && r.ok === false) { reply(`error: ${r.error}`); return { ok: false }; }
       const st = await box.status();
       const ports = (st && st.ports) || (r && r.ports) || {};
       const token = box.remoteToken();
@@ -3062,7 +3068,7 @@ function createTicketMethods(deps, shared) {
       atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
 
       const health = await box.waitHealthy();
-      if (!health || health.ok === false) { reply(`error: ${(health && health.error) || 'health check failed'}`); return; }
+      if (!health || health.ok === false) { reply(`error: ${(health && health.error) || 'health check failed'}`); return { ok: false }; }
 
       const seeds = [
         { name: 'bash', type: 'bash', cwd: SANDBOX_HOME_DIR },
@@ -3071,7 +3077,7 @@ function createTicketMethods(deps, shared) {
       const seeded = await seedSandboxSessions({
         wireUrl: record.wireUrl, token, seeds, optional: [team.lead], fetch: seedFetch,
       });
-      if (!seeded || seeded.ok === false) { reply(`error: ${(seeded && seeded.error) || 'seeding failed'}`); return; }
+      if (!seeded || seeded.ok === false) { reply(`error: ${(seeded && seeded.error) || 'seeding failed'}`); return { ok: false }; }
       const results = seeded.results || [];
       const leadResult = results.find((r) => r.name === team.lead);
       const ready = results.filter((r) => r.name !== team.lead && r.state !== 'failed').map((r) => r.name);
@@ -3083,6 +3089,7 @@ function createTicketMethods(deps, shared) {
         + ` · token in ${file}`
         + `${claudeSeedClause(seed, boxId)}`
         + `${leadSeedClause(leadResult, team.lead)}`);
+      return { ok: true, record, webUrl: record.webUrl };
     },
 
     _teamFileDeps() {

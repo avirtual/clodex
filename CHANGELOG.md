@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- (internal) the box-side half of `team sandbox up` is a method the desktop can call without an intent, in preparation for teams created straight into a box.
+
 ## 5.63.15 — 2026-09-12 — the Account picker is a Claude-only control
 
 - New Session and Edit Session no longer offer the Account picker on a Codex seat — it selects a Claude credential store, which Codex does not read.
