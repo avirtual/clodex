@@ -98,6 +98,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     preflight = preflightByRole(res && res.ok ? res.findings : []);
   }
 
+  let stockRoles = null;
+  async function loadStockRoles() {
+    if (typeof window.api.teamStockRoles !== 'function') { stockRoles = null; return; }
+    let res;
+    try { res = await window.api.teamStockRoles(); } catch { res = null; }
+    stockRoles = res && res.ok ? res.roles : null;
+  }
+
   let activity = null;
   async function loadActivity(name) {
     if (typeof window.api.teamActivity !== 'function') { activity = null; return; }
@@ -406,9 +414,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         // is omitted when blank because setRole validates any present template
         // against NAME_RE and throws on ''. Offering one there round-trips to
         // "saved" with the value still on disk and no error anywhere — the
-        // operator is told a removal happened that did not. The stock `hand`
-        // role is exactly this shape (a template, no dispatch, so standing), so
-        // it is the DEFAULT team's first expanded row, not an edge case.
+        // operator is told a removal happened that did not.
         why.title = clearable
           ? `A standing role's seat is operator-created, so ${f} does nothing for it. Clear it, or switch dispatch to spawn/worktree.`
           : `A standing role's seat is operator-created, so ${f} does nothing for it. It can't be cleared from the app in this version — switch dispatch to spawn/worktree, or remove it in team.json.`;
@@ -917,7 +923,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // cannot dispatch anything yet.
     if (stage === 'normal') {
       for (const key of absentStockRoles(manifest)) {
-        listEl.appendChild(buildOfferCard(key, { note: absentStockNote(key), dispatchLine: offerDispatchLine() }));
+        const def = stockRoles && stockRoles[key];
+        listEl.appendChild(buildOfferCard(key, { note: absentStockNote(key), dispatchLine: offerDispatchLine(def && def.dispatch) }));
       }
     }
   }
@@ -931,6 +938,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // whose prompt was just re-pointed by a Save must re-badge against the new
     // name, and a stale checklist accusing the previous value is worse than none.
     await loadPreflight(res.team.name);
+    await loadStockRoles();
     await loadActivity(res.team.name);
     await loadUses(res.team.name, Object.keys((res.team && res.team.roles) || {}));
     // Before renderRows, same reason as the preflight above: the lead row's

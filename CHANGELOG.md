@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team popover: the offer card for a stock role the team lacks shows that role's real dispatch (the stock hand runs per ticket in its own worktree), instead of a fixed "standing".
+
 ## 5.64.2 — 2026-09-13 — a fresh team reviews its own tickets, and a sandboxed team can be deleted
 
 - `task done` on a ticket that records no branch now says it closed WITHOUT review, instead of a plain "closed (done)" that reads as if the cold reviewer ran.

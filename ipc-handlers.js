@@ -376,6 +376,14 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
 
+  handle('team:stockRoles', () => {
+    const roles = {};
+    for (const key of Object.keys(STOCK_ROLE_DEFS)) {
+      roles[key] = { dispatch: STOCK_ROLE_DEFS[key].dispatch != null ? STOCK_ROLE_DEFS[key].dispatch : null };
+    }
+    return { ok: true, roles };
+  });
+
   handle('team:activity', (_e, name) => {
     try { return manager.teamActivity(name); }
     catch (err) { return { ok: false, error: err.message }; }

@@ -264,6 +264,16 @@ test('team:get returns the loaded manifest (full role map) or {ok:false} on a ba
   assert.match(bad.error, /no team manifest/);
 });
 
+test('team:stockRoles exposes every STOCK_ROLE_DEFS key with its dispatch', () => {
+  const { STOCK_ROLE_DEFS } = require('../team-manifest');
+  const handlers = registerWith({});
+  const res = handlers['team:stockRoles']({});
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(Object.keys(res.roles), Object.keys(STOCK_ROLE_DEFS));
+  assert.strictEqual(res.roles.hand.dispatch, 'worktree');
+  assert.strictEqual(res.roles.reviewer.dispatch, null);
+});
+
 test('team:addRole forwards to addRole, succeeds on an ordinary role, surfaces the guard errors', () => {
   const writes = [];
   const handlers = registerWith({
