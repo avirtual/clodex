@@ -22231,7 +22231,7 @@ ${i3.join("\n")}
   var require_provider_caps = __commonJS({
     "renderer/lib/provider-caps.js"(exports, module) {
       "use strict";
-      var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire"];
+      var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire", "accounts"];
       var PROVIDER_CAPS = {
         claude: {
           injectSkills: true,
@@ -22241,7 +22241,8 @@ ${i3.join("\n")}
           tools: true,
           strip: true,
           autoCompact: true,
-          noWire: true
+          noWire: true,
+          accounts: true
         },
         codex: {
           injectSkills: true,
@@ -22251,7 +22252,8 @@ ${i3.join("\n")}
           tools: false,
           strip: false,
           autoCompact: false,
-          noWire: false
+          noWire: false,
+          accounts: false
         }
       };
       var NO_CAPS = Object.freeze(Object.fromEntries(CAP_KEYS.map((k) => [k, false])));
@@ -36276,6 +36278,7 @@ ${detail}` });
         renderEnvHint(inputEnv, envHint);
       }
       var inputAccount = document.getElementById("input-account");
+      var accountRow = document.getElementById("account-row");
       var dialogAccounts = null;
       async function fetchAccounts() {
         try {
@@ -37580,6 +37583,7 @@ ${detail}` });
         if (stripRow) stripRow.style.display = caps.strip ? "" : "none";
         if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? "" : "none";
         if (noWireRow) noWireRow.style.display = caps.noWire ? "" : "none";
+        if (accountRow) accountRow.style.display = caps.accounts ? "" : "none";
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
         if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
         if (!skipAsyncRefresh) {
@@ -42897,6 +42901,7 @@ ${res.stderr}` : "");
       var argsEnv = document.getElementById("args-env");
       var argsEnvHint = document.getElementById("args-env-hint");
       var argsAccount = document.getElementById("args-account");
+      var argsAccountRow = document.getElementById("args-account-row");
       var argsAccounts = null;
       if (argsEnv) argsEnv.addEventListener("input", () => renderEnvHint(argsEnv, argsEnvHint));
       bindAccountSelect(argsAccount, argsEnv, () => argsAccounts);
@@ -42963,6 +42968,7 @@ ${res.stderr}` : "");
         argsAppendSection.style.display = isAgent ? "" : "none";
         const isClaude = res.type === "claude";
         const caps = capsFor(res.type);
+        argsAccountRow.style.display = caps.accounts ? "" : "none";
         argsAgentsRow.style.display = caps.agents ? "" : "none";
         argsOtherSection.style.display = isClaude ? "" : "none";
         const isPluginsEditable = caps.plugins && !argsSource;

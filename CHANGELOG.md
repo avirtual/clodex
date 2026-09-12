@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- New Session and Edit Session no longer offer the Account picker on a Codex seat — it selects a Claude credential store, which Codex does not read.
+
 ## 5.63.14 — 2026-09-12 — Delete Session… clears a row whose seat already died
 
 - Delete Session… on a row whose seat already died (e.g. a resume that exited during launch) removes the row immediately instead of leaving a ghost until the next relaunch.
