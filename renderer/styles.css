@@ -3735,10 +3735,7 @@ html, body {
   align-items: stretch;
   gap: 2px;
   height: 100%;
-  /* The strip is what gives up space when the header is tight. A flex item
-     defaults to min-width:auto and refuses to shrink below its content, which
-     makes the RIGHT-hand controls the ones that clip (#drawer is overflow:hidden). */
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .drawer-tab {
@@ -3754,6 +3751,8 @@ html, body {
   font-family: inherit;
   cursor: pointer;
   padding: 0 10px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .drawer-tab:hover {
@@ -3781,6 +3780,7 @@ html, body {
   padding: 1px 7px;
   min-width: 18px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .drawer-badge.zero {
@@ -3798,11 +3798,13 @@ html, body {
   margin-left: auto;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .drawer-action-group {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 #drawer-header button:not(.drawer-tab) {
@@ -3867,8 +3869,8 @@ html, body {
    an inline text container rather than becoming a flex row: text-overflow works
    on inline content and stops applying to flex items, and the ellipsis is what
    keeps a second account's chip from shoving the tabs.
-   Bounded like #drawer-status and for the same reason: #drawer-tabs is the
-   designated shrinker and #drawer is overflow:hidden, so an unbounded strip
+   Bounded like #drawer-status and for the same reason: this strip is the
+   header's only shrinker and #drawer is overflow:hidden, so an unbounded strip
    pushes the tabs and their unread badges off screen at exactly the moment the
    loud one fires. The cap is measured in Electron at this size and font: the
    longest string ONE chip emits is "week (all models) quota 100% used ·
@@ -3886,6 +3888,7 @@ html, body {
   font-size: 10px;
   white-space: nowrap;
   flex-shrink: 1;
+  min-width: 0;
   max-width: 400px;
   overflow: hidden;
   text-overflow: ellipsis;

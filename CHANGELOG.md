@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The Edit Session dialog now shows its Skills section for a local seat too (it was peer-only), and saving it writes both the disabled-skills and injected-skills lists — the same section the new-seat dialog and the default preferences already have.
+- The bottom-panel tab bar no longer wraps "IPC Traffic" or crushes a tab's count badge into its Clear button when the quota chip is long: the tabs, badges and action buttons keep their width and the chip is what shortens (its full text stays in the tooltip).
 
 ## 5.63.11 — 2026-09-12 — the phone transcript gains a cursor; a second-account seat registers its login with the proxy
 
