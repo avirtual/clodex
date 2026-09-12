@@ -155,13 +155,16 @@ test('an un-injected registryDir follows CLODEX_HOME into the compose mounts', a
         isPortInUse: async () => false,
         log: { info() {}, error() {} },
       });
+      // A catalogue dir is bound only when the host has it, so the decoy home
+      // must carry one for the library bind to exist at all.
+      fs.mkdirSync(path.join(home, 'library', 'prompts'), { recursive: true });
       const gen = await box.writeComposeFile();
       const yaml = fs.readFileSync(gen.path, 'utf8');
-      assert.ok(yaml.includes(`${path.join(home, 'library')}:`),
+      assert.ok(yaml.includes(`${path.join(home, 'library', 'prompts')}:`),
         `the library bind must come from CLODEX_HOME — got:\n${yaml}`);
       assert.ok(!yaml.includes(`${path.join(APP_ROOT, 'library')}:`),
         'the operator home must not appear once CLODEX_HOME is set');
-      assert.ok(fs.existsSync(path.join(home, 'library')),
+      assert.ok(fs.existsSync(path.join(home, 'skills')),
         'the mount sources are created under the override, not under the operator home');
     } finally { fs.rmSync(userData, { recursive: true, force: true }); }
   });
