@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a box says which Clodex it runs, and its origin markers cannot be shadowed
+## Unreleased
+
+## 5.64.5 — 2026-09-13 — a box says which Clodex it runs, and its origin markers cannot be shadowed
 
 - Peer wire: the origin marker a box keeps for a peer that dm'd it uses a name no peer label can take, so a label ending in `.origin` can no longer shadow or erase another origin's marker.
 - `[agent:team sandbox status]` names the Clodex version the box reports on its wire, so a lead can tell whether a rebuild picked up a release without asking a seat inside.
