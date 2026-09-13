@@ -408,23 +408,17 @@ test('the greedy-body RULE names the kv-only role-verb exception, in the literal
     'and a brief ON the head line keeps it greedy — the escape the clause tells a lead to use');
 });
 
-// The prose lives in the PREAMBLE, which every seat renders regardless of its
-// allowlist — so buildIpcPrompt([]) is the right second target: a fully-gated
-// seat with not one grammar line still carries the rule.
-test('the input-kind prose states both directions and its escape hatches, in the literal AND in the preamble', () => {
+test('the input-kind prose states both directions and its escape hatches, in the literal AND in the preamble of a fully-gated seat', () => {
   const HUMAN = /human input — marked `\[agent:from user\]`, or carrying no marker at all \(your operator typing into the CLI\) — ends the turn with prose they read/;
   const MACHINE = /machine input — anything carrying another `\[agent:…\]` marker[^\n]*ends with the intents the situation calls for and nothing after them/;
   const UNCERTAIN = /When you cannot tell, it is human/;
-  // `notify-user` is named WITHOUT its brackets on purpose: the narrow-seat test
-  // above pins that a gated seat's prompt contains no `[agent:notify-user]`
-  // string, and this prose renders for every seat including that one.
   const PROSE_NOT_WORK = /The rule governs PROSE, not work[^\n]*`notify-user`/;
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
     assert.ok(HUMAN.test(src), 'human input gets end-of-turn prose');
     assert.ok(MACHINE.test(src), 'machine input gets intents and nothing after them');
     assert.ok(UNCERTAIN.test(src), 'the uncertain case resolves toward speaking, not silence');
     assert.ok(PROSE_NOT_WORK.test(src),
-      'and the rule is scoped to prose, with notify-user named as the escalation channel it must not swallow');
+      'the rule is scoped to prose, naming notify-user as the escalation it must not swallow — unbracketed, since this preamble reaches gated seats whose prompt must not carry an [agent:notify-user] line');
   }
 });
 
