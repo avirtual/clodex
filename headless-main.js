@@ -24,6 +24,7 @@ const { execSync } = require('child_process');
 const { ensureDir } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
 const { createEngine } = require('./engine');
+const { runningInSandboxBox } = require('./sandbox');
 const { DEFAULT_WORKSPACE_ID } = require('./catalogs');
 
 // ── userDataPath ── CLODEX_DATA_DIR wins; otherwise the platform default that
@@ -158,8 +159,8 @@ const engine = createEngine({
     notifyOS: (opts) => log.info('notify', `${(opts && opts.title) || ''}${opts && opts.body ? ` — ${opts.body}` : ''}`),
     setAppQuitting: (v) => { appQuitting = v; },
     pathMergeFailed,   // login-shell PATH merge outcome → diagnostics banner (Task 12)
-    // No docker-in-docker: a headless node offers no sandbox-box placement.
-    enableSandbox: false,
+    // Not "am I headless" but "am I inside a box": in-box has no docker (t903).
+    enableSandbox: !runningInSandboxBox(process.env),
     // This box's browser frontend, for peers that want to reach it (t30). A
     // closure over the `webHost` let below, which is assigned AFTER this call
     // returns — so it reads live, and stays null when CLODEX_WEB_PORT is unset

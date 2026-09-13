@@ -171,17 +171,17 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // headless does — its supervisor contract is exit-64-now.
   const restartHostWhenIdle = seams.restartHostWhenIdle || restartHost;
   const pathMergeFailed = !!seams.pathMergeFailed;
+  // Granted on a headless host too (t903): by the argument below, that hands
+  // `sandbox:*` — docker and container lifecycle on this box — to a web client.
   const enableSandbox = seams.enableSandbox !== false;
   // The drawer's service-backed tenants (a clodexctl verb runner over `ctl:*`,
   // the selection reads over `drawer:*`, a shell on a peer over `peer:wterm*`)
   // are DESKTOP-ONLY, and the boundary that makes them so is this flag, not the
-  // renderer. web-host.js registers the same ipc-handlers map the desktop does
-  // and dispatches any registered channel BY NAME without consulting
-  // api-contract, so a handler that exists is a handler an authenticated web
-  // connection can invoke — a token-backed verb runner, a read of the
-  // operator's own screen, a shell on a third machine. The renderer's
-  // `available()` only hides the tabs. Same shape as enableSandbox: the host
-  // opts out at construction.
+  // renderer, whose `available()` only hides the tabs. web-host.js registers the
+  // same ipc-handlers map the desktop does and dispatches any registered channel
+  // BY NAME without consulting api-contract, so a handler that exists is one an
+  // authenticated web connection can invoke — a token-backed verb runner, a read
+  // of the operator's own screen, a shell on a third machine.
   const enableDrawerServices = seams.enableDrawerServices !== false;
   // The LOCAL drawer terminal, split off that flag (t227) because its
   // argument is different: `wterm:*` spawns `$SHELL` on THIS box, and any

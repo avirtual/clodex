@@ -67,6 +67,12 @@ const GHCR_REPO = 'ghcr.io/avirtual/clodex';
 const SANDBOX_PEER_ID = 'sandbox';
 const SANDBOX_PEER_LABEL = 'sandbox';
 
+const SANDBOX_BOX_ENV = 'CLODEX_IN_SANDBOX';
+
+function runningInSandboxBox(env) {
+  return ((env || {})[SANDBOX_BOX_ENV] || '') === '1';
+}
+
 // Docker derives the compose project name from this id, and project names
 // disallow dots and uppercase — two ids differing only in case would collapse
 // to one project and share volumes. Creation is gated here; the store's
@@ -887,6 +893,7 @@ module.exports = {
   resolveImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,
+  runningInSandboxBox,
   DEFAULT_CONFIG, DEFAULT_PORTS, CONTAINER_PORTS, RESERVED_MOUNT_TARGETS, WORK_CONTAINER_DIR,
-  SANDBOX_PEER_ID, SANDBOX_PEER_LABEL, BOX_ID_RE, RESERVED_BOX_IDS,
+  SANDBOX_PEER_ID, SANDBOX_PEER_LABEL, SANDBOX_BOX_ENV, BOX_ID_RE, RESERVED_BOX_IDS,
 };
