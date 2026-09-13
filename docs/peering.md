@@ -310,7 +310,5 @@ create/kill/restart now ride the `create` cap over the wire.
   is relayed through the hub, reusing the outbox+claim legs. Opt-in per peer
   (`relayAllowed`, default OFF, symmetric both-ends gate); distinct `relay` cap;
   `from`'s local part is sacred, but the hub restamps its origin suffix to its
-  own label for the source spoke on the terminal leg (the selfLabel the
-  originating spoke stamps is unroutable at the destination); the terminal leg
-  strips relay fields
-  (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.
+  own label for the source spoke on the terminal leg; that leg also strips relay
+  fields (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.
