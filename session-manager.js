@@ -6722,8 +6722,7 @@ function createSessionManager(deps) {
     // UserPromptSubmit. Unlike _maybeParkDelivery this does NOT arm the park cap:
     // the cap drains through the inject queue after a timeout, which would defeat
     // the hold by injecting into the cold/blocked target anyway. A held delivery
-    // waits for the target's OWN next turn; `key` is what lets a re-send of the
-    // same body claim this file instead of adding a second copy of one message.
+    // waits for the target's next turn; `key` lets a re-send claim this file.
     // Returns the resend id, or null if parking failed (caller falls back to a bounce).
     _parkHeldDelivery(target, finalText, key = null) {
       const id = this._mintParkId();
