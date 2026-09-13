@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a superseded dm is visible, and a diverted re-park stays supersedable
 
 - A dm that is released or delivered urgent and then parked again because a draft was open keeps its content key, so a later urgent re-send of the same message still supersedes it instead of delivering twice.
 - When an urgent dm claims the parked copy of the same message, the sender is told which park id was consumed and the IPC log records the send as `URGENT (supersedes <id>)`, so a superseded delivery is visible instead of looking like two sends.
