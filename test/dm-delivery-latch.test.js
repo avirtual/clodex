@@ -368,7 +368,7 @@ test('t878: an urgent re-send claims the parked copy of the same dm, so the targ
     assert.strictEqual(ids.length, 1, 'ENTER: the hold-park must carry a resend id, which is what the claim reports back');
 
     const r = app.m._gatedDeliver('target', 'sender', 'SUPERSEDE ME', true);
-    assert.deepStrictEqual(r.superseded, ids,
+    assert.deepStrictEqual(r.superseded, { ids, claimed: 1 },
       'the return must name the park it claimed: the sender is being told its earlier copy was consumed by this '
       + 'one, and an unqualified `queued` reads as a second delivery');
     assert.strictEqual(app.parked('target', /SUPERSEDE ME/), 0,
@@ -461,7 +461,7 @@ test('t881: the urgent re-send still supersedes a dm that was diverted back to t
       + 'nothing to supersede and would report the same empty dir for the wrong reason');
 
     const r = app.m._gatedDeliver('target', 'sender', 'DIVERTED THEN URGENT', true);
-    assert.deepStrictEqual(r.superseded, [ids[0]],
+    assert.deepStrictEqual(r.superseded, { ids: [ids[0]], claimed: 1 },
       'the urgent copy must claim the DIVERTED park by its key and name it back: told an unqualified `queued`, '
       + 'the sender has no way to know its earlier copy is still queued to arrive');
     assert.strictEqual(app.parked('target', /DIVERTED THEN URGENT/), 0,
@@ -599,10 +599,21 @@ test('t883: an urgent re-send supersedes the copy parked while the target was mi
 
     target.activityState = 'idle';
     target.activityTs = Date.now();
+    const beforeCasts = app.casts.length;
     await app.m._handleIntent('sender', dm('target', 'BUSY THEN URGENT', true));
     assert.strictEqual(app.parked('target', /BUSY THEN URGENT/), 0,
       'the copy parked while the target was mid-turn must be GONE once the urgent delivery is accepted: left '
       + 'on disk, the target\'s own next drain delivers the message a second time');
+    const told = await settled(app, 'sender', /delivered urgent/);
+    assert.ok(told.includes('[agent:dm] delivered urgent to target; its parked copy was claimed, so target reads it once.'),
+      'the busy park carries no id, so the sender must still be told a copy was claimed: silence here is the '
+      + `t882 failure surviving on the commonest path. Got: ${JSON.stringify(told.slice(-300))}`);
+    const fresh = app.casts.slice(beforeCasts)
+      .filter((c) => c.ch === 'ipc-message' && c.payload && c.payload.type === 'dm');
+    assert.strictEqual(fresh.length, 1, 'ENTER: exactly one dm broadcast for the urgent send');
+    assert.strictEqual(fresh[0].payload.body, 'URGENT (supersedes a parked copy): BUSY THEN URGENT',
+      'and the log must record the supersede without an id: a raw body shows the operator two identical sends '
+      + 'with no way to tell that only one of them arrived');
     const got = await settled(app, 'target', /BUSY THEN URGENT/);
     assert.strictEqual(got.match(/BUSY THEN URGENT/g).length, 1,
       'and exactly one copy reaches the seat — superseding is only worth doing if the urgent copy still arrives');
