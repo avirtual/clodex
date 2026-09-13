@@ -544,7 +544,6 @@ function createSessionManager(deps) {
     createSubagentStore,
     noteSubagentTurn,
     os,
-    outboxHasOrigin,
     outboxKnowsOrigin,
     markOutboxOrigin,
     parkDelivery,

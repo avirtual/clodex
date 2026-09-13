@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Peer wire: the origin marker a box keeps for a peer that dm'd it uses a name no peer label can take, so a label ending in `.origin` can no longer shadow or erase another origin's marker.
+
 ## 5.64.4 — 2026-09-13 — a kv-only role verb keeps its hands off the brief, and a box can always reply to the desktop
 
 - `[agent:team role-set …]` / `role-add …` with only key:value flags and nothing after the bracket no longer swallows the lines that follow as the role's brief; a brief on such a line starts on the head line.
