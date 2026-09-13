@@ -118,6 +118,8 @@ function createRemoteWiring(deps) {
       setRemoteServer(new RemoteServer({
         port: s.remotePort,
         host: bindHost,
+        basePath: process.env.CLODEX_REMOTE_BASE_PATH,
+        warn: (m) => log.error('remote', m),
         token: remoteToken,
         insecure: remoteInsecure,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
