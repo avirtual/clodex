@@ -90,6 +90,12 @@ function sandboxRefClause(st) {
   return (st && st.ref) ? ` (ref ${st.ref})` : '';
 }
 
+function sandboxVersionClause(peerStatus) {
+  return peerStatus && peerStatus.version
+    ? ` · clodex ${peerStatus.version}`
+    : ' · clodex version unknown (box not reporting on its wire)';
+}
+
 function sandboxPortClause(st) {
   const ports = (st && st.ports) || {};
   if (!ports.web && !ports.wire) return '';
@@ -484,6 +490,7 @@ function createTicketMethods(deps, shared) {
     path,
     pathFor,
     getAccounts,
+    getPeerManager,
     getPersistence,
     getRemindScheduler,
     getSandboxManager,
@@ -3025,7 +3032,9 @@ function createTicketMethods(deps, shared) {
       }
       if (action === 'status') {
         const st = await box.status();
-        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}`);
+        const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
+        const peer = pm ? ((pm.statuses() || []).find((p) => p && p.id === boxId) || null) : null;
+        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}`);
         return;
       }
 

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team sandbox status]` names the Clodex version the box reports on its wire, so a lead can tell whether a rebuild picked up a release without asking a seat inside.
+
 ## 5.64.4 — 2026-09-13 — a kv-only role verb keeps its hands off the brief, and a box can always reply to the desktop
 
 - `[agent:team role-set …]` / `role-add …` with only key:value flags and nothing after the bracket no longer swallows the lines that follow as the role's brief; a brief on such a line starts on the head line.

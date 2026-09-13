@@ -136,6 +136,7 @@ function mkBox(opts = {}) {
     resolveTeam: (cwd) => (cwd === '/proj' ? team : null),
     refreshAppMenu: () => {},
     getSandboxManager: () => (fake ? fake.manager : null),
+    getPeerManager: opts.getPeerManager || (() => null),
     fetch: net.fetch,
     log: { info() {}, warn() {}, error() {} },
   }, {});
@@ -272,6 +273,29 @@ test('status on a box with no ref reports no ref clause, and still configures no
   assert.strictEqual(b.calls.setConfig.length, 0);
   assert.match(b.last(), /^\[agent:team\] sandbox team-clodex running/);
   assert.ok(!/\(ref /.test(b.last()), `no ref was configured, so none is claimed: ${b.last()}`);
+});
+
+test('status names the clodex version the box reports on its wire', async () => {
+  const b = mkBox({
+    getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', online: true, version: '5.64.4' }] }),
+  });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), / · clodex 5\.64\.4$/);
+});
+
+test('status with no peer manager says the version is unknown', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /clodex version unknown \(box not reporting on its wire\)/);
+});
+
+test('status ignores a peer row whose id is not the box id', async () => {
+  const b = mkBox({
+    getPeerManager: () => ({ statuses: () => [{ id: 'sandbox', version: '9.9.9' }] }),
+  });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /clodex version unknown \(box not reporting on its wire\)/);
+  assert.ok(!/9\.9\.9/.test(b.last()), `a differently-id'd row is not this box: ${b.last()}`);
 });
 
 // The r1 must-fix, in the order a lead really types it. The parser used to default
