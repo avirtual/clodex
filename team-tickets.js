@@ -1656,7 +1656,7 @@ function createTicketMethods(deps, shared) {
         return this._rejectTicketFromLoop(team, ticketId,
           `the review came back REWORK (review round ${landedOn.reviewRound}).\n\n`
           + `${items}\n\n${where}\n\n`
-          + 'Fix these and close the ticket again — the loop re-verifies and re-reviews from there. '
+          + 'Address every item, then report as usual: the loop re-verifies your branch and sends it to a fresh review from there. '
           + 'If you think an item is wrong, say so in your report rather than skipping it silently.',
           { notifyLead: false });
       } catch (e) {
