@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a rework goes straight back to work, and the browser menus stop drifting
+## Unreleased
+
+## 5.66.0 — 2026-09-14 — a rework goes straight back to work, and the browser menus stop drifting
 
 - The browser GUI's menus are now held to the desktop's by a test, so the two cannot quietly drift apart again. It checks what has to match — the order of the Window menu's Peers and Sandboxes sections, and that the "Manage Peered Clodexes…" and "Manage Clodex Sandboxes…" entries are always offered — and deliberately leaves alone the places the two legitimately differ, such as the desktop-only "Open Log File" and "Check for Updates…".
 - A ticket review that comes back REWORK now goes straight to the seat holding
