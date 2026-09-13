@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A message sent from the Clodex app's own page arrives as operator input with no reply address, so a seat answers in its normal output instead of messaging a human who cannot receive it.
+
 ## 5.64.13 — 2026-09-13 — a mid-turn dm can be superseded, and the supersede is never silent
 
 - A dm that is parked because the target was mid-turn keeps its content key, so an urgent re-send of the same message supersedes it instead of arriving twice.

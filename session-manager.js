@@ -158,7 +158,7 @@ const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } =
 // global namespace, so an unrelated seat that happens to be called `team` makes
 // `team` look answerable and every seat on the box gets told to reply to it.
 // Keep in sync with the senderName literals at the _deliver* call sites.
-const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex', 'ticket-loop']);
+const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex', 'ticket-loop', 'user']);
 
 const ECHOED_DUP_TYPES = new Set(['task', 'remind', 'spawn', 'team']);
 
