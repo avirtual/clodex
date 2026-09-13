@@ -8,14 +8,12 @@ Keep `Unreleased` current as work lands. `scripts/release.sh` publishes it
 verbatim as the release notes, then stamps it with the version and date and
 opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
-
-- A built-in role's template is editable from the team popover: the `lead` and `reviewer` rows now name the template their seats boot on and open it in the template editor, so changing which model the reviewer runs no longer means hand-editing a JSON file a release can overwrite.
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
 
-- A built-in role's template is editable from the team popover: the `lead` and `reviewer` rows now name the template their seats boot on and open it in the template editor, so changing which model the reviewer runs no longer means hand-editing a JSON file a release can overwrite.
+- A built-in role's template is editable from the team popover: the `lead` and `reviewer` rows now name the template their seats boot on and open it in the template editor, so changing which model the reviewer runs no longer means finding and hand-editing the right JSON file.
 - The browser menubar's two-level submenus work with the mouse: opening a deeper panel no longer destroys the one the pointer is in, so Library ▸ Prompts ▸ New Prompt… and ▸ Manage Prompts… can be clicked again, and a submenu that would overflow the window flips to the other side of its parent instead of opening detached at the screen edge.
 
 ## 5.64.13 — 2026-09-13 — a mid-turn dm can be superseded, and the supersede is never silent
