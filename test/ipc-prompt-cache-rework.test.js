@@ -246,6 +246,11 @@ test('MF3: a RESTORE with a resumeId DOES reuse — mint is the axis, not resume
     'the restore path must freeze — this is the control: if the decision were false for everyone, the mint test above would pass against a freeze that never happens at all');
 });
 
+test('MF3: a persisted seat with NO sessionId does not reuse — resumeId is a conjunct, not a passenger', async () => {
+  assert.strictEqual(await decidedReuse({ resumeId: null, mint: false }, 'a restore with no sessionId'), false,
+    'a restore carrying no sessionId has no conversation to protect: session-restore passes entry.sessionId straight through, so create() gets resumeId=null, the CLI gets no --resume and starts a FRESH conversation. Freezing there bakes whatever session.md a dead namesake left behind into that new conversation and owes it no delta, because bakePrompt(reuse=true) stages against notified.md and a conversation that never existed has been told nothing. This is the third conjunct of `!!resumeId && !mint && hookInstalled` and the only one the two tests above cannot reach — both pass a truthy resumeId, so deleting `!!resumeId &&` from the product line leaves them green: the same revert-B shape this file\'s header documents for the other two');
+});
+
 test('MF3: the cache side actually reuses when told to, and reseeds when not', () => {
   // The decision above is one half; this is what the two decisions DO. Split
   // deliberately — an earlier draft asserted a locally recomputed predicate and
