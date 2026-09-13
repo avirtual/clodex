@@ -1094,7 +1094,7 @@ function createTicketMethods(deps, shared) {
       const cwd = treeOk ? seatCwdInTree(team.root, shape.cwd, treePath) : shape.cwd;
       const tplWarn = reviewTpl
         ? ''
-        : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
+        : ` — NOTE: reviewer template "${templateName}" not found for this team or in the library; spawned from built-in defaults (install it to customize)`;
       const reviewerSystemPrompt = shape.systemPromptFile;
       // Resolved HERE, above the name reservation below, not beside the check that
       // consumes it: an unwired `path` or REGISTRY_DIR throws on this line, and the
@@ -5054,12 +5054,12 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
 
-      // A team file for the role's stem outranks an IMPLIED template's: the stock
-      // reviewer names none, so the default's would shadow the
-      // `prompts/system/reviewer.md` create writes. A NAMED one keeps its own —
-      // `reviewer:clodex-team-reviewer-shell` must not spawn a shell seat briefed
-      // by the team's copy of the no-shell prompt.
-      const explicitTpl = !!(templateOverride || (def && def.template));
+      // A stem EQUAL to the role key is the copy create seeded, not a naming — the
+      // team's own `prompts/system/<role>.md` still outranks it (t791). A NAMED one
+      // keeps its own: `reviewer:clodex-team-reviewer-shell` must not spawn a shell
+      // seat briefed by the team's copy of the no-shell prompt.
+      const seededTpl = !!(def && def.template && def.template === roleKey);
+      const explicitTpl = !!(templateOverride || (def && def.template && !seededTpl));
       const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
         ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
         : null;

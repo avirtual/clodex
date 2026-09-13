@@ -14,7 +14,8 @@
     },
     "reviewer": {
       "prompt": "reviewer",
-      "brief": "reviewer; an independent verification pass, invoked on demand."
+      "brief": "reviewer; an independent verification pass, invoked on demand.",
+      "template": "clodex-team-reviewer"
     }
   }
 }
