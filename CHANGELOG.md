@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — a kv-only role verb keeps its hands off the brief, and a box can always reply to the desktop
+## Unreleased
+
+## 5.64.4 — 2026-09-13 — a kv-only role verb keeps its hands off the brief, and a box can always reply to the desktop
 
 - `[agent:team role-set …]` / `role-add …` with only key:value flags and nothing after the bracket no longer swallows the lines that follow as the role's brief; a brief on such a line starts on the head line.
 - The IPC prompt's greedy-body rule names the exception introduced for kv-only `team role-add`/`role-set`; a `team sandbox` verb emitted inside a sandbox box says to run it from the desktop.
