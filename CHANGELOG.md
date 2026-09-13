@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The run-tests digest names the exact `TOTALS:` line it could not find instead of "no TOTALS summary"; the lead prompt says how a project's artifact-dir hash is derived; the plugin API doc's `removeWorktree` row states the `deleteBranch` option and its return fields.
+
 ## 5.64.10 — 2026-09-13 — a hand can measure its comment delta over test files too
 
 - `scripts/comment-delta.js` reports comment lines added against the merge-base across every changed `.js` file, test trees included, using the ratchet's own tokenizer; the hand prompt names it as the pre-report check, since the ratchet's green says nothing about `test/`.

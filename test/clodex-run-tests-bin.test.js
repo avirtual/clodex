@@ -171,7 +171,7 @@ test('a runner that prints no TOTALS is reported as "nothing measured", never as
     writeStub(root, { body: "console.error('boom: cannot start');", exit: 7 });
     const r = run(root, '{}');
     assert.strictEqual(r.code, 7, 'the runner\'s own exit code is the verdict');
-    assert.ok(r.digest.startsWith(`[${path.basename(root)}] no TOTALS summary`), r.digest);
+    assert.ok(r.digest.startsWith(`[${path.basename(root)}] no "TOTALS:`), r.digest);
     assert.ok(r.digest.includes('boom: cannot start'),
       'the runner\'s last line is the only diagnosis the seat gets');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -202,7 +202,7 @@ test('a lock refusal reaches the seat WHOLE — the order is what the exec exist
     assert.ok(r.digest.length <= 200,
       `the dispatcher delivers 200 chars of the last stderr line, so anything past that never `
       + `arrives; got ${r.digest.length}`);
-    assert.ok(!r.digest.startsWith(`[${path.basename(root)}] no TOTALS summary`),
+    assert.ok(!r.digest.startsWith(`[${path.basename(root)}] no "TOTALS:`),
       `the refusal must not be wrapped as an unexplained failure; got ${JSON.stringify(r.digest)}`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
