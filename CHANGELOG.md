@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - `[agent:team role-set …]` / `role-add …` with only key:value flags and nothing after the bracket no longer swallows the lines that follow as the role's brief; a brief on such a line starts on the head line.
+- The IPC prompt's greedy-body rule names the exception introduced for kv-only `team role-add`/`role-set`; a `team sandbox` verb emitted inside a sandbox box says to run it from the desktop.
 - Peer wire: a box remembers every peer origin that has dm'd it (a marker in that origin's outbox dir), so a seat inside a sandboxed team can still reply to the desktop after the box restarts or the outbox drains, and the reply trailer no longer calls that address unreachable.
 
 ## 5.64.3 — 2026-09-13 — the roles popover and Join team tell the truth about a per-ticket role

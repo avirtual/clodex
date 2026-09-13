@@ -403,6 +403,7 @@ test('no sandbox manager on this host → the "not enabled" error, and nothing i
   const b = mkBox({ noManager: true });
   await fire(b, b.lead, { action: 'up' });
   assert.match(b.last(), /error: sandboxes are not enabled on this host/);
+  assert.match(b.last(), /run \[agent:team sandbox …\] from a desktop seat, or use Settings > Sandboxes on the desktop/);
   assert.ok(!exists(b.file));
 });
 

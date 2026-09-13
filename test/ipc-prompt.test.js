@@ -398,6 +398,16 @@ test('term grammar line: the documented line scope matches what the row actually
   assert.strictEqual(bodyModeFor(parseIntent('[agent:memory remember] x')), 'greedy');
 });
 
+test('the greedy-body RULE names the kv-only role-verb exception, in the literal AND in the trailer', () => {
+  const CLAUSE = /a `team role-add`\/`role-set` whose head line carries key:value flags and nothing after the bracket takes no body at all \(put the brief on the head line to keep it greedy\)/;
+  assert.ok(CLAUSE.test(IPC_PROMPT), 'the literal states the exception');
+  assert.ok(CLAUSE.test(buildIpcPrompt([])), 'and so does the assembled trailer for a fully-gated seat');
+  assert.strictEqual(bodyModeFor(parseIntent('[agent:team role-add hand model:sonnet]')), 'none',
+    'the parser agrees: a kv-only head line with nothing after the bracket takes no body');
+  assert.strictEqual(bodyModeFor(parseIntent('[agent:team role-add hand model:sonnet] a brief')), 'greedy',
+    'and a brief ON the head line keeps it greedy — the escape the clause tells a lead to use');
+});
+
 // The generalisation of the bug, and the reason this is a test rather than a
 // one-line fix: EVERY rendered grammar line is a form some seat will copy
 // literally. A line that cannot parse teaches an emission that does nothing.
