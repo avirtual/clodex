@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — an urgent re-send of a parked dm arrives once
 
 - Re-sending a dm as `urgent` after it was parked for a cold peer no longer delivers it twice: the urgent copy claims the parked copy of the same message (same sender, same body) for that target before it is injected, so the peer reads it once.
 
