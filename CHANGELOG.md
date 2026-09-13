@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Peer wire: a box remembers every peer origin that has dm'd it (a marker in that origin's outbox dir), so a seat inside a sandboxed team can still reply to the desktop after the box restarts or the outbox drains, and the reply trailer no longer calls that address unreachable.
+
 ## 5.64.3 — 2026-09-13 — the roles popover and Join team tell the truth about a per-ticket role
 
 - Team popover: the offer card for a stock role the team lacks shows that role's real dispatch (the stock hand runs per ticket in its own worktree), instead of a fixed "standing".

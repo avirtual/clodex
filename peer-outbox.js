@@ -121,8 +121,7 @@ function claimOutbox(root, origin) {
 }
 
 // Does `origin` have at least one queued message right now? Cheap peek, not a
-// claim — feeds the outbound-routing "known origin" fallback after a restart
-// (the runtime seen-Set is empty, but an undelivered mailbox lingers on disk).
+// claim.
 function outboxHasOrigin(root, origin) {
   if (!validOrigin(origin)) return false;
   try {
@@ -131,6 +130,27 @@ function outboxHasOrigin(root, origin) {
   } catch {
     return false;
   }
+}
+
+function originMarker(root, origin) { return path.join(root, `${origin}.origin`); }
+
+function markOutboxOrigin(root, origin) {
+  if (!validOrigin(origin)) return false;
+  try {
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(originMarker(root, origin), '');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function outboxKnowsOrigin(root, origin) {
+  if (!validOrigin(origin)) return false;
+  try {
+    if (fs.existsSync(originMarker(root, origin))) return true;
+  } catch {}
+  return outboxHasOrigin(root, origin);
 }
 
 // Origins with a non-empty mailbox right now — the set the hello payload
@@ -149,5 +169,6 @@ function listOutboxOrigins(root) {
 
 module.exports = {
   enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins,
+  markOutboxOrigin, outboxKnowsOrigin,
   validOrigin, ORIGIN_RE,
 };

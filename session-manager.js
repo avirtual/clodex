@@ -545,6 +545,8 @@ function createSessionManager(deps) {
     noteSubagentTurn,
     os,
     outboxHasOrigin,
+    outboxKnowsOrigin,
+    markOutboxOrigin,
     parkDelivery,
     parkIdInUse,
     parseAndValidate,
@@ -6450,7 +6452,7 @@ function createSessionManager(deps) {
         this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin}: ${intent.body}` });
         return;
       }
-      if (this._knownDmOrigins.has(origin) || outboxHasOrigin(OUTBOX_DIR, origin)) {
+      if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) {
         const r = enqueueOutbox(OUTBOX_DIR, origin,
           { from: senderName, to: name, body: intent.body, urgent: intent.urgent === true, ts: Date.now() },
           this._nextParkSeq());
@@ -6562,6 +6564,11 @@ function createSessionManager(deps) {
       try { conn.dm({ to: senderLocal, from: 'relay', body: `NOT delivered to ${m.finalTarget}: ${why}.`, urgent: false }, () => {}); } catch {}
     }
 
+    _rememberDmOrigin(origin) {
+      this._knownDmOrigins.add(origin);
+      markOutboxOrigin(OUTBOX_DIR, origin);
+    }
+
     _isDmReachable(senderName) {
       if (!senderName) return false;
       const at = senderName.lastIndexOf('@');
@@ -6570,6 +6577,7 @@ function createSessionManager(deps) {
         const peers = getPeerManager() ? getPeerManager().statuses() : [];
         const hit = findPeerByOrigin(peers.filter((p) => p && p.online), origin);
         if (hit) return true;
+        if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) return true;
         return this._relayViaForOrigin(origin) != null;
       }
       const s = this.sessions.get(senderName);

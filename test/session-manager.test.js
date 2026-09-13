@@ -13130,13 +13130,26 @@ test('remind: a gone agent\'s recurring schedule is pruned by the deliver seam (
 // The "(reply: [agent:dm <sender>])" nudge must only appear when that reply path
 // actually exists: receiver can emit dm AND sender is a reachable agent.
 
-function mkReach({ peers = [], receiverIntents = undefined } = {}) {
+function mkReach({ peers = [], receiverIntents = undefined, outboxDir = undefined } = {}) {
   return mk({
     getPeerManager: () => ({ statuses: () => peers }),
     // Receiver record carries the intents allowlist the dm-enabled check reads.
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'rcv' ? { intents: receiverIntents } : null) }),
+    ...(outboxDir ? { OUTBOX_DIR: outboxDir } : {}),
   });
 }
+
+test('t870 _isDmReachable: an origin that has dm\'d this box is reachable, and stays so in a fresh manager', () => {
+  const outboxDir = mkTmpRoot('clodex-t870-outbox-');
+  const m = mkReach({ outboxDir });
+  assert.strictEqual(m._isDmReachable('lead@desk'), false, 'unconfigured, no relay, never contacted');
+  m._rememberDmOrigin('desk');
+  assert.strictEqual(m._isDmReachable('lead@desk'), true, 'the origin that dialed us is a live reply address');
+  const restarted = mkReach({ outboxDir });
+  assert.strictEqual(restarted._knownDmOrigins.has('desk'), false, 'the in-memory Set died with the process');
+  assert.strictEqual(restarted._isDmReachable('lead@desk'), true, 'the on-disk marker outlives the restart');
+  assert.strictEqual(restarted._isDmReachable('lead@never'), false, 'an origin that never contacted us stays unreachable');
+});
 
 test('_isDmReachable: live local agent session → true; bash/dead/absent → false', () => {
   const m = mkReach();
