@@ -4694,7 +4694,7 @@ function createSessionManager(deps) {
               : `${target.name} is ${verdict.reason} and re-parking failed — try [agent:resend ${intent.id}] again shortly.`);
             break;
           }
-          this._injectText(target, claimed.text, { parkable: true, parkId: intent.id });
+          this._injectText(target, claimed.text, { parkable: true, parkId: intent.id, parkKey: claimed.key || null });
           const origin = (claimed.text.match(/^\[agent:from (\S+)\]/) || [])[1] || senderName;
           this._sendToSession(target.name, 'session-mention', target.name, 'dm', origin);
           reply(`released ${intent.id} to ${claimed.name} — it injects at the next safe moment; if a draft is open there it re-parks under the same id.`);
@@ -6113,7 +6113,7 @@ function createSessionManager(deps) {
           : { held: verdict.reason, noUrgent: verdict.noUrgent };
       }
       const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : [];
-      this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite);
+      this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite, key);
       // `queued`, not `delivered`: _deliverMessage returns once the text is parked
       // or handed to the inject queue, and the queue writes it later — within one
       // poll of the seat's readiness latch. Every negative verdict above IS decided
@@ -6645,7 +6645,7 @@ function createSessionManager(deps) {
     // out-of-process hook mid-loop, and a seat already `thinking` produces no fresh
     // activity edge for it. A caller that waits for such an edge must therefore arm
     // on 'injected' only.
-    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null) {
+    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
       const finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
@@ -6653,6 +6653,7 @@ function createSessionManager(deps) {
       if (!this._maybeParkDelivery(target, finalText)) {
         this._injectText(target, finalText, {
           parkable: true,
+          parkKey,
           // A park via the fire-time divert is durable too, so the stamp is taken
           // once the producer runs and the write is imminent — the same instant the
           // divert decides. Returning the text unchanged keeps this a pure hook.
@@ -6856,7 +6857,7 @@ function createSessionManager(deps) {
       // self-intent (compact/reload continuation, a slash command) would stall the
       // agent. The divert re-checks for an open draft at write time, inside the
       // queue's critical section.
-      const baseDivert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null) : null;
+      const baseDivert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null, opts.parkKey || null) : null;
       // The divert runs AFTER `produce`, so a caller told 'injected' by the producer
       // can still have its text parked a moment later. Reporting the claim lets such
       // a caller correct itself — last disposition wins.
@@ -6900,13 +6901,13 @@ function createSessionManager(deps) {
       return Date.now() - (session.lastVoiceDraftTs || 0) < INJECT_VOICE_DRAFT_STALE_MS;
     }
 
-    _parkDivertFor(session, id = null) {
+    _parkDivertFor(session, id = null, key = null) {
       if (!session || session.agentType !== 'claude') return null;
       return (text) => {
         if (session._dead) return false;
         if (!this._anyDraftOpen(session)) return false;
         try {
-          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id, false, this._bornFor(session.name));
+          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id, false, this._bornFor(session.name), key);
         } catch (e) {
           log.error('inject', `fire-time park failed for ${session.name}: ${e.message} — injecting instead`);
           return false;
