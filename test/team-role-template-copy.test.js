@@ -35,8 +35,6 @@ const LIB_HAND = {
 const LIB_HAND_COPIED = { ...LIB_HAND };
 delete LIB_HAND_COPIED.id;
 const LIB_LEAD = { name: 'clodex-team-lead', type: 'claude', cwd: '${TEAM_ROOT}', stripLevel: 2 };
-// t891: the reviewer names a template too. `extraArgs` carries the --model,
-// which is the whole reason the operator wants this file per team.
 const LIB_REVIEWER = {
   name: 'clodex-team-reviewer',
   type: 'claude',
@@ -99,16 +97,10 @@ test('t789 createTeam: every role with a stock template gets the team\'s own cop
   // the same shape deriveModelTemplate produces, minus the --model splice.
   assert.deepStrictEqual(readTpl(home, 'x', 'hand'), { ...LIB_HAND_COPIED, name: 'hand' });
   assert.deepStrictEqual(readTpl(home, 'x', 'lead'), { ...LIB_LEAD, name: 'lead' });
-  // t891: the reviewer is copied for too, and its `extraArgs` survives the copy —
-  // reviewerModelArgs reads the --model out of exactly this array, so a copier
-  // that dropped it would seed a team whose reviewer silently lost its model.
-  assert.deepStrictEqual(readTpl(home, 'x', 'reviewer'), { ...LIB_REVIEWER, name: 'reviewer' });
-  // The copy COUNT, anchored at THREE: a fourth file means a role gained a
-  // template nobody decided to give it, and a missing one means a stock role lost
-  // the file its seat boots on; a listing assertion catches both where existsSync
-  // calls would not.
+  assert.deepStrictEqual(readTpl(home, 'x', 'reviewer'), { ...LIB_REVIEWER, name: 'reviewer' },
+    't891: the reviewer is copied for too, and its `extraArgs` survives verbatim — reviewerModelArgs reads the --model out of exactly this array, so a copier that dropped it would seed a team whose reviewer silently lost its model');
   assert.deepStrictEqual(fs.readdirSync(tplDir(home, 'x')).sort(), ['hand.json', 'lead.json', 'reviewer.json'],
-    'three copies and no more — every stock role names a template as of t891');
+    'three copies and no more — a fourth file means a role gained a template nobody decided to give it, a missing one means a stock role lost the file its seat boots on, and a listing assertion catches both where existsSync calls would not');
   assert.deepStrictEqual(team.templatesCopied, ['lead', 'hand', 'reviewer'],
     'and the create reports exactly the roles it wrote a file for');
 
@@ -542,8 +534,6 @@ test('t791 [agent:team role-add]: the reply names the prompt copy, over the REAL
     `the role-add reply carries the clause — got: ${JSON.stringify(injected)}`);
 });
 
-// --- t891: the reviewer is one of those roles ---------------------------------
-
 test('t891 createTeam: the reviewer role reads back WHOLE, pointing at the team\'s own copy', () => {
   const home = mkHome();
   const root = mkTmpRoot('t891-proj-');
@@ -552,9 +542,6 @@ test('t891 createTeam: the reviewer role reads back WHOLE, pointing at the team\
   assert.strictEqual(fs.existsSync(teamDir(home, 'x')), false, 'ENTER: no team dir before the create');
   tm.createTeam({ name: 'x', root, lead: 'x-lead' });
 
-  // The WHOLE def, not a substring: a partial match reads around a missing seam
-  // here — a role that kept the library stem while the file was written under the
-  // role name would satisfy any single-field check on `prompt` or `brief`.
   assert.deepStrictEqual(tm.loadManifest('x').roles.reviewer, {
     template: 'reviewer',
     prompt: 'reviewer',
@@ -562,28 +549,24 @@ test('t891 createTeam: the reviewer role reads back WHOLE, pointing at the team\
     dispatch: 'standing',
     cwd: null,
     account: null,
-  });
+  }, 'the WHOLE def, not a substring: a role that kept the library stem while the file was written under the role name would satisfy any single-field check on `prompt` or `brief`');
 
-  // And the file it points at is the library body, `name` swapped to the role.
-  assert.deepStrictEqual(readTpl(home, 'x', 'reviewer'), { ...LIB_REVIEWER, name: 'reviewer' });
+  assert.deepStrictEqual(readTpl(home, 'x', 'reviewer'), { ...LIB_REVIEWER, name: 'reviewer' },
+    'and the file it points at is the library body with `name` swapped to the role');
 });
 
 test('t891: an agent still cannot repoint the reviewer role, template or not', () => {
-  // The template is now a real field on the reviewer def, so the refusals that
-  // guard it stop being vacuous — they are what keeps an agent from pointing the
-  // reviewer at a template of its own choosing.
   const home = mkHome();
   const root = mkTmpRoot('t891-proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'x', root, lead: 'x-lead' });
   const before = tm.loadManifest('x').roles.reviewer;
-  assert.strictEqual(before.template, 'reviewer', 'ENTER: there is a template to repoint');
+  assert.strictEqual(before.template, 'reviewer',
+    'ENTER: the template is a real field on the reviewer def now, so the refusals below stop being vacuous — they are what keeps an agent from pointing the reviewer at a template of its own choosing');
 
   assert.throws(() => tm.setRole('x', 'reviewer', { template: 'attacker-template' }), /operator-owned topology/);
-  // addRole over an EXISTING key never reaches the reserved branch — it is the
-  // already-exists arm that refuses here. A different message, the same refusal,
-  // and both must stay: an agent reaching either one must not repoint the role.
   assert.throws(() => tm.addRole('x', 'reviewer', { template: 'attacker-template' }),
-    /already exists on team "x" with a different definition/);
+    /already exists on team "x" with a different definition/,
+    'addRole over an EXISTING key never reaches the reserved branch — the already-exists arm refuses here instead: a different message, the same refusal, and both must stay');
   assert.deepStrictEqual(tm.loadManifest('x').roles.reviewer, before, 'the def is untouched by both');
 });

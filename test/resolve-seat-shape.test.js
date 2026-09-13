@@ -1304,13 +1304,6 @@ test('t680: a role template named <plugin>:<stem> resolves through listAllTempla
     'without the seam only the library is consulted, and the library does not carry it');
 });
 
-// --- t891: the reviewer role names a template, so a team owns its own copy ----
-//
-// The mechanism end to end, over a REAL team directory rather than a stub:
-// createTeam seeds `templates/reviewer.json` and repoints the role at
-// `reviewer`, and _templateShape reads that file before the library. What rides
-// on it is the --model inside it — the reviewer's model becomes a per-team
-// setting instead of one shared library file.
 
 function t891Team(roles, files) {
   const dir = mkTmpRoot('t891-team-');
@@ -1323,8 +1316,6 @@ function t891Team(roles, files) {
 }
 
 test('t891: the TEAM\'s own reviewer.json supplies the --model, over the library copy of the same role', () => {
-  // The two files must disagree on the model or this asserts nothing: with both
-  // naming the same one, a resolver reading either source passes.
   const library = { name: 'clodex-team-reviewer', type: 'claude', cwd: '/repo', extraArgs: ['--model', 'library-model'] };
   const m = managerWith([library]);
   const team = t891Team(
@@ -1333,33 +1324,25 @@ test('t891: the TEAM\'s own reviewer.json supplies the --model, over the library
   );
 
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
-  assert.strictEqual(shape.tpl.name, 'reviewer', 'ENTER: the TEAM file is what resolved, not the library one');
+  assert.strictEqual(shape.tpl.name, 'reviewer',
+    'ENTER: the TEAM file resolved, not the library one — the two name DIFFERENT models, or a resolver reading either source would pass below');
   assert.deepStrictEqual(shape.extraArgs, ['--model', 'team-model'],
-    'the team\'s own file decides the reviewer\'s model — that token is the whole point of seeding it');
+    'the team\'s own file decides the reviewer\'s model: that token is the whole reason the file is seeded per team');
   assert.strictEqual(shape.modelRefused, null);
 });
 
 test('t891: a team with NO reviewer file still resolves the library copy, exactly as before', () => {
-  // The additive half: nothing may regress to REVIEWER_FALLBACK that did not use
-  // it before. The role names the seeded stem and the file is absent, which is
-  // every team created before this change and every box with an uninstalled copy.
   const library = { name: 'clodex-team-reviewer', type: 'claude', cwd: '/repo', extraArgs: ['--model', 'library-model'] };
   const m = managerWith([library]);
   const team = t891Team({ reviewer: { prompt: 'clodex-team-reviewer', template: 'clodex-team-reviewer' } }, {});
 
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
-  assert.strictEqual(shape.tpl, library, 'the library copy resolved');
+  assert.strictEqual(shape.tpl, library,
+    'the seeding is ADDITIVE: every team made before it, and every box whose copy is uninstalled, keeps the library template and must not drop to REVIEWER_FALLBACK');
   assert.deepStrictEqual(shape.extraArgs, ['--model', 'library-model']);
 });
 
 test('t891: the SEEDED template does not shadow the team\'s own reviewer prompt (the t791 property)', () => {
-  // The regression this ticket had to avoid. t791 made `prompts/system/reviewer.md`
-  // outrank the template's systemPromptFile, and it was conditional on the
-  // template being IMPLIED — which held only while the stock reviewer named none.
-  // A template equal to the ROLE KEY is the seeded copy, not an operator's
-  // naming, so it must not count as explicit: create writes both files from one
-  // stock pair, and the template shadowing the prompt beside it is exactly the
-  // state t791 fixed.
   const m = managerWith([{ name: 'clodex-team-reviewer', type: 'claude', systemPromptFile: 'clodex-team-reviewer' }]);
   const team = t891Team(
     { reviewer: { prompt: 'reviewer', template: 'reviewer' } },
@@ -1370,13 +1353,10 @@ test('t891: the SEEDED template does not shadow the team\'s own reviewer prompt 
   );
 
   assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).systemPromptFile, 'reviewer',
-    'the team\'s copy of the briefing is still reachable — otherwise a team cannot edit its reviewer at all');
+    't791 made the team\'s prompt outrank an IMPLIED template\'s, conditional on the reviewer naming no template — so a seeded stem equal to the ROLE KEY must not read as a naming, or the team\'s copy of the briefing becomes unreachable again and a team cannot edit its reviewer at all');
 });
 
 test('t891: an EXPLICITLY named template still keeps its own prompt over the team\'s copy', () => {
-  // The other side, unchanged: a per-ticket `reviewer:<name>` or an operator's
-  // own stem is a naming, and the template and its briefing are chosen together.
-  // Only a stem EQUAL to the role key is treated as the seeded copy.
   const m = managerWith([
     { name: 'clodex-team-reviewer', type: 'claude', systemPromptFile: 'clodex-team-reviewer' },
     { name: 'clodex-team-reviewer-shell', type: 'claude', systemPromptFile: 'clodex-team-reviewer-shell', tools: ['Read', 'Grep', 'Glob', 'Bash'] },
@@ -1388,19 +1368,19 @@ test('t891: an EXPLICITLY named template still keeps its own prompt over the tea
       'prompts/system/reviewer.md': 'the team wrote this one\n',
     },
   );
+  assert.ok(fs.existsSync(path.join(team.dir, 'prompts', 'system', 'reviewer.md')),
+    'ENTER: the team owns the file the role points at, so the assertion below is the override DECLINING to yield rather than finding nothing to yield to');
 
   assert.strictEqual(
     m.resolveSeatShape(team, 'reviewer', 'review', LEAD, 'clodex-team-reviewer-shell').systemPromptFile,
     'clodex-team-reviewer-shell',
-    'a shell seat briefed by the no-shell prompt is the mismatch this keeps preventing',
+    'only a stem EQUAL to the role key is the seeded copy: a named template and its briefing are chosen together, and a shell seat briefed by the no-shell prompt is the mismatch that keeps preventing',
   );
 });
 
 test('t891: the SHIPPED reviewer template really is what the stock role now names', () => {
-  // The stem and the file, together: a stock def naming a template that does not
-  // ship is a role pointing at nothing, and the resolver would fall through to
-  // DEFAULT_REVIEWER_TEMPLATE and hide it.
-  assert.strictEqual(STOCK_ROLE_DEFS.reviewer.template, 'clodex-team-reviewer');
+  assert.strictEqual(STOCK_ROLE_DEFS.reviewer.template, 'clodex-team-reviewer',
+    'a stock def naming a template that does not ship is a role pointing at nothing, and the resolver would fall through to DEFAULT_REVIEWER_TEMPLATE and hide it');
   const tplDir = path.join(__dirname, '..', 'resources', 'library', 'templates');
   const tpl = JSON.parse(fs.readFileSync(path.join(tplDir, `${STOCK_ROLE_DEFS.reviewer.template}.json`), 'utf-8'));
   assert.strictEqual(tpl.name, STOCK_ROLE_DEFS.reviewer.template,
