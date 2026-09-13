@@ -50,6 +50,23 @@ test('unset base path serves the live /c route byte-identically', async () => {
   });
 });
 
+test('bare /c redirects to /c/ by default, and the Location is /c/', async () => {
+  await withServer({}, async (port) => {
+    const bare = await req(port, '/c');
+    assert.equal(bare.status, 301);
+    assert.equal(bare.headers.location, '/c/', 'the default redirect target is the default prefix with a slash');
+  });
+});
+
+test('bare /i redirects to /i/ when /i is configured, never to /c/', async () => {
+  await withServer({ basePath: '/i' }, async (port) => {
+    const bare = await req(port, '/i');
+    assert.equal(bare.status, 301);
+    assert.notEqual(bare.headers.location, '/c/', 'a hardcoded /c/ target would send the page to another instance');
+    assert.equal(bare.headers.location, '/i/', 'the redirect follows the configured prefix');
+  });
+});
+
 test('a configured prefix replaces /c rather than adding to it', async () => {
   await withServer({ basePath: '/i' }, async (port) => {
     const now = await req(port, '/i/api/sessions');
