@@ -1,9 +1,4 @@
 'use strict';
-// service-ports.test.js — CLODEX_REMOTE_PORT / CLODEX_WIRESCOPE_PORT precedence.
-// The env var WINS over the persisted setting because a second instance starts
-// from a default COPY of the first's ui-settings.json, and it must never be
-// written back: a launcher that exports a port would otherwise mutate stored
-// config, and the next launch without the var would silently keep it.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
