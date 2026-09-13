@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- When you type to a seat, its reply now leads with the intents it fired and closes with the prose for you, so the part you read sits at the end of the turn instead of buried above a ticket spec it unrolled. The seat is also told that this ordering makes a forgotten `[agent:end]` costly — the unclosed body would swallow the text meant for you — and the greedy-body rule no longer offers the older "above the intents" placement as an equal option.
+
 ## 5.64.15 — 2026-09-13 — a team owns its reviewer, and a seat knows you from a machine
 
 - A team created from now on owns its reviewer's template: the create writes `teams/<team>/templates/reviewer.json` from the shipped copy and points the reviewer role at it, the way it already did for the lead and the hand. Editing that file — the `--model` in particular — changes the reviewer for that team alone, instead of every team sharing one library file. Teams created before this keep resolving the library copy exactly as they did.
