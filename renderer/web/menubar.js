@@ -88,12 +88,6 @@ function buildMenus(ctx) {
         { sep: true },
         { label: 'Rename Workspace…', run: () => emit('request-rename-workspace') },
         { label: 'Preferences…', run: () => emit('request-open-preferences') },
-        // EXACTLY ONE route to the Manage Plugins dialog exists at any time: this
-        // row appears only while the top-level Plugins menu is absent, which by
-        // its null rule is the zero-plugins state a fresh install is in — and
-        // without a route there, the dialog's "Open Plugins Folder" button (how
-        // you install your first plugin) would be unreachable. Both sides read
-        // pluginsTopMenu, so they cannot disagree about which is showing.
         ...((await pluginsTopMenu(ctx)) ? [] : [{ label: 'Plugins…', run: () => emit('request-open-plugins-dialog') }]),
         { sep: true },
         { label: 'Restart Clodex…', run: () => confirmRestart(invoke) },
@@ -154,11 +148,6 @@ function buildMenus(ctx) {
             return p.sessions.map((s) => ({ label: s.name, run: () => emit('request-open-peer-session', p.id, s.name) }));
           },
         });
-        // Split managed sandbox boxes out of the peer list the way app-menus.js
-        // does: a box's peer id IS its box id (sandbox.js registerPeer), so the
-        // registry ids ∩ peer ids marks them. Peers = genuine remotes only. A box
-        // gets a peer status row once first started and keeps it until deleted,
-        // so a never-started seed box appears nowhere but the panel.
         const [allStatuses, boxes] = await Promise.all([
           Promise.resolve(api.peerList ? api.peerList() : []).catch(() => []),
           Promise.resolve(api.sandboxListBoxes ? api.sandboxListBoxes() : []).catch(() => []),
@@ -173,11 +162,6 @@ function buildMenus(ctx) {
           for (const p of peers) rows.push(peerRow(p));
         }
         rows.push({ sep: true }, { label: 'Manage Peered Clodexes…', run: () => emit('request-open-peers-dialog') });
-        // Box rows and their header are gated on a box peer existing, so a
-        // non-sandbox user sees no clutter — but "Manage Clodex Sandboxes…" is
-        // always-on, mirroring the always-on manage row above it. That keeps a
-        // path to the panel that owns box creation on a fresh install whose seed
-        // box was never started, now that File > Sandboxes… is gone.
         rows.push({ sep: true });
         if (boxList.length) {
           rows.push({ head: 'Sandboxes' });
@@ -389,10 +373,6 @@ function buildPluginsMenu(status, ctx) {
   };
 }
 
-// The ONE source of "is the top-level Plugins menu showing?", read by both the
-// bar (which inserts and removes the menu) and the File fallback row (present
-// exactly when this is null). Two independent evaluations of the null rule could
-// disagree and show either both routes or neither; this cannot.
 async function pluginsTopMenu(ctx) {
   const status = ctx && ctx.pluginStatus ? await ctx.pluginStatus() : null;
   return buildPluginsMenu(status, ctx);
