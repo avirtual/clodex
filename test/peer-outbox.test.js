@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const {
   enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins, validOrigin,
+  markOutboxOrigin, outboxKnowsOrigin,
 } = require('../peer-outbox');
 
 function tmpRoot() {
@@ -124,6 +125,40 @@ test('a bad origin charset is rejected by enqueue and never touches disk', () =>
   assert.strictEqual(r3.ok, false);
   // The root has no stray dirs from the rejected writes.
   assert.deepStrictEqual(listOutboxOrigins(root), []);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('markOutboxOrigin is invisible to the queued-message view and the advertised set', () => {
+  const root = tmpRoot();
+  assert.strictEqual(markOutboxOrigin(root, 'desk'), true);
+  assert.strictEqual(outboxKnowsOrigin(root, 'desk'), true);
+  assert.strictEqual(outboxHasOrigin(root, 'desk'), false, 'a marker is not a queued message');
+  assert.deepStrictEqual(listOutboxOrigins(root), [], 'a marked-but-empty origin is never advertised');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a marked origin stays known across a full drain — the restart/claim case', () => {
+  const root = tmpRoot();
+  const seq = seqGen();
+  markOutboxOrigin(root, 'desk');
+  enqueueOutbox(root, 'desk', { from: 'a', to: 'b', body: 'x' }, seq());
+  assert.equal(claimOutbox(root, 'desk').length, 1);
+  assert.strictEqual(outboxHasOrigin(root, 'desk'), false, 'drained: nothing queued');
+  assert.strictEqual(outboxKnowsOrigin(root, 'desk'), true, 'but the box still knows it was contacted');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('outboxKnowsOrigin falls back to a queued message, and rejects a bad origin', () => {
+  const root = tmpRoot();
+  const seq = seqGen();
+  assert.strictEqual(outboxKnowsOrigin(root, 'unmarked'), false);
+  enqueueOutbox(root, 'unmarked', { from: 'a', to: 'b', body: 'x' }, seq());
+  assert.strictEqual(outboxKnowsOrigin(root, 'unmarked'), true, 'known via the queued-message path');
+  assert.strictEqual(outboxKnowsOrigin(root, '..'), false);
+  assert.strictEqual(outboxKnowsOrigin(root, 'a/b'), false);
+  assert.strictEqual(markOutboxOrigin(root, '..'), false);
+  assert.deepStrictEqual(fs.readdirSync(root).filter((f) => f.endsWith('.origin')), [],
+    'a rejected origin writes no marker');
   fs.rmSync(root, { recursive: true, force: true });
 });
 

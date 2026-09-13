@@ -313,7 +313,7 @@ function createRemoteWiring(deps) {
           return out;
         },
         deliverDm: ({ to, from, origin, body, urgent }) => {
-          manager._knownDmOrigins.add(origin);
+          manager._rememberDmOrigin(origin);
           // A bare `from` is a direct DM — qualify it with the origin that dialed us.
           // An already-qualified `from` (contains '@') is the terminal leg of a
           // relayed DM: the originating spoke's fully-qualified sender, carried

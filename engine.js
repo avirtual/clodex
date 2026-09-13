@@ -850,7 +850,7 @@ const {
   // PASSED, not left to defaultClodexHome(): that reads CLODEX_HOME, which
   // would put teams on a different tree than every other subsystem.
 } = createTeamManifest({ fs, clodexHome: REGISTRY_DIR });
-const { enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins } = require('./peer-outbox');
+const { enqueueOutbox, claimOutbox, outboxHasOrigin, outboxKnowsOrigin, markOutboxOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, fencedLines, looksLikeIntent, shadowIntentKey } = require('./intent-scanner');
 const { intentEnabled } = require('./intent-catalog');
 const { bodyModeFor, intentEnabledFor, intentEnabledForSeat, withoutPrivilegedIntentsFor, pluginGrammarLines, pluginRowFor, pruneForPlugins, validIntentNames } = require('./intent-registry');
@@ -1267,6 +1267,8 @@ const SessionManager = createSessionManager({
     noteSubagentTurn,
     os,
     outboxHasOrigin,
+    outboxKnowsOrigin,
+    markOutboxOrigin,
     parkDelivery,
     parkIdInUse,
     fencedLines,

@@ -22,6 +22,13 @@ const { isDraftOpen: isDraftOpenReal } = require('../../proxy-util');
 
 // Minimal fake deps: only what the PTY-free methods touch. Everything else is
 // undefined, which the destructure tolerates (those methods aren't reached).
+let OUTBOX_PARENT = null;
+let OUTBOX_N = 0;
+function sharedOutboxRoot() {
+  if (!OUTBOX_PARENT) OUTBOX_PARENT = mkTmpRoot('clodex-fix-outbox-');
+  return pathReal.join(OUTBOX_PARENT, `mk-${++OUTBOX_N}`);
+}
+
 function mk(overrides = {}) {
   const deps = {
     knownSkillNames: () => [],
@@ -74,6 +81,9 @@ function mk(overrides = {}) {
     // an unwired seam must throw rather than wave every session type through to
     // a shell it should not reach.
     termAvailableFor: require('../../drawer-avail').termAvailableFor,
+    OUTBOX_DIR: sharedOutboxRoot(),
+    outboxKnowsOrigin: require('../../peer-outbox').outboxKnowsOrigin,
+    markOutboxOrigin: require('../../peer-outbox').markOutboxOrigin,
     ...overrides,
   };
   const SessionManager = createSessionManager(deps);
