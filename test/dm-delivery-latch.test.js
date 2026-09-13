@@ -488,6 +488,54 @@ test('t881: a _deliverMessage with no key still re-parks keyless when diverted',
   } finally { app.stop(); }
 });
 
+test('t882: an urgent dm that claimed a parked copy says so to its sender and in the IPC log', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    await coldParked(app, 'SUPERSEDE NOTICE');
+    const ids = app.parkedIds('target', /SUPERSEDE NOTICE/);
+    assert.strictEqual(ids.length, 1,
+      'ENTER: the parked copy must exist WITH its resend id before the urgent send — that id is the whole '
+      + 'content of the notice under test, and a park that never happened would make both assertions vacuous');
+    const beforeCasts = app.casts.length;
+    await app.m._handleIntent('sender', dm('target', 'SUPERSEDE NOTICE', true));
+    const told = await settled(app, 'sender', /delivered urgent/);
+    assert.ok(told.includes(`[agent:dm] delivered urgent to target; its parked copy ${ids[0]} was claimed`),
+      'the sender must be told WHICH park was consumed: it is holding a resend id it would otherwise still '
+      + `believe is live, and a bare 'queued' reads as a second delivery. Got: ${JSON.stringify(told.slice(-300))}`);
+    assert.strictEqual(app.parked('target', /SUPERSEDE NOTICE/), 0,
+      'and the park must be GONE — the notice claims a consumption, so a park still on disk would make it a lie');
+    const fresh = app.casts.slice(beforeCasts)
+      .filter((c) => c.ch === 'ipc-message' && c.payload && c.payload.type === 'dm');
+    assert.strictEqual(fresh.length, 1, 'ENTER: exactly one dm broadcast for the urgent send');
+    assert.strictEqual(fresh[0].payload.body, `URGENT (supersedes ${ids[0]}): SUPERSEDE NOTICE`,
+      'the log records the supersede: with a plain body the operator sees two sends of the same text and no '
+      + 'way to tell that only one of them arrived');
+  } finally { app.stop(); }
+});
+
+test('t882: a plain dm to a warm target keeps the exact prior shape — no notice, raw broadcast body', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    const senderBefore = app.seen('sender');
+    const beforeCasts = app.casts.length;
+    await app.m._handleIntent('sender', dm('target', 'PLAIN BODY'));
+    await settled(app, 'target', /PLAIN BODY/);
+    await complete(app, 'target');
+    assert.strictEqual(app.seen('sender'), senderBefore,
+      'a dm that superseded nothing must inject NOTHING extra on its sender: the notice is priced against a '
+      + 'claim that happened, and every ordinary dm paying for it is a context tax on the whole fleet');
+    const fresh = app.casts.slice(beforeCasts)
+      .filter((c) => c.ch === 'ipc-message' && c.payload && c.payload.type === 'dm');
+    assert.strictEqual(fresh.length, 1, 'ENTER: exactly one dm broadcast for the plain send');
+    assert.strictEqual(fresh[0].payload.body, 'PLAIN BODY',
+      'and the broadcast body is the RAW body, unprefixed — the log shape every non-superseding dm has always had');
+  } finally { app.stop(); }
+});
+
 test('t388: a seat that went busy while the unit waited in the gates does not arm', async () => {
   const app = boot({ deps: { specConfirmMs: 60_000 } });
   try {

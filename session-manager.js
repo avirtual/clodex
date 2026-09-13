@@ -4598,6 +4598,7 @@ function createSessionManager(deps) {
       switch (intent.type) {
         case 'dm': {
           const localTarget = this.sessions.get(intent.target);
+          let sup = null;
           if (localTarget && localTarget.agentType) {
             // The ONE site where a live local sender exists to be told, which is
             // why the latch is armed from here and not from inside
@@ -4628,6 +4629,7 @@ function createSessionManager(deps) {
               });
               break;
             }
+            sup = Array.isArray(r.superseded) && r.superseded.length ? r.superseded : null;
           } else if (!localTarget) {
             if (intent.target.includes('@')) {
               this._routeFederatedDm(session, senderName, intent);
@@ -4662,8 +4664,14 @@ function createSessionManager(deps) {
             });
             break;
           }
+          if (sup && session) {
+            this._injectText(session,
+              `[agent:dm] delivered urgent to ${intent.target}; its parked copy ${sup.join(', ')} was claimed, so ${intent.target} reads it once.`,
+              { parkable: true });
+          }
           this._broadcast('ipc-message', {
-            type: 'dm', from: senderName, to: intent.target, body: intent.body,
+            type: 'dm', from: senderName, to: intent.target,
+            body: sup ? `URGENT (supersedes ${sup.join(', ')}): ${intent.body}` : intent.body,
           });
           break;
         }
