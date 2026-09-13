@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — three things an operator touches: the reviewer's model, the browser menus, and messages from the phone
 
 - A built-in role's template is editable from the team popover: the `lead` and `reviewer` rows now name the template their seats boot on and open it in the template editor, so changing which model the reviewer runs no longer means finding and hand-editing the right JSON file.
 - The browser menubar's two-level submenus work with the mouse: opening a deeper panel no longer destroys the one the pointer is in, so Library ▸ Prompts ▸ New Prompt… and ▸ Manage Prompts… can be clicked again, and a submenu that would overflow the window flips to the other side of its parent instead of opening detached at the screen edge.
