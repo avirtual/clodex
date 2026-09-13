@@ -102,7 +102,11 @@ ENV HOME=/home/clodex \
     # first boot with no GUI toggle to reach in the container.
     CLODEX_WIRESCOPE_HOST=0.0.0.0 \
     CLODEX_REMOTE_HOST=0.0.0.0 \
-    CLODEX_REMOTE_ENABLE=1
+    CLODEX_REMOTE_ENABLE=1 \
+    # This engine runs INSIDE a sandbox box: no docker socket, so it must not
+    # construct a sandbox manager. Baked into the image, not the generated
+    # compose, so it holds however the container is launched.
+    CLODEX_IN_SANDBOX=1
 
 USER clodex
 EXPOSE 8080

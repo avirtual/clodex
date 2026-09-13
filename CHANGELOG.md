@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A headless Clodex running on your own machine can now manage sandboxes from its web GUI — the Sandboxes dialog used to answer "Couldn't check Docker — sandbox manager unavailable" on every headless instance, before it ever looked for Docker. One running *inside* a sandbox box still cannot, which is what the flag was always meant to say: the question is whether there is a Docker to reach, not whether there is a desktop window. Note that this puts sandbox start/stop/rebuild within reach of anyone holding the instance's web token, since the browser is a headless instance's only frontend.
+
 - **Breaking:** the phone viewer no longer answers under `/c` unless you ask it to. The mount prefix used to default to `/c`, which meant every Clodex served its entire API twice — once at `/api/*` and again at `/c/api/*` — so an ingress path match, a WAF rule or an audit filter written against `/api/*` was silently bypassable through the alias, and nothing declared it existed. Unset now means no prefix: `/` and `/api/sessions` serve exactly as before, `/c/` 404s. To restore the old route, set `CLODEX_REMOTE_BASE_PATH=/c` or the new `remoteBasePath` setting. That setting is the other half of this change — the prefix is now persisted rather than env-only, so a packaged `.app` launched from Finder (which inherits no shell environment) can set it at all. The variable still wins over the stored value and is never written back, so a launch without it returns to whatever Settings holds.
 
 ## 5.65.0 — 2026-09-13
