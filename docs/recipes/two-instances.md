@@ -68,7 +68,7 @@ holds — the pair of shells above is the whole configuration, nothing to click.
 launched without it has none. That failure does not look like a failure: the
 instance still serves a page, because the peer wire brings up a second and
 different frontend. `remote.js` is the phone viewer, a deliberately simplified
-page of a few tens of kilobytes, reachable on `CLODEX_REMOTE_PORT`.
+single page of some sixteen kilobytes, reachable on `CLODEX_REMOTE_PORT`.
 `web-host.js` is the real browser GUI, serving the two-megabyte
 `web-dist/index.html`, and `headless-main.js` constructs it only when
 `CLODEX_WEB_PORT` is set. So a launcher that omits the variable yields an
