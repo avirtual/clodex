@@ -23,6 +23,8 @@ edit, no build flag.
 | `CLODEX_REMOTE_ENABLE` | `1` brings the peer wire up with no settings write (the headless-container door) | unset — the wire follows the persisted `remoteEnabled` setting |
 | `CLODEX_REMOTE_HOST` | the interface the peer wire binds | `127.0.0.1` |
 | `CLODEX_REMOTE_TOKEN` | the peer wire's bearer token; wins over the token file | unset — the token file, else localhost trust |
+| `CLODEX_REMOTE_PORT` | the port the peer wire listens on; wins over the persisted `remotePort` setting and is never written back to it | unset — the persisted setting, else `7900` |
+| `CLODEX_WIRESCOPE_PORT` | the port wirescope listens on; wins over the persisted `wirescopePort` setting and is never written back. A persisted `proxyUrl` pointed at loopback follows it, so routing stays consistent | unset — the persisted setting, else `7800` |
 
 ## 2. Two headless instances
 
@@ -34,6 +36,8 @@ export CLODEX_DATA_DIR=~/clodex-a/data
 export CLODEX_LABEL=box-a
 export CLODEX_WEB_PORT=8080
 export CLODEX_REMOTE_ENABLE=1
+export CLODEX_REMOTE_PORT=7900
+export CLODEX_WIRESCOPE_PORT=7800
 export CLODEX_REMOTE_TOKEN=$(openssl rand -hex 16)
 node headless-main.js
 ```
@@ -46,17 +50,19 @@ export CLODEX_DATA_DIR=~/clodex-b/data
 export CLODEX_LABEL=box-b
 export CLODEX_WEB_PORT=8081
 export CLODEX_REMOTE_ENABLE=1
+export CLODEX_REMOTE_PORT=7901
+export CLODEX_WIRESCOPE_PORT=7801
 export CLODEX_REMOTE_TOKEN=$(openssl rand -hex 16)
 node headless-main.js
 ```
 
 Keep each token — step 3 below needs B's.
 
-**The two service ports are not environment.** The peer wire's port (default
-`7900`) and wirescope's (default `7800`) are per-instance *persisted settings*,
-living in each instance's own `CLODEX_DATA_DIR`. Change them in that instance's
-Settings — there is no env override, and two instances left on the defaults
-collide on both. Give B, say, `7901` and `7801`.
+Two instances left on the default service ports collide on both, which is why B
+exports `7901` and `7801` above. Each var wins over that instance's persisted
+`remotePort` / `wirescopePort` and is never written back into its
+`ui-settings.json`, so a launch without the var returns to whatever Settings
+holds — the pair of shells above is the whole configuration, nothing to click.
 
 ## 3. How A reaches B
 
