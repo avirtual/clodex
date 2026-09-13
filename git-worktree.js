@@ -257,9 +257,9 @@ async function isDirty(worktreePath) {
 
 // Remove a worktree. --force covers a dirty tree / lingering handles (the PTY
 // is already dead by the time this runs on kill). Best-effort: also prunes the
-// admin entry. Returns { ok } or { ok:false, error }. Refuses to remove the
-// main working tree (guard: the path must be a registered LINKED worktree).
-async function removeWorktree(worktreePath) {
+// admin entry. Refuses to remove the main working tree (guard: the path must be
+// a registered LINKED worktree).
+async function removeWorktree(worktreePath, opts) {
   const wt = worktreePath && path.resolve(String(worktreePath));
   if (!wt) return { ok: false, error: 'No worktree path given' };
   // Anchor git at the worktree itself so we can find its repo, then confirm it's
@@ -277,13 +277,17 @@ async function removeWorktree(worktreePath) {
   if (self.bare || entries.indexOf(self) === 0) {
     return { ok: false, error: 'Refusing to remove the main working tree' };
   }
+  const repo = entries[0] && entries[0].path;
   const r = await git(wt, ['worktree', 'remove', '--force', wt]);
   if (!r.ok) {
     // A manually-deleted dir leaves a stale admin entry; prune clears it.
     await git(path.dirname(wt), ['worktree', 'prune']).catch(() => {});
     return { ok: false, error: (r.stderr || 'git worktree remove failed').trim() };
   }
-  return { ok: true };
+  const branch = opts && opts.deleteBranch ? String(opts.deleteBranch) : null;
+  if (!branch) return { ok: true };
+  const d = await deleteBranch(repo, branch);
+  return d.ok ? { ok: true, branchDeleted: branch } : { ok: true, branchDeleted: null, branchError: d.error };
 }
 
 async function headSha(dir) {

@@ -49,6 +49,63 @@ test('createWorktree: makes a new branch + dir, removeWorktree tears it down', {
   assert.ok(!fs.existsSync(r.path));
 });
 
+function branchList(repo, branch) {
+  return execFileSync('git', ['-C', repo, 'branch', '--list', branch], { encoding: 'utf8' }).trim();
+}
+
+test('removeWorktree: deleteBranch drops the branch createWorktree minted', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const r = await wt.createWorktree(repo, 'agent/minted');
+  assert.strictEqual(r.ok, true, r.error);
+  assert.notStrictEqual(r.base, null, 'a branch this call created carries a non-null base');
+  assert.ok(fs.existsSync(r.path), 'the worktree must exist before the call under test');
+  assert.ok(branchList(repo, 'agent/minted').includes('agent/minted'), 'the branch must exist before the call under test');
+
+  const rm = await wt.removeWorktree(r.path, { deleteBranch: r.branch });
+  assert.strictEqual(rm.ok, true, rm.error);
+  assert.strictEqual(rm.branchDeleted, 'agent/minted');
+  assert.ok(!fs.existsSync(r.path));
+  assert.strictEqual(branchList(repo, 'agent/minted'), '');
+});
+
+test('removeWorktree: no deleteBranch keeps the branch', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const r = await wt.createWorktree(repo, 'agent/kept');
+  assert.strictEqual(r.ok, true, r.error);
+  assert.ok(fs.existsSync(r.path), 'the worktree must exist before the call under test');
+  assert.ok(branchList(repo, 'agent/kept').includes('agent/kept'), 'the branch must exist before the call under test');
+
+  const rm = await wt.removeWorktree(r.path);
+  assert.strictEqual(rm.ok, true, rm.error);
+  assert.strictEqual(rm.branchDeleted, undefined);
+  assert.ok(!fs.existsSync(r.path));
+  assert.ok(branchList(repo, 'agent/kept').includes('agent/kept'));
+
+  const rm2 = await wt.createWorktree(repo, 'agent/kept2');
+  const rmNoOpt = await wt.removeWorktree(rm2.path, {});
+  assert.strictEqual(rmNoOpt.ok, true, rmNoOpt.error);
+  assert.ok(branchList(repo, 'agent/kept2').includes('agent/kept2'));
+});
+
+test('removeWorktree: an unmerged branch is kept and the refusal is reported', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const r = await wt.createWorktree(repo, 'agent/unmerged');
+  assert.strictEqual(r.ok, true, r.error);
+  const run = (...a) => execFileSync('git', ['-C', r.path, ...a], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(r.path, 'b.txt'), 'work\n');
+  run('add', '-A');
+  run('commit', '-qm', 'unmerged work');
+  assert.ok(fs.existsSync(r.path), 'the worktree must exist before the call under test');
+  assert.ok(branchList(repo, 'agent/unmerged').includes('agent/unmerged'), 'the branch must exist before the call under test');
+
+  const rm = await wt.removeWorktree(r.path, { deleteBranch: r.branch });
+  assert.strictEqual(rm.ok, true, rm.error);
+  assert.strictEqual(rm.branchDeleted, null);
+  assert.ok(rm.branchError && rm.branchError.length > 0, 'the refusal must be reported');
+  assert.ok(!fs.existsSync(r.path));
+  assert.ok(branchList(repo, 'agent/unmerged').includes('agent/unmerged'));
+});
+
 test('removeWorktree: refuses to remove the main working tree', { skip: !gitAvailable() }, async () => {
   const repo = makeRepo();
   const rm = await wt.removeWorktree(repo);
