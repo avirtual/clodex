@@ -147,3 +147,59 @@ test('a rejected value leaves the server serving the default route', async () =>
     assert.equal(escaped.status, 404, 'the refused value is not sanitised into an adjacent prefix');
   });
 });
+
+function captureRemoteOptions() {
+  let srv = null;
+  const deps = {
+    path, fs: require('node:fs'), os: require('node:os'),
+    log: { info() {}, error() {} },
+    DEFAULT_WORKSPACE_ID: 'default',
+    AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    REGISTRY_DIR: '/tmp/reg', OUTBOX_DIR: '/tmp/outbox', SELF_LABEL: 'testbox',
+    parseCtxFile: () => null, jsonlToMessages: () => [], ensureDir: () => {}, homeRelativize: (x) => x,
+    claimOutbox: () => [], listOutboxOrigins: () => [],
+    manager: { sessions: new Map(), create: async () => ({}) },
+    proxyPoller: { snapshot: () => null },
+    restartClodex: () => {}, restartSession: () => {}, peerProxyView: () => null,
+    readSessionArgs: () => ({ ok: false }), applySessionArgs: () => ({ ok: true }),
+    readSkillCatalog: () => ({ ok: false }), applySessionSkills: () => ({ ok: false }),
+    fetchProxyContext: () => {}, fetchProxyReport: () => {}, fetchProxyBust: () => {},
+    fetchSessionFiles: () => {}, fetchFilePeek: () => {}, fetchFileDiff: () => {},
+    CLAUDE_TOOLS: ['Bash'],
+    getPromptLibrary: () => ({ list: () => [] }),
+    getAgentLibrary: () => ({ list: () => [] }),
+    getSkillLibrary: () => ({ list: () => [] }),
+    getPersistence: () => ({ get: () => undefined, setStripLevel: () => {} }),
+    getUiSettings: () => ({ get: () => ({ remoteEnabled: true, remotePort: 0 }) }),
+    getWorkspaces: () => ({ get: () => ({}) }),
+    getRemoteServer: () => srv, setRemoteServer: (v) => { srv = v; }, setRemoteError: () => {},
+    readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
+    appVersion: '9.9.9', isPackaged: () => false,
+  };
+  const remoteMod = require('../remote');
+  const orig = remoteMod.RemoteServer;
+  let opts = null;
+  remoteMod.RemoteServer = function (o) {
+    opts = o;
+    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {}, setWtermCallbacks() {} };
+  };
+  try {
+    require('../remote-wiring').createRemoteWiring(deps).syncRemoteServer();
+  } finally {
+    remoteMod.RemoteServer = orig;
+  }
+  return opts;
+}
+
+test('remote-wiring threads CLODEX_REMOTE_BASE_PATH into the server it constructs', () => {
+  const had = process.env.CLODEX_REMOTE_BASE_PATH;
+  try {
+    delete process.env.CLODEX_REMOTE_BASE_PATH;
+    assert.equal(captureRemoteOptions().basePath, undefined, 'unset stays unset, so the server picks its default');
+    process.env.CLODEX_REMOTE_BASE_PATH = '/i/phone';
+    assert.equal(captureRemoteOptions().basePath, '/i/phone', 'the env value reaches the constructor verbatim');
+  } finally {
+    if (had === undefined) delete process.env.CLODEX_REMOTE_BASE_PATH;
+    else process.env.CLODEX_REMOTE_BASE_PATH = had;
+  }
+});
