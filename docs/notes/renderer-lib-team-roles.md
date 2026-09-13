@@ -29,6 +29,10 @@ from the window's session rows: a worktree hand runs in its own window and count
 zero in this workspace, so the session-scoped numbers would contradict the note
 beside them.
 
+`reservedRoleTemplate` mirrors team-tickets.js's `DEFAULT_LEAD_TEMPLATE` /
+`DEFAULT_REVIEWER_TEMPLATE`: a reserved def stores no `template`, so drift between
+them names a file no seat boots on.
+
 ## activityTime
 
 Formats in the VIEWER's timezone, from `Date`'s local getters. Fixtures must

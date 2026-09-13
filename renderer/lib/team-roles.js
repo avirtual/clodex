@@ -203,9 +203,16 @@ function accountOptions(accounts, stored) {
 // and (b) the reason. lead/reviewer are the only reserved keys today; an unknown
 // reserved key gets a safe generic line.
 function reservedRoleNote(key) {
-  if (key === 'lead') return 'Runs the team. Its role is fixed so the team always has one.';
-  if (key === 'reviewer') return "Independently checks the lead's work — locked so a lead can never rewrite its own reviewer.";
+  if (key === 'lead') return 'Runs the team. Its role is fixed so the team always has one, but its template — including which model it runs — is yours to edit below.';
+  if (key === 'reviewer') return "Independently checks the lead's work. The role is locked so a lead can never rewrite its own reviewer, but its template — including which model it runs — is yours to edit below.";
   return 'Managed by Clodex — no changes needed here.';
+}
+
+const RESERVED_ROLE_TEMPLATE = { lead: 'clodex-team-lead', reviewer: 'clodex-team-reviewer' };
+
+function reservedRoleTemplate(key, stored) {
+  if (stored) return stored;
+  return RESERVED_ROLE_TEMPLATE[key] || '';
 }
 
 // Friendly-units parse for the stall-watchdog field (Slice 4 C1): "30m", "2h",
@@ -684,7 +691,7 @@ function usesByRole(planItems, roleKeys) {
 }
 
 module.exports = {
-  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole, usesByRole,
+  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, preflightByRole, usesByRole,
   promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, accountOptions,
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,

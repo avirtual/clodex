@@ -10,7 +10,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
+  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
   reservedRemovalWarning,
@@ -566,6 +566,39 @@ test('reservedRoleNote: newcomer-facing lock reason for lead/reviewer, safe gene
   assert.match(reservedRoleNote('reviewer'), /Independently checks the lead's work/);
   // Any other (no other reserved key today) → a safe generic, never empty.
   assert.match(reservedRoleNote('whatever'), /Managed by Clodex/);
+});
+
+// The operator could not change the reviewer's model from the GUI at all: the
+// reserved row showed no template control, so the only route was hand-editing the
+// template JSON (which a release overwrites). These pin the resolution the row
+// now displays. The names are the spawn-path defaults in team-tickets.js —
+// DEFAULT_LEAD_TEMPLATE and DEFAULT_REVIEWER_TEMPLATE — and a drift between the
+// two sends the operator to edit a file the seat never boots on, which is the bug
+// this fixes in a new costume.
+test('reservedRoleTemplate: a reserved role with no stored template resolves to the spawn default', () => {
+  assert.strictEqual(reservedRoleTemplate('reviewer', ''), 'clodex-team-reviewer');
+  assert.strictEqual(reservedRoleTemplate('lead', ''), 'clodex-team-lead');
+});
+
+test('reservedRoleTemplate: a stored template wins over the default, and an unknown key resolves to blank', () => {
+  assert.strictEqual(reservedRoleTemplate('reviewer', 'my-own-reviewer'), 'my-own-reviewer',
+    'a team that set its own reviewer template must see THAT name, not the stock one it does not boot on');
+  assert.strictEqual(reservedRoleTemplate('whatever', ''), '',
+    'an unknown reserved key has no default to claim: blank renders as the dash, never as another role\'s template');
+});
+
+test('reservedRoleNote tells the operator the template is editable even though the role is locked', () => {
+  // The lock note was the ONLY text on the row and it said "locked" without
+  // qualification, so an operator reading it concluded the model was unreachable.
+  for (const key of ['lead', 'reviewer']) {
+    const note = reservedRoleNote(key);
+    assert.match(note, /template/,
+      `ENTER: the ${key} note must mention the template at all, or the assertions below are vacuous`);
+    assert.match(note, /model/,
+      `the ${key} note must say the MODEL is what the template carries: that is the setting the operator came to change`);
+    assert.match(note, /yours to edit/,
+      `the ${key} note must say the template is editable — "locked" alone is what sent the operator to hand-edit JSON`);
+  }
 });
 
 // t421. `reviewer` is removable BY THE OPERATOR and `lead` is not, and these

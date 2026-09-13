@@ -24,7 +24,7 @@
 
 const { esc } = require('../lib/format');
 const {
-  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
+  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
   leadSeatCandidates, leadResolution,
   teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
@@ -721,9 +721,33 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
           `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>` +
+          `<div class="team-role-ro-field" data-field="template"><span>template</span></div>` +
           `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label>` +
           `<div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
         paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
+        {
+          const holder = body.querySelector('.team-role-ro-field[data-field="template"]');
+          const name = reservedRoleTemplate(row.key, row.template);
+          const val = document.createElement('span');
+          val.className = 'ro-val';
+          val.textContent = name || '—';
+          holder.appendChild(val);
+          const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
+          const open = document.createElement('button');
+          open.type = 'button';
+          open.className = 'secondary team-role-template-open';
+          open.textContent = 'Open';
+          open.title = tplRow
+            ? 'Edit this template — its model, tools and prompts — in the template editor.'
+            : `no template named "${name}" is installed for this team or in the library`;
+          open.disabled = !tplRow;
+          open.addEventListener('click', () => {
+            if (!tplRow) return;
+            closeTeamRolesPopover();
+            if (typeof openTemplate === 'function') openTemplate(tplRow);
+          });
+          holder.appendChild(open);
+        }
         // The lead ROLE stays locked; which SEAT fills it does not (t420).
         // Gated on `normal` because a non-normal stage ALREADY hoisted a lead
         // block card above the list: two live seat editors for one setting, each

@@ -31716,9 +31716,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         return out;
       }
       function reservedRoleNote(key) {
-        if (key === "lead") return "Runs the team. Its role is fixed so the team always has one.";
-        if (key === "reviewer") return "Independently checks the lead's work \u2014 locked so a lead can never rewrite its own reviewer.";
+        if (key === "lead") return "Runs the team. Its role is fixed so the team always has one, but its template \u2014 including which model it runs \u2014 is yours to edit below.";
+        if (key === "reviewer") return "Independently checks the lead's work. The role is locked so a lead can never rewrite its own reviewer, but its template \u2014 including which model it runs \u2014 is yours to edit below.";
         return "Managed by Clodex \u2014 no changes needed here.";
+      }
+      var RESERVED_ROLE_TEMPLATE = { lead: "clodex-team-lead", reviewer: "clodex-team-reviewer" };
+      function reservedRoleTemplate(key, stored) {
+        if (stored) return stored;
+        return RESERVED_ROLE_TEMPLATE[key] || "";
       }
       var DURATION_UNITS = { ms: 1, s: 1e3, m: 6e4, h: 36e5, d: 864e5 };
       function parseDuration(input) {
@@ -31966,6 +31971,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         validateAddRole,
         buildSavePatch,
         reservedRoleNote,
+        reservedRoleTemplate,
         preflightByRole,
         usesByRole,
         promptOptionGroups,
@@ -32006,6 +32012,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         validateAddRole,
         buildSavePatch,
         reservedRoleNote,
+        reservedRoleTemplate,
         DISPATCH_VALUES,
         DEFAULT_DISPATCH,
         parseDuration,
@@ -32528,8 +32535,29 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             el.appendChild(body);
             if (row.readOnly) {
               el.classList.add("read-only");
-              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div><div class="team-role-ro-field" data-field="template"><span>template</span></div><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
               paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
+              {
+                const holder = body.querySelector('.team-role-ro-field[data-field="template"]');
+                const name = reservedRoleTemplate(row.key, row.template);
+                const val = document.createElement("span");
+                val.className = "ro-val";
+                val.textContent = name || "\u2014";
+                holder.appendChild(val);
+                const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
+                const open = document.createElement("button");
+                open.type = "button";
+                open.className = "secondary team-role-template-open";
+                open.textContent = "Open";
+                open.title = tplRow ? "Edit this template \u2014 its model, tools and prompts \u2014 in the template editor." : `no template named "${name}" is installed for this team or in the library`;
+                open.disabled = !tplRow;
+                open.addEventListener("click", () => {
+                  if (!tplRow) return;
+                  closeTeamRolesPopover();
+                  if (typeof openTemplate === "function") openTemplate(tplRow);
+                });
+                holder.appendChild(open);
+              }
               if (row.key === "lead" && stage === "normal") body.appendChild(buildLeadSeatBlock(manifest));
               if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
                 const rm = document.createElement("button");
