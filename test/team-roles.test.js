@@ -601,6 +601,53 @@ test('reservedRoleNote tells the operator the template is editable even though t
   }
 });
 
+// `reservedRoleTemplate: a reserved role with no stored template…` above hardcodes
+// the two stems, so it only asserts the renderer agrees with itself: a cold review
+// mutated team-tickets.js's DEFAULT_LEAD_TEMPLATE /
+// DEFAULT_REVIEWER_TEMPLATE to `…-DRIFT` and the whole suite stayed green. This is
+// the pin that was missing. team-tickets.js exports neither constant, so the
+// literals are scraped from its source — the team-uses.js shape (regex-extract,
+// compare the capture), not the host-stamp one, because nothing here needs the
+// main-process module EVALUATED: the facts are two string literals, and a scrape
+// that reads them cannot itself restate them.
+//
+// Each row names its own main-process constant rather than deriving the name from
+// the role key: `DEFAULT_LEAD_TEMPLATE` spelled out is what fails loudly if the
+// constant is renamed, where a computed `DEFAULT_${KEY}_TEMPLATE` would quietly
+// stop finding anything the moment the naming convention moved.
+test('t888 parity: each reserved default is the literal team-tickets.js actually spawns on', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf-8');
+  for (const [key, constName] of [['lead', 'DEFAULT_LEAD_TEMPLATE'], ['reviewer', 'DEFAULT_REVIEWER_TEMPLATE']]) {
+    const m = new RegExp(`^const ${constName} = '([^']+)';$`, 'm').exec(src);
+    assert.ok(m, `ENTER: team-tickets.js declares ${constName} as a single-quoted literal — `
+      + 'without this the assertion below has nothing to compare and would pass vacuously');
+    assert.strictEqual(reservedRoleTemplate(key, ''), m[1],
+      `the popover's ${key} row resolves a template the spawn path does not use: `
+      + `${constName} moved and RESERVED_ROLE_TEMPLATE did not. The row would send the operator `
+      + 'to edit a file no seat boots on — the exact bug the control was added to fix');
+  }
+});
+
+// RESERVED_ROLE_KEYS and RESERVED_ROLE_TEMPLATE are a second pair that must stay
+// in step, and only the second has a live accessor. A third reserved key added to
+// the Set alone renders the row as `—` with the title `no template named ""
+// is installed…` — a dead Open button and no way to see which seat the role boots
+// on. Neither constant is exported, so the Set is scraped and evaluated (the
+// host-stamp shape): restating its members here would pin this file against
+// itself and see no drift at all.
+test('t888: every RESERVED_ROLE_KEYS member has a RESERVED_ROLE_TEMPLATE default to resolve', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'lib', 'team-roles.js'), 'utf-8');
+  const m = /^const RESERVED_ROLE_KEYS = (new Set\(\[[^\]]*\]\));$/m.exec(src);
+  assert.ok(m, 'ENTER: found the RESERVED_ROLE_KEYS declaration to scrape');
+  const keys = [...new Function(`return ${m[1]};`)()];
+  assert.ok(keys.length > 0, 'ENTER: the scraped Set has members, or the loop below asserts nothing');
+  for (const key of keys) {
+    assert.notStrictEqual(reservedRoleTemplate(key, ''), '',
+      `reserved key \`${key}\` has no entry in RESERVED_ROLE_TEMPLATE: its row renders the dash `
+      + 'with a permanently disabled Open, and the operator cannot reach the template its seats boot on');
+  }
+});
+
 // t421. `reviewer` is removable BY THE OPERATOR and `lead` is not, and these
 // helpers are how the popover renders that split. The membership assertion is the
 // point: a `lead` that leaked into the removable set would put a Remove button on
@@ -1521,4 +1568,68 @@ test('t792 wiring: the Open routes a team row to the drawer\'s own team opener',
     'ENTER: the drawer is initialised AFTER the popover, which is why the opener is read late');
   assert.match(wire[0], /openTemplate: \(row\) => \{/,
     'the dep is a function reading the binding, not the binding\'s value at construction time');
+});
+
+// ── the reserved row's template control ─────────────────────────────────────
+// The `reservedRoleTemplate:` tests far above pin string RESOLUTION only. A cold
+// review deleted BOTH added pieces from the popover's read-only arm — the
+// `data-field="template"` markup line and the whole holder/val/tplRow/open block
+// — and the suite stayed green: the operator-visible name, the Open button and
+// its disabled state could all be removed in silence. These are the source-shape
+// pins, mirroring the ones t792 shipped for the IDENTICAL editable-row control
+// immediately above.
+const reservedTemplateControl = () => {
+  const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
+  const from = pop.indexOf('if (row.readOnly) {');
+  assert.ok(from > 0, 'ENTER: found the read-only arm — a rename would reduce every assertion below to nothing');
+  const to = pop.indexOf('holder.appendChild(open);', from);
+  assert.ok(to > from, 'ENTER: the arm still ends by appending the Open button');
+  const arm = pop.slice(from, to + 'holder.appendChild(open);'.length);
+  const blockFrom = arm.indexOf('const holder = body.querySelector');
+  assert.ok(blockFrom > 0, 'ENTER: found the control block inside that arm');
+  // CODE ONLY for the block: the negatives below are about what it DOES, and the
+  // comments around it name `data-act` and attributes precisely because those are
+  // the traps — matching them would fail on the prose explaining them.
+  const strip = (s) => s.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  return { arm: strip(arm), block: strip(arm.slice(blockFrom)) };
+};
+
+test('t888 wiring: the reserved row shows the template name it resolves, in a field the block can find', () => {
+  const { arm, block } = reservedTemplateControl();
+
+  assert.match(arm, /<div class="team-role-ro-field" data-field="template"><span>template<\/span><\/div>/,
+    'the read-only markup carries the template field — without it there is no row for the name to land in');
+  assert.match(block, /const holder = body\.querySelector\('\.team-role-ro-field\[data-field="template"\]'\)/,
+    'and the block fills THAT field: the markup hook and the query are one fact, so they move together');
+
+  assert.match(block, /reservedRoleTemplate\(row\.key, row\.template\)/,
+    'the name is resolved stored-first by the helper, not read raw — a team that set its own '
+    + 'reviewer template must see THAT stem, not the stock one its seats do not boot on');
+  // SECURITY: `row.template` comes from an agent-writable team.json, in this
+  // nodeIntegration renderer.
+  assert.match(block, /val\.textContent = name \|\| '—';/,
+    'the stem lands as textContent, and an unresolvable one renders the dash rather than blank');
+  assert.ok(!/innerHTML|setAttribute/.test(block),
+    'the stem must never reach an attribute, where a `" onfocus="` payload would break out');
+});
+
+test('t888 wiring: reserved Open is team-first, dead on an unresolvable stem, and outside the click delegation', () => {
+  const { block } = reservedTemplateControl();
+
+  assert.match(block, /const tplRow = name \? templateRowFor\(templateRows, teamName\(\), name\) : null;/,
+    'the Open target is resolved by the team-first helper over THIS team — a name-only find over the '
+    + 'raw listing opens another team\'s file, or the library copy of a stem this team shadows');
+  assert.match(block, /open\.textContent = 'Open';/, 'the Open button is beside the name');
+  assert.match(block, /open\.disabled = !tplRow;/,
+    'Open is dead unless the resolved stem names a row the editor can be seeded from');
+  assert.match(block, /if \(!tplRow\) return;\n\s*closeTeamRolesPopover\(\);\n\s*if \(typeof openTemplate === 'function'\) openTemplate\(tplRow\);/,
+    'the click re-checks the target, closes the popover and hands the ROW to the injected opener — no globals');
+
+  // THE LOCK: this is the one assertion here that guards more than wiring. The
+  // row-scoped list delegation matches `button[data-act]` and routes what it
+  // finds through the switch that reaches role-def writes. A reserved row's
+  // definition is locked; a `data-act` on this button would put a door into that
+  // path on exactly the row whose whole point is that it has none.
+  assert.ok(!/dataset\.act|data-act/.test(block),
+    'the reserved Open must NOT carry data-act: it would join the delegation that reaches role-def writes');
 });
