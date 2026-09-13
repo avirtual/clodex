@@ -91,9 +91,10 @@ function sandboxRefClause(st) {
 }
 
 function sandboxVersionClause(peerStatus) {
-  return peerStatus && peerStatus.version
+  if (!peerStatus || !peerStatus.version) return ' · clodex version unknown (box not reporting on its wire)';
+  return peerStatus.online
     ? ` · clodex ${peerStatus.version}`
-    : ' · clodex version unknown (box not reporting on its wire)';
+    : ` · clodex ${peerStatus.version} (last seen; the box's wire is offline now)`;
 }
 
 function sandboxPortClause(st) {

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team sandbox status]` says "last seen" beside the version when the box's wire is offline, instead of presenting a stopped box's last-known version as current.
+
 ## 5.64.5 — 2026-09-13 — a box says which Clodex it runs, and its origin markers cannot be shadowed
 
 - Peer wire: the origin marker a box keeps for a peer that dm'd it uses a name no peer label can take, so a label ending in `.origin` can no longer shadow or erase another origin's marker.

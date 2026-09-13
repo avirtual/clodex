@@ -283,6 +283,22 @@ test('status names the clodex version the box reports on its wire', async () => 
   assert.match(b.last(), / · clodex 5\.64\.4$/);
 });
 
+test('status marks the version as last seen when the box wire is offline', async () => {
+  const b = mkBox({
+    getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', online: false, version: '5.64.4' }] }),
+  });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /clodex 5\.64\.4 \(last seen; the box's wire is offline now\)/);
+});
+
+test('status treats a peer row with no online key as offline for the version', async () => {
+  const b = mkBox({
+    getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', version: '5.64.4' }] }),
+  });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /clodex 5\.64\.4 \(last seen; the box's wire is offline now\)/);
+});
+
 test('status with no peer manager says the version is unknown', async () => {
   const b = mkBox();
   await fire(b, b.lead, { action: 'status' });
