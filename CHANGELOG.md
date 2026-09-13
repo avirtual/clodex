@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Every agent seat now knows the difference between you and a machine: input you typed gets a turn that ends in prose you read, while a peer dm, a reminder, a ticket or a command result gets the intents it calls for and no closing summary addressed to nobody. The answers themselves are unaffected — a dm still gets its reply, a ticket its full report, and anything only you can decide still reaches your inbox.
 - `[agent:team role-add|role-set <role> model:opus|sonnet|fable]` now derives the 1M-context variant of that model, so a hand or custom role asks for Opus and gets the 1M Opus rather than the 200k one. `haiku` is unchanged, in this kv the alias is still the only way to name a 1M id (the intent's argument list ends at the first `]`, so a bracketed id cannot be typed into the kv), and templates already derived keep their literal `--model` until the role is re-derived. A standing seat on a derived 1M model is still asked to compact at the same absolute-token thresholds (175k), which are priced on payload cost, not window size.
 
 ## 5.64.14 — 2026-09-13 — three things an operator touches: the reviewer's model, the browser menus, and messages from the phone
