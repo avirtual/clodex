@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A dm that is parked because the target was mid-turn keeps its content key, so an urgent re-send of the same message supersedes it instead of arriving twice.
+- An urgent dm that supersedes a parked copy now says so even when that copy carried no resend id, so the mid-turn case reports one delivery instead of logging two identical sends.
 
 ## 5.64.12 — 2026-09-13 — a superseded dm is visible, and a diverted re-park stays supersedable
 

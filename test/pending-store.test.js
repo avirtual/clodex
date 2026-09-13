@@ -244,11 +244,19 @@ test('claimParkedByKey claims only the same-key parks of the named agent', () =>
   parkDelivery(root, 'bob', 't3', SEQ(1), 'id003', false, null, 'K');
   assert.strictEqual(countPending(root, 'alice'), 2, 'ENTER: alice must hold both of her parks');
   assert.strictEqual(countPending(root, 'bob'), 1, 'ENTER: bob must hold his same-key park');
-  assert.deepStrictEqual(claimParkedByKey(root, 'alice', 'K'), ['id001']);
+  assert.deepStrictEqual(claimParkedByKey(root, 'alice', 'K'), { ids: ['id001'], claimed: 1 });
   assert.deepStrictEqual(drainPending(root, 'alice', 't'), ['t2'],
     'the OTHER-key park is a different message and must survive the claim');
   assert.deepStrictEqual(drainPending(root, 'bob', 't'), ['t3'],
     'bob was never the target: his same-key park is his own mail, not a copy of alice\'s');
+
+  parkDelivery(root, 'carol', 't4', SEQ(1), null, false, null, 'K');
+  assert.strictEqual(countPending(root, 'carol'), 1, 'ENTER: carol must hold her id-less keyed park');
+  assert.deepStrictEqual(claimParkedByKey(root, 'carol', 'K'), { ids: [], claimed: 1 },
+    'an id-less park is still a claim: reported as a count only, it is the one the busy path writes, and a '
+    + 'bare id list makes the supersede invisible on exactly that path');
+  assert.strictEqual(countPending(root, 'carol'), 0,
+    'and it must be GONE — the count claims a consumption, so a park still on disk would make it a lie');
 });
 
 test('claimParkedById reports the content key only when the park carries one', () => {

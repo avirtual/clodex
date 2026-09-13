@@ -260,11 +260,12 @@ function claimParkedById(root, id) {
 }
 
 function claimParkedByKey(root, name, key) {
-  const out = [];
-  if (typeof key !== 'string' || !key) return out;
+  const ids = [];
+  let claimed = 0;
+  if (typeof key !== 'string' || !key) return { ids, claimed };
   let dir;
   let files;
-  try { dir = agentDir(root, name); files = fs.readdirSync(dir); } catch { return out; }
+  try { dir = agentDir(root, name); files = fs.readdirSync(dir); } catch { return { ids, claimed }; }
   let n = 0;
   for (const f of files.sort()) {
     if (!f.endsWith('.json') || f.startsWith('.')) continue;
@@ -275,21 +276,22 @@ function claimParkedByKey(root, name, key) {
     try {
       fs.renameSync(path.join(dir, f), claim);
     } catch (e) {
-      if (e && e.code === 'ENOENT') return out;
+      if (e && e.code === 'ENOENT') return { ids, claimed };
       throw e;
     }
+    claimed += 1;
     try {
       const obj = JSON.parse(fs.readFileSync(claim, 'utf8'));
       const parts = f.split('.');
       const id = (obj && typeof obj.id === 'string' && obj.id)
         || (parts.length === 4 ? parts[2] : null);
-      if (id) out.push(id);
+      if (id) ids.push(id);
     } catch {}
     finally {
       try { fs.rmSync(claim, { force: true }); } catch {}
     }
   }
-  return out;
+  return { ids, claimed };
 }
 
 module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };

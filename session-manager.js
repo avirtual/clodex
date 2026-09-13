@@ -4629,7 +4629,7 @@ function createSessionManager(deps) {
               });
               break;
             }
-            sup = Array.isArray(r.superseded) && r.superseded.length ? r.superseded : null;
+            sup = r.superseded && r.superseded.claimed > 0 ? r.superseded : null;
           } else if (!localTarget) {
             if (intent.target.includes('@')) {
               this._routeFederatedDm(session, senderName, intent);
@@ -4666,12 +4666,18 @@ function createSessionManager(deps) {
           }
           if (sup && session) {
             this._injectText(session,
-              `[agent:dm] delivered urgent to ${intent.target}; its parked copy ${sup.join(', ')} was claimed, so ${intent.target} reads it once.`,
+              sup.ids.length
+                ? `[agent:dm] delivered urgent to ${intent.target}; its parked copy ${sup.ids.join(', ')} was claimed, so ${intent.target} reads it once.`
+                : `[agent:dm] delivered urgent to ${intent.target}; its parked copy was claimed, so ${intent.target} reads it once.`,
               { parkable: true });
           }
           this._broadcast('ipc-message', {
             type: 'dm', from: senderName, to: intent.target,
-            body: sup ? `URGENT (supersedes ${sup.join(', ')}): ${intent.body}` : intent.body,
+            body: sup
+              ? (sup.ids.length
+                ? `URGENT (supersedes ${sup.ids.join(', ')}): ${intent.body}`
+                : `URGENT (supersedes a parked copy): ${intent.body}`)
+              : intent.body,
           });
           break;
         }
@@ -6120,14 +6126,14 @@ function createSessionManager(deps) {
           ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
           : { held: verdict.reason, noUrgent: verdict.noUrgent };
       }
-      const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : [];
+      const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : null;
       this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite, key);
       // `queued`, not `delivered`: _deliverMessage returns once the text is parked
       // or handed to the inject queue, and the queue writes it later — within one
       // poll of the seat's readiness latch. Every negative verdict above IS decided
       // synchronously and is therefore exact; only success is a statement about the
       // future. A caller needing certainty passes _deliverMessage an onWrite hook.
-      return superseded.length > 0 ? { queued: true, superseded } : { queued: true };
+      return superseded && superseded.claimed > 0 ? { queued: true, superseded } : { queued: true };
     }
 
     // The plain-dm delivery latch.
