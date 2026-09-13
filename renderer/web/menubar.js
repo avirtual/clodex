@@ -82,24 +82,13 @@ function buildMenus(ctx) {
   return [
     {
       label: 'File',
-      items: () => [
+      items: async () => [
         { label: 'New Workspace', run: () => newWorkspace() },
         { label: 'New Session…', accel: `${ACCEL_ALT}T`, run: () => emit('request-open-new-dialog') },
         { sep: true },
-        { label: 'Sandboxes…', run: () => emit('request-open-sandbox-dialog') },
-        { sep: true },
         { label: 'Rename Workspace…', run: () => emit('request-rename-workspace') },
         { label: 'Preferences…', run: () => emit('request-open-preferences') },
-        // The browser's ALWAYS-AVAILABLE route to the Manage Plugins dialog.
-        // t28 added the real top-level Plugins menu (buildPluginsMenu below), so
-        // this is no longer the only route — it is kept deliberately as the
-        // fallback for the one case the top-level menu cannot cover: with zero
-        // plugins on disk the menu is absent by design, and removing this item
-        // would leave a fresh install with NO way to reach the dialog whose
-        // "Open Plugins Folder" button is how you install your first plugin.
-        // (The desktop has that hole; it is masked there only because a packaged
-        // build ships plugins/workbench, so the menu is never actually absent.)
-        { label: 'Plugins…', run: () => emit('request-open-plugins-dialog') },
+        ...((await pluginsTopMenu(ctx)) ? [] : [{ label: 'Plugins…', run: () => emit('request-open-plugins-dialog') }]),
         { sep: true },
         { label: 'Restart Clodex…', run: () => confirmRestart(invoke) },
       ],
@@ -151,23 +140,34 @@ function buildMenus(ctx) {
             });
           }
         }
-        const peers = await Promise.resolve(api.peerList ? api.peerList() : []).catch(() => []);
+        const peerRow = (p) => ({
+          label: `${p.online ? '● ' : '○ '}${p.label || p.host || p.id}`,
+          submenu: () => {
+            if (!p.online) return [{ label: 'offline', disabled: true }];
+            if (!p.sessions || !p.sessions.length) return [{ label: '(no sessions)', disabled: true }];
+            return p.sessions.map((s) => ({ label: s.name, run: () => emit('request-open-peer-session', p.id, s.name) }));
+          },
+        });
+        const [allStatuses, boxes] = await Promise.all([
+          Promise.resolve(api.peerList ? api.peerList() : []).catch(() => []),
+          Promise.resolve(api.sandboxListBoxes ? api.sandboxListBoxes() : []).catch(() => []),
+        ]);
+        const boxIds = new Set((boxes || []).map((b) => b && b.id).filter(Boolean));
+        const peers = (allStatuses || []).filter((p) => !boxIds.has(p.id));
+        const boxList = (allStatuses || []).filter((p) => boxIds.has(p.id));
         rows.push({ sep: true }, { head: 'Peers' });
-        if (!peers || !peers.length) {
+        if (!peers.length) {
           rows.push({ label: '(no peers configured)', disabled: true });
         } else {
-          for (const p of peers) {
-            rows.push({
-              label: `${p.online ? '● ' : '○ '}${p.label || p.host || p.id}`,
-              submenu: () => {
-                if (!p.online) return [{ label: 'offline', disabled: true }];
-                if (!p.sessions || !p.sessions.length) return [{ label: '(no sessions)', disabled: true }];
-                return p.sessions.map((s) => ({ label: s.name, run: () => emit('request-open-peer-session', p.id, s.name) }));
-              },
-            });
-          }
+          for (const p of peers) rows.push(peerRow(p));
         }
         rows.push({ sep: true }, { label: 'Manage Peered Clodexes…', run: () => emit('request-open-peers-dialog') });
+        rows.push({ sep: true });
+        if (boxList.length) {
+          rows.push({ head: 'Sandboxes' });
+          for (const b of boxList) rows.push(peerRow(b));
+        }
+        rows.push({ label: 'Manage Clodex Sandboxes…', run: () => emit('request-open-sandbox-dialog') });
         return rows;
       },
     },
@@ -371,6 +371,11 @@ function buildPluginsMenu(status, ctx) {
       return rows;
     },
   };
+}
+
+async function pluginsTopMenu(ctx) {
+  const status = ctx && ctx.pluginStatus ? await ctx.pluginStatus() : null;
+  return buildPluginsMenu(status, ctx);
 }
 
 // ── The top-level Teams menu (t288) ────────────────────────────────────────
@@ -614,7 +619,7 @@ function mount(shim) {
   // teardown listens to — so enable/disable/rescan all reach it by one path.
   let pluginsTop = null;
   const refreshPluginsTop = async () => {
-    const menu = buildPluginsMenu(await ctx.pluginStatus(), ctx);
+    const menu = await pluginsTopMenu(ctx);
     if (pluginsTop) { if (state && state.top === pluginsTop) closeAll(); pluginsTop.remove(); pluginsTop = null; }
     if (!menu) return;
     pluginsTop = makeTop(menu);

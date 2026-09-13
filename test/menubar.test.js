@@ -454,16 +454,68 @@ test('mount REMOVES the Plugins element when the last plugin goes', async () => 
   } finally { m.restore(); }
 });
 
-test('File keeps its Plugins… item — the top-level menu is absent exactly when a fresh install needs it', async () => {
-  // At zero plugins the top-level menu is absent BY DESIGN, and that is the state
-  // a fresh install is in. Dropping the File item would leave no route to the
-  // dialog whose "Open/Show Plugins Folder" button is how you install your first
-  // plugin.
+const fileRows = async (over = {}) => {
   const { ctx } = recordingCtx();
-  const file = buildMenus(ctx).find((m) => m.label === 'File');
-  const rows = await Promise.resolve(file.items());
-  assert.ok(rows.some((r) => r.label === 'Plugins…'), 'the always-available route survives');
+  const file = buildMenus({ ...ctx, ...over, api: { ...ctx.api, ...(over.api || {}) } }).find((m) => m.label === 'File');
+  return Promise.resolve(file.items());
+};
+
+test('t904: File > Plugins… is present exactly when the top-level Plugins menu is absent', async () => {
+  // Both directions, because a one-directional pin also passes on an item that is
+  // never shown at all. Absent top-level menu is the zero-plugins state a fresh
+  // install is in, and there the File row is the only route to the dialog whose
+  // "Open/Show Plugins Folder" button installs the first plugin.
+  const hasFileRow = async (status) => (await fileRows({ pluginStatus: async () => status }))
+    .some((r) => r.label === 'Plugins…');
+  assert.equal(await hasFileRow({ ok: true, plugins: [], problems: [] }), true,
+    'no top-level menu at zero plugins, so the fallback route is offered');
+  assert.equal(await hasFileRow(STATUS_ONE), false,
+    'the top-level menu is showing, so the fallback would be a second route to the same dialog');
 });
+
+test('t904: File offers no Sandboxes route, and the Window manage row emits the dialog', async () => {
+  const rows = await fileRows();
+  assert.deepEqual(rows.map((r) => r.label).filter((l) => /Sandbox/.test(l || '')), [],
+    'the item the desktop deleted is gone here too');
+  const { ctx, rec } = recordingCtx();
+  const win = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'Window').items());
+  const manage = win.find((r) => r.label === 'Manage Clodex Sandboxes…');
+  assert.ok(manage, 'Window carries the always-on manage row');
+  manage.run();
+  assert.deepEqual(rec.emits, [['request-open-sandbox-dialog']], 'same channel the File item used');
+});
+
+const BOX_A_REGISTERED = [{ id: 'box-a', label: 'Box A' }];
+const PEER_ONE = { id: 'p1', label: 'Peer One', online: true, sessions: [{ name: 'psess' }] };
+
+const SANDBOX_GATING = [
+  {
+    name: 'box-a is registered AND has a peer row: header and row appear, and it is not counted as a peer',
+    boxes: BOX_A_REGISTERED,
+    peers: [PEER_ONE, { id: 'box-a', label: 'Box A', online: true, sessions: [{ name: 'seat' }] }],
+    tail: ['—', '[Peers]', '● Peer One ▸', '—', 'Manage Peered Clodexes…',
+      '—', '[Sandboxes]', '● Box A ▸', 'Manage Clodex Sandboxes…'],
+  },
+  {
+    name: 'box-a is registered but never started, so no peer row: no header, no rows, manage row still there',
+    boxes: BOX_A_REGISTERED,
+    peers: [PEER_ONE],
+    tail: ['—', '[Peers]', '● Peer One ▸', '—', 'Manage Peered Clodexes…',
+      '—', 'Manage Clodex Sandboxes…'],
+  },
+];
+
+for (const c of SANDBOX_GATING) {
+  test(`t904: ${c.name}`, async () => {
+    const { ctx } = recordingCtx();
+    const win = buildMenus({
+      ...ctx,
+      api: { ...ctx.api, peerList: async () => c.peers, sandboxListBoxes: async () => c.boxes },
+    }).find((m) => m.label === 'Window');
+    const shape = webShape(await Promise.resolve(win.items()));
+    assert.deepStrictEqual(shape.slice(-c.tail.length), c.tail);
+  });
+}
 
 // ── t445: a workspace switch must not disarm the loopback gate ───────────────
 
