@@ -728,6 +728,15 @@ test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context clear]')), 'greedy');
 });
 
+test('bodyMode: a kv-only role-set/role-add head line takes no body', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-set hand model:opus]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-set hand model:opus] tighter brief')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-set hand]')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-add runner dispatch:spawn]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team role-add runner] does the thing')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team prompt-save append team-project]')), 'greedy');
+});
+
 // `term exec` is the one body-carrying verb whose body is LINE-SCOPED, because
 // vetTermCommand rejects any command containing a newline. Greedy capture (how
 // it shipped) could therefore only ever swallow the agent's following prose and
@@ -781,6 +790,10 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || i.type === 'team-create';
+  const deliberatelyNarrowed = (i) => i.type === 'team'
+    && (i.sub === 'role-add' || i.sub === 'role-set')
+    && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account'].some((k) => i[k] != null)
+    && !(i.body || '').trim();
   let sawTerm = 0;
   for (const line of CORPUS) {
     const i = parseIntent(line);
@@ -791,7 +804,8 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     // greedy capture (it terminates at the complete JSON value); it was in the
     // allow-set then and still captures now.
     const capturesNow = mode === 'greedy' || mode === 'json';
-    assert.strictEqual(capturesNow, legacyGreedy(i) || deliberatelyWidened(i) || newSinceLegacy(i), `body capture differs for ${JSON.stringify(line)}`);
+    const legacyExpects = (legacyGreedy(i) || deliberatelyWidened(i) || newSinceLegacy(i)) && !deliberatelyNarrowed(i);
+    assert.strictEqual(capturesNow, legacyExpects, `body capture differs for ${JSON.stringify(line)}`);
   }
   // The loop skips lines that don't parse, and every assertion it makes about
   // term is that term does NOT capture — which is also true of a term row the

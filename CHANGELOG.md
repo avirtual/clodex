@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team role-set …]` / `role-add …` with only key:value flags and nothing after the bracket no longer swallows the lines that follow as the role's brief; a brief on such a line starts on the head line.
+
 ## 5.64.3 — 2026-09-13 — the roles popover and Join team tell the truth about a per-ticket role
 
 - Team popover: the offer card for a stock role the team lacks shows that role's real dispatch (the stock hand runs per ticket in its own worktree), instead of a fixed "standing".
