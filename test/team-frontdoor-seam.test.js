@@ -79,15 +79,16 @@ function joinSeam(seedRoles = {}) {
   const created = [];
   const writes = [];
   const roles = { ...seedRoles };
+  const loadManifest = (name) => ({ name, roles });
   const handlers = registerWith({
     manager: fakeManager(created),
-    loadManifest: (name) => ({ name, roles }),
+    loadManifest,
     addRole: (team, role, def) => { writes.push([team, role, def]); roles[role] = def; return {}; },
     agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
-  return { handlers, created, writes };
+  return { handlers, created, writes, loadManifest };
 }
 
 test('team:join MINTS the hand role (stock def) then REFUSES the standing seat', async () => {
@@ -121,6 +122,28 @@ test('team:join refuses a CUSTOM role the manifest marks dispatch: spawn', async
   assert.strictEqual(res.ok, false);
   assert.match(res.error, /dispatch: spawn/);
   assert.strictEqual(created.length, 0, 'the spawn seam was NOT reached');
+});
+
+test('team:join SPAWNS for lead even when the manifest hand-edits dispatch: worktree', async () => {
+  const { handlers, created, writes, loadManifest } = joinSeam({
+    lead: { prompt: 'clodex-team-lead', dispatch: 'worktree' },
+  });
+  assert.strictEqual(loadManifest('shop').roles.lead.dispatch, 'worktree', 'the fixture really seeds a non-standing dispatch on lead');
+  const res = await handlers['team:join']({}, { team: 'shop', role: 'lead', name: 'shop-lead', type: 'claude', cwd: '/proj/sub' });
+  assert.strictEqual(writes.length, 0, 'an existing role is adopted, not minted');
+  assert.strictEqual(res.ok, true, `expected the seam's ok (got: ${res.error})`);
+  assert.strictEqual(created.length, 1, 'the spawn seam ran once');
+});
+
+test('team:join SPAWNS for reviewer even when the manifest hand-edits dispatch: spawn', async () => {
+  const { handlers, created, writes, loadManifest } = joinSeam({
+    reviewer: { prompt: 'clodex-team-reviewer', dispatch: 'spawn' },
+  });
+  assert.strictEqual(loadManifest('shop').roles.reviewer.dispatch, 'spawn', 'the fixture really seeds a non-standing dispatch on reviewer');
+  const res = await handlers['team:join']({}, { team: 'shop', role: 'reviewer', name: 'shop-reviewer', type: 'claude', cwd: '/proj/sub' });
+  assert.strictEqual(writes.length, 0, 'an existing role is adopted, not minted');
+  assert.strictEqual(res.ok, true, `expected the seam's ok (got: ${res.error})`);
+  assert.strictEqual(created.length, 1, 'the spawn seam ran once');
 });
 
 test('team:join custom role forwards the picked prompt into the role def', async () => {
