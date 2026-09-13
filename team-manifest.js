@@ -67,7 +67,7 @@ const STOCK_ROLE_DEFS = {
   // clodex-team-hand.json writes "${TEAM_ROOT}", so a new team's hand boots in
   // its own root, not the project the template was authored against.
   hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.', template: 'clodex-team-hand', dispatch: 'worktree' },
-  reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
+  reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.', template: 'clodex-team-reviewer' },
 };
 
 // A field may live here only if exactly one resolver consumes it and every spawn

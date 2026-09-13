@@ -5054,12 +5054,18 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
 
-      // A team file for the role's stem outranks an IMPLIED template's: the stock
-      // reviewer names none, so the default's would shadow the
-      // `prompts/system/reviewer.md` create writes. A NAMED one keeps its own —
-      // `reviewer:clodex-team-reviewer-shell` must not spawn a shell seat briefed
-      // by the team's copy of the no-shell prompt.
-      const explicitTpl = !!(templateOverride || (def && def.template));
+      // A team file for the role's stem outranks an IMPLIED template's, so the
+      // default's would shadow the `prompts/system/reviewer.md` create writes. A
+      // NAMED one keeps its own — `reviewer:clodex-team-reviewer-shell` must not
+      // spawn a shell seat briefed by the team's copy of the no-shell prompt.
+      //
+      // A `template` equal to the ROLE KEY is not a naming: it is the repoint
+      // copyRoleTemplates performs on every seeded role, pointing at the team's
+      // own copy of the stock file. Counting it as explicit would make the
+      // reviewer's seeded template shadow the seeded prompt beside it — the two
+      // are written by one call, out of the same stock pair.
+      const seededTpl = !!(def && def.template && def.template === roleKey);
+      const explicitTpl = !!(templateOverride || (def && def.template && !seededTpl));
       const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
         ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
         : null;
