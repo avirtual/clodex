@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A team role set to `model: opus`, `sonnet` or `fable` now runs the 1M-context variant of that model. Asking for an Opus reviewer gets a 1M Opus reviewer instead of the 200k one, and a full id with a `[1m]` suffix can be typed where only the plain form was accepted before. `haiku` is unchanged. Templates already derived keep the model they were written with until the role is re-derived.
+
 ## 5.64.14 — 2026-09-13 — three things an operator touches: the reviewer's model, the browser menus, and messages from the phone
 
 - A built-in role's template is editable from the team popover: the `lead` and `reviewer` rows now name the template their seats boot on and open it in the template editor, so changing which model the reviewer runs no longer means finding and hand-editing the right JSON file.

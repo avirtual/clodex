@@ -51,17 +51,25 @@ test('deriveModelTemplate strips the listing decoration, not just id', () => {
   assert.deepStrictEqual(out.env, { A: '1' }, 'a real template key is untouched');
 });
 
-test('resolveModelId: the four aliases', () => {
-  assert.strictEqual(resolveModelId('opus'), 'claude-opus-5');
-  assert.strictEqual(resolveModelId('sonnet'), 'claude-sonnet-5');
+test('t890: the three aliases the operator named resolve to their 1M ids, haiku does not', () => {
+  assert.strictEqual(resolveModelId('opus'), 'claude-opus-5[1m]');
+  assert.strictEqual(resolveModelId('sonnet'), 'claude-sonnet-5[1m]');
+  assert.strictEqual(resolveModelId('fable'), 'claude-fable-5-1[1m]');
   assert.strictEqual(resolveModelId('haiku'), 'claude-haiku-4-5-20251001');
-  assert.strictEqual(resolveModelId('fable'), 'claude-fable-5-1');
 });
 
-test('resolveModelId: a plain id passes through, a bracketed or pathy one does not', () => {
+test('t890: a plain id and a trailing-bracketed id both pass through', () => {
   assert.strictEqual(resolveModelId('claude-sonnet-5'), 'claude-sonnet-5');
-  assert.strictEqual(resolveModelId('claude-opus-5[1m]'), null);
-  assert.strictEqual(resolveModelId('../x'), null);
+  assert.strictEqual(resolveModelId('claude-opus-5[1m]'), 'claude-opus-5[1m]');
+});
+
+test('t890: the widened pattern stays fail-closed — the value reaches an argv', () => {
+  for (const bad of [
+    '../x', 'x[1m]/y', 'a[1m][2m]', '-lead', '', 'a/b', 'a[1m]b', '[1m]', 'a[]',
+    'a[1m];rm -rf /', 'a[1 m]', 'a\n[1m]', 'a[1m]\n', 'claude-opus-5[1m] --foo',
+  ]) {
+    assert.strictEqual(resolveModelId(bad), null, `must refuse ${JSON.stringify(bad)}`);
+  }
   assert.strictEqual(resolveModelId(''), null);
   assert.strictEqual(resolveModelId(null), null);
 });

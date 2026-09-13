@@ -10592,15 +10592,15 @@ function mkTeamModel({ roles = { hand: { brief: 'the hand', template: 'clodex-te
 test('t767: role-set hand model:opus derives templates/hand.json from the library base and repoints the role', () => {
   const f = mkTeamModel();
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', body: '' });
-  assert.deepStrictEqual(f.readTpl('hand'), { ...f.shippedHand, name: 'hand', extraArgs: ['--model', 'claude-opus-5'] },
+  assert.deepStrictEqual(f.readTpl('hand'), { ...f.shippedHand, name: 'hand', extraArgs: ['--model', 'claude-opus-5[1m]'] },
     'the whole derived object landed on disk, not a hand-edited subset');
   assert.strictEqual(f.tm.loadManifest('team').roles.hand.template, 'hand', 'the role now points at its own derived copy');
-  assert.ok(/derived from clodex-team-hand with --model claude-opus-5/.test(f.last()), f.last());
+  assert.ok(/derived from clodex-team-hand with --model claude-opus-5\[1m\]/.test(f.last()), f.last());
 
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
-  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'],
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5[1m]'],
     're-deriving from the own copy leaves exactly one --model pair, not two');
-  assert.ok(/derived from hand with --model claude-sonnet-5/.test(f.last()), f.last());
+  assert.ok(/derived from hand with --model claude-sonnet-5\[1m\]/.test(f.last()), f.last());
 });
 
 test('t767: role-add worker model:haiku with no template derives from the shipped clodex-team-hand', () => {
@@ -10617,7 +10617,7 @@ test('t767: role-add worker model:haiku with no template derives from the shippe
 // template for a role that was never added or changed.
 test('t767: a bad alias, a missing base, and every refusal the mutator would raise each write nothing at all', () => {
   for (const [intentPatch, want] of [
-    [{ sub: 'role-set', name: 'hand', model: 'claude-opus-5[1m]' }, /error: model "claude-opus-5\[1m\]" is not a model id or alias \(opus, sonnet, haiku, fable\)/],
+    [{ sub: 'role-set', name: 'hand', model: '../x' }, /error: model "\.\.\/x" is not a model id or alias \(opus, sonnet, haiku, fable\)/],
     [{ sub: 'role-set', name: 'hand', model: 'opus', template: 'nope' }, /error: no template "nope" to derive from/],
     [{ sub: 'role-set', name: 'reviewer', model: 'opus' }, /error: the "reviewer" role is operator-owned topology/],
     [{ sub: 'role-set', name: 'ghost', model: 'opus' }, /error: role "ghost" not found on team "team"/],
@@ -10645,13 +10645,13 @@ test('t767: a bad alias, a missing base, and every refusal the mutator would rai
 test('t767: a mutator throw on a role that already owns its derived template restores the prior bytes', () => {
   const f = mkTeamModel();
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
-  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'], 'setup: hand owns its own derived template');
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5[1m]'], 'setup: hand owns its own derived template');
   const before = fsReal.readFileSync(f.tplFile('hand'));
   const teamBefore = f.teamJsonBytes();
 
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', dispatch: 'wortree', body: '' });
   assert.match(f.last(), /error: role "hand" dispatch must be one of/);
-  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5'],
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5[1m]'],
     'the live template still runs sonnet — an error: reply must not leave the role on a different model');
   assert.deepStrictEqual(fsReal.readFileSync(f.tplFile('hand')), before, 'byte-identical, not merely equivalent');
   assert.deepStrictEqual(f.teamJsonBytes(), teamBefore);
