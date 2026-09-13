@@ -425,6 +425,15 @@ function navQuery(id) {
   } catch { return `?workspace=${encodeURIComponent(id)}`; }
 }
 
+function submenuLeft({ parentLeft, parentRight, width, viewportWidth }) {
+  const preferred = Math.round(parentRight - 3);
+  if (!width || !viewportWidth) return preferred;
+  if (preferred + width <= viewportWidth - 4) return preferred;
+  const flipped = Math.round(parentLeft - width + 3);
+  if (flipped >= 4) return flipped;
+  return Math.max(4, viewportWidth - width - 4);
+}
+
 function injectStyle() {
   const el = document.createElement('style');
   el.textContent = STYLE;
@@ -487,7 +496,7 @@ function mount(shim) {
     if (!state) return;
     if (state.top.classList) state.top.classList.remove('open');
     state.drop.remove();
-    for (const s of state.subs) s.remove();
+    clearSubs();
     state = null;
     document.removeEventListener('mousedown', onDocDown, true);
     document.removeEventListener('keydown', onKey, true);
@@ -503,25 +512,40 @@ function mount(shim) {
     const r = drop.getBoundingClientRect();
     if (r.width && r.right > window.innerWidth - 4) drop.style.left = `${Math.max(4, window.innerWidth - r.width - 4)}px`;
   };
-  const clearSubs = () => { if (state) { for (const s of state.subs) s.remove(); state.subs = []; } };
+  const clearSubsFrom = (depth) => {
+    if (!state) return;
+    const keep = Math.max(0, depth - 1);
+    for (const s of state.subs.slice(keep)) s.remove();
+    state.subs.length = keep;
+  };
+  const clearSubs = () => clearSubsFrom(1);
+  const placeSub = (drop, parentRect) => {
+    const r = drop.getBoundingClientRect();
+    drop.style.left = `${submenuLeft({
+      parentLeft: parentRect.left,
+      parentRight: parentRect.right,
+      width: r.width,
+      viewportWidth: window.innerWidth,
+    })}px`;
+  };
 
-  const openSub = (anchor, row) => {
-    clearSubs();
+  const openSub = (anchor, row, depth) => {
+    clearSubsFrom(depth);
     const drop = document.createElement('div');
     drop.className = 'clx-mb-drop';
     const r = anchor.getBoundingClientRect();
     drop.style.left = `${Math.round(r.right - 3)}px`;
     drop.style.top = `${Math.round(r.top - 5)}px`;
     document.body.appendChild(drop);
-    state.subs.push(drop);
+    state.subs[depth - 1] = drop;
     Promise.resolve().then(() => row.submenu()).then((rows) => {
-      if (!state || !state.subs.includes(drop)) return;
-      renderRows(drop, rows, false);
-      clampX(drop);
+      if (!state || state.subs[depth - 1] !== drop) return;
+      renderRows(drop, rows, depth);
+      placeSub(drop, r);
     }).catch((err) => console.error('menubar submenu', row.label, err));
   };
 
-  function renderRows(container, rows, isTop) {
+  function renderRows(container, rows, depth) {
     for (const row of (rows || [])) {
       if (row.sep) { const s = document.createElement('div'); s.className = 'clx-mb-sep'; container.appendChild(s); continue; }
       if (row.head) { const h = document.createElement('div'); h.className = 'clx-mb-head'; h.textContent = row.head; container.appendChild(h); continue; }
@@ -537,10 +561,10 @@ function mount(shim) {
         arr.className = 'clx-sub-arrow';
         arr.textContent = '▸';
         el.appendChild(arr);
-        if (!row.disabled) el.addEventListener('mouseenter', () => openSub(el, row));
+        if (!row.disabled) el.addEventListener('mouseenter', () => openSub(el, row, depth + 1));
       } else {
         if (row.accel) { const a = document.createElement('span'); a.className = 'clx-accel'; a.textContent = row.accel; el.appendChild(a); }
-        if (isTop) el.addEventListener('mouseenter', clearSubs);
+        el.addEventListener('mouseenter', () => clearSubsFrom(depth + 1));
         if (!row.disabled) el.addEventListener('mouseup', () => { closeAll(); try { row.run && row.run(); } catch (err) { console.error('menubar action', row.label, err); } });
       }
       container.appendChild(el);
@@ -563,7 +587,7 @@ function mount(shim) {
     document.addEventListener('keydown', onKey, true);
     Promise.resolve().then(() => menu.items()).then((rows) => {
       if (!state || state.drop !== drop) return;
-      renderRows(drop, rows, true);
+      renderRows(drop, rows, 0);
       clampX(drop);
     }).catch((err) => console.error('menubar items', menu.label, err));
   };
@@ -612,5 +636,5 @@ function mount(shim) {
 
 module.exports = {
   mount, buildMenus, buildLibraryMenu, buildPluginsMenu, buildTeamsMenu,
-  categoryRows, navQuery, BAR_H, FOLD_AT, THEMES,
+  categoryRows, navQuery, submenuLeft, BAR_H, FOLD_AT, THEMES,
 };

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The browser menubar's two-level submenus work with the mouse: opening a deeper panel no longer destroys the one the pointer is in, so Library ▸ Prompts ▸ New Prompt… and ▸ Manage Prompts… can be clicked again, and a submenu that would overflow the window flips to the other side of its parent instead of opening detached at the screen edge.
+
 ## 5.64.13 — 2026-09-13 — a mid-turn dm can be superseded, and the supersede is never silent
 
 - A dm that is parked because the target was mid-turn keeps its content key, so an urgent re-send of the same message supersedes it instead of arriving twice.

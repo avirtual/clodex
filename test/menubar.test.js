@@ -13,7 +13,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { API_CONTRACT } = require('../api-contract');
-const { buildMenus, buildPluginsMenu, mount, THEMES } = require('../renderer/web/menubar');
+const { buildMenus, buildPluginsMenu, mount, submenuLeft, THEMES } = require('../renderer/web/menubar');
 
 const ON_CHANNELS = new Set(API_CONTRACT.filter((r) => r.kind === 'on').map((r) => r.channel));
 
@@ -253,10 +253,10 @@ function fakeClassList() {
 // Parent-tracking, so insertBefore/remove are REAL — the Plugins top element is
 // inserted at a position and removed again, and a no-op remove() would let a
 // stale menu pass as removed.
-function fakeNode(tag) {
+function fakeNode(tag, rects) {
   return {
     tag: tag || '', id: '', className: '', textContent: '', style: {}, dataset: {},
-    children: [], classList: fakeClassList(), parent: null,
+    children: [], classList: fakeClassList(), parent: null, listeners: {},
     appendChild(c) { c.parent = this; this.children.push(c); return c; },
     insertBefore(c, ref) {
       const i = this.children.indexOf(ref);
@@ -265,9 +265,18 @@ function fakeNode(tag) {
       return c;
     },
     remove() { if (this.parent) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); this.parent = null; } },
-    addEventListener() {}, removeEventListener() {},
+    addEventListener(type, fn) { (this.listeners[type] || (this.listeners[type] = [])).push(fn); },
+    removeEventListener(type, fn) {
+      const a = this.listeners[type] || [];
+      const i = a.indexOf(fn);
+      if (i >= 0) a.splice(i, 1);
+    },
+    fire(type, ev) { for (const fn of (this.listeners[type] || []).slice()) fn(ev || { preventDefault() {} }); },
     contains() { return false; },
-    getBoundingClientRect() { return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; },
+    getBoundingClientRect() {
+      const r = rects && rects(this);
+      return r || { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    },
   };
 }
 
@@ -484,4 +493,106 @@ test('t445: navQuery on an ordinary local tab adds nothing it was not given', ()
     assert.equal(p.get('via'), null, 'a tab on the box does not acquire a tunnel mark by navigating');
     assert.equal([...p.keys()].length, 1, 'and gains no other params');
   } finally { global.location = prev; }
+});
+
+test('t885: submenuLeft prefers the parent\'s right edge, flips left on overflow, clamps only when neither side fits', () => {
+  const cases = [
+    { name: 'fits on the right', geo: { parentLeft: 100, parentRight: 300, width: 200, viewportWidth: 1000 }, expected: 297 },
+    { name: 'exactly fills the 4px gutter, still on the right', geo: { parentLeft: 300, parentRight: 500, width: 199, viewportWidth: 700 }, expected: 497 },
+    { name: 'one past the gutter flips to the parent\'s left side', geo: { parentLeft: 300, parentRight: 500, width: 200, viewportWidth: 700 }, expected: 103 },
+    { name: 'the operator\'s case: parent mid-screen, panel overflows', geo: { parentLeft: 700, parentRight: 900, width: 200, viewportWidth: 1000 }, expected: 503 },
+    { name: 'too narrow for either side falls back to the clamp', geo: { parentLeft: 40, parentRight: 240, width: 300, viewportWidth: 400 }, expected: 96 },
+    { name: 'a clamp that would go negative stops at the 4px floor', geo: { parentLeft: 10, parentRight: 60, width: 400, viewportWidth: 200 }, expected: 4 },
+    { name: 'an unmeasured panel keeps the preferred position', geo: { parentLeft: 700, parentRight: 900, width: 0, viewportWidth: 1000 }, expected: 897 },
+  ];
+  for (const c of cases) assert.strictEqual(submenuLeft(c.geo), c.expected, c.name);
+});
+
+function itemsOf(panel) { return panel.children.filter((c) => c.className === 'clx-mb-item'); }
+function labelOf(el) {
+  const l = el.children.find((c) => c.className === 'clx-mb-label');
+  return l ? l.textContent : '';
+}
+function itemNamed(panel, text) { return itemsOf(panel).find((el) => labelOf(el) === text); }
+
+function mountBar(rects) {
+  const prev = { window: global.window, document: global.document, location: global.location };
+  const main = fakeNode('div'); main.id = 'main';
+  const head = fakeNode('head');
+  const body = fakeNode('body');
+  const emits = [];
+  global.document = {
+    head, body,
+    getElementById: (id) => (id === 'main' ? main : null),
+    createElement: (t) => fakeNode(t, rects),
+    addEventListener() {}, removeEventListener() {},
+  };
+  global.window = { api: recordingCtx().ctx.api, innerWidth: 1000 };
+  global.location = { search: '' };
+  mount({ emit: (ch, ...a) => emits.push([ch, ...a]), invoke() { return Promise.resolve(); } });
+  const bar = main.children.find((c) => c.id === 'clx-menubar');
+  const panels = () => body.children.filter((c) => c.className === 'clx-mb-drop');
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const restore = () => { for (const k of Object.keys(prev)) { if (prev[k] === undefined) delete global[k]; else global[k] = prev[k]; } };
+  return { bar, body, panels, emits, settle, restore };
+}
+
+async function openPromptsThenSystem(m) {
+  const library = m.bar.children.find((c) => c.textContent === 'Library');
+  library.fire('mousedown');
+  await m.settle();
+  const prompts = itemNamed(m.panels()[0], 'Prompts');
+  assert.ok(prompts, 'ENTER: the Library drop carries a Prompts row');
+  prompts.fire('mouseenter');
+  await m.settle();
+  assert.equal(m.panels().length, 2, 'ENTER: hovering Prompts opens a second panel');
+  const system = itemNamed(m.panels()[1], 'System');
+  assert.ok(system, 'ENTER: the Prompts panel carries a System row');
+  system.fire('mouseenter');
+  await m.settle();
+  return { prompts, system };
+}
+
+test('t885: opening the third-level panel keeps the second-level panel, and a leaf hover closes only what is deeper', async () => {
+  const m = mountBar();
+  try {
+    await openPromptsThenSystem(m);
+    const ps = m.panels();
+    assert.equal(ps.length, 3, 'ENTER: three distinct panels are in the document');
+    assert.equal(new Set(ps).size, 3, 'ENTER: and they are three different elements, not one matched thrice');
+    const [, sub1, sub2] = ps;
+    assert.ok(itemNamed(sub1, 'System'), 'the Prompts panel the pointer is standing in survives its own submenu opening');
+    assert.ok(itemNamed(sub2, 'lib-sys'), 'and the third-level panel rendered its library rows');
+
+    itemNamed(sub1, 'New Prompt…').fire('mouseenter');
+    assert.deepEqual(m.panels(), [ps[0], sub1], 'hovering a leaf in the Prompts panel closes the deeper panel only');
+  } finally { m.restore(); }
+});
+
+test('t885: Library ▸ Prompts ▸ New Prompt… is still clickable after the pointer crosses a submenu row', async () => {
+  const m = mountBar();
+  try {
+    await openPromptsThenSystem(m);
+    const sub1 = m.panels()[1];
+    const tail = itemNamed(sub1, 'New Prompt…');
+    assert.ok(tail, 'the tail row below System/Append/Teams is still in the document');
+    tail.fire('mouseup');
+    assert.deepEqual(m.emits, [['request-open-prompts-drawer', ':new']], 'and reaching it fires its action');
+  } finally { m.restore(); }
+});
+
+test('t885: mount places an overflowing submenu beside its parent, not at the window edge', async () => {
+  const overflowing = (node) => {
+    if (node.className === 'clx-mb-drop') return { left: 0, top: 0, right: 200, bottom: 300, width: 200, height: 300 };
+    if (labelOf(node) === 'System') return { left: 700, top: 120, right: 900, bottom: 140, width: 200, height: 20 };
+    return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  };
+  const m = mountBar(overflowing);
+  try {
+    await openPromptsThenSystem(m);
+    const third = m.panels()[2];
+    assert.ok(third, 'ENTER: the third-level panel exists to be placed');
+    assert.equal(third.style.left, '503px',
+      'flipped to the parent\'s left side (700 - 200 + 3), not clamped to 1000 - 200 - 4 = 796');
+  } finally { m.restore(); }
 });
