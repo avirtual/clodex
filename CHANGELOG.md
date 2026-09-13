@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a stopped box's version is marked last seen
 
 - `[agent:team sandbox status]` says "last seen" beside the version when the box's wire is offline, instead of presenting a stopped box's last-known version as current.
 
