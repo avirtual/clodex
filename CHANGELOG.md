@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — reserved roles always join, and a refused create rolls its worktree back
+## Unreleased
+
+## 5.64.7 — 2026-09-13 — reserved roles always join, and a refused create rolls its worktree back
 
 - `team:join` spawns a standing seat for `lead` and `reviewer` even when the role's `dispatch` on disk says spawn or worktree, matching how the ticket loop routes work to those roles; only non-reserved per-ticket roles are refused.
 - The New Session dialog removes the opt-in worktree it just created when the spawn is refused (a per-ticket role on Join team, a bad name, a broken install), instead of leaving an orphaned checkout on disk (a branch the dialog minted still remains); a failed removal names the path in a toast.
