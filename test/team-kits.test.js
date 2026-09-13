@@ -139,12 +139,12 @@ test('the resolvers themselves agree with the literals pinned above', () => {
     'and [] must be the lift — otherwise the expansion above proves nothing');
 });
 
-test('the default kit\'s reviewer carries a prompt only, and no reviewer template ships with it', () => {
-  // Read-only tools are the review's design, not a restriction to lift. The
-  // role names no template, so the copy falls through to the flat library's
-  // clodex-team-reviewer — which is why the kit ships no reviewer template.
+test('the default kit\'s reviewer names the FLAT library\'s template, which is why the kit ships none', () => {
+  // Read-only tools are the review's design, not a restriction to lift.
   const roles = readKitJson('default').roles;
-  assert.deepStrictEqual(Object.keys(roles.reviewer).sort(), ['brief', 'prompt']);
+  assert.deepStrictEqual(Object.keys(roles.reviewer).sort(), ['brief', 'prompt', 'template']);
+  assert.strictEqual(roles.reviewer.template, 'clodex-team-reviewer',
+    't891: the role names the LIBRARY stem rather than a kit-local one, so copyRoleTemplates falls through sourceDirs to <home>/library/templates and seeds the team a reviewer.json with no new file shipping in the kit');
   assert.strictEqual(fs.existsSync(path.join(KITS, 'default', 'templates', 'reviewer.json')), false);
   assert.deepStrictEqual(fs.readdirSync(path.join(KITS, 'default', 'templates')).sort(),
     ['hand.json', 'lead.json']);
@@ -230,7 +230,11 @@ test('the kit\'s reviewer prompt reaches the team even though the kit is the cop
   assert.strictEqual(
     fs.readFileSync(path.join(home, 'teams', 'x', 'prompts', 'system', 'reviewer.md'), 'utf-8'),
     fs.readFileSync(path.join(KITS, 'default', 'prompts', 'system', 'reviewer.md'), 'utf-8'));
-  assert.strictEqual(team.roles.reviewer.template, null, 'the reviewer still names no template');
+  assert.strictEqual(team.roles.reviewer.template, 'reviewer',
+    't891: the reviewer is repointed at the team\'s own copy, seeded from the FLAT library because the kit ships no reviewer template of its own');
+  assert.deepStrictEqual(readTeamTpl(home, 'x', 'reviewer'),
+    { ...JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-reviewer.json'), 'utf-8')), name: 'reviewer' },
+    'and the bytes are the flat library\'s, which is what makes the stem resolvable without a new shipped file');
 });
 
 test('createTeam defaults to the default kit when the caller names none', () => {
@@ -589,4 +593,21 @@ test('createTeam unwinds its kit exec copies when team.json cannot be written', 
   assert.throws(() => tm.createTeam({ name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead', kit: 'default' }));
   assert.strictEqual(fs.existsSync(path.join(home, 'teams', 'x', 'exec')), false,
     'the exec copies this call made are gone');
+});
+
+test('t891: a KITLESS create — the majority path — seeds the reviewer its own template', () => {
+  const home = mkHome();
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const team = tm.createTeam({ name: 'x', root: mkTmpRoot('t891-proj-'), lead: 'x-lead' });
+
+  assert.strictEqual(team.kit, 'default',
+    'ENTER: a kitless create lands on the DEFAULT KIT, whose roles WIN over STOCK_ROLE_DEFS in createTeam — so the stock def naming a template proves nothing about this path, and team-role-template-copy.test.js cannot reach it at all since its home ships no library/kits');
+  assert.strictEqual(fs.existsSync(path.join(KITS, 'default', 'templates', 'reviewer.json')), false,
+    'ENTER: the kit ships NO reviewer template, so the copy below can only have come from the flat library via sourceDirs');
+  assert.strictEqual(team.roles.reviewer.template, 'reviewer',
+    'the reviewer owns its template on the path most teams are created by — a bullet claiming per-team ownership is false otherwise');
+  assert.deepStrictEqual(readTeamTpl(home, 'x', 'reviewer'),
+    { ...JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-reviewer.json'), 'utf-8')), name: 'reviewer' });
+  assert.ok(team.templatesCopied.includes('reviewer'),
+    'and the create REPORTS the copy, which is how a lead learns the team owns the file');
 });

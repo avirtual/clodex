@@ -1615,8 +1615,6 @@ test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORE
   assert.deepStrictEqual(team.roles.reviewer, {
     ...STOCK_ROLE_DEFS.reviewer, dispatch: 'standing', cwd: null, account: null,
   }, 'the reviewer reads back as the STOCK def — the attacker def bought nothing');
-  assert.notStrictEqual(team.roles.reviewer.template, 'attacker-template',
-    'specifically: the template is Clodex\'s, not the caller\'s — the stock reviewer now names one, so this field is no longer inert');
   assert.strictEqual(team.roles.reviewer.prompt, STOCK_ROLE_DEFS.reviewer.prompt,
     'specifically: the prompt is Clodex\'s, not the caller\'s');
 
