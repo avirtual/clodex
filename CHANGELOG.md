@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a team owns its reviewer, and a seat knows you from a machine
 
 - A team created from now on owns its reviewer's template: the create writes `teams/<team>/templates/reviewer.json` from the shipped copy and points the reviewer role at it, the way it already did for the lead and the hand. Editing that file — the `--model` in particular — changes the reviewer for that team alone, instead of every team sharing one library file. Teams created before this keep resolving the library copy exactly as they did.
 - Every agent seat now knows the difference between you and a machine: input you typed gets a turn that ends in prose you read, while a peer dm, a reminder or a ticket gets the intents it calls for and no closing summary addressed to nobody. Nothing you are waiting for goes quiet — a result you asked for still comes back in a line even though it arrives as machine input, a dm still gets its reply, a ticket its full report, and anything only you can decide still reaches your inbox.
