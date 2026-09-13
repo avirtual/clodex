@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a hand can measure its comment delta over test files too
 
 - `scripts/comment-delta.js` reports comment lines added against the merge-base across every changed `.js` file, test trees included, using the ratchet's own tokenizer; the hand prompt names it as the pre-report check, since the ratchet's green says nothing about `test/`.
 
