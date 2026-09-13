@@ -408,6 +408,25 @@ test('the greedy-body RULE names the kv-only role-verb exception, in the literal
     'and a brief ON the head line keeps it greedy — the escape the clause tells a lead to use');
 });
 
+test('the input-kind prose states both directions and its escape hatches, in the literal AND in the preamble of a fully-gated seat', () => {
+  const HUMAN = /human input — marked `\[agent:from user\]`, or carrying no marker at all \(your operator typing into the CLI\) — ends the turn with prose they read/;
+  const MACHINE = /machine input — anything carrying another `\[agent:…\]` marker[^\n]*ends with the intents the situation calls for and nothing after them/;
+  const UNCERTAIN = /When you cannot tell, it is human/;
+  const PROSE_NOT_WORK = /The rule governs PROSE, not work[^\n]*`notify-user`/;
+  const WAITING = /A machine-input turn holding what your operator is waiting for — a result they asked for, or work no intent carries — still ends in one terse line\./;
+  for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
+    assert.ok(HUMAN.test(src), 'human input gets end-of-turn prose');
+    assert.ok(MACHINE.test(src), 'machine input gets intents and nothing after them');
+    assert.ok(UNCERTAIN.test(src), 'the uncertain case resolves toward speaking, not silence');
+    assert.ok(PROSE_NOT_WORK.test(src),
+      'the rule is scoped to prose, naming notify-user as the escalation it must not swallow — unbracketed, since this preamble reaches gated seats whose prompt must not carry an [agent:notify-user] line');
+    assert.ok(/a ticket its full report/.test(src),
+      'the clause that keeps a hand from thinning its report into the intent');
+    assert.ok(WAITING.test(src),
+      'the hatch covers a result the operator asked for, not only a turn that carries no intent — an async answer arrives machine-marked');
+  }
+});
+
 // The generalisation of the bug, and the reason this is a test rather than a
 // one-line fix: EVERY rendered grammar line is a form some seat will copy
 // literally. A line that cannot parse teaches an emission that does nothing.
