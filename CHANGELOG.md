@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - `team:join` spawns a standing seat for `lead` and `reviewer` even when the role's `dispatch` on disk says spawn or worktree, matching how the ticket loop routes work to those roles; only non-reserved per-ticket roles are refused.
+- The New Session dialog removes the opt-in worktree it just created when the spawn is refused (a per-ticket role on Join team, a bad name, a broken install), instead of leaving an orphaned branch and checkout on disk; a failed removal names the path in a toast.
 
 ## 5.64.6 — 2026-09-13 — a stopped box's version is marked last seen
 

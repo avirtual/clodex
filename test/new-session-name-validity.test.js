@@ -280,6 +280,27 @@ test('a server refusal re-fetches the reserved sets before the operator can rety
     'refreshNameValidity repaints the hint, so the server reason must be painted back when the fresh sets have nothing of their own to say');
 });
 
+test('a refused create rolls the opt-in worktree back before the failure branch returns', () => {
+  const src = doCreateSource();
+  const block = src.indexOf('if (!applyCreateResult(nameFieldEls(), result)) {');
+  assert.ok(block >= 0, 'the create-failure block was not found in doCreate');
+  const ret = src.indexOf('return;', block);
+  assert.ok(ret > block, 'the create-failure block returns nowhere');
+  const rollback = src.indexOf('window.api.removeWorktree(worktree.path)', block);
+  assert.ok(rollback > block && rollback < ret,
+    'the worktree is created before the spawn is asked for, so a refusal that returns without removing it leaves a branch and a checkout nothing names');
+});
+
+test('the rollback is guarded, so a plain-cwd create never asks to remove a worktree', () => {
+  const src = doCreateSource();
+  const block = src.indexOf('if (!applyCreateResult(nameFieldEls(), result)) {');
+  const rollback = src.indexOf('window.api.removeWorktree(worktree.path)', block);
+  assert.ok(rollback > block, 'the rollback is missing from the create-failure block');
+  const guard = src.lastIndexOf('if (worktree) {', rollback);
+  assert.ok(guard > block && guard < rollback,
+    'without an if (worktree) in the block, a session spawned in a plain cwd would hand removeWorktree a null');
+});
+
 test('the name field is re-checked on every keystroke and again at submit', () => {
   assert.match(rendererSrc, /inputName\.addEventListener\('input', \(\) => refreshNameValidity\(\)\)/,
     'without the input listener the reason only ever appears after a failed submit');
