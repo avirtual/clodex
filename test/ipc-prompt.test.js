@@ -413,7 +413,9 @@ test('the input-kind prose states both directions and its escape hatches, in the
   const MACHINE = /machine input — anything carrying another `\[agent:…\]` marker[^\n]*ends with the intents the situation calls for and nothing after them/;
   const UNCERTAIN = /When you cannot tell, it is human/;
   const PROSE_NOT_WORK = /The rule governs PROSE, not work[^\n]*`notify-user`/;
-  const WAITING = /A machine-input turn holding what your operator is waiting for — a result they asked for, or work no intent carries — still ends in one terse line\./;
+  const WAITING = /A machine-input turn holding what your operator is waiting for — a result they asked for, or work no intent carries — still ends in a terse line\./;
+  const ORDER = /ends the turn with prose they read: intents FIRST, prose last, so a forgotten `\[agent:end\]` swallows that prose into the message and they see none of it;/;
+  const RULES_AGREE = /anything meant for your operator goes last, after an `\[agent:end\]`\./;
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
     assert.ok(HUMAN.test(src), 'human input gets end-of-turn prose');
     assert.ok(MACHINE.test(src), 'machine input gets intents and nothing after them');
@@ -424,6 +426,10 @@ test('the input-kind prose states both directions and its escape hatches, in the
       'the clause that keeps a hand from thinning its report into the intent');
     assert.ok(WAITING.test(src),
       'the hatch covers a result the operator asked for, not only a turn that carries no intent — an async answer arrives machine-marked');
+    assert.ok(ORDER.test(src),
+      'human-input turns state the reading order and the greedy-body cost it raises');
+    assert.ok(RULES_AGREE.test(src),
+      'the greedy-body RULE agrees: prose-last is the single placement, not one of two options');
   }
 });
 
