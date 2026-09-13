@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket review that comes back REWORK now goes straight to the seat holding
+  the branch, instead of stopping at the team lead. The lead gets a short brief
+  listing the must-fix titles, which seat received the rework, and that no
+  action is owed — rather than a multi-KB verdict it had to read and re-send by
+  hand. With no live seat nothing changes: the lead is told the rework was not
+  dispatched and is owed. `[agent:task respec <id>]` still reaches the seat if
+  the lead wants to correct a verdict mid-rework.
+
 - The browser GUI's menus now match the desktop's. Sandboxes has left the File menu and lives under Window, listing your running boxes the way Peers already were, with "Manage Clodex Sandboxes…" always there even when no box has been started. Plugins now has one route instead of two: the File ▸ Plugins… entry shows only when the top-level Plugins menu is absent, which is the fresh-install case it exists for.
 
 - A headless Clodex running on your own machine can now manage sandboxes from its web GUI — the Sandboxes dialog used to answer "Couldn't check Docker — sandbox manager unavailable" on every headless instance, before it ever looked for Docker. One running *inside* a sandbox box still cannot, which is what the flag was always meant to say: the question is whether there is a Docker to reach, not whether there is a desktop window. Note that this puts sandbox start/stop/rebuild within reach of anyone holding the instance's web token, since the browser is a headless instance's only frontend.

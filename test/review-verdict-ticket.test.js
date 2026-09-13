@@ -322,8 +322,14 @@ test('review-done on a ticket review writes the verdict to the RECORD and tells 
   // t326: the record is still the store, but the lead is now TOLD. The previous
   // behaviour asserted this array was empty; a lead whose only channel is
   // polling the ticket JSON is the defect that replaced.
-  assert.strictEqual(f.gated.length, 1, 'the lead is notified exactly once');
-  assert.strictEqual(f.gated[0].target, 'lead');
+  //
+  // t906: still exactly one copy for the LEAD, but no longer the only delivery —
+  // a REWORK now goes straight to the hand as well. Filtered rather than counted,
+  // so "the lead gets one brief" stays the claim it was.
+  const toLead = f.gated.filter((g) => g.target === 'lead');
+  assert.strictEqual(toLead.length, 1, 'the lead is notified exactly once');
+  assert.deepStrictEqual(f.gated.map((g) => g.target).sort(), ['lead', 'team-hand'],
+    'and the rework itself went to the seat holding the branch');
 });
 
 test('the verdict is written BEFORE the seat is discarded', async () => {
@@ -678,9 +684,9 @@ test('the lead notification carries ticket id, verdict, round and must-fix COUNT
 
   // ENTER: the row under test survived — without this, every assertion below
   // reads off `undefined` and a route that delivered nothing would pass them.
-  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery, and it is the notification');
-  const note = f.gated[0];
-  assert.strictEqual(note.target, 'lead', 'it goes to the lead named by reviewFor');
+  const notes = f.gated.filter((g) => g.target === 'lead');
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one delivery to the lead, and it is the notification');
+  const note = notes[0];
 
   assert.match(note.body, /\bt1\b/, 'names the ticket — the lead runs several rounds at once');
   assert.match(note.body, /REWORK/, 'states which way it went');
@@ -779,8 +785,9 @@ test('the full verdict body is written into the ticket task dir, and the pointer
 
   await f.m._handleReviewDone(f.m.sessions.get(rec.name), full);
 
-  assert.strictEqual(f.gated.length, 1, 'ENTER: the notification was sent');
-  const note = f.gated[0];
+  const notes = f.gated.filter((g) => g.target === 'lead');
+  assert.strictEqual(notes.length, 1, 'ENTER: the notification was sent');
+  const note = notes[0];
   // The cited path is READ BACK, not merely matched: a pointer that names a
   // file nobody wrote is the same dead end as an invented verb.
   const m = note.body.match(/(\S*review-t1-r1\.verdict\.md)/);
@@ -802,7 +809,10 @@ test('the verdict file is round-stamped, so round 2 does not overwrite round 1',
   await f.m._handleReviewDone(f.m.sessions.get(r2.name), 'VERDICT: ACCEPT\n\nMUST-FIX: none\n\nsecond round');
 
   assert.strictEqual(f.one('t1').reviewRound, 2, 'ENTER: round 2 landed');
-  const paths = f.gated.map((g) => (g.body.match(/\S*review-t1-r\d\.verdict\.md/) || [null])[0]).filter(Boolean);
+  // The LEAD's copies only: round 1 is a REWORK, so its verdict path also went to
+  // the hand, and counting both readers would make this pass on one round told twice.
+  const paths = f.gated.filter((g) => g.target === 'lead')
+    .map((g) => (g.body.match(/\S*review-t1-r\d\.verdict\.md/) || [null])[0]).filter(Boolean);
   assert.strictEqual(paths.length, 2, 'ENTER: both rounds cited a verdict file');
   assert.notStrictEqual(paths[0], paths[1], 'the rounds must not share a filename');
   assert.match(fsReal.readFileSync(paths[0], 'utf8'), /first round/, "round 1's body survived round 2");
@@ -1680,4 +1690,177 @@ test('a task dir the confinement REFUSES drops the scope line and still spawns t
   const rendered = scope.slice(0, scope.indexOf('SPEC — what this ticket'));
   assert.ok(!rendered.includes('etc'),
     'nothing Clodex RENDERED mentions the escaping target — only the lead\'s own text does');
+});
+
+// ── t906: a REWORK verdict goes straight to the hand ────────────────────────
+//
+// The loop was already unmediated on ACCEPT — it merges to master and runs a
+// post-merge suite with no lead turn. REWORK, which only sends work back to a
+// seat still holding its own branch, was the one gated on a human, and the gate
+// cost the lead the whole verdict twice: once read in, once re-emitted as a
+// reject body. These pin the four properties of the symmetric arm.
+
+const reworkVerdict = (items) => `VERDICT: REWORK\n\nMUST-FIX\n${items}\n\nNITS\n- naming`;
+const leadNote = (f) => {
+  const notes = f.gated.filter((g) => g.target === 'lead');
+  assert.strictEqual(notes.length, 1, `ENTER: exactly one lead delivery; got ${notes.length}`);
+  return notes[0].body;
+};
+const handNote = (f) => {
+  const notes = f.gated.filter((g) => g.target === 'team-hand');
+  assert.strictEqual(notes.length, 1, `ENTER: exactly one hand delivery; got ${notes.length}`);
+  return notes[0].body;
+};
+
+test('t906: a REWORK with a live seat is dispatched to that seat, not to the lead', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    reworkVerdict('- the guard is inverted\n- the sweep drops the row'));
+
+  const hand = handNote(f);
+  assert.match(hand, /\[ticket t1 rejected\]/, 'it arrives as a rejection, the shape the seat already handles');
+  assert.match(hand, /the guard is inverted/, 'carrying the must-fix items inline');
+  assert.match(hand, /the sweep drops the row/, 'all of them, uncapped — the hand has to act on every one');
+  assert.match(hand, /\S*review-t1-r1\.verdict\.md/, 'and the path to the reasoning it must not re-derive');
+
+  // The state transition is _rejectTicketFromLoop's, whole. A second rejecter
+  // that skipped any of it is the defect this arm exists to prevent.
+  const t = f.one('t1');
+  assert.strictEqual(t.state, 'open', 'the ticket is reopened');
+  assert.strictEqual(t.reworkRound, 1, 'the rework round is counted');
+  assert.strictEqual(t.verdict, 'REWORK', 'and the verdict still landed on the record');
+  assert.ok(!('loopStep' in t), 'the loop step is cleared');
+  assert.deepStrictEqual((t.reworkReasons || []).map((r) => r.by), ['ticket-loop'],
+    'the reason is filed under the loop, exactly as the suite-red reject files it');
+  assert.match(t.reworkReasons[0].reason, /the review came back REWORK/);
+});
+
+test('t906: the lead gets a BRIEF carrying the must-fix TITLES, so the verdict need not be opened', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  const bulk = 'x'.repeat(15839);
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    `VERDICT: REWORK\n\n${bulk}\n\nMUST-FIX\n- the guard is inverted\n- the sweep drops the row`);
+
+  const body = leadNote(f);
+  // The acceptance criterion of the whole change: a COUNT cannot be judged, so a
+  // lead handed one opens the file anyway and the change saves nothing.
+  assert.match(body, /2 must-fixes/, 'the count is still there');
+  assert.match(body, /^- the guard is inverted$/m, 'and so is the first title');
+  assert.match(body, /^- the sweep drops the row$/m, 'and the second');
+  assert.match(body, /Sent straight to team-hand for rework \(rework round 1\)/,
+    'the brief names WHICH seat received it — otherwise the lead has to look');
+  assert.match(body, /NO action is owed from you/, 'and says so explicitly, which is the point of the brief');
+  assert.ok(!body.includes(bulk), 'and it is still not the body');
+
+  // The stop channel is a SENTENCE, not a new verb: respec already delivers to a
+  // dispatched assignee and keeps its tree.
+  assert.match(body, /\[agent:task respec t1\]/, 'the brief names the route that can still redirect the seat');
+  const suggested = body.match(/\[agent:[^\]]+\]/g) || [];
+  assert.ok(suggested.length > 0, 'ENTER: the brief suggests at least one route');
+  for (const intent of suggested) {
+    assert.ok(parseWithRegistry(intent) !== null,
+      `the brief tells the lead to run ${intent}, so it must parse — an unrecognized verb is a dead end at 3am`);
+  }
+});
+
+test('t906: the brief caps both the number of titles and their length, and says how many it dropped', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  const long = 'z'.repeat(400);
+  const items = ['one', 'two', 'three', 'four', 'five', 'six', long].map((s) => `- ${s}`).join('\n');
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), reworkVerdict(items));
+
+  const body = leadNote(f);
+  const listed = body.split('\n').filter((l) => /^- (?:one|two|three|four|five|six|z)/.test(l));
+  assert.strictEqual(listed.length, 5, 'at most five titles reach the lead');
+  assert.match(body, /^\+2 more, in the verdict file below\.$/m,
+    'and the two it dropped are STATED — a list read as complete is worse than no list');
+  // A reviewer is an agent writing free text: without a per-line bound one
+  // pathological item puts the whole verdict back into the context this protects.
+  assert.ok(!body.includes(long), 'a 400-byte title is not passed through whole');
+  assert.ok(body.length < 1200, `the whole brief stays small; got ${body.length} bytes`);
+
+  // The hand's copy is deliberately NOT capped: it is the one that has to act.
+  const hand = handNote(f);
+  assert.ok(hand.includes(long), 'the seat gets every item in full');
+});
+
+test('t906: with NO live seat the lead gets the path AND is told the rework is OWED', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  // The fallback arm: _rejectTicketFromLoop resolves the seat BEFORE it writes,
+  // so with none the ticket must stay as it was and the lead is the only reader.
+  f.m.sessions.delete('team-hand');
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), reworkVerdict('- the guard is inverted'));
+
+  assert.deepStrictEqual(f.gated.filter((g) => g.target === 'team-hand'), [],
+    'ENTER: nothing was sent to a seat that is not there');
+  const body = leadNote(f);
+  assert.match(body, /rework was NOT dispatched/, 'the lead is told the dispatch did not happen');
+  assert.match(body, /OWED/, 'and that it is owed — silence here is the original defect wearing a different hat');
+  assert.match(body, /\[agent:task reject t1\]/, 'with the route that sends it back by hand');
+  assert.match(body, /\S*review-t1-r1\.verdict\.md/,
+    'and the full verdict path, because on this arm the lead is the only remaining reader');
+  assert.match(body, /^- the guard is inverted$/m, 'the titles are still there — they are what the lead re-emits');
+
+  assert.strictEqual(f.one('t1').reworkRound, undefined,
+    'and nothing was counted: a rework nobody received must never read as delivered');
+});
+
+test('t906: an ACCEPT is untouched — the brief lines are REWORK-only', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\n\nMUST-FIX: none\n\nlooks right');
+
+  assert.deepStrictEqual(f.gated.map((g) => g.target), ['lead'],
+    'the ACCEPT path sends exactly one message, to the lead, as it always did');
+  const body = leadNote(f);
+  const path = (body.match(/\S*review-t1-r1\.verdict\.md/) || [null])[0];
+  assert.ok(path, 'ENTER: the ACCEPT brief still cites its verdict file');
+  // Byte-for-byte, because "ACCEPT is out of scope" is the claim and a single
+  // extra line in this body is a change to the merge path's only lead signal.
+  assert.strictEqual(body, [
+    'ACCEPT on ticket t1 (review round 1, no must-fixes).',
+    'Landed on the ticket record; the board shows it via [agent:task list all].',
+    `Full verdict (44 bytes): ${path}`,
+  ].join('\n'), 'the ACCEPT body is exactly what it was before the REWORK arm existed');
+  assert.strictEqual(f.one('t1').reworkRound, undefined, 'and nothing was rejected');
+});
+
+test('t906: mustFixTitles returns one title per counted must-fix, marker stripped', () => {
+  const { mustFixTitles } = require('../tickets-store');
+  const cases = [
+    '- the guard is inverted\n- the sweep drops the row',
+    '1. first\n2) second\n3. third',
+    '- parent\n  - child\n  - child two\n- sibling',
+    '  - all indented\n  - both of them',
+    'bare prose with no marker at all',
+    '---\n- after a rule\n- and another',
+  ];
+  for (const mf of cases) {
+    // The invariant the brief rests on: a brief saying "3 must-fixes" and listing
+    // two is a brief the lead must open the verdict to reconcile.
+    assert.strictEqual(mustFixTitles(mf).length, countMustFix(mf), `count/title parity for:\n${mf}`);
+  }
+  assert.deepStrictEqual(mustFixTitles('- the guard is inverted\n- the sweep drops the row'),
+    ['the guard is inverted', 'the sweep drops the row'], 'the bullet marker is not part of the title');
+  assert.deepStrictEqual(mustFixTitles('1. first\n2) second'), ['first', 'second'], 'nor is an ordered marker');
+  assert.deepStrictEqual(mustFixTitles('- parent\n  - child\n- sibling'), ['parent', 'sibling'],
+    'sub-bullets are not titles, exactly as they are not counted');
+  assert.deepStrictEqual(mustFixTitles('bare prose'), ['bare prose'],
+    'the floor-of-one arm yields the line itself, so the count still has a title');
+  assert.deepStrictEqual(mustFixTitles(null), [], 'absent is no titles');
+  assert.deepStrictEqual(mustFixTitles('(none)'), [], 'and so is a placeholder — not a title reading "(none)"');
 });
