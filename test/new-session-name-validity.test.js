@@ -286,7 +286,7 @@ test('a refused create rolls the opt-in worktree back before the failure branch 
   assert.ok(block >= 0, 'the create-failure block was not found in doCreate');
   const ret = src.indexOf('return;', block);
   assert.ok(ret > block, 'the create-failure block returns nowhere');
-  const rollback = src.indexOf('window.api.removeWorktree(worktree.path)', block);
+  const rollback = src.indexOf('window.api.removeWorktree(worktree.path', block);
   assert.ok(rollback > block && rollback < ret,
     'the worktree is created before the spawn is asked for, so a refusal that returns without removing it leaves a branch and a checkout nothing names');
 });
@@ -294,7 +294,7 @@ test('a refused create rolls the opt-in worktree back before the failure branch 
 test('the rollback is guarded, so a plain-cwd create never asks to remove a worktree', () => {
   const src = doCreateSource();
   const block = src.indexOf('if (!applyCreateResult(nameFieldEls(), result)) {');
-  const rollback = src.indexOf('window.api.removeWorktree(worktree.path)', block);
+  const rollback = src.indexOf('window.api.removeWorktree(worktree.path', block);
   assert.ok(rollback > block, 'the rollback is missing from the create-failure block');
   const guard = src.lastIndexOf('if (worktree) {', rollback);
   assert.ok(guard > block && guard < rollback,

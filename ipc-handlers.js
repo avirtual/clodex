@@ -460,7 +460,7 @@ function registerIpcHandlers(deps) {
     try { return { ok: true, ...(await gitWorktree.repoInfo(cwd)) }; }
     catch (e) { return { ok: false, error: e.message, isRepo: false, branches: [] }; }
   });
-  handle('worktree:remove', async (_e, worktreePath) => gitWorktree.removeWorktree(worktreePath));
+  handle('worktree:remove', async (_e, worktreePath, opts) => gitWorktree.removeWorktree(worktreePath, opts || null));
   // Scoped, not global: `popular` is built from directory paths, so an unscoped
   // list would hand a web-host connection bound to one workspace the cwds of
   // every other one. See the rule at `session:list` below — this handler was the

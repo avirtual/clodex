@@ -2737,8 +2737,9 @@ async function doCreate() {
     }
     if (!applyCreateResult(nameFieldEls(), result)) {
       if (worktree) {
-        const rm = await window.api.removeWorktree(worktree.path);
+        const rm = await window.api.removeWorktree(worktree.path, worktree.base !== null ? { deleteBranch: worktree.branch } : null);
         if (!rm || !rm.ok) showToast(`Session was not created and its worktree could not be removed: ${worktree.path} (${(rm && rm.error) || 'unknown error'})`, { kind: 'error', duration: 10000 });
+        else if (rm.branchError) showToast(`Session was not created; worktree removed but branch ${worktree.branch} was kept: ${rm.branchError}`, { kind: 'error', duration: 10000 });
         worktree = null;
       }
       console.error('Failed to create session:', result && result.error);

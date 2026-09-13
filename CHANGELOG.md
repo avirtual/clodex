@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A refused New Session create now also deletes the branch the dialog minted for its opt-in worktree (never a pre-existing branch the operator named), so nothing is left behind; a branch git refuses to delete is kept and named in the toast.
+
 ## 5.64.7 — 2026-09-13 — reserved roles always join, and a refused create rolls its worktree back
 
 - `team:join` spawns a standing seat for `lead` and `reviewer` even when the role's `dispatch` on disk says spawn or worktree, matching how the ticket loop routes work to those roles; only non-reserved per-ticket roles are refused.
