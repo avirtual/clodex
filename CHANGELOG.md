@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.65.0 — 2026-09-13
+
 - The phone viewer can be mounted under any path: `CLODEX_REMOTE_BASE_PATH=/i` serves it at `example.com/i/` so a second instance on the same box no longer needs an nginx rewrite to borrow the first one's `/c`. The default is unchanged — leave the variable unset and `/c` works exactly as before, as does the unprefixed root. A value that is not a plain path (`..`, a backslash, an empty segment) is logged and ignored rather than mounted somewhere adjacent.
 - The two-instances recipe now covers moving an existing team into the second instance — its session rows, memory and tickets, with no downtime — and says which of the two frontends `CLODEX_WEB_PORT` actually turns on, so a launcher that omits it no longer sends you to the phone viewer thinking it is the GUI.
 - A second Clodex on the same box is now configured entirely from the shell: `CLODEX_REMOTE_PORT` and `CLODEX_WIRESCOPE_PORT` move the peer wire and wirescope off the ports the first instance holds, so the two-instances recipe is a copy-pasteable pair of shells instead of a procedure that stops to have you open Settings on the instance that has no window yet. Either var wins over the port stored in that instance's settings and is never written back, so a launch without it returns to whatever Settings holds; an unparseable or out-of-range value is logged and ignored rather than bound.
