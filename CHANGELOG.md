@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — one intent to dispatch, a popover that reads as a form, and prose where you look for it
 
 - The team roles popover reads as a form again. A role's pickers (prompt, account, template) are as wide as the names they hold instead of spanning the whole popover to show the word `hand`; the popover is the only thing that scrolls, so an expanded role no longer opens a second scrollbar inside the first and no longer cuts `cwd` off mid-label at a fold; the dispatch picker has the caption every field beside it already had; and the editor no longer repeats the role's name or shouts "EDIT THIS ROLE" at you for clicking it open. The selected dispatch option now wears the same highlight the rest of the app uses for a selected thing, rather than the red reserved for primary and destructive actions.
 - When you type to a seat, its reply now leads with the intents it fired and closes with the prose for you, so the part you read sits at the end of the turn instead of buried above a ticket spec it unrolled. The seat is also told that this ordering makes a forgotten `[agent:end]` costly — the unclosed body would swallow the text meant for you — and the greedy-body rule no longer offers the older "above the intents" placement as an equal option.
