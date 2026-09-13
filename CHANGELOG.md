@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A dm that is parked because the target was mid-turn keeps its content key, so an urgent re-send of the same message supersedes it instead of arriving twice.
+
 ## 5.64.12 — 2026-09-13 — a superseded dm is visible, and a diverted re-park stays supersedable
 
 - A dm that is released or delivered urgent and then parked again because a draft was open keeps its content key, so a later urgent re-send of the same message still supersedes it instead of delivering twice.

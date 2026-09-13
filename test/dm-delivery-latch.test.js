@@ -22,10 +22,12 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const crypto = require('node:crypto');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
+const { isDraftOpen } = require('../proxy-util');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -533,6 +535,98 @@ test('t882: a plain dm to a warm target keeps the exact prior shape — no notic
     assert.strictEqual(fresh.length, 1, 'ENTER: exactly one dm broadcast for the plain send');
     assert.strictEqual(fresh[0].payload.body, 'PLAIN BODY',
       'and the broadcast body is the RAW body, unprefixed — the log shape every non-superseding dm has always had');
+  } finally { app.stop(); }
+});
+
+const BUSY_QUIET_MS = 2_000;
+
+function midTurn(app) {
+  const target = app.m.sessions.get('target');
+  target.activityState = 'thinking';
+  target.activityTs = Date.now();
+  target.lastUserInputTs = Date.now() - 10 * BUSY_QUIET_MS;
+  target.lastUserSubmitTs = target.lastUserInputTs + 1;
+  assert.strictEqual(target.activityState, 'thinking',
+    'ENTER: the target must be MID-TURN — that is the branch under test. An idle target takes the HOLD park, '
+    + 'which has carried a key since t878, so a test that drifted onto it would pass with the busy park keyless');
+  assert.ok(Date.now() - target.lastUserInputTs >= BUSY_QUIET_MS,
+    'ENTER: and the typing window must be CLOSED — the typing branch parks through the same call, so with the '
+    + 'window open this test could not tell which of the two conditions put the file on disk');
+  assert.ok(!isDraftOpen(target),
+    'ENTER: and no draft may be open — the fire-time divert parks through _parkDivertFor, which has carried a '
+    + 'key since t881, so an open draft would satisfy these assertions with _maybeParkDelivery still keyless');
+  return target;
+}
+
+const busyKey = (sender, body) => crypto.createHash('sha256').update(`${sender}\n${body}`).digest('hex').slice(0, 16);
+
+test('t883: a dm to a mid-turn seat parks WITH its content key', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, INJECT_QUIET_MS: BUSY_QUIET_MS } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    midTurn(app);
+    const before = app.seen('target');
+    await app.m._handleIntent('sender', dm('target', 'BUSY BODY'));
+    await new Promise((r) => setTimeout(r, 60));
+    assert.strictEqual(app.seen('target'), before,
+      'ENTER: nothing may have reached the PTY — a dm that was written was never parked, and the payload read '
+      + 'below would then be some other file entirely');
+    const payloads = app.parkedPayloads('target', /BUSY BODY/);
+    assert.strictEqual(payloads.length, 1,
+      'ENTER: exactly one parked copy must be on disk, proving the busy park positively — the absence at the '
+      + 'PTY above is equally true of a park that threw');
+    assert.strictEqual(payloads[0].key, busyKey('sender', 'BUSY BODY'),
+      'the busy park must carry the CONTENT key: keyless, the file is unreachable by claimParkedByKey, so an '
+      + 'urgent re-send of the same message cannot supersede it and the target reads the dm twice');
+  } finally { app.stop(); }
+});
+
+test('t883: an urgent re-send supersedes the copy parked while the target was mid-turn', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, INJECT_QUIET_MS: BUSY_QUIET_MS } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    midTurn(app);
+    const before = app.seen('target');
+    await app.m._handleIntent('sender', dm('target', 'BUSY THEN URGENT'));
+    await new Promise((r) => setTimeout(r, 60));
+    assert.strictEqual(app.seen('target'), before,
+      'ENTER: the first copy must have been PARKED and not written — a delivered dm leaves nothing for the '
+      + 'urgent send to claim and the count below would be zero for the wrong reason');
+    assert.strictEqual(app.parked('target', /BUSY THEN URGENT/), 1,
+      'ENTER: exactly one parked copy before the urgent send');
+
+    target.activityState = 'idle';
+    target.activityTs = Date.now();
+    await app.m._handleIntent('sender', dm('target', 'BUSY THEN URGENT', true));
+    assert.strictEqual(app.parked('target', /BUSY THEN URGENT/), 0,
+      'the copy parked while the target was mid-turn must be GONE once the urgent delivery is accepted: left '
+      + 'on disk, the target\'s own next drain delivers the message a second time');
+    const got = await settled(app, 'target', /BUSY THEN URGENT/);
+    assert.strictEqual(got.match(/BUSY THEN URGENT/g).length, 1,
+      'and exactly one copy reaches the seat — superseding is only worth doing if the urgent copy still arrives');
+  } finally { app.stop(); }
+});
+
+test('t883: a caller that minted no key still parks keyless while mid-turn', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, INJECT_QUIET_MS: BUSY_QUIET_MS } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    midTurn(app);
+    const before = app.seen('target');
+    app.m._deliverMessage('target', 'reminder', 'KEYLESS BUSY BODY', 'dm');
+    await new Promise((r) => setTimeout(r, 60));
+    assert.strictEqual(app.seen('target'), before,
+      'ENTER: nothing may have reached the PTY, which is what makes the file below the busy park\'s work');
+    const payloads = app.parkedPayloads('target', /KEYLESS BUSY BODY/);
+    assert.strictEqual(payloads.length, 1,
+      'ENTER: the delivery must have been parked, or the absence of a key is asserted about a file that was '
+      + 'never written');
+    assert.ok(!('key' in payloads[0]),
+      'a caller that minted no key must park with NO key field: keys are minted only by _gatedDeliver, and a '
+      + 'fabricated one here would let an unrelated urgent dm claim a reminder');
   } finally { app.stop(); }
 });
 

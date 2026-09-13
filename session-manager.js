@@ -6658,7 +6658,7 @@ function createSessionManager(deps) {
       if (!target) return;
       const finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
       const fire = typeof onWrite === 'function' ? onWrite : null;
-      if (!this._maybeParkDelivery(target, finalText)) {
+      if (!this._maybeParkDelivery(target, finalText, parkKey)) {
         this._injectText(target, finalText, {
           parkable: true,
           parkKey,
@@ -6744,7 +6744,7 @@ function createSessionManager(deps) {
       return id;
     }
 
-    _maybeParkDelivery(target, finalText) {
+    _maybeParkDelivery(target, finalText, key = null) {
       if (!target || target.agentType !== 'claude' || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
       // "Busy" = mid-turn ('thinking' from either the wire tracker or the JSONL
@@ -6755,7 +6755,7 @@ function createSessionManager(deps) {
       const busy = target.activityState === 'thinking';
       if (!typing && !busy) return false;
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name));
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name), key);
       } catch (e) {
         log.error('inject', `park failed for ${target.name}: ${e.message} — injecting instead`);
         return false;
