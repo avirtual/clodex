@@ -25463,6 +25463,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       var NONE = () => "none";
       var GREEDY = () => "greedy";
+      var TEAM_ROLE_KV_KEYS = ["prompt", "template", "dispatch", "cwd", "model", "account"];
+      function teamBodyMode(intent) {
+        if (intent.sub === "template-save" || intent.sub === "prompt-save") return "greedy";
+        if (intent.sub === "role-add" || intent.sub === "role-set") {
+          const carriesKv = TEAM_ROLE_KV_KEYS.some((k) => intent[k] != null);
+          return carriesKv && !(intent.body || "").trim() ? "none" : "greedy";
+        }
+        return "none";
+      }
       var CORE_ROWS = [
         { type: "dm", parse: parseDm, bodyMode: GREEDY },
         { type: "resend", parse: parseResend, bodyMode: NONE },
@@ -25487,7 +25496,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "reboot", parse: parseReboot, bodyMode: NONE },
         { type: "task", parse: parseTask, bodyMode: (i) => i.sub === "add" || i.sub === "done" || i.sub === "reject" || i.sub === "respec" || i.sub === "cancel" || i.sub === "accept" ? "greedy" : "none" },
         { type: "team-create", parse: parseTeamCreate, bodyMode: GREEDY },
-        { type: "team", parse: parseTeam, bodyMode: (i) => i.sub === "role-add" || i.sub === "role-set" || i.sub === "template-save" || i.sub === "prompt-save" ? "greedy" : "none" },
+        { type: "team", parse: parseTeam, bodyMode: teamBodyMode },
         { type: "spawn", parse: parseSpawn, bodyMode: NONE }
       ].map((r) => Object.freeze({
         ...r,
