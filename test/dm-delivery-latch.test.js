@@ -114,10 +114,6 @@ function boot(opts = {}) {
     validIntentNames: require('../intent-registry').validIntentNames,
     parkDelivery: require('../pending-store').parkDelivery,
     parkIdInUse: require('../pending-store').parkIdInUse,
-    // REAL, and load-bearing here rather than defensive: the urgent arm of
-    // _gatedDeliver calls it to supersede a park this file's `parked()` helper
-    // then counts, so a stub returning [] would leave the supersede assertion
-    // measuring the stub.
     claimParkedByKey: require('../pending-store').claimParkedByKey,
     drainPending: () => [], countPending: () => 0, peekPending: () => [],
     hasActivePending: () => false,
@@ -190,10 +186,6 @@ function boot(opts = {}) {
         } catch { return false; }
       }).length;
     },
-    // The resend ids of those same matching parks, read off the payload (falling
-    // back to the basename's id segment). `parked` counts; the supersede pin has
-    // to compare the ids the claim REPORTS against the ids that were on disk, and
-    // a count cannot tell a claim of the right file from a claim of any file.
     parkedIds: (name, re) => {
       const dir = path.join(root, 'pending', name);
       let files;
@@ -333,16 +325,6 @@ test('t388: a dm HELD-PARKED behind a permission dialog does not arm', async () 
   } finally { app.stop(); }
 });
 
-// The exit the notices above hand out, closed. Both bounce texts teach a re-send
-// (`[agent:resend <id>]` from the park notice, `[agent:dm target urgent]` from the
-// latch report at :417), and the urgent copy takes the fresh-write path, which
-// never consulted the pending store — so the parked copy still drained on the
-// target's next turn and the target read one message twice.
-//
-// Parked by the COLD-idle hold rather than the busy park: only the hold path mints
-// a content key (the busy park at _maybeParkDelivery carries none), and only the
-// hold path can then be re-entered with `urgent`, which lifts the hold. A dialog
-// hold would not do — it holds urgent too, so the claim would never be reached.
 async function coldParked(app, body) {
   const target = app.m.sessions.get('target');
   target.activityState = 'idle';
@@ -373,8 +355,8 @@ test('t878: an urgent re-send claims the parked copy of the same dm, so the targ
       'the return must name the park it claimed: the sender is being told its earlier copy was consumed by this '
       + 'one, and an unqualified `queued` reads as a second delivery');
     assert.strictEqual(app.parked('target', /SUPERSEDE ME/), 0,
-      'and the parked copy must be GONE before the write — claimed after it, the target\'s own next-turn drain '
-      + 'can win the race and deliver the message a second time');
+      'and the parked copy must be GONE once the urgent delivery has been accepted: left on disk, the target\'s '
+      + 'own next-turn drain delivers the message a second time');
     const got = await settled(app, 'target', /SUPERSEDE ME/);
     assert.strictEqual(got.match(/SUPERSEDE ME/g).length, 1,
       'exactly one copy reaches the seat: superseding is only worth doing if the urgent copy still arrives');

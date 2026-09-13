@@ -267,7 +267,7 @@ function claimParkedByKey(root, name, key) {
   try { dir = agentDir(root, name); files = fs.readdirSync(dir); } catch { return out; }
   let n = 0;
   for (const f of files.sort()) {
-    if (!f.endsWith('.json') || f.startsWith('.') || isClaimEntry(f)) continue;
+    if (!f.endsWith('.json') || f.startsWith('.')) continue;
     let parked;
     try { parked = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { continue; }
     if (!parked || parked.key !== key) continue;

@@ -68,10 +68,6 @@ function mk(overrides = {}) {
     isDraftOpen: require('../../proxy-util').isDraftOpen,
     drainPending: require('../../pending-store').drainPending,
     hasActivePending: require('../../pending-store').hasActivePending,
-    // Same family, and the one member whose absence is NOT swallowed: the urgent
-    // arm of _gatedDeliver calls it outside any try, so an unwired seam is a
-    // TypeError on every urgent dm rather than a quiet no-op. Returns [] for the
-    // undefined PENDING_DIR most fixtures have.
     claimParkedByKey: require('../../pending-store').claimParkedByKey,
     // Every rejecting ticket verb calls this. Undefined here would make each one
     // run its catch branch and report the failure wording, so a host that stopped

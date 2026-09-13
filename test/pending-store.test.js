@@ -237,18 +237,11 @@ test('claimParkedById searches across all agent stores', () => {
   assert.deepStrictEqual(drainPending(root, 'alice', 't'), ['for alice']);
 });
 
-// The urgent-supersede claim. Keyed by CONTENT (sender+body), which is not unique
-// across targets, so the sweep is scoped to ONE agent dir — bob's same-key park is
-// in the fixture precisely because a root-wide sweep (the shape claimParkedById
-// uses) would claim another seat's mail and delete a message nobody re-sent.
 test('claimParkedByKey claims only the same-key parks of the named agent', () => {
   const root = tmpRoot();
   parkDelivery(root, 'alice', 't1', SEQ(1), 'id001', false, null, 'K');
   parkDelivery(root, 'alice', 't2', SEQ(2), 'id002', false, null, 'OTHER');
   parkDelivery(root, 'bob', 't3', SEQ(1), 'id003', false, null, 'K');
-  // ENTER: all three must be on disk before the claim. A claim over an empty or
-  // half-written store returns [] and drains nothing, which is indistinguishable
-  // from the scoping this test is about.
   assert.strictEqual(countPending(root, 'alice'), 2, 'ENTER: alice must hold both of her parks');
   assert.strictEqual(countPending(root, 'bob'), 1, 'ENTER: bob must hold his same-key park');
   assert.deepStrictEqual(claimParkedByKey(root, 'alice', 'K'), ['id001']);
@@ -263,11 +256,9 @@ test('claimParkedById reports the content key only when the park carries one', (
   parkDelivery(root, 'a', 'keyed', SEQ(1), 'kk111', false, null, 'K');
   parkDelivery(root, 'b', 'plain', SEQ(1), 'pp222');
   assert.deepStrictEqual(claimParkedById(root, 'kk111'), { name: 'a', text: 'keyed', key: 'K' });
-  // Exactly two keys, not three: the resend re-park passes `claimed.key` straight
-  // back to parkDelivery, and a `key: undefined` there would be JSON-dropped
-  // anyway — but every deepStrictEqual pin above this line reads the shape, so the
-  // absence is the pinned behaviour, not an accident of serialization.
-  assert.deepStrictEqual(claimParkedById(root, 'pp222'), { name: 'b', text: 'plain' });
+  assert.deepStrictEqual(claimParkedById(root, 'pp222'), { name: 'b', text: 'plain' },
+    'an unkeyed park must come back with exactly two keys: the resend re-park feeds this straight to '
+    + 'parkDelivery, and every deepStrictEqual pin above reads the shape');
 });
 
 test('claimParkedById returns null for an unknown id (already delivered / bad id)', () => {
