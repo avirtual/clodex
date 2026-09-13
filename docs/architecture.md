@@ -486,13 +486,16 @@ not by size:
   same precedence `_templateShape` uses) and hands the result to
   `teamTemplateSave`, so this module never learns where a template lives.
   `resolveModelId` is an ALLOWLIST — four aliases, else an
-  `[a-z0-9][a-z0-9.-]{0,63}` id with at most one trailing `[…]` suffix — because
-  the value reaches a spawn's argv, so the brackets are legal ONLY in that
-  trailing position and a stem containing one is still refused. Three of the
-  aliases now resolve to `[1m]` ids, which is the only way to reach one: a
-  bracketed id typed into the kv is unreachable, since the intent's family regex
-  stops at the first `]` and delivers a truncated `claude-opus-5[1m` the
-  allowlist then refuses. That is why the aliases exist. Derivation drops every prior `--model <x>` pair and `--model=<x>`
+  `[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}` id with at most one trailing lowercase `[…]`
+  suffix — because the value reaches a spawn's argv, so the brackets are legal
+  ONLY in that trailing position and a stem containing one is still refused. The
+  suffix is lowercase-only because `argv-merge.js` matches `/\[1m\]$/` case-
+  sensitively, so an accepted `[1M]` would keep a 200k denominator. Three of the
+  aliases now resolve to `[1m]` ids, and the alias is the only way to reach one:
+  a bracketed id typed into the kv is unreachable, since the intent's family
+  regex stops at the first `]` and delivers a truncated `claude-opus-5[1m` the
+  allowlist then refuses — which is why the aliases exist.
+  Derivation drops every prior `--model <x>` pair and `--model=<x>`
   token before prepending the new one, so re-deriving from the role's own copy
   cannot accumulate a second pair, and it never mutates `base`. It also strips
   the LISTING decoration (`id`, `shadowedBy`, `plugin`, `pluginName`) the library
