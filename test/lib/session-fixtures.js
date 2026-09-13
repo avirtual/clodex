@@ -20,8 +20,6 @@ const { execFileSync } = require('child_process');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending: countPendingReal, parkIdInUse } = require('../../pending-store');
 const { isDraftOpen: isDraftOpenReal } = require('../../proxy-util');
 
-// Minimal fake deps: only what the PTY-free methods touch. Everything else is
-// undefined, which the destructure tolerates (those methods aren't reached).
 let OUTBOX_PARENT = null;
 let OUTBOX_N = 0;
 function sharedOutboxRoot() {
@@ -29,6 +27,8 @@ function sharedOutboxRoot() {
   return pathReal.join(OUTBOX_PARENT, `mk-${++OUTBOX_N}`);
 }
 
+// Minimal fake deps: only what the PTY-free methods touch. Everything else is
+// undefined, which the destructure tolerates (those methods aren't reached).
 function mk(overrides = {}) {
   const deps = {
     knownSkillNames: () => [],

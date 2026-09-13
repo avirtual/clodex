@@ -132,7 +132,7 @@ function outboxHasOrigin(root, origin) {
   }
 }
 
-function originMarker(root, origin) { return path.join(root, `${origin}.origin`); }
+function originMarker(root, origin) { return path.join(root, `${origin}@origin`); }
 
 function markOutboxOrigin(root, origin) {
   if (!validOrigin(origin)) return false;

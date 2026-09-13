@@ -148,6 +148,34 @@ test('a marked origin stays known across a full drain — the restart/claim case
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("a peer labelled 'desk.origin' does not collide with desk's marker", () => {
+  const root = tmpRoot();
+  const seq = seqGen();
+  assert.strictEqual(markOutboxOrigin(root, 'desk'), true);
+  const r = enqueueOutbox(root, 'desk.origin', { from: 'a', to: 'b', body: 'x' }, seq());
+  assert.strictEqual(r.ok, true, "a label ending in .origin still gets a mailbox");
+  assert.deepStrictEqual(claimOutbox(root, 'desk.origin').map((m) => m.body), ['x']);
+  assert.strictEqual(outboxKnowsOrigin(root, 'desk'), true, "desk's marker survived the other peer's claim");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a mailbox for 'desk.origin' does not make desk look known", () => {
+  const root = tmpRoot();
+  const seq = seqGen();
+  enqueueOutbox(root, 'desk.origin', { from: 'a', to: 'b', body: 'x' }, seq());
+  assert.strictEqual(outboxKnowsOrigin(root, 'desk'), false, 'desk was never marked');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('the marker name is not a name any peer can take', () => {
+  const root = tmpRoot();
+  assert.equal(validOrigin('desk@origin'), false);
+  assert.strictEqual(markOutboxOrigin(root, 'desk'), true);
+  assert.ok(fs.readdirSync(root).includes('desk@origin'));
+  assert.deepStrictEqual(listOutboxOrigins(root), []);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('outboxKnowsOrigin falls back to a queued message, and rejects a bad origin', () => {
   const root = tmpRoot();
   const seq = seqGen();
@@ -157,7 +185,7 @@ test('outboxKnowsOrigin falls back to a queued message, and rejects a bad origin
   assert.strictEqual(outboxKnowsOrigin(root, '..'), false);
   assert.strictEqual(outboxKnowsOrigin(root, 'a/b'), false);
   assert.strictEqual(markOutboxOrigin(root, '..'), false);
-  assert.deepStrictEqual(fs.readdirSync(root).filter((f) => f.endsWith('.origin')), [],
+  assert.deepStrictEqual(fs.readdirSync(root).filter((f) => f.endsWith('@origin')), [],
     'a rejected origin writes no marker');
   fs.rmSync(root, { recursive: true, force: true });
 });
