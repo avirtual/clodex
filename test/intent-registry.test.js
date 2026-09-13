@@ -82,18 +82,19 @@ function parseIntentLegacy(rawLine) {
     const sub = taskMatch[1];
     const argToks = taskMatch[2].trim().split(/\s+/).filter(Boolean);
     const body = taskMatch[3];
-    // t174: `park` is a modifier on add, filtered out of the positionals so it
-    // can never be read as the assignee. Same lockstep rule as t80's filter.
+    // t174/t897: `park` and `start` are modifiers on add, filtered out of the
+    // positionals so neither is read as the assignee. Lockstep rule as in t80.
     if (sub === 'add') {
       const park = argToks.includes('park');
-      // t673: `reviewer:<template>` joins `park` as a keyed modifier, filtered
+      const start = argToks.includes('start');
+      // t673: `reviewer:<template>` joins them as a keyed modifier, filtered
       // out of the positionals. Updated here in lockstep with parseTask, per the
       // rule below — a shape change that lands in only one copy stops the
       // differential covering the verb at all.
       const rvTok = /^reviewer:(.+)$/;
       const reviewer = (argToks.find((t) => rvTok.test(t)) || '').replace(/^reviewer:/, '') || null;
-      const rest = argToks.filter((t) => t !== 'park' && !rvTok.test(t));
-      return { type: 'task', sub, who: rest[0] || null, id: null, park, reviewer, body };
+      const rest = argToks.filter((t) => t !== 'park' && t !== 'start' && !rvTok.test(t));
+      return { type: 'task', sub, who: rest[0] || null, id: null, park, start, reviewer, body };
     }
     if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
     // t80: list carries an optional state filter from the bracket. Updated here
@@ -361,6 +362,9 @@ const ADVERSARIAL = [
   '[agent:task started t1]',
   '[agent:task add park] spec', '[agent:task add park hand] spec',
   '[agent:task add hand park] spec', '[agent:task add parked] spec',
+  '[agent:task add start] spec', '[agent:task add start hand] spec',
+  '[agent:task add hand start] spec', '[agent:task add started] spec',
+  '[agent:task add hand park start] spec',
   '[agent:team role-add lead] brief', '[agent:team role-add lead prompt:p.md] brief',
   '[agent:team role-set lead template:t] brief', '[agent:team role-rm lead]',
   '[agent:team role-add hand dispatch:worktree template:t] brief', '[agent:team role-set hand cwd:/tmp/x] ',

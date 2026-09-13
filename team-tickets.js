@@ -5540,6 +5540,11 @@ function createTicketMethods(deps, shared) {
       const spec = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can open a ticket${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
       if (!spec) { reply('error: a ticket needs spec text — [agent:task add [role|name]] <what to do>'); return; }
+      if (intent.park && intent.start) {
+        reply('error: `park` and `start` are opposite modifiers — park files the ticket held, start dispatches it now; pick one'
+          + this._spillRejectedPayload(session, 'task add', spec));
+        return;
+      }
       let assignee = null;
       if (intent.who) {
         assignee = this._resolveAssignee(team, intent.who);
@@ -5578,14 +5583,26 @@ function createTicketMethods(deps, shared) {
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee || '(backlog)', body: `ticket ${ticket.id} opened${parked ? ' (parked)' : ''}` });
       log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee || 'backlog'}${parked ? ', parked' : ''})`);
-      // WRITES ONLY. `add` used to mint the seat and deliver the spec itself,
-      // which left no seam between "the work is written down" and "the work is
-      // running" — and every later loop step has to hang off that seam. Dispatch
-      // now lives in `_taskStart` alone; two spawn paths for one job is the
-      // defect this split exists to avoid, so do not restore a delivery here.
+      // The ticket is WRITTEN here and dispatched nowhere but `_taskStart`: the
+      // seam between "written down" and "running" is what every later loop step
+      // hangs off, and the `start` modifier below crosses it by CALLING that one
+      // function, never by growing a second spawn path here.
       const rvNote = reviewerTemplate ? ` — reviewer template: ${reviewerTemplate}` : '';
       if (parked) {
         reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it${rvNote}`);
+        return;
+      }
+      if (intent.start) {
+        const startMsgs = [];
+        this._taskStart(session, team, { id: ticket.id, reviewer: null }, (m) => startMsgs.push(String(m)));
+        const after = (ticketsStore.load(team.root) || []).find((t) => t.id === ticket.id);
+        const raw = startMsgs.join(' ').trim();
+        if (after && ticketStarted(after)) {
+          const tail = raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim();
+          reply(`ticket ${ticket.id} created and started ${tail}${rvNote}`);
+          return;
+        }
+        reply(`ticket ${ticket.id} created but NOT started — the ticket exists and is unstarted. Start leg: ${raw || 'no reply'}`);
         return;
       }
       reply((assignee

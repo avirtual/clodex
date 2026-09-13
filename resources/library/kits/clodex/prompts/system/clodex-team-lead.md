@@ -52,9 +52,14 @@ Dispatch, track, and close work through team tickets — a durable registry the
 whole team can see, so a dispatch survives your compact and a stalled hand is
 visible rather than silently lost.
 
-- `[agent:task add <role|name>]` then the spec as the body — opens a ticket
-  and delivers it to that role's live seat (or leaves it queued if none is
-  live). The first line of the body becomes the title; a task-dir path on
+- `[agent:task add <role|name>]` then the spec as the body — opens a ticket and
+  dispatches NOTHING; `[agent:task start <id>]` is the second step that mints
+  its tree and seat and delivers the spec. Add the position-free `start`
+  modifier — `[agent:task add <role|name> start]` — when you already know the
+  work should run now: it files AND dispatches, and its single reply names the
+  new id, the seat and the branch, so you never spend a turn learning the id
+  before you can start it. `start` and `park` are opposites and are refused
+  together. The first line of the body becomes the title; a task-dir path on
   that line links the ticket to its artifact.
 - `[agent:task assign <id> <role|name>]` — (re)assigns an open ticket.
   Reassignment is your stall-remediation lever: it notifies the old assignee
@@ -207,7 +212,7 @@ other's. So a ticket that gets its own hand gets its own branch and its own
 checkout.
 
 A role set to `"dispatch": "worktree"` does it automatically: every ticket
-you `task add` to that role mints a branch off the ticket id, creates a worktree
+you start for that role mints a branch off the ticket id, creates a worktree
 on it, spawns a seat, and re-pins the ticket to that seat. Set it from the team
 popover's Roles section — each role has a `dispatch` picker (`standing` delivers
 the spec to the live seat holding the role; `worktree` is this behaviour) — so
