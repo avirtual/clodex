@@ -114,6 +114,7 @@ function boot(opts = {}) {
     validIntentNames: require('../intent-registry').validIntentNames,
     parkDelivery: require('../pending-store').parkDelivery,
     parkIdInUse: require('../pending-store').parkIdInUse,
+    claimParkedById: require('../pending-store').claimParkedById,
     claimParkedByKey: require('../pending-store').claimParkedByKey,
     drainPending: () => [], countPending: () => 0, peekPending: () => [],
     hasActivePending: () => false,
@@ -185,6 +186,20 @@ function boot(opts = {}) {
           return obj && typeof obj.text === 'string' && re.test(obj.text);
         } catch { return false; }
       }).length;
+    },
+    parkedPayloads: (name, re) => {
+      const dir = path.join(root, 'pending', name);
+      let files;
+      try { files = fs.readdirSync(dir); } catch { return []; }
+      const out = [];
+      for (const f of files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort()) {
+        try {
+          const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+          if (!obj || typeof obj.text !== 'string' || !re.test(obj.text)) continue;
+          out.push(obj);
+        } catch {}
+      }
+      return out;
     },
     parkedIds: (name, re) => {
       const dir = path.join(root, 'pending', name);
@@ -378,6 +393,98 @@ test('t878: a DIFFERENT body sent urgent leaves the park in place — the key is
       'the parked first message is a DIFFERENT message and must still be delivered: a claim scoped to the '
       + 'target rather than to the content would silently destroy it');
     await settled(app, 'target', /SECOND BODY/);
+  } finally { app.stop(); }
+});
+
+function openDraft(session) {
+  session.lastUserSubmitTs = Date.now() - 5_000;
+  session.lastUserInputTs = Date.now();
+}
+
+async function divertedCopy(app, re, tries = 400) {
+  for (let i = 0; i < tries; i++) {
+    const found = app.parkedPayloads('target', re);
+    if (found.length) return found;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  return app.parkedPayloads('target', re);
+}
+
+test('t881: a released dm diverted back to the park at fire time keeps its content key', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    await coldParked(app, 'DIVERTED BODY');
+    const ids = app.parkedIds('target', /DIVERTED BODY/);
+    assert.strictEqual(ids.length, 1, 'ENTER: the hold-park must carry the id the resend addresses');
+    const held = app.parkedPayloads('target', /DIVERTED BODY/);
+    assert.strictEqual(typeof held[0].key, 'string',
+      'ENTER: the HELD park must already carry a key — with no key on the file there is nothing for the divert '
+      + 'to preserve and this test would pass against any re-park at all');
+    const key = held[0].key;
+
+    openDraft(target);
+    const before = app.seen('target');
+    await app.m._handleIntent('sender', { type: 'resend', id: ids[0] });
+    const after = await divertedCopy(app, /DIVERTED BODY/);
+    assert.strictEqual(after.length, 1,
+      'ENTER: the release must have been DIVERTED back to one file — a claim that never re-parked leaves the '
+      + 'dir empty and every key assertion below holds vacuously');
+    assert.strictEqual(app.seen('target'), before,
+      'ENTER: and nothing may have reached the PTY — a write means the draft seam never fired and the file '
+      + 'above is the un-claimed original, not the re-park under test');
+    assert.strictEqual(after[0].id, ids[0],
+      'the re-park keeps the resend id, so the sender\'s bounce copy still names a live park');
+    assert.strictEqual(after[0].key, key,
+      'and it keeps the CONTENT key: without it the file is unreachable by claimParkedByKey, so a later urgent '
+      + 'copy of the same message cannot supersede it and the target reads the dm twice');
+  } finally { app.stop(); }
+});
+
+test('t881: the urgent re-send still supersedes a dm that was diverted back to the park', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    await coldParked(app, 'DIVERTED THEN URGENT');
+    const ids = app.parkedIds('target', /DIVERTED THEN URGENT/);
+    assert.strictEqual(ids.length, 1, 'ENTER: the hold-park must carry an id for the resend to address');
+
+    openDraft(target);
+    await app.m._handleIntent('sender', { type: 'resend', id: ids[0] });
+    const after = await divertedCopy(app, /DIVERTED THEN URGENT/);
+    assert.strictEqual(after.length, 1,
+      'ENTER: the release must have been diverted back to the park — with nothing on disk the claim below has '
+      + 'nothing to supersede and would report the same empty dir for the wrong reason');
+
+    const r = app.m._gatedDeliver('target', 'sender', 'DIVERTED THEN URGENT', true);
+    assert.deepStrictEqual(r.superseded, [ids[0]],
+      'the urgent copy must claim the DIVERTED park by its key and name it back: told an unqualified `queued`, '
+      + 'the sender has no way to know its earlier copy is still queued to arrive');
+    assert.strictEqual(app.parked('target', /DIVERTED THEN URGENT/), 0,
+      'and the diverted copy must be gone the moment the urgent delivery is accepted — left on disk, the '
+      + 'target\'s own next drain delivers the message a second time');
+  } finally { app.stop(); }
+});
+
+test('t881: a _deliverMessage with no key still re-parks keyless when diverted', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    openDraft(target);
+    const before = app.seen('target');
+    app.m._deliverMessage('target', 'reminder', 'KEYLESS BODY', 'dm');
+    const after = await divertedCopy(app, /KEYLESS BODY/);
+    assert.strictEqual(after.length, 1,
+      'ENTER: the delivery must have been diverted to the park — otherwise this asserts the absence of a key '
+      + 'on a file that was never written');
+    assert.strictEqual(app.seen('target'), before,
+      'ENTER: and nothing may have reached the PTY, which is what makes the file above the divert\'s work');
+    assert.ok(!('key' in after[0]),
+      'a caller that minted no key must re-park with NO key field: keys are minted only by _gatedDeliver, and a '
+      + 'fabricated one here would let an unrelated urgent dm claim a reminder');
   } finally { app.stop(); }
 });
 
