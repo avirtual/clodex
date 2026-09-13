@@ -253,10 +253,10 @@ function mkWorld({ tplPlugins } = {}) {
       // getSandboxManager is optional in that same sense: it is read only by
       // _handleTeam's sandbox case, which no subject here drives — and a fixture
       // that DID inject one would have to fake docker to say anything. `fetch`
-      // rides with it for the same reason: the only reader is that case seeding
-      // the box's starting seats over its wire port.
+      // and getPeerManager ride with it for the same reason: their only reader is
+      // that case, seeding the box's starting seats and naming its clodex version.
     optional: ['ticketSuiteTimeoutMs', 'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
-        'getSandboxManager', 'fetch'],
+        'getSandboxManager', 'getPeerManager', 'fetch'],
   });
 
   const SessionManager = createSessionManager(deps);

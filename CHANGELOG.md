@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Peer wire: the origin marker a box keeps for a peer that dm'd it uses a name no peer label can take, so a label ending in `.origin` can no longer shadow or erase another origin's marker.
+- `[agent:team sandbox status]` names the Clodex version the box reports on its wire, so a lead can tell whether a rebuild picked up a release without asking a seat inside.
 
 ## 5.64.4 — 2026-09-13 — a kv-only role verb keeps its hands off the brief, and a box can always reply to the desktop
 

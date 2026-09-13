@@ -262,7 +262,7 @@ test('mkFixture injects every dep team-tickets.js reads', () => {
   assertTicketDepsCovered(assert, f.deps, {
     optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
       'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest',
-      'refreshAppMenu', 'getSandboxManager', 'fetch'],
+      'refreshAppMenu', 'getSandboxManager', 'getPeerManager', 'fetch'],
   });
 });
 
