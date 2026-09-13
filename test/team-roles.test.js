@@ -627,7 +627,7 @@ test('t888 parity: each reserved default is the literal team-tickets.js actually
       + 'to edit a file no seat boots on — the exact bug the control was added to fix');
   }
   for (const [site, re] of [
-    ['the lead spawn path', /\|\| DEFAULT_LEAD_TEMPLATE;/],
+    ['the lead spawn path', /const stem = \(targetTeam\.roles && targetTeam\.roles\.lead && targetTeam\.roles\.lead\.template\)\s*\|\| DEFAULT_LEAD_TEMPLATE;/],
     ['the team-review handler', /const templateName = templateOverride \|\| def\.template \|\| DEFAULT_REVIEWER_TEMPLATE;/],
     ['resolveSeatShape, purpose `review`', /\(templateOverride \|\| \(def && def\.template\) \|\| DEFAULT_REVIEWER_TEMPLATE\)/],
   ]) {
