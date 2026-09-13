@@ -2999,7 +2999,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
-      if (!mgr) { reply('error: sandboxes are not enabled on this host'); return; }
+      if (!mgr) { reply('error: sandboxes are not enabled on this host — inside a sandbox box there is no docker; run [agent:team sandbox …] from a desktop seat, or use Settings > Sandboxes on the desktop'); return; }
 
       const boxId = `team-${team.name}`;
       if (!BOX_ID_RE.test(boxId)) {
