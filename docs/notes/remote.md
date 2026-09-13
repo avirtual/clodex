@@ -15,14 +15,16 @@ the sense the app relies on.
 
 ## resolveRemoteBasePath
 
-`DEFAULT_REMOTE_BASE_PATH` is `/c` because that is a live ingress route
-(`clodex.dinzona.ro/c` → a work laptop over an ssh tunnel). Changing the
-fallback silently breaks it; only an explicit `CLODEX_REMOTE_BASE_PATH` may
-move the mount.
+`DEFAULT_REMOTE_BASE_PATH` is the EMPTY STRING, not `'/'`. `'/'` would make
+`p === base` true for the root and 301 `/` to itself, and `p.startsWith('/')`
+is true of every path, so the strip would eat the leading slash off all of them.
+The empty string makes `if (base)` in `_route` the whole off-switch.
 
 A refused value falls back rather than being sanitised: `/c/../etc` must not
 become `/etc`, because an operator reading the env would then believe the mount
-is somewhere it is not.
+is somewhere it is not. The fallback is the caller's `fallback` argument, which
+is how `resolveRemoteBasePathSetting` makes a garbage env keep the PERSISTED
+prefix rather than dropping to no prefix.
 
 ## _route
 
