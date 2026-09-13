@@ -1238,19 +1238,10 @@ html, body {
 #team-roles-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 #team-roles-popover .popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 
-/* Team-management popover: the role list + an add-role form + the watchdog
-   field. Each role row is a small card; reserved (operator-owned) rows are
-   dimmed and control-free.
-
-   ONE scroller, and it is the SHELL — the same shape #intents-popover settled
-   on. The list used to be `overflow-y:auto; flex:1` inside a 70vh cap, so every
-   pixel the sections below it overran was taken from the list alone: an
-   expanded role card was cut off mid-field at the list's fold, inside a nested
-   scrollbar, with nothing saying there was more below. A card must never sit at
-   a fold of its own, so the list takes its natural height and the popover
-   scrolls past it. */
-#team-roles-popover { overflow-y: auto; }
-#team-roles-list { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+/* Team-management popover: a scrollable role list + an add-role form + the
+   watchdog field. Each role row is a small card; reserved (operator-owned) rows
+   are dimmed and control-free. */
+#team-roles-list { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; }
 .team-role-row {
   border: 1px solid var(--border, #333);
   border-radius: 5px;
@@ -1365,13 +1356,6 @@ html, body {
 .team-role-field { display: flex; flex-direction: column; align-items: stretch; gap: 2px; margin: 6px 0; font-size: 11px; }
 .team-role-field > span { color: var(--text-dim); }
 .team-role-field input, .team-role-field select { width: 100%; min-width: 0; box-sizing: border-box; }
-/* A select holds a short stem — `hand`, `opsguru`, a template name — so a
-   full-width one is a 1100px box around an eight-character word, and the form
-   reads as though every field were the same size as the sentence-long `brief`.
-   `width:auto` sizes it to its widest option; the cap keeps a pathological stem
-   inside the popover instead of widening it. Text INPUTS stay full width:
-   `brief` holds a sentence and `cwd` a path, and both are typed into. */
-.team-role-field select { width: auto; max-width: 100%; align-self: flex-start; }
 .team-role-field.hidden { display: none; }
 /* R4's stale state: the value is stored but nothing consumes it while the role
    dispatches standing. Dimmed and disabled, but PRESENT — buildSavePatch always
@@ -1391,32 +1375,16 @@ html, body {
    inputs stay in the DOM (focusable, arrow-key navigable, announced as a radio
    group) and only their default box is hidden, so the keyboard and ARIA
    behaviour is the platform's rather than a keydown handler of ours. */
-.team-role-dispatch { margin: 6px 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; font-size: 11px; }
-/* The caption every neighbouring field had and this one did not. The group's
-   `aria-label` already named it to the a11y tree, so the control was labelled
-   for a screen reader and unlabelled for everyone else. */
-.team-role-dispatch > .team-role-dispatch-label { color: var(--text-dim); }
-/* `inline-flex` + segments that do not grow: three one-word options make a
-   control about eleven characters wide, not a popover-wide bar. */
-.team-role-segments { display: inline-flex; border: 1px solid var(--border, #333); border-radius: 4px; overflow: hidden; max-width: 100%; }
-.team-role-segment { position: relative; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; padding: 3px 8px; font-size: 11px; color: var(--text-dim); cursor: pointer; border-right: 1px solid var(--border, #333); }
+.team-role-dispatch { margin: 6px 0; }
+.team-role-segments { display: flex; border: 1px solid var(--border, #333); border-radius: 4px; overflow: hidden; }
+.team-role-segment { position: relative; flex: 1 1 0; display: flex; align-items: center; justify-content: center; padding: 3px 6px; font-size: 11px; color: var(--text-dim); cursor: pointer; border-right: 1px solid var(--border, #333); }
 .team-role-segment:last-child { border-right: none; }
 /* Visually hidden, NOT display:none — a display:none radio is unfocusable and
    drops out of the group's keyboard navigation, which is the whole reason for
    using native radios here. */
 .team-role-segment input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
 .team-role-segment:hover { color: var(--text); }
-/* The SELECTED segment, in the treatment this app already uses for a selected
-   thing: an `--active-bg` fill carrying an `--accent` edge, text at `--text` —
-   `.session-item.active` (inset bar) and `.drawer-tab.active` (accent underline)
-   composed. A solid `background: var(--accent)` slab is this codebase's PRIMARY
-   BUTTON look (#btn-create, #prompts-new), not its selection look, and under the
-   default theme `--accent` is a red that reads as destructive at that size. */
-.team-role-segment:has(input:checked) {
-  background: var(--active-bg);
-  color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
+.team-role-segment:has(input:checked) { background: var(--accent); color: var(--bg, #1e1e1e); }
 /* The focus ring has to live on the LABEL: the input it belongs to is visually
    hidden, so its own outline would be invisible and the group would look like
    it had lost focus entirely while being navigated by keyboard. */
@@ -1498,6 +1466,14 @@ html, body {
 .team-lead-status.live .team-lead-who { color: var(--accent); }
 .team-lead-empty { font-size: 11px; color: var(--text-dim); margin: 4px 0; }
 .team-lead-hint { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
+/* Editable rows announce themselves. */
+.team-role-editcap {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
 /* Draggable-by-title affordance (shared helper). */
 .draggable-title { cursor: move; }
 .draggable-title button { cursor: pointer; }

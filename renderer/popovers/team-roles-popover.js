@@ -86,7 +86,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
 
   // Render one row per role. Reserved rows TEACH their lock (read-only brief +
   // prompt, a "built-in role" badge, and a one-line why); ordinary rows read
-  // as editable — hinted inputs + Save/Rename/Remove (delegated below).
+  // as editable — an "Edit this role" caption + three hinted inputs +
+  // Save/Rename/Remove (delegated below).
   // What this team's manifest names that resolves to nothing, per role. A
   // failed/absent preflight leaves this empty and the rows render exactly as they
   // did before it existed — the checklist is additive, never a gate on the editor.
@@ -700,7 +701,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       const owed = preflight.get(row.key) || [];
       const expanded = expandedRole === row.key;
       el.appendChild(buildSummaryLine(summaryByKey.get(row.key), { res, expanded, owed }));
-      // The editor lives in a body element that the summary line discloses.
+      // The editor lives in a body element that the summary line discloses. Its
+      // MARKUP is unchanged — the same innerHTML strings, the same property
+      // assignments after them — so the security shape of both arms is exactly
+      // what it was; only the container it hangs from is new.
       const body = document.createElement('div');
       body.className = 'team-role-body';
       if (!expanded) body.classList.add('hidden');
@@ -712,7 +716,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         // by property, never into an attribute.
         el.classList.add('read-only');
         body.innerHTML =
-          `<div class="team-role-head">` +
+          `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
           `<span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div>` +
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
@@ -771,13 +775,15 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         // value="…" attribute — a `" onfocus="…` payload would break out of the
         // attribute and execute in this nodeIntegration renderer. Build the inputs
         // WITHOUT value attrs, then assign each `.value` by property below (a
-        // property assignment can't escape an attribute context). The placeholders
-        // and captions are fixed strings — they signal this row is editable (C3).
+        // property assignment can't escape an attribute context). Placeholders +
+        // the caption are fixed strings — they signal this row is editable (C3).
         body.innerHTML =
+          `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div>` +
+          `<div class="team-role-editcap">Edit this role</div>` +
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
           `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label>` +
-          `<div class="team-role-dispatch" data-f-group="dispatch"><span class="team-role-dispatch-label">dispatch</span></div>` +
+          `<div class="team-role-dispatch" data-f-group="dispatch"></div>` +
           `<div class="team-role-reveal" data-reveal></div>` +
           `<div class="team-role-actions">` +
           `<button type="button" data-act="save">Save</button>` +

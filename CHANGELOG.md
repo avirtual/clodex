@@ -13,8 +13,6 @@ blocks a release.
 
 ## Unreleased
 
-- The team roles popover reads as a form again. A role's pickers (prompt, account, template) are as wide as the names they hold instead of spanning the whole popover to show the word `hand`; the popover is the only thing that scrolls, so an expanded role no longer opens a second scrollbar inside the first and no longer cuts `cwd` off mid-label at a fold; the dispatch picker has the caption every field beside it already had; and the editor no longer repeats the role's name or shouts "EDIT THIS ROLE" at you for clicking it open. The selected dispatch option now wears the same highlight the rest of the app uses for a selected thing, rather than the red reserved for primary and destructive actions.
-
 ## 5.64.15 — 2026-09-13 — a team owns its reviewer, and a seat knows you from a machine
 
 - A team created from now on owns its reviewer's template: the create writes `teams/<team>/templates/reviewer.json` from the shipped copy and points the reviewer role at it, the way it already did for the lead and the hand. Editing that file — the `--model` in particular — changes the reviewer for that team alone, instead of every team sharing one library file. Teams created before this keep resolving the library copy exactly as they did.

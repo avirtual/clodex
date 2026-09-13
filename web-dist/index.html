@@ -1503,11 +1503,9 @@ body {
   gap: 8px;
   margin-top: 10px;
 }
-#team-roles-popover {
-  overflow-y: auto;
-}
 #team-roles-list {
-  flex: 0 0 auto;
+  overflow-y: auto;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1720,11 +1718,6 @@ body {
   min-width: 0;
   box-sizing: border-box;
 }
-.team-role-field select {
-  width: auto;
-  max-width: 100%;
-  align-self: flex-start;
-}
 .team-role-field.hidden {
   display: none;
 }
@@ -1750,29 +1743,20 @@ body {
 }
 .team-role-dispatch {
   margin: 6px 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  font-size: 11px;
-}
-.team-role-dispatch > .team-role-dispatch-label {
-  color: var(--text-dim);
 }
 .team-role-segments {
-  display: inline-flex;
+  display: flex;
   border: 1px solid var(--border, #333);
   border-radius: 4px;
   overflow: hidden;
-  max-width: 100%;
 }
 .team-role-segment {
   position: relative;
-  flex: 0 0 auto;
+  flex: 1 1 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 8px;
+  padding: 3px 6px;
   font-size: 11px;
   color: var(--text-dim);
   cursor: pointer;
@@ -1792,9 +1776,8 @@ body {
   color: var(--text);
 }
 .team-role-segment:has(input:checked) {
-  background: var(--active-bg);
-  color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  background: var(--accent);
+  color: var(--bg, #1e1e1e);
 }
 .team-role-segment:has(input:focus-visible) {
   outline: 2px solid var(--accent);
@@ -1961,6 +1944,13 @@ body {
   font-size: 10px;
   color: var(--text-dim);
   margin-top: 6px;
+}
+.team-role-editcap {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 4px;
 }
 .draggable-title {
   cursor: move;
@@ -32564,7 +32554,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             el.appendChild(body);
             if (row.readOnly) {
               el.classList.add("read-only");
-              body.innerHTML = `<div class="team-role-head"><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div><div class="team-role-ro-field" data-field="template"><span>template</span></div><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div><div class="team-role-ro-field" data-field="template"><span>template</span></div><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button></div>`;
               paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
               {
                 const holder = body.querySelector('.team-role-ro-field[data-field="template"]');
@@ -32598,7 +32588,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 body.querySelector(".team-role-actions").appendChild(rm);
               }
             } else {
-              body.innerHTML = `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-dispatch" data-f-group="dispatch"><span class="team-role-dispatch-label">dispatch</span></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-dispatch" data-f-group="dispatch"></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               body.querySelector('input[data-f="brief"]').value = row.brief;
               paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
               const sel = body.querySelector('select[data-f="prompt"]');
