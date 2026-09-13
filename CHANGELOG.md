@@ -14,6 +14,13 @@ blocks a release.
 ## Unreleased
 
 - The browser GUI's menus are now held to the desktop's by a test, so the two cannot quietly drift apart again. It checks what has to match — the order of the Window menu's Peers and Sandboxes sections, and that the "Manage Peered Clodexes…" and "Manage Clodex Sandboxes…" entries are always offered — and deliberately leaves alone the places the two legitimately differ, such as the desktop-only "Open Log File" and "Check for Updates…".
+- A ticket review that comes back REWORK now goes straight to the seat holding
+  the branch, instead of stopping at the team lead. The lead gets a short brief
+  listing the must-fix titles, which seat received the rework, and that no
+  action is owed — rather than a multi-KB verdict it had to read and re-send by
+  hand. With no live seat nothing changes: the lead is told the rework was not
+  dispatched and is owed. `[agent:task respec <id>]` still reaches the seat if
+  the lead wants to correct a verdict mid-rework.
 
 - The browser GUI's menus now match the desktop's. Sandboxes has left the File menu and lives under Window, listing your running boxes the way Peers already were, with "Manage Clodex Sandboxes…" always there even when no box has been started. Plugins now has one route instead of two: the File ▸ Plugins… entry shows only when the top-level Plugins menu is absent, which is the fresh-install case it exists for.
 

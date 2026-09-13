@@ -12,7 +12,7 @@
 //      test/ticket-mixin-surface.test.js gates the seam instead: deleting a core
 //      method these bodies call is a runtime TypeError only that gate catches.
 
-const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
+const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
@@ -285,6 +285,9 @@ const holdRecoveryText = (cls, id) => (HOLD_RECOVERY[cls] || HOLD_RECOVERY.hand)
 //     precedes it on its line. Rendering it through a shared helper puts that
 //     line's column at a caller's mercy. Pinned by ticket-auto-merge.test.js.
 const NOTHING_TORN_DOWN = 'Nothing was torn down — the worktree, the branch and the seat are exactly as they were.';
+
+const VERDICT_BRIEF_TITLES = 5;
+const VERDICT_BRIEF_TITLE_BYTES = 160;
 const ticketCloseLine = (id) => `CLOSE WITH: ${ticketCloseVerb(id)} <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
   + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
@@ -1616,6 +1619,52 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    _verdictBriefLines(ticketId, landedOn, dispatch) {
+      if (landedOn.verdict !== 'REWORK') return [];
+      const out = [];
+      const titles = mustFixTitles(landedOn.mustFix);
+      if (titles.length) {
+        out.push('', 'MUST-FIX:');
+        for (const t of titles.slice(0, VERDICT_BRIEF_TITLES)) {
+          out.push(`- ${t.length > VERDICT_BRIEF_TITLE_BYTES ? `${t.slice(0, VERDICT_BRIEF_TITLE_BYTES - 1)}…` : t}`);
+        }
+        const more = titles.length - VERDICT_BRIEF_TITLES;
+        if (more > 0) out.push(`+${more} more, in the verdict file below.`);
+      }
+      out.push('');
+      if (dispatch && dispatch.ok) {
+        out.push(`Sent straight to ${dispatch.seat} for rework (rework round ${dispatch.round})`
+          + `${this._seatReplacedClause(dispatch.replaced)}. NO action is owed from you.`);
+        out.push(`If the verdict is wrong and you want to redirect the seat: [agent:task respec ${ticketId}] <the corrected spec>`
+          + ' — it reaches that same seat and keeps its tree, and it REPLACES the spec wholesale, so send the whole corrected'
+          + ' one rather than a delta. Doing nothing is the normal case.');
+      } else {
+        out.push(`The rework was NOT dispatched (${(dispatch && dispatch.error) || 'no live seat was resolved'}) and is OWED:`
+          + ` no seat has been told. Read the full verdict below and send it back yourself with [agent:task reject ${ticketId}] <the must-fixes>.`);
+      }
+      return out;
+    },
+
+    _dispatchReworkFromVerdict(team, ticketId, landedOn, written) {
+      try {
+        if (!team) return { ok: false, error: 'the team could not be resolved from the reviewer seat' };
+        const items = landedOn.mustFix
+          ? `MUST-FIX:\n${landedOn.mustFix}`
+          : 'The verdict named no must-fix items — read it and fix what it says, or say in your report why it is wrong.';
+        const where = written && written.ok
+          ? `FULL VERDICT (the reasoning, the nits and what was checked): ${written.path}\nRead it; it is why, and the items above are only what.`
+          : `The full verdict could NOT be saved (${(written && written.error) || 'unknown'}), so the items above are all there is.`;
+        return this._rejectTicketFromLoop(team, ticketId,
+          `the review came back REWORK (review round ${landedOn.reviewRound}).\n\n`
+          + `${items}\n\n${where}\n\n`
+          + 'Address every item, then report as usual: the loop re-verifies your branch and sends it to a fresh review from there. '
+          + 'If you think an item is wrong, say so in your report rather than skipping it silently.',
+          { notifyLead: false, cause: 'review REWORK' });
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
     // The lead's copy of a TICKET verdict: a SUMMARY, never the body. The record
     // stays the store — this only tells the lead the store changed, because a
     // lead that does not know a review finished is a lead not merging it.
@@ -1631,7 +1680,7 @@ function createTicketMethods(deps, shared) {
     // and the worst case is a landed verdict the lead has to poll for — the
     // status quo this fixes, never a lost one. Ordering is the invariant; do
     // not hoist this above the save.
-    _notifyLeadOfVerdict(session, lead, ticketId, landedOn, fullVerdict) {
+    _notifyLeadOfVerdict(session, lead, ticketId, landedOn, fullVerdict, prewritten = null, dispatch = null) {
       try {
         const n = countMustFix(landedOn.mustFix);
         const mf = n === 0
@@ -1642,7 +1691,7 @@ function createTicketMethods(deps, shared) {
         // an overnight lead wakes to a dead path — and not the record either,
         // which a truncated dump already hides `verdict` inside. The task dir
         // is durable, outside the user's repo, and costs the record nothing.
-        const written = this._writeVerdictBody(session, ticketId, landedOn, fullVerdict);
+        const written = prewritten || this._writeVerdictBody(session, ticketId, landedOn, fullVerdict);
         const where = written.ok
           ? `Full verdict (${fullVerdict.length} bytes): ${written.path}`
           : `Full verdict (${fullVerdict.length} bytes) could NOT be saved (${written.error}) — only the summary above survives.`;
@@ -1652,15 +1701,12 @@ function createTicketMethods(deps, shared) {
         const body = [
           `${landedOn.verdict} on ticket ${ticketId} (review round ${landedOn.reviewRound}, ${mf}).`,
           `Landed on the ticket record; the board shows it via [agent:task list all].`,
+          ...this._verdictBriefLines(ticketId, landedOn, dispatch),
           where,
         ].join('\n');
         // Not urgent: a verdict is durable on the record before this runs, so
         // waking a busy lead buys nothing the next turn does not. A hold or a
         // park is therefore an acceptable outcome and is logged, not retried.
-        //
-        // Sent as `ticket-loop`, NOT the reviewer's own name: `_buildDeliveryText`
-        // attaches a reply address for any dm-reachable sender, which a live
-        // reviewer seat is until this handler retires it a few lines later.
         const r = this._gatedDeliver(lead, 'ticket-loop', body, false, `[ticket ${ticketId} ${landedOn.verdict}]`);
         if (r && r.error) {
           log.warn('intent', `ticket ${ticketId}: verdict landed but lead ${lead} not notified — ${r.error}`);
@@ -2533,7 +2579,20 @@ function createTicketMethods(deps, shared) {
       };
 
       if (landedOn) {
-        this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict);
+        const rework = landedOn.verdict === 'REWORK';
+        let written;
+        try {
+          written = this._writeVerdictBody(session, rec.reviewTicket, landedOn, verdict);
+        } catch (e) {
+          written = { ok: false, path: null, error: `the verdict body write threw: ${e && e.message ? e.message : String(e)}` };
+        }
+        // Re-resolved off the reviewer's cwd rather than threaded out of
+        // _landVerdictOnTicket: widening that function's return to carry the
+        // team so one caller can avoid a resolve is how a narrow contract turns
+        // into a bag.
+        let team = null;
+        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        if (!rework) this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict, written);
         this._broadcast('ipc-message', {
           type: 'review-done', from: session.name, to: rec.reviewTicket, body: `verdict → ticket ${rec.reviewTicket}`,
         });
@@ -2550,18 +2609,18 @@ function createTicketMethods(deps, shared) {
         //
         // AFTER the verdict is durable and the reviewer retired: the merge reads
         // the record, and a merge that throws must never cost the verdict or
-        // strand the seat. A REWORK is untouched by this and takes the path it
-        // always did.
+        // strand the seat.
         if (landedOn.verdict === 'ACCEPT') {
-          // Re-resolved off the reviewer's cwd rather than threaded out of
-          // _landVerdictOnTicket: widening that function's return to carry the
-          // team so one caller can avoid a resolve is how a narrow contract turns
-          // into a bag.
-          let team = null;
-          try { team = resolveTeam(session.cwd); } catch { team = null; }
           // QUEUED, not fired: see _queueAutoMerge for why two of these must
           // never overlap.
           if (team) this._queueAutoMerge(team, rec.reviewTicket, landedOn, verdict);
+        }
+        if (rework) {
+          const dispatch = this._dispatchReworkFromVerdict(team, rec.reviewTicket, landedOn, written);
+          if (!dispatch.ok) {
+            log.warn('intent', `ticket ${rec.reviewTicket}: REWORK landed but the rework was not dispatched (${dispatch.error}) — the lead's brief says it is owed`);
+          }
+          this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict, written, dispatch);
         }
         return;
       }
@@ -6923,7 +6982,7 @@ function createTicketMethods(deps, shared) {
     // TRANSITION is deliberately identical to it, because a ticket reopened by
     // the loop and one reopened by the lead must be indistinguishable to every
     // reader downstream; if that handler's transition changes, this must follow.
-    _rejectTicketFromLoop(team, ticketId, reason) {
+    _rejectTicketFromLoop(team, ticketId, reason, { notifyLead = true, cause = 'suite red' } = {}) {
       try {
         const tickets = ticketsStore.load(team.root);
         const ticket = tickets.find((t) => t.id === ticketId);
@@ -6960,12 +7019,10 @@ function createTicketMethods(deps, shared) {
         ticketsStore.save(team.root, tickets);
         // The reviewer goes with the step, exactly as it does in `_taskReject`.
         // This pair is documented as never diverging (see the header), so the
-        // teardown belongs on both sides of it even though this side is currently
-        // LATENT: the loop rejects only at `loopStep: 'verify'` with a red suite,
-        // and no reviewer exists for the round until the suite is green. It cannot
-        // fail — the resolver returns [] when nothing is live, and the helper never
-        // throws — and a twin that has silently diverged is a trap for the next
-        // reader, who is told here that it has not.
+        // teardown belongs on both sides of it. It cannot fail — the resolver
+        // returns [] when nothing is live, and the helper never throws — and a
+        // twin that has silently diverged is a trap for the next reader, who is
+        // told here that it has not.
         this._retireReviewSeatsFor(team, ticketId, 'rejected by the loop');
         // Rework needs the verb as much as a first dispatch: the seat closes a
         // SECOND time, and without it here that close depends on the seeded role
@@ -6984,8 +7041,8 @@ function createTicketMethods(deps, shared) {
               { label: 'rejected', reason, from: 'ticket-loop' }));
         const replaced = this._seatReplacedClause(rework);
         this._reconcileTickets(team);
-        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} rejected: suite red${replaced}` });
-        log.info('intent', `ticket ${ticket.id} rejected by the loop (suite red) → ${rework.seat}${replaced}`);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} rejected: ${cause}${replaced}` });
+        log.info('intent', `ticket ${ticket.id} rejected by the loop (${cause}) → ${rework.seat}${replaced}`);
         // Undelivered is still reopened: the board is correct and the watchdog
         // sees an open ticket, which is recoverable. Reporting it lets the caller
         // escalate so the lead learns the hand was never told.
@@ -6995,8 +7052,11 @@ function createTicketMethods(deps, shared) {
         // The DELIVERED arm only. The undelivered one above returns an error the
         // call site already escalates on, and firing both would report one
         // rejection to the lead twice, by two channels, as two events.
-        this._notifyLeadOfLoopRejection(team, ticket, rework.seat, reason, replaced);
-        return { ok: true, error: null, seat: rework.seat, replaced: rework.replaced ? rework : null };
+        if (notifyLead) this._notifyLeadOfLoopRejection(team, ticket, rework.seat, reason, replaced);
+        return {
+          ok: true, error: null, seat: rework.seat, round: ticket.reworkRound,
+          replaced: rework.replaced ? rework : null,
+        };
       } catch (e) {
         return { ok: false, error: e.message };
       }

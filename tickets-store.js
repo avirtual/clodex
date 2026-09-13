@@ -191,8 +191,8 @@ function stripEmphasis(line) {
   return s;
 }
 
-function countMustFix(mustFixText) {
-  if (mustFixText == null) return 0;
+function mustFixItemLines(mustFixText) {
+  if (mustFixText == null) return null;
   const text = String(mustFixText);
   const lines = text.split('\n');
   // Tested against the FIRST line, not the whole blob: prose written under a
@@ -202,26 +202,34 @@ function countMustFix(mustFixText) {
   // Only the tested line is normalized, so a `*` marker stays a marker below.
   const firstLine = nonEmpty.length ? stripEmphasis(nonEmpty[0].trim()) : '';
   const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
-  if (re.test(firstLine)) return 0;
-  // Minimum indentation present, not a fixed column, and RELATIVE because the
-  // direction worth protecting is undercounting: against column 0 a verdict whose
-  // items are all indented matches no marker and falls through to the floor below.
-  const widths = [];
+  if (re.test(firstLine)) return null;
+  const found = [];
   for (const line of lines) {
     if (THEMATIC_BREAK_RE.test(line)) continue;
     const m = MUSTFIX_ITEM_RE.exec(line);
     // CommonMark's tab stop, or raw counts make one tab shallower than two spaces
     // and pick the sub-bullets as the top level.
-    if (m) { let w = 0; for (const ch of m[1]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1; widths.push(w); }
+    if (m) { let w = 0; for (const ch of m[1]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1; found.push({ w, line }); }
   }
-  // Reduced, not `Math.min(...widths)`: one argument per line is a stack overflow
-  // on a long blob.
   let top = Infinity;
-  for (const w of widths) if (w < top) top = w;
-  let n = 0;
-  for (const w of widths) if (w === top) n++;
-  // Reached only once the placeholder test above ruled out "no items at all".
-  return n > 0 ? n : (text.trim() ? 1 : 0);
+  for (const f of found) if (f.w < top) top = f.w;
+  return found.filter((f) => f.w === top).map((f) => f.line);
+}
+
+function countMustFix(mustFixText) {
+  const items = mustFixItemLines(mustFixText);
+  if (items === null) return 0;
+  return items.length > 0 ? items.length : (String(mustFixText).trim() ? 1 : 0);
+}
+
+const MUSTFIX_MARKER_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/;
+
+function mustFixTitles(mustFixText) {
+  const items = mustFixItemLines(mustFixText);
+  if (items === null) return [];
+  if (items.length) return items.map((line) => line.replace(MUSTFIX_MARKER_RE, '').trim());
+  const first = String(mustFixText).split('\n').find((l) => l.trim());
+  return first ? [first.trim()] : [];
 }
 
 // Append-only, and the array is the point: a later rework reason never
@@ -282,4 +290,4 @@ function ticketTerminalReason(ticket) {
 
 const ticketTerminal = (ticket) => ticketTerminalReason(ticket) !== null;
 
-module.exports = { createTicketsStore, appendReworkReason, nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, appendReworkReason, nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };

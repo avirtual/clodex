@@ -2957,7 +2957,7 @@ test('review-done with an ACCEPT drives the merge, not merely marks it', async (
   assert.strictEqual(f.landed().length, 1, 'and the lead was told once');
 });
 
-test('a REWORK verdict merges NOTHING and takes the path it always did', async () => {
+test('a REWORK verdict merges NOTHING, and is dispatched instead of merged', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkMerge({ repo });
@@ -2971,9 +2971,10 @@ test('a REWORK verdict merges NOTHING and takes the path it always did', async (
   assert.strictEqual(f.masterHead(), before, 'master did not move');
   assert.deepStrictEqual(f.landed(), [], 'nothing was announced as merged');
   assert.deepStrictEqual(f.esc(), [], 'and the merge path was never entered, so it escalated nothing');
-  // The unchanged behaviour: the lead still gets the verdict summary.
-  assert.strictEqual(f.gated.length, 1, 'exactly the verdict notification, as before');
-  assert.match(f.gated[0].body, /REWORK on ticket t1/);
+  const toLead = f.gated.filter((g) => g.target === 'lead');
+  assert.strictEqual(toLead.length, 1,
+    't906: exactly one verdict notification to the lead, and it is the brief — the second delivery is the rework going to the seat, and the merge path this file pins stayed out of both');
+  assert.match(toLead[0].body, /REWORK on ticket t1/);
 });
 
 test('an ad-hoc review with no ticket never reaches the merge path', async () => {
