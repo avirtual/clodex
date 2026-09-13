@@ -8803,24 +8803,6 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 're-nudged after the reset');
 });
 
-// --- t174: `parked` — filing WHO a ticket is for without dispatching it ------
-// The defect: a ticket whose BODY said "BACKLOG, do not start" was dispatched
-// anyway, because nothing reads the body. These pin the field the mechanism
-// reads instead. `parked` is orthogonal to `state` on purpose — a parked ticket
-// IS open — so every test here asserts both.
-
-test('task add park: records the assignee and does NOT deliver the spec', () => {
-  const f = mkTasks();
-  f.seat('lead'); f.seat('team-hand');
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'later work' });
-  const t = f.one('t1');
-  assert.strictEqual(t.parked, true, 'the flag is on the record, not in the prose');
-  assert.strictEqual(t.state, 'open', 'parked is NOT a state — the ticket is open');
-  assert.strictEqual(t.assignee, 'hand', 'the assignee IS recorded — that is the whole point');
-  assert.deepStrictEqual(f.gated, [], 'the seat was told nothing');
-  assert.ok(f.injected.some((x) => /ticket t1 parked for hand/.test(x)), 'the lead is told it was parked');
-});
-
 test('task add start: files the ticket AND dispatches it, in one reply naming the id', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
@@ -8865,6 +8847,24 @@ test('task add park start: refused naming both, and nothing is filed', () => {
   assert.ok(err, 'the lead is told');
   assert.match(err, /park/, 'naming park');
   assert.match(err, /start/, 'and naming start');
+});
+
+// --- t174: `parked` — filing WHO a ticket is for without dispatching it ------
+// The defect: a ticket whose BODY said "BACKLOG, do not start" was dispatched
+// anyway, because nothing reads the body. These pin the field the mechanism
+// reads instead. `parked` is orthogonal to `state` on purpose — a parked ticket
+// IS open — so every test here asserts both.
+
+test('task add park: records the assignee and does NOT deliver the spec', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'later work' });
+  const t = f.one('t1');
+  assert.strictEqual(t.parked, true, 'the flag is on the record, not in the prose');
+  assert.strictEqual(t.state, 'open', 'parked is NOT a state — the ticket is open');
+  assert.strictEqual(t.assignee, 'hand', 'the assignee IS recorded — that is the whole point');
+  assert.deepStrictEqual(f.gated, [], 'the seat was told nothing');
+  assert.ok(f.injected.some((x) => /ticket t1 parked for hand/.test(x)), 'the lead is told it was parked');
 });
 
 test('task add without park writes NO parked key, so old records read identically', () => {
