@@ -114,6 +114,11 @@ function boot(opts = {}) {
     validIntentNames: require('../intent-registry').validIntentNames,
     parkDelivery: require('../pending-store').parkDelivery,
     parkIdInUse: require('../pending-store').parkIdInUse,
+    // REAL, and load-bearing here rather than defensive: the urgent arm of
+    // _gatedDeliver calls it to supersede a park this file's `parked()` helper
+    // then counts, so a stub returning [] would leave the supersede assertion
+    // measuring the stub.
+    claimParkedByKey: require('../pending-store').claimParkedByKey,
     drainPending: () => [], countPending: () => 0, peekPending: () => [],
     hasActivePending: () => false,
     isDraftOpen: require('../proxy-util').isDraftOpen,
@@ -184,6 +189,26 @@ function boot(opts = {}) {
           return obj && typeof obj.text === 'string' && re.test(obj.text);
         } catch { return false; }
       }).length;
+    },
+    // The resend ids of those same matching parks, read off the payload (falling
+    // back to the basename's id segment). `parked` counts; the supersede pin has
+    // to compare the ids the claim REPORTS against the ids that were on disk, and
+    // a count cannot tell a claim of the right file from a claim of any file.
+    parkedIds: (name, re) => {
+      const dir = path.join(root, 'pending', name);
+      let files;
+      try { files = fs.readdirSync(dir); } catch { return []; }
+      const out = [];
+      for (const f of files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort()) {
+        try {
+          const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+          if (!obj || typeof obj.text !== 'string' || !re.test(obj.text)) continue;
+          const parts = f.split('.');
+          const id = obj.id || (parts.length === 4 ? parts[2] : null);
+          if (id) out.push(id);
+        } catch { /* */ }
+      }
+      return out;
     },
   };
 }
@@ -305,6 +330,72 @@ test('t388: a dm HELD-PARKED behind a permission dialog does not arm', async () 
       'ENTER: the dm must be in the park store, proving the hold-park path positively');
     assert.strictEqual((target._dmUnconfirmed || []).length, 0,
       'a held-parked dm must not arm — the same reason as the busy park: the bytes are a file, not a write');
+  } finally { app.stop(); }
+});
+
+// The exit the notices above hand out, closed. Both bounce texts teach a re-send
+// (`[agent:resend <id>]` from the park notice, `[agent:dm target urgent]` from the
+// latch report at :417), and the urgent copy takes the fresh-write path, which
+// never consulted the pending store — so the parked copy still drained on the
+// target's next turn and the target read one message twice.
+//
+// Parked by the COLD-idle hold rather than the busy park: only the hold path mints
+// a content key (the busy park at _maybeParkDelivery carries none), and only the
+// hold path can then be re-entered with `urgent`, which lifts the hold. A dialog
+// hold would not do — it holds urgent too, so the claim would never be reached.
+async function coldParked(app, body) {
+  const target = app.m.sessions.get('target');
+  target.activityState = 'idle';
+  target.activityTs = Date.now() - 31 * 60_000;
+  const before = app.seen('target');
+  app.m._handleIntent('sender', dm('target', body));
+  await new Promise((r) => setTimeout(r, 60));
+  assert.strictEqual(app.seen('target'), before,
+    `ENTER: "${body}" must have been HELD-PARKED rather than written — a dm that reached the PTY was never `
+    + 'parked, and the supersede below would have nothing to claim');
+  return target;
+}
+
+test('t878: an urgent re-send claims the parked copy of the same dm, so the target reads it once', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    await coldParked(app, 'SUPERSEDE ME');
+    assert.strictEqual(app.parked('target', /SUPERSEDE ME/), 1,
+      'ENTER: the parked copy must be on disk — the absence at the PTY above cannot tell a park from a park '
+      + 'that threw, and only one of those is the state this test supersedes');
+    const ids = app.parkedIds('target', /SUPERSEDE ME/);
+    assert.strictEqual(ids.length, 1, 'ENTER: the hold-park must carry a resend id, which is what the claim reports back');
+
+    const r = app.m._gatedDeliver('target', 'sender', 'SUPERSEDE ME', true);
+    assert.deepStrictEqual(r.superseded, ids,
+      'the return must name the park it claimed: the sender is being told its earlier copy was consumed by this '
+      + 'one, and an unqualified `queued` reads as a second delivery');
+    assert.strictEqual(app.parked('target', /SUPERSEDE ME/), 0,
+      'and the parked copy must be GONE before the write — claimed after it, the target\'s own next-turn drain '
+      + 'can win the race and deliver the message a second time');
+    const got = await settled(app, 'target', /SUPERSEDE ME/);
+    assert.strictEqual(got.match(/SUPERSEDE ME/g).length, 1,
+      'exactly one copy reaches the seat: superseding is only worth doing if the urgent copy still arrives');
+  } finally { app.stop(); }
+});
+
+test('t878: a DIFFERENT body sent urgent leaves the park in place — the key is the content, not the target', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    await coldParked(app, 'FIRST BODY');
+    assert.strictEqual(app.parked('target', /FIRST BODY/), 1, 'ENTER: the first body must be parked to survive anything');
+    const r = app.m._gatedDeliver('target', 'sender', 'SECOND BODY', true);
+    assert.strictEqual(r.superseded, undefined,
+      'nothing was superseded, so the return must be the unchanged shape — a `superseded: []` would tell every '
+      + 'urgent sender that a claim ran');
+    assert.strictEqual(app.parked('target', /FIRST BODY/), 1,
+      'the parked first message is a DIFFERENT message and must still be delivered: a claim scoped to the '
+      + 'target rather than to the content would silently destroy it');
+    await settled(app, 'target', /SECOND BODY/);
   } finally { app.stop(); }
 });
 

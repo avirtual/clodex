@@ -128,6 +128,7 @@ function boot(opts = {}) {
     countPending: pendingStore.countPending,
     peekPending: pendingStore.peekPending,
     hasActivePending: pendingStore.hasActivePending,
+    claimParkedByKey: pendingStore.claimParkedByKey,
     isDraftOpen: require('../proxy-util').isDraftOpen,
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
     peerStatusLabel: require('../proxy-util').peerStatusLabel,

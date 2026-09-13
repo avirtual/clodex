@@ -141,6 +141,7 @@ function boot(world, opts = {}) {
     // REAL, like parkDelivery beside it: the hold-park mints its id through this,
     // so a stub returning a constant would collide every park after the first.
     parkIdInUse: require('../pending-store').parkIdInUse,
+    claimParkedByKey: require('../pending-store').claimParkedByKey,
     drainPending: () => [], countPending: () => 0, peekPending: () => [],
     hasActivePending: () => false,
     isDraftOpen: require('../proxy-util').isDraftOpen,
