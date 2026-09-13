@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — three sentences readers act on now say the true thing
+## Unreleased
+
+## 5.64.11 — 2026-09-13 — three sentences readers act on now say the true thing
 
 - The run-tests digest names the exact `TOTALS:` line it could not find instead of "no TOTALS summary"; the lead prompt says how a project's artifact-dir hash is derived; the plugin API doc's `removeWorktree` row states the `deleteBranch` option and its return fields.
 
