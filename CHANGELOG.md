@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a refused create leaves no minted branch behind
 
 - A refused New Session create now also deletes the branch the dialog minted for its opt-in worktree (never a pre-existing branch the operator named), so nothing is left behind; a branch git refuses to delete is kept and named in the toast.
 
