@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- When an urgent dm claims the parked copy of the same message, the sender is told which park id was consumed and the IPC log records the send as `URGENT (supersedes <id>)`, so a superseded delivery is visible instead of looking like two sends.
+
 ## 5.64.11 — 2026-09-13 — three sentences readers act on now say the true thing
 
 - The run-tests digest names the exact `TOTALS:` line it could not find instead of "no TOTALS summary"; the lead prompt says how a project's artifact-dir hash is derived; the plugin API doc's `removeWorktree` row states the `deleteBranch` option and its return fields.
