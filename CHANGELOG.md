@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Re-sending a dm as `urgent` after it was parked for a cold peer no longer delivers it twice: the urgent copy claims the parked copy of the same message (same sender, same body) for that target before it is injected, so the peer reads it once.
+
 ## 5.64.8 — 2026-09-13 — a refused create leaves no minted branch behind
 
 - A refused New Session create now also deletes the branch the dialog minted for its opt-in worktree (never a pre-existing branch the operator named), so nothing is left behind; a branch git refuses to delete is kept and named in the toast.

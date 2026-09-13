@@ -19,9 +19,9 @@ const { previewLine } = require('./body-preview');
 //     now routes through fs-util's atomicWriteFileSync like every other store
 //     (F010): the local pairs were atomic but unsynced, so a power loss could
 //     leave a zero-length message file that a drain then discards as corrupt.
-//   * CLAIM (drainPending's dir rename, claimParkedById's file rename) — a
+//   * CLAIM (drainPending's dir rename, the claimParked* file renames) — a
 //     rename used as a LOCK, not as a write. It is the at-most-once delivery
-//     protocol: whoever renames first owns what was there. Those two must stay
+//     protocol: whoever renames first owns what was there. Those must stay
 //     bare renames; routing them through a write primitive would replace the
 //     claim with a copy and deliver the same message twice.
 
@@ -49,7 +49,7 @@ function parkFileHasId(f, id) {
 // name inherits its predecessor's parked mail (see drainPending). It lives in the
 // PAYLOAD rather than the path so the `<seq>[.<id>].json` grammar and
 // parkFileHasId's segment split stay exactly as they are.
-function parkDelivery(root, name, text, seq, id = null, passive = false, born = null) {
+function parkDelivery(root, name, text, seq, id = null, passive = false, born = null, key = null) {
   const dir = agentDir(root, name);
       // `.passive.` occupies the id segment slot (4 dot-segments) — safe from
       // parkFileHasId collisions because minted resend ids are 5 or 10 base36
@@ -57,7 +57,8 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
   const base = passive ? `${seq}.passive.json` : (id ? `${seq}.${id}.json` : `${seq}.json`);
   const fin = path.join(dir, base);
   const payload = JSON.stringify(Object.assign({ text }, id ? { id } : null,
-    typeof born === 'number' ? { born } : null));
+    typeof born === 'number' ? { born } : null,
+    (typeof key === 'string' && key) ? { key } : null));
   try {
     atomicWriteFileSync(fin, payload);
   } catch (e) {
@@ -223,9 +224,9 @@ function parkIdInUse(root, id) {
 // Single-file rename-claim (mirrors drainPending's atomicity at file grain): the
 // matched file is renamed OUT to a root-level `.resend.` sibling before it's
 // read, so it can't also be swept up by a concurrent whole-dir drain. Returns
-// { name, text } on success, or null when no file matches OR the rename ENOENTs
-// (the next-turn drain already claimed the whole dir — a success outcome, so the
-// caller reports "already delivered", not an error). The claimed file is removed.
+// null when no file matches OR the rename ENOENTs (the next-turn drain already
+// claimed the whole dir — a success outcome, so the caller reports "already
+// delivered", not an error). The claimed file is removed.
 function claimParkedById(root, id) {
   let names;
   try { names = fs.readdirSync(root); } catch { return null; }
@@ -246,7 +247,9 @@ function claimParkedById(root, id) {
     try {
       const obj = JSON.parse(fs.readFileSync(claim, 'utf8'));
       const text = (obj && typeof obj.text === 'string') ? obj.text : null;
-      return text != null ? { name, text } : null;
+      return text != null
+        ? Object.assign({ name, text }, (obj.key && typeof obj.key === 'string') ? { key: obj.key } : null)
+        : null;
     } catch {
       return null; // corrupt entry — treat as gone rather than throw
     } finally {
@@ -256,4 +259,37 @@ function claimParkedById(root, id) {
   return null;
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, agentDir };
+function claimParkedByKey(root, name, key) {
+  const out = [];
+  if (typeof key !== 'string' || !key) return out;
+  let dir;
+  let files;
+  try { dir = agentDir(root, name); files = fs.readdirSync(dir); } catch { return out; }
+  let n = 0;
+  for (const f of files.sort()) {
+    if (!f.endsWith('.json') || f.startsWith('.')) continue;
+    let parked;
+    try { parked = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { continue; }
+    if (!parked || parked.key !== key) continue;
+    const claim = path.join(root, `.resend.${key}.${process.pid}.${Date.now()}.${n++}`);
+    try {
+      fs.renameSync(path.join(dir, f), claim);
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return out;
+      throw e;
+    }
+    try {
+      const obj = JSON.parse(fs.readFileSync(claim, 'utf8'));
+      const parts = f.split('.');
+      const id = (obj && typeof obj.id === 'string' && obj.id)
+        || (parts.length === 4 ? parts[2] : null);
+      if (id) out.push(id);
+    } catch {}
+    finally {
+      try { fs.rmSync(claim, { force: true }); } catch {}
+    }
+  }
+  return out;
+}
+
+module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };

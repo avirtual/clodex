@@ -68,6 +68,7 @@ function mk(overrides = {}) {
     isDraftOpen: require('../../proxy-util').isDraftOpen,
     drainPending: require('../../pending-store').drainPending,
     hasActivePending: require('../../pending-store').hasActivePending,
+    claimParkedByKey: require('../../pending-store').claimParkedByKey,
     // Every rejecting ticket verb calls this. Undefined here would make each one
     // run its catch branch and report the failure wording, so a host that stopped
     // wiring the seam would degrade silently instead of failing a test.

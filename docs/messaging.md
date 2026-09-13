@@ -255,6 +255,9 @@ for the operator. The nudge is cleared by the turn edge and by kill, gives up at
   survives — a later resend still resolves it) instead of splicing.
   SETTLED: resend is protocol-invisible — not in IPC_PROMPT; only the park
   notice hands out the incantation (ids only exist at park time).
+  An `urgent` re-send of the same body from the same sender claims any parked
+  copy for that target first (content key = sha256 of sender + body), so the
+  target never reads it twice.
 - Drains: `run/<name>/pending.sh` (UserPromptSubmit hook) delivers parked mail
   with the target's own next turn; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog

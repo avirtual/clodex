@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpRoot() {
@@ -235,6 +235,30 @@ test('claimParkedById searches across all agent stores', () => {
   assert.deepStrictEqual(claimParkedById(root, 'bbb22'), { name: 'bob', text: 'for bob' });
   // alice's park is untouched by bob's claim.
   assert.deepStrictEqual(drainPending(root, 'alice', 't'), ['for alice']);
+});
+
+test('claimParkedByKey claims only the same-key parks of the named agent', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'alice', 't1', SEQ(1), 'id001', false, null, 'K');
+  parkDelivery(root, 'alice', 't2', SEQ(2), 'id002', false, null, 'OTHER');
+  parkDelivery(root, 'bob', 't3', SEQ(1), 'id003', false, null, 'K');
+  assert.strictEqual(countPending(root, 'alice'), 2, 'ENTER: alice must hold both of her parks');
+  assert.strictEqual(countPending(root, 'bob'), 1, 'ENTER: bob must hold his same-key park');
+  assert.deepStrictEqual(claimParkedByKey(root, 'alice', 'K'), ['id001']);
+  assert.deepStrictEqual(drainPending(root, 'alice', 't'), ['t2'],
+    'the OTHER-key park is a different message and must survive the claim');
+  assert.deepStrictEqual(drainPending(root, 'bob', 't'), ['t3'],
+    'bob was never the target: his same-key park is his own mail, not a copy of alice\'s');
+});
+
+test('claimParkedById reports the content key only when the park carries one', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'keyed', SEQ(1), 'kk111', false, null, 'K');
+  parkDelivery(root, 'b', 'plain', SEQ(1), 'pp222');
+  assert.deepStrictEqual(claimParkedById(root, 'kk111'), { name: 'a', text: 'keyed', key: 'K' });
+  assert.deepStrictEqual(claimParkedById(root, 'pp222'), { name: 'b', text: 'plain' },
+    'an unkeyed park must come back with exactly two keys: the resend re-park feeds this straight to '
+    + 'parkDelivery, and every deepStrictEqual pin above reads the shape');
 });
 
 test('claimParkedById returns null for an unknown id (already delivered / bad id)', () => {

@@ -431,6 +431,11 @@ function peerOriginSuffix(p, nameRe = ORIGIN_NAME_RE) {
 const { speakable } = require('./speakable');
 const { expandSkillsOff } = require('./skills-off');
 
+function dmContentKey(senderTag, body) {
+  return require('crypto').createHash('sha256')
+    .update(`${senderTag}\n${body}`).digest('hex').slice(0, 16);
+}
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -468,6 +473,7 @@ function createSessionManager(deps) {
     buildIpcPrompt,
     childProcess,
     claimParkedById,
+    claimParkedByKey,
     classifyNotification,
     cleanupClaudeHook,
     cleanupCodexHook,
@@ -4682,7 +4688,7 @@ function createSessionManager(deps) {
           });
           if (verdict.hold) {
             let reparked = false;
-            try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(target.name)); reparked = true; } catch {}
+            try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(target.name), claimed.key); reparked = true; } catch {}
             reply(reparked
               ? `${target.name} is ${verdict.reason}; re-parked as ${intent.id} — it'll deliver after the dialog is answered.`
               : `${target.name} is ${verdict.reason} and re-parking failed — try [agent:resend ${intent.id}] again shortly.`);
@@ -6083,6 +6089,7 @@ function createSessionManager(deps) {
     _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null) {
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
+      const key = dmContentKey(senderTag, body);
       const verdict = shouldHoldDm({
         urgent: urgent === true,
         state: target.activityState || 'idle',
@@ -6093,7 +6100,7 @@ function createSessionManager(deps) {
       if (verdict.hold) {
         const canPark = target.agentType === 'claude' && !target._dead;
         const parkId = canPark
-          ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm', tag))
+          ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm', tag), key)
           : null;
         // A park IS durable, so it fires onWrite; a bare `held` reached nobody and
         // must not — that asymmetry is the same one the nudge/replay stamps encode.
@@ -6105,13 +6112,14 @@ function createSessionManager(deps) {
           ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
           : { held: verdict.reason, noUrgent: verdict.noUrgent };
       }
+      const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : [];
       this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite);
       // `queued`, not `delivered`: _deliverMessage returns once the text is parked
       // or handed to the inject queue, and the queue writes it later — within one
       // poll of the seat's readiness latch. Every negative verdict above IS decided
       // synchronously and is therefore exact; only success is a statement about the
       // future. A caller needing certainty passes _deliverMessage an onWrite hook.
-      return { queued: true };
+      return superseded.length > 0 ? { queued: true, superseded } : { queued: true };
     }
 
     // The plain-dm delivery latch.
@@ -6714,12 +6722,12 @@ function createSessionManager(deps) {
     // UserPromptSubmit. Unlike _maybeParkDelivery this does NOT arm the park cap:
     // the cap drains through the inject queue after a timeout, which would defeat
     // the hold by injecting into the cold/blocked target anyway. A held delivery
-    // waits for the target's OWN next turn (or an explicit [agent:resend]).
+    // waits for the target's next turn; `key` lets a re-send claim this file.
     // Returns the resend id, or null if parking failed (caller falls back to a bounce).
-    _parkHeldDelivery(target, finalText) {
+    _parkHeldDelivery(target, finalText, key = null) {
       const id = this._mintParkId();
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), id, false, this._bornFor(target.name));
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), id, false, this._bornFor(target.name), key);
       } catch (e) {
         log.error('inject', `park-on-hold failed for ${target.name}: ${e.message}`);
         return null;
