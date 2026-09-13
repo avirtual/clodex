@@ -309,5 +309,6 @@ create/kill/restart now ride the `create` cap over the wire.
 - Hub-relay (messaging.md §4a): spokes never dial each other; a spoke→spoke DM
   is relayed through the hub, reusing the outbox+claim legs. Opt-in per peer
   (`relayAllowed`, default OFF, symmetric both-ends gate); distinct `relay` cap;
-  `from` is sacred (never rewritten); the terminal leg strips relay fields
-  (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.
+  `from`'s local part is sacred, but the hub restamps its origin suffix to its
+  own label for the source spoke on the terminal leg; that leg also strips relay
+  fields (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.
