@@ -18,6 +18,7 @@ const { visibleTo } = require('./scope-util');
 const { clampSidebarWidth } = require('./sidebar-width');
 const { sanitizeCtxThresholds } = require('./ctx-reminder');
 const { confineOrThrow } = require('./path-confine');
+const { resolveWirescopePort, resolveRemotePort, resolveProxyUrl } = require('./service-ports');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
@@ -1451,7 +1452,14 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         };
       } catch { return defaultUiSettings(); }
     },
-    get() { return this._load(); },
+    get() {
+      const s = this._load();
+      const warn = (m) => console.warn(m);
+      s.wirescopePort = resolveWirescopePort(s, process.env, warn);
+      s.remotePort = resolveRemotePort(s, process.env, warn);
+      s.proxyUrl = resolveProxyUrl(s, process.env, warn);
+      return s;
+    },
     set(partial) {
       const cur = this._load();
       const next = {
@@ -1536,7 +1544,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       try {
         atomicWriteFileSync(UI_SETTINGS_FILE, JSON.stringify(next, null, 2));
       } catch (e) { console.error('ui-settings save failed:', e); }
-      return next;
+      return {
+        ...next,
+        wirescopePort: resolveWirescopePort(next, process.env),
+        remotePort: resolveRemotePort(next, process.env),
+        proxyUrl: resolveProxyUrl(next, process.env),
+      };
     },
   };
 

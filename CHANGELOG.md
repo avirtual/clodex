@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A second Clodex on the same box is now configured entirely from the shell: `CLODEX_REMOTE_PORT` and `CLODEX_WIRESCOPE_PORT` move the peer wire and wirescope off the ports the first instance holds, so the two-instances recipe is a copy-pasteable pair of shells instead of a procedure that stops to have you open Settings on the instance that has no window yet. Either var wins over the port stored in that instance's settings and is never written back, so a launch without it returns to whatever Settings holds; an unparseable or out-of-range value is logged and ignored rather than bound.
+
 ## 5.64.16 — 2026-09-13 — one intent to dispatch, a popover that reads as a form, and prose where you look for it
 
 - The team roles popover reads as a form again. A role's pickers (prompt, account, template) are as wide as the names they hold instead of spanning the whole popover to show the word `hand`; the popover is the only thing that scrolls, so an expanded role no longer opens a second scrollbar inside the first and no longer cuts `cwd` off mid-label at a fold; the dispatch picker has the caption every field beside it already had; and the editor no longer repeats the role's name or shouts "EDIT THIS ROLE" at you for clicking it open. The selected dispatch option now wears the same highlight the rest of the app uses for a selected thing, rather than the red reserved for primary and destructive actions.

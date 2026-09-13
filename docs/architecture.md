@@ -613,6 +613,11 @@ accept teardown removes.
   persisted in `<userData>/remote.env` (0600, single key), so the peer-wire gate
   survives restarts without an env var the operator has to remember.
   DELIBERATELY separate from the sandbox's `auth.env`.
+- **service-ports.js** — `CLODEX_REMOTE_PORT` / `CLODEX_WIRESCOPE_PORT`, the env
+  overrides for the two service ports, so a second instance on one box is fully
+  env-configurable. Env wins over the persisted setting and is never written
+  back; a garbage value falls back and warns. Pure leaf, applied once at
+  `uiSettings.get()` in `stores.js`.
 - **auth-token.js** — the single operator-token predicate shared by BOTH HTTP
   hosts (`web-host.js` and `remote.js`), so the two wires cannot drift on "does
   this request carry the configured secret". Pure leaf: a token string in, a
