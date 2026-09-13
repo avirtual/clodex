@@ -2971,11 +2971,9 @@ test('a REWORK verdict merges NOTHING, and is dispatched instead of merged', asy
   assert.strictEqual(f.masterHead(), before, 'master did not move');
   assert.deepStrictEqual(f.landed(), [], 'nothing was announced as merged');
   assert.deepStrictEqual(f.esc(), [], 'and the merge path was never entered, so it escalated nothing');
-  // t906: the lead still gets exactly one copy, and it is the brief. The second
-  // delivery is the rework going to the seat — the merge path is what this file
-  // pins, and it stayed out of both.
   const toLead = f.gated.filter((g) => g.target === 'lead');
-  assert.strictEqual(toLead.length, 1, 'exactly one verdict notification to the lead');
+  assert.strictEqual(toLead.length, 1,
+    't906: exactly one verdict notification to the lead, and it is the brief — the second delivery is the rework going to the seat, and the merge path this file pins stayed out of both');
   assert.match(toLead[0].body, /REWORK on ticket t1/);
 });
 

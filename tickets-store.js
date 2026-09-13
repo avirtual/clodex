@@ -191,10 +191,6 @@ function stripEmphasis(line) {
   return s;
 }
 
-// `null` for "there are no items at all" (absent, or a placeholder), an ARRAY of
-// the top-level item lines otherwise — a distinction `countMustFix` needs and a
-// bare `[]` cannot carry: an empty array reaches its floor-of-one, a placeholder
-// must not.
 function mustFixItemLines(mustFixText) {
   if (mustFixText == null) return null;
   const text = String(mustFixText);
@@ -207,9 +203,6 @@ function mustFixItemLines(mustFixText) {
   const firstLine = nonEmpty.length ? stripEmphasis(nonEmpty[0].trim()) : '';
   const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
   if (re.test(firstLine)) return null;
-  // Minimum indentation present, not a fixed column, and RELATIVE because the
-  // direction worth protecting is undercounting: against column 0 a verdict whose
-  // items are all indented matches no marker and falls through to the floor below.
   const found = [];
   for (const line of lines) {
     if (THEMATIC_BREAK_RE.test(line)) continue;
@@ -218,8 +211,6 @@ function mustFixItemLines(mustFixText) {
     // and pick the sub-bullets as the top level.
     if (m) { let w = 0; for (const ch of m[1]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1; found.push({ w, line }); }
   }
-  // Reduced, not `Math.min(...widths)`: one argument per line is a stack overflow
-  // on a long blob.
   let top = Infinity;
   for (const f of found) if (f.w < top) top = f.w;
   return found.filter((f) => f.w === top).map((f) => f.line);
@@ -228,19 +219,11 @@ function mustFixItemLines(mustFixText) {
 function countMustFix(mustFixText) {
   const items = mustFixItemLines(mustFixText);
   if (items === null) return 0;
-  // Reached only once the placeholder test above ruled out "no items at all".
   return items.length > 0 ? items.length : (String(mustFixText).trim() ? 1 : 0);
 }
 
-// The marker, once the line is known to BE an item — same alternation as
-// MUSTFIX_ITEM_RE's, without the `\S` that regex needs as a lookahead.
 const MUSTFIX_MARKER_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/;
 
-// One title per must-fix, in the same order and the SAME NUMBER as
-// `countMustFix` reports — including its floor-of-one arm, which yields the
-// first non-empty line. A brief that says "3 must-fixes" and lists two is a
-// brief the lead has to open the verdict to reconcile, which is the whole cost
-// the titles exist to remove.
 function mustFixTitles(mustFixText) {
   const items = mustFixItemLines(mustFixText);
   if (items === null) return [];
