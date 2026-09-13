@@ -473,8 +473,6 @@ test('t904: File > Plugins… is present exactly when the top-level Plugins menu
     'the top-level menu is showing, so the fallback would be a second route to the same dialog');
 });
 
-// ── t904: Sandboxes moved from File to Window, mirroring app-menus.js ────────
-
 test('t904: File offers no Sandboxes route, and the Window manage row emits the dialog', async () => {
   const rows = await fileRows();
   assert.deepEqual(rows.map((r) => r.label).filter((l) => /Sandbox/.test(l || '')), [],
