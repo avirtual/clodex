@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a mid-turn dm can be superseded, and the supersede is never silent
 
 - A dm that is parked because the target was mid-turn keeps its content key, so an urgent re-send of the same message supersedes it instead of arriving twice.
 - An urgent dm that supersedes a parked copy now says so even when that copy carried no resend id, so the mid-turn case reports one delivery instead of logging two identical sends.
