@@ -606,7 +606,7 @@ test('reservedRoleNote tells the operator the template is editable even though t
 // mutated team-tickets.js's DEFAULT_LEAD_TEMPLATE /
 // DEFAULT_REVIEWER_TEMPLATE to `…-DRIFT` and the whole suite stayed green. This is
 // the pin that was missing. team-tickets.js exports neither constant, so the
-// literals are scraped from its source — the team-uses.js shape (regex-extract,
+// literals are scraped from its source — the team-uses.test.js shape (regex-extract,
 // compare the capture), not the host-stamp one, because nothing here needs the
 // main-process module EVALUATED: the facts are two string literals, and a scrape
 // that reads them cannot itself restate them.
@@ -625,6 +625,17 @@ test('t888 parity: each reserved default is the literal team-tickets.js actually
       `the popover's ${key} row resolves a template the spawn path does not use: `
       + `${constName} moved and RESERVED_ROLE_TEMPLATE did not. The row would send the operator `
       + 'to edit a file no seat boots on — the exact bug the control was added to fix');
+  }
+  for (const [site, re] of [
+    ['the lead spawn path', /\|\| DEFAULT_LEAD_TEMPLATE;/],
+    ['the team-review handler', /const templateName = templateOverride \|\| def\.template \|\| DEFAULT_REVIEWER_TEMPLATE;/],
+    ['resolveSeatShape, purpose `review`', /\(templateOverride \|\| \(def && def\.template\) \|\| DEFAULT_REVIEWER_TEMPLATE\)/],
+  ]) {
+    assert.match(src, re,
+      `${site} no longer falls back through the constant the assertions above compare against: `
+      + 'it inlines its own literal, so that literal can drift from RESERVED_ROLE_TEMPLATE '
+      + 'while every assertion above stays green and the row again sends the operator to a '
+      + 'template no seat boots on');
   }
 });
 
@@ -1583,13 +1594,12 @@ const reservedTemplateControl = () => {
   const from = pop.indexOf('if (row.readOnly) {');
   assert.ok(from > 0, 'ENTER: found the read-only arm — a rename would reduce every assertion below to nothing');
   const to = pop.indexOf('holder.appendChild(open);', from);
-  assert.ok(to > from, 'ENTER: the arm still ends by appending the Open button');
+  assert.ok(to > from, 'ENTER: the reserved template control block is gone (or the arm was '
+    + 'restructured) — the name and Open button are unpinned again');
   const arm = pop.slice(from, to + 'holder.appendChild(open);'.length);
   const blockFrom = arm.indexOf('const holder = body.querySelector');
   assert.ok(blockFrom > 0, 'ENTER: found the control block inside that arm');
-  // CODE ONLY for the block: the negatives below are about what it DOES, and the
-  // comments around it name `data-act` and attributes precisely because those are
-  // the traps — matching them would fail on the prose explaining them.
+  // CODE ONLY for the block: the negatives below are about what it DOES.
   const strip = (s) => s.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   return { arm: strip(arm), block: strip(arm.slice(blockFrom)) };
 };
