@@ -994,7 +994,7 @@ function leadActionLine(team) {
   const parts = [];
   // The "Dispatch:" prefix is the token three roster tests assert the ABSENCE of
   // for a non-lead seat. Rewording the line without it defangs all three silently.
-  if (sessionRoles.length) parts.push('Dispatch: TWO steps. [agent:task add <role>] <spec> writes the ticket and starts NOTHING, then [agent:task start <id>] mints its tree and seat and delivers the spec. A "do not start" line in the body is NOT read by anything — an unstarted ticket is simply one you have not started.');
+  if (sessionRoles.length) parts.push('Dispatch: TWO steps, or one. [agent:task add <role>] <spec> writes the ticket and starts NOTHING, then [agent:task start <id>] mints its tree and seat and delivers the spec; [agent:task add <role> start] <spec> does both in one intent and tells you the id in a single reply. A "do not start" line in the body is NOT read by anything — an unstarted ticket is simply one you have not started.');
   // Spells out that the intent does the spawning: a lead that reaches for its
   // harness subagent tool instead gets a reviewer with no tools cap, no verdict
   // intent, and no seat the operator can see.

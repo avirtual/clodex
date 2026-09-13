@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A team lead can file and dispatch a ticket in one intent: `[agent:task add hand start] <spec>` writes the ticket and starts it, and answers with a single line naming the new ticket id, the seat and its branch. The two-step is unchanged — `add` on its own still files work held for later, which is how you queue a ticket behind a hand already in the same files — but the lead no longer has to spend a turn learning the id before it can start the work, which is how it came to guess ids. `park` and `start` mean opposite things and are refused together rather than one being silently picked.
+
 ## 5.64.15 — 2026-09-13 — a team owns its reviewer, and a seat knows you from a machine
 
 - A team created from now on owns its reviewer's template: the create writes `teams/<team>/templates/reviewer.json` from the shipped copy and points the reviewer role at it, the way it already did for the lead and the hand. Editing that file — the `--model` in particular — changes the reviewer for that team alone, instead of every team sharing one library file. Teams created before this keep resolving the library copy exactly as they did.

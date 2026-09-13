@@ -4138,7 +4138,7 @@ test('composeRosterFor: renders for the NAMED seat, live or persistence-only', (
   const forLead = m.composeRosterFor('lead');
   assert.match(forLead, /live: lead \(you\)/, 'the reading seat is marked in its own digest');
   assert.match(forLead, /live: team-dev \(idle 12m, warm\)/, 'teammates carry their warmth label');
-  assert.match(forLead, /Dispatch: TWO steps\. \[agent:task add <role>\]/, 'the lead seat gets the action line');
+  assert.match(forLead, /Dispatch: TWO steps, or one\. \[agent:task add <role>\]/, 'the lead seat gets the action line');
 
   // Not in the map: the cwd comes from persistence, and the seat name must
   // still reach formatRoster.
@@ -8819,6 +8819,52 @@ test('task add park: records the assignee and does NOT deliver the spec', () => 
   assert.strictEqual(t.assignee, 'hand', 'the assignee IS recorded — that is the whole point');
   assert.deepStrictEqual(f.gated, [], 'the seat was told nothing');
   assert.ok(f.injected.some((x) => /ticket t1 parked for hand/.test(x)), 'the lead is told it was parked');
+});
+
+test('task add start: files the ticket AND dispatches it, in one reply naming the id', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, start: true, body: 'tasks/t897-one-dispatch/SPEC.md build the widget\ndetail' });
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand', 'dispatched — re-pinned to the seat that received it');
+  assert.strictEqual(t.role, 'hand', 'the filed role survives the pin');
+  assert.ok(t.startedAt, 'stamped started, exactly as the two-step does');
+  assert.strictEqual(f.gated.length, 1, 'the spec reached the seat — _taskStart did the work, not a second dispatch path');
+  assert.strictEqual(f.gated[0].target, 'team-hand');
+  assert.match(f.gated[0].body, /build the widget/, 'and it is this ticket\'s spec');
+  const combined = f.injected.filter((x) => /ticket t1/.test(x));
+  assert.strictEqual(combined.length, 1, 'ONE reply: the round trip disappears only if the lead is not told twice');
+  assert.match(combined[0], /ticket t1 created and started/, 'and it says both halves happened');
+  assert.ok(!/not started/.test(combined[0]), 'no "(not started)" — that is the bare add reply');
+  assert.ok(!/\[agent:task start t1\]/.test(combined[0]),
+    'and NOT the start nudge: reproducing the two-step hint in the reply that removes it is the confusion itself');
+});
+
+test('task add start: when the start leg refuses, the ticket exists and is named unstarted', () => {
+  const f = mkTasks();
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, start: true, body: 'work' });
+  const t = f.one('t1');
+  assert.ok(t, 'the ticket was WRITTEN — a refused dispatch does not roll the write back');
+  assert.ok(!t.startedAt, 'and it really is unstarted');
+  assert.deepStrictEqual(f.gated, [], 'nothing dispatched');
+  const combined = f.injected.filter((x) => /ticket t1/.test(x));
+  assert.strictEqual(combined.length, 1, 'still one reply — the lead must never reconcile two');
+  assert.match(combined[0], /ticket t1 created but NOT started/,
+    'the id is named and the state is stated — the lead never guesses which half happened');
+  assert.match(combined[0], /backlog \(no assignee\)/, 'and the start leg\'s own reason rides along');
+});
+
+test('task add park start: refused naming both, and nothing is filed', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, start: true, body: 'contradictory' });
+  assert.strictEqual(f.load().length, 0, 'no ticket — silently picking one of two opposite instructions is the failure');
+  assert.deepStrictEqual(f.gated, [], 'nothing dispatched');
+  const err = f.injected.find((x) => /error:/.test(x));
+  assert.ok(err, 'the lead is told');
+  assert.match(err, /park/, 'naming park');
+  assert.match(err, /start/, 'and naming start');
 });
 
 test('task add without park writes NO parked key, so old records read identically', () => {
@@ -16553,6 +16599,26 @@ test('task dispatch: the TASK DIR line rides a REPLAY too, where the artifact ch
 // _mintTicketSeat carried its own inline slugger for three tickets, and the
 // branches it minted embedded a task-dir path, a duplicated id, and once an id
 // the board never issued.
+test('task add start: the single reply names the seat and the branch, as task start does', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  const replies = [];
+  f.m._injectText = (_s, text) => { replies.push(text); };
+  let createdName = null;
+  f.m.create = async (...args) => { createdName = args[0]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, start: true, body: 'tasks/t897/SPEC.md build the widget' });
+  await until(() => createdName || f.gated.length);
+
+  assert.strictEqual(createdName, 'team-hand-1', 'ENTER: a seat was really minted, or the reply below asserts nothing');
+  assert.match(replies[0], /ticket t1 created and started/, 'the FIRST reply says both halves happened, id first');
+  assert.match(replies[0], /team-hand-1/, 'and names the seat');
+  assert.match(replies[0], /branch t1-build-the-widget/, 'and the branch, so nothing downstream needs another turn');
+  assert.ok(!replies.some((r) => /\[agent:task start/.test(r)), 'no reply carries the start nudge');
+  assert.ok(!replies.some((r) => /not started/.test(r)), 'and none says the ticket is unstarted');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: the minted branch carries the REAL ticket id and no id from the title', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);

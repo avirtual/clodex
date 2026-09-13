@@ -1913,6 +1913,7 @@ test('formatRoster: the action line is rendered for the lead seat only', () => {
   // close it. It does so by naming the second step: a lead that cannot see where
   // "start" lives is a lead that goes looking for a prose way to say it.
   assert.match(forLead, /\[agent:task start <id>\]/, 'the start verb is named — dispatch is a step the lead must be able to find');
+  assert.match(forLead, /\[agent:task add <role> start\]/, 'the one-intent form is named — a lead that cannot see it pays the round trip');
   assert.match(forLead, /starts NOTHING/, 'and add is explicitly stated not to dispatch');
   assert.match(forLead, /body is NOT read by anything/, 'the body convention stays explicitly disclaimed (t174)');
   // The intent must be stated as SELF-SUFFICIENT. "Review: [agent:team-review]"
@@ -1936,7 +1937,7 @@ test('formatRoster: the action line keys off the role name, never the lead SEAT 
   const roster = formatRoster(team, [], { seat: 'hand' });
   assert.match(roster, /New session seat: \[agent:spawn name:shop-<role>/,
     'the hand role survives a lead seat that happens to be called "hand"');
-  assert.match(roster, /Dispatch: TWO steps\. \[agent:task add <role>\] <spec>/);
+  assert.match(roster, /Dispatch: TWO steps, or one\. \[agent:task add <role>\] <spec>/);
 });
 
 // The line advertised the verb to every seat, so a lead spawned without the

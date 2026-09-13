@@ -122,16 +122,17 @@ function parseTask(cleaned) {
   const argToks = m[2].trim().split(/\s+/).filter(Boolean);
   const body = m[3];
   if (sub === 'add') {
-    // `park` is a MODIFIER filtered out of the positionals, never `who`. Taking
-    // argToks[0] as the assignee would read `add park hand` as a ticket for a
-    // seat named "park" and drop the role — a silent misfile, since an
-    // unresolvable assignee is rejected but "park" could be a real seat.
-    // Position-free because both orders read naturally; the cost is that a seat
-    // literally named `park` is unaddressable here and needs `assign`.
+    // `park` and `start` are MODIFIERS filtered out of the positionals, never
+    // `who`. Taking argToks[0] as the assignee would read `add park hand` as a
+    // ticket for a seat named "park" and drop the role — a silent misfile, since
+    // an unresolvable assignee is rejected but "park" could be a real seat.
+    // Position-free because every order reads naturally; the cost is that a seat
+    // literally named `park` or `start` is unaddressable here and needs `assign`.
     const park = argToks.includes('park');
+    const start = argToks.includes('start');
     const reviewer = reviewerToken(argToks);
-    const rest = argToks.filter((t) => t !== 'park' && !REVIEWER_TOKEN_RE.test(t));
-    return { type: 'task', sub, who: rest[0] || null, id: null, park, reviewer, body };
+    const rest = argToks.filter((t) => t !== 'park' && t !== 'start' && !REVIEWER_TOKEN_RE.test(t));
+    return { type: 'task', sub, who: rest[0] || null, id: null, park, start, reviewer, body };
   }
   if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
   if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
