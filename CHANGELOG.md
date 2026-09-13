@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The browser GUI's menus are now held to the desktop's by a test, so the two cannot quietly drift apart again. It checks what has to match — the order of the Window menu's Peers and Sandboxes sections, and that the "Manage Peered Clodexes…" and "Manage Clodex Sandboxes…" entries are always offered — and deliberately leaves alone the places the two legitimately differ, such as the desktop-only "Open Log File" and "Check for Updates…".
+
 - The browser GUI's menus now match the desktop's. Sandboxes has left the File menu and lives under Window, listing your running boxes the way Peers already were, with "Manage Clodex Sandboxes…" always there even when no box has been started. Plugins now has one route instead of two: the File ▸ Plugins… entry shows only when the top-level Plugins menu is absent, which is the fresh-install case it exists for.
 
 - A headless Clodex running on your own machine can now manage sandboxes from its web GUI — the Sandboxes dialog used to answer "Couldn't check Docker — sandbox manager unavailable" on every headless instance, before it ever looked for Docker. One running *inside* a sandbox box still cannot, which is what the flag was always meant to say: the question is whether there is a Docker to reach, not whether there is a desktop window. Note that this puts sandbox start/stop/rebuild within reach of anyone holding the instance's web token, since the browser is a headless instance's only frontend.
