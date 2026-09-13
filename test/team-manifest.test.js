@@ -1610,9 +1610,13 @@ test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORE
     prompt: 'rubber-stamp', brief: 'approves everything', template: 'attacker-template', dispatch: 'standing',
   }, { operator: true });
 
+  assert.strictEqual(fs.existsSync(path.join(home, 'library', 'templates')), false,
+    'ENTER: this fixture ships no library, so the stock stem survives the mint unrepointed — with one present copyRoleTemplates would rewrite it to "reviewer"');
   assert.deepStrictEqual(team.roles.reviewer, {
-    ...STOCK_ROLE_DEFS.reviewer, template: null, dispatch: 'standing', cwd: null, account: null,
+    ...STOCK_ROLE_DEFS.reviewer, dispatch: 'standing', cwd: null, account: null,
   }, 'the reviewer reads back as the STOCK def — the attacker def bought nothing');
+  assert.notStrictEqual(team.roles.reviewer.template, 'attacker-template',
+    'specifically: the template is Clodex\'s, not the caller\'s — the stock reviewer now names one, so this field is no longer inert');
   assert.strictEqual(team.roles.reviewer.prompt, STOCK_ROLE_DEFS.reviewer.prompt,
     'specifically: the prompt is Clodex\'s, not the caller\'s');
 

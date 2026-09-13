@@ -10913,8 +10913,8 @@ test('t773 create: a brief makes the hand per-ticket and lands on disk byte for 
   assert.strictEqual(raw.roles.hand.dispatch, 'worktree', 'the hand is born per-ticket');
   assert.deepStrictEqual(Object.keys(raw.roles.lead), ['prompt', 'brief', 'template'],
     'lead carries no dispatch: a reserved role with dispatch:worktree is refused by the writer');
-  assert.deepStrictEqual(Object.keys(raw.roles.reviewer), ['prompt', 'brief'],
-    'reviewer likewise untouched');
+  assert.deepStrictEqual(Object.keys(raw.roles.reviewer), ['prompt', 'brief', 'template'],
+    'reviewer likewise carries no dispatch, and names a template of its own as of t891');
   const promptFile = pathReal.join(f.home, 'teams', 'shop', 'prompts', 'append', 'team-project.md');
   assert.strictEqual(fsReal.readFileSync(promptFile, 'utf-8'), brief,
     'the brief is written verbatim — the bytes, not a shape');
