@@ -625,8 +625,9 @@ role. `cwd:` is relative to the team root, as everywhere else. `model:` derives
 `templates/<role>.json` from the role's template (or `clodex-team-hand`) with that
 `--model` and points the role at it — and since create and role-add already gave
 the role the team's own copy, that base is normally the team's own file rather
-than the library one, so a model change keeps whatever else was edited into it. A
-bracketed id such as `claude-opus-5[1m]` cannot be written here, use the alias —
+than the library one, so a model change keeps whatever else was edited into it.
+The aliases resolve to the 1M-context variants, and a bracketed id still cannot
+be written in this kv (the arg list ends at the first `]`), so use the alias —
 `opus`, `sonnet`, `haiku`, `fable`.
 
 `account:` names a label from Accounts (the registry behind the quota chip), and

@@ -1,13 +1,13 @@
 'use strict';
 
 const MODEL_ALIASES = {
-  opus: 'claude-opus-5',
-  sonnet: 'claude-sonnet-5',
+  opus: 'claude-opus-5[1m]',
+  sonnet: 'claude-sonnet-5[1m]',
   haiku: 'claude-haiku-4-5-20251001',
-  fable: 'claude-fable-5-1',
+  fable: 'claude-fable-5-1[1m]',
 };
 
-const MODEL_ID_RE = /^[a-z0-9][a-z0-9.-]{0,63}$/i;
+const MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
 
 function resolveModelId(v) {
   if (typeof v !== 'string' || !v) return null;

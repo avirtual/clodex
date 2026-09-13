@@ -415,6 +415,14 @@ test('parseIntent: team role-set — same shape as role-add', () => {
     { type: 'team', sub: 'role-set', name: 'worker', prompt: null, template: null, dispatch: null, cwd: null, model: 'claude-sonnet-5', account: null, body: 'new brief' });
 });
 
+test('t890: a bracketed id typed into model: is truncated at the first ] and orphans the rest into the body', () => {
+  const got = parseIntent('[agent:team role-set worker model:claude-opus-5[1m]] brief');
+  assert.strictEqual(got.model, 'claude-opus-5[1m',
+    'the kv list is ([^\\]]*), so it ends at the FIRST ] — resolveModelId then refuses this, correctly, which is why an alias is the only way to reach a 1M id');
+  assert.strictEqual(got.body, '] brief',
+    'and the orphaned ] leads the body, so the row reads as greedy from there on');
+});
+
 test('parseIntent: team role-rm / role-rename / watchdog carry no body', () => {
   assert.deepStrictEqual(parseIntent('[agent:team role-rm worker]'),
     { type: 'team', sub: 'role-rm', name: 'worker', body: '' });

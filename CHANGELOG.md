@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team role-add|role-set <role> model:opus|sonnet|fable]` now derives the 1M-context variant of that model, so a hand or custom role asks for Opus and gets the 1M Opus rather than the 200k one. `haiku` is unchanged, the alias is still the only way to name a 1M id (the intent's argument list ends at the first `]`, so a bracketed id cannot be typed into the kv), and templates already derived keep their literal `--model` until the role is re-derived. One rough edge: a standing seat on a derived 1M model is still nudged about its context at the 200k thresholds.
+
 ## 5.64.14 — 2026-09-13 — three things an operator touches: the reviewer's model, the browser menus, and messages from the phone
 
 - A built-in role's template is editable from the team popover: the `lead` and `reviewer` rows now name the template their seats boot on and open it in the template editor, so changing which model the reviewer runs no longer means finding and hand-editing the right JSON file.
