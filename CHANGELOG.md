@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The New Session dialog removes the opt-in worktree it just created when the spawn is refused (a per-ticket role on Join team, a bad name, a broken install), instead of leaving an orphaned branch and checkout on disk; a failed removal names the path in a toast.
+
 ## 5.64.6 — 2026-09-13 — a stopped box's version is marked last seen
 
 - `[agent:team sandbox status]` says "last seen" beside the version when the box's wire is offline, instead of presenting a stopped box's last-known version as current.

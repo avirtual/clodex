@@ -63,10 +63,10 @@ const API_CONTRACT = [
   // create, never to a roster render.
   { name: 'teamPreflight', kind: 'invoke', channel: 'team:preflight' },
   // Opt-in git worktree at spawn + working-dir suggestions for the New Session
-  // dialog. createWorktree/worktreeInfo/markSessionWorktree drive the worktree
-  // row; cwdSuggestions/noteCwd feed the working-directory MRU datalist.
+  // dialog. cwdSuggestions/noteCwd feed the working-directory MRU datalist.
   { name: 'createWorktree', kind: 'invoke', channel: 'worktree:create' },
   { name: 'worktreeInfo', kind: 'invoke', channel: 'worktree:info' },
+  { name: 'removeWorktree', kind: 'invoke', channel: 'worktree:remove' },
   { name: 'markSessionWorktree', kind: 'invoke', channel: 'session:markWorktree' },
   { name: 'cwdSuggestions', kind: 'invoke', channel: 'session:cwdSuggestions' },
   { name: 'noteCwd', kind: 'invoke', channel: 'session:noteCwd' },

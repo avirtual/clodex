@@ -2736,6 +2736,11 @@ async function doCreate() {
       result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
     }
     if (!applyCreateResult(nameFieldEls(), result)) {
+      if (worktree) {
+        const rm = await window.api.removeWorktree(worktree.path);
+        if (!rm || !rm.ok) showToast(`Session was not created and its worktree could not be removed: ${worktree.path} (${(rm && rm.error) || 'unknown error'})`, { kind: 'error', duration: 10000 });
+        worktree = null;
+      }
       console.error('Failed to create session:', result && result.error);
       refreshDiagBanner(); // a posix_spawnp failure usually means a broken install
       const refused = await window.api.reservedSessionNames();

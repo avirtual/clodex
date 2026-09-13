@@ -7993,10 +7993,10 @@ body {
         // create, never to a roster render.
         { name: "teamPreflight", kind: "invoke", channel: "team:preflight" },
         // Opt-in git worktree at spawn + working-dir suggestions for the New Session
-        // dialog. createWorktree/worktreeInfo/markSessionWorktree drive the worktree
-        // row; cwdSuggestions/noteCwd feed the working-directory MRU datalist.
+        // dialog. cwdSuggestions/noteCwd feed the working-directory MRU datalist.
         { name: "createWorktree", kind: "invoke", channel: "worktree:create" },
         { name: "worktreeInfo", kind: "invoke", channel: "worktree:info" },
+        { name: "removeWorktree", kind: "invoke", channel: "worktree:remove" },
         { name: "markSessionWorktree", kind: "invoke", channel: "session:markWorktree" },
         { name: "cwdSuggestions", kind: "invoke", channel: "session:cwdSuggestions" },
         { name: "noteCwd", kind: "invoke", channel: "session:noteCwd" },
@@ -38667,6 +38667,11 @@ ${detail}` });
             result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
           }
           if (!applyCreateResult(nameFieldEls(), result)) {
+            if (worktree) {
+              const rm = await window.api.removeWorktree(worktree.path);
+              if (!rm || !rm.ok) showToast(`Session was not created and its worktree could not be removed: ${worktree.path} (${rm && rm.error || "unknown error"})`, { kind: "error", duration: 1e4 });
+              worktree = null;
+            }
             console.error("Failed to create session:", result && result.error);
             refreshDiagBanner();
             const refused = await window.api.reservedSessionNames();
