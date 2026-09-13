@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- The two-instances recipe now covers moving an existing team into the second instance — its session rows, memory and tickets, with no downtime — and says which of the two frontends `CLODEX_WEB_PORT` actually turns on, so a launcher that omits it no longer sends you to the phone viewer thinking it is the GUI.
 - A second Clodex on the same box is now configured entirely from the shell: `CLODEX_REMOTE_PORT` and `CLODEX_WIRESCOPE_PORT` move the peer wire and wirescope off the ports the first instance holds, so the two-instances recipe is a copy-pasteable pair of shells instead of a procedure that stops to have you open Settings on the instance that has no window yet. Either var wins over the port stored in that instance's settings and is never written back, so a launch without it returns to whatever Settings holds; an unparseable or out-of-range value is logged and ignored rather than bound.
 
 ## 5.64.16 — 2026-09-13 — one intent to dispatch, a popover that reads as a form, and prose where you look for it

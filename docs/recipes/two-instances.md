@@ -64,6 +64,26 @@ exports `7901` and `7801` above. Each var wins over that instance's persisted
 `ui-settings.json`, so a launch without the var returns to whatever Settings
 holds — the pair of shells above is the whole configuration, nothing to click.
 
+`CLODEX_WEB_PORT` is what gives an instance a browser GUI, and an instance
+launched without it has none. That failure does not look like a failure: the
+instance still serves a page, because the peer wire brings up a second and
+different frontend. `remote.js` is the phone viewer, a deliberately simplified
+single page of some sixteen kilobytes, reachable on `CLODEX_REMOTE_PORT`.
+`web-host.js` is the real browser GUI, serving the two-megabyte
+`web-dist/index.html`, and `headless-main.js` constructs it only when
+`CLODEX_WEB_PORT` is set. So a launcher that omits the variable yields an
+instance that answers on a port and has no GUI at all — send an operator there
+and they land on the wrong frontend.
+
+Headless is the recommended shape for the second instance, not a workaround for
+the Finder caveat below. `requestSingleInstanceLock` is called at exactly one
+site, in `main.js`, so a headless instance never takes the Electron lock and
+cannot contend with a running desktop Clodex for it. That lock is also why
+`main.js` moves `userData` to `CLODEX_DATA_DIR` immediately above the
+`requestSingleInstanceLock` call: Electron derives the lock's identity from
+`userData`, so the move only separates two desktop instances if it happens
+first.
+
 ## 3. How A reaches B
 
 They are ordinary peers, over loopback:
@@ -103,7 +123,40 @@ shared outbox. Distinct labels keep them apart on every box they dial.
 Give the peer label A uses for B the same word B exports as `CLODEX_LABEL`, and
 the address A's agents type matches the one B's agents reply to.
 
-## 4. Caveats
+## 4. Moving an existing team into the second instance
+
+Moving a live team — its session rows, its tickets, its memory — out of an
+existing root and into the new one is a file copy plus four corrections. It
+needs no downtime window.
+
+1. **Every store is read-through, so a running instance will not clobber your
+   edit.** `stores.js`'s `remove()` is `_save(_load().filter(...))` and its
+   `list()` is `_load()`; `team-manifest.js`'s `listTeams` and `loadManifest`
+   do a `readdirSync`/`readFileSync` per call. There is no cached array waiting
+   to be written back over your change, so `sessions.json` can be edited under a
+   live instance. The one exception is `ui-settings.json`: the renderer holds
+   settings in memory and can re-save a stale copy, so settings edits still want
+   a restart.
+2. **Kill the agent's CLI pid; do not retire the seat.** Killing the pid is
+   lossless — `exitDisposition` in `session-manager.js` returns
+   `dropRecord: !agentType && !expected`, and for an agent that is always false,
+   so the row and its `sessionId` survive and the seat `--resume`s into its
+   conversation once the new instance starts it. Retiring is the destructive
+   path: `kill()` calls `getPersistence().remove(name)` unconditionally, and the
+   record you meant to move is gone.
+3. **Per-name directories do not follow the session row.** `run/<name>/` is
+   transient and can be left behind, but `library/memory/<name>/` and the
+   notices and messages trees are keyed by agent name and have to be copied
+   deliberately. After the move the two roots hold different name sets, so
+   nothing reconciles them later.
+4. **Rewrite `workspaceId` on the copied rows.** A row that points at a
+   workspace UUID the new root does not have is invisible in the new instance.
+   Set it to `default`, or copy the workspace row across as well.
+5. **Strip the peer keys from any copied settings** — `peerShellEnabled`,
+   `peers`, `peerAttached`, `peerVisible`, `peerControlled`. The new instance is
+   not the old one's peer set, and §3 above is how it acquires its own.
+
+## 5. Caveats
 
 - **No trailing slash on the paths.** Give `~/clodex-a`, not `~/clodex-a/`.
   `CLODEX_HOME` is taken as the raw string, and joins normalise it away, so a
@@ -120,3 +173,33 @@ the address A's agents type matches the one B's agents reply to.
   addressed by that instance's `CLODEX_LABEL`; on the **dialing** side, by the
   peer label given there. Two instances sharing a root would not be two
   instances.
+- **A fresh root's library is seeded from the shipped copies, so hand-edits do
+  not come along.** `seedLibraryDefaults()` in `stores.js` populates a new
+  root's `library/templates/*.json` from the versions that ship with Clodex, and
+  stops re-syncing a file the moment a live copy exists. Anything you edited in
+  your first root is therefore silently absent from the second: the shipped
+  `clodex-team-reviewer.json` carries no `--model`, so a second instance's
+  reviewers boot at 200k rather than 1M unless you copy your edited template
+  across by hand. Copy every hand-edited template deliberately.
+- **A free port is not an unclaimed one.** `lsof` sees a port as free when
+  nothing is bound to it right now, and a Clodex-supervised tunnel
+  (`ssh -L 127.0.0.1:7901:...`) reserves its local port but binds it only while
+  the far end is up. Check the `ssh -L` set and the peers panel as well as
+  `lsof` before you assign `CLODEX_REMOTE_PORT` or `CLODEX_WIRESCOPE_PORT`.
+  Taking a port a tunnel owns is silent: the second instance starts, and an
+  existing ingress route reaches it instead of the instance it was meant for.
+
+## 6. Several people on one box
+
+The variables in §1 are not a multi-tenancy mechanism, and a box shared by
+several people should not be configured with them.
+
+- **Environment variables give one user several instances.** They are a
+  blast-radius boundary: the processes run under the same uid, the roots are
+  separated by nothing but ordinary file permissions, and either process can
+  read the other's variables. Good for keeping a client's work off your own
+  tree; not a boundary between people.
+- **A Unix account each is the real boundary.** `useradd` per person is
+  kernel-enforced, and `CLODEX_HOME` and `CLODEX_DATA_DIR` then default into
+  each user's own home — so the multi-user shape needs no configuration at all,
+  and a recipe for it is `useradd` and nothing else.
