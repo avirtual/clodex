@@ -106,6 +106,12 @@ merge-base with master, and a hand that comments while it implements spends the
 end of its context trimming them back out (hand-825: ~12 trim passes; hand-827:
 red at turn 189 with 187k tokens carried). Do not write them in the first place.
 
+Before you report, run `node scripts/comment-delta.js` from your tree: it counts
+with the same tokenizer as the ratchet but over EVERY changed `.js` file, `test/`
+included, and a `/* */` block counts. The ratchet's green says nothing about
+test files, and a `grep '^+\s*//'` misses block comments. Report its one-line
+result; a positive delta is a must-fix you owe before `task done`, not a nit.
+
 A fact the code genuinely cannot express — a vendor behaviour, a measured
 number, an ordering that must hold — goes as one or two lines under a
 `## <symbol>` heading in `docs/notes/<module>.md`, which the gate does not

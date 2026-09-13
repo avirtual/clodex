@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `scripts/comment-delta.js` reports comment lines added against the merge-base across every changed `.js` file, test trees included, using the ratchet's own tokenizer; the hand prompt names it as the pre-report check, since the ratchet's green says nothing about `test/`.
+
 ## 5.64.9 — 2026-09-13 — an urgent re-send of a parked dm arrives once
 
 - Re-sending a dm as `urgent` after it was parked for a cold peer no longer delivers it twice: the urgent copy claims the parked copy of the same message (same sender, same body) for that target before it is injected, so the peer reads it once.
