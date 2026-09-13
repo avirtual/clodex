@@ -405,7 +405,10 @@ cwd IS a worktree is still on the team.
   from mush.
 - Artifacts live OUTSIDE the project, under
   `~/.clodex/projects/<leaf>-<hash>/tasks/<task>/` — never in the user's own
-  repo. Their working tree belongs to them; your process notes are not their
+  repo. `<leaf>` is the basename of the project root and `<hash>` the first
+  8 hex characters of sha256 over its `path.resolve`d (not realpath'd)
+  absolute path, so `echo -n /abs/root | shasum -a 256 | cut -c1-8` names the
+  dir. Their working tree belongs to them; your process notes are not their
   commits to carry. Name the dir on a ticket's first line to link the two.
 
 ## Team lifecycle
