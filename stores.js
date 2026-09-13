@@ -19,6 +19,7 @@ const { clampSidebarWidth } = require('./sidebar-width');
 const { sanitizeCtxThresholds } = require('./ctx-reminder');
 const { confineOrThrow } = require('./path-confine');
 const { resolveWirescopePort, resolveRemotePort, resolveProxyUrl } = require('./service-ports');
+const { coerceRemoteBasePath, resolveRemoteBasePathSetting } = require('./remote');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
@@ -106,6 +107,7 @@ const DEFAULT_UI_SETTINGS = {
   sidebarWidth: 220,
   remoteEnabled: false,
   remotePort: 7900,
+  remoteBasePath: '',
   // Serve peer terminals. Unlike terminalReports there is no second door: the
   // absent-key answer below is the migration's `false`, so a new install and a
   // settings file without the key agree by construction.
@@ -1430,6 +1432,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
           sidebarWidth: clampSidebarWidth(raw?.sidebarWidth),
           remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
           remotePort: Number.isInteger(raw?.remotePort) ? raw.remotePort : DEFAULT_UI_SETTINGS.remotePort,
+          remoteBasePath: coerceRemoteBasePath(raw?.remoteBasePath) ?? DEFAULT_UI_SETTINGS.remoteBasePath,
           // `raw.peers`, NOT `peers` — see legacyShellGrant. The sanitized
           // array no longer carries `shellAllowed`.
           //
@@ -1457,6 +1460,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       const warn = (m) => console.warn(m);
       s.wirescopePort = resolveWirescopePort(s, process.env, warn);
       s.remotePort = resolveRemotePort(s, process.env, warn);
+      s.remoteBasePath = resolveRemoteBasePathSetting(s, process.env, warn);
       s.proxyUrl = resolveProxyUrl(s, process.env, warn);
       return s;
     },
@@ -1520,6 +1524,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         sidebarWidth: clampSidebarWidth(partial?.sidebarWidth ?? cur.sidebarWidth),
         remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,
         remotePort: Number.isInteger(partial?.remotePort) ? partial.remotePort : cur.remotePort,
+        remoteBasePath: (partial && 'remoteBasePath' in partial)
+          ? (partial.remoteBasePath == null || !String(partial.remoteBasePath).trim()
+            ? ''
+            : (coerceRemoteBasePath(partial.remoteBasePath) ?? cur.remoteBasePath))
+          : cur.remoteBasePath,
         // Booleans only: `cur` already carries the migrated value, so a junk
         // partial must not be able to write a non-boolean that reads back as
         // itself and makes the grant depend on truthiness.
@@ -1548,6 +1557,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
         ...next,
         wirescopePort: resolveWirescopePort(next, process.env),
         remotePort: resolveRemotePort(next, process.env),
+        remoteBasePath: resolveRemoteBasePathSetting(next, process.env),
         proxyUrl: resolveProxyUrl(next, process.env),
       };
     },

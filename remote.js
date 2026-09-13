@@ -19,29 +19,42 @@ function isLoopbackHost(h) {
 }
 
 const REMOTE_BASE_PATH_ENV = 'CLODEX_REMOTE_BASE_PATH';
-const DEFAULT_REMOTE_BASE_PATH = '/c';
+const DEFAULT_REMOTE_BASE_PATH = '';
 const BASE_PATH_SEGMENT_RE = /^(?!\.+$)[A-Za-z0-9._~-]+$/;
 const basePathWarned = new Set();
 
-function resolveRemoteBasePath(value, warn) {
-  if (value == null) return DEFAULT_REMOTE_BASE_PATH;
-  const raw = String(value);
-  if (!raw.trim()) return DEFAULT_REMOTE_BASE_PATH;
-  let s = raw.trim();
+function coerceRemoteBasePath(value) {
+  if (value == null) return null;
+  let s = String(value).trim();
+  if (!s) return null;
   if (s.startsWith('/')) s = s.slice(1);
   if (s.endsWith('/')) s = s.slice(0, -1);
+  if (s === '') return null;
   const segments = s.split('/');
-  if (s !== '' && segments.every((seg) => BASE_PATH_SEGMENT_RE.test(seg))) {
-    return `/${segments.join('/')}`;
-  }
-  const mark = `${REMOTE_BASE_PATH_ENV}=${raw}`;
+  if (!segments.every((seg) => BASE_PATH_SEGMENT_RE.test(seg))) return null;
+  return `/${segments.join('/')}`;
+}
+
+function resolveRemoteBasePath(value, warn, fallback = DEFAULT_REMOTE_BASE_PATH) {
+  if (value == null) return fallback;
+  const raw = String(value);
+  if (!raw.trim()) return fallback;
+  const base = coerceRemoteBasePath(raw);
+  if (base != null) return base;
+  const mark = JSON.stringify([REMOTE_BASE_PATH_ENV, raw, fallback]);
   if (typeof warn === 'function' && !basePathWarned.has(mark)) {
     basePathWarned.add(mark);
     try {
-      warn(`${REMOTE_BASE_PATH_ENV}="${raw}" is not a mount path like /c or /i/phone — keeping ${DEFAULT_REMOTE_BASE_PATH}`);
+      warn(`${REMOTE_BASE_PATH_ENV}="${raw}" is not a mount path like /c or /i/phone — keeping ${fallback || 'no prefix'}`);
     } catch {}
   }
-  return DEFAULT_REMOTE_BASE_PATH;
+  return fallback;
+}
+
+function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
+  const settled = coerceRemoteBasePath(settings ? settings.remoteBasePath : null)
+    ?? DEFAULT_REMOTE_BASE_PATH;
+  return resolveRemoteBasePath(env ? env[REMOTE_BASE_PATH_ENV] : null, warn, settled);
 }
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
@@ -526,11 +539,13 @@ class RemoteServer {
     // this server). The page uses relative URLs, so it works at / and under the
     // prefix alike; the redirect makes the bare prefix resolve those correctly.
     const base = this._basePath;
-    if (p === base) {
-      res.writeHead(301, { Location: `${base}/` });
-      return res.end();
+    if (base) {
+      if (p === base) {
+        res.writeHead(301, { Location: `${base}/` });
+        return res.end();
+      }
+      if (p.startsWith(`${base}/`)) p = p.slice(base.length);
     }
-    if (p.startsWith(`${base}/`)) p = p.slice(base.length);
 
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
       return this._page(res);
@@ -1077,6 +1092,6 @@ class RemoteServer {
 }
 
 module.exports = {
-  RemoteServer, resolveRemoteBasePath,
+  RemoteServer, resolveRemoteBasePath, coerceRemoteBasePath, resolveRemoteBasePathSetting,
   REMOTE_BASE_PATH_ENV, DEFAULT_REMOTE_BASE_PATH,
 };

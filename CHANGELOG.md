@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Breaking:** the phone viewer no longer answers under `/c` unless you ask it to. The mount prefix used to default to `/c`, which meant every Clodex served its entire API twice — once at `/api/*` and again at `/c/api/*` — so an ingress path match, a WAF rule or an audit filter written against `/api/*` was silently bypassable through the alias, and nothing declared it existed. Unset now means no prefix: `/` and `/api/sessions` serve exactly as before, `/c/` 404s. To restore the old route, set `CLODEX_REMOTE_BASE_PATH=/c` or the new `remoteBasePath` setting. That setting is the other half of this change — the prefix is now persisted rather than env-only, so a packaged `.app` launched from Finder (which inherits no shell environment) can set it at all. The variable still wins over the stored value and is never written back, so a launch without it returns to whatever Settings holds.
+
 ## 5.65.0 — 2026-09-13
 
 - The phone viewer can be mounted under any path: `CLODEX_REMOTE_BASE_PATH=/i` serves it at `example.com/i/` so a second instance on the same box no longer needs an nginx rewrite to borrow the first one's `/c`. The default is unchanged — leave the variable unset and `/c` works exactly as before, as does the unprefixed root. A value that is not a plain path (`..`, a backslash, an empty segment) is logged and ignored rather than mounted somewhere adjacent.
