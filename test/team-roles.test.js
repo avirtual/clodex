@@ -1571,12 +1571,13 @@ test('t792 wiring: the Open routes a team row to the drawer\'s own team opener',
 });
 
 // ── the reserved row's template control ─────────────────────────────────────
-// The three tests above pin string RESOLUTION only. A cold review deleted BOTH
-// added pieces from the popover's read-only arm — the `data-field="template"`
-// markup line and the whole holder/val/tplRow/open block — and 253 tests stayed
-// green: the operator-visible name, the Open button and its disabled state could
-// all be removed in silence. These are the source-shape pins that mirror the ones
-// t792 shipped for the IDENTICAL control on the editable row.
+// The `reservedRoleTemplate:` tests far above pin string RESOLUTION only. A cold
+// review deleted BOTH added pieces from the popover's read-only arm — the
+// `data-field="template"` markup line and the whole holder/val/tplRow/open block
+// — and the suite stayed green: the operator-visible name, the Open button and
+// its disabled state could all be removed in silence. These are the source-shape
+// pins, mirroring the ones t792 shipped for the IDENTICAL editable-row control
+// immediately above.
 const reservedTemplateControl = () => {
   const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
   const from = pop.indexOf('if (row.readOnly) {');
