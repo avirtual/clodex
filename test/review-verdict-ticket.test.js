@@ -1723,6 +1723,33 @@ test('t906: a REWORK with a live seat is dispatched to that seat, not to the lea
   assert.deepStrictEqual((t.reworkReasons || []).map((r) => r.by), ['ticket-loop'],
     'the reason is filed under the loop, exactly as the suite-red reject files it');
   assert.match(t.reworkReasons[0].reason, /the review came back REWORK/);
+
+  const rejects = f.broadcasts.filter((b) => b.msg && b.msg.type === 'task' && /rejected/.test(b.msg.body || ''));
+  assert.strictEqual(rejects.length, 1, 'ENTER: the rejection was broadcast, or the cause below reads off nothing');
+  assert.ok(!/suite red/.test(rejects[0].msg.body),
+    `the suite is GREEN by construction on this path — a broadcast blaming it sends whoever is debugging to the branch instead of to the verdict. Got: ${rejects[0].msg.body}`);
+  assert.match(rejects[0].msg.body, /review REWORK/, 'it names the cause that actually fired');
+});
+
+test('t906: a SECOND REWORK round dispatches again and the brief names the round it opened', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+
+  const r1 = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  await f.m._handleReviewDone(f.m.sessions.get(r1.name), reworkVerdict('- first round'));
+  assert.match(leadNote(f), /rework round 1/, 'ENTER: round 1 dispatched and was briefed as round 1');
+  f.gated.length = 0;
+
+  const ts = f.tstore.load(f.team.root);
+  const i = ts.findIndex((t) => t.id === 't1');
+  ts[i] = { ...ts[i], state: 'done', loopStep: 'review' };
+  f.tstore.save(f.team.root, ts);
+  const r2 = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  await f.m._handleReviewDone(f.m.sessions.get(r2.name), reworkVerdict('- still inverted'));
+
+  assert.strictEqual(f.one('t1').reworkRound, 2, 'the second rejection counts up');
+  assert.match(leadNote(f), /rework round 2/,
+    'and the brief reports the round it OPENED — read post-bump, so a pre-bump read would say 1 twice');
 });
 
 test('t906: the lead gets a BRIEF carrying the must-fix TITLES, so the verdict need not be opened', async () => {
@@ -1843,4 +1870,24 @@ test('t906: mustFixTitles returns one title per counted must-fix, marker strippe
     'the floor-of-one arm yields the line itself, so the count still has a title');
   assert.deepStrictEqual(mustFixTitles(null), [], 'absent is no titles');
   assert.deepStrictEqual(mustFixTitles('(none)'), [], 'and so is a placeholder — not a title reading "(none)"');
+});
+
+test('t906: a THROWING verdict-body write costs neither the dispatch nor the brief', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  f.m._writeVerdictBody = () => { throw new Error('the disk went away'); };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), reworkVerdict('- the guard is inverted'));
+
+  assert.deepStrictEqual(f.killed, [rec.name],
+    'the reviewer still retires — hoisted out of the notification, this write sits in the window bookReview closes, and an escape here skips the kill, the cost row, the dispatch AND the brief');
+  const hand = handNote(f);
+  assert.match(hand, /the guard is inverted/, 'the rework still reached the seat');
+  assert.match(hand, /could NOT be saved \(the verdict body write threw: the disk went away\)/,
+    'and says why there is no file to read, rather than citing one that was never written');
+  const body = leadNote(f);
+  assert.match(body, /Sent straight to team-hand/, 'the brief still says the rework was dispatched');
+  assert.match(body, /could NOT be saved/, 'and is honest that the verdict body is gone');
+  assert.strictEqual(f.one('t1').reworkRound, 1, 'and the rejection landed');
 });

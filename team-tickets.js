@@ -1635,8 +1635,9 @@ function createTicketMethods(deps, shared) {
       if (dispatch && dispatch.ok) {
         out.push(`Sent straight to ${dispatch.seat} for rework (rework round ${dispatch.round})`
           + `${this._seatReplacedClause(dispatch.replaced)}. NO action is owed from you.`);
-        out.push(`If the verdict is wrong and you want to redirect the seat: [agent:task respec ${ticketId}] <the correction>`
-          + ' — it reaches that same seat and keeps its tree. Doing nothing is the normal case.');
+        out.push(`If the verdict is wrong and you want to redirect the seat: [agent:task respec ${ticketId}] <the corrected spec>`
+          + ' — it reaches that same seat and keeps its tree, and it REPLACES the spec wholesale, so send the whole corrected'
+          + ' one rather than a delta. Doing nothing is the normal case.');
       } else {
         out.push(`The rework was NOT dispatched (${(dispatch && dispatch.error) || 'no live seat was resolved'}) and is OWED:`
           + ` no seat has been told. Read the full verdict below and send it back yourself with [agent:task reject ${ticketId}] <the must-fixes>.`);
@@ -1658,7 +1659,7 @@ function createTicketMethods(deps, shared) {
           + `${items}\n\n${where}\n\n`
           + 'Address every item, then report as usual: the loop re-verifies your branch and sends it to a fresh review from there. '
           + 'If you think an item is wrong, say so in your report rather than skipping it silently.',
-          { notifyLead: false });
+          { notifyLead: false, cause: 'review REWORK' });
       } catch (e) {
         return { ok: false, error: e.message };
       }
@@ -2579,7 +2580,12 @@ function createTicketMethods(deps, shared) {
 
       if (landedOn) {
         const rework = landedOn.verdict === 'REWORK';
-        const written = this._writeVerdictBody(session, rec.reviewTicket, landedOn, verdict);
+        let written;
+        try {
+          written = this._writeVerdictBody(session, rec.reviewTicket, landedOn, verdict);
+        } catch (e) {
+          written = { ok: false, path: null, error: `the verdict body write threw: ${e && e.message ? e.message : String(e)}` };
+        }
         // Re-resolved off the reviewer's cwd rather than threaded out of
         // _landVerdictOnTicket: widening that function's return to carry the
         // team so one caller can avoid a resolve is how a narrow contract turns
@@ -6976,7 +6982,7 @@ function createTicketMethods(deps, shared) {
     // TRANSITION is deliberately identical to it, because a ticket reopened by
     // the loop and one reopened by the lead must be indistinguishable to every
     // reader downstream; if that handler's transition changes, this must follow.
-    _rejectTicketFromLoop(team, ticketId, reason, { notifyLead = true } = {}) {
+    _rejectTicketFromLoop(team, ticketId, reason, { notifyLead = true, cause = 'suite red' } = {}) {
       try {
         const tickets = ticketsStore.load(team.root);
         const ticket = tickets.find((t) => t.id === ticketId);
@@ -7035,8 +7041,8 @@ function createTicketMethods(deps, shared) {
               { label: 'rejected', reason, from: 'ticket-loop' }));
         const replaced = this._seatReplacedClause(rework);
         this._reconcileTickets(team);
-        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} rejected: suite red${replaced}` });
-        log.info('intent', `ticket ${ticket.id} rejected by the loop (suite red) → ${rework.seat}${replaced}`);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} rejected: ${cause}${replaced}` });
+        log.info('intent', `ticket ${ticket.id} rejected by the loop (${cause}) → ${rework.seat}${replaced}`);
         // Undelivered is still reopened: the board is correct and the watchdog
         // sees an open ticket, which is recoverable. Reporting it lets the caller
         // escalate so the lead learns the hand was never told.
