@@ -130,7 +130,7 @@ if (!totals) {
   if (refusal) emit(refusal, 1, 200);
   const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
   emit(
-    `[${LEAF}] no "TOTALS: <n> pass, <n> fail, <n> tests" line from scripts/run-tests.js on stdout (exit ${code}) — nothing was measured; last line: ${last}`,
+    `[${LEAF}] no "TOTALS: <n> pass, <n> fail, <n> tests" line (exit ${code}); last: ${last}`,
     exitCode,
   );
 }
