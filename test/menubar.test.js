@@ -583,7 +583,10 @@ test('t885: Library ▸ Prompts ▸ New Prompt… is still clickable after the p
 
 test('t885: mount places an overflowing submenu beside its parent, not at the window edge', async () => {
   const overflowing = (node) => {
-    if (node.className === 'clx-mb-drop') return { left: 0, top: 0, right: 200, bottom: 300, width: 200, height: 300 };
+    if (node.className === 'clx-mb-drop') {
+      const left = parseFloat(node.style.left) || 0;
+      return { left, top: 0, right: left + 200, bottom: 300, width: 200, height: 300 };
+    }
     if (labelOf(node) === 'System') return { left: 700, top: 120, right: 900, bottom: 140, width: 200, height: 20 };
     return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
   };
