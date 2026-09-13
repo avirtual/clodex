@@ -626,9 +626,9 @@ role. `cwd:` is relative to the team root, as everywhere else. `model:` derives
 `--model` and points the role at it — and since create and role-add already gave
 the role the team's own copy, that base is normally the team's own file rather
 than the library one, so a model change keeps whatever else was edited into it.
-The aliases — `opus`, `sonnet`, `haiku`, `fable` — resolve to the 1M-context
-variants where one exists (`opus`, `sonnet` and `fable` carry a `[1m]` suffix;
-`haiku` has none), and a full id may be written here including a `[1m]` suffix.
+The aliases resolve to the 1M-context variants, and a bracketed id still cannot
+be written in this kv (the arg list ends at the first `]`), so use the alias —
+`opus`, `sonnet`, `haiku`, `fable`.
 
 `account:` names a label from Accounts (the registry behind the quota chip), and
 every seat the LOOP mints for that role — a ticket hand, a cold reviewer, a

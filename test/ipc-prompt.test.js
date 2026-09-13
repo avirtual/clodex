@@ -213,8 +213,8 @@ test('t767/t830/t890: the role-add row documents model: and account:, closes the
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
     assert.ok(/model: derives templates\/<role>\.json from the role's template \(or clodex-team-hand\) with that --model and points the role at it/.test(src),
       'the row says what model: DOES');
-    assert.ok(/the aliases resolve to the 1M-context variants, and a full id may be written here including a \[1m\] suffix/.test(src),
-      'and that an alias IS a 1M id, so a lead who wants one neither hand-edits JSON nor avoids the bracket');
+    assert.ok(/the aliases resolve to the 1M-context variants, and a bracketed id still cannot be written in this kv \(the arg list ends at the first \]\), so use the alias/.test(src),
+      'an alias IS a 1M id, AND the first-] parser limit still stands — a row that drops the limit sends a lead at a refusal that reads as a bug');
     assert.ok(/account: pins every seat the loop mints for the role — ticket hands, cold reviewers — to that account's config dir/.test(src),
       'the row says what account: DOES — which seats it reaches is the whole question a lead has about it');
     assert.ok(/an ephemeral seat cannot be edited after the fact, so this is the only way to move them/.test(src),

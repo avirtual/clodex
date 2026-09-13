@@ -7,7 +7,7 @@ const MODEL_ALIASES = {
   fable: 'claude-fable-5-1[1m]',
 };
 
-const MODEL_ID_RE = /^[a-z0-9][a-z0-9.-]{0,63}(\[[a-z0-9]{1,8}\])?$/i;
+const MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
 
 function resolveModelId(v) {
   if (typeof v !== 'string' || !v) return null;

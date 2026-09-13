@@ -63,10 +63,11 @@ test('t890: a plain id and a trailing-bracketed id both pass through', () => {
   assert.strictEqual(resolveModelId('claude-opus-5[1m]'), 'claude-opus-5[1m]');
 });
 
-test('t890: the widened pattern stays fail-closed — the value reaches an argv', () => {
+test('t890: the widened pattern stays fail-closed, and the suffix is lowercase-only', () => {
   for (const bad of [
     '../x', 'x[1m]/y', 'a[1m][2m]', '-lead', '', 'a/b', 'a[1m]b', '[1m]', 'a[]',
     'a[1m];rm -rf /', 'a[1 m]', 'a\n[1m]', 'a[1m]\n', 'claude-opus-5[1m] --foo',
+    'claude-opus-5[1M]', 'CLAUDE-OPUS-5[1M]',
   ]) {
     assert.strictEqual(resolveModelId(bad), null, `must refuse ${JSON.stringify(bad)}`);
   }

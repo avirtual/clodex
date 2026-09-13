@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- A team role set to `model: opus`, `sonnet` or `fable` now runs the 1M-context variant of that model. Asking for an Opus reviewer gets a 1M Opus reviewer instead of the 200k one, and a full id with a `[1m]` suffix can be typed where only the plain form was accepted before. `haiku` is unchanged. Templates already derived keep the model they were written with until the role is re-derived.
+- `[agent:team role-add|role-set <role> model:opus|sonnet|fable]` now derives the 1M-context variant of that model, so a hand or custom role asks for Opus and gets the 1M Opus rather than the 200k one. `haiku` is unchanged, the alias is still the only way to name a 1M id (the intent's argument list ends at the first `]`, so a bracketed id cannot be typed into the kv), and templates already derived keep their literal `--model` until the role is re-derived. One rough edge: a standing seat on a derived 1M model is still nudged about its context at the 200k thresholds.
 
 ## 5.64.14 — 2026-09-13 — three things an operator touches: the reviewer's model, the browser menus, and messages from the phone
 
