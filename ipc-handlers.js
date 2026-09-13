@@ -8,7 +8,7 @@ const { nameConflict } = require('./session-manager');
 // rather than injected so there is one draft notion: a focus decision computed
 // from a second one would drift from the delivery it is supposed to agree with.
 const { isDraftOpen } = require('./proxy-util');
-const { STOCK_ROLE_DEFS, defaultLeadSeat } = require('./team-manifest');
+const { STOCK_ROLE_DEFS, RESERVED_ROLE_KEYS, defaultLeadSeat } = require('./team-manifest');
 const { resolveAccountLabel } = require('./accounts');
 const { teamPreflight } = require('./team-preflight');
 const {
@@ -206,7 +206,7 @@ function registerIpcHandlers(deps) {
         addRole(team, role, def);
       }
       const dispatch = (loadManifest(team).roles[role] || {}).dispatch;
-      if (dispatch === 'spawn' || dispatch === 'worktree') {
+      if ((dispatch === 'spawn' || dispatch === 'worktree') && !RESERVED_ROLE_KEYS.has(role)) {
         return { ok: false, error: `team ${team}: the ${role} role runs per ticket (dispatch: ${dispatch}) — the ticket loop mints a seat for each ticket, so a standing seat would never receive one; no session was created. Dispatch work with [agent:task add ${role}] from the lead, or set the role's dispatch to standing in the Roles popover to hold a live seat.` };
       }
       return await spawnFromParams(e, p);
