@@ -1,6 +1,7 @@
-// Transcript rendering off the CLI's on-disk JSONL. Two consumers: a full
-// markdown export (jsonlToMarkdown, tool traffic included) and the remote
-// (phone) chat view (jsonlToMessages, user/assistant text only). Both read the
+// Transcript rendering off the CLI's on-disk JSONL. Two renderers: a full
+// markdown export (jsonlToMarkdown, tool traffic included) and the chat-message
+// list served over /api/transcript to both the phone page and the `clodex` CLI
+// (jsonlToMessages, user/assistant text only). Both read the
 // JSONL the CLI writes regardless of which observation path is live, so the
 // remote view never depends on the intent machinery. extractText pulls the
 // assistant-visible text from ONE parsed entry — the JsonlWatcher's per-line
