@@ -2616,6 +2616,7 @@ html, body {
 .prefs-check { display: flex; align-items: center; gap: 8px; }
 .prefs-check input[type="checkbox"] { margin: 0; }
 .prefs-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none; }
+input.env-locked { opacity: 0.6; cursor: not-allowed; }
 /* Why a dependent toggle is greyed. Hidden when empty rather than always
    present, so a live control has no leftover gap under it. */
 .prefs-dep-reason { display: none; font-size: 11px; opacity: 0.65; margin: 3px 0 0 24px; }

@@ -42,6 +42,7 @@ const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
+const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -4663,6 +4664,9 @@ const wsLogsSize = document.getElementById('ws-logs-size');
 const wsLogsAge = document.getElementById('ws-logs-age');
 const wsLogsClearBtn = document.getElementById('ws-logs-clear-btn');
 const prefsRemoteEnabled = document.getElementById('prefs-remote-enabled');
+const prefsRemoteBasePath = document.getElementById('prefs-remote-base-path');
+const prefsRemoteBasePathState = document.getElementById('prefs-remote-base-path-state');
+let prefsEnvLocked = {};
 const remoteDot = document.getElementById('remote-dot');
 const remoteStatusText = document.getElementById('remote-status-text');
 const prefsRemoteToken = document.getElementById('prefs-remote-token');
@@ -7073,6 +7077,11 @@ async function openPrefs() {
   // that claims to say what the mode IS.
   voiceControl.start();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
+  prefsEnvLocked = (s && s.envLockedSettings) || {};
+  if (prefsRemoteBasePath) {
+    prefsRemoteBasePath.value = s.remoteBasePath == null ? '' : String(s.remoteBasePath);
+    applyEnvLock(prefsRemoteBasePath, prefsRemoteBasePathState, envLockView(prefsEnvLocked, 'remoteBasePath'));
+  }
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!s.remoteHasToken);
@@ -7175,6 +7184,9 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : 'optimized',
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
+    ...(prefsRemoteBasePath
+      ? patchUnlessEnvLocked(prefsEnvLocked, 'remoteBasePath', prefsRemoteBasePath.value)
+      : {}),
   });
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
   await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());

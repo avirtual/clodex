@@ -1213,7 +1213,12 @@ and are not, which is why the judgement worth testing is pushed down here.
   persists), **env-row.js** (one Preferences ▸ Env row — its layout CLASSES, its
   full-text titles, and the "shipped" marker, which tracks the VALUE so an edited
   default drops it; takes `document` as a parameter so all of that is assertable
-  without a browser), **account-select.js** (the Account picker as a VIEW onto the
+  without a browser), **env-lock.js** (which settings an environment variable has
+  taken over, and what a Preferences field does about it: the note naming the
+  variable, the read-only field, and — the load-bearing half —
+  `patchUnlessEnvLocked`, which OMITS a locked key from the save so the stored
+  value round-trips and removing the variable returns to what Settings holds),
+  **account-select.js** (the Account picker as a VIEW onto the
   `CLAUDE_CONFIG_DIR` line inside the env textarea — no separate persisted field,
   the same shape args-model.js gives `--model`; `default` is the ABSENCE of the
   line and an unregistered dir reads as `custom`, which the picker leaves alone),

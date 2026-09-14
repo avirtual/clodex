@@ -1160,6 +1160,12 @@
           <span id="remote-dot" class="prefs-dot"></span>
           <span id="remote-status-text" class="hint-text" style="flex: 1;">—</span>
         </div>
+        <p class="hint-text" style="margin-top: 10px;">Mount path the viewer is served under, for an ingress that proxies a sub-path. Blank serves at the root, which is the default; <code>/c</code> is the usual choice. Applies as soon as you save — the wire restarts on it.</p>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Mount path</span>
+          <input type="text" id="prefs-remote-base-path" placeholder="/c" autocomplete="off" spellcheck="false" style="flex: 1;">
+        </div>
+        <span id="prefs-remote-base-path-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
         <p class="hint-text" style="margin-top: 10px;">Optional access token that gates the wire. Paste a token you keep a copy of — you'll need it for <code>?token=</code> bookmarks on your phone. Stored write-only on this machine; it's never shown again after you save. The <code>CLODEX_REMOTE_TOKEN</code> env var, if set, overrides this.</p>
         <div class="prefs-row" style="margin-top: 6px;">
           <input type="password" id="prefs-remote-token" placeholder="Paste a token to set…" autocomplete="off" style="flex: 1;">
