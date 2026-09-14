@@ -536,9 +536,9 @@ function createRemoteWiring(deps) {
   }
 
   // The RemoteServer reads its operator token only at construct, so a token
-  // change (remote:setToken) must tear down any live server before reconciling —
-  // syncRemoteServer's own stop/start only fires on a port change or a toggle.
-  // Forcing the teardown here makes the new gate live immediately.
+  // change (remote:setToken) must tear down any live server before reconciling:
+  // the token is not among the fields syncRemoteServer's own stop/start
+  // compares. Forcing the teardown here makes the new gate live immediately.
   function refreshRemoteToken() {
     if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
     syncRemoteServer();
