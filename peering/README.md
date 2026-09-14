@@ -93,8 +93,13 @@ variable in one table, is `docs/recipes/two-instances.md`.
 - **0** — clean SIGTERM/SIGINT teardown (kills PTYs, stops remote/peer/tunnel).
 - **1** — another headless instance already holds the pidfile
   (`$CLODEX_DATA_DIR/headless.pid`).
-- **64** — restart requested (the phone/menu restart over the peer wire). The
-  process shuts down cleanly and exits; **the supervisor does the relaunch.**
+- **64** — restart requested: the phone/menu restart over the peer wire, or an
+  agent emitting `[agent:reboot]` (which waits for every session to go idle
+  first, so no seat is killed mid-turn). The process shuts down cleanly and
+  exits; **the supervisor does the relaunch.** The agent path is available only
+  where `Environment=CLODEX_SUPERVISED=1` declares that a supervisor exists —
+  without it the intent is refused rather than taking the box down for good.
+  Supervision cannot be detected, only declared, so the unit below sets it.
 
 So the systemd **user** unit wants `Restart=always` — it relaunches on both a
 crash and the deliberate exit-64 restart:
@@ -110,6 +115,11 @@ Type=simple
 WorkingDirectory=%h/wb-wrap-ui
 # claude CLI lives in the user-global npm prefix; put it on PATH for spawns.
 Environment=PATH=%h/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Declares the Restart=always below to the engine, which is what lets an agent
+# ask for a restart at all: [agent:reboot] restarts this host by exiting 64, and
+# is refused when nothing is declared to bring it back. Drop this line and the
+# intent goes away with it.
+Environment=CLODEX_SUPERVISED=1
 # Optional: Environment=CLODEX_DATA_DIR=%h/.config/clodex  (bare default shown)
 #           Environment=CLODEX_WORKSPACES=default
 ExecStart=/usr/bin/node headless-main.js

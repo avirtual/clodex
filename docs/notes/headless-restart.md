@@ -22,6 +22,11 @@ notification: there is no operator surface on this host, and the ops log is what
 through the waiter — that callback is the only way an agent learns its relaunch
 is never coming, and losing it strands the seat silently.
 
+`disarm` is exported for symmetry with the waiter but has NO caller: unlike
+`main.js`, which disarms on `before-quit` because Electron can cancel a quit,
+this host's `terminate()` ends in `process.exit(0)` and takes the poll timer with
+it. Read it as available, not as a wired path.
+
 ## supervisorDeclared
 
 Declared by `CLODEX_SUPERVISED`, never DETECTED. A process cannot know whether

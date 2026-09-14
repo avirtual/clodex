@@ -107,10 +107,10 @@ ENV HOME=/home/clodex \
     # construct a sandbox manager. Baked into the image, not the generated
     # compose, so it holds however the container is launched.
     CLODEX_IN_SANDBOX=1 \
-    # Declares the compose `restart: always` (sandbox.js writes it) to the
-    # engine: [agent:reboot] restarts this host by exiting 64 for a supervisor,
-    # and refuses when none is declared. The two are a PAIR — pinned together by
-    # test/supervised-launchers.test.js.
+    # Declares to the engine that this image is run under a restart policy:
+    # [agent:reboot] restarts the host by exiting 64 for a supervisor, and is
+    # refused when none is declared. Baked in because every launcher that ships
+    # this image supplies one — pinned by test/supervised-launchers.test.js.
     CLODEX_SUPERVISED=1
 
 USER clodex

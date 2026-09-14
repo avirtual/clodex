@@ -58,7 +58,11 @@ test(`${WEB_DOCKERFILE}: the web image declares ${SUPERVISED_ENV}`, () => {
   assert.match(src, /CMD\s*\[\s*"node"\s*,\s*"headless-main\.js"\s*\]/,
     `ENTER: ${WEB_DOCKERFILE} runs the headless host, which is the host that refuses`);
 
-  const m = new RegExp(`${SUPERVISED_ENV}=(\\S+)`).exec(src);
+  // Anchored to the start of a line: an unanchored search takes the FIRST
+  // occurrence anywhere, comments included, so a `CLODEX_SUPERVISED=1` written
+  // into the comment above would make the value assertion read prose instead of
+  // the ENV. The unit test gets this for free by filtering `^Environment=`.
+  const m = new RegExp(`^\\s*${SUPERVISED_ENV}=(\\S+)`, 'm').exec(src);
   assert.ok(m,
     `${WEB_DOCKERFILE} never sets ${SUPERVISED_ENV}, but sandbox.js writes `
     + '`restart: always` into the compose that runs it — so every team sandbox box '
@@ -69,10 +73,11 @@ test(`${WEB_DOCKERFILE}: the web image declares ${SUPERVISED_ENV}`, () => {
 });
 
 test('sandbox.js writes the restart policy this image is declaring', () => {
-  // The other half of the web pair, and it does not live in the Dockerfile: the
-  // supervisor for that image is the compose file sandbox.js generates. Drop the
-  // policy there and the Dockerfile's declaration becomes the lie — an agent told
-  // its restart is coming when nothing will bring the box back.
+  // The image declares a capability its own file cannot supply: the restart
+  // policy lives in whatever launches it. sandbox.js's compose is the one such
+  // launcher this repo generates, so it is the half that is checkable here —
+  // drop the policy and the image's declaration becomes a lie for every team
+  // sandbox box, an agent told a restart is coming that nothing performs.
   assert.match(read('sandbox.js'), /restart:\s*always/,
     `sandbox.js no longer writes a restart policy, so ${WEB_DOCKERFILE}'s ${SUPERVISED_ENV} `
     + 'now promises a relaunch nothing performs');
