@@ -155,6 +155,8 @@ test('applyEnvLock makes the input read-only and prints the reason beside it', (
 test('the applies-sentence is hidden under a lock and shown when the lock lifts', () => {
   assert.match(htmlSrc, /<span id="prefs-remote-base-path-applies">Applies as soon as you save/,
     'the sentence is its own element, so it can be hidden without the rest of the hint');
+  assert.match(rendererSrc, /const prefsRemoteBasePathApplies = document\.getElementById\('prefs-remote-base-path-applies'\)/,
+    'looked up by the id the markup carries — a typo here is a silent null and the sentence never hides');
   assert.match(rendererSrc, /applyEnvLock\(prefsRemoteBasePath, prefsRemoteBasePathState,[\s\S]{0,120}?prefsRemoteBasePathApplies\)/,
     'and the renderer hands it to the same call that paints the lock');
 

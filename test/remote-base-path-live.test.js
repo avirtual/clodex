@@ -224,7 +224,7 @@ test('a throwing boot log does not null a server whose socket is still listening
 
     const before = w.server();
     w.sync();
-    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(await serving(port, '/c/api/sessions'), 'the sync settled with the wire still up');
     assert.strictEqual(w.server(), before,
       'so the next sync reuses it rather than racing a second bind on the same port');
     assert.equal(await req(port, '/c/api/sessions'), 200, 'and the wire is still up');

@@ -24,6 +24,16 @@ blocks a release.
   fresh install. If you have already set your own defaults in Preferences,
   nothing changes: your explicit choice still wins, including an empty one.
 
+- Fixed: the read-only lock on the mount path field in Preferences ▸ Phone
+  access now appears only when `CLODEX_REMOTE_BASE_PATH` holds a value the app
+  can actually use. A value it refuses — `"/my path"`, say, since a space is not
+  legal in a mount path — is ignored and your stored prefix is what gets served,
+  but the field still went read-only saying the box served the variable's value,
+  and quietly dropped any edit you saved. In exactly those cases the field now
+  stays editable and your save takes effect. The "Applies as soon as you save"
+  line is also hidden while the field really is locked, where it contradicted
+  the note right below it. Nothing about which mount path gets served changes.
+
 ## 5.67.0 — 2026-09-14 — the headless host stops dying, and comes back when an agent asks
 
 - Fixed: a headless Clodex instance would die outright, minutes or hours in,
@@ -60,16 +70,6 @@ blocks a release.
   `CLODEX_REMOTE_BASE_PATH` the field says so and goes read-only, rather than
   quietly accepting edits the environment variable overrides; the log line at
   startup now names the prefix actually being served.
-
-- Fixed: that read-only lock on the mount path and remote port fields now fires
-  only when the environment variable is one the app can actually use. A variable
-  it refuses — `CLODEX_REMOTE_BASE_PATH="/my path"`, a port outside 1-65535 —
-  is ignored and the stored value is served, but the field still went read-only
-  claiming the box served the variable's value, and silently dropped saves that
-  would have worked. The field now stays editable in exactly those cases, and
-  the "Applies as soon as you save" line is hidden while the field really is
-  locked, where it contradicted the note below it. Nothing about which mount
-  path gets served changes.
 
 - Fixed: if you run two Clodexes and peer them, the one on the far end of the
   link could see agents on your other machines — relayed through the instance it
