@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — the headless host stops dying, and comes back when an agent asks
+## Unreleased
+
+## 5.67.0 — 2026-09-14 — the headless host stops dying, and comes back when an agent asks
 
 - Fixed: a headless Clodex instance would die outright, minutes or hours in,
   with no user action involved. Seven diagnostic lines in the session engine —
