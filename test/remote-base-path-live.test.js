@@ -92,7 +92,15 @@ function mkWiring(uiSettings, info = () => {}) {
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
   });
-  return { sync: () => wiring.syncRemoteServer(), server: () => srv };
+  // `stop` in a finally, not after the last assertion: a failing subject leaves
+  // the bound socket holding the event loop open, and the runner hangs after
+  // reporting instead of exiting. Measured while red-proofing this file — the
+  // process had to be killed to collect the results.
+  return {
+    sync: () => wiring.syncRemoteServer(),
+    server: () => srv,
+    stop: () => { if (srv) { try { srv.stop(); } catch {} } },
+  };
 }
 
 function mkStores() {
@@ -114,23 +122,23 @@ test('a saved mount path takes effect on a RUNNING wire: the old prefix stops, t
   const uiSettings = mkStores();
   const port = await freePort();
   uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '/c' });
-  const { sync, server } = mkWiring(uiSettings);
+  const { sync, stop } = mkWiring(uiSettings);
+  try {
+    sync();
+    assert.ok(await serving(port, '/c/api/sessions'), 'ENTER: the wire came up serving /c');
+    assert.equal(await req(port, '/i/phone/api/sessions'), 404,
+      'ENTER: and /i/phone is not already answering, so the move below proves something');
 
-  sync();
-  assert.ok(await serving(port, '/c/api/sessions'), 'ENTER: the wire came up serving /c');
-  assert.equal(await req(port, '/i/phone/api/sessions'), 404,
-    'ENTER: and /i/phone is not already answering, so the move below proves something');
-
-  // The real operator action: Preferences writes the setting through the store,
-  // then the ipc handler re-syncs. Nothing else changes — same port, same box.
-  uiSettings.set({ remoteBasePath: '/i/phone' });
-  sync();
-  assert.ok(await serving(port, '/i/phone/api/sessions'),
-    'the new prefix is being SERVED, not merely written to the settings file');
-  assert.equal(await req(port, '/c/api/sessions'), 404,
-    'and the old prefix stopped — the server really restarted rather than gaining a second mount');
-
-  server().stop();
+    // The real operator action: Preferences writes the setting through the
+    // store, then the ipc handler re-syncs. Nothing else changes — same port,
+    // same box.
+    uiSettings.set({ remoteBasePath: '/i/phone' });
+    sync();
+    assert.ok(await serving(port, '/i/phone/api/sessions'),
+      'the new prefix is being SERVED, not merely written to the settings file');
+    assert.equal(await req(port, '/c/api/sessions'), 404,
+      'and the old prefix stopped — the server really restarted rather than gaining a second mount');
+  } finally { stop(); }
 });
 
 test('a change that resolves to the SAME prefix does not bounce the wire', async () => {
@@ -141,18 +149,17 @@ test('a change that resolves to the SAME prefix does not bounce the wire', async
   const uiSettings = mkStores();
   const port = await freePort();
   uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '/c' });
-  const { sync, server } = mkWiring(uiSettings);
+  const { sync, server, stop } = mkWiring(uiSettings);
+  try {
+    sync();
+    assert.ok(await serving(port, '/c/api/sessions'), 'ENTER: serving /c');
+    const before = server();
 
-  sync();
-  assert.ok(await serving(port, '/c/api/sessions'), 'ENTER: serving /c');
-  const before = server();
-
-  uiSettings.set({ remoteBasePath: 'c/' });
-  sync();
-  assert.strictEqual(server(), before, 'same RemoteServer instance — nothing was stopped and rebuilt');
-  assert.equal(await req(port, '/c/api/sessions'), 200, 'and it is still answering');
-
-  server().stop();
+    uiSettings.set({ remoteBasePath: 'c/' });
+    sync();
+    assert.strictEqual(server(), before, 'same RemoteServer instance — nothing was stopped and rebuilt');
+    assert.equal(await req(port, '/c/api/sessions'), 200, 'and it is still answering');
+  } finally { stop(); }
 });
 
 test('the boot log names the prefix being served, once per start', async () => {
@@ -163,24 +170,23 @@ test('the boot log names the prefix being served, once per start', async () => {
   const port = await freePort();
   uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '/c' });
   const rows = [];
-  const { sync, server } = mkWiring(uiSettings, (tag, body) => rows.push([tag, body]));
+  const { sync, stop } = mkWiring(uiSettings, (tag, body) => rows.push([tag, body]));
+  try {
+    sync();
+    assert.ok(await serving(port, '/c/api/sessions'), 'ENTER: serving /c');
+    const said = rows.filter(([tag, body]) => tag === 'remote' && /serving on/.test(body));
+    assert.equal(said.length, 1, 'one line per start');
+    assert.match(said[0][1], /\/c/, 'and it names the prefix');
+    assert.match(said[0][1], new RegExp(String(port)), 'alongside the port it is presumably read with');
 
-  sync();
-  assert.ok(await serving(port, '/c/api/sessions'), 'ENTER: serving /c');
-  const said = rows.filter(([tag, body]) => tag === 'remote' && /serving on/.test(body));
-  assert.equal(said.length, 1, 'one line per start');
-  assert.match(said[0][1], /\/c/, 'and it names the prefix');
-  assert.match(said[0][1], new RegExp(String(port)), 'alongside the port it is presumably read with');
-
-  // A sync that changes nothing must not re-log: syncRemoteServer runs on every
-  // settings write on the box, and a line per write is a line the operator
-  // stops reading.
-  sync();
-  await new Promise((r) => setTimeout(r, 50));
-  assert.equal(rows.filter(([t, b]) => t === 'remote' && /serving on/.test(b)).length, 1,
-    'a no-op sync is silent — the server did not restart, so nothing started');
-
-  server().stop();
+    // A sync that changes nothing must not re-log: syncRemoteServer runs on
+    // every settings write on the box, and a line per write is a line the
+    // operator stops reading.
+    sync();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(rows.filter(([t, b]) => t === 'remote' && /serving on/.test(b)).length, 1,
+      'a no-op sync is silent — the server did not restart, so nothing started');
+  } finally { stop(); }
 });
 
 test('a box with no prefix says so rather than printing a bare port', async () => {
@@ -188,16 +194,15 @@ test('a box with no prefix says so rather than printing a bare port', async () =
   const port = await freePort();
   uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '' });
   const rows = [];
-  const { sync, server } = mkWiring(uiSettings, (tag, body) => rows.push([tag, body]));
-
-  sync();
-  assert.ok(await serving(port, '/api/sessions'), 'ENTER: serving at the root');
-  const said = rows.find(([t, b]) => t === 'remote' && /serving on/.test(b));
-  assert.ok(said, 'the line is emitted for an unprefixed box too');
-  assert.match(said[1], /no prefix/,
-    '"no prefix" is the answer to the operator question, and silence is not one');
-
-  server().stop();
+  const { sync, stop } = mkWiring(uiSettings, (tag, body) => rows.push([tag, body]));
+  try {
+    sync();
+    assert.ok(await serving(port, '/api/sessions'), 'ENTER: serving at the root');
+    const said = rows.find(([t, b]) => t === 'remote' && /serving on/.test(b));
+    assert.ok(said, 'the line is emitted for an unprefixed box too');
+    assert.match(said[1], /no prefix/,
+      '"no prefix" is the answer to the operator question, and silence is not one');
+  } finally { stop(); }
 });
 
 test('the wire exposes its served base path read-only, like its port', () => {
