@@ -27,12 +27,13 @@ blocks a release.
 - Fixed: the read-only lock on the mount path field in Preferences ▸ Phone
   access now appears only when `CLODEX_REMOTE_BASE_PATH` holds a value the app
   can actually use. A value it refuses — `"/my path"`, say, since a space is not
-  legal in a mount path — is ignored and your stored prefix is what gets served,
-  but the field still went read-only saying the box served the variable's value,
-  and quietly dropped any edit you saved. In exactly those cases the field now
-  stays editable and your save takes effect. The "Applies as soon as you save"
-  line is also hidden while the field really is locked, where it contradicted
-  the note right below it. Nothing about which mount path gets served changes.
+  legal in a mount path — is ignored and your stored prefix is what gets served.
+  Until now the field still went read-only saying the box served the variable's
+  value, and quietly dropped any edit you saved. In exactly those cases the
+  field now stays editable and your save takes effect. The "Applies as soon as
+  you save" line is also hidden while the field really is locked, where it
+  contradicted the note right below it. Upgrading changes nothing about what any
+  box is already serving.
 
 ## 5.67.0 — 2026-09-14 — the headless host stops dying, and comes back when an agent asks
 
