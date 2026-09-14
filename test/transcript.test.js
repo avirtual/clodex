@@ -96,6 +96,71 @@ test('jsonlToMessages: scrubs control chars, delivery label, and slash-command e
   } finally { fs.unlinkSync(p); }
 });
 
+test('jsonlToMessages: the delivery label is scrubbed off the Codex event_msg user shape too', () => {
+  const p = writeJsonl([
+    { type: 'event_msg', payload: { type: 'user_message', message: '\x15[agent:from user] do the thing' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'on it' } },
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.deepStrictEqual(msgs.map(m => [m.role, m.text]), [
+      ['user', 'do the thing'],
+      ['assistant', 'on it'],
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: the delivery label is scrubbed off the Codex response_item user shape too', () => {
+  const p = writeJsonl([
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '\x15[agent:from user] do the thing' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'on it' }] } },
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.deepStrictEqual(msgs.map(m => [m.role, m.text]), [
+      ['user', 'do the thing'],
+      ['assistant', 'on it'],
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: a peer label on a Codex user entry keeps rendering', () => {
+  const p = writeJsonl([
+    { type: 'event_msg', payload: { type: 'user_message', message: '[agent:from reviewer] verdict: accept' } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '[agent:from clodex] ticket t9' }] } },
+  ]);
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p).map(m => m.text), [
+      '[agent:from reviewer] verdict: accept\n\n[agent:from clodex] ticket t9',
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: an assistant entry quoting the delivery label keeps it', () => {
+  const p = writeJsonl([
+    { type: 'event_msg', payload: { type: 'user_message', message: 'what did you get?' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: '[agent:from user] was the prefix' } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: '[agent:from user] was the prefix' }] } },
+  ]);
+  try {
+    assert.deepStrictEqual(jsonlToMessages(p).map(m => [m.role, m.text]), [
+      ['user', 'what did you get?'],
+      ['assistant', '[agent:from user] was the prefix\n\n[agent:from user] was the prefix'],
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: the user-text cleaning applies after the branch chain, not inside one branch', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'transcript.js'), 'utf-8');
+  const body = src.slice(src.indexOf('function jsonlToMessages'), src.indexOf('function cachedMessages'));
+  assert.strictEqual((body.match(/cleanUserText\(/g) || []).length, 1,
+    'one application point, so a user-producing branch added later cannot miss it');
+  assert.ok(body.indexOf('cleanUserText(') > body.lastIndexOf('codexResponseMessage(obj)'),
+    'it must run after every branch has assigned role/text, keyed on role');
+  assert.strictEqual((src.match(/agent:from user/g) || []).length, 1,
+    'the label literal lives in exactly one place');
+});
+
 test('jsonlToMessages: a harness task-notification block is not conversation and does not split the reply', () => {
   const p = writeJsonl([
     { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'checking' }] } },
