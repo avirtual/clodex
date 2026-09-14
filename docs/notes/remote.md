@@ -33,7 +33,6 @@ prefix rather than dropping to no prefix.
 `GET /api/inbox` with no `before` in test/remote-inbox.test.js is what holds it.
 
 A roster row whose `origin` equals `via` is one of the pushing hub's OWN agents.
-
 Those rows are kept, and the relay path is closed to them at two points:
 `receiveRoster` marks `via` as a dm origin, which puts `_routeFederatedDm`'s
 OUTBOX branch ahead of its relay branch for that origin, and
