@@ -195,9 +195,6 @@ test('the who-list prints the hub\'s own rows BARE and a third-box row with its 
   m._injectText = (_s, text) => injected.push(text);
   m._broadcast = () => {};
   m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
-  // ENTER: one roster carrying BOTH shapes. A fixture with only the third-box row
-  // renders identically before and after the fix, so the hub-local row is the
-  // whole proof; one assertion over the whole line keeps the two from drifting.
   m._setRelayRoster(HUB, [
     { name: 'clodex', origin: HUB, type: 'claude' },
     { name: 'worker', origin: 'remote-linux', type: 'claude' },
@@ -209,7 +206,9 @@ test('the who-list prints the hub\'s own rows BARE and a third-box row with its 
   assert.strictEqual(
     injected[0],
     `[agent:peers] clodex@${HUB}, worker@remote-linux (via ${HUB})`,
-    'a hub-local row is reached over the outbox, not a relay hop — the suffix would state a hop that does not exist',
+    'ENTER: both shapes come off ONE roster and are asserted in ONE line, because they differ only on the hub-local row '
+    + '— a fixture without it renders identically before and after the fix. Bare is the truth for that row: it is reached '
+    + 'over the outbox, and the suffix would state a relay hop that does not exist.',
   );
 });
 
@@ -225,13 +224,13 @@ test('_rememberDmOrigin writes the marker once per process, and a fresh process 
   assert.deepStrictEqual(marks, [HUB],
     'receiveRoster calls this every 15s hello tick; the in-memory Set is what stops a mkdir+write per tick');
 
-  // ENTER: the guard must sit BEFORE the Set add and must read the Set, never the
-  // disk. Moving it onto outboxKnowsOrigin would pass the half above and make this
-  // half zero — a fresh process would never write the marker it restarts without.
   const restarted = mkMarker();
   assert.strictEqual(restarted._knownDmOrigins.has(HUB), false, 'the Set died with the process');
   restarted._rememberDmOrigin(HUB);
-  assert.deepStrictEqual(marks, [HUB, HUB], 'first call after a boot still writes');
+  assert.deepStrictEqual(marks, [HUB, HUB],
+    'ENTER: the guard must read the in-memory Set and sit BEFORE the add. Moving it onto the disk state '
+    + '(outboxKnowsOrigin) would keep the half above green and make this half zero — a rebooted spoke would '
+    + 'never write the marker it needs, and a statSync per tick is the cost the guard removes.');
 });
 
 test('_routeFederatedDm sends an origin that is both a known dm origin and relay-reachable out the OUTBOX, not the relay', async () => {
@@ -253,13 +252,12 @@ test('_routeFederatedDm sends an origin that is both a known dm origin and relay
   m._setRelayRoster(HUB, [{ name: 'clodex', origin: HUB, type: 'claude' }]);
   m._setRelayRoster('other-hub', [{ name: 'clodex', origin: HUB, type: 'claude' }]);
 
-  // ENTER: the precondition is built from two INDEPENDENT pieces of state, and the
-  // branch race only exists while both hold. The second roster is what makes the
-  // relay branch live for HUB at all (the first is refused by the via === origin
-  // guard), so without this line the absence below is vacuous and a reordering of
-  // the two branches goes unnoticed.
-  assert.strictEqual(m._relayViaForOrigin(HUB), 'other-hub', 'the relay branch is reachable for HUB');
-  assert.strictEqual(m._knownDmOrigins.has(HUB), true, 'and so is the outbox branch');
+  assert.strictEqual(m._relayViaForOrigin(HUB), 'other-hub',
+    'ENTER: this routing precondition is two INDEPENDENT pieces of state and the branch race exists only while both '
+    + 'hold. The second roster is what makes the relay branch live for HUB at all — the first is refused by the '
+    + 'via === origin guard — so a change to either piece can stop this test REACHING the branch it names while every '
+    + 'assertion below still passes.');
+  assert.strictEqual(m._knownDmOrigins.has(HUB), true, 'ENTER: and the outbox branch is live too, so the ordering decides');
 
   await m._handleIntent('a', { type: 'dm', target: `clodex@${HUB}`, body: 'hi' });
 
