@@ -4749,7 +4749,7 @@ function createSessionManager(deps) {
             const addr = `${e.name}@${e.origin}`;
             if (directAddrs.has(addr)) continue;
             directAddrs.add(addr);
-            relayNames.push({ name: addr, label: `via ${e.via}` });
+            relayNames.push({ name: addr, label: e.via === e.origin ? null : `via ${e.via}` });
           }
           const others = [...localAgents, ...externalNames, ...remoteNames, ...relayNames].filter(p => p.name !== senderName);
           const list = others.length
@@ -6596,6 +6596,7 @@ function createSessionManager(deps) {
     }
 
     _rememberDmOrigin(origin) {
+      if (this._knownDmOrigins.has(origin)) return;
       this._knownDmOrigins.add(origin);
       markOutboxOrigin(OUTBOX_DIR, origin);
     }
