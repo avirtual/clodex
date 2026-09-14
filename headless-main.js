@@ -8,9 +8,8 @@
 // — those are Electron-frontend concerns the engine does not need to run.
 //
 // Exit codes: 0 = clean SIGTERM/SIGINT teardown · 1 = another headless instance
-// already holds the pidfile · 64 = restart requested (the phone-restart endpoint
-// via the restartHost seam) — a supervisor (systemd Restart=always) does the
-// actual relaunch; a manual run just exits with the reason logged.
+// already holds the pidfile · 64 = restart requested — a supervisor does the
+// relaunch; see docs/notes/headless-restart.md for who may ask for one.
 //
 // node-pty ABI caveat: the dev checkout's node-pty is built against Electron's
 // ABI, so `node headless-main.js` in THIS tree fails to load it. Run it on a
@@ -150,6 +149,26 @@ acquirePidLock();
 // ── Engine ── the whole electron-free bootstrap, with headless seams.
 initLog();
 log.info('app', `startup — Clodex headless (pid ${process.pid}, dataDir ${userDataPath})`);
+
+function restartNow() {
+  log.info('app', 'restart requested — shutting down, exit 64 for supervisor relaunch');
+  if (webHost) { try { webHost.close(); } catch {} }
+  try { engine.shutdown(); } catch {}
+  releasePidLock();
+  process.exit(64);
+}
+
+const { createHeadlessRestart } = require('./headless-restart');
+const headlessRestart = createHeadlessRestart({
+  env: process.env,
+  log,
+  getSessions: () => Array.from(engine.manager.sessions.values()),
+  restart: restartNow,
+});
+log.info('app', headlessRestart.supervised
+  ? 'restart capability: supervised — [agent:reboot] will exit 64 once every session is idle'
+  : 'restart capability: unsupervised — [agent:reboot] is refused (see CLODEX_SUPERVISED)');
+
 const engine = createEngine({
   userDataPath,
   log,
@@ -169,14 +188,11 @@ const engine = createEngine({
     // than a port nothing serves.
     webInfo: () => (webHost ? webHost.info : null),
     // App-menu / tray refresh hooks default to no-ops (there is no menu here).
-    // restartHost: shut down cleanly and exit 64 so a supervisor relaunches.
-    restartHost: () => {
-      log.info('app', 'restart requested — shutting down, exit 64 for supervisor relaunch');
-      if (webHost) { try { webHost.close(); } catch {} }
-      try { engine.shutdown(); } catch {}
-      releasePidLock();
-      process.exit(64);
-    },
+    // restartHost is the human control (phone/web) and stays immediate;
+    // restartHostWhenIdle is [agent:reboot], scanned mid-turn, so it waits.
+    restartHost: restartNow,
+    restartHostWhenIdle: headlessRestart.restartHostWhenIdle,
+    restartUnavailable: headlessRestart.restartUnavailable,
   },
 });
 

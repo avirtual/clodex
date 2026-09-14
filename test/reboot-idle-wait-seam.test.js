@@ -79,10 +79,11 @@ test('engine: relaunchApp passes the requester options THROUGH to the host', () 
   assert.strictEqual(seen.onAbandon, onAbandon, 'and the exact callback, not a copy or a wrapper');
 });
 
-test('engine: a host with no deferred seam falls back to the immediate one (headless)', () => {
-  // headless-main.js supplies only restartHost — its contract is "exit 64 now,
-  // the supervisor relaunches", and there is no operator or dialog there to
-  // rescue a 30-minute wait. The fallback is what keeps that unchanged.
+test('engine: a host with no deferred seam falls back to the immediate one', () => {
+  // The fallback keeps the agent path working on a host that declares no
+  // deferred variant. It is ALSO why omitting a seam cannot mean "I cannot
+  // relaunch" — that is a separate question, asked through restartUnavailable
+  // (t910); both shipped hosts now supply a deferred seam.
   const calls = [];
   const { agentPath, operatorPath } = engineSeamTargets({ restartHost: () => calls.push('immediate') });
   agentPath();

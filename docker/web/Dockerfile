@@ -106,7 +106,12 @@ ENV HOME=/home/clodex \
     # This engine runs INSIDE a sandbox box: no docker socket, so it must not
     # construct a sandbox manager. Baked into the image, not the generated
     # compose, so it holds however the container is launched.
-    CLODEX_IN_SANDBOX=1
+    CLODEX_IN_SANDBOX=1 \
+    # Declares to the engine that this image is run under a restart policy:
+    # [agent:reboot] restarts the host by exiting 64 for a supervisor, and is
+    # refused when none is declared. Baked in because every launcher that ships
+    # this image supplies one — pinned by test/supervised-launchers.test.js.
+    CLODEX_SUPERVISED=1
 
 USER clodex
 EXPOSE 8080
