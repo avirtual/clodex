@@ -2,22 +2,20 @@
 // Run: node --test test/remote-base-path-live.test.js
 //
 // t912 — the mount prefix has to reach the SERVING process, not just the
-// settings file. t901 made it configurable and wired it into the RemoteServer
-// constructor; what nothing covered was a change on a box that is already
-// serving. `syncRemoteServer` decided whether to bounce the wire by comparing
-// the PORT alone, so a saved prefix was written to disk and never served: no
-// error, no indication, and the file disagreeing with the process until the
-// next launch. That cost a production route an evening.
+// settings file. t901 wired it into the RemoteServer constructor; what nothing
+// covered was a change on a box already serving. `syncRemoteServer` decided
+// whether to bounce the wire by comparing the PORT alone, so a saved prefix was
+// written to disk and never served — no error, no indication, and the file
+// disagreeing with the process until the next launch.
 //
 // ENTER: these drive the real store, the real `syncRemoteServer` and a real
 // bound socket — no RemoteServer double. A double would pin that the wiring
-// CALLS something; the failure was that a live server kept answering on the old
+// CALLS something; the failure was a live server still answering on the old
 // prefix, and only a socket can see that.
 //
 // ENTER: both halves are asserted on every move. "The new prefix answers" alone
-// passes against a server that never restarted whenever the new prefix happens
-// to equal the old one, and the absence alone is the vacuous shape that passes
-// on a server that died. Old-stops AND new-starts, together, is the claim.
+// passes against a server that never restarted whenever the new prefix equals
+// the old one, and the absence alone passes on a server that simply died.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -92,10 +90,9 @@ function mkWiring(uiSettings, info = () => {}) {
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
   });
-  // `stop` in a finally, not after the last assertion: a failing subject leaves
-  // the bound socket holding the event loop open, and the runner hangs after
-  // reporting instead of exiting. Measured while red-proofing this file — the
-  // process had to be killed to collect the results.
+  // `stop` belongs in a finally: a failing subject otherwise leaves the bound
+  // socket holding the event loop open and the runner hangs after reporting.
+  // Measured while red-proofing this file — the process had to be killed.
   return {
     sync: () => wiring.syncRemoteServer(),
     server: () => srv,
@@ -142,10 +139,9 @@ test('a saved mount path takes effect on a RUNNING wire: the old prefix stops, t
 });
 
 test('a change that resolves to the SAME prefix does not bounce the wire', async () => {
-  // The restart drops every SSE client on the box, so the comparison is against
-  // the resolved value the constructor would receive — not the raw setting.
-  // `c`, `/c` and `/c/` are one prefix; re-saving one of the other spellings
-  // must not cost a phone its stream.
+  // A restart drops every SSE client on the box, so the comparison is against
+  // the RESOLVED value the constructor would receive: `c`, `/c` and `/c/` are
+  // one prefix, and re-saving another spelling must not cost a phone its stream.
   const uiSettings = mkStores();
   const port = await freePort();
   uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '/c' });
@@ -163,8 +159,8 @@ test('a change that resolves to the SAME prefix does not bounce the wire', async
 });
 
 test('the boot log names the prefix being served, once per start', async () => {
-  // The operator whose route 404s reads the log. The answer has to be IN it:
-  // before this, nothing in the app mentioned the prefix at all and the only
+  // The operator whose route 404s reads the log, so the answer has to be in it:
+  // before this nothing in the app mentioned the prefix at all, and the only
   // recovery was guessing at an environment variable.
   const uiSettings = mkStores();
   const port = await freePort();

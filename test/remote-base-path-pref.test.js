@@ -1,18 +1,15 @@
 'use strict';
 // Run: node --test test/remote-base-path-pref.test.js
 //
-// t912 — the operator-facing half of the mount prefix: the IPC crossing that
-// carries it to the renderer, the env-lock view that stops the field from
-// lying, and the Preferences wiring that reads and writes it.
+// t912 — the operator-facing half of the mount prefix: the IPC crossing, the
+// env-lock view that stops the field from lying, and the Preferences wiring.
 //
-// The IPC object is an explicit WHITELIST. A key not named there arrives
-// `undefined`, which is indistinguishable from a real value at every consumer —
-// the same shape that once hid the peer-shell grant on a serving box.
-//
-// The env lock exists because CLODEX_REMOTE_BASE_PATH overrides the stored
-// value and is never written back. Without it the field shows the env value,
-// accepts an edit, saves it, and changes nothing about what is served —
-// forever, with no feedback.
+// The IPC object is an explicit WHITELIST: a key not named there arrives
+// `undefined`, indistinguishable from a real value at every consumer — the
+// shape that once hid the peer-shell grant on a serving box. The env lock
+// exists because CLODEX_REMOTE_BASE_PATH overrides the stored value and is
+// never written back, so without it the field shows the env value, accepts an
+// edit, saves it, and changes nothing about what is served — with no feedback.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -74,9 +71,8 @@ test('envLockedSettings names the variable for each setting the environment over
 });
 
 test('a blank or whitespace variable is not a lock', () => {
-  // `FOO= clodex` exports an empty string. The resolver treats that as unset
-  // and serves the stored value, so a lock here would freeze a field the
-  // environment is NOT overriding.
+  // `FOO= clodex` exports an empty string, which the resolver treats as unset —
+  // so a lock here would freeze a field the environment is NOT overriding.
   for (const raw of ['', '   ', '\t']) {
     assert.deepStrictEqual(envLockedSettings({ CLODEX_REMOTE_BASE_PATH: raw }), {},
       `${JSON.stringify(raw)} → not a lock`);
@@ -129,10 +125,9 @@ test('applyEnvLock makes the input read-only and prints the reason beside it', (
 // ── the save side: the contract that must survive the lock ──────────────────
 
 test('a locked setting is OMITTED from the save, so the stored value round-trips', () => {
-  // The documented contract (stores.js: the env value is never written back) is
-  // what makes removing the variable later return to what Settings holds. A UI
-  // that saved the displayed env value would bake it in permanently and break
-  // that — the trap this whole part exists to close.
+  // stores.js never writes the env value back, which is what makes removing the
+  // variable later return to what Settings holds. A UI that saved the displayed
+  // env value would bake it in permanently and break that contract.
   assert.deepStrictEqual(
     patchUnlessEnvLocked({ remoteBasePath: 'CLODEX_REMOTE_BASE_PATH' }, 'remoteBasePath', '/typed'),
     {},
@@ -145,9 +140,8 @@ test('a locked setting is OMITTED from the save, so the stored value round-trips
 
 // ── the Preferences wiring, pinned as source ────────────────────────────────
 //
-// renderer.js has no harness (it reaches for `document` at load). These pin the
-// crossings a move would break silently: the field existing, being filled by
-// DOM PROPERTY, and riding the save batch.
+// renderer.js has no harness (it reaches for `document` at load), so these pin
+// the crossings a move would break silently.
 
 test('the mount path field exists in the phone group', () => {
   assert.match(htmlSrc, /<input[^>]*id="prefs-remote-base-path"/,
@@ -162,9 +156,9 @@ test('the mount path field exists in the phone group', () => {
 });
 
 test('the value is written as a DOM PROPERTY, never interpolated into HTML', () => {
-  // contextIsolation:false + nodeIntegration:true. The prefix is
-  // operator-supplied text that can arrive from a settings file, so an
-  // innerHTML or a concatenated value="..." would be script execution with the
+  // contextIsolation:false + nodeIntegration:true, and the prefix is
+  // operator-supplied text that can arrive from a settings file — so an
+  // innerHTML or a concatenated value="..." is script execution with the
   // renderer's full node privileges.
   assert.match(rendererSrc, /prefsRemoteBasePath\.value = s\.remoteBasePath == null \? '' : String\(s\.remoteBasePath\)/,
     'assigned through .value');
@@ -185,9 +179,9 @@ test('the field rides the setSettings batch and defers its lock to the shared he
 });
 
 test('the renderer does not re-validate the prefix', () => {
-  // The store already handles every input shape: blank clears to '', junk keeps
-  // the current value. A second copy of that rule in the renderer is a second
-  // place for it to drift.
+  // The store already handles every input shape (blank clears to '', junk keeps
+  // the current value), and a second copy of that rule is a second place for it
+  // to drift.
   for (const m of rendererSrc.matchAll(/^.*prefsRemoteBasePath.*$/gm)) {
     assert.doesNotMatch(m[0], /coerceRemoteBasePath|\.replace\(|test\(/,
       `no renderer-side coercion: ${m[0].trim()}`);
