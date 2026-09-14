@@ -22,7 +22,7 @@ const { resolveWirescopePort, resolveRemotePort, resolveProxyUrl } = require('./
 const { coerceRemoteBasePath, resolveRemoteBasePathSetting } = require('./remote');
 const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
-  CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
+  CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_SKILL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
 } = require('./catalogs');
 
 const PROMPT_KINDS = ['system', 'append'];
@@ -1001,10 +1001,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       if (Object.keys(e).length) map[name] = e; else delete map[name];
       this._save(map);
     },
-    // Tri-state: key ABSENT -> the in-code DEFAULT_TOOL_DENY_FLOOR; key PRESENT
-    // with a deny array (including EMPTY) -> the user's explicit choice wins, so
-    // [] means "deny nothing", not "fall back to the floor". Keyed "*", which is
-    // not a legal session name and so cannot collide with a per-agent entry.
+    // Tri-state, for each of the three sets below: key ABSENT -> the matching
+    // in-code floor; key PRESENT with a deny array (including EMPTY) -> the
+    // user's explicit choice wins, so [] means "deny nothing", not "fall back to
+    // the floor". Keyed "*", which is not a legal session name and so cannot
+    // collide with a per-agent entry.
     getDefaultDeny() {
       const e = this._load()['*'];
       if (e && Array.isArray(e.deny)) return e.deny.filter((t) => CLAUDE_TOOLS.includes(t));
@@ -1023,7 +1024,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
     getDefaultSkillDeny() {
       const e = this._load()['*'];
       if (e && Array.isArray(e.denySkills)) return [...new Set(e.denySkills.filter((s) => typeof s === 'string' && s))];
-      return [];
+      return DEFAULT_SKILL_DENY_FLOOR.slice();
     },
     setDefaultSkillDeny(list) {
       const map = this._load();

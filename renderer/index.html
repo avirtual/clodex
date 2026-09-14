@@ -902,11 +902,11 @@
       <p class="hint-text">Pick how new sessions should start. This is the only question.</p>
       <label class="prefs-check">
         <input type="radio" name="setup-mode" id="setup-mode-optimized" value="optimized" checked>
-        <span><strong>Clodex optimized</strong><br>New sessions start from your default tools, skills and agents (Preferences), routed through the built-in wirescope. Change per session under Advanced.</span>
+        <span><strong>Clodex optimized</strong><br>New sessions start from your default tools, skills and agents (Preferences) — the core harness: read, edit, search, shell, web, subagents, skills — routed through the built-in wirescope. Change per session under Advanced.</span>
       </label>
       <label class="prefs-check">
         <input type="radio" name="setup-mode" id="setup-mode-standard" value="standard">
-        <span><strong>Standard</strong><br>New sessions run the CLI as installed, nothing tweaked.</span>
+        <span><strong>Standard</strong><br>New sessions run the CLI as installed — every tool, skill and agent, nothing tweaked.</span>
       </label>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
@@ -1183,7 +1183,7 @@
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
         <h5>Default session mode</h5>
-        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
+        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) — the core harness: read, edit, search, shell, web, subagents, skills — and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched, with every tool, skill and agent. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
         <div class="prefs-row" style="margin-top: 4px;">
           <span>Mode</span>
           <select id="prefs-default-mode" style="flex: none;">
