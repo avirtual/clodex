@@ -109,11 +109,15 @@ function createRemoteWiring(deps) {
       setRemoteError(null);
       return;
     }
-    if (getRemoteServer() && getRemoteServer().port !== s.remotePort) {
+    const { resolveRemoteBasePath } = require('./remote');
+    const wantBasePath = resolveRemoteBasePath(s.remoteBasePath);
+    if (getRemoteServer()
+      && (getRemoteServer().port !== s.remotePort || getRemoteServer().basePath !== wantBasePath)) {
       getRemoteServer().stop();
       setRemoteServer(null);
     }
-    if (!getRemoteServer()) {
+    const constructed = !getRemoteServer();
+    if (constructed) {
       const { RemoteServer } = require('./remote');
       setRemoteServer(new RemoteServer({
         port: s.remotePort,
@@ -424,7 +428,11 @@ function createRemoteWiring(deps) {
     const wterm = wtermCallbacks();
     getRemoteServer().setWtermCallbacks(wterm.wtermOpen ? wterm : null);
     setRemoteError(null);
-    getRemoteServer().start().catch((e) => {
+    const started = getRemoteServer();
+    started.start().then(() => {
+      if (!constructed) return;
+      log.info('remote', `serving on ${bindHost}:${started.port}${started.basePath ? ` under ${started.basePath}` : ' with no prefix'}`);
+    }).catch((e) => {
       setRemoteError(e.message);
       setRemoteServer(null);
     });

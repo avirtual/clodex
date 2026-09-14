@@ -166,6 +166,7 @@ class RemoteServer {
 
   get running() { return !!this._server; }
   get port() { return this._port; }
+  get basePath() { return this._basePath; }
 
   start() {
     if (this._server) return Promise.resolve();

@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- The phone viewer's mount path is now a field in Preferences ▸ Phone access,
+  and saving it applies immediately — the wire restarts on the new prefix
+  instead of waiting for the app to be relaunched. On a box started with
+  `CLODEX_REMOTE_BASE_PATH` the field says so and goes read-only, rather than
+  quietly accepting edits the environment variable overrides; the log line at
+  startup now names the prefix actually being served.
+
 - Fixed: on the headless host (`node headless-main.js`, the Linux spokes and the
   Docker web image), an agent emitting `[agent:reboot]` took the box down and
   nothing brought it back. The restart now behaves as it does on the desktop app:
