@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: a headless Clodex instance would die outright, minutes or hours in,
+  with no user action involved. Seven diagnostic lines in the session engine —
+  reached from background timers that fire on parked-message flushes, inject
+  drains and reboot notices — called a logging method the headless host did not
+  have. On the desktop app the same lines wrote a debug entry; headless they
+  threw, and because the throw arrived from a timer it escaped to the crash
+  handler and took the whole process with it. Operators running the headless
+  host saw their instance vanish and had to lean on an unconditional restart to
+  keep it alive. The headless host now logs at DEBUG like the desktop one, and
+  the two hosts are held to an identical logging surface so a method can no
+  longer exist on one and be missing from the other.
+
 - A file under `docs/notes/` may now be as long as the facts it records require.
   The old 40-line ceiling had become the binding constraint: of 51 note files,
   ten sat at exactly 40 lines and six more at 38-39, so notes were being trimmed
