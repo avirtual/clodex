@@ -33,12 +33,8 @@ prefix rather than dropping to no prefix.
 `GET /api/inbox` with no `before` in test/remote-inbox.test.js is what holds it.
 
 A roster row whose `origin` equals `via` is one of the pushing hub's OWN agents.
-Intake used to drop those rows, on the rationale that a hub advertising its own
-label as a reachable origin would make the spoke relay back to it. The defect was
-real but the conclusion was wrong: it made the hub's agents unnameable from the
-spoke, so the spoke could only ever reply to a dm the hub sent first.
 
-The rows are kept, and the relay path is closed to them at two points instead:
+Those rows are kept, and the relay path is closed to them at two points:
 `receiveRoster` marks `via` as a dm origin, which puts `_routeFederatedDm`'s
 OUTBOX branch ahead of its relay branch for that origin, and
 `_relayViaForOrigin` skips a roster whose `via` is the origin being resolved.

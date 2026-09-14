@@ -38,6 +38,11 @@ blocks a release.
   per-peer "relay allowed" mark that already governs the rest of that roster: a
   peer you have not marked still receives nothing, and there is no new switch to
   set. Bash sessions stay private and are never listed.
+- Fixed: `[agent:who]` listed those hub-side agents with a `(via <hub>)` suffix,
+  which reads as "reachable only by passing through a third machine". They are
+  not — the hub is the box you are peered with directly. They now list bare, and
+  the suffix is kept for what it was for: an agent on some other machine that a
+  hub relays for.
 
 - Fixed: a headless Clodex instance would die outright, minutes or hours in,
   with no user action involved. Seven diagnostic lines in the session engine —

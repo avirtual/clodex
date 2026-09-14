@@ -178,3 +178,100 @@ test('receiveRoster marks via as a dm origin, putting the outbox branch ahead of
   assert.strictEqual(m._relayViaForOrigin(HUB), null,
     'and that origin is still refused the relay path, so the dm cannot take the dropping route');
 });
+
+const { mkTmpRoot } = require('./lib/tmp-roots');
+const { enqueueOutbox, claimOutbox, markOutboxOrigin } = require('../peer-outbox');
+
+const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+
+test('the who-list prints the hub\'s own rows BARE and a third-box row with its via', async () => {
+  const injected = [];
+  const m = mk({
+    AGENT_NAME_RE: NAME_RE,
+    registry: { listPeers: () => [] },
+    peerStatusLabel: () => 'idle',
+    getPeerManager: () => ({ statuses: () => [] }),
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  // ENTER: one roster carrying BOTH shapes. A fixture with only the third-box row
+  // renders identically before and after the fix, so the hub-local row is the
+  // whole proof; one assertion over the whole line keeps the two from drifting.
+  m._setRelayRoster(HUB, [
+    { name: 'clodex', origin: HUB, type: 'claude' },
+    { name: 'worker', origin: 'remote-linux', type: 'claude' },
+  ]);
+
+  await m._handleIntent('a', { type: 'who' });
+
+  assert.strictEqual(injected.length, 1);
+  assert.strictEqual(
+    injected[0],
+    `[agent:peers] clodex@${HUB}, worker@remote-linux (via ${HUB})`,
+    'a hub-local row is reached over the outbox, not a relay hop — the suffix would state a hop that does not exist',
+  );
+});
+
+test('_rememberDmOrigin writes the marker once per process, and a fresh process writes it again', () => {
+  const outboxDir = mkTmpRoot('clodex-t911-mark-');
+  const marks = [];
+  const counting = (root, origin) => { marks.push(origin); return markOutboxOrigin(root, origin); };
+  const mkMarker = () => mk({ OUTBOX_DIR: outboxDir, markOutboxOrigin: counting });
+
+  const m = mkMarker();
+  m._rememberDmOrigin(HUB);
+  m._rememberDmOrigin(HUB);
+  assert.deepStrictEqual(marks, [HUB],
+    'receiveRoster calls this every 15s hello tick; the in-memory Set is what stops a mkdir+write per tick');
+
+  // ENTER: the guard must sit BEFORE the Set add and must read the Set, never the
+  // disk. Moving it onto outboxKnowsOrigin would pass the half above and make this
+  // half zero — a fresh process would never write the marker it restarts without.
+  const restarted = mkMarker();
+  assert.strictEqual(restarted._knownDmOrigins.has(HUB), false, 'the Set died with the process');
+  restarted._rememberDmOrigin(HUB);
+  assert.deepStrictEqual(marks, [HUB, HUB], 'first call after a boot still writes');
+});
+
+test('_routeFederatedDm sends an origin that is both a known dm origin and relay-reachable out the OUTBOX, not the relay', async () => {
+  const outboxDir = mkTmpRoot('clodex-t911-route-');
+  const injected = [];
+  const m = mk({
+    AGENT_NAME_RE: NAME_RE,
+    OUTBOX_DIR: outboxDir,
+    SELF_LABEL: 'spoke',
+    enqueueOutbox,
+    getPeerManager: () => ({ statuses: () => [] }),
+    getRemoteServer: () => null,
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+
+  m._rememberDmOrigin(HUB);
+  m._setRelayRoster(HUB, [{ name: 'clodex', origin: HUB, type: 'claude' }]);
+  m._setRelayRoster('other-hub', [{ name: 'clodex', origin: HUB, type: 'claude' }]);
+
+  // ENTER: the precondition is built from two INDEPENDENT pieces of state, and the
+  // branch race only exists while both hold. The second roster is what makes the
+  // relay branch live for HUB at all (the first is refused by the via === origin
+  // guard), so without this line the absence below is vacuous and a reordering of
+  // the two branches goes unnoticed.
+  assert.strictEqual(m._relayViaForOrigin(HUB), 'other-hub', 'the relay branch is reachable for HUB');
+  assert.strictEqual(m._knownDmOrigins.has(HUB), true, 'and so is the outbox branch');
+
+  await m._handleIntent('a', { type: 'dm', target: `clodex@${HUB}`, body: 'hi' });
+
+  const mine = claimOutbox(outboxDir, HUB);
+  assert.strictEqual(mine.length, 1, `expected one queued dm for ${HUB}, got ${JSON.stringify(mine)}`);
+  assert.deepStrictEqual(
+    { from: mine[0].from, to: mine[0].to, body: mine[0].body, finalTarget: mine[0].finalTarget },
+    { from: 'a', to: 'clodex', body: 'hi', finalTarget: undefined },
+    'a plain direct dm — no finalTarget, so the hub delivers it locally instead of trying to relay to itself',
+  );
+  assert.deepStrictEqual(claimOutbox(outboxDir, 'other-hub'), [],
+    'nothing went to the third box, which would resolve findPeerByOrigin for HUB against the hub itself and drop it');
+  assert.deepStrictEqual(injected, [],
+    'no bounce and no "relayed via" notice — the outbox branch delivers silently');
+});
