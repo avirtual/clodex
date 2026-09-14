@@ -7722,7 +7722,7 @@ input.env-locked {
           <span id="remote-dot" class="prefs-dot"></span>
           <span id="remote-status-text" class="hint-text" style="flex: 1;">—</span>
         </div>
-        <p class="hint-text" style="margin-top: 10px;">Mount path the viewer is served under, for an ingress that proxies a sub-path. Blank serves at the root, which is the default; <code>/c</code> is the usual choice. Applies as soon as you save — the wire restarts on it.</p>
+        <p class="hint-text" style="margin-top: 10px;">Mount path the viewer is served under, for an ingress that proxies a sub-path. Blank serves at the root, which is the default; <code>/c</code> is the usual choice. <span id="prefs-remote-base-path-applies">Applies as soon as you save — the wire restarts on it.</span></p>
         <div class="prefs-row" style="margin-top: 6px;">
           <span>Mount path</span>
           <input type="text" id="prefs-remote-base-path" placeholder="/c" autocomplete="off" spellcheck="false" style="flex: 1;">
@@ -23261,12 +23261,14 @@ ${i3.join("\n")}
           note: name ? `Set by ${name} \u2014 this box serves that value and the field cannot change it. Clear the variable and restart to use what Settings holds.` : ""
         };
       }
-      function applyEnvLock(el, stateEl, view) {
+      function applyEnvLock(el, stateEl, view, hideWhenLocked) {
+        const locked = !!(view && view.locked);
         if (el) {
-          el.readOnly = !!(view && view.locked);
-          el.classList.toggle("env-locked", !!(view && view.locked));
+          el.readOnly = locked;
+          el.classList.toggle("env-locked", locked);
         }
         if (stateEl) stateEl.textContent = view && view.note || "";
+        if (hideWhenLocked) hideWhenLocked.hidden = locked;
       }
       function patchUnlessEnvLocked(locked, key, value) {
         return envLockFor(locked, key) ? {} : { [key]: value };
@@ -40433,6 +40435,7 @@ Click for live activity`;
       var prefsRemoteEnabled = document.getElementById("prefs-remote-enabled");
       var prefsRemoteBasePath = document.getElementById("prefs-remote-base-path");
       var prefsRemoteBasePathState = document.getElementById("prefs-remote-base-path-state");
+      var prefsRemoteBasePathApplies = document.getElementById("prefs-remote-base-path-applies");
       var prefsEnvLocked = {};
       var remoteDot = document.getElementById("remote-dot");
       var remoteStatusText = document.getElementById("remote-status-text");
@@ -42864,7 +42867,12 @@ ${res.stderr}` : "");
         prefsEnvLocked = s && s.envLockedSettings || {};
         if (prefsRemoteBasePath) {
           prefsRemoteBasePath.value = s.remoteBasePath == null ? "" : String(s.remoteBasePath);
-          applyEnvLock(prefsRemoteBasePath, prefsRemoteBasePathState, envLockView(prefsEnvLocked, "remoteBasePath"));
+          applyEnvLock(
+            prefsRemoteBasePath,
+            prefsRemoteBasePathState,
+            envLockView(prefsEnvLocked, "remoteBasePath"),
+            prefsRemoteBasePathApplies
+          );
         }
         if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
         prefsRemoteToken.value = "";

@@ -64,6 +64,8 @@ async function serving(port, pathname) {
 
 function mkWiring(uiSettings, info = () => {}) {
   let srv = null;
+  const errors = [];
+  const seen = new Set();
   const wiring = createRemoteWiring({
     path, fs, os,
     log: { info: (...a) => info(...a), error() {} },
@@ -86,7 +88,8 @@ function mkWiring(uiSettings, info = () => {}) {
     getPersistence: () => ({ get: () => undefined, setStripLevel: () => {} }),
     getUiSettings: () => uiSettings,
     getWorkspaces: () => ({ get: () => ({}) }),
-    getRemoteServer: () => srv, setRemoteServer: (v) => { srv = v; }, setRemoteError: () => {},
+    getRemoteServer: () => srv, setRemoteServer: (v) => { srv = v; if (v) seen.add(v); },
+    setRemoteError: (e) => { if (e != null) errors.push(e); },
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
   });
@@ -96,7 +99,8 @@ function mkWiring(uiSettings, info = () => {}) {
   return {
     sync: () => wiring.syncRemoteServer(),
     server: () => srv,
-    stop: () => { if (srv) { try { srv.stop(); } catch {} } },
+    errors: () => errors,
+    stop: () => { for (const s of seen) { try { s.stop(); } catch {} } },
   };
 }
 
@@ -201,6 +205,34 @@ test('a box with no prefix says so rather than printing a bare port', async () =
     assert.match(said[1], /no prefix/,
       '"no prefix" is the answer to the operator question, and silence is not one');
   } finally { stop(); }
+});
+
+test('a throwing boot log does not null a server whose socket is still listening', async () => {
+  // The `.catch` behind that log is the BIND failure handler: it records a
+  // remote error and drops the server. A throw from the injected `log.info`
+  // reached it too, so the next sync built a second server on the same port and
+  // got EADDRINUSE — from a logging fault, on a wire that was serving fine.
+  const uiSettings = mkStores();
+  const port = await freePort();
+  uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '/c' });
+  const w = mkWiring(uiSettings, (tag, body) => {
+    if (tag === 'remote' && /serving on/.test(body)) throw new Error('log sink is down');
+  });
+  try {
+    w.sync();
+    assert.ok(await serving(port, '/c/api/sessions'),
+      'ENTER: the socket is bound and answering — start() resolved, only the log threw');
+    assert.ok(w.server(), 'the server is still held, not nulled underneath its own live socket');
+    assert.deepStrictEqual(w.errors(), [],
+      'and no remote error was recorded — a log sink is not a bind failure');
+
+    const before = w.server();
+    w.sync();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(w.server(), before,
+      'so the next sync reuses it rather than racing a second bind on the same port');
+    assert.equal(await req(port, '/c/api/sessions'), 200, 'and the wire is still up');
+  } finally { w.stop(); }
 });
 
 test('the wire exposes its served base path read-only, like its port', () => {

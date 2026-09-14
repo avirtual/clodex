@@ -61,6 +61,16 @@ blocks a release.
   quietly accepting edits the environment variable overrides; the log line at
   startup now names the prefix actually being served.
 
+- Fixed: that read-only lock on the mount path and remote port fields now fires
+  only when the environment variable is one the app can actually use. A variable
+  it refuses — `CLODEX_REMOTE_BASE_PATH="/my path"`, a port outside 1-65535 —
+  is ignored and the stored value is served, but the field still went read-only
+  claiming the box served the variable's value, and silently dropped saves that
+  would have worked. The field now stays editable in exactly those cases, and
+  the "Applies as soon as you save" line is hidden while the field really is
+  locked, where it contradicted the note below it. Nothing about which mount
+  path gets served changes.
+
 - Fixed: if you run two Clodexes and peer them, the one on the far end of the
   link could see agents on your other machines — relayed through the instance it
   dials — but never the agents on that instance itself. It could answer a message
