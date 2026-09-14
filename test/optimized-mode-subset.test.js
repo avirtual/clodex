@@ -313,26 +313,6 @@ test('t913: an operator with their own defaults keeps them — the tri-state, no
   assert.deepStrictEqual(curated.opened.builtins, BUILTIN_AGENTS.filter((a) => a !== 'Explore'));
 });
 
-test('t913: the floors and the allow lists partition their catalogs exactly', () => {
-  // A typo in an allow list silently widens the floor by one and is invisible
-  // forever after — the name simply never matches, and the tool stays denied.
-  for (const t of OPTIMIZED_TOOLS) {
-    assert.ok(CLAUDE_TOOLS.includes(t), `OPTIMIZED_TOOLS: ${t} is not in CLAUDE_TOOLS`);
-  }
-  for (const s of OPTIMIZED_SKILLS) {
-    assert.ok(CLAUDE_SKILLS.includes(s), `OPTIMIZED_SKILLS: ${s} is not in CLAUDE_SKILLS`);
-  }
-  for (const [what, catalog, keep, floor] of [
-    ['tools', CLAUDE_TOOLS, OPTIMIZED_TOOLS, DEFAULT_TOOL_DENY_FLOOR],
-    ['skills', CLAUDE_SKILLS, OPTIMIZED_SKILLS, DEFAULT_SKILL_DENY_FLOOR],
-  ]) {
-    const overlap = floor.filter((n) => keep.includes(n));
-    assert.deepStrictEqual(overlap, [], `${what}: the floor must not deny a kept name`);
-    assert.deepStrictEqual([...floor, ...keep].sort(), [...catalog].sort(),
-      `${what}: the floor and the keep-set must cover the catalog with nothing missing`);
-  }
-});
-
 test('t913: both floors are DERIVED from the allow lists, never re-listed by hand', () => {
   // The direction the allow-list shape buys: a tool added to CLAUDE_TOOLS is
   // off-by-default in optimized instead of silently on, which is the whole

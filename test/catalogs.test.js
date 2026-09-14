@@ -72,6 +72,11 @@ test('DEFAULT_SKILL_DENY_FLOOR: non-empty, derived, and partitions CLAUDE_SKILLS
     'the floor must not deny a curated skill');
   assert.strictEqual(DEFAULT_SKILL_DENY_FLOOR.length + OPTIMIZED_SKILLS.length, CLAUDE_SKILLS.length,
     'floor + allow list partition the skill catalog exactly');
+  // The tool half carries this bound and the skill half did not, which is the
+  // asymmetry that let the tool floor rot in the first place: an allow list
+  // grown to 13-of-14 keeps every other pin here green.
+  assert.ok(OPTIMIZED_SKILLS.length * 2 < CLAUDE_SKILLS.length,
+    'optimized must keep a minority of the skill catalog, or it is not a curated subset');
 });
 
 // A name outside BUILTIN_AGENTS can never be denied: the checklist offers only
