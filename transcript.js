@@ -126,8 +126,8 @@ function extractClaudeBlocks(content) {
   return out.join('\n');
 }
 
-// Transcript → chat messages for the remote (phone) view: user/assistant text
-// only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
+// Transcript → chat messages for every /api/transcript reader: user/assistant
+// text only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
 // regardless of which observation path (wire vs JsonlWatcher) is live — so the
 // remote view never depends on the intent machinery.
 function jsonlToMessages(jsonlPath, limit = 100) {
