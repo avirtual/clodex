@@ -333,15 +333,22 @@ test('t913: the floors and the allow lists partition their catalogs exactly', ()
   }
 });
 
-test('t913: a tool added to the catalog is off-by-default in optimized, not silently on', () => {
-  // The direction the allow-list shape buys, and the whole reason 33-of-44
-  // accumulated under the deny-list shape. Simulated against the real derivation
-  // rather than asserted about today's literals, which would prove nothing about
-  // the NEXT tool someone adds.
-  const withNewTool = [...CLAUDE_TOOLS, 'SomeBrandNewTool'];
-  const derivedFloor = withNewTool.filter((t) => !OPTIMIZED_TOOLS.includes(t));
-  assert.ok(derivedFloor.includes('SomeBrandNewTool'),
-    'a tool nobody curated must land in the deny floor by construction');
-  assert.ok(!OPTIMIZED_TOOLS.includes('SomeBrandNewTool'),
-    'ENTER: the new name really is uncurated, or the assertion above is vacuous');
+test('t913: both floors are DERIVED from the allow lists, never re-listed by hand', () => {
+  // The direction the allow-list shape buys: a tool added to CLAUDE_TOOLS is
+  // off-by-default in optimized instead of silently on, which is the whole
+  // reason 33-of-44 accumulated under the deny-list shape.
+  //
+  // This has to be a source-shape assertion, and that is not laziness. The
+  // property is about a tool NOBODY HAS ADDED YET, so no value assertion over
+  // today's catalog can see it — re-deriving the floor in the test with the same
+  // `filter` proves only that Array.prototype.filter works. What can actually
+  // regress is someone "fixing" a floor by pasting a literal back, which is
+  // exactly the shape that decayed, and which the partition test above would
+  // still pass on the day it was written.
+  const src = fs.readFileSync(path.join(ROOT, 'catalogs.js'), 'utf8');
+  assert.match(src, /const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS\.filter\(\(t\) => !OPTIMIZED_TOOLS\.includes\(t\)\);/,
+    'DEFAULT_TOOL_DENY_FLOOR must be derived from OPTIMIZED_TOOLS, not listed — a hand-listed floor '
+    + 'silently keeps every future tool ON in optimized');
+  assert.match(src, /const DEFAULT_SKILL_DENY_FLOOR = CLAUDE_SKILLS\.filter\(\(s\) => !OPTIMIZED_SKILLS\.includes\(s\)\);/,
+    'DEFAULT_SKILL_DENY_FLOOR must be derived from OPTIMIZED_SKILLS, not listed');
 });

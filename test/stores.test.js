@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { initStores } = require('../stores');
-const { DEFAULT_BUILTIN_DENY_FLOOR } = require('../catalogs');
+const { DEFAULT_BUILTIN_DENY_FLOOR, DEFAULT_SKILL_DENY_FLOOR } = require('../catalogs');
 const { shellCapGranted } = require('../peer-shell');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -2644,10 +2644,15 @@ test('agentDefaults: the skill and built-in deny tri-states, and what each one f
   try {
     const d = stores.agentDefaults;
 
-    // Skills: the floor is EMPTY (a fresh install denies no skill), and the
-    // list is NOT catalog-filtered — a project-only skill exists under one cwd
-    // and must survive being stored from anywhere else.
-    assert.deepStrictEqual(d.getDefaultSkillDeny(), [], 'absent key -> deny no skill');
+    // Skills: a non-empty floor (t913 — it WAS `[]`, which made the New Session
+    // Mode selector a no-op for the whole skills category on a fresh root: both
+    // modes rendered the same empty deny set), and the list is NOT
+    // catalog-filtered — a project-only skill exists under one cwd and must
+    // survive being stored from anywhere else.
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), DEFAULT_SKILL_DENY_FLOOR,
+      'absent key -> the shipped floor');
+    assert.ok(DEFAULT_SKILL_DENY_FLOOR.length > 0,
+      'an empty floor is indistinguishable from standard mode — the defect t913 fixed');
     d.setDefaultSkillDeny(['code-review', 'a-project-only-skill', 'code-review']);
     assert.deepStrictEqual(d.getDefaultSkillDeny().sort(),
       ['a-project-only-skill', 'code-review'], 'deduped, and the unknown name is KEPT');
