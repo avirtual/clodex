@@ -980,9 +980,9 @@ class RemoteServer {
         const via = String(msg.via || '');
         if (!NAME_RE.test(via)) return this._json(res, 400, { ok: false, error: 'bad via' });
         // Sanitize the roster wire value into trusted shape before it's cached:
-        // both name and origin must be name-charset (they become dm targets/keys),
-        // and the origin must not be `via` itself (a hub advertising its own label
-        // as a reachable origin would make the spoke try to relay back to it).
+        // both name and origin must be name-charset (they become dm targets/keys).
+        // A row whose origin IS `via` is the hub's own agent: kept, and kept off
+        // the relay path by two guards elsewhere — docs/notes/remote.md.
         const rosterIn = Array.isArray(msg.roster) ? msg.roster : [];
         const roster = [];
         for (const e of rosterIn) {
@@ -991,7 +991,6 @@ class RemoteServer {
           const origin = String(e.origin || '');
           const type = e.type === 'codex' ? 'codex' : 'claude';
           if (!NAME_RE.test(name) || !NAME_RE.test(origin)) continue;
-          if (origin === via) continue;
           roster.push({ name, origin, type });
         }
         Promise.resolve()

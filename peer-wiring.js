@@ -65,10 +65,10 @@ function createPeerWiring(deps) {
       const { computeRosterFor } = require('./relay-protocol');
       setPeerManager(new PeerManager({
         selfLabel: SELF_LABEL,
-        // Hub-relay: compute the roster to push to spoke `targetId` — agents on our
-        // OTHER relayAllowed peers, split-horizon'd and both-endpoints-gated. Reads
-        // live settings + peer statuses each call, so a relayAllowed toggle takes
-        // effect on the next hello tick with no extra wiring.
+        // Hub-relay: the roster pushed to spoke `targetId` — agents on our OTHER
+        // relayAllowed peers plus OUR OWN, all under the symmetric gate. Re-reads
+        // settings, statuses and sessions per call, so a relayAllowed toggle lands
+        // on the next hello tick. manager.list()'s scope: docs/notes/relay-protocol.md.
         computeRoster: (targetId) => {
           const allowed = new Set(
             (getUiSettings().get().peers || [])
@@ -76,7 +76,9 @@ function createPeerWiring(deps) {
               .map((p) => String(p.id)),
           );
           if (!allowed.has(String(targetId))) return [];
-          return computeRosterFor(targetId, getPeerManager().statuses(), allowed);
+          let local = [];
+          try { local = manager.list(); } catch { local = []; }
+          return computeRosterFor(targetId, getPeerManager().statuses(), allowed, local, SELF_LABEL);
         },
         emit: (channel, ...args) => {
           // DM federation: claimed box→consumer messages are internal, not a

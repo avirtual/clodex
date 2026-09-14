@@ -6438,6 +6438,7 @@ function createSessionManager(deps) {
       const now = Date.now();
       for (const [via, rec] of this._relayRosters) {
         if (now - rec.at > RELAY_ROSTER_TTL_MS) { this._relayRosters.delete(via); continue; }
+        if (via === origin) continue;
         if (rec.roster.some((e) => e.origin === origin)) return via;
       }
       return null;

@@ -337,9 +337,13 @@ per-peer opt-in is the `relayAllowed` setting; the build capability is the
 distinct `relay` cap.
 
 - **Discovery (roster push).** The hub computes, per allowed spoke X, the
-  agents on its OTHER allowed peers X may reach (`computeRosterFor`:
+  agents X may reach on its OTHER allowed peers (`computeRosterFor`:
   split-horizon — never X's own — plus the **symmetric** `relayAllowed(X) &&
-  relayAllowed(Y)` gate), and **pushes** it to X via `POST /api/peer/roster`
+  relayAllowed(Y)` gate) **and its own local agents**, under the hub's
+  `SELF_LABEL`. The local rows ride the symmetric gate alone — the
+  both-endpoints gate is about a third party Y and the hub is not one — and the
+  claude/codex type filter keeps bash sessions private. It **pushes** the result
+  to X via `POST /api/peer/roster`
   (served by the spoke, called by the hub each hello tick — but only to a spoke
   advertising the `relay` cap, never 501-spamming an old box). Payload
   `{rv, via, roster:[{name,origin,type}]}`; `via` is the hub's label. The spoke

@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: if you run two Clodexes and peer them, the one on the far end of the
+  link could see agents on your other machines — relayed through the instance it
+  dials — but never the agents on that instance itself. It could answer a message
+  the hub's agents sent it and could never start one, because it had no way to
+  name them. The hub now includes its own agents in the roster it pushes, so they
+  can be addressed like any other peer's, and a message to one is delivered by the
+  same route their replies already came back on. This is gated by the same
+  per-peer "relay allowed" mark that already governs the rest of that roster: a
+  peer you have not marked still receives nothing, and there is no new switch to
+  set. Bash sessions stay private and are never listed.
+
 - Fixed: a headless Clodex instance would die outright, minutes or hours in,
   with no user action involved. Seven diagnostic lines in the session engine —
   reached from background timers that fire on parked-message flushes, inject

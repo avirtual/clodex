@@ -117,37 +117,41 @@ function hopRule(hops) {
   return { relay: true, hops: h - 1 };
 }
 
-// Compute the relay roster the HUB pushes to one spoke `targetId` — the agents on
-// its OTHER peers that this spoke is permitted to reach. Pure: takes the hub's
-// peer statuses (PeerManager.statuses() shape: {id,label,online,caps,sessions})
-// and the set of peer ids the operator marked relayAllowed. Enforces, in order:
+// Compute the relay roster the HUB pushes to one spoke `targetId` — the agents
+// it may reach on the hub's OTHER peers and on the HUB ITSELF. Pure: takes the
+// hub's peer statuses (PeerManager.statuses() shape: {id,label,online,caps,
+// sessions}), the relayAllowed peer ids, the hub's own sessions and own label.
+// Gates below; docs/notes/relay-protocol.md says which reach the local rows.
 //   * symmetric gate — the target must itself be relayAllowed, else it's not in
 //     the mesh at all → empty roster.
 //   * split-horizon — never advertise the target's own agents back to it.
 //   * both-endpoints gate — only include peer Y where Y is relayAllowed too.
 //   * liveness — only online peers with a routable label.
-//   * type filter — only claude/codex sessions (the who-list's existing filter;
-//     bash can't process intents).
-// Returns [{name, origin, type}] (origin = Y's label). Dedup guards a pathological
-// duplicate name across the same origin.
-function computeRosterFor(targetId, statuses, relayAllowedIds) {
+//   * type filter — only claude/codex; bash can't process intents and a bash
+//     session is private by design, so it must never reach a spoke's roster.
+// Returns [{name, origin, type}]. Dedup guards a duplicate name on one origin.
+function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, selfLabel) {
   const allowed = relayAllowedIds instanceof Set ? relayAllowedIds : new Set(relayAllowedIds || []);
   if (!allowed.has(String(targetId))) return [];
   const roster = [];
   const seen = new Set();
+  const admit = (sess, origin) => {
+    if (!sess || (sess.type !== 'claude' && sess.type !== 'codex')) return;
+    if (!RELAY_NAME_RE.test(String(sess.name || ''))) return;
+    const key = `${sess.name}@${origin}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    roster.push({ name: sess.name, origin, type: sess.type });
+  };
   for (const st of (statuses || [])) {
     if (!st || String(st.id) === String(targetId)) continue;   // split-horizon
     if (!st.online) continue;                                   // liveness
     if (!allowed.has(String(st.id))) continue;                 // both-endpoints gate
     if (!st.label || !RELAY_NAME_RE.test(st.label)) continue;  // routable origin only
-    for (const sess of (st.sessions || [])) {
-      if (!sess || (sess.type !== 'claude' && sess.type !== 'codex')) continue;
-      if (!RELAY_NAME_RE.test(String(sess.name || ''))) continue;
-      const key = `${sess.name}@${st.label}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      roster.push({ name: sess.name, origin: st.label, type: sess.type });
-    }
+    for (const sess of (st.sessions || [])) admit(sess, st.label);
+  }
+  if (selfLabel && RELAY_NAME_RE.test(String(selfLabel))) {
+    for (const sess of (localSessions || [])) admit(sess, String(selfLabel));
   }
   return roster;
 }

@@ -31,3 +31,24 @@ prefix rather than dropping to no prefix.
 `before` is parsed with `parseInt`, not `Number()`: an absent query param is
 `null` and `Number(null)` is `0`, a finite cutoff that pages every note away.
 `GET /api/inbox` with no `before` in test/remote-inbox.test.js is what holds it.
+
+A roster row whose `origin` equals `via` is one of the pushing hub's OWN agents.
+Intake used to drop those rows, on the rationale that a hub advertising its own
+label as a reachable origin would make the spoke relay back to it. The defect was
+real but the conclusion was wrong: it made the hub's agents unnameable from the
+spoke, so the spoke could only ever reply to a dm the hub sent first.
+
+The rows are kept, and the relay path is closed to them at two points instead:
+`receiveRoster` marks `via` as a dm origin, which puts `_routeFederatedDm`'s
+OUTBOX branch ahead of its relay branch for that origin, and
+`_relayViaForOrigin` skips a roster whose `via` is the origin being resolved.
+The outbox is the route that already works — it is how a reply reaches the hub
+today: the hub sees its own `selfLabel` in the spoke's `dmOrigins` on the next
+hello, claims, and `_deliverClaimedDms` hands the message to a live local agent.
+A relay envelope instead would have the hub resolve `findPeerByOrigin` for a peer
+that is itself, find none, and drop the dm — a row that resolves to a dropped
+message is worse than no row.
+
+The dm-origin mark is not a new exposure: `deliverDm` sets the same mark the
+first time the hub dms the spoke, which is the only way these agents were
+reachable at all before this change.
