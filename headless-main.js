@@ -73,6 +73,7 @@ const log = {
   info: (tag, message) => writeLog('INFO', tag, message),
   warn: (tag, message) => writeLog('WARN', tag, message),
   error: (tag, message) => writeLog('ERROR', tag, message),
+  debug: (tag, message) => writeLog('DEBUG', tag, message),
 };
 
 // ── Login-shell PATH ── a service launcher (systemd, docker) inherits a minimal
