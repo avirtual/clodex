@@ -11,14 +11,19 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — the headless host stops dying, and comes back when an agent asks
 
-- The phone viewer's mount path is now a field in Preferences ▸ Phone access,
-  and saving it applies immediately — the wire restarts on the new prefix
-  instead of waiting for the app to be relaunched. On a box started with
-  `CLODEX_REMOTE_BASE_PATH` the field says so and goes read-only, rather than
-  quietly accepting edits the environment variable overrides; the log line at
-  startup now names the prefix actually being served.
+- Fixed: a headless Clodex instance would die outright, minutes or hours in,
+  with no user action involved. Seven diagnostic lines in the session engine —
+  reached from background timers that fire on parked-message flushes, inject
+  drains and reboot notices — called a logging method the headless host did not
+  have. On the desktop app the same lines wrote a debug entry; headless they
+  threw, and because the throw arrived from a timer it escaped to the crash
+  handler and took the whole process with it. Operators running the headless
+  host saw their instance vanish and had to lean on an unconditional restart to
+  keep it alive. The headless host now logs at DEBUG like the desktop one, and
+  the two hosts are held to an identical logging surface so a method can no
+  longer exist on one and be missing from the other.
 
 - Fixed: on the headless host (`node headless-main.js`, the Linux spokes and the
   Docker web image), an agent emitting `[agent:reboot]` took the box down and
@@ -35,6 +40,14 @@ blocks a release.
   before. If you start the headless host from a launcher of your own that
   restarts it, set `CLODEX_SUPERVISED=1` there. The restart button in the
   phone/web UI is unchanged and still restarts immediately either way.
+
+- The phone viewer's mount path is now a field in Preferences ▸ Phone access,
+  and saving it applies immediately — the wire restarts on the new prefix
+  instead of waiting for the app to be relaunched. On a box started with
+  `CLODEX_REMOTE_BASE_PATH` the field says so and goes read-only, rather than
+  quietly accepting edits the environment variable overrides; the log line at
+  startup now names the prefix actually being served.
+
 - Fixed: if you run two Clodexes and peer them, the one on the far end of the
   link could see agents on your other machines — relayed through the instance it
   dials — but never the agents on that instance itself. It could answer a message
@@ -45,24 +58,13 @@ blocks a release.
   per-peer "relay allowed" mark that already governs the rest of that roster: a
   peer you have not marked still receives nothing, and there is no new switch to
   set. Bash sessions stay private and are never listed.
+
 - Fixed: the peers list you get back from `[agent:who]` showed those hub-side
   agents with a `(via <hub>)` suffix,
   which reads as "reachable only by passing through a third machine". They are
   not — the hub is the box you are peered with directly. They now list bare, and
   the suffix is kept for what it was for: an agent on some other machine that a
   hub relays for.
-
-- Fixed: a headless Clodex instance would die outright, minutes or hours in,
-  with no user action involved. Seven diagnostic lines in the session engine —
-  reached from background timers that fire on parked-message flushes, inject
-  drains and reboot notices — called a logging method the headless host did not
-  have. On the desktop app the same lines wrote a debug entry; headless they
-  threw, and because the throw arrived from a timer it escaped to the crash
-  handler and took the whole process with it. Operators running the headless
-  host saw their instance vanish and had to lean on an unconditional restart to
-  keep it alive. The headless host now logs at DEBUG like the desktop one, and
-  the two hosts are held to an identical logging surface so a method can no
-  longer exist on one and be missing from the other.
 
 - A file under `docs/notes/` may now be as long as the facts it records require.
   The old 40-line ceiling had become the binding constraint: of 51 note files,
