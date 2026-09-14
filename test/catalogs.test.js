@@ -5,7 +5,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED,
+  CLAUDE_TOOLS, OPTIMIZED_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
+  CLAUDE_SKILLS, OPTIMIZED_SKILLS, DEFAULT_SKILL_DENY_FLOOR, SKILL_REENABLE_CONFIRMED,
   DEFAULT_BUILTIN_DENY_FLOOR,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
 } = require('../catalogs');
@@ -33,11 +34,44 @@ test('CLAUDE_TOOLS: covers the tools observed on the live wire', () => {
   }
 });
 
-test('DEFAULT_TOOL_DENY_FLOOR: every entry is a known tool', () => {
+// t913: the floor is now DERIVED (`CLAUDE_TOOLS.filter(not in OPTIMIZED_TOOLS)`),
+// which makes "every entry is a known tool" true by construction and so vacuous
+// on its own. What can still break is the allow list: a typo there is not an
+// error, it just fails to match and silently widens the floor by one — the
+// direction nobody notices, because the tool simply stays denied.
+test('DEFAULT_TOOL_DENY_FLOOR: derived from the allow list, which holds only real tools', () => {
   assert.ok(Array.isArray(DEFAULT_TOOL_DENY_FLOOR));
   for (const t of DEFAULT_TOOL_DENY_FLOOR) {
     assert.ok(CLAUDE_TOOLS.includes(t), `${t} not in CLAUDE_TOOLS`);
   }
+  for (const t of OPTIMIZED_TOOLS) {
+    assert.ok(CLAUDE_TOOLS.includes(t), `OPTIMIZED_TOOLS: ${t} not in CLAUDE_TOOLS — a typo widens the floor`);
+  }
+  assert.deepStrictEqual(DEFAULT_TOOL_DENY_FLOOR.filter((t) => OPTIMIZED_TOOLS.includes(t)), [],
+    'the floor must not deny a curated tool');
+  assert.strictEqual(DEFAULT_TOOL_DENY_FLOOR.length + OPTIMIZED_TOOLS.length, CLAUDE_TOOLS.length,
+    'floor + allow list partition the catalog exactly');
+  // The one thing the derivation cannot catch: an allow list that quietly grew
+  // to most of the catalog is no longer a curated subset, which is the defect
+  // t913 fixed (33 of 44 tools left checked in "optimized").
+  assert.ok(OPTIMIZED_TOOLS.length * 2 < CLAUDE_TOOLS.length,
+    'optimized must keep a minority of the catalog, or it is not a curated subset');
+});
+
+// Same shape for skills. Before t913 this floor did not exist and
+// getDefaultSkillDeny() returned [] when the `*` key was absent, which made the
+// Mode selector a literal no-op for the whole skills category on a fresh root.
+test('DEFAULT_SKILL_DENY_FLOOR: non-empty, derived, and partitions CLAUDE_SKILLS', () => {
+  assert.ok(Array.isArray(DEFAULT_SKILL_DENY_FLOOR));
+  assert.ok(DEFAULT_SKILL_DENY_FLOOR.length > 0,
+    'an empty skill floor makes optimized and standard render the same set');
+  for (const s of OPTIMIZED_SKILLS) {
+    assert.ok(CLAUDE_SKILLS.includes(s), `OPTIMIZED_SKILLS: ${s} not in CLAUDE_SKILLS`);
+  }
+  assert.deepStrictEqual(DEFAULT_SKILL_DENY_FLOOR.filter((s) => OPTIMIZED_SKILLS.includes(s)), [],
+    'the floor must not deny a curated skill');
+  assert.strictEqual(DEFAULT_SKILL_DENY_FLOOR.length + OPTIMIZED_SKILLS.length, CLAUDE_SKILLS.length,
+    'floor + allow list partition the skill catalog exactly');
 });
 
 // A name outside BUILTIN_AGENTS can never be denied: the checklist offers only

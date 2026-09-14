@@ -4,10 +4,13 @@
 // main.js reference them, and a constants module keeps the initStores factory
 // signature to (userDataPath, {log}) instead of threading them as params.
 //
-// - CLAUDE_TOOLS / DEFAULT_TOOL_DENY_FLOOR — the tool catalog + shipped deny
-//   floor (used by agentDefaults and the tool-gating IPC surface).
-// - CLAUDE_SKILLS / SKILL_REENABLE_CONFIRMED — the built-in skill seed + the
-//   re-enable empirical gate (used by the skill-gating IPC surface).
+// - CLAUDE_TOOLS / OPTIMIZED_TOOLS / DEFAULT_TOOL_DENY_FLOOR — the tool catalog,
+//   the curated keep-set, and the deny floor derived from the two (used by
+//   agentDefaults and the tool-gating IPC surface).
+// - CLAUDE_SKILLS / OPTIMIZED_SKILLS / DEFAULT_SKILL_DENY_FLOOR /
+//   SKILL_REENABLE_CONFIRMED — the built-in skill seed, its curated keep-set and
+//   derived floor, plus the re-enable empirical gate (used by the skill-gating
+//   IPC surface).
 // - DEFAULT_WORKSPACE_ID / AGENT_NAME_RE / THEME_KEYS — shared identifiers the
 //   stores validate against and main.js reuses.
 
@@ -54,37 +57,12 @@ const CLAUDE_TOOLS = [
   'DesignSync',
 ];
 
-// Shipped default tool-deny floor for NEW sessions (the "*" agent-default seed).
-// On 2.1.183 a denied tool's schema is omitted from the wire tools[] (verified
-// on live bytes), so a uniform deny set shrinks AND shares the first cache
-// segment. This floor is deliberately conservative — only the provably-near-
-// universally-unused tools, so override probability (which would re-fragment
-// the shared segment) stays ~0: Jupyter-only (NotebookEdit), heavy/niche (LSP),
-// Windows-only (PowerShell), onboarding fluff (ShareOnboardingGuide), a connector
-// absent from a default session anyway (DesignSync), and Workflow (~5.2k tokens,
-// the single biggest reclaim, ~never used in an interactive console). Also:
-// TaskOutput (self-described DEPRECATED, ~1.6k ch of "don't call me" shipped
-// every request — the redirected paths, Read on the output file + task
-// notifications, predate the deprecation, so denying it breaks nothing even
-// for orchestration-heavy agents), Artifact (publishes local content to
-// claude.ai hosting — egress; deny by default, enable per-session when a
-// hosted page is actually wanted), ReportFindings (code-review-host
-// plumbing, unused in a console session), and EndConversation (abuse-
-// termination affordance with one of the largest always-shipped
-// descriptions in the roster; pointless in a managed console where the
-// operator kills sessions from the UI), and SendFeedback (~4.7k chars of
-// prose + a 27-value enum schema every request, to draft a report that is
-// queued locally and needs the operator's approval to go anywhere — the
-// operator is right here). Orchestration
-// tools (Cron*/other Task*/Monitor/worktrees) are intentionally NOT here — some
-// agents genuinely use them, and denying-by-default would force the per-session
-// overrides that re-fragment M1. The default is an editable FLOOR, not a ceiling;
-// specialized sessions add to it. Not perfect on purpose — adjust via the
-// settings panel.
-const DEFAULT_TOOL_DENY_FLOOR = [
-  'NotebookEdit', 'LSP', 'PowerShell', 'ShareOnboardingGuide', 'DesignSync', 'Workflow',
-  'TaskOutput', 'Artifact', 'ReportFindings', 'EndConversation', 'SendFeedback',
+const OPTIMIZED_TOOLS = [
+  'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash',
+  'WebFetch', 'WebSearch', 'Agent', 'SendMessage', 'Skill',
 ];
+
+const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.includes(t));
 
 // Known CLI-shipped built-in skills. Unlike tools, skills are normally
 // DISCOVERED from the transcript (skill_listing attachments) — but a skill
@@ -119,6 +97,10 @@ const CLAUDE_SKILLS = [
 // is the same mechanism the popover already ships.
 const SKILL_REENABLE_CONFIRMED = false;
 
+const OPTIMIZED_SKILLS = ['code-review', 'security-review', 'review', 'verify', 'simplify', 'claude-api'];
+
+const DEFAULT_SKILL_DENY_FLOOR = CLAUDE_SKILLS.filter((s) => !OPTIMIZED_SKILLS.includes(s));
+
 const DEFAULT_BUILTIN_DENY_FLOOR = ['Plan', 'claude', 'claude-code-guide', 'statusline-setup'];
 
 const DEFAULT_WORKSPACE_ID = 'default';
@@ -126,7 +108,8 @@ const AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session name 
 const THEME_KEYS = ['midnight', 'claude', 'paper', 'light'];
 
 module.exports = {
-  CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED,
+  CLAUDE_TOOLS, OPTIMIZED_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
+  CLAUDE_SKILLS, OPTIMIZED_SKILLS, DEFAULT_SKILL_DENY_FLOOR, SKILL_REENABLE_CONFIRMED,
   DEFAULT_BUILTIN_DENY_FLOOR,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
 };

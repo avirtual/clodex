@@ -76,15 +76,34 @@ test('#mode-row is a first-contact field: after Working directory, before #workt
 // the mode mean the three default sets, so a surface still promising only a
 // trimmed tool roster is a false claim about what the button does — and none of
 // them is reachable from the others, so nothing but a pin keeps them together.
-test('all three "Clodex optimized" surfaces promise the three default sets', () => {
-  const MODE_HINT = /optimized: 'Starts from your default tools, skills and agents \(Preferences\) and strips prior-turn thinking from the wire\. Open Advanced to enable more for this session\.'/;
+//
+// t913 added what the sets CONTAIN. Naming the three sets was true but useless
+// to a first-time user, whose reported complaint was being unable to tell what
+// optimized had done; the shape phrase is the same on all three surfaces for the
+// same reason the set list is.
+test('all three "Clodex optimized" surfaces promise the three default sets, and name the shape', () => {
+  const SHAPE = 'the core harness: read, edit, search, shell, web, subagents, skills';
+
+  const MODE_HINT = /optimized: 'Starts from your default tools, skills and agents \(Preferences\) — the core harness: read, edit, search, shell, web, subagents, skills — and strips prior-turn thinking from the wire\. Open Advanced to enable more for this session\.'/;
   assert.match(rendererSrc, MODE_HINT, "renderer.js MODE_HINTS.optimized");
 
-  const SETUP = 'New sessions start from your default tools, skills and agents (Preferences), routed through the built-in wirescope.';
+  const SETUP = 'New sessions start from your default tools, skills and agents (Preferences) — '
+    + `${SHAPE} — routed through the built-in wirescope.`;
   assert.ok(htmlSrc.includes(SETUP), 'the first-run setup dialog');
 
-  const PREFS = '<strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) and turns on wire stripping;';
+  const PREFS = '<strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) — '
+    + `${SHAPE} — and turns on wire stripping;`;
   assert.ok(htmlSrc.includes(PREFS), 'the Preferences default-mode hint');
+
+  // Standard's half of the same claim: "nothing trimmed" never said what the
+  // user GETS, which is the whole catalog. A mode selector whose two arms are
+  // not described in the same terms cannot be compared by the person choosing.
+  assert.match(rendererSrc, /standard: 'Runs the CLI with its own defaults — every tool, skill and agent, nothing stripped\.'/,
+    'renderer.js MODE_HINTS.standard names what standard includes');
+  assert.ok(htmlSrc.includes('New sessions run the CLI as installed — every tool, skill and agent, nothing tweaked.'),
+    'the first-run setup dialog says the same of Standard');
+  assert.ok(htmlSrc.includes('<strong>Standard</strong> runs the CLI untouched, with every tool, skill and agent.'),
+    'and so does the Preferences hint');
 
   // The anti-degenerate half: the superseded wording must be GONE, not merely
   // outnumbered. A surface left behind reads as the current promise.
@@ -92,6 +111,8 @@ test('all three "Clodex optimized" surfaces promise the three default sets', () 
     'the old setup wording is replaced, not duplicated');
   assert.ok(!rendererSrc.includes('Trims the tool roster and strips prior-turn thinking'),
     'the old mode hint is replaced, not duplicated');
+  assert.ok(!rendererSrc.includes("Runs the CLI with its own defaults — nothing trimmed, nothing stripped."),
+    'the old standard hint is replaced, not duplicated');
 });
 
 // --- the preset -----------------------------------------------------------
