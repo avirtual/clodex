@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: on the headless host (`node headless-main.js`, the Linux spokes and the
+  Docker web image), an agent emitting `[agent:reboot]` took the box down and
+  nothing brought it back. The restart now behaves as it does on the desktop app:
+  it waits until every session has been idle for a while, so the seat that asked
+  finishes its turn first, and if the sessions never settle the agent is told the
+  restart was dropped instead of being left waiting on one. Because a headless
+  restart means exiting for a supervisor to start the process again, that host
+  now also refuses the intent outright unless you tell it a supervisor exists —
+  set `CLODEX_SUPERVISED=1` in the launcher that reruns it (systemd
+  `Restart=always`, a Docker restart policy, a loop in your own script). Without
+  it the agent gets a refusal naming the missing variable rather than a box that
+  stays down, and the refusal costs it no cooldown, so it can say so again. The
+  restart button in the phone/web UI is unchanged and still restarts
+  immediately, supervised or not.
 - Fixed: if you run two Clodexes and peer them, the one on the far end of the
   link could see agents on your other machines — relayed through the instance it
   dials — but never the agents on that instance itself. It could answer a message

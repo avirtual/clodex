@@ -100,7 +100,8 @@ bundle), whose packaged form is the Docker image under
   variable, via `app.setPath('userData')` before its single-instance lock), a
   pidfile single-instance lock,
   log-only `openPath`/`notifyOS` seams, `restartHost` that shuts down and exits
-  64 for a supervisor to relaunch, and SIGTERM/SIGINT → `engine.shutdown()` →
+  64 for a supervisor to relaunch, the `headless-restart.js` seams for the agent
+  path, and SIGTERM/SIGINT → `engine.shutdown()` →
   exit 0. It restores `DEFAULT_WORKSPACE_ID` (or `CLODEX_WORKSPACES`). Also in
   `SCANNED_MODULES`. Deployment: [../peering/README.md](../peering/README.md).
 - **web-host.js** — the **browser frontend**, engine-side. Plain Node (HTTP +
@@ -133,6 +134,13 @@ bundle), whose packaged form is the Docker image under
   Clodex" dialog: sustained-idle detection with clock, timers, session
   snapshot and actions all injected, so it is testable with a fake clock.
   main.js is the thin shell that wires the real dialog onto it.
+- **headless-restart.js** — the headless host's shell over that waiter, plus its
+  restart CAPABILITY. Off Electron a restart is an exit-64 a supervisor must
+  answer, so `[agent:reboot]` is refused unless `CLODEX_SUPERVISED` declares one
+  (declared, never detected); when it is, the agent path arms the same sustained
+  idle wait main.js arms rather than exiting under the requesting seat. The
+  human `restartHost` control is ungated and stays immediate.
+  See [notes/headless-restart.md](notes/headless-restart.md).
 - **update-checker.js** — GitHub release poller (data layer only; main.js
   keeps the notify/banner side effects).
 - **bin-materialize.js** — stamps the exec helper scripts into `~/.clodex/bin/`

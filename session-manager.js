@@ -594,7 +594,7 @@ function createSessionManager(deps) {
     readSystemPromptBody,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     getPluginHooks,
-    getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
+    getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
   } = deps;
 
   // Which memory units are live in each agent's context. Every call site below
@@ -4894,6 +4894,15 @@ function createSessionManager(deps) {
       const reply = (msg) => this._injectText(session, `[agent:reboot] ${msg}`, { parkable: true });
       const who = session.name;
       const reason = String(body == null ? '' : body).trim();
+
+      const unavailable = relaunchUnavailable ? relaunchUnavailable() : null;
+      if (unavailable) {
+        reply(`refused — ${unavailable}`);
+        this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `REFUSED (no relaunch on this host): ${reason || '(no reason)'}` });
+        log.warn('intent', `reboot by ${who} refused: ${unavailable}`);
+        return;
+      }
+
       const store = getUiSettings && getUiSettings();
       const settings = store ? store.get() : {};
 

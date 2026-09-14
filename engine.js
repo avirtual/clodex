@@ -166,10 +166,9 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const restartHost = seams.restartHost || (() => {});
   // The agent path's restart, kept SEPARATE from restartHost: restartHost is a
   // human pressing a control (menu, phone) and must stay immediate, while
-  // [agent:reboot] fires mid-turn and has to wait for the seats to settle. A host
-  // that offers no deferred variant falls back to the immediate one, which is what
-  // headless does — its supervisor contract is exit-64-now.
+  // [agent:reboot] fires mid-turn and has to wait for the seats to settle.
   const restartHostWhenIdle = seams.restartHostWhenIdle || restartHost;
+  const restartUnavailable = seams.restartUnavailable || (() => null);
   const pathMergeFailed = !!seams.pathMergeFailed;
   // Granted on a headless host too (t903): by the argument below, that hands
   // `sandbox:*` — docker and container lifecycle on this box — to a web client.
@@ -1330,6 +1329,7 @@ const SessionManager = createSessionManager({
   notifyOS,
   setAppQuitting,
   relaunchApp: restartHostWhenIdle,
+  relaunchUnavailable: restartUnavailable,
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
 const manager = new SessionManager();
