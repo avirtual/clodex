@@ -106,7 +106,12 @@ ENV HOME=/home/clodex \
     # This engine runs INSIDE a sandbox box: no docker socket, so it must not
     # construct a sandbox manager. Baked into the image, not the generated
     # compose, so it holds however the container is launched.
-    CLODEX_IN_SANDBOX=1
+    CLODEX_IN_SANDBOX=1 \
+    # Declares the compose `restart: always` (sandbox.js writes it) to the
+    # engine: [agent:reboot] restarts this host by exiting 64 for a supervisor,
+    # and refuses when none is declared. The two are a PAIR — pinned together by
+    # test/supervised-launchers.test.js.
+    CLODEX_SUPERVISED=1
 
 USER clodex
 EXPOSE 8080

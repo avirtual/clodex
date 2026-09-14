@@ -12,6 +12,10 @@ WorkingDirectory=%h/wb-wrap-ui
 # is resolved off this PATH by /usr/bin/env below (NodeSource drops it at
 # /usr/bin/node; a nvm/local install stays reachable via ~/.npm-global etc).
 Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Declares the Restart=always below to the engine: [agent:reboot] restarts this
+# host by exiting 64 for a supervisor, and refuses when none is declared. The two
+# lines are a PAIR — pinned together by test/supervised-launchers.test.js.
+Environment=CLODEX_SUPERVISED=1
 # The remote node runs the HEADLESS engine (plain Node, no Electron/Xvfb): a peer
 # node needs only the engine + node-pty, never the desktop GUI. headless-main.js
 # stands up the same engine the Electron app hosts and answers the peer wire.

@@ -32,6 +32,15 @@ Absent means unsupervised, which is the safe answer for a manual `node
 headless-main.js`. `0/false/no/off` also decline, so a drop-in written to turn
 the capability OFF cannot turn it on by being present.
 
+Every launcher this repo ships restarts the host, so every one of them sets it:
+`peering/clodex.service` (the unit `cli/deploy/clodex-deploy.sh` installs on each
+spoke, and which `docker/Dockerfile` copies with a WorkingDirectory-only sed, so
+the peer box inherits it) and `docker/web/Dockerfile` (run under the
+`restart: always` compose `sandbox.js` generates). The restart policy and the
+declaration are a PAIR — one without the other either strands the box or lies to
+the agent — and `test/supervised-launchers.test.js` pins them together, since
+nothing else in the tree would notice them drifting apart.
+
 ## restartUnavailable
 
 Asked as its OWN seam rather than inferred from the restart seams, because
