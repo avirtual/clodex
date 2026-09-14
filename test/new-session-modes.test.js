@@ -82,9 +82,9 @@ test('#mode-row is a first-contact field: after Working directory, before #workt
 // optimized had done; the shape phrase is the same on all three surfaces for the
 // same reason the set list is.
 test('all three "Clodex optimized" surfaces promise the three default sets, and name the shape', () => {
-  const SHAPE = 'the core harness: read, edit, search, shell, web, subagents, skills';
+  const SHAPE = 'by default the core harness: read, edit, search, shell, web, subagents, skills';
 
-  const MODE_HINT = /optimized: 'Starts from your default tools, skills and agents \(Preferences\) — the core harness: read, edit, search, shell, web, subagents, skills — and strips prior-turn thinking from the wire\. Open Advanced to enable more for this session\.'/;
+  const MODE_HINT = /optimized: 'Starts from your default tools, skills and agents \(Preferences\) — by default the core harness: read, edit, search, shell, web, subagents, skills — and strips prior-turn thinking from the wire\. Open Advanced to enable more for this session\.'/;
   assert.match(rendererSrc, MODE_HINT, "renderer.js MODE_HINTS.optimized");
 
   const SETUP = 'New sessions start from your default tools, skills and agents (Preferences) — '
