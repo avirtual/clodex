@@ -1431,11 +1431,38 @@ test('a ticket whose verify suite was re-measured says so in the merge notice', 
 
   const notes = f.landed();
   assert.strictEqual(notes.length, 1, 'ENTER: the notice was sent');
-  assert.match(notes[0].body, /Verify suite was re-measured \(first run: 8048\/8050 passing, 2 failing \(exit 1\)\)\./);
+  assert.match(notes[0].body,
+    /Verify suite was re-measured\. First run: 8048\/8050 passing, 2 failing \(exit 1\) \(a timing bound\)\./,
+    'the counts reached the lead without the NAMES, which are what the lead has to act on — '
+    + 'the cold reviewer is given them and the lead is not');
   // The knife-edge the method's header states: no line may start with `[agent:`,
   // and this insertion reflows the body.
   for (const line of notes[0].body.split('\n')) {
     assert.ok(!/^\[agent:/.test(line), `no line may start with an intent: ${JSON.stringify(line)}`);
+  }
+});
+
+test('a re-measure stamp with no failing names says so rather than rendering undefined', () => {
+  const { repo } = mkRepoWithChangelog();
+
+  for (const stamp of [
+    { first: '8048/8050 passing, 2 failing (exit 1)', at: 1 },
+    { first: '8048/8050 passing, 2 failing (exit 1)', firstFailing: '', at: 1 },
+  ]) {
+    const f = mkMerge({ repo });
+    const t = f.one();
+    t.suiteRemeasured = stamp;
+    f.tstore.save(f.team.root, [t]);
+
+    f.m._notifyMergeLanded(f.team, 't1', { branch: 'tl-1', sha: 'deadbee', rounds: 1, summary: '5 pass' });
+
+    const notes = f.landed();
+    assert.strictEqual(notes.length, 1, `ENTER: a notice was sent for ${JSON.stringify(stamp)}`);
+    assert.match(notes[0].body,
+      /Verify suite was re-measured\. First run: 8048\/8050 passing, 2 failing \(exit 1\) \(no names recorded\)\./,
+      `${JSON.stringify(stamp)} did not reach the fallback`);
+    assert.ok(!/undefined|null/.test(notes[0].body),
+      `${JSON.stringify(stamp)} leaked a placeholder the lead reads as a test name`);
   }
 });
 

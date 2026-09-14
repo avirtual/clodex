@@ -349,17 +349,19 @@ fail=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="fail" {n=$3} END{print n+0}')
 # exit path (clodex-paths.js's header is the authority on the split, and names
 # putting must-survive data under the run dir as the recurring bug).
 #
-# BOUNDED BY SHAPE, NOT BY A SWEEP. One fixed file that every failing run
-# overwrites, with the body line-capped in awk below. It cannot grow, so there
-# is nothing to prune later — t187 exists because a log grew at 1.16 MB/day and
-# a second one is not worth a reader who read the digest line seconds ago.
+# BOUNDED BY SHAPE, NOT BY A SWEEP. Two fixed files: `last.txt`, which every
+# failing run overwrites, and `last-red.txt`, which the green arm below renames
+# it to rather than unlinking it, so one red survives the next green. The body
+# is line-capped in awk below, so neither can grow and there is nothing to prune
+# later — t187 exists because a log grew at 1.16 MB/day.
 #
-# The cost of one fixed path is that a second tree's failure clobbers the first
+# The cost of a fixed path is that a second tree's failure clobbers the first
 # before anyone reads it. The box-wide lock above already serializes runs, and
 # the header written below names the tree, the commit and the time, so a
 # foreign dump is detectable on sight rather than silently misread.
 keep_dir=${CLODEX_HOME:-$HOME/.clodex}/test-failures
 keep=$keep_dir/last.txt
+keep_red=$keep_dir/last-red.txt
 # Display form for the digest line, which is capped at 180 chars and where the
 # failing NAMES are the more valuable half. Empty $HOME would make the pattern
 # `/*` and match everything, so the guard is not decorative.
@@ -482,9 +484,19 @@ write_last_run_ms "$wall_ms"
 if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ]; then
   # A green run makes any dump on disk older than the verdict just printed, and
   # the reader is an agent who cats it as evidence about the run it just made.
+  # So $keep must not survive a green run — but the loop re-measures a red on
+  # the SAME commit seconds later, so unlinking it destroys the only copy of the
+  # evidence that re-measure exists to explain. Renaming clears the name a
+  # reader mistakes for current while keeping the body under one they cannot:
+  # `rm -f` here cost t915 three subagents and 49 runs re-hunting a name this
+  # script had already written down. The `|| rm -f` is for the ordinary case of
+  # no dump to move; without it a mv failure would leave $keep in place.
   # Only the green arm: a refusal measured nothing, so it must not destroy the
   # last real failure.
-  rm -f "$keep" 2>/dev/null
+  mv "$keep" "$keep_red" 2>/dev/null || rm -f "$keep" 2>/dev/null
+  # NOT named on this line: it describes a run that is not the one this digest
+  # just reported green, and the digest is what an agent reads before deciding
+  # what to open.
   printf '[%s] %s/%s green (%s)\n' "$tree" "$pass" "$tests" "$wall_show" 1>&2
   exit 0
 fi

@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: when a ticket's verify suite failed and then re-measured green, the
+  evidence of the failing run survives. The merge notice now names the tests
+  that failed on the first run, not just its counts (`no names recorded` for
+  older tickets stamped before the names were kept); the cold reviewer was
+  already told them and the lead, who has to act on it, was not. And a green
+  run of `scripts/test-digest.sh` now renames the previous failing run's
+  preserved output to `~/.clodex/test-failures/last-red.txt` instead of
+  deleting it, so a re-measure no longer destroys the only copy of the
+  assertion text, diff and stack that explains why it happened. The green
+  digest line still names no file, because that output describes an earlier
+  run.
+
 - Fixed: a Codex seat's transcript no longer shows the internal `[agent:from
   user]` delivery marker on the messages you send it. `clodex logs`, `clodex
   send --wait` and `clodex run` print `/api/transcript` verbatim, so every line
