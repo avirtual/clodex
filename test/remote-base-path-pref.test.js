@@ -18,6 +18,8 @@ const path = require('node:path');
 
 const { registerIpcHandlers, envLockedSettings } = require('../ipc-handlers');
 const { envLockFor, envLockView, applyEnvLock, patchUnlessEnvLocked } = require('../renderer/lib/env-lock');
+const { resolveRemoteBasePathSetting } = require('../remote');
+const { resolveRemotePort } = require('../service-ports');
 
 const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
@@ -79,6 +81,34 @@ test('a blank or whitespace variable is not a lock', () => {
   }
 });
 
+test('a variable the resolver REFUSES is not a lock — and the resolver keeps the stored value', () => {
+  const env = { CLODEX_REMOTE_BASE_PATH: '/my path' };
+  assert.deepStrictEqual(envLockedSettings(env), {},
+    'a space fails BASE_PATH_SEGMENT_RE, so the env value never reaches the wire');
+  assert.equal(resolveRemoteBasePathSetting({ remoteBasePath: '/c' }, env),
+    '/c', 'and what is SERVED is the stored prefix — which is what the unlocked field can now edit');
+
+  const penv = { CLODEX_REMOTE_PORT: '70000' };
+  assert.deepStrictEqual(envLockedSettings(penv), {},
+    '70000 is outside 1–65535, so the port resolver refuses it too');
+  assert.equal(resolveRemotePort({ remotePort: 7911 }, penv), 7911,
+    'and the stored port is what binds');
+
+  assert.deepStrictEqual(envLockedSettings({ CLODEX_REMOTE_PORT: 'abc' }), {},
+    'a non-numeric port is refused for the same reason');
+});
+
+test('a variable the resolver ACCEPTS still locks, and still wins — the anti-degenerate half', () => {
+  const env = { CLODEX_REMOTE_BASE_PATH: '/i/phone' };
+  assert.deepStrictEqual(envLockedSettings(env), { remoteBasePath: 'CLODEX_REMOTE_BASE_PATH' });
+  assert.equal(resolveRemoteBasePathSetting({ remoteBasePath: '/c' }, env), '/i/phone',
+    'the env value is served, which is exactly what the note claims');
+
+  const penv = { CLODEX_REMOTE_PORT: '7901' };
+  assert.deepStrictEqual(envLockedSettings(penv), { remotePort: 'CLODEX_REMOTE_PORT' });
+  assert.equal(resolveRemotePort({ remotePort: 7911 }, penv), 7901);
+});
+
 test('settings:get projects the lock map alongside the value', () => {
   const s = settingsGet({ remoteBasePath: '/c', peers: [] })({});
   assert.ok(s.envLockedSettings && typeof s.envLockedSettings === 'object',
@@ -120,6 +150,22 @@ test('applyEnvLock makes the input read-only and prints the reason beside it', (
   assert.equal(el.readOnly, false, 'and the lock lifts');
   assert.equal(classes.has('env-locked'), false);
   assert.equal(stateEl.textContent, '', 'with no leftover note');
+});
+
+test('the applies-sentence is hidden under a lock and shown when the lock lifts', () => {
+  assert.match(htmlSrc, /<span id="prefs-remote-base-path-applies">Applies as soon as you save/,
+    'the sentence is its own element, so it can be hidden without the rest of the hint');
+  assert.match(rendererSrc, /const prefsRemoteBasePathApplies = document\.getElementById\('prefs-remote-base-path-applies'\)/,
+    'looked up by the id the markup carries — a typo here is a silent null and the sentence never hides');
+  assert.match(rendererSrc, /applyEnvLock\(prefsRemoteBasePath, prefsRemoteBasePathState,[\s\S]{0,120}?prefsRemoteBasePathApplies\)/,
+    'and the renderer hands it to the same call that paints the lock');
+
+  const applies = { hidden: false };
+  const el = { value: '/c', readOnly: false, classList: { toggle: () => {} } };
+  applyEnvLock(el, { textContent: '' }, envLockView({ remoteBasePath: 'CLODEX_REMOTE_BASE_PATH' }, 'remoteBasePath'), applies);
+  assert.equal(applies.hidden, true, 'locked → the save promise is not made');
+  applyEnvLock(el, { textContent: '' }, envLockView({}, 'remoteBasePath'), applies);
+  assert.equal(applies.hidden, false, 'unlocked → it comes back, because saving works again');
 });
 
 // ── the save side: the contract that must survive the lock ──────────────────

@@ -37,18 +37,18 @@ const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
 const {
   CTX_MODEL_THRESHOLDS, CTX_REMINDER_NUDGE_TOKENS, CTX_REMINDER_ESCALATE_TOKENS,
 } = require('./ctx-reminder');
-const { REMOTE_PORT_ENV } = require('./service-ports');
-const { REMOTE_BASE_PATH_ENV } = require('./remote');
+const { REMOTE_PORT_ENV, coercePort } = require('./service-ports');
+const { REMOTE_BASE_PATH_ENV, coerceRemoteBasePath } = require('./remote');
 
 const ENV_LOCKED_SETTINGS = [
-  ['remotePort', REMOTE_PORT_ENV],
-  ['remoteBasePath', REMOTE_BASE_PATH_ENV],
+  ['remotePort', REMOTE_PORT_ENV, coercePort],
+  ['remoteBasePath', REMOTE_BASE_PATH_ENV, coerceRemoteBasePath],
 ];
 
 function envLockedSettings(env = process.env) {
   const out = {};
-  for (const [key, name] of ENV_LOCKED_SETTINGS) {
-    if (String((env && env[name]) || '').trim()) out[key] = name;
+  for (const [key, name, coerce] of ENV_LOCKED_SETTINGS) {
+    if (coerce(env ? env[name] : null) != null) out[key] = name;
   }
   return out;
 }

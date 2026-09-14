@@ -36,7 +36,7 @@ const CONTROLS = [
   'prefs-selection-hints', 'prefs-terminal-reports',
   'ws-logs-block', 'ws-logs-size', 'ws-logs-age', 'ws-logs-clear-btn',
   'prefs-remote-enabled', 'remote-dot', 'remote-status-text',
-  'prefs-remote-base-path', 'prefs-remote-base-path-state',
+  'prefs-remote-base-path', 'prefs-remote-base-path-state', 'prefs-remote-base-path-applies',
   'prefs-remote-token', 'prefs-remote-token-save', 'prefs-remote-token-clear',
   'prefs-remote-token-state', 'prefs-peer-shell',
   'prefs-env-scope', 'prefs-env-list', 'prefs-env-key', 'prefs-env-value',

@@ -4666,6 +4666,7 @@ const wsLogsClearBtn = document.getElementById('ws-logs-clear-btn');
 const prefsRemoteEnabled = document.getElementById('prefs-remote-enabled');
 const prefsRemoteBasePath = document.getElementById('prefs-remote-base-path');
 const prefsRemoteBasePathState = document.getElementById('prefs-remote-base-path-state');
+const prefsRemoteBasePathApplies = document.getElementById('prefs-remote-base-path-applies');
 let prefsEnvLocked = {};
 const remoteDot = document.getElementById('remote-dot');
 const remoteStatusText = document.getElementById('remote-status-text');
@@ -7080,7 +7081,8 @@ async function openPrefs() {
   prefsEnvLocked = (s && s.envLockedSettings) || {};
   if (prefsRemoteBasePath) {
     prefsRemoteBasePath.value = s.remoteBasePath == null ? '' : String(s.remoteBasePath);
-    applyEnvLock(prefsRemoteBasePath, prefsRemoteBasePathState, envLockView(prefsEnvLocked, 'remoteBasePath'));
+    applyEnvLock(prefsRemoteBasePath, prefsRemoteBasePathState, envLockView(prefsEnvLocked, 'remoteBasePath'),
+      prefsRemoteBasePathApplies);
   }
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   prefsRemoteToken.value = '';

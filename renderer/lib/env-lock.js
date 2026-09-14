@@ -15,12 +15,14 @@ function envLockView(locked, key) {
   };
 }
 
-function applyEnvLock(el, stateEl, view) {
+function applyEnvLock(el, stateEl, view, hideWhenLocked) {
+  const locked = !!(view && view.locked);
   if (el) {
-    el.readOnly = !!(view && view.locked);
-    el.classList.toggle('env-locked', !!(view && view.locked));
+    el.readOnly = locked;
+    el.classList.toggle('env-locked', locked);
   }
   if (stateEl) stateEl.textContent = (view && view.note) || '';
+  if (hideWhenLocked) hideWhenLocked.hidden = locked;
 }
 
 function patchUnlessEnvLocked(locked, key, value) {

@@ -17,3 +17,11 @@ there. It joins the DECLINED set rather than the granted one because
 `accounts:list` hands out the filesystem path of each account's credential
 store and `accounts:move-by-model` kills and respawns live seats — neither is
 something the ungated `session:create` already grants a web client.
+
+## envLockedSettings
+
+The predicate is the coercer each resolver uses, not "the variable is set". Both
+`resolveRemoteBasePathSetting` and `resolveRemotePort` fall back to the STORED
+value when the variable is set but fails coercion, so a lock keyed on mere
+presence made the field read-only and the note claim the box served a value it
+did not. Widening this back to a truthiness check re-opens that lie.
