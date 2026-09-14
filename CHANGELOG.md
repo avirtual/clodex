@@ -18,9 +18,11 @@ blocks a release.
   skills — instead of nearly the whole catalog. On a fresh install the mode left
   33 of 44 tools switched on, and did nothing at all to skills, so choosing
   "Standard (CLI as-is)" made little visible difference; both modes now differ in
-  every category, and the Mode hints say what each one actually gives you. If you
-  have already set your own defaults in Preferences, nothing changes: your
-  explicit choice still wins, including an empty one.
+  every category, and the Mode hints say what each one actually gives you. The
+  same defaults seed any seat spawned without an explicit roster — a headless or
+  API spawn, or a team seat — so those start from the curated subset too on a
+  fresh install. If you have already set your own defaults in Preferences,
+  nothing changes: your explicit choice still wins, including an empty one.
 
 ## 5.67.0 — 2026-09-14 — the headless host stops dying, and comes back when an agent asks
 
