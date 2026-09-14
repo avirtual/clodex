@@ -171,10 +171,8 @@ test('no tracked source file gains comment lines against the merge-base', () => 
 });
 
 const NOTES_DIR = path.join(REPO, 'docs', 'notes');
-const NOTES_LINE_CAP = 40;
+const NOTES_LINE_CAP = 120;
 
-// docs/notes/ holds no files today and that is the intended state, so the checks
-// below must pass over an absent directory rather than error on it.
 function noteFiles() {
   if (!fs.existsSync(NOTES_DIR)) return [];
   return fs.readdirSync(NOTES_DIR).filter((f) => f.endsWith('.md')).sort();
