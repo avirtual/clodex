@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- A file under `docs/notes/` may now be as long as the facts it records require.
+  The old 40-line ceiling had become the binding constraint: of 51 note files,
+  ten sat at exactly 40 lines and six more at 38-39, so notes were being trimmed
+  to fit rather than written to length — and at least once a fact was discarded
+  outright because there was no room for it. The ceiling is now 120 lines, which
+  still catches a runaway essay but stops rationing the one channel meant for
+  facts the code cannot express. Nothing else moves: source files are held to the
+  same no-new-comments rule as before, every `##` heading in a note must still
+  name a real symbol in the file it describes, and a single fact is still one or
+  two lines under that heading.
+
 ## 5.66.0 — 2026-09-14 — a rework goes straight back to work, and the browser menus stop drifting
 
 - The browser GUI's menus are now held to the desktop's by a test, so the two cannot quietly drift apart again. It checks what has to match — the order of the Window menu's Peers and Sandboxes sections, and that the "Manage Peered Clodexes…" and "Manage Clodex Sandboxes…" entries are always offered — and deliberately leaves alone the places the two legitimately differ, such as the desktop-only "Open Log File" and "Check for Updates…".
