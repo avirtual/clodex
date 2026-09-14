@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: a Codex seat's transcript no longer shows the internal `[agent:from
+  user]` delivery marker on the messages you send it. `clodex logs`, `clodex
+  send --wait` and `clodex run` print `/api/transcript` verbatim, so every line
+  you typed to a Codex seat came back prefixed with the marker and a stray
+  control character; only Claude seats were cleaned. The phone page was never
+  affected — it strips the marker in the browser as well. Peer labels like
+  `[agent:from reviewer]` still render, as before.
+
 - Fixed: "Clodex optimized" now really does start a new session from a curated
   subset — the core harness of read, edit, search, shell, web, subagents and
   skills — instead of nearly the whole catalog. On a fresh install the mode left

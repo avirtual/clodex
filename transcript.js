@@ -8,8 +8,6 @@
 // Seam: plain functions over a path/string/object; only Node `fs` for the two
 // file readers — no main.js state, no Electron. Handles BOTH the Claude
 // (type:"user"/"assistant") and Codex (event_msg / response_item) shapes.
-// Gotcha: jsonlToMessages strips injected control chars + the `[agent:from …]`
-// delivery label so the sender's own phone view renders clean.
 
 const fs = require('fs');
 
@@ -27,6 +25,15 @@ function codexResponseMessage(obj) {
     .map(b => String(b.text))
     .join('\n');
   return text ? { role, text } : null;
+}
+
+// Panel/phone sends carry the operator delivery label; every consumer of
+// jsonlToMessages renders the operator's own chat, so drop it (peer labels like
+// [agent:from reviewer] stay visible). Injected input can be recorded with the
+// leading Ctrl-U (\x15) that _injectText uses to clear the line — control chars
+// go first. Applied to every user text whatever entry shape produced it.
+function cleanUserText(text) {
+  return text.replace(/^[\x00-\x1f]+/, '').replace(/^\[agent:from user\]\s*/, '');
 }
 
 function isCodexReply(obj) {
@@ -147,11 +154,6 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
         .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '').trim();
       if (text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>')) text = '';
-      // panel/phone sends carry the delivery label; the phone view is the
-      // sender's own chat, so render them clean (peer labels stay visible).
-      // Injected input can be recorded with the leading Ctrl-U (\x15) that
-      // _injectText uses to clear the line — drop control chars first.
-      text = text.replace(/^[\x00-\x1f]+/, '').replace(/^\[agent:from user\]\s*/, '');
     } else if (type === 'assistant') {
       role = 'assistant';
       const content = (obj.message || {}).content;
@@ -166,6 +168,7 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       const msg = codexResponseMessage(obj);
       if (msg) { role = msg.role; text = msg.text; }
     }
+    if (role === 'user') text = cleanUserText(text);
 
     const turnEnd = isTurnEndEntry(obj);
     if (!role || !text.trim()) {
