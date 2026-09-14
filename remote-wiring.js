@@ -343,6 +343,7 @@ function createRemoteWiring(deps) {
 // Presence of this callback is what advertises the 'relay' cap in the hello.
         receiveRoster: ({ via, roster }) => {
           manager._setRelayRoster(via, roster);
+          if (roster.some((e) => e && e.origin === via)) manager._rememberDmOrigin(via);
           log.info('peer', `relay roster from ${via}: ${roster.length} agent(s)`);
         },
         // ---- Peer terminal (t219) ----
