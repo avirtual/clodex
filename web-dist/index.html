@@ -4078,6 +4078,10 @@ body {
   display: inline-block;
   flex: none;
 }
+input.env-locked {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .prefs-dep-reason {
   display: none;
   font-size: 11px;
@@ -7718,6 +7722,12 @@ body {
           <span id="remote-dot" class="prefs-dot"></span>
           <span id="remote-status-text" class="hint-text" style="flex: 1;">—</span>
         </div>
+        <p class="hint-text" style="margin-top: 10px;">Mount path the viewer is served under, for an ingress that proxies a sub-path. Blank serves at the root, which is the default; <code>/c</code> is the usual choice. Applies as soon as you save — the wire restarts on it.</p>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Mount path</span>
+          <input type="text" id="prefs-remote-base-path" placeholder="/c" autocomplete="off" spellcheck="false" style="flex: 1;">
+        </div>
+        <span id="prefs-remote-base-path-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
         <p class="hint-text" style="margin-top: 10px;">Optional access token that gates the wire. Paste a token you keep a copy of — you'll need it for <code>?token=</code> bookmarks on your phone. Stored write-only on this machine; it's never shown again after you save. The <code>CLODEX_REMOTE_TOKEN</code> env var, if set, overrides this.</p>
         <div class="prefs-row" style="margin-top: 6px;">
           <input type="password" id="prefs-remote-token" placeholder="Paste a token to set…" autocomplete="off" style="flex: 1;">
@@ -23234,6 +23244,37 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/env-lock.js
+  var require_env_lock = __commonJS({
+    "renderer/lib/env-lock.js"(exports, module) {
+      "use strict";
+      function envLockFor(locked, key) {
+        if (!locked || typeof locked !== "object") return null;
+        const name = locked[key];
+        return typeof name === "string" && name.trim() ? name.trim() : null;
+      }
+      function envLockView(locked, key) {
+        const name = envLockFor(locked, key);
+        return {
+          locked: !!name,
+          envName: name,
+          note: name ? `Set by ${name} \u2014 this box serves that value and the field cannot change it. Clear the variable and restart to use what Settings holds.` : ""
+        };
+      }
+      function applyEnvLock(el, stateEl, view) {
+        if (el) {
+          el.readOnly = !!(view && view.locked);
+          el.classList.toggle("env-locked", !!(view && view.locked));
+        }
+        if (stateEl) stateEl.textContent = view && view.note || "";
+      }
+      function patchUnlessEnvLocked(locked, key, value) {
+        return envLockFor(locked, key) ? {} : { [key]: value };
+      }
+      module.exports = { envLockFor, envLockView, applyEnvLock, patchUnlessEnvLocked };
+    }
+  });
+
   // renderer/lib/account-select.js
   var require_account_select = __commonJS({
     "renderer/lib/account-select.js"(exports, module) {
@@ -36228,6 +36269,7 @@ ${detail}` });
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
+      var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require_account_select();
       var { accountRowView, buildAccountRow, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -40389,6 +40431,9 @@ Click for live activity`;
       var wsLogsAge = document.getElementById("ws-logs-age");
       var wsLogsClearBtn = document.getElementById("ws-logs-clear-btn");
       var prefsRemoteEnabled = document.getElementById("prefs-remote-enabled");
+      var prefsRemoteBasePath = document.getElementById("prefs-remote-base-path");
+      var prefsRemoteBasePathState = document.getElementById("prefs-remote-base-path-state");
+      var prefsEnvLocked = {};
       var remoteDot = document.getElementById("remote-dot");
       var remoteStatusText = document.getElementById("remote-status-text");
       var prefsRemoteToken = document.getElementById("prefs-remote-token");
@@ -42816,6 +42861,11 @@ ${res.stderr}` : "");
         applyPrefsGate();
         voiceControl.start();
         prefsRemoteEnabled.checked = !!s.remoteEnabled;
+        prefsEnvLocked = s && s.envLockedSettings || {};
+        if (prefsRemoteBasePath) {
+          prefsRemoteBasePath.value = s.remoteBasePath == null ? "" : String(s.remoteBasePath);
+          applyEnvLock(prefsRemoteBasePath, prefsRemoteBasePathState, envLockView(prefsEnvLocked, "remoteBasePath"));
+        }
         if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
         prefsRemoteToken.value = "";
         renderRemoteTokenState(!!s.remoteHasToken);
@@ -42918,7 +42968,8 @@ ${res.stderr}` : "");
           terminalReports: readTerminalReports(),
           defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : "optimized",
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
-          remoteEnabled: prefsRemoteEnabled.checked
+          remoteEnabled: prefsRemoteEnabled.checked,
+          ...prefsRemoteBasePath ? patchUnlessEnvLocked(prefsEnvLocked, "remoteBasePath", prefsRemoteBasePath.value) : {}
         });
         await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
         await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());
