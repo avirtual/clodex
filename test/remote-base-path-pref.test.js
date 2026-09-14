@@ -82,8 +82,6 @@ test('a blank or whitespace variable is not a lock', () => {
 });
 
 test('a variable the resolver REFUSES is not a lock — and the resolver keeps the stored value', () => {
-  // Both directions in one subject: the unlock alone passes against a lock that
-  // is simply always off, and the fallback alone says nothing about the field.
   const env = { CLODEX_REMOTE_BASE_PATH: '/my path' };
   assert.deepStrictEqual(envLockedSettings(env), {},
     'a space fails BASE_PATH_SEGMENT_RE, so the env value never reaches the wire');
@@ -100,8 +98,7 @@ test('a variable the resolver REFUSES is not a lock — and the resolver keeps t
     'a non-numeric port is refused for the same reason');
 });
 
-test('a variable the resolver ACCEPTS still locks, and still wins', () => {
-  // The anti-degenerate half of the pair above.
+test('a variable the resolver ACCEPTS still locks, and still wins — the anti-degenerate half', () => {
   const env = { CLODEX_REMOTE_BASE_PATH: '/i/phone' };
   assert.deepStrictEqual(envLockedSettings(env), { remoteBasePath: 'CLODEX_REMOTE_BASE_PATH' });
   assert.equal(resolveRemoteBasePathSetting({ remoteBasePath: '/c' }, env), '/i/phone',
@@ -156,8 +153,6 @@ test('applyEnvLock makes the input read-only and prints the reason beside it', (
 });
 
 test('the applies-sentence is hidden under a lock and shown when the lock lifts', () => {
-  // "Applies as soon as you save" sat two lines above a note saying the field
-  // cannot change anything — one of the two had to be wrong on every locked box.
   assert.match(htmlSrc, /<span id="prefs-remote-base-path-applies">Applies as soon as you save/,
     'the sentence is its own element, so it can be hidden without the rest of the hint');
   assert.match(rendererSrc, /applyEnvLock\(prefsRemoteBasePath, prefsRemoteBasePathState,[\s\S]{0,120}?prefsRemoteBasePathApplies\)/,

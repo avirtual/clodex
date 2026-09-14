@@ -208,10 +208,6 @@ test('a box with no prefix says so rather than printing a bare port', async () =
 });
 
 test('a throwing boot log does not null a server whose socket is still listening', async () => {
-  // The `.catch` behind that log is the BIND failure handler: it records a
-  // remote error and drops the server. A throw from the injected `log.info`
-  // reached it too, so the next sync built a second server on the same port and
-  // got EADDRINUSE — from a logging fault, on a wire that was serving fine.
   const uiSettings = mkStores();
   const port = await freePort();
   uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '/c' });

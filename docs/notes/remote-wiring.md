@@ -26,3 +26,8 @@ that gives it effect.
 The boot log fires in `start()`'s `then`, gated on the server having just been
 constructed. `syncRemoteServer` runs on every settings write on the box, so an
 ungated line would log on writes that started nothing.
+
+`log` is injected, so `log.info` can throw. It is wrapped in its own
+`try {} catch {}` because the surrounding `.catch` is the BIND-failure handler:
+it records a remote error and nulls the server, which under a live socket makes
+the next sync bind the same port again and get EADDRINUSE.
