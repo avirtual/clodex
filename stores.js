@@ -1001,11 +1001,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
       if (Object.keys(e).length) map[name] = e; else delete map[name];
       this._save(map);
     },
-    // Tri-state, for each of the three sets below: key ABSENT -> the matching
-    // in-code floor; key PRESENT with a deny array (including EMPTY) -> the
-    // user's explicit choice wins, so [] means "deny nothing", not "fall back to
-    // the floor". Keyed "*", which is not a legal session name and so cannot
-    // collide with a per-agent entry.
+    // Tri-state, each set below: key ABSENT -> the matching in-code floor; key
+    // PRESENT with a deny array (including EMPTY) -> the user's explicit choice
+    // wins, so [] means "deny nothing", not "fall back to the floor". Keyed "*",
+    // not a legal session name, so it cannot collide with a per-agent entry.
     getDefaultDeny() {
       const e = this._load()['*'];
       if (e && Array.isArray(e.deny)) return e.deny.filter((t) => CLAUDE_TOOLS.includes(t));

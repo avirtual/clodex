@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: "Clodex optimized" now really does start a new session from a curated
+  subset — the core harness of read, edit, search, shell, web, subagents and
+  skills — instead of nearly the whole catalog. On a fresh install the mode left
+  33 of 44 tools switched on, and did nothing at all to skills, so choosing
+  "Standard (CLI as-is)" made little visible difference; both modes now differ in
+  every category, and the Mode hints say what each one actually gives you. If you
+  have already set your own defaults in Preferences, nothing changes: your
+  explicit choice still wins, including an empty one.
+
 ## 5.67.0 — 2026-09-14 — the headless host stops dying, and comes back when an agent asks
 
 - Fixed: a headless Clodex instance would die outright, minutes or hours in,
