@@ -18,8 +18,8 @@ blocks a release.
   send --wait` and `clodex run` print `/api/transcript` verbatim, so every line
   you typed to a Codex seat came back prefixed with the marker and a stray
   control character; only Claude seats were cleaned. The phone page already
-  stripped it in the browser, except on back-to-back sends, which merge into one
-  message and left the marker on all but the first; the server-side fix covers
+  stripped it in the browser, except on back-to-back sends, which merged into
+  one message and left the marker on all but the first; the server-side fix covers
   those too. Peer labels like `[agent:from reviewer]` still render, as before.
 
 - Fixed: "Clodex optimized" now really does start a new session from a curated
