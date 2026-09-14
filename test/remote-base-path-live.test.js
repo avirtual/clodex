@@ -139,9 +139,11 @@ test('a saved mount path takes effect on a RUNNING wire: the old prefix stops, t
 });
 
 test('a change that resolves to the SAME prefix does not bounce the wire', async () => {
-  // A restart drops every SSE client on the box, so the comparison is against
-  // the RESOLVED value the constructor would receive: `c`, `/c` and `/c/` are
-  // one prefix, and re-saving another spelling must not cost a phone its stream.
+  // A restart drops every SSE client on the box, so re-saving a prefix that is
+  // already being served must not cost a phone its stream. The store coerces
+  // before the wiring sees it, so this does NOT reach the resolver comparison
+  // at remote-wiring.js — an unresolved spelling can only arrive there through
+  // a getUiSettings stub returning the raw value, which nothing does yet.
   const uiSettings = mkStores();
   const port = await freePort();
   uiSettings.set({ remoteEnabled: true, remotePort: port, remoteBasePath: '/c' });
