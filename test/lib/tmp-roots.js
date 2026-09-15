@@ -33,15 +33,13 @@ function mkTmpRoot(prefix) {
   return root;
 }
 
-// For a root minted some other way — under a realpath'd tmpdir, say. Only for
-// roots directly in a shared temp parent: a directory nested inside an
-// already-tracked root goes with its parent and must not be listed twice.
-function trackTmpRoot(root) {
-  ROOTS.push(root);
-  return root;
-}
-
 function mkTmpDirIn(parent, prefix) {
+  if (!ROOTS.some((r) => parent === r || parent.startsWith(r + path.sep))) {
+    throw new Error(
+      `mkTmpDirIn('${parent}', '${prefix}'): the parent must be a root this process ALREADY tracks, `
+      + 'or a directory inside one. Anything else is an untracked root that nothing will sweep — '
+      + 'call mkTmpRoot(prefix) for a root in $TMPDIR.');
+  }
   return fs.mkdtempSync(path.join(parent, prefix));
 }
 
@@ -85,10 +83,6 @@ function sweep() {
   // box with 283k entries a readdirSync costs ~170ms, so session-manager.test.js
   // (877 roots × 2 passes) spent ~292s enumerating the same directory 1,754
   // times — measured, and it dominated the file's runtime.
-  //
-  // Keyed on the parent rather than assuming one, because there is more than
-  // one: test/clodex-team.test.js mints under fs.realpathSync(os.tmpdir()),
-  // which on macOS is a different string from os.tmpdir() itself.
   const byParent = new Map();
   for (const root of ROOTS) {
     const parent = path.dirname(root);
@@ -128,4 +122,4 @@ after(sweep);
 // rmSync({ force: true }) over an already-removed path is a no-op.
 process.on('exit', sweep);
 
-module.exports = { mkTmpRoot, trackTmpRoot, mkTmpDirIn };
+module.exports = { mkTmpRoot, mkTmpDirIn };

@@ -3,12 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const TEST_DIR = __dirname;
 const HELPER = path.join('lib', 'tmp-roots.js');
 const RAW = `mkdtemp${'Sync'}`;
-const CALL = new RegExp(`\\b${RAW}\\s*\\(`);
+const CALL = new RegExp(`\\bmkdtemp${'(Sync)?'}\\s*\\(`);
 
 function walk(dir, out = []) {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -20,7 +21,8 @@ function walk(dir, out = []) {
 }
 
 function codeOnly(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n');
+  const blanked = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+  return blanked.split('\n').map((l) => l.split('//')[0]).join('\n');
 }
 
 test(`no test file outside ${HELPER} mints a scratch root with a raw ${RAW}`, () => {
@@ -50,4 +52,25 @@ test(`no test file outside ${HELPER} mints a scratch root with a raw ${RAW}`, ()
     + `directory and registers it for the top-level sweep. For a directory inside a root that is ALREADY `
     + `tracked, call mkTmpDirIn(parent, 'prefix'). Do NOT add an exemption here: an exempt file leaks exactly `
     + `as much as an unconverted one, and the next reader takes it as precedent.`);
+});
+
+test('mkTmpDirIn refuses a parent that is not already tracked', () => {
+  const { mkTmpRoot, mkTmpDirIn } = require('./lib/tmp-roots');
+
+  const tracked = mkTmpRoot('tmp-roots-pin-');
+  const nested = mkTmpDirIn(tracked, 'child-');
+  assert.ok(fs.existsSync(nested), 'ENTER: the sanctioned call really does mint, so the throws below are the guard');
+  assert.ok(fs.existsSync(mkTmpDirIn(nested, 'grandchild-')),
+    'ENTER: and a directory deeper inside a tracked root is sanctioned too');
+
+  assert.throws(() => mkTmpDirIn(os.tmpdir(), 'tmp-roots-pin-escape-'), /ALREADY tracks/,
+    'the message the pin advertises would otherwise be a second, unswept route into $TMPDIR');
+  assert.throws(() => mkTmpDirIn(path.join(tracked, '..'), 'tmp-roots-pin-dotdot-'), /ALREADY tracks/,
+    'and a `..` back out of a tracked root reaches the same untracked parent');
+
+  const escaped = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('tmp-roots-pin-escape-') || n.startsWith('tmp-roots-pin-dotdot-'));
+  assert.deepStrictEqual(escaped, [],
+    'the refusal happens BEFORE the mint — a throw that left a directory behind leaks exactly what it refused. '
+    + "Scanned by this file's OWN prefixes rather than by an entry count: $TMPDIR is shared with every other "
+    + 'process on the box, so a total is not stable across two reads.');
 });
