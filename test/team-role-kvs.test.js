@@ -20,10 +20,11 @@ const os = require('node:os');
 
 const { createTicketMethods } = require('../team-tickets');
 const { createTeamManifest } = require('../team-manifest');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkBox(t) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 't754-home-'));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't754-root-'));
+  const home = mkTmpRoot('t754-home-');
+  const root = mkTmpRoot('t754-root-');
   fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
   const teamsDir = path.join(home, 'teams');
   const dir = path.join(teamsDir, 'clodex');

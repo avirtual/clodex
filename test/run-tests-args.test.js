@@ -44,6 +44,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 const STUB = "require('node:test').test('stub', () => {});\n";
@@ -52,7 +53,7 @@ const STUB = "require('node:test').test('stub', () => {});\n";
 // and resolves relative arguments against ITS OWN root, and this file usually
 // runs inside a sweep that already holds the real lock.
 function runRunner(argsFor, extraFiles = {}, spawnCwd = null) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t279-')));
+  const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));

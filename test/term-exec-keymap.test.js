@@ -41,6 +41,7 @@ const { stripAnsi } = require('../cli/src/output');
 // the door a `trap '' HUP` comes through -- measured surviving on both shells
 // this file drives.
 const { pidAlive, reapPty } = require('./lib/pty-reap');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A shell missing from a machine is not a failure of this property. Nothing is
 // skipped for being slow or flaky — a keymap answer does not vary run to run.
@@ -58,7 +59,7 @@ const SHELLS = [
   try {
     if (!fs.statSync(p).isFile()) return false;
   } catch { return false; }
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-keymap-probe-'));
+  const probe = mkTmpRoot('clodex-keymap-probe-');
   try {
     return !!buildTermShim({ dir: probe, shell: p });
   } catch { return false; } finally {
@@ -119,7 +120,7 @@ const KEYMAP_MARK = ['KEYMAP', 'SET'].join('_');
 async function runCase({ shellPath, keymapCmd, prefill, armHup, graceMs }) {
   const out = { s: '' };
   let proc = null;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-keymap-'));
+  const dir = mkTmpRoot('clodex-keymap-');
   const ptys = createDrawerPtys({
     spawn: (file, args, opts) => {
       proc = pty.spawn(file, args, opts);

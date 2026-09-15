@@ -39,6 +39,7 @@ const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { createTeamManifest } = require('../team-manifest');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const T0 = Date.UTC(2026, 7, 14, 9, 0, 0);
 const MIN = 60 * 1000;
@@ -78,7 +79,7 @@ function fakeClock(startMs) {
 // gitWorktree would let a subject claim to exercise the not-merged arm while
 // actually taking whichever arm the stub was written to return.
 function mkRepo() {
-  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t395-repo-'));
+  const dir = mkTmpRoot('clodex-t395-repo-');
   const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git(['init', '-q', '-b', 'master']);
   git(['config', 'user.email', 't@t.t']);
@@ -105,8 +106,8 @@ function mkRepo() {
 // accounting), and driving them for real would pull worktrees and cost ledgers
 // into a fixture whose whole subject is which reminders survive.
 function mkFixture() {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t395-'));
-  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t395-ud-'));
+  const home = mkTmpRoot('clodex-t395-');
+  const userData = mkTmpRoot('clodex-t395-ud-');
   const repo = mkRepo();
   const repoDir = repo.dir;
 

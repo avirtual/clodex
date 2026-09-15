@@ -26,11 +26,12 @@ const {
   RESOLVE_WINDOW_MS,
 } = require('../bash-live');
 const { pathFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function tmpRoot(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-'));
+  const dir = mkTmpRoot('clodex-live-');
   t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
   // RESOLVED, because on macOS os.tmpdir() is itself a symlink (/var -> /private/var)
   // and a fixture keyed on the unresolved form cannot see a defect that is exactly
@@ -107,7 +108,7 @@ test('the observer takes the tasks dir from the payload, NOT from os.tmpdir()', 
   assert.notStrictEqual(tasksDirFromScratchpad(scratchpad), derived,
     'ENTER: the two roots must actually DIFFER here, or this test cannot fail');
 
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-real-'));
+  const root = mkTmpRoot('clodex-live-real-');
   try {
     const tasks = path.join(root, 'sess', 'tasks');
     fs.mkdirSync(tasks, { recursive: true });
@@ -126,7 +127,7 @@ test('the observer takes the tasks dir from the payload, NOT from os.tmpdir()', 
 });
 
 test('a payload with no scratchpad_dir still falls back to the derived dir', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-fb-'));
+  const root = mkTmpRoot('clodex-live-fb-');
   try {
     const tasks = tasksDirFor('/proj/fb', 'sess', { uid: 7, tmpdir: root });
     fs.mkdirSync(tasks, { recursive: true });
@@ -148,7 +149,7 @@ test('a relative or empty scratchpad_dir is refused, not joined', () => {
 });
 
 test('writeObserver records the call, and ignores non-Bash', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-'));
+  const root = mkTmpRoot('clodex-live-');
   const cwd = '/proj/one';
   const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
   fs.mkdirSync(tasks, { recursive: true });
@@ -1476,7 +1477,7 @@ test('a stale observer whose file never appeared is dropped, not kept as a phant
 });
 
 test('pruneObservers bounds the dir, keeping the newest', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-'));
+  const root = mkTmpRoot('clodex-live-');
   const live = path.join(root, 'live');
   fs.mkdirSync(live, { recursive: true });
   const total = OBSERVER_MAX_FILES + 10;

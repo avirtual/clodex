@@ -11,12 +11,13 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { isEnvTruthy, readEffectiveClaudeEnv, teeBlindBackend } = require('../claude-env');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A hermetic cwd + a clean home (no real ~/.claude leaking in). Each mk() call
 // is torn down by the caller.
 function mkDirs() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ce-home-'));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ce-cwd-'));
+  const home = mkTmpRoot('ce-home-');
+  const cwd = mkTmpRoot('ce-cwd-');
   return { home, cwd };
 }
 function rmDirs({ home, cwd }) {

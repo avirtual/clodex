@@ -27,6 +27,7 @@ const path = require('node:path');
 
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const DOCS = path.join(__dirname, '..', 'plugins', 'plugin-api.md');
 
@@ -120,7 +121,7 @@ const HOST_METHODS = [
 // plugin-host-engine.test.js uses. Nothing here mocks the host itself; a mocked
 // host would pin the mock.
 function realEngineHost() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-surface-'));
+  const dir = mkTmpRoot('clodex-surface-');
   let ui = {};
   const engine = createPluginHostEngine({
     manager: {

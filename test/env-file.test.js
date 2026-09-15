@@ -10,9 +10,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { readEnvFile, writeEnvFile } = require('../env-file');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmp() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'envfile-'));
+  const dir = mkTmpRoot('envfile-');
   return { dir, file: path.join(dir, 'x.env'), cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 

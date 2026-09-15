@@ -11,9 +11,10 @@ const path = require('node:path');
 
 const { asRecord, readBasket, parseArgs } = require('../scripts/embed-basket');
 const { keyOf } = require('../hint-embed');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkBasket(objs) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eb-'));
+  const dir = mkTmpRoot('clx-eb-');
   const file = path.join(dir, 'operator.jsonl');
   fs.writeFileSync(file, objs.map((o) => (typeof o === 'string' ? o : JSON.stringify(o))).join('\n') + '\n');
   return { dir, file };

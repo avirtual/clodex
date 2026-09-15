@@ -35,6 +35,7 @@ const {
   stripAnsi, splitFailure, bgOutputPath, readBgOutput, normalizeRecord, readBashConsole,
 } = require('../bash-console');
 const { pathFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A real PostToolUse payload for `printf "OUT1\nERR1\n"; printf "E2\n" >&2`.
 // The interleaving is the measured fact: stdout and stderr arrive ALREADY
@@ -67,7 +68,7 @@ const FAIL_PAYLOAD = {
 };
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clx-console-'));
+  return mkTmpRoot('clx-console-');
 }
 
 function spoolDir(root, name) {

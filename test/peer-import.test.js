@@ -17,6 +17,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { initStores } = require('../stores');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   classifyEntry, sameDestination, collectCandidates, loadContexts, applyCandidates,
 } = require('../peer-import');
@@ -89,8 +90,8 @@ test('peer-import: a url that is not http(s) is refused', () => {
 // the kind accepted-but-unreachable, so this asserts survival through the real
 // sanitizePeers, not just the shape peer-import produced.
 test('peer-import: an az context imports WHOLE and survives a real ui-settings round-trip', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'peerimp-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'peerimp-reg-'));
+  const userData = mkTmpRoot('peerimp-ud-');
+  const registryDir = mkTmpRoot('peerimp-reg-');
   try {
     const { uiSettings } = initStores(userData, {
       log: console, registryDir, resourcesDir: path.join(registryDir, '__no_seed__'),
@@ -227,7 +228,7 @@ test('peer-import: applyCandidates appends only the named adds, leaving existing
 });
 
 test('peer-import: loadContexts on a missing file is an empty store, not an error', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peerimp-ctx-'));
+  const dir = mkTmpRoot('peerimp-ctx-');
   try {
     const res = loadContexts({ file: path.join(dir, 'nope.json') });
     assert.strictEqual(res.error, undefined);
@@ -236,7 +237,7 @@ test('peer-import: loadContexts on a missing file is an empty store, not an erro
 });
 
 test('peer-import: loadContexts surfaces the CLI loader warning rather than swallowing it', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peerimp-ctx-'));
+  const dir = mkTmpRoot('peerimp-ctx-');
   const file = path.join(dir, 'contexts.json');
   try {
     fs.writeFileSync(file, JSON.stringify({ current: null, contexts: { a: { url: 'https://x/' } } }));
@@ -250,7 +251,7 @@ test('peer-import: loadContexts surfaces the CLI loader warning rather than swal
 });
 
 test('peer-import: malformed JSON is reported as an error, not a crash', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peerimp-ctx-'));
+  const dir = mkTmpRoot('peerimp-ctx-');
   const file = path.join(dir, 'contexts.json');
   try {
     fs.writeFileSync(file, '{not json');

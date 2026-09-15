@@ -19,6 +19,7 @@ const { EventEmitter } = require('node:events');
 
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate, validateExecDef } = require('../exec-schema');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The dispatcher spawns on setImmediate, and the spawn itself is preceded by one
 // more hop; two flushes is what the sibling exec tests settled on. setImmediate
@@ -29,7 +30,7 @@ const settle = async () => {
 };
 
 function harness(entry, { cwd = '/proj/alpha' } = {}) {
-  const REGISTRY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-runstatus-'));
+  const REGISTRY_DIR = mkTmpRoot('clx-runstatus-');
   const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
   fs.mkdirSync(execDir, { recursive: true });
   fs.writeFileSync(path.join(execDir, 'digest.json'), JSON.stringify(entry));

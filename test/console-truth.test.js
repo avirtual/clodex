@@ -28,6 +28,7 @@ const path = require('node:path');
 
 const { readBashConsole, PULL_MAX_RECORDS } = require('../bash-console');
 const { pathFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ENT = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
 
@@ -110,7 +111,7 @@ function drawn(node) {
 // caller that started writing records straight away would lose its first tick
 // and every ENTER check below it.
 async function mountPane(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-repaint-'));
+  const root = mkTmpRoot('clx-repaint-');
   const dir = pathFor(root, 'agent1', 'bashConsole');
   fs.mkdirSync(dir, { recursive: true });
 

@@ -13,6 +13,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Register ipc-handlers with capturing transport seams + a Proxy of inert stubs
 // for everything EXCEPT the named overrides, so a handler body can run against
@@ -479,8 +480,8 @@ const { initStores } = require('../stores');
 // try/finally, not trailing rmSync: a failing assertion throws past the cleanup
 // and leaks two mkdtemp dirs per run.
 function withRegistry(fn) {
-  const registryDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t416-'));
-  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t416-ud-'));
+  const registryDir = mkTmpRoot('clodex-t416-');
+  const userData = mkTmpRoot('clodex-t416-ud-');
   fsReal.mkdirSync(pathReal.join(registryDir, 'library', 'exec'), { recursive: true });
   try {
     return fn({ registryDir, userData, stores: initStores(userData, { log: console, registryDir }) });

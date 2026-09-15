@@ -81,7 +81,7 @@ test('viewer projectDirFor agrees on a root reached through a symlink', () => {
   // started calling realpath would hash the link target, look in a directory
   // nobody wrote, and render an empty board. A parity test over non-symlinked
   // paths alone would stay green through exactly that change.
-  const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'parity-'));
+  const tmp = fs.realpathSync(mkTmpRoot('parity-'));
   const real = path.join(tmp, 'real-project');
   const link = path.join(tmp, 'link-to-project');
   fs.mkdirSync(real);
@@ -796,7 +796,7 @@ test('viewer rollupTeam agrees with core team-cost on every total it publishes',
 });
 
 test('viewer readTeamLedger reads a real cost.jsonl, and a missing one is empty', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-ledger-'));
+  const dir = mkTmpRoot('parity-ledger-');
   fs.writeFileSync(path.join(dir, 'cost.jsonl'), `${PARITY_LEDGER_ROWS.join('\n')}\n`);
 
   const mine = viewer.readTeamLedger(dir);

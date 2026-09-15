@@ -32,6 +32,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createEngine, resolveRegistryDir } = require('../engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silent = { info() {}, warn() {}, error() {} };
 
@@ -40,7 +41,7 @@ const silent = { info() {}, warn() {}, error() {} };
 // before createEngine is called, not merely before the write.
 function withFakeHome(fn) {
   const prev = process.env.HOME;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t359-fakehome-'));
+  const home = mkTmpRoot('clx-t359-fakehome-');
   process.env.HOME = home;
   try {
     assert.strictEqual(os.homedir(), home,
@@ -68,8 +69,8 @@ function fileCount(root) {
 
 test('a test-constructed engine seeds its OWN registry root and writes no home at all', () => {
   withFakeHome((fakeHome) => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t359-home-'));
-    const tmpUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t359-ud-'));
+    const tmpHome = mkTmpRoot('clx-t359-home-');
+    const tmpUserData = mkTmpRoot('clx-t359-ud-');
     try {
       const eng = createEngine({
         userDataPath: tmpUserData,
@@ -201,7 +202,7 @@ test('resolveRegistryDir throws when the seam is forgotten under node --test', (
 test('initStores refuses to seed the home-derived root when running under node --test', () => {
   withFakeHome((fakeHome) => {
     const { initStores } = require('../stores');
-    const tmpUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t359-guard-'));
+    const tmpUserData = mkTmpRoot('clx-t359-guard-');
     const warnings = [];
     try {
       // ENTER: the guard's own precondition. If node ever stops setting this,

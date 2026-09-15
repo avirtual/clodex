@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   WarmthStore, stripCacheControl, canonJson, prefixHash, segmentHashes,
   markerTtl, isWarmPing,
@@ -248,7 +249,7 @@ test('persistence: reopening the same file keeps rows and heads (schema re-run s
   const path = require('path');
   const os = require('os');
   const fs = require('fs');
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'warmth-')), 'w.sqlite');
+  const file = path.join(mkTmpRoot('warmth-'), 'w.sqlite');
   let now = 1000000;
   const w1 = new WarmthStore({ now: () => now, path: file });
   const rec = w1.record(makeBody(), CACHED, 'sess-1');

@@ -57,6 +57,7 @@ const { execFileSync } = require('node:child_process');
 const { createEngine } = require('../engine');
 const clodexPaths = require('../clodex-paths');
 const { createTicketsStore } = require('../tickets-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Realpath'd: on macOS /tmp is a symlink to /private/tmp, and git prints the
 // canonical form while a record can carry the path as created. The guard under
@@ -69,7 +70,7 @@ const real = (p) => { try { return fs.realpathSync(p); } catch { return path.res
 // Two worktree-dispatch roles: the collision needs the re-dispatch to mint a
 // DIFFERENT seat name, and the name is derived from the role.
 function mkWorld() {
-  const tmp = real(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t491-')));
+  const tmp = real(mkTmpRoot('clx-t491-'));
   const registryDir = path.join(tmp, 'clodex-home');
   const repo = path.join(tmp, 'repo');
   fs.mkdirSync(repo);

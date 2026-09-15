@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { usesTeamRoot } = require('../team-root-expand');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TPL_DIR = path.join(__dirname, '..', 'resources', 'library', 'templates');
 const LEAD_PATH = path.join(TPL_DIR, 'clodex-team-lead.json');
@@ -97,8 +98,8 @@ test('it seeds into a fresh registry byte-exact and surfaces through the templat
   // spawn falls back to a bare seat.
   const os = require('node:os');
   const { initStores } = require('../stores');
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 't770-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 't770-reg-'));
+  const userData = mkTmpRoot('t770-ud-');
+  const registryDir = mkTmpRoot('t770-reg-');
   try {
     const stores = initStores(userData, { registryDir });
     const dest = path.join(registryDir, 'library', 'templates', 'clodex-team-lead.json');

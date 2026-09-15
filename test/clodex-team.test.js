@@ -32,7 +32,7 @@ const cp = require('child_process');
 const { parseAndValidate } = require("../exec-schema");
 const { createTicketsStore } = require("../tickets-store");
 const { createSessionManager } = require('../session-manager');
-const { mkTmpRoot, trackTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-team.js');
 // The SHIPPED def, not a copy of it (t101).
@@ -565,10 +565,7 @@ test('projectDirFor parity: the script re-derivation agrees with core clodex-pat
   // resolve() and realpath() disagree. Asserting parity alone is not enough: both
   // copies drifting the same way would still be equal, so pin that neither
   // follows the link.
-  // Minted raw rather than through mkTmpRoot because the realpath'd tmpdir is
-  // the subject here — resolve() and realpath() must disagree for this to test
-  // anything. trackTmpRoot registers it for the same sweep.
-  const tmp = trackTmpRoot(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-parity-')));
+  const tmp = fs.realpathSync(mkTmpRoot('ct-parity-'));
   const real = path.join(tmp, 'real-project');
   const link = path.join(tmp, 'link-to-project');
   fs.mkdirSync(real);

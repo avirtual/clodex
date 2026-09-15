@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { initStores } = require('../stores');
 const { createRemindScheduler, MAX_TIMER_MS } = require('../remind-scheduler');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Fake clock + timer wheel. `now` is a mutable epoch; setTimer records a due
 // time; advance() walks time forward firing due callbacks in order (a callback
@@ -45,8 +46,8 @@ function fakeClock(startMs) {
 
 // A scheduler over a fresh temp store + fake clock, plus a deliver spy.
 function freshEngine(startMs) {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'remsched-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'remsched-reg-'));
+  const userData = mkTmpRoot('remsched-ud-');
+  const registryDir = mkTmpRoot('remsched-reg-');
   const stores = initStores(userData, { log: console, registryDir });
   const clock = fakeClock(startMs);
   const fires = []; // { agent, id, spec, body }

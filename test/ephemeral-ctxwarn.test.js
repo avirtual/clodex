@@ -24,8 +24,9 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { promptCacheDir } = require('../ipc-prompt-cache');
 const { parseCtxFile } = require('../argv-merge');
 const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('../ctx-reminder');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t433-')); }
+function tmp() { return mkTmpRoot('clodex-t433-'); }
 
 // One fixture; `ephemeral` is the only thing either call varies. The real
 // ctxReminderFor, ctxThresholdsFor and parseCtxFile are injected, not spied: a

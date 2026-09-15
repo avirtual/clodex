@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { createSessionManager, deniedBodyDisposition, findPeerByOrigin, isStaleRegistration, nameConflict, peerOriginSuffix } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
-const { mkTmpRoot, trackTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const { mk, mkPark, mkTeamCreate } = require('./lib/session-fixtures');
 
 function fakeWin({ destroyed = false, focused = false } = {}) {
@@ -15689,7 +15689,7 @@ async function until(cond, ms = 5000) {
 }
 
 function mkGitRepo() {
-  const root = trackTmpRoot(fsReal.realpathSync(fsReal.mkdtempSync(path.join(os.tmpdir(), 'sm-wt-'))));
+  const root = fsReal.realpathSync(mkTmpRoot('sm-wt-'));
   const repo = path.join(root, 'repo');
   fsReal.mkdirSync(repo);
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };

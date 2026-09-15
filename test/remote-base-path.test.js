@@ -9,6 +9,7 @@ const {
   resolveRemoteBasePathSetting, DEFAULT_REMOTE_BASE_PATH,
 } = require('../remote');
 const { initStores } = require('../stores');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const PAGE = path.join(__dirname, '..', 'renderer', 'remote.html');
 
@@ -269,7 +270,7 @@ test('resolveRemoteBasePathSetting: env wins, then persisted, then no prefix', (
 function withStores(fn) {
   const fs = require('node:fs');
   const os = require('node:os');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'basepath-'));
+  const dir = mkTmpRoot('basepath-');
   const had = process.env.CLODEX_REMOTE_BASE_PATH;
   delete process.env.CLODEX_REMOTE_BASE_PATH;
   try {

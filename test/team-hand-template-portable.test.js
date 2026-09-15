@@ -17,6 +17,7 @@ const path = require('node:path');
 
 const { STOCK_ROLE_DEFS } = require('../team-manifest');
 const { usesTeamRoot } = require('../team-root-expand');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TPL_PATH = path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-hand.json');
 const tpl = JSON.parse(fs.readFileSync(TPL_PATH, 'utf-8'));
@@ -124,7 +125,6 @@ test('t789: a team created against the SHIPPED library owns a copy of this templ
   // The stem above is what a new team STARTS from; the copy is what it edits.
   // Driven from resources/ rather than a fixture body, so a change to the shipped
   // template that the copy path cannot carry fails here.
-  const { mkTmpRoot } = require('./lib/tmp-roots');
   const { createTeamManifest } = require('../team-manifest');
   const home = mkTmpRoot('t789-portable-');
   const libDir = path.join(home, 'library', 'templates');
@@ -159,8 +159,8 @@ test('it seeds into a fresh registry byte-exact and surfaces through the templat
   // actually HAS it — an unseeded default is a role pointing at nothing.
   const os = require('node:os');
   const { initStores } = require('../stores');
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 't415-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 't415-reg-'));
+  const userData = mkTmpRoot('t415-ud-');
+  const registryDir = mkTmpRoot('t415-reg-');
   try {
     const stores = initStores(userData, { registryDir });
     const dest = path.join(registryDir, 'library', 'templates', 'clodex-team-hand.json');

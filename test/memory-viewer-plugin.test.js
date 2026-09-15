@@ -33,6 +33,7 @@ const { execFileSync } = require('node:child_process');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/memory-viewer/engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The plugin derives MEMORY_ROOT at require time (it is deliberately not
 // injectable — see its header). Point HOME at a temp dir and re-require so the
@@ -40,7 +41,7 @@ const viewerEngine = require('../plugins/memory-viewer/engine');
 // hermetic only on a machine where nobody exported it — and every seat Clodex
 // spawns has it set, so the whole file would read the operator's real store.
 function bootStore() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-home-'));
+  const home = mkTmpRoot('clodex-mv-home-');
   const root = path.join(home, '.clodex', 'library', 'memory');
   fs.mkdirSync(root, { recursive: true });
   return { home, root };
@@ -71,7 +72,7 @@ function boot({ removeImpl } = {}) {
   delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
   const engine = require('../plugins/memory-viewer/engine');
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-data-'));
+  const dir = mkTmpRoot('clodex-mv-data-');
   const removals = [];
   const host = createPluginHostEngine({
     manager: {
@@ -230,7 +231,7 @@ test('memory-viewer: a unit with NO id line is still deletable', async () => {
 
 test('memory-viewer: a symlink out of the agent dir is neither listed nor read', async () => {
   const { host, root, cleanup } = boot();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-secret-'));
+  const outside = mkTmpRoot('clodex-mv-secret-');
   try {
     // Well-formed as a unit, so nothing but the containment check can exclude
     // it: a parse failure would produce the same empty list for the wrong reason.
@@ -276,7 +277,7 @@ test('memory-viewer: an agent dir that is itself a symlink out is not listed and
   // `agent` arrives over IPC and need not have come from the agents listing, so
   // the folder is confined on the read path as well as excluded from the list.
   const { host, root, cleanup } = boot();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-secret-'));
+  const outside = mkTmpRoot('clodex-mv-secret-');
   try {
     fs.writeFileSync(path.join(outside, 'secret.md'),
       '---\nid: secret\nlearned_at: 2026-07-30T10:00:00.000Z\n---\n\nSECRET BODY\n');
@@ -322,7 +323,7 @@ test('memory-viewer: a HARDLINK planted in the agent dir is neither listed nor r
   // it and readFileSync serves the outside file's bytes. Only the open-time
   // link count can tell it from a real unit.
   const { host, root, cleanup } = boot();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-secret-'));
+  const outside = mkTmpRoot('clodex-mv-secret-');
   try {
     // Well-formed as a unit, so only the containment check can exclude it.
     const secret = path.join(outside, 'secret.md');
@@ -397,8 +398,8 @@ test('memory-viewer: the store still reads when the ROOT itself is behind a syml
   // The guard compares against the RESOLVED root, so it must resolve the root
   // too — comparing a resolved entry against an unresolved root refuses every
   // legitimate unit, and on macOS /var → /private/var makes that the real case.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-link-'));
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-real-'));
+  const home = mkTmpRoot('clodex-mv-link-');
+  const real = mkTmpRoot('clodex-mv-real-');
   const prevHome = process.env.HOME;
   const prevVar = process.env.CLODEX_HOME;
   try {
@@ -410,7 +411,7 @@ test('memory-viewer: the store still reads when the ROOT itself is behind a syml
     delete process.env.CLODEX_HOME;
     delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
     const engine = require('../plugins/memory-viewer/engine');
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-data-'));
+    const dir = mkTmpRoot('clodex-mv-data-');
     const host = createPluginHostEngine({
       manager: {
         sessions: new Map(),
@@ -457,8 +458,8 @@ test('memory-viewer: the store follows CLODEX_HOME, not the home-derived root', 
   // operator's real memory while the app wrote somewhere else. The discriminator
   // is a HOME and a CLODEX_HOME that hold DIFFERENT agents: asserting only that
   // the override's agent appears would also pass for a root that reads both.
-  const overrideHome = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-envroot-'));
-  const decoyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-decoyhome-'));
+  const overrideHome = mkTmpRoot('clodex-mv-envroot-');
+  const decoyHome = mkTmpRoot('clodex-mv-decoyhome-');
   const prevHome = process.env.HOME;
   const prevVar = process.env.CLODEX_HOME;
   try {
@@ -469,7 +470,7 @@ test('memory-viewer: the store follows CLODEX_HOME, not the home-derived root', 
     process.env.CLODEX_HOME = overrideHome;
     delete require.cache[require.resolve('../plugins/memory-viewer/engine')];
     const engine = require('../plugins/memory-viewer/engine');
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mv-data-'));
+    const dir = mkTmpRoot('clodex-mv-data-');
     const host = createPluginHostEngine({
       manager: {
         sessions: new Map(),

@@ -22,6 +22,7 @@ const readline = require('node:readline');
 
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createSessionInfo } = require('../session-info');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ENTRY = {
   name: 'seat', type: 'claude', cwd: '/tmp/work',
@@ -33,7 +34,7 @@ const ENTRY = {
 // `_wireTelemetry.payload(name)` returns — null means no telemetry at all,
 // which is the un-overlaid baseline every subject here compares against.
 function mkDoor({ sessions, wire }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-sinfo-overlay-'));
+  const root = mkTmpRoot('clodex-sinfo-overlay-');
   fs.writeFileSync(path.join(root, 'wire-totals.json'), JSON.stringify({ sessions }));
   const sessionInfo = createSessionInfo({
     fs, readline, homedir: () => root,

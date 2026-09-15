@@ -26,6 +26,7 @@ const path = require('node:path');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { readVoiceMode, readVoiceTrigger } = require('../voice-settings');
 const { createVoiceCore } = require('../renderer/voice-control');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ctrl+j, not the CLI's default space: a payload that lost the user's file and
 // fell back to the seeded default would still carry a `binding`, and asserting
@@ -36,7 +37,7 @@ const PARSED = { key: 'j', ctrl: true, alt: false, shift: false, meta: false, su
 // A real HOME on disk with both files the two readers open — no fs stubbing, so
 // a change to either read path surfaces here rather than only on a live box.
 function withHome(fn) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voice-ipc-'));
+  const home = mkTmpRoot('clodex-voice-ipc-');
   const dir = path.join(home, '.claude');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'settings.json'),

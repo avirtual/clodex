@@ -19,6 +19,7 @@ const { createTeamManifest, STOCK_ROLE_DEFS } = require('../team-manifest');
 const { createTeamDelete } = require('../team-delete');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createTicketsStore } = require('../tickets-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A team on disk plus the handler map, wired to the REAL manifest module.
 // `roles` is the team.json as authored; the returned `read()` re-reads the file
@@ -29,8 +30,8 @@ const DOOR_ACCOUNTS = [
 ];
 
 function mkDoor(roles, { accounts = DOOR_ACCOUNTS } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-team-home-'));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-team-root-'));
+  const home = mkTmpRoot('ipc-team-home-');
+  const root = mkTmpRoot('ipc-team-root-');
   const dir = path.join(home, 'teams', 't');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'team.json');
@@ -191,8 +192,8 @@ function mkDeleteDoor({
   manifest = 'ok', sessions = [], tickets = [], persisted = [],
   sandboxed = false, removeResult = { ok: true }, sandboxManager,
 } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-del-home-'));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-del-root-'));
+  const home = mkTmpRoot('ipc-del-home-');
+  const root = mkTmpRoot('ipc-del-root-');
   const dir = path.join(home, 'teams', 't');
   fs.mkdirSync(path.join(dir, 'prompts'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'prompts', 'lead.md'), '# lead');
@@ -393,8 +394,8 @@ test('t863: sandboxes disabled on this host refuses a sandboxed delete and keeps
 // agree, and a stub of either lets one half assert a truth the other denies.
 
 function mkActivityDoor({ manifest = 'ok', roles = null, tickets = [], sessions = [] } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-act-home-'));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-act-root-'));
+  const home = mkTmpRoot('ipc-act-home-');
+  const root = mkTmpRoot('ipc-act-root-');
   const dir = path.join(home, 'teams', 'shop');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'team.json'), manifest === 'ok'
