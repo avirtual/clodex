@@ -199,6 +199,7 @@ function createPeerWiring(deps) {
       // the far side and usually need no token — but if that node sets one, it
       // rides through here too.
       const token = (typeof p.token === 'string' && p.token) ? p.token : null;
+      const direct = !destinationOf(p);
       // Keyed off "this peer is dialled through a MANAGED TUNNEL", not off
       // sshHost specifically — ssh and the typed cloud kinds (t32) both land on
       // a local port TunnelManager owns, and both need the dead placeholder
@@ -207,7 +208,6 @@ function createPeerWiring(deps) {
       // "do you have a tunnel for this peer?" is not enough: it answers null
       // while the tunnel is merely DOWN, which is exactly when the placeholder
       // has to keep the connection object alive.
-      const direct = !destinationOf(p);
       if (p.sshHost || hasCloudTransport(p)) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
         resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox, direct });
