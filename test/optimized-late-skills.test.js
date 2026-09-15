@@ -402,8 +402,10 @@ test('t918 pin 5: a box create sends a plain list, because an old peer reads `!x
   assert.ok(!expandSkillsOff(floor, { known: ['dataviz', 'design'] }).includes('dataviz'),
     'a t918 peer would have honoured it — the send-plain choice is about versions, not about the shape being wrong');
 
+  // assert.ok, not assert.match: a failing match serializes the whole 336KB
+  // renderer source as `actual`, which takes node minutes to diff.
   const renderer = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
-  assert.match(renderer, /disabledSkills: skillDenyForPeer\(disabledSkills\)/,
+  assert.ok(/disabledSkills: skillDenyForPeer\(disabledSkills\)/.test(renderer),
     'the box-create spec must route through it — the host spawn arm keeps the directives');
 });
 
@@ -435,7 +437,7 @@ test('t918 pin 7: a lean `["*"]` template loaded into the dialog saves as `*` ag
     'one tick is one exemption — every other skill, including ones announced later, stays denied');
 });
 
-test('t918 pin 6: a read-only row never becomes a keep, and Check All means deny nothing', async () => {
+test('t918 pin 6: a read-only row never becomes a keep', async () => {
   const box = freshBox();
   // `design` is a name the floor DENIES, so nothing in the asked list asks to
   // keep it; a lower-layer off makes its row read-only, which takes it out of
@@ -449,8 +451,12 @@ test('t918 pin 6: a read-only row never becomes a keep, and Check All means deny
     "a row this box owns from a LOWER layer must not travel as a keep: on another box it would read as 'turn it on'");
   assert.ok(locked.persisted.includes('*'),
     'and the denial is still deferred — dropping the read-only row is not dropping the mechanism');
+});
 
-  // Check All: every toggleable row ticked, so the collect is empty.
+test('t918 pin 8: Check All means deny nothing, not "deny whatever arrives later"', async () => {
+  // A separate test from pin 6 deliberately: both guard the same collector and a
+  // shared one would stop at the first assert, masking the second defect.
+  const box = freshBox();
   const all = await dialogDisabledSkills(box.engine, 'optimized', {
     afterRender: (list) => {
       for (const r of list.children) {
@@ -459,6 +465,7 @@ test('t918 pin 6: a read-only row never becomes a keep, and Check All means deny
       }
     },
   });
+  assert.ok(all.rows.length, 'ENTER: rows drew, so there was something to tick');
   assert.deepStrictEqual(all.persisted, [],
     'the ticks say "deny nothing"; re-emitting `*` would still deny whatever the CLI announces later');
 });
