@@ -40,6 +40,17 @@ blocks a release.
   never seen on this box still can't be denied before it appears. Creating
   into a sandbox or a peer box still sends that box a plain list rather than the
   deferred shape, so an older Clodex on the far side can't misread it.
+- Fixed: the sidebar's web-UI arrow (↗) now works for a peer you reach by plain
+  URL. It used to refuse those with "Clodex can only tunnel to a web UI over a
+  transport it dials itself" — the refusal fired *because* there was no tunnel
+  to open, which is exactly the case needing none. Clicking it now opens your
+  browser straight at that peer's web UI, composed from the peer's own address
+  and the port it advertises in its hello, and the button's tooltip shows the
+  address it will open. The ssh, SSM, kubectl, GCP IAP and Azure Bastion peers
+  still tunnel exactly as before. A peer that reports no web frontend is still
+  refused rather than opened at a guessed port, and a peer whose web UI requires
+  a token still opens no window — you get the address to open with `?token=…`,
+  because a fresh tab carries no token and would land on a bare 401.
 
 ## 5.68.0 — 2026-09-15 — Optimized mode really is curated, and four fixes where Clodex showed or kept the wrong thing
 

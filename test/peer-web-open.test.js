@@ -106,6 +106,20 @@ test('SECURITY-adjacent: a TOKEN-GATED peer opens its tunnel but NO browser is p
   } finally { h.restore(); }
 });
 
+test('t923 PIN: a TOKEN-GATED url peer pops NO browser — the direct path is not a door around the gate', () => {
+  const h = makeWiring({
+    peers: [{ id: 'p1', label: 'cloud', url: 'https://box.example' }],
+    statuses: { p1: GATED },
+  });
+  try {
+    const res = h.wiring.openPeerWeb('p1');
+    assert.equal(res.ok, true, 'the address is resolved — that is what makes the box reachable');
+    assert.equal(res.tokenGated, true, 'and the caller is TOLD a token is required');
+    assert.equal(res.url, 'https://box.example:8080', 'with the address to append the token to');
+    assert.deepEqual(h.externals, [], 'but NO browser: a fresh tab carries no token and lands on the bare 401');
+  } finally { h.restore(); }
+});
+
 test('an UNGATED peer pops the browser exactly once, at the supervisor`s live URL', () => {
   const h = makeWiring({ peers: [{ id: 'p1', label: 'box', sshHost: 'box' }], statuses: { p1: OPEN } });
   try {
@@ -234,23 +248,45 @@ test('openPeerWeb refuses an unknown peer', () => {
   } finally { h.restore(); }
 });
 
-test('openPeerWeb refuses a URL-only peer, and SAYS why rather than failing mutely', () => {
-  // The one limitation that survives t36: Clodex reaches a url peer over a path
-  // it does not own, so there is no local end to bind. A silent failure would
-  // read as "this box has no web UI", which is a different and false claim.
+test('t923 PIN: a URL-only peer OPENS at its own host and advertised port — no tunnel', () => {
   const h = makeWiring({
-    peers: [{ id: 'p1', label: 'cloud', url: 'https://box.example' }],
+    peers: [{ id: 'p1', label: 'cloud', url: 'https://box.example:7900' }],
     statuses: { p1: OPEN },
   });
   try {
     const res = h.wiring.openPeerWeb('p1');
-    assert.equal(res.ok, false);
-    // Matched on the REASON, not on /ssh/i: the new message lists ssh among the
-    // transports Clodex does dial, so an /ssh/i match would pass on text that
-    // says the opposite of what this test is for.
-    assert.match(res.error, /reached by URL/i, 'the limitation is stated');
-    assert.deepEqual(h.opened, [], 'no tunnel attempted');
+    assert.equal(res.ok, true, 'the arrow refused BECAUSE there was no forward — the one case needing none');
+    assert.equal(res.direct, true, 'and flagged as the no-tunnel path, so the renderer phrases it right');
+    assert.equal(res.url, 'https://box.example:8080',
+      'the peer\'s own scheme and host with the hello\'s port — a `localhost` or a kept :7900 fails here');
+    assert.deepEqual(h.externals, ['https://box.example:8080'], 'the browser went exactly there');
+    assert.deepEqual(h.opened, [], 'and no tunnel was attempted');
   } finally { h.restore(); }
+});
+
+test('t923: the direct pop carries NO tunnel query params — they describe a forward that does not exist', () => {
+  const h = makeWiring({
+    peers: [{ id: 'p1', label: 'cloud', url: 'http://box.example' }],
+    statuses: { p1: { webHost: { port: 7902, tokenGated: false }, wirescope: { port: 7800 } } },
+  });
+  try {
+    assert.equal(h.wiring.openPeerWeb('p1').ok, true);
+    assert.deepEqual(h.externals, ['http://box.example:7902'],
+      'bare: `?wirescope=` would name a port on OUR loopback, and `via=tunnel` a forward this tab has not got');
+  } finally { h.restore(); }
+});
+
+test('t923: a url peer whose own url is unreadable is refused — never a half-composed address', () => {
+  for (const url of [undefined, null, '', 'box.example:7900', 'ftp://box.example']) {
+    const h = makeWiring({ peers: [{ id: 'p1', label: 'cloud', url }], statuses: { p1: OPEN } });
+    try {
+      const res = h.wiring.openPeerWeb('p1');
+      assert.equal(res.ok, false, `${JSON.stringify(url)} → refused`);
+      assert.match(res.error, /no usable web address/i);
+      assert.deepEqual(h.externals, [], 'and nothing was popped');
+      assert.deepEqual(h.opened, [], 'nor tunnelled');
+    } finally { h.restore(); }
+  }
 });
 
 test('t36: a CLOUD peer is NOT refused at the door, and its block reaches the supervisor', () => {
@@ -293,22 +329,48 @@ test('t36: a cloud peer missing a REQUIRED field is refused, not half-dialled', 
   try {
     const res = h.wiring.openPeerWeb('p1');
     assert.equal(res.ok, false);
-    assert.match(res.error, /reached by URL/i, 'falls back to the url-only refusal — nothing forwardable');
+    assert.match(res.error, /no usable web address/i,
+      'since t923 it reaches the DIRECT path and is refused there — an unusable transport and no url either');
     assert.deepEqual(h.opened, [], 'and no tunnel was attempted');
+    assert.deepEqual(h.externals, [], 'nor any browser popped at a guess');
   } finally { h.restore(); }
+});
+
+test('t923 PIN: a FORWARDABLE peer that also has a url still tunnels — the direct path must not steal it', () => {
+  for (const rec of [
+    { sshHost: 'box', url: 'http://localhost:7900' },
+    { kubectl: { target: 'svc/clodex' }, url: 'http://localhost:7901' },
+  ]) {
+    const h = makeWiring({ peers: [{ id: 'p1', label: 'box', ...rec }], statuses: { p1: OPEN } });
+    try {
+      const res = h.wiring.openPeerWeb('p1');
+      assert.equal(res.ok, true, `${JSON.stringify(rec)}: opened`);
+      assert.notEqual(res.direct, true,
+        `${JSON.stringify(rec)}: via the TUNNEL — every forwardable peer carries a url too (its wire endpoint), `
+        + 'so a direct path keyed off rec.url would reroute the whole box to unforwarded addresses');
+      assert.equal(h.opened.length, 1, `${JSON.stringify(rec)}: a tunnel was raised`);
+      assert.deepEqual(h.externals, [], `${JSON.stringify(rec)}: and nothing popped before the forward is up`);
+    } finally { h.restore(); }
+  }
 });
 
 test('openPeerWeb refuses a peer whose hello reports NO web frontend — never a guessed port', () => {
   // The whole point of t30a's hello field: a consumer must not guess
   // wire-port+1. An absent webHost means "no web host", not "try 7901".
-  for (const st of [null, {}, { webHost: null }, { webHost: undefined }]) {
-    const h = makeWiring({ peers: [{ id: 'p1', label: 'box', sshHost: 'box' }], statuses: st ? { p1: st } : {} });
-    try {
-      const res = h.wiring.openPeerWeb('p1');
-      assert.equal(res.ok, false, `${JSON.stringify(st)} → refused`);
-      assert.match(res.error, /web frontend/i);
-      assert.deepEqual(h.opened, [], 'no tunnel, no guessed port');
-    } finally { h.restore(); }
+  // The url-kind rec is in the loop as t923's PIN 2: the direct path is the
+  // second consumer of that port and so the second door this rule could be
+  // walked around.
+  for (const rec of [{ sshHost: 'box' }, { url: 'https://box.example:7900' }]) {
+    for (const st of [null, {}, { webHost: null }, { webHost: undefined }]) {
+      const h = makeWiring({ peers: [{ id: 'p1', label: 'box', ...rec }], statuses: st ? { p1: st } : {} });
+      try {
+        const res = h.wiring.openPeerWeb('p1');
+        assert.equal(res.ok, false, `${JSON.stringify(rec)} ${JSON.stringify(st)} → refused`);
+        assert.match(res.error, /web frontend/i, 'and with the SAME sentence on both paths');
+        assert.deepEqual(h.opened, [], 'no tunnel, no guessed port');
+        assert.deepEqual(h.externals, [], 'and no browser at the record`s own port either');
+      } finally { h.restore(); }
+    }
   }
 });
 

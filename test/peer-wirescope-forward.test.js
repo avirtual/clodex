@@ -388,12 +388,11 @@ test('closePeerWeb is still safe before anything was ever opened', () => {
 });
 
 test('a refused web view raises no companion forward — the refusals come first', () => {
-  // openPeerWeb refuses an unknown peer and a url-only one before either forward
-  // is touched. A companion raised ahead of those checks would be a tunnel for a
-  // web view that never opens.
+  // openPeerWeb refuses an unknown peer and a peer with no web frontend before
+  // either forward is touched. A companion raised ahead of those checks would be
+  // a tunnel for a web view that never opens.
   for (const [peers, statuses, what] of [
     [[], {}, 'unknown peer'],
-    [[{ id: 'p1', label: 'cloud', url: 'https://box.example' }], { p1: BOTH }, 'url-only peer'],
     [[SSH], { p1: { wirescope: { port: 7800 } } }, 'peer with no web frontend'],
   ]) {
     const h = makeWiring({ peers, statuses });
@@ -402,6 +401,21 @@ test('a refused web view raises no companion forward — the refusals come first
       assert.equal(h.mgrs.length, 0, `${what}: and no forward of either kind`);
     } finally { h.restore(); }
   }
+});
+
+test('t923 PIN: a url peer OPENS and still raises no companion forward — nothing to forward over', () => {
+  const h = makeWiring({
+    peers: [{ id: 'p1', label: 'cloud', url: 'https://box.example:7900' }],
+    statuses: { p1: BOTH },
+  });
+  try {
+    const res = h.wiring.openPeerWeb('p1');
+    assert.equal(res.ok, true, 'opened — this is the case needing no tunnel');
+    assert.equal(h.mgrs.length, 0,
+      'and no supervisor of either kind: openPeerWirescope has no destination to dial');
+    assert.deepEqual(h.externals, ['https://box.example:8080'],
+      'bare — `?wirescope=` would name a port on OUR loopback, the wrong machine for a peer on another host');
+  } finally { h.restore(); }
 });
 
 // ── t445: the tunnel MARK, which is not the wirescope param ──────────────────
