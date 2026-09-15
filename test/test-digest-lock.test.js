@@ -794,14 +794,15 @@ test('lock: npm test reclaims a lock whose holder is dead, and releases on exit'
 // contain that string" — a spawn error naming the fixture path satisfies any
 // substring grep, and does it in the case where the script emitted nothing.
 function runDigest({
-  tap, exit, cwd, seed, holdLock,
+  tap, exit, cwd, seed, holdLock, then, home: homeIn,
 }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t88-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
   fs.mkdirSync(path.join(root, 'bin'));
-  fs.writeFileSync(path.join(root, 'bin', 'node'),
-    `#!/bin/sh\ncat <<'CLX_TAP'\n${tap}\nCLX_TAP\nexit ${exit}\n`, { mode: 0o755 });
+  const stubNode = (t, x) => fs.writeFileSync(path.join(root, 'bin', 'node'),
+    `#!/bin/sh\ncat <<'CLX_TAP'\n${t}\nCLX_TAP\nexit ${x}\n`, { mode: 0o755 });
+  stubNode(tap, exit);
   if (holdLock) {
     // The lock is rooted at the script's own checkout, which here is the
     // fixture. OUR pid, so the holder is alive by construction and no process
@@ -816,7 +817,7 @@ function runDigest({
   // CLODEX_HOME into the fixture, or a failing case here writes the preserved
   // output into the developer's REAL ~/.clodex and destroys the dump they are
   // most likely reading — the suite must not clobber the artifact it ships.
-  const home = path.join(root, 'home');
+  const home = homeIn || path.join(root, 'home');
   const env = {
     ...process.env,
     PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
@@ -829,19 +830,30 @@ function runDigest({
     fs.mkdirSync(path.dirname(keep), { recursive: true });
     fs.writeFileSync(keep, seed);
   }
+  const keepRed = path.join(home, 'test-failures', 'last-red.txt');
+  const spawnOne = () => withRetry('runDigest', () => spawnSync(
+    '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+    { encoding: 'utf-8', cwd: cwd || root, timeout: 60000, env },
+  ));
   try {
-    const res = withRetry('runDigest', () => spawnSync(
-      '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
-      { encoding: 'utf-8', cwd: cwd || root, timeout: 60000, env },
-    ));
+    let res = spawnOne();
+    let firstDigest;
+    if (then) {
+      firstDigest = (res.stderr || '').split('\n').filter((l) => l.trim() !== '').pop();
+      stubNode(then.tap, then.exit);
+      res = spawnOne();
+    }
     const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
     return {
       tree: path.basename(root),
       lines,
+      firstDigest,
       digest: lines[lines.length - 1],
       code: res.status,
       keep,
+      keepRed,
       kept: fs.existsSync(keep) ? fs.readFileSync(keep, 'utf-8') : null,
+      keptRed: fs.existsSync(keepRed) ? fs.readFileSync(keepRed, 'utf-8') : null,
       last: fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf-8') : null,
     };
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -1071,6 +1083,13 @@ const RICH_FAIL_TAP = [
 
 const RICH_FAIL_CASE = { what: 'rich fail', tap: RICH_FAIL_TAP, exit: 1 };
 
+const ALT_FAIL_CASE = {
+  what: 'alt fail',
+  tap: ['TAP version 13', 'not ok 1 - a different failing subtest', '1..1',
+    '# tests 1', '# pass 0', '# fail 1'].join('\n'),
+  exit: 1,
+};
+
 test('keep: a failing run preserves the assertion text, diff and stack it produced', () => {
   const r = runDigest(RICH_FAIL_CASE);
   // ENTER: everything below is about the contents of a file, and a missing file
@@ -1134,6 +1153,43 @@ test('keep: a green run removes the dump an earlier failure left', () => {
   assert.strictEqual(r.kept, null,
     'a green run left the older failure dump in place, which the next reader takes for evidence '
     + 'about this run');
+});
+
+test('keep: the red run a green re-measure follows keeps its evidence under the sibling name', () => {
+  const r = runDigest({ ...RICH_FAIL_CASE, then: PASS_CASE });
+  assertDigest(r.firstDigest || '', `[${r.tree}] 2/4 green, 2 failing (${r.keep}) (${WALL}): `
+    + 'the failing subtest; outer suite',
+  'ENTER: the first run was not red, so the green arm below had no evidence to preserve');
+  assertDigest(r.digest, `[${r.tree}] 3/3 green (${WALL})`,
+    'ENTER: the second run was not green, so this is not the re-measure case');
+  assert.ok(r.keptRed !== null, 'the green re-measure destroyed the red run it followed: its '
+    + 'evidence is the only account of why a re-measure happened');
+  assert.match(r.keptRed, /^ *not ok 1 - the failing subtest$/m,
+    'the preserved red holds no failing row, so it names nothing a reader can act on');
+  assert.match(r.keptRed, /Expected values to be strictly deep-equal/,
+    'the failing ROW survived but the assertion text did not — that is the half worth keeping');
+});
+
+test('keep: the green digest names only its own run, never the red it just preserved', () => {
+  const r = runDigest({ ...RICH_FAIL_CASE, then: PASS_CASE });
+  assertDigest(r.digest, `[${r.tree}] 3/3 green (${WALL})`,
+    'the green line gained a path: it points at evidence that is not about this run');
+  assert.strictEqual(r.kept, null,
+    'the current-run name still holds the older failure, which the next reader takes for evidence '
+    + 'about the green run');
+});
+
+test('keep: the preserved red is ONE file, overwritten, not a growing set', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t916-home-'));
+  try {
+    const first = runDigest({ ...RICH_FAIL_CASE, then: PASS_CASE, home });
+    assert.ok(first.keptRed !== null, 'ENTER: the first cycle preserved nothing to overwrite');
+    const second = runDigest({ ...ALT_FAIL_CASE, then: PASS_CASE, home });
+    assert.match(String(second.keptRed), /not ok 1 - a different failing subtest/,
+      'the second cycle did not overwrite the first: the name now holds stale evidence');
+    assert.deepStrictEqual(fs.readdirSync(path.join(home, 'test-failures')).sort(), ['last-red.txt'],
+      'the dump directory grew a file per cycle — one fixed name is what bounds it without a prune');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('keep: a failing run OVERWRITES the older dump rather than being cleared', () => {

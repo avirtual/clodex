@@ -2478,7 +2478,7 @@ function createTicketMethods(deps, shared) {
           '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
-          ...(stamp ? [`Verify suite was re-measured (first run: ${oneLine(stamp.first) || 'unrecorded'}).`] : []),
+          ...(stamp ? [`Verify suite was re-measured. First run: ${oneLine(stamp.first) || 'unrecorded'} (${oneLine(stamp.firstFailing) || 'no names recorded'}).`] : []),
           changelogLine,
           // False once the loop has closed out; on a REOPEN it is true but its
           // verb is not, and line 2 has already said it.
