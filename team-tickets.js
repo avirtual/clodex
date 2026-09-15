@@ -22,7 +22,7 @@ const { projectDirFor } = require('./clodex-paths');
 const nodePath = require('path');
 const {
   readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
-  parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
+  parseCpuTime, sumTreeCpuMs, parsePsRows, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
 const { resolveAccountLabel, accountMissingError } = require('./accounts');
@@ -9419,12 +9419,6 @@ function createTicketMethods(deps, shared) {
     // the tree is discovered FROM the snapshot, so a per-pid walk would need a
     // call per level and would read a different instant at each one.
     //
-    // No command column is requested, so every row is exactly three
-    // whitespace-separated fields and a row that yields anything else is
-    // dropped. That is what makes the split safe across ps flavors — BSD ps
-    // right-pads its columns and procps pads differently, but neither can
-    // introduce an interior space once the command is absent.
-    //
     // Same null-on-failure contract and same 5s timeout as `_sampleCpuMs`.
     _samplePtyTreeCpuMs(pid) {
       return new Promise((resolve) => {
@@ -9432,16 +9426,7 @@ function createTicketMethods(deps, shared) {
         try {
           childProcess.execFile('ps', ['-axo', 'pid=,ppid=,time='], { timeout: 5000 }, (err, stdout) => {
             if (err) { resolve(null); return; }
-            const rows = [];
-            for (const line of String(stdout || '').split('\n')) {
-              const f = line.trim().split(/\s+/);
-              if (f.length !== 3) continue;
-              const p = Number(f[0]);
-              const pp = Number(f[1]);
-              if (!Number.isInteger(p) || !Number.isInteger(pp)) continue;
-              rows.push({ pid: p, ppid: pp, timeText: f[2] });
-            }
-            resolve(sumTreeCpuMs(rows, pid));
+            resolve(sumTreeCpuMs(parsePsRows(stdout), pid));
           });
         } catch { resolve(null); }
       });

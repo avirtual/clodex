@@ -173,7 +173,7 @@ const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
-const { didGrow } = require('./stall-evidence');
+const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { effectiveModel } = require('./accounts');
@@ -299,6 +299,73 @@ function sigkillPid(pid, name, log) {
     return;
   }
   try { process.kill(pid, 'SIGKILL'); } catch {}
+}
+
+// One `ps` snapshot of the whole process table, or null. Separate from the reap
+// so `killAll` can pay for it once and sweep every seat against it.
+//
+// The sync twin is for `killAll` ALONE and is not an optimisation: engine.js's
+// `shutdown()` is synchronous and no caller of it awaits anything, so on the
+// quit path an `await` here yields to an event loop the process is about to
+// leave — the pty kills would be scheduled and then never run. Blocking the main
+// thread for one `ps` at quit is the cost of the kills happening at all.
+function psSnapshotSync(childProcess) {
+  try {
+    return parsePsRows(childProcess.execFileSync(
+      'ps', ['-axo', 'pid=,ppid=,time='], { timeout: 5000, encoding: 'utf8' },
+    ));
+  } catch { return null; }
+}
+
+function psSnapshot(childProcess) {
+  return new Promise((resolve) => {
+    try {
+      childProcess.execFile('ps', ['-axo', 'pid=,ppid=,time='], { timeout: 5000 }, (err, stdout) => {
+        resolve(err ? null : parsePsRows(stdout));
+      });
+    } catch { resolve(null); }
+  });
+}
+
+// SIGKILL every process still running BENEATH a seat's pty, each pid targeted
+// individually through `sigkillPid`.
+//
+// The failure this exists to end: `pty.kill()` signals the pty and nothing under
+// it, so a CLI that spawned a test runner leaves that runner alive when the seat
+// dies. Two `node --test` processes were found at ~98% CPU each, reparented to
+// init, an hour after the run nobody was waiting for; one carried a `timeout 300`
+// wrapper that had been orphaned too, so its own five-minute kill never fired.
+//
+// Discovery is `descendantPids` over the snapshot, and NOTHING else is ever
+// signalled: no process group, no negative pid, no command-line match, no pid
+// arithmetic. `process.kill` reads a non-positive pid as a BROADCAST, and a
+// reaper that inherited that blast radius would multiply it by the size of the
+// tree — so every pid goes through the `> 0` refusal, which logs.
+//
+// SIGKILL with no SIGTERM grace, which is the opposite of the pty's own path.
+// The pty gets grace because a CLI flushes its transcript on SIGTERM and we want
+// that write. A descendant has no such contract: today's orphans IGNORED SIGTERM
+// entirely, a grace period here would delay every teardown by seconds, and
+// anything still standing at this point is by construction something the seat
+// stopped waiting for.
+//
+// Reached BEFORE `pty.kill()`, which is the whole of its timing contract: a
+// descendant is found by its ppid chain back to the pty, and the moment the pty
+// exits the kernel reparents its children to init — where the walk deliberately
+// does not follow, because every unrelated orphan on the box hangs there too.
+// Run after the kill, the snapshot is empty exactly when there was something to
+// reap.
+function reapFromSnapshot({ rows, ptyPid, name, log }) {
+  if (!rows || !(ptyPid > 0)) return 0;
+  const pids = descendantPids(rows, ptyPid);
+  for (const pid of pids) sigkillPid(pid, `${name} descendant`, log);
+  if (pids.length && log) log.info('session', `reaped ${pids.length} descendant(s) of ${name} pid=${ptyPid}`);
+  return pids.length;
+}
+
+async function reapPtyDescendants({ ptyPid, name, log, childProcess }) {
+  if (!(ptyPid > 0)) return 0;
+  return reapFromSnapshot({ rows: await psSnapshot(childProcess), ptyPid, name, log });
 }
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
@@ -2822,6 +2889,7 @@ function createSessionManager(deps) {
       }
       try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
+      await reapPtyDescendants({ ptyPid: s.pty.pid, name, log, childProcess });
       try { s.pty.kill(); } catch {}
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
@@ -2904,6 +2972,7 @@ function createSessionManager(deps) {
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
+      await reapPtyDescendants({ ptyPid: s.pty.pid, name, log, childProcess });
       try { s.pty.kill(); } catch {}
       setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
@@ -3823,13 +3892,21 @@ function createSessionManager(deps) {
       this._pendingPollTimer = setInterval(tick, intervalMs);
     }
 
+    // ONE snapshot for every seat, taken before the first pty dies. Per-seat
+    // snapshots would each be a fresh `ps` at quit time, and every one after the
+    // first would be reading a table the earlier kills had already emptied.
+    //
+    // Sync, for the reason `psSnapshotSync`'s header gives: nothing awaits the
+    // quit path, so an await here drops the kills on the floor.
     async killAll() {
       setAppQuitting(true);
       for (const s of this.sessions.values()) {
         s._shuttingDown = true;
       }
+      const rows = psSnapshotSync(childProcess);
       for (const [name] of this.sessions) {
         const s = this.sessions.get(name);
+        reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log });
         try { s.pty.kill(); } catch {}
       }
     }
