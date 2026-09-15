@@ -565,9 +565,6 @@ test('projectDirFor parity: the script re-derivation agrees with core clodex-pat
   // resolve() and realpath() disagree. Asserting parity alone is not enough: both
   // copies drifting the same way would still be equal, so pin that neither
   // follows the link.
-  // Minted raw rather than through mkTmpRoot because the realpath'd tmpdir is
-  // the subject here — resolve() and realpath() must disagree for this to test
-  // anything. trackTmpRoot registers it for the same sweep.
   const tmp = fs.realpathSync(mkTmpRoot('ct-parity-'));
   const real = path.join(tmp, 'real-project');
   const link = path.join(tmp, 'link-to-project');

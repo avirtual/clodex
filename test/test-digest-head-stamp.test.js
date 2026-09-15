@@ -47,9 +47,8 @@ function mkScratch(testBody) {
   // line AFTER this function returns, so a throw below (git absent, `git init`
   // failing, a full TMPDIR) leaks the repo the finally was added to reap.
   //
-  // trackTmpRoot around the realpath'd mint rather than mkTmpRoot, which does
-  // not realpath: $TMPDIR is under a /var symlink on macOS, and runDigest
-  // compares the dump's `# tree:` against this string.
+  // Realpath'd on the way out: $TMPDIR is under a /var symlink on macOS, and
+  // runDigest compares the dump's `# tree:` against this string.
   const dir = fs.realpathSync(mkTmpRoot('clx-t518-'));
   fs.mkdirSync(path.join(dir, 'scripts'));
   fs.mkdirSync(path.join(dir, 'test'));
