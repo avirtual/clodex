@@ -260,27 +260,16 @@ test('output is visible WHILE the writer is still appending, not only after it c
   assert.match(readsDuringWrite[readsDuringWrite.length - 1][0].output, /line 4/);
 });
 
-// Polls `read` until `want` holds, and returns the LAST read either way -- on
-// timeout it returns the failing value rather than throwing, so the caller's own
-// assertions produce the diagnosis and the failure message stays theirs.
+// Returns the LAST read on timeout rather than throwing, so the caller's own
+// assertion reports the failure.
 //
-// The one subject below needs this and its siblings do not. `finished` is set in
-// retire(), reachable ONLY from the fs.watch name-event loop, so no read can
-// force it: the test waits on the KERNEL's unlink event, not on work it drives
-// itself. Every other fixture here sleeps only to let a read it makes itself
-// observe the disk, which readdir and statSync answer synchronously -- a copy of
-// this file with every sleep cut to 1ms failed this subject alone, 43 of 44
-// still green.
-//
-// That event's latency has a HEAVY TAIL, which is what made a fixed sleep
-// hopeless rather than merely tight. Instrumented here, time from unlinkSync to
-// the finalize: 78ms / 400ms / 699ms on three idle runs, and 326-1237ms with
-// eight CPU hogs alongside. The 120ms this replaced was under the IDLE median.
-// A deadline poll costs the fast case nothing and spends time only when it must.
-//
-// The long wait is safe in the other direction too: before the finalize the row
-// is held by neither expiry in read(). FINALIZED_GRACE_MS is counted from
-// `finishedAt`, which is still null, and the RESOLVE_WINDOW_MS drop requires
+// Only the subject below needs this: `finished` is set in retire(), reachable
+// ONLY from the fs.watch name-event loop, so it waits on the KERNEL's unlink
+// event rather than on a read it makes itself. That latency has a heavy tail --
+// measured unlinkSync to finalize: 78/400/699ms idle, 326-1237ms under load --
+// which is why the 120ms sleep this replaced lost under a loaded suite.
+// The ceiling cannot expire the row early: FINALIZED_GRACE_MS runs from
+// `finishedAt`, still null here, and the RESOLVE_WINDOW_MS drop needs
 // `!row.offset`, which PARTIAL has already made nonzero.
 async function readUntil(read, want, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
@@ -307,10 +296,9 @@ test('the DELETE of the file finalizes the row, and the last read keeps what it 
   t.after(() => live.stopAll());
   live.read('seat');
   fs.writeFileSync(file, 'PARTIAL\n');
-  // The bytes must reach the row BEFORE the unlink: retire() tails through a
-  // statSync on the now-deleted path, which throws and keeps whatever the row
-  // already had. A row that never streamed PARTIAL would finalize empty and fail
-  // the last assertion instead of this one.
+  // PARTIAL must reach the row BEFORE the unlink: retire() tails through a
+  // statSync on the deleted path, which throws, so the row keeps only what it
+  // already had.
   const before = await readUntil(() => live.read('seat'), (r) => r.length === 1 && /PARTIAL/.test(r[0].output));
   assert.strictEqual(before[0].finished, false, 'ENTER: it was live before the unlink');
 
