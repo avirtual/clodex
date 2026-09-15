@@ -62,8 +62,7 @@ test('DEFAULT_TOOL_DENY_FLOOR: derived from the allow list, which holds only rea
 // Same shape for skills. Before t913 this floor did not exist and
 // getDefaultSkillDeny() returned [] when the `*` key was absent, which made the
 // Mode selector a literal no-op for the whole skills category on a fresh root.
-// t918 made it DEFERRED — `*` plus one `!name` exemption per kept skill — so the
-// partition it used to assert directly is asserted over the EXPANSION instead.
+// t918 made it deferred, so the partition is asserted over the EXPANSION.
 test('DEFAULT_SKILL_DENY_FLOOR: deferred, derived, and partitions CLAUDE_SKILLS when expanded', () => {
   assert.ok(Array.isArray(DEFAULT_SKILL_DENY_FLOOR));
   assert.ok(DEFAULT_SKILL_DENY_FLOOR.includes('*'),

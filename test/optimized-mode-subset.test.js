@@ -146,10 +146,8 @@ async function runDialog(settings, { type = 'claude', openIn, switchTo } = {}) {
         },
       },
       advisoryEffective: (e) => e || {},
-      // Real module, not stubs: the off-set the rows draw is then exactly what
-      // `!name` resolves to at spawn, so render and spawn cannot disagree here.
+      // Real module, so the rows draw from what `!name` resolves to at spawn.
       skillOffSetFor, skillDenyIsDeferred,
-      // Module-level lets beside the extracted function; the harness binds them.
       newSessionSkillsDeferred: false,
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],
@@ -337,9 +335,8 @@ test('t913: both floors are DERIVED from the allow lists, never re-listed by han
   assert.match(src, /const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS\.filter\(\(t\) => !OPTIMIZED_TOOLS\.includes\(t\)\);/,
     'DEFAULT_TOOL_DENY_FLOOR must be derived from OPTIMIZED_TOOLS, not listed — a hand-listed floor '
     + 'silently keeps every future tool ON in optimized');
-  // The skill half derives the same way but through `deferredSkillDeny` (t918),
-  // so the value is `['*', '!keep', …]` and resolves at SPAWN. Same property,
-  // strengthened: the sentinel also covers skills in no list at all yet.
+  // The skill half derives through `deferredSkillDeny` (t918) — same property,
+  // strengthened: its sentinel also covers skills in no list at all yet.
   assert.match(src, /const DEFAULT_SKILL_DENY_FLOOR = deferredSkillDeny\(OPTIMIZED_SKILLS\);/,
     'DEFAULT_SKILL_DENY_FLOOR must be derived from OPTIMIZED_SKILLS, not listed');
   assert.ok(!/const DEFAULT_SKILL_DENY_FLOOR = \[/.test(src),
