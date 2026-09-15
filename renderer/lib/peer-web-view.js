@@ -85,7 +85,7 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   const webHost = st && st.webHost;
   const phase = tunnelPhase(webTunnel);
   const direct = !!(st && st.direct === true);
-  const how = transportPhrase(tunnel);
+  const how = tunnel ? ` ${transportPhrase(tunnel)}` : '';
   const label = (st && (st.host || st.label)) || 'peer';
   // `=== true`, matching peer-client's hello normalization (the single producer,
   // which already coerces to a strict boolean) and peer-wiring's pop decision.
@@ -132,7 +132,7 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   if (phase === 'connecting') {
     return {
       show: true, enabled: true, action: 'close', phase, url: null, tokenGated,
-      tip: `Connecting to ${label}'s web UI ${how}… click to cancel`,
+      tip: `Connecting to ${label}'s web UI${how}… click to cancel`,
     };
   }
   if (phase === 'gave-up') {
@@ -145,8 +145,8 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   return {
     show: true, enabled: true, action: 'open', phase, url: null, tokenGated,
     tip: tokenGated
-      ? `Open ${label}'s web UI ${how} — the box requires a token, so you'll get a URL to open with ?token=…`
-      : `Open ${label}'s web UI ${how}`,
+      ? `Open ${label}'s web UI${how} — the box requires a token, so you'll get a URL to open with ?token=…`
+      : `Open ${label}'s web UI${how}`,
   };
 }
 

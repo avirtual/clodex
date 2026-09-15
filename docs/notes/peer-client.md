@@ -17,5 +17,4 @@ A `direct` change alone updates the connection IN PLACE and re-announces, rather
 than joining the url/label/token list that restarts it. Nothing on the wire
 depends on the flag, so a restart would shed every live attachment to carry one
 boolean; but a silent no-op would leave the sidebar offering a direct address for
-a peer main now tunnels to. Adding an `sshHost` to a url peer is exactly that
-edit: it moves the route while leaving every restart field untouched.
+a peer main now tunnels to.

@@ -228,6 +228,23 @@ test('every tip names the transport the operator is ACTUALLY getting', () => {
   // And an ssh peer still says ssh — the phrase is per-transport, not removed.
   const ssh = webViewAffordance({ status: online(WEB), tunnel: { id: 'p1', sshHost: 'box' } });
   assert.match(ssh.tip, /over ssh/, 'an ssh peer is still described as ssh');
+
+  for (const [tunnel, phase] of [[undefined, 'closed'], [null, 'closed']]) {
+    const a = webViewAffordance({ status: { ...online(WEB), direct: false }, tunnel });
+    assert.equal(a.phase, phase);
+    assert.doesNotMatch(a.tip, /over /,
+      `tunnel=${JSON.stringify(tunnel)}: no transport is named — transportPhrase falls back to 'over ssh', the `
+      + 'same map-miss guess t925 took out of the ROUTE decision, and it would tell a kubectl operator in the '
+      + 'pre-seed window to debug an ssh they never use');
+    assert.doesNotMatch(a.tip, /\s{2}|\s+…|\s+—/, 'and no gap is left where the phrase was');
+  }
+  const connectingRowless = webViewAffordance({
+    status: { ...online(WEB), direct: false }, tunnel: null, webTunnel: { id: 'p1', state: 'down' },
+  });
+  assert.equal(connectingRowless.phase, 'connecting',
+    'reachable row-less: a click in the pre-seed window sets peerWebTunnels while peerTunnels is still empty');
+  assert.doesNotMatch(connectingRowless.tip, /over /, 'the connecting tip names none either');
+  assert.doesNotMatch(connectingRowless.tip, /\s{2}|\s+…/, 'and reads cleanly without it');
 });
 
 test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees the peer record', () => {
@@ -252,7 +269,10 @@ test('t925 PIN: before the tunnel rows are seeded, a forwardable peer keeps the 
       + 'row-less while resolvePeerUrls has rewritten its status.url to the forward`s own loopback. Reading the '
       + 'miss as "url peer" composed an address from it — and the TIP is where that showed, while a.url stayed null');
     assert.doesNotMatch(a.tip, /no tunnel needed/i, `${what}: a forward is exactly what this peer needs`);
-    assert.match(a.tip, /over ssh/, `${what}: it falls to the ordinary open arm, which names the forward`);
+    assert.match(a.tip, /^Open box's web UI/, `${what}: it falls to the ordinary open arm`);
+    assert.doesNotMatch(a.tip, /over /,
+      `${what}: and names NO transport — with no row, the kind is unconfirmed, and "over ssh" at a kubectl peer `
+      + 'is the false-but-plausible sentence t36 removed. transportPhrase defaults to ssh, so it must not be asked');
     assert.strictEqual(a.url, null, `${what}: and still no url before a live forward reports one`);
   }
 });

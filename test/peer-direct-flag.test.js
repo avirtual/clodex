@@ -65,7 +65,7 @@ test('t925: status() carries `direct` to the renderer, strictly', () => {
   } finally { mgr.stopAll(); }
 });
 
-test('t925: a transport edit re-announces the new route WITHOUT restarting the connection', () => {
+test('t925: a `direct`-only delta re-announces the new route WITHOUT restarting the connection', () => {
   const emits = [];
   const mgr = new PeerManager({ emit: (ch, ...a) => emits.push([ch, ...a]) });
   try {
@@ -74,9 +74,8 @@ test('t925: a transport edit re-announces the new route WITHOUT restarting the c
     mgr.sync([{ id: 'p1', label: 'box', url: 'http://127.0.0.1:1', direct: false }]);
 
     assert.deepEqual(emits.filter(([ch]) => ch === 'peer-removed'), [],
-      'no teardown: adding an sshHost moves the ROUTE while url, label and token — the fields sync restarts on '
-      + '— are untouched, and nothing on the wire depends on the flag, so a restart would shed every live '
-      + 'attachment to carry one boolean');
+      'no teardown: nothing on the wire depends on the flag, so a restart would shed every live attachment to '
+      + 'carry one boolean');
     const states = emits.filter(([ch]) => ch === 'peer-state');
     assert.equal(states.length, 1,
       'exactly one re-announcement — a silent no-op would leave the sidebar offering a direct address for a '

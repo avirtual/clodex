@@ -29,4 +29,11 @@ is gone; `isSshPeer` remains for the deploy flow, which is genuinely ssh-only.
 ## transportPhrase
 
 Names the forward being opened, so it is asked of the tunnel row and not of
-`status.direct` — by the time any arm using it renders, a row exists.
+`status.direct`.
+
+t925: it is asked ONLY when a row exists. Its no-row fallback is `'over ssh'`,
+which is the same map-miss guess this ticket took out of the route decision — in
+the pre-seed window it told a kubectl or SSM operator to debug an ssh they never
+use. Row-less tips now name no transport (`Open box's web UI`), in both the
+`closed` fallback arm and the `connecting` one, which a click in that window
+reaches with `peerWebTunnels` set and `peerTunnels` still empty.

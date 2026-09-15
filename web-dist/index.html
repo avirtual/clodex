@@ -34235,7 +34235,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const webHost = st && st.webHost;
         const phase = tunnelPhase(webTunnel);
         const direct = !!(st && st.direct === true);
-        const how = transportPhrase(tunnel);
+        const how = tunnel ? ` ${transportPhrase(tunnel)}` : "";
         const label = st && (st.host || st.label) || "peer";
         const tokenGated = !!(webHost && webHost.tokenGated === true);
         const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
@@ -34282,7 +34282,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             phase,
             url: null,
             tokenGated,
-            tip: `Connecting to ${label}'s web UI ${how}\u2026 click to cancel`
+            tip: `Connecting to ${label}'s web UI${how}\u2026 click to cancel`
           };
         }
         if (phase === "gave-up") {
@@ -34304,7 +34304,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           phase,
           url: null,
           tokenGated,
-          tip: tokenGated ? `Open ${label}'s web UI ${how} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI ${how}`
+          tip: tokenGated ? `Open ${label}'s web UI${how} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI${how}`
         };
       }
       module.exports = {

@@ -956,7 +956,7 @@ class PeerManager {
 
   // Reconcile the ui-settings peer rows: keep matching, drop removed, start added.
   // An edit to a field the WIRE depends on restarts that peer — the Bearer header
-  // is fixed at construction; the rest update in place. docs/notes/peer-client.md.
+  // is fixed at construction; `direct` updates in place. docs/notes/peer-client.md.
   sync(peers) {
     const wanted = new Map();
     for (const p of Array.isArray(peers) ? peers : []) {
