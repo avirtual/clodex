@@ -167,45 +167,69 @@ test('archive(): a real descendant of the seat pty is dead afterwards', async ()
 
 // ── The ownership guard ──
 
-// A LIVE pid this process does not own, with real descendants beneath it. This
-// is the fixture shape that took the operator's machine down twice: `pid: 1` is
-// positive, so every sign-based guard passes it, and launchd parents everything.
+// A LIVE pid this process does not own, with real descendants beneath it.
+//
+// TWO shapes, and the second is the one that keeps this honest. `pid: 1` is the
+// fixture that took the operator's machine down twice — positive, so every
+// sign-based guard passes it, and launchd parents everything. But a subject that
+// only ever passes 1 is satisfied by `ptyPid !== 1`, which is a magic value and
+// not the invariant: measured, that relaxation shipped GREEN against the
+// single-case version of this test while every foreign pid except 1 stayed
+// reapable. The 4242/999 row is an ordinary live pid owned by someone else —
+// a stale pid the OS has recycled — and nothing but a real ownership proof
+// refuses it.
 //
 // Nothing here signals anything — process.kill is captured. A test for a guard
 // against killing the machine must not kill the machine when the guard is gone.
-test('a seat pty this process does not own reaps NOTHING, however many descendants it has', async () => {
-  const warned = [];
-  const m = mkManager({ info: () => {}, warn: (_c, msg) => warned.push(String(msg)), error: () => {} });
+const FOREIGN_TREES = [
+  {
+    what: 'pid 1 (launchd), the shape that took the machine down',
+    ptyPid: 1,
+    // pid 1 parented to 0, exactly as launchd appears in a real snapshot, with
+    // three processes beneath it standing in for the 542 that were really there.
+    rows: '1 0 0:01.00\n500 1 0:02.00\n501 1 0:03.00\n502 500 0:04.00\n',
+  },
+  {
+    what: 'an ordinary pid parented to a process that is not us',
+    ptyPid: 4242,
+    rows: '4242 999 0:01.00\n500 4242 0:02.00\n502 500 0:04.00\n',
+  },
+];
 
-  const realExecFile = childProcess.execFile;
-  const realKill = process.kill;
-  const seen = [];
-  // pid 1 parented to 0, exactly as launchd appears in a real snapshot, with
-  // three processes beneath it standing in for the 542 that were really there.
-  childProcess.execFile = (file, args, opts, cb) => {
-    const done = typeof opts === 'function' ? opts : cb;
-    done(null, '1 0 0:01.00\n500 1 0:02.00\n501 1 0:03.00\n502 500 0:04.00\n', '');
-    return { on() {} };
-  };
-  process.kill = (pid, sig) => { seen.push({ pid, sig }); };
-  try {
-    seat(m, 'dummy', 1);
-    await m.kill('dummy');
-  } finally {
-    childProcess.execFile = realExecFile;
-    process.kill = realKill;
-  }
+for (const tree of FOREIGN_TREES) {
+  test(`a seat pty this process does not own reaps NOTHING — ${tree.what}`, async () => {
+    const warned = [];
+    const m = mkManager({ info: () => {}, warn: (_c, msg) => warned.push(String(msg)), error: () => {} });
 
-  assert.deepStrictEqual(seen, [],
-    'the reaper signalled beneath a pty pid this process does not own. pid 1 is launchd: every process on the '
-    + 'box is its descendant, and this suite seeds `pty: { pid: 1 }` in dozens of fixtures. That is not a '
-    + 'hypothetical — it reaped 542 of 543 processes on the operator\'s laptop, twice, during a suite run. '
-    + 'A pty we spawned is always a direct child of this process; anything else must reap nothing.');
+    const realExecFile = childProcess.execFile;
+    const realKill = process.kill;
+    const seen = [];
+    childProcess.execFile = (file, args, opts, cb) => {
+      const done = typeof opts === 'function' ? opts : cb;
+      done(null, tree.rows, '');
+      return { on() {} };
+    };
+    process.kill = (pid, sig) => { seen.push({ pid, sig }); };
+    try {
+      seat(m, 'dummy', tree.ptyPid);
+      await m.kill('dummy');
+    } finally {
+      childProcess.execFile = realExecFile;
+      process.kill = realKill;
+    }
 
-  assert.ok(warned.some((m2) => /not a child of this one/.test(m2)),
-    'the refusal must reach the log. The ~277-process incident was invisible for exactly this reason: a bare '
-    + 'catch swallowed it, so nothing said why the desktop had died.');
-});
+    assert.deepStrictEqual(seen, [],
+      `the reaper signalled beneath pty pid ${tree.ptyPid}, which this process does not own. pid 1 is launchd: `
+      + 'every process on the box is its descendant, and this suite seeds `pty: { pid: 1 }` in dozens of '
+      + 'fixtures — it reaped 542 of 543 processes on the operator\'s laptop, twice, during a suite run. But '
+      + 'the rule is not about 1: a pty we spawned is ALWAYS a direct child of this process, and any other '
+      + 'live pid — a stale one the OS recycled — owns a tree that is equally not ours to kill.');
+
+    assert.ok(warned.some((m2) => /not a child of this one/.test(m2)),
+      'the refusal must reach the log. The ~277-process incident was invisible for exactly this reason: a bare '
+      + 'catch swallowed it, so nothing said why the desktop had died.');
+  });
+}
 
 // ENTER: the subject above asserts an ABSENCE, which is equally true of a reaper
 // that was never called, a snapshot that never parsed, and a tree with nothing in
