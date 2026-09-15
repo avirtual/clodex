@@ -19,10 +19,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { registerIpcHandlers } = require('../ipc-handlers');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A real forwarded-turn response, trimmed to the fields the store reads.
 const CLAUDE_HEADERS = {
@@ -44,17 +44,18 @@ const CODEX_429_HEADERS = { 'content-type': 'application/json' };
 // happened" case vacuously.
 const tick = () => new Promise((r) => setImmediate(r));
 
-// The retries are the point. `_ensureWire` shadow-logs `wire-up`, and
-// ShadowLog.append is fire-and-forget fs.appendFile — observer-grade, nothing
-// awaits it — so a libuv worker can recreate the file after this walk read the
-// directory and before its closing rmdir: ENOTEMPTY, thrown from teardown long
-// after the subject's assertions passed.
-const rmTree = (root) => fs.rmSync(root, {
-  recursive: true, force: true, maxRetries: 10, retryDelay: 20,
-});
+// Retries first: `_ensureWire` shadow-logs `wire-up` through fire-and-forget
+// fs.appendFile, so a libuv worker can create the file between this walk and its
+// closing rmdir — ENOTEMPTY out of teardown, long after the subject passed. The
+// catch takes only what ten passes could not, and the tmp-roots sweep has it.
+const rmTree = (root) => {
+  try {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
+  } catch {}
+};
 
 function mkManager(extra = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t418-seam-'));
+  const root = mkTmpRoot('clodex-t418-seam-');
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
