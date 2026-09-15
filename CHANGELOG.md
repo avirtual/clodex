@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: a finished foreground Bash call no longer stays "live" in the pane. Its
+  output file is deleted when the call ends, and Clodex noticed that deletion
+  only through a filesystem notification the OS drops when the disk is busy —
+  when it went missing the call kept its spinner and its elapsed counter for the
+  rest of the session, while a call that finished a moment later finalized
+  normally. The row now settles from the next refresh regardless.
 - Fixed: a preserved failing-run dump is now written through a staging file
   named for the writing process, in both the shipped `clodex-run-tests` grant
   and the `test-digest.sh` one. Two runs finishing at the same moment used to

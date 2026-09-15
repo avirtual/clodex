@@ -260,6 +260,26 @@ test('output is visible WHILE the writer is still appending, not only after it c
   assert.match(readsDuringWrite[readsDuringWrite.length - 1][0].output, /line 4/);
 });
 
+// Returns the LAST read on timeout rather than throwing, so the caller's own
+// assertion reports the failure.
+//
+// The subjects below wait on a CONDITION rather than a duration because the
+// finalize used to depend on the kernel's unlink event, whose latency has a
+// heavy tail and which under filesystem pressure never arrived at all. read()
+// now reconciles a vanished file itself, so the wait is bounded by the poll and
+// not by the kernel: measured unlinkSync to finalize is 0-1ms across 12 runs
+// idle and 12 more under four fs-churn processes. The ceiling is three orders of
+// margin on that, and a condition poll keeps the fast path free either way.
+async function readUntil(read, want, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  let rows = read();
+  while (!want(rows) && Date.now() < deadline) {
+    await sleep(10);
+    rows = read();
+  }
+  return rows;
+}
+
 test('the DELETE of the file finalizes the row, and the last read keeps what it had', async (t) => {
   const root = tmpRoot(t);
   const cwd = '/proj/fin';
@@ -275,15 +295,107 @@ test('the DELETE of the file finalizes the row, and the last read keeps what it 
   t.after(() => live.stopAll());
   live.read('seat');
   fs.writeFileSync(file, 'PARTIAL\n');
-  await sleep(120);
-  assert.strictEqual(live.read('seat')[0].finished, false, 'ENTER: it was live before the unlink');
+  // PARTIAL must reach the row BEFORE the unlink: retire() tails through a
+  // statSync on the deleted path, which throws, so the row keeps only what it
+  // already had.
+  const before = await readUntil(() => live.read('seat'), (r) => r.length === 1 && /PARTIAL/.test(r[0].output));
+  assert.strictEqual(before[0].finished, false, 'ENTER: it was live before the unlink');
 
   fs.unlinkSync(file);
-  await sleep(120);
-  const rows = live.read('seat');
+  const rows = await readUntil(() => live.read('seat'), (r) => r.length === 1 && r[0].finished);
   assert.strictEqual(rows.length, 1, 'the row survives its file for the finalize grace');
   assert.strictEqual(rows[0].finished, true, 'and is marked finished by the delete');
   assert.match(rows[0].output, /PARTIAL/, 'keeping the text it had read');
+});
+
+test('a row finalizes even when the unlink event is never delivered', async (t) => {
+  // The defect the subject above could never see. Under filesystem pressure the
+  // kernel drops the unlink notification outright -- measured here with four
+  // write+unlink loops alongside, the event arrived 0 times in 15s while a poll
+  // at 10ms and at 200ms both waited it out -- and retire() is reachable ONLY
+  // from that event. So the row kept `finished: false` forever, and because
+  // FINALIZED_GRACE_MS is counted from `finishedAt` the grace never started
+  // either: the pane showed a completed call as live until the seat died.
+  //
+  // Events deliver normally until the unlink and are swallowed after it, which
+  // is exactly what the lost notification looks like from in here. No sleep
+  // tuning can make this pass -- the event is not late, it never comes.
+  const root = tmpRoot(t);
+  const cwd = '/proj/lost';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'run', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+
+  const file = path.join(tasks, 'bLOST0001.output');
+  let dropping = false;
+  let delivered = 0;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: resolverOf([['run', file]]),
+    watch: (dir, cb) => fs.watch(dir, { persistent: false }, (ev, name) => {
+      if (dropping) return;
+      delivered++;
+      cb(ev, name);
+    }),
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  fs.writeFileSync(file, 'PARTIAL\n');
+  const before = await readUntil(() => live.read('seat'), (r) => r.length === 1 && /PARTIAL/.test(r[0].output));
+  assert.strictEqual(before[0].finished, false, 'ENTER: it was live before the unlink');
+
+  dropping = true;
+  const deliveredAtUnlink = delivered;
+  fs.unlinkSync(file);
+  const rows = await readUntil(() => live.read('seat'), (r) => r.length === 1 && r[0].finished);
+  assert.strictEqual(delivered, deliveredAtUnlink,
+    'ENTER: not one event reached the seat after the unlink, so the finalize came from the read');
+  assert.ok(!fs.existsSync(file), 'ENTER: the file really is gone, which is the state being reconciled');
+  assert.strictEqual(rows.length, 1, 'the row survives its file for the finalize grace');
+  assert.strictEqual(rows[0].finished, true,
+    'a vanished file finalizes its row on the next read, with no event to prompt it');
+  assert.match(rows[0].output, /PARTIAL/, 'keeping the text it had already read');
+});
+
+test('an unreadable file is not mistaken for a finished one', async (t) => {
+  // The reconciliation must key on GONE, not on "stat failed": an EACCES or an
+  // EIO is a file still being written that we cannot see, and finalizing on it
+  // would freeze a live row and drop it a grace later.
+  const root = tmpRoot(t);
+  const cwd = '/proj/eacces';
+  const tasks = tasksDirFor(cwd, 'sess', { uid: 7, tmpdir: root });
+  fs.mkdirSync(tasks, { recursive: true });
+  observe(root, 'seat', { id: 'tu-1', command: 'run', cwd, sessionId: 'sess' }, { uid: 7, tmpdir: root });
+
+  const file = path.join(tasks, 'bEACCES01.output');
+  let failWith = null;
+  const live = createBashLive({
+    REGISTRY_DIR: root,
+    resolveOwners: resolverOf([['run', file]]),
+    statFile: (p) => {
+      if (failWith && p === file) throw Object.assign(new Error('stat'), { code: failWith });
+      return fs.statSync(p);
+    },
+  });
+  t.after(() => live.stopAll());
+  live.read('seat');
+  fs.writeFileSync(file, 'PARTIAL\n');
+  const before = await readUntil(() => live.read('seat'), (r) => r.length === 1 && /PARTIAL/.test(r[0].output));
+  assert.strictEqual(before[0].finished, false, 'ENTER: it was live before the stat started failing');
+
+  for (const code of ['EACCES', 'EIO', 'EPERM']) {
+    failWith = code;
+    const rows = live.read('seat');
+    assert.strictEqual(rows.length, 1, `the row survives a ${code}`);
+    assert.strictEqual(rows[0].finished, false,
+      `${code} means the file is unreadable, not that the command finished`);
+  }
+
+  // ENTER for the three refusals: the same seam returning ENOENT DOES finalize,
+  // so it is the error code deciding and not the stub never being consulted.
+  failWith = 'ENOENT';
+  const gone = await readUntil(() => live.read('seat'), (r) => r.length === 1 && r[0].finished);
+  assert.strictEqual(gone[0].finished, true, 'ENTER: ENOENT through the same seam finalizes');
 });
 
 test('the resolver keeps lsof output when lsof exits NONZERO', () => {
