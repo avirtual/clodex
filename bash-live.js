@@ -346,6 +346,16 @@ function createBashLive(deps) {
     }
   }
 
+  function isGone(p) {
+    try {
+      statFile(p);
+      return false;
+    } catch (e) {
+      const code = e && e.code;
+      return code === 'ENOENT' || code === 'ENOTDIR';
+    }
+  }
+
   function retire(st, key) {
     const c = st.candidates.get(key);
     if (!c) return;
@@ -563,7 +573,11 @@ function createBashLive(deps) {
         };
         st.rows.set(o.id, row);
       }
-      const c = [...st.candidates.values()].find((x) => x.owner === o.id) || null;
+      let c = [...st.candidates.values()].find((x) => x.owner === o.id) || null;
+      if (c && !row.finishedAt && isGone(c.path)) {
+        retire(st, c.path);
+        c = null;
+      }
       if (c && !row.finishedAt) tail(st, row, c);
 
       if (!c && !row.finishedAt && row.offset > 0) row.finishedAt = t;
