@@ -41,11 +41,6 @@ function trackTmpRoot(root) {
   return root;
 }
 
-// A scratch directory INSIDE a parent that is already tracked, and deliberately
-// not registered: the sweep removes its parent recursively, and listing it
-// separately would make sweep() glob `<nested>-*` inside a directory that no
-// longer exists by the time its turn comes. Exists so no test file needs a raw
-// mkdtempSync — the source-shape pin in test/tmp-roots-pin.test.js allows none.
 function mkTmpDirIn(parent, prefix) {
   return fs.mkdtempSync(path.join(parent, prefix));
 }
@@ -64,7 +59,7 @@ function mkTmpDirIn(parent, prefix) {
 // answer to different concerns and one file's force-exit is not the other's.
 //
 // Siblings are globbed on `path.basename(root) + '-'`, NEVER on the shared
-// prefix the call site passed. All 128 minting files share one $TMPDIR, so
+// prefix the call site passed. All 204 minting files share one $TMPDIR, so
 // uniqueness comes only from mkdtempSync's random characters: a sweep of
 // `clodex-repo-*` would delete another file's LIVE fixtures, and under parallel
 // load that failure reads as a flake anywhere except the file that caused it.
