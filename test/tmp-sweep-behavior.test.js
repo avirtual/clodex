@@ -37,6 +37,16 @@ function run(parent, args = []) {
   });
 }
 
+test('ENTER: plant() ages a root AFTER filling it, so the fixtures below are really as old as they claim', () => {
+  const parent = fixture();
+  const filled = plant(parent, 'clodex-aging', AGED_DAYS,
+    (dir) => fs.mkdirSync(path.join(dir, 'inner'), { recursive: true }));
+  const ageMs = Date.now() - fs.statSync(filled).mtimeMs;
+  assert.ok(ageMs > (AGED_DAYS - 1) * 86400_000,
+    'writing inside a directory resets its mtime to now, so a root aged before its contents exist reads '
+    + `as fresh and every age-gate case below would be measuring nothing. Age was ${Math.round(ageMs / 1000)}s.`);
+});
+
 test('ENTER: the scratch parent satisfies the per-user-temp gate, or every case below is only testing a refusal', () => {
   const parent = fixture();
   plant(parent, 'clodex-aaaaaa', AGED_DAYS);
