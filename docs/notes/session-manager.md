@@ -37,3 +37,22 @@ The open-ticket refusal reads the board directly instead of relying on
 ticket — assigned to the seat by name, never started — passes it, and the rename
 strands the ticket naming an assignee nothing answers to. The direct read is
 unioned with the helper so the role-resolved and started cases it covers are kept.
+
+## reapFromSnapshot
+
+Nothing in this codebase deliberately outlives its seat, which is what makes an
+unconditional reap safe. Established by sweeping every `detached: true` in
+production source: `wirescope-supervisor.js`, `tunnel-supervisor.js`,
+`team-tickets.js`'s merge-gate runner and `scripts/clodex-monitor.js`'s daemon are
+all spawned by the ENGINE process, so none is a descendant of any seat's pty.
+`clodex-monitor` is the one mechanism designed to survive the thing that asked for
+it, and an agent requests it only as a text marker on stdout — `_handleExecIntent`
+does the spawning from the engine, and the watcher additionally `setsid`s itself,
+so the whole chain is a SIBLING of the seat's pty rather than a child. The things
+that genuinely do run under a seat's pty are the CLI's hook and statusline scripts
+(`cli-hooks.js`), all synchronous one-shots.
+
+That sweep is also why discovery must stay keyed on pty-descendancy and never on
+a process group or session id: the monitor daemon and the wirescope proxy occupy
+their own groups deliberately, and a sweep keyed on anything the seat shares with
+the engine would reach them.

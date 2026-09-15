@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: ending a session now also kills whatever its CLI left running. Killing,
+  archiving or destroying a seat used to signal only the session's own process,
+  so a command the agent had started underneath it — a test run, a build — kept
+  running with nothing left to stop it; two such runs were found an hour later
+  using a core each. Quitting the app sweeps every session the same way. Each
+  leftover process is targeted individually and killed outright, with no
+  grace period.
 - Fixed: a preserved failing-run dump is now written through a staging file
   named for the writing process, in both the shipped `clodex-run-tests` grant
   and the `test-digest.sh` one. Two runs finishing at the same moment used to
