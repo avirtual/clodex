@@ -18,7 +18,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -28,8 +27,9 @@ const REPO = path.join(__dirname, '..');
 const SCAFFOLD = path.join(REPO, 'plugins', 'tools', 'scaffold.js');
 const VERIFY = path.join(REPO, 'plugins', 'tools', 'verify.js');
 
-function run(script, args) {
-  const r = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', cwd: REPO });
+function run(script, args, tmpRoot) {
+  const env = tmpRoot ? { ...process.env, TMPDIR: tmpRoot } : process.env;
+  const r = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', cwd: REPO, env });
   return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
 }
 
@@ -130,7 +130,7 @@ function mkContentPlugin(id) {
 
 test('verify.js passes a content-only plugin and reports the bundle the loader read', () => {
   const dir = mkContentPlugin('content-only');
-  const r = run(VERIFY, [dir]);
+  const r = run(VERIFY, [dir], mkTmpRoot('clx-t678-verifytmp-'));
 
   // ENTER: the run must have reached discovery. A stage-time EISDIR — the
   // regression this pins — exits 1 with the checklist stopping at
@@ -152,7 +152,7 @@ test('verify.js passes a content-only plugin and reports the bundle the loader r
 
 test('verify.js reports each bundle entry the loader skipped, with its reason', () => {
   const dir = mkContentPlugin('skipper');
-  const r = run(VERIFY, [dir]);
+  const r = run(VERIFY, [dir], mkTmpRoot('clx-t678-verifytmp-'));
   assert.strictEqual(r.code, 0, `verify exited ${r.code}\n${r.out}`);
 
   // Three skips, three DIFFERENT reasons, each a literal the loader emits. A
@@ -195,15 +195,15 @@ test('verify.js stages a plugin\'s own subdirectories, so an engine can require 
     entry: { engine: 'engine.js' },
   }, null, 2));
 
-  // Marker so the stage's own copy (not the source, which the code never
-  // touches) can be told apart — verify.js does not report its scratch path,
-  // so the stage dir is found by diffing os.tmpdir() before/after the run.
-  // `clodex-verify-data-*` (the UI-settings tmp dir verify.js also mints)
-  // shares the prefix, so it is excluded explicitly rather than by count.
+  // verify.js does not report its scratch path; it mints one under os.tmpdir(),
+  // which in the child is whatever TMPDIR says. A private TMPDIR makes a
+  // concurrent process structurally incapable of appearing in the probe below —
+  // a scan of the shared tmpdir cannot tell this subject's `clodex-verify-*`
+  // dir from another seat's.
+  const verifyTmp = mkTmpRoot('clx-t678-verifytmp-');
   const isStageDir = (f) => f.startsWith('clodex-verify-') && !f.startsWith('clodex-verify-data-');
-  const before = new Set(fs.readdirSync(os.tmpdir()).filter(isStageDir));
 
-  const r = run(VERIFY, [dir]);
+  const r = run(VERIFY, [dir], verifyTmp);
 
   // ENTER: activation must have been REACHED. An unstaged lib/ fails here, and
   // the rc assertion below would then be measuring a load failure rather than
@@ -215,9 +215,9 @@ test('verify.js stages a plugin\'s own subdirectories, so an engine can require 
   assert.match(r.out, /PASS {2}ipc tag\(\) answers {2}— -> "from-lib"/,
     'and the value came through the required module, not a stub');
 
-  const after = fs.readdirSync(os.tmpdir()).filter((f) => isStageDir(f) && !before.has(f));
-  assert.strictEqual(after.length, 1, `ENTER: exactly one new stage dir, found ${after.length}`);
-  const stagedPluginDir = path.join(os.tmpdir(), after[0], 'lib-plugin');
+  const stages = fs.readdirSync(verifyTmp).filter(isStageDir);
+  assert.strictEqual(stages.length, 1, `ENTER: exactly one stage dir, found ${stages.length}`);
+  const stagedPluginDir = path.join(verifyTmp, stages[0], 'lib-plugin');
   assert.strictEqual(fs.existsSync(path.join(stagedPluginDir, 'node_modules')), false,
     'node_modules is skipped by the stage copy, not merely present-and-unread');
   assert.strictEqual(fs.existsSync(path.join(dir, 'node_modules', 'junk', 'index.js')), true,
