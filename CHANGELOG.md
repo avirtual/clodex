@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.68.1 — 2026-09-15
+
 - Fixed: ending a session now also kills whatever its CLI left running. Killing,
   archiving or destroying a seat used to signal only the session's own process,
   so a command the agent had started underneath it — a test run, a build — kept
