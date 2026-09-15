@@ -40,6 +40,44 @@ unioned with the helper so the role-resolved and started cases it covers are kep
 
 ## reapFromSnapshot
 
+Every discovered pid is signalled INDIVIDUALLY through `sigkillPid`, whose `> 0`
+refusal is the whole safety property — never a process group, never a negated pid,
+never a command-line match. `process.kill` reads a non-positive pid as a broadcast
+(-1 = every process the user may signal, 0 = our own process group), and a reaper
+walks a whole tree, so it multiplies that blast radius by every pid it finds. The
+guard's own header carries the incident: a fixture's `pid: -1` once SIGKILLed ~277
+processes three times over, swallowed by a bare `catch {}`.
+
+Must run BEFORE `pty.kill()`. A descendant is found by its ppid chain back to the
+pty, and the kernel reparents the pty's children to init the moment it exits —
+where `walkPtyTree` deliberately does not follow. Run after the kill, the snapshot
+is empty exactly when there was something to reap.
+
+## psSnapshotSync
+
+Sync, and for `killAll` alone. engine.js's `shutdown()` is synchronous and no
+caller awaits it, so on the quit path an `await` yields to an event loop the
+process is about to leave: the pty kills would be scheduled and never run.
+Blocking the main thread for one `ps` at quit is the cost of the kills happening
+at all. `killAll` takes that ONE snapshot before the first pty dies — a per-seat
+`ps` would read a table the earlier kills had already emptied.
+
+## reapPtyDescendants
+
+The measured failure: `pty.kill()` signals the pty and nothing under it, so a CLI
+that spawned a test runner leaves that runner alive when the seat dies. Two
+`node --test` processes were found at ~98% CPU each, reparented to init, an hour
+after the run nobody was waiting for. One carried a `timeout 300` wrapper that had
+been orphaned too, so its five-minute kill never fired — the wrapper survived, its
+enforcement context did not. Both ignored SIGTERM.
+
+SIGKILL with no SIGTERM grace, which is the opposite of the pty's own path. The
+pty gets five seconds because a CLI flushes its transcript on SIGTERM and that
+write is wanted. A descendant has no such contract: the measured orphans ignored
+SIGTERM outright, a grace period would delay every teardown by seconds, and
+anything still standing when its seat is torn down is by construction something
+nobody is waiting on.
+
 Nothing in this codebase deliberately outlives its seat, which is what makes an
 unconditional reap safe. Established by sweeping every `detached: true` in
 production source: `wirescope-supervisor.js`, `tunnel-supervisor.js`,
