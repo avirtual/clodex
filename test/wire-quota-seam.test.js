@@ -44,6 +44,15 @@ const CODEX_429_HEADERS = { 'content-type': 'application/json' };
 // happened" case vacuously.
 const tick = () => new Promise((r) => setImmediate(r));
 
+// The retries are the point. `_ensureWire` shadow-logs `wire-up`, and
+// ShadowLog.append is fire-and-forget fs.appendFile — observer-grade, nothing
+// awaits it — so a libuv worker can recreate the file after this walk read the
+// directory and before its closing rmdir: ENOTEMPTY, thrown from teardown long
+// after the subject's assertions passed.
+const rmTree = (root) => fs.rmSync(root, {
+  recursive: true, force: true, maxRetries: 10, retryDelay: 20,
+});
+
 function mkManager(extra = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t418-seam-'));
   const SessionManager = createSessionManager({
@@ -80,7 +89,7 @@ async function onWire(fn, extra = {}) {
     // _ensureWire opens a real WarmthStore too; both are sqlite handles this
     // test has no use for after the emit.
     if (wire.warmth) wire.warmth.close();
-    fs.rmSync(root, { recursive: true, force: true });
+    rmTree(root);
   }
 }
 
@@ -252,6 +261,6 @@ test('wire:quota serves the stored reading, so a window opened before any turn i
     assert.strictEqual(payload.accounts[0].primary.used_pct, 95);
   } finally {
     if (m._quotaStore) m._quotaStore.close();
-    fs.rmSync(root, { recursive: true, force: true });
+    rmTree(root);
   }
 });
