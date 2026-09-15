@@ -21,11 +21,20 @@ const forwards = (param) => new RegExp(
   `\\b(?:__MINTERS__)\\(\\s*${param}\\s*[,)]`
   + `|${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*${param}\\s*[,)]`);
 
-function mintersIn(src) {
+function bodyAt(src, openBrace) {
+  let depth = 0;
+  for (let i = openBrace; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(openBrace, i + 1);
+  }
+  return src.slice(openBrace);
+}
+
+function mintersIn(src, maxPasses = Infinity) {
   const fns = [...src.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)[^)]*\)\s*\{/g)]
-    .map((m) => ({ name: m[1], param: m[2], body: src.slice(m.index, m.index + 4000) }));
+    .map((m) => ({ name: m[1], param: m[2], body: bodyAt(src, m.index + m[0].length - 1) }));
   const minters = new Set(['mkTmpRoot', 'trackTmpRoot']);
-  for (let pass = 0; pass < fns.length + 1; pass++) {
+  for (let pass = 0; pass < Math.min(maxPasses, fns.length + 1); pass++) {
     let grew = false;
     for (const fn of fns) {
       if (minters.has(fn.name)) continue;
@@ -42,7 +51,8 @@ function scanPrefixes() {
   const helperShape = /\b(?:mkTmpRoot|trackTmpRoot)\(\s*(['"`])([^'"`]*)\1/g;
   const raw = new Map();
   const helper = new Map();
-  const indirect = new Map();
+  const viaWrapper = new Map();
+  const viaConst = new Map();
   for (const rel of trackedJs()) {
     const src = fs.readFileSync(path.join(REPO, rel), 'utf8');
     for (const m of src.matchAll(rawShape)) {
@@ -58,7 +68,7 @@ function scanPrefixes() {
       if (name === 'mkTmpRoot' || name === 'trackTmpRoot') continue;
       for (const c of src.matchAll(new RegExp(`\\b${name}\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))) {
         const p = literal(c[2]);
-        if (p && !indirect.has(p)) indirect.set(p, `${rel} via ${name}()`);
+        if (p && !viaWrapper.has(p)) viaWrapper.set(p, `${rel} via ${name}()`);
       }
     }
     const alt = [...minters].join('|');
@@ -66,11 +76,11 @@ function scanPrefixes() {
       const p = literal(c[3]);
       if (!p) continue;
       const used = new RegExp(forwards(c[1]).source.replace('__MINTERS__', alt));
-      if (used.test(src) && !indirect.has(p)) indirect.set(p, `${rel} via const ${c[1]}`);
+      if (used.test(src) && !viaConst.has(p)) viaConst.set(p, `${rel} via const ${c[1]}`);
     }
   }
-  const union = new Map([...raw, ...helper, ...indirect]);
-  return { raw, helper, indirect, union };
+  const union = new Map([...raw, ...helper, ...viaWrapper, ...viaConst]);
+  return { raw, helper, viaWrapper, viaConst, union };
 }
 
 function scriptPrefixes() {
@@ -81,17 +91,62 @@ function scriptPrefixes() {
 }
 
 test('ENTER: the scan finds mint sites in all three shapes, so the coverage assertions below are not vacuous', () => {
-  const { helper, indirect, union } = scanPrefixes();
+  const { helper, viaWrapper, viaConst, union } = scanPrefixes();
   assert.ok(union.size > 100,
     `ENTER: expected the suite to mint well over 100 distinct tmp prefixes, scanned ${union.size} — `
     + 'a near-empty scan means the patterns stopped matching and every assertion below passes for nothing');
   assert.ok(helper.size > 0,
     'ENTER: no mkTmpRoot()/trackTmpRoot() prefixes found at all — test/lib/tmp-roots.js is the suite\'s '
     + 'mint helper, so zero call sites means this scan is broken, not that the suite stopped minting');
-  assert.ok(indirect.size > 0,
+  assert.ok(viaWrapper.size > 0,
     'ENTER: no prefixes found through a local wrapper — the suite\'s dominant fixture idiom is '
     + '`function mkHome(prefix) { mkTmpRoot(prefix) }` called with a literal, and review round 1 found '
     + '~60 prefixes uncollected because this shape was missing. Zero means it is missing again.');
+  assert.ok(viaConst.size > 0,
+    'ENTER: no prefixes found through a module const forwarded to a mint (scripts/renderer-smoke.js '
+    + 'is the live case). This path is counted separately from the wrapper path on purpose: when the '
+    + 'two shared one map, disabling the wrapper scan entirely still left the map non-empty and the '
+    + 'guard passed.');
+});
+
+test('the wrapper scan collects prefixes that no other shape reaches', () => {
+  const { raw, helper, viaWrapper } = scanPrefixes();
+  const onlyViaWrapper = [...viaWrapper.keys()].filter((p) => !raw.has(p) && !helper.has(p));
+  assert.ok(onlyViaWrapper.length >= 40,
+    `the wrapper shape must be load-bearing, but only ${onlyViaWrapper.length} prefixes are reachable `
+    + 'through it alone. Review round 1 shipped with this shape missing and ~60 live prefixes went '
+    + `uncollected while the pin stayed green. Found: ${onlyViaWrapper.slice(0, 5).join(', ')}…`);
+  for (const probe of ['clx-t700-leaf-', 'clodex-t679-spawn-a-', 't748-rows-']) {
+    assert.ok(viaWrapper.has(probe),
+      `${probe} is minted only through a wrapper — if the scan stops reaching it, tmp-sweep.sh goes stale silently`);
+  }
+});
+
+test('a wrapper body stops at its own closing brace, so a neighbour\'s mint is not attributed to it', () => {
+  const src = 'function innocent(prefix) { return prefix.trim(); }\n'
+    + 'function minter(prefix) { return mkTmpRoot(prefix); }\n';
+  const found = mintersIn(src);
+  assert.ok(found.has('minter'), 'ENTER: the minting function must be recognised, or this proves nothing');
+  assert.ok(!found.has('innocent'),
+    'innocent() does not mint — attributing its neighbour\'s mkTmpRoot to it would collect every literal '
+    + 'ever passed to it as a tmp prefix, and PREFIXES is interpolated into the deletion pattern');
+});
+
+test('resolving wrappers to a fixpoint reaches chains a single pass cannot', () => {
+  const forward = 'function inner(prefix) { return mkTmpRoot(prefix); }\n'
+    + 'function outer(prefix) { return inner(prefix); }\n';
+  const reverse = 'function outer(prefix) { return inner(prefix); }\n'
+    + 'function inner(prefix) { return mkTmpRoot(prefix); }\n';
+
+  assert.ok(mintersIn(forward, 1).has('outer'),
+    'ENTER: when the inner wrapper is defined first, one pass already resolves the chain — the set '
+    + 'grows during the pass. If this fails, the scan is not resolving chains at all.');
+  assert.ok(!mintersIn(reverse, 1).has('outer'),
+    'ENTER: when the outer wrapper is defined FIRST, one pass cannot resolve it — that is the case '
+    + 'the fixpoint exists for, and it must genuinely be unreachable in one pass');
+  assert.ok(mintersIn(reverse).has('outer'),
+    'outer -> inner -> mkTmpRoot must resolve regardless of definition order. Capping the loop at one '
+    + 'pass silently drops every prefix minted through a wrapper declared above its callee.');
 });
 
 test('every prefix the suite mints is covered by tmp-sweep.sh', () => {

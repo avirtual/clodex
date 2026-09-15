@@ -26,12 +26,11 @@ set -uo pipefail
 # across every tracked .js, the union of raw mint-literals, mkTmpRoot()/
 # trackTmpRoot() literals, and literals passed to a local wrapper that forwards
 # its parameter to one of those (`mkEngine('t748-rows-')` → `mkHome(prefix)` →
-# `mkTmpRoot(prefix)`, resolved to a fixpoint because the suite nests wrappers
-# two deep). test/tmp-sweep-prefix-coverage.test.js re-derives that union from
-# source and reds when a new prefix is not covered here, which is the only thing
-# stopping this list going stale. The wrapper shape was missing in round 1 and
-# hid ~60 live prefixes while the pin stayed green; it has its own ENTER guard
-# now.
+# `mkTmpRoot(prefix)`, to a fixpoint so a wrapper declared above its callee
+# resolves too). test/tmp-sweep-prefix-coverage.test.js re-derives that union
+# from source and reds when a new prefix is not covered here, which is the only
+# thing stopping this list going stale. The wrapper shape was missing in round 1
+# and hid ~60 live prefixes while the pin stayed green.
 #
 # Listed in full, NOT collapsed to family roots, and the difference is not
 # cosmetic. Keeping only `clodex-` because it is a string-prefix of
@@ -209,6 +208,7 @@ clodex-solo-repo-
 clodex-surface-
 clodex-surface-gate-
 clodex-sweep-
+clodex-sweeptest-
 clodex-t166-
 clodex-t170-
 clodex-t188-
