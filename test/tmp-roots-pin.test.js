@@ -31,7 +31,7 @@ test(`no test file outside ${HELPER} mints a scratch root with a raw ${RAW}`, ()
 
   const helper = files.filter((f) => path.relative(TEST_DIR, f) === HELPER);
   assert.strictEqual(helper.length, 1, `ENTER: ${HELPER} must exist for the conversion to have a target`);
-  assert.ok(CALL.test(fs.readFileSync(helper[0], 'utf8')),
+  assert.ok(CALL.test(codeOnly(fs.readFileSync(helper[0], 'utf8'))),
     `ENTER: ${HELPER} is the one place that may call ${RAW}, and it no longer does — `
     + `the detector below matches nothing, so its green means nothing`);
 
