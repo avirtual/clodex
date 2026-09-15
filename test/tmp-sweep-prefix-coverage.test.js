@@ -11,12 +11,109 @@ const SCRIPT = path.join(REPO, 'scripts', 'tmp-sweep.sh');
 
 const MINT = ['mkdtemp', 'Sync'].join('');
 
+const SEEDS = ['mkTmpRoot'];
+const NOT_SEEDS = ['mkTmpDirIn'];
+
 function trackedJs() {
   const out = cp.execSync("git ls-files '*.js' '*.cjs' '*.mjs'", { cwd: REPO, maxBuffer: 1 << 28 }).toString();
   return out.split('\n').filter((f) => f && !f.includes('node_modules'));
 }
 
-const literal = (s) => s.split('${')[0];
+const HOLE = /\u0000(\d+)\u0000/g;
+
+function maskSource(src) {
+  const values = [];
+  const mark = (v) => `\u0000${values.push(v) - 1}\u0000`;
+  let out = '';
+  let tail = '';
+  const push = (s) => { out += s; if (s) tail = (tail + s).slice(-12); };
+  const regexAllowed = () => {
+    const before = tail.replace(/\s+$/, '');
+    return before === '' || /[(,=:[!&|?{};+\-*%~^<>]$/.test(before)
+      || /(?:^|[^\w$])(?:return|typeof|case|in|of|new|delete|void|do|else|yield|await)$/.test(before);
+  };
+  let i = 0;
+  let mode = 'code';
+  let depth = 0;
+  const stack = [];
+  while (i < src.length) {
+    if (mode === 'tpl') {
+      let j = i;
+      let val = '';
+      while (j < src.length && src[j] !== '`' && !(src[j] === '$' && src[j + 1] === '{')) {
+        if (src[j] === '\\') { val += src[j + 1] ?? ''; j += 2; } else { val += src[j]; j += 1; }
+      }
+      push(mark(val));
+      i = j;
+      if (src[i] === '`') { push('`'); i += 1; mode = 'code'; depth = stack.pop().depth; } else if (src[i] === '$') { push('${'); i += 2; mode = 'code'; stack.push({ kind: 'interp', depth }); depth = 0; } else break;
+      continue;
+    }
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') {
+      const j = src.indexOf('\n', i) < 0 ? src.length : src.indexOf('\n', i);
+      push(' '.repeat(j - i));
+      i = j;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      const end = src.indexOf('*/', i + 2);
+      const j = end < 0 ? src.length : end + 2;
+      push(src.slice(i, j).replace(/[^\n]/g, ' '));
+      i = j;
+      continue;
+    }
+    if (c === '/' && regexAllowed()) {
+      let j = i + 1;
+      let inClass = false;
+      let closed = false;
+      while (j < src.length && src[j] !== '\n') {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === '[') inClass = true;
+        else if (src[j] === ']') inClass = false;
+        else if (src[j] === '/' && !inClass) { closed = true; break; }
+        j += 1;
+      }
+      if (closed) {
+        j += 1;
+        while (j < src.length && /[a-z]/.test(src[j])) j += 1;
+        push(' '.repeat(j - i));
+        i = j;
+        continue;
+      }
+    }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      let val = '';
+      while (j < src.length && src[j] !== c && src[j] !== '\n') {
+        if (src[j] === '\\') { val += src[j + 1] ?? ''; j += 2; } else { val += src[j]; j += 1; }
+      }
+      push(c + mark(val) + c);
+      i = src[j] === c ? j + 1 : j;
+      continue;
+    }
+    if (c === '`') { push('`'); i += 1; stack.push({ kind: 'tpl', depth }); depth = 0; mode = 'tpl'; continue; }
+    if (c === '{') depth += 1;
+    else if (c === '}') {
+      if (depth === 0 && stack.length && stack[stack.length - 1].kind === 'interp') {
+        push('}');
+        i += 1;
+        depth = stack.pop().depth;
+        mode = 'tpl';
+        continue;
+      }
+      depth -= 1;
+    }
+    push(c);
+    i += 1;
+  }
+  return { masked: out, values };
+}
+
+const literal = (captured, values) => {
+  const head = captured.split('${')[0];
+  const m = new RegExp(HOLE.source).exec(head);
+  return m ? values[Number(m[1])].split('${')[0] : '';
+};
 const forwards = (param) => new RegExp(
   `\\b(?:__MINTERS__)\\(\\s*${param}\\s*[,)]`
   + `|${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*${param}\\s*[,)]`);
@@ -30,15 +127,16 @@ function bodyAt(src, openBrace) {
   return src.slice(openBrace);
 }
 
-function mintersIn(src, maxPasses = Infinity) {
-  const fns = [...src.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)[^)]*\)\s*\{/g)]
-    .map((m) => ({ name: m[1], param: m[2], body: bodyAt(src, m.index + m[0].length - 1) }));
-  const minters = new Set(['mkTmpRoot', 'trackTmpRoot']);
+function mintersIn(src, maxPasses = Infinity, premasked = false) {
+  const code = premasked ? src : maskSource(src).masked;
+  const fns = [...code.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)[^)]*\)\s*\{/g)]
+    .map((m) => ({ name: m[1], param: m[2], body: bodyAt(code, m.index + m[0].length - 1) }));
+  const minters = new Set(SEEDS);
   for (let pass = 0; pass < Math.min(maxPasses, fns.length + 1); pass++) {
     let grew = false;
     for (const fn of fns) {
       if (minters.has(fn.name)) continue;
-      const re = new RegExp(forwards(fn.param).source.replace('__MINTERS__', [...minters].join('|')));
+      const re = new RegExp(forwards(fn.param).source.replace('__MINTERS__', () => [...minters].join('|')));
       if (re.test(fn.body)) { minters.add(fn.name); grew = true; }
     }
     if (!grew) break;
@@ -46,41 +144,45 @@ function mintersIn(src, maxPasses = Infinity) {
   return minters;
 }
 
+let cachedScan = null;
+
 function scanPrefixes() {
+  if (cachedScan) return cachedScan;
   const rawShape = new RegExp(`${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*(['"\`])([^'"\`]*)\\1`, 'g');
-  const helperShape = /\b(?:mkTmpRoot|trackTmpRoot)\(\s*(['"`])([^'"`]*)\1/g;
+  const helperShape = new RegExp(`\\b(?:${SEEDS.join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g');
   const raw = new Map();
   const helper = new Map();
   const viaWrapper = new Map();
   const viaConst = new Map();
   for (const rel of trackedJs()) {
-    const src = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    const { masked: src, values } = maskSource(fs.readFileSync(path.join(REPO, rel), 'utf8'));
     for (const m of src.matchAll(rawShape)) {
-      const p = literal(m[2]);
+      const p = literal(m[2], values);
       if (p && !raw.has(p)) raw.set(p, rel);
     }
     for (const m of src.matchAll(helperShape)) {
-      const p = literal(m[2]);
+      const p = literal(m[2], values);
       if (p && !helper.has(p)) helper.set(p, rel);
     }
-    const minters = mintersIn(src);
+    const minters = mintersIn(src, Infinity, true);
     for (const name of minters) {
-      if (name === 'mkTmpRoot' || name === 'trackTmpRoot') continue;
+      if (SEEDS.includes(name)) continue;
       for (const c of src.matchAll(new RegExp(`\\b${name}\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))) {
-        const p = literal(c[2]);
+        const p = literal(c[2], values);
         if (p && !viaWrapper.has(p)) viaWrapper.set(p, `${rel} via ${name}()`);
       }
     }
     const alt = [...minters].join('|');
     for (const c of src.matchAll(/const\s+([A-Z][A-Z0-9_]*)\s*=\s*(['"`])([^'"`]*)\2/g)) {
-      const p = literal(c[3]);
+      const p = literal(c[3], values);
       if (!p) continue;
-      const used = new RegExp(forwards(c[1]).source.replace('__MINTERS__', alt));
+      const used = new RegExp(forwards(c[1]).source.replace('__MINTERS__', () => alt));
       if (used.test(src) && !viaConst.has(p)) viaConst.set(p, `${rel} via const ${c[1]}`);
     }
   }
   const union = new Map([...raw, ...helper, ...viaWrapper, ...viaConst]);
-  return { raw, helper, viaWrapper, viaConst, union };
+  cachedScan = { raw, helper, viaWrapper, viaConst, union };
+  return cachedScan;
 }
 
 function scriptPrefixes() {
@@ -96,7 +198,7 @@ test('ENTER: the scan finds mint sites in all three shapes, so the coverage asse
     `ENTER: expected the suite to mint well over 100 distinct tmp prefixes, scanned ${union.size} — `
     + 'a near-empty scan means the patterns stopped matching and every assertion below passes for nothing');
   assert.ok(helper.size > 0,
-    'ENTER: no mkTmpRoot()/trackTmpRoot() prefixes found at all — test/lib/tmp-roots.js is the suite\'s '
+    `ENTER: no ${SEEDS.join('()/')}() prefixes found at all — test/lib/tmp-roots.js is the suite's `
     + 'mint helper, so zero call sites means this scan is broken, not that the suite stopped minting');
   assert.ok(viaWrapper.size > 0,
     'ENTER: no prefixes found through a local wrapper — the suite\'s dominant fixture idiom is '
@@ -130,6 +232,83 @@ test('a wrapper body stops at its own closing brace, so a neighbour\'s mint is n
   assert.ok(!found.has('innocent'),
     'innocent() does not mint — attributing its neighbour\'s mkTmpRoot to it would collect every literal '
     + 'ever passed to it as a tmp prefix, and PREFIXES is interpolated into the deletion pattern');
+});
+
+test('the scan seeds itself from every $TMPDIR-minting export of test/lib/tmp-roots.js', () => {
+  const helper = require('./lib/tmp-roots.js');
+  const exported = Object.keys(helper);
+  assert.ok(exported.length > 0, 'ENTER: the helper must export something, or this test compares two empty lists');
+  for (const name of SEEDS) {
+    assert.ok(exported.includes(name),
+      `the scan seeds itself with ${name}(), which test/lib/tmp-roots.js no longer exports. A seed that `
+      + 'does not exist collects nothing, and the prefixes it used to reach silently leave PREFIXES.');
+  }
+  const unclassified = exported.filter((n) => !SEEDS.includes(n) && !NOT_SEEDS.includes(n));
+  assert.deepStrictEqual(unclassified, [],
+    `test/lib/tmp-roots.js exports ${unclassified.join(', ')}, which this scan neither seeds nor `
+    + 'deliberately excludes. If it mints a direct child of $TMPDIR, add it to SEEDS or tmp-sweep.sh '
+    + 'will never remove its abandoned roots; if it mints inside an already-tracked root (as mkTmpDirIn '
+    + 'does, which is why that one is excluded), add it to NOT_SEEDS and say so.');
+  const code = maskSource(fs.readFileSync(path.join(REPO, 'test', 'lib', 'tmp-roots.js'), 'utf8')).masked;
+  const decl = code.indexOf('function mkTmpDirIn');
+  assert.ok(decl >= 0, 'ENTER: mkTmpDirIn must be declared as a function for its body to be readable');
+  const body = bodyAt(code, code.indexOf('{', decl));
+  assert.match(body, /mkdtempSync\(path\.join\(parent,/,
+    'ENTER: mkTmpDirIn must still mint under its `parent` argument rather than under os.tmpdir(). If it '
+    + 'ever mints a direct child of $TMPDIR it belongs in SEEDS, and excluding it would leak every root it makes.');
+});
+
+test('a mint call written inside a string or a comment is not collected as a mint site', () => {
+  const quoted = 'const msg = "call mkTmpRoot(\'quoted-\') instead";\n';
+  const templated = 'const msg = `call mkTmpRoot(\'templated-\') instead`;\n';
+  const lineComment = '// call mkTmpRoot(\'linecomment-\') instead\n';
+  const blockComment = '/* call mkTmpRoot(\'blockcomment-\') instead */\n';
+  const real = 'mkTmpRoot(\'real-\');\n';
+  const collect = (src) => {
+    const { masked, values } = maskSource(src);
+    return [...masked.matchAll(new RegExp(`\\b(?:${SEEDS.join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))]
+      .map((m) => literal(m[2], values)).filter(Boolean);
+  };
+  assert.deepStrictEqual(collect(real), ['real-'],
+    'ENTER: a genuine mkTmpRoot call must still be collected, or masking has simply blinded the scan');
+  for (const [what, src] of [['a double-quoted string', quoted], ['a template literal', templated],
+    ['a line comment', lineComment], ['a block comment', blockComment]]) {
+    assert.deepStrictEqual(collect(src), [],
+      `prose in ${what} telling a reader to call mkTmpRoot('…') is not a mint site. test/tmp-roots-pin.test.js `
+      + 'says exactly that in an assertion message, and without masking the scan collected `prefix` from it — '
+      + 'which would have shipped `prefix` into PREFIXES and made `prefixA1b2c3` a deletion target anywhere in $TMPDIR.');
+  }
+  assert.deepStrictEqual(collect(quoted + real + lineComment), ['real-'],
+    'and masking must not shift the offsets of the real call sites around the masked ones');
+});
+
+test('the live prose case in test/tmp-roots-pin.test.js is masked, not merely absent', () => {
+  const src = fs.readFileSync(path.join(REPO, 'test', 'tmp-roots-pin.test.js'), 'utf8');
+  assert.match(src, /mkTmpRoot\('prefix'\)/,
+    'ENTER: test/tmp-roots-pin.test.js must still contain the prose `mkTmpRoot(\'prefix\')` in its assertion '
+    + 'message, or this regression case no longer exists in the tree and this test proves nothing');
+  const { masked, values } = maskSource(src);
+  const collected = [...masked.matchAll(new RegExp(`\\b(?:${SEEDS.join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))]
+    .map((m) => literal(m[2], values)).filter(Boolean);
+  assert.ok(collected.includes('tmp-roots-pin-'),
+    'the real mkTmpRoot(\'tmp-roots-pin-\') call in that file must still be collected');
+  assert.ok(!collected.includes('prefix'),
+    '`prefix` is the word the assertion message uses as a placeholder, not a prefix the suite mints. '
+    + 'It reached PREFIXES once and turned the merged branch red on master.');
+});
+
+test('every prefix, scanned or listed, is shaped like a prefix', () => {
+  const { union } = scanPrefixes();
+  const listed = scriptPrefixes();
+  const SHAPE = /^[A-Za-z0-9][A-Za-z0-9-]*-$/;
+  const why = 'A collected literal that is not prefix-shaped means the scan attributed a mint to the wrong '
+    + 'function or read a string as code, and PREFIXES is interpolated straight into the deletion pattern: '
+    + 'a bare word like `prefix` makes every `prefixA1b2c3` in $TMPDIR a deletion target, whoever owns it.';
+  const misshapen = [...union].filter(([p]) => !SHAPE.test(p) || p.length < 3)
+    .map(([p, where]) => `${JSON.stringify(p)} (${where})`);
+  assert.deepStrictEqual(misshapen, [], `scanned but not prefix-shaped:\n  ${misshapen.join('\n  ')}\n${why}`);
+  const badListed = listed.filter((p) => !SHAPE.test(p) || p.length < 3);
+  assert.deepStrictEqual(badListed, [], `listed in tmp-sweep.sh but not prefix-shaped:\n  ${badListed.join('\n  ')}\n${why}`);
 });
 
 test('resolving wrappers to a fixpoint reaches chains a single pass cannot', () => {

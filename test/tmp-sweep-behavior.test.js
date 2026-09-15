@@ -124,6 +124,32 @@ test('a prefix carrying a regex metacharacter refuses the run instead of widenin
     + 'the guard is what stops one bad list entry deleting another process\'s data');
 });
 
+test('a root whose INNER directory blocks removal is still counted as a survivor', () => {
+  const parent = fixture();
+  const root = plant(parent, 'clodex-kkkkkk', AGED_DAYS, (dir) => {
+    fs.mkdirSync(path.join(dir, 'locked', 'deeper'), { recursive: true });
+  });
+  const inner = path.join(root, 'locked');
+  fs.chmodSync(inner, 0o000);
+  try {
+    const r = run(parent, ['--yes']);
+    assert.ok(fs.existsSync(root),
+      'ENTER: the inner chmod must actually block the root\'s removal, or this proves nothing');
+    const ageMs = Date.now() - fs.statSync(root).mtimeMs;
+    assert.ok(ageMs < 60_000,
+      `ENTER: a partial rm must have reset the root's mtime to now (it is ${Math.round(ageMs / 1000)}s old). `
+      + 'That reset is the whole hazard: an aged re-enumeration would no longer select this survivor.');
+    assert.strictEqual(r.status, 1,
+      'the root is still on disk, so the sweep is incomplete. Counting survivors with a second aged '
+      + 'enumeration reported 0 here and exited 0 — a false clean sweep over a directory it had not removed.');
+    assert.match(r.stderr, /1 could not be removed/);
+    assert.doesNotMatch(r.stdout, /^tmp-sweep: removed 1 directories\.$/m,
+      'and it must not print the success line while a root it listed is still there');
+  } finally {
+    fs.chmodSync(inner, 0o755);
+  }
+});
+
 test('a root that cannot be removed is reported, not fatal, and the rest of the batch still goes', () => {
   const parent = fixture();
   const poisoned = plant(parent, 'clodex-iiiiii', AGED_DAYS,

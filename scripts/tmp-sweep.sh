@@ -25,14 +25,18 @@
 set -uo pipefail
 
 # Every prefix the suite mints, enumerated from the source rather than guessed:
-# across every tracked .js, the union of raw mint-literals, mkTmpRoot()/
-# trackTmpRoot() literals, and literals passed to a local wrapper that forwards
-# its parameter to one of those (`mkEngine('t748-rows-')` → `mkHome(prefix)` →
-# `mkTmpRoot(prefix)`, to a fixpoint so a wrapper declared above its callee
-# resolves too). test/tmp-sweep-prefix-coverage.test.js re-derives that union
-# from source and reds when a new prefix is not covered here, which is the only
-# thing stopping this list going stale. The wrapper shape was missing in round 1
-# and hid ~60 live prefixes while the pin stayed green.
+# across every tracked .js, the union of raw mint-literals, mkTmpRoot() literals,
+# and literals passed to a local wrapper that forwards its parameter to one of
+# those (`mkEngine('t748-rows-')` → `mkHome(prefix)` → `mkTmpRoot(prefix)`, to a
+# fixpoint so a wrapper declared above its callee resolves too). Strings and
+# comments are masked out first, so prose naming a mint call is not read as one.
+# test/tmp-sweep-prefix-coverage.test.js re-derives that union from source and
+# reds when a new prefix is not covered here, which is the only thing stopping
+# this list going stale.
+#
+# mkTmpDirIn() prefixes are deliberately absent: it mints INSIDE an already
+# tracked root, so those directories are never direct children of $TMPDIR and
+# this sweep removes them with their parent or not at all.
 #
 # Listed in full, NOT collapsed to family roots, and the difference is not
 # cosmetic. Keeping only `clodex-` because it is a string-prefix of
@@ -623,6 +627,7 @@ teams-menu-
 tl-home-
 tl-none-
 tl-outer-
+tmp-roots-pin-
 warmth-
 wire-hold-cred-
 ws-gate-
@@ -753,7 +758,18 @@ echo "tmp-sweep: removing $COUNT directories, $HUMAN, from $TMP (older than ${HO
 # below rather than assumed gone.
 xargs -0 rm -rf -- < "$LISTFILE" 2>/dev/null
 
-LEFT="$(enumerate | tr -dc '\0' | wc -c | tr -d ' ')"
+# Survivors are counted by re-testing the paths we tried to remove, NOT by a
+# second enumerate. Two reasons, and the first is a correctness bug the second
+# pass had: `rm -rf` that empties a root and then fails on a chmod-0o000
+# directory INSIDE it leaves the root with an mtime of now, so `-mmin +$MINUTES`
+# no longer selects it and the survivor reads as removed. Dropping the age gate
+# instead would over-count the other way — a concurrent suite run mints fresh
+# matching roots that were never in this list. The list is the exact set this
+# run is answerable for.
+LEFT=0
+while IFS= read -r -d '' path; do
+  [ -e "$path" ] && LEFT=$((LEFT + 1))
+done < "$LISTFILE"
 REMOVED=$((COUNT - LEFT))
 if [ "$LEFT" -gt 0 ]; then
   echo "tmp-sweep: removed $REMOVED; $LEFT could not be removed (unreadable or not ours to force)" >&2
