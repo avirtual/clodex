@@ -260,6 +260,35 @@ test('output is visible WHILE the writer is still appending, not only after it c
   assert.match(readsDuringWrite[readsDuringWrite.length - 1][0].output, /line 4/);
 });
 
+// Polls `read` until `want` holds, and returns the LAST read either way -- on
+// timeout it returns the failing value rather than throwing, so the caller's own
+// assertions produce the diagnosis and the failure message stays theirs.
+//
+// The one subject below needs this and its siblings do not. `finished` is set in
+// retire(), reachable ONLY from the fs.watch name-event loop: no read can force
+// it, so the test is waiting on the KERNEL's unlink event and not on work it
+// drives itself. Measured latency on an idle box is 11ms, but the whole suite
+// running at once stretches it past any fixed sleep worth writing -- and a
+// deadline poll is strictly stronger than a longer sleep, staying fast when the
+// event is fast and spending time only when it must. Every other fixture here
+// sleeps only to let a read it makes itself observe the disk, which readdir and
+// statSync answer synchronously.
+//
+// The ceiling stays under FINALIZED_GRACE_MS (5000), counted from the finalize:
+// past that the finalized row is dropped entirely, and a poll that outlived the
+// grace would report an absent row rather than an unset flag. Measured here:
+// 259ms for the unlink event on an otherwise idle box, so 4000 is the margin the
+// 120ms sleep never had.
+async function readUntil(read, want, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  let rows = read();
+  while (!want(rows) && Date.now() < deadline) {
+    await sleep(5);
+    rows = read();
+  }
+  return rows;
+}
+
 test('the DELETE of the file finalizes the row, and the last read keeps what it had', async (t) => {
   const root = tmpRoot(t);
   const cwd = '/proj/fin';
@@ -275,12 +304,15 @@ test('the DELETE of the file finalizes the row, and the last read keeps what it 
   t.after(() => live.stopAll());
   live.read('seat');
   fs.writeFileSync(file, 'PARTIAL\n');
-  await sleep(120);
-  assert.strictEqual(live.read('seat')[0].finished, false, 'ENTER: it was live before the unlink');
+  // The bytes must reach the row BEFORE the unlink: retire() tails through a
+  // statSync on the now-deleted path, which throws and keeps whatever the row
+  // already had. A row that never streamed PARTIAL would finalize empty and fail
+  // the last assertion instead of this one.
+  const before = await readUntil(() => live.read('seat'), (r) => r.length === 1 && /PARTIAL/.test(r[0].output));
+  assert.strictEqual(before[0].finished, false, 'ENTER: it was live before the unlink');
 
   fs.unlinkSync(file);
-  await sleep(120);
-  const rows = live.read('seat');
+  const rows = await readUntil(() => live.read('seat'), (r) => r.length === 1 && r[0].finished);
   assert.strictEqual(rows.length, 1, 'the row survives its file for the finalize grace');
   assert.strictEqual(rows[0].finished, true, 'and is marked finished by the delete');
   assert.match(rows[0].output, /PARTIAL/, 'keeping the text it had read');
