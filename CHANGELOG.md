@@ -16,7 +16,7 @@ blocks a release.
 - Added: `scripts/tmp-sweep.sh`, a janitor for the scratch directories the test
   suite abandons in your temp folder. The suite cleans up after itself, but a run
   that is killed part way through — a crashed seat, a force-quit, a SIGKILL —
-  never gets the chance, and those leftovers are never reaped: 332,600 of them
+  never gets the chance, and those leftovers are never reaped: 300,478 of them
   had piled up on one machine, which is enough to keep `fseventsd` pinned at 100%
   CPU and the whole filesystem under pressure, with a reboot the only way out.
   Running it bare prints what it would delete and the space it would reclaim, and

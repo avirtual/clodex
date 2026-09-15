@@ -16,24 +16,61 @@ function trackedJs() {
   return out.split('\n').filter((f) => f && !f.includes('node_modules'));
 }
 
+const literal = (s) => s.split('${')[0];
+const forwards = (param) => new RegExp(
+  `\\b(?:__MINTERS__)\\(\\s*${param}\\s*[,)]`
+  + `|${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*${param}\\s*[,)]`);
+
+function mintersIn(src) {
+  const fns = [...src.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)[^)]*\)\s*\{/g)]
+    .map((m) => ({ name: m[1], param: m[2], body: src.slice(m.index, m.index + 4000) }));
+  const minters = new Set(['mkTmpRoot', 'trackTmpRoot']);
+  for (let pass = 0; pass < fns.length + 1; pass++) {
+    let grew = false;
+    for (const fn of fns) {
+      if (minters.has(fn.name)) continue;
+      const re = new RegExp(forwards(fn.param).source.replace('__MINTERS__', [...minters].join('|')));
+      if (re.test(fn.body)) { minters.add(fn.name); grew = true; }
+    }
+    if (!grew) break;
+  }
+  return minters;
+}
+
 function scanPrefixes() {
   const rawShape = new RegExp(`${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*(['"\`])([^'"\`]*)\\1`, 'g');
   const helperShape = /\b(?:mkTmpRoot|trackTmpRoot)\(\s*(['"`])([^'"`]*)\1/g;
   const raw = new Map();
   const helper = new Map();
+  const indirect = new Map();
   for (const rel of trackedJs()) {
     const src = fs.readFileSync(path.join(REPO, rel), 'utf8');
     for (const m of src.matchAll(rawShape)) {
-      const p = m[2].split('${')[0];
+      const p = literal(m[2]);
       if (p && !raw.has(p)) raw.set(p, rel);
     }
     for (const m of src.matchAll(helperShape)) {
-      const p = m[2].split('${')[0];
+      const p = literal(m[2]);
       if (p && !helper.has(p)) helper.set(p, rel);
     }
+    const minters = mintersIn(src);
+    for (const name of minters) {
+      if (name === 'mkTmpRoot' || name === 'trackTmpRoot') continue;
+      for (const c of src.matchAll(new RegExp(`\\b${name}\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))) {
+        const p = literal(c[2]);
+        if (p && !indirect.has(p)) indirect.set(p, `${rel} via ${name}()`);
+      }
+    }
+    const alt = [...minters].join('|');
+    for (const c of src.matchAll(/const\s+([A-Z][A-Z0-9_]*)\s*=\s*(['"`])([^'"`]*)\2/g)) {
+      const p = literal(c[3]);
+      if (!p) continue;
+      const used = new RegExp(forwards(c[1]).source.replace('__MINTERS__', alt));
+      if (used.test(src) && !indirect.has(p)) indirect.set(p, `${rel} via const ${c[1]}`);
+    }
   }
-  const union = new Map([...raw, ...helper]);
-  return { raw, helper, union };
+  const union = new Map([...raw, ...helper, ...indirect]);
+  return { raw, helper, indirect, union };
 }
 
 function scriptPrefixes() {
@@ -43,16 +80,18 @@ function scriptPrefixes() {
   return block[1].split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
-test('ENTER: the scan finds mint sites in both shapes, so the coverage assertions below are not vacuous', () => {
-  const { raw, helper, union } = scanPrefixes();
+test('ENTER: the scan finds mint sites in all three shapes, so the coverage assertions below are not vacuous', () => {
+  const { helper, indirect, union } = scanPrefixes();
   assert.ok(union.size > 100,
     `ENTER: expected the suite to mint well over 100 distinct tmp prefixes, scanned ${union.size} — `
     + 'a near-empty scan means the patterns stopped matching and every assertion below passes for nothing');
   assert.ok(helper.size > 0,
     'ENTER: no mkTmpRoot()/trackTmpRoot() prefixes found at all — test/lib/tmp-roots.js is the suite\'s '
     + 'mint helper, so zero call sites means this scan is broken, not that the suite stopped minting');
-  assert.ok(raw.size + helper.size >= union.size,
-    'ENTER: the union cannot exceed the sum of its two shapes');
+  assert.ok(indirect.size > 0,
+    'ENTER: no prefixes found through a local wrapper — the suite\'s dominant fixture idiom is '
+    + '`function mkHome(prefix) { mkTmpRoot(prefix) }` called with a literal, and review round 1 found '
+    + '~60 prefixes uncollected because this shape was missing. Zero means it is missing again.');
 });
 
 test('every prefix the suite mints is covered by tmp-sweep.sh', () => {

@@ -5,9 +5,9 @@
 # The suite mints scratch roots with mkdtemp in $TMPDIR. test/lib/tmp-roots.js
 # sweeps the ones it registered, but roots still escape: a run killed mid-flight
 # (SIGKILL, a crashed seat, a force-exit before the top-level `after`) never gets
-# to sweep at all. They accumulate — 332,600 entries on the box this was written
-# for — and macOS reaps them on no timescale that matters. That volume pegs
-# fseventsd at 100% CPU indefinitely.
+# to sweep at all. They accumulate — 300,478 abandoned roots on the box this was
+# written for, out of 332,600 entries in $TMPDIR — and macOS reaps them on no
+# timescale that matters. That volume pegs fseventsd at 100% CPU indefinitely.
 #
 #   scripts/tmp-sweep.sh                   # dry-run: what it WOULD remove, plus totals
 #   scripts/tmp-sweep.sh --list            # dry-run, printing every path
@@ -23,10 +23,15 @@
 set -uo pipefail
 
 # Every prefix the suite mints, enumerated from the source rather than guessed:
-# the union of raw mint-literals and mkTmpRoot()/trackTmpRoot() literals across
-# every tracked .js. test/tmp-sweep-prefix-coverage.test.js re-derives that union
-# from source and reds when a new prefix is not covered here, which is the only
-# thing stopping this list going stale.
+# across every tracked .js, the union of raw mint-literals, mkTmpRoot()/
+# trackTmpRoot() literals, and literals passed to a local wrapper that forwards
+# its parameter to one of those (`mkEngine('t748-rows-')` → `mkHome(prefix)` →
+# `mkTmpRoot(prefix)`, resolved to a fixpoint because the suite nests wrappers
+# two deep). test/tmp-sweep-prefix-coverage.test.js re-derives that union from
+# source and reds when a new prefix is not covered here, which is the only thing
+# stopping this list going stale. The wrapper shape was missing in round 1 and
+# hid ~60 live prefixes while the pin stayed green; it has its own ENTER guard
+# now.
 #
 # Listed in full, NOT collapsed to family roots, and the difference is not
 # cosmetic. Keeping only `clodex-` because it is a string-prefix of
@@ -139,6 +144,7 @@ clodex-mv-home-
 clodex-mv-link-
 clodex-mv-real-
 clodex-mv-secret-
+clodex-norepo-
 clodex-not-a-worktree-
 clodex-nr-
 clodex-nr2-
@@ -198,6 +204,8 @@ clodex-scope-
 clodex-sinfo-
 clodex-sinfo-overlay-
 clodex-sm-
+clodex-solo-home-
+clodex-solo-repo-
 clodex-surface-
 clodex-surface-gate-
 clodex-sweep-
@@ -231,7 +239,21 @@ clodex-t619-abs-
 clodex-t619-base-
 clodex-t619-rt-
 clodex-t63-
+clodex-t679-a-
+clodex-t679-b-
+clodex-t679-c-
+clodex-t679-d-
+clodex-t679-e-core-
+clodex-t679-e-user-
+clodex-t679-f-core-
+clodex-t679-f-user-
+clodex-t679-g-
+clodex-t679-h-
 clodex-t679-res-
+clodex-t679-spawn-a-
+clodex-t679-spawn-b-
+clodex-t679-spawn-c-
+clodex-t679-spawn-d-
 clodex-t751-
 clodex-t751-proj-
 clodex-t751-proj2-
@@ -244,8 +266,11 @@ clodex-t776-root-
 clodex-t776-sub-
 clodex-t776-task-
 clodex-t776-tree-
+clodex-t780-bare-
+clodex-t780-clause-
 clodex-t780-files-
 clodex-t780-nocommit-
+clodex-t780-take-
 clodex-t801-code-
 clodex-t801-host-
 clodex-t801-other-
@@ -268,6 +293,7 @@ clodex-t94-sm2-
 clodex-tag-
 clodex-tc-
 clodex-tc2-
+clodex-team-repo-
 clodex-teammut-
 clodex-teams-
 clodex-tee-
@@ -409,6 +435,33 @@ clx-t678-scaffold-
 clx-t678-verifytmp-
 clx-t687-manifest-
 clx-t699-
+clx-t700-defs-
+clx-t700-grant-
+clx-t700-ipc-
+clx-t700-ipcguard-
+clx-t700-leaf-
+clx-t700-run-
+clx-t700-runbad-
+clx-t700-runguard-
+clx-t700-runnone-
+clx-t700-shape-
+clx-t700-shapeguard-
+clx-t700-shapeplugin-
+clx-t700-spawn-
+clx-t700-spawnguard-
+clx-t701-dry-
+clx-t701-effect-
+clx-t701-ipc-
+clx-t701-real-
+clx-t701-twice-
+clx-t702-flip-
+clx-t702-ipc-
+clx-t702-lead-
+clx-t702-leaf-
+clx-t702-plan-
+clx-t702-shared-
+clx-t711-silent-
+clx-t711-verb-
 clx-t732-companions-
 clx-t738-home-
 clx-t738-repo-
@@ -471,6 +524,9 @@ notif-reg-
 notif-ud-
 outer-
 parity-
+parity-atomic-
+parity-atomic-fail-
+parity-atomic-mode-
 parity-ledger-
 parity-watchdog-
 peerimp-ctx-
@@ -492,6 +548,7 @@ remotetok-
 remsched-reg-
 remsched-ud-
 renderer-smoke-
+renderer-smoke-profile-
 retired-roster-
 review-ab-
 review-ab-empty-
@@ -514,7 +571,12 @@ stores-ud-
 svcport-
 t415-reg-
 t415-ud-
+t748-bad-
+t748-empty-
 t748-ipc-
+t748-rows-
+t748-shadow-
+t748-two-
 t753-
 t753-parity-
 t753-throw-
@@ -529,7 +591,13 @@ t789-home-
 t789-portable-
 t789-portable-proj-
 t789-proj-
+t790-bad-
+t790-both-
+t790-empty-
 t790-ipc-
+t790-kind-
+t790-rows-
+t790-shadow-
 t791-proj-
 t803-bare-
 t803-home-
@@ -596,6 +664,14 @@ TMP="${TMP%/}"
 # dir. Checking only the string would let a symlinked TMPDIR point the sweep at
 # $HOME; checking only the resolved path would miss nothing but costs nothing.
 # /private/var is the macOS realpath of /var, which is why both spellings pass.
+#
+# `*` matches `/` in a bash case pattern, so a deeper path like
+# /var/folders/a/b/T/scratch/T also passes. That is DELIBERATE and the blast
+# radius stays inside /var/folders either way. Tightening to [!/]*/[!/]* would
+# also lock out test/tmp-sweep-behavior.test.js, which cannot mint a real
+# /var/folders/xx/yy/T (that directory is root-owned) and instead points TMPDIR
+# at a scratch parent nested under the real one. A gate nothing can exercise is
+# worth less than one extra path component of slack.
 looks_like_user_tmp() {
   case "$1" in
     /var/folders/*/*/T|/private/var/folders/*/*/T) return 0 ;;
@@ -609,6 +685,13 @@ looks_like_user_tmp "$REAL" || die "TMPDIR resolves outside /var/folders: $TMP -
 NPREFIX="$(printf '%s' "$PREFIXES" | tr -d ' \t' | grep -cv '^$')"
 ALT="$(printf '%s' "$PREFIXES" | tr -d ' \t' | grep -v '^$' | paste -sd'|' -)"
 [ -n "$ALT" ] || die "prefix list is empty — refusing to match everything"
+
+# Prefixes are interpolated raw into an extended regex below, so a future entry
+# containing `.` or `+` would silently become a wildcard and widen what gets
+# deleted. Every current entry is [A-Za-z0-9-]; anything else stops the run
+# rather than quietly matching more than its author meant.
+BADPREFIX="$(printf '%s' "$PREFIXES" | tr -d ' \t' | grep -v '^$' | grep -vE '^[A-Za-z0-9-]+$' | head -1)"
+[ -z "$BADPREFIX" ] || die "prefix '$BADPREFIX' has characters that are regex metacharacters — refusing to run"
 
 # The whole match, and the reason a prefix as generic as `proj-` is safe here:
 # mkdtemp appends exactly six random alphanumerics, so a real scratch root is
