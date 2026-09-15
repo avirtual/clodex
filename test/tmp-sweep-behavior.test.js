@@ -16,9 +16,6 @@ function age(target, days) {
   fs.utimesSync(target, when, when);
 }
 
-// Aged LAST, and that ordering is the whole correctness of the fixture: writing
-// anything inside a directory resets its mtime to now, so a root aged before its
-// contents are filled in reads as fresh and the age gate skips it.
 function plant(parent, name, ageDays, fill) {
   const dir = path.join(parent, name);
   fs.mkdirSync(dir, { recursive: true });
@@ -84,11 +81,10 @@ test('--older-than widens the age gate but never reaches a root younger than it'
   const twoDays = plant(parent, 'clodex-gggggg', 2);
   const tenDays = plant(parent, 'clodex-hhhhhh', 10);
 
-  // 120h, not 240h: a 10-day root is exactly 240h old, and `-mmin +N` is
-  // strictly greater, so 240 would be a boundary this test has no reason to sit
-  // on. The gate erring young-side-exclusive is the conservative direction.
   const narrow = run(parent, ['--older-than', '120']);
-  assert.match(narrow.stdout, /would remove 1 director/, 'a 120h gate must reach only the 10-day root');
+  assert.match(narrow.stdout, /would remove 1 director/,
+    'a 120h gate must reach only the 10-day root (120 and not 240: a 10-day root is exactly 240h old '
+    + 'and `-mmin +N` is strictly greater, so 240 is a boundary this test has no reason to sit on)');
   assert.ok(narrow.stdout.includes(path.basename(tenDays)));
   assert.ok(!narrow.stdout.includes(path.basename(twoDays)));
 
