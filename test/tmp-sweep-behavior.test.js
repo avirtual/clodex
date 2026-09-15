@@ -94,6 +94,26 @@ test('--older-than widens the age gate but never reaches a root younger than it'
   assert.ok(!fs.existsSync(tenDays));
 });
 
+test('a prefix carrying a regex metacharacter refuses the run instead of widening it', () => {
+  const parent = fixture();
+  const original = fs.readFileSync(SCRIPT, 'utf8');
+  const block = original.match(/\nPREFIXES='\n([\s\S]*?)\n'\n/);
+  assert.ok(block, 'ENTER: the PREFIXES block must be findable, or the poisoning below is a no-op');
+
+  const poisoned = path.join(parent, 'poisoned-sweep.sh');
+  fs.writeFileSync(poisoned, original.replace(block[0], "\nPREFIXES='\nclodex-\n.*\n'\n"));
+
+  const victim = plant(parent, 'somebody-elses-data', AGED_DAYS);
+  const r = cp.spawnSync('bash', [poisoned, '--yes'], {
+    env: { ...process.env, TMPDIR: parent }, encoding: 'utf8',
+  });
+  assert.strictEqual(r.status, 2, `a metacharacter prefix must refuse, got status ${r.status}: ${r.stdout}`);
+  assert.match(r.stderr, /regex metacharacters — refusing to run/);
+  assert.ok(fs.existsSync(victim),
+    'without the guard, `.*` interpolated into the deletion pattern matches every aged directory — '
+    + 'the guard is what stops one bad list entry deleting another process\'s data');
+});
+
 test('a root that cannot be removed is reported, not fatal, and the rest of the batch still goes', () => {
   const parent = fixture();
   const poisoned = plant(parent, 'clodex-iiiiii', AGED_DAYS,
