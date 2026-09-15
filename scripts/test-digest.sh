@@ -378,7 +378,8 @@ save_failing_output() {
   mkdir -p "$keep_dir" 2>/dev/null || return 1
   {
     printf '# clodex test-digest — preserved output of a FAILING run.\n'
-    printf '# ONE fixed file, overwritten by the next failing run on this box.\n'
+    printf '# Fixed names, overwritten: last.txt by the next failing run on this box,\n'
+    printf '# last-red.txt by the next green run that follows one.\n'
     printf '# tree:  %s\n' "$measure"
     printf '# head:  %s %s\n' "$head_branch" "$head_commit"
     printf '# start: %s\n' "$run_started"

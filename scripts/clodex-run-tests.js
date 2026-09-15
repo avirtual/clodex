@@ -69,7 +69,8 @@ function preserve({
   const sections = structured ? failureSections(lines) : null;
   const out = [
     '# clodex clodex-run-tests — preserved output of a FAILING run.',
-    '# ONE fixed file, overwritten by the next failing run on this box.',
+    '# Fixed names, overwritten: last.txt by the next failing run on this box,',
+    '# last-red.txt by the next green run that follows one.',
     `# tree:  ${measure}`,
     `# head:  ${head}`,
     `# start: ${startedIso}`,
