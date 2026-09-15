@@ -18,12 +18,18 @@ blocks a release.
   that failed on the first run, not just its counts (`no names recorded` for
   older tickets stamped before the names were kept); the cold reviewer was
   already told them and the lead, who has to act on it, was not. And a green
-  run of `scripts/test-digest.sh` now renames the previous failing run's
-  preserved output to `~/.clodex/test-failures/last-red.txt` instead of
-  deleting it, so a re-measure no longer destroys the only copy of the
-  assertion text, diff and stack that explains why it happened. The green
-  digest line still names no file, because that output describes an earlier
-  run.
+  run now renames the previous failing run's preserved output to
+  `~/.clodex/test-failures/last-red.txt` instead of deleting it, so a
+  re-measure no longer destroys the only copy of the assertion text, diff and
+  stack that explains why it happened. The green digest line still names no
+  file, because that output describes an earlier run.
+
+- Fixed: the `clodex-run-tests` grant every team gets now preserves a failing
+  run's output to `~/.clodex/test-failures/last.txt` and names it on the digest
+  line. It previously kept nothing at all — a red suite gave you one 180-char
+  line of test names, and the assertion text, diff and stack behind them existed
+  nowhere afterwards. Both files are fixed names that the next run overwrites,
+  so nothing accumulates to prune.
 
 - Fixed: a Codex seat's transcript no longer shows the internal `[agent:from
   user]` delivery marker on the messages you send it. `clodex logs`, `clodex
