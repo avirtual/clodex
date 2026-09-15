@@ -627,7 +627,7 @@
           <label id="skills-row">Skills
             <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
             <div id="input-skills-list" class="agent-checklist"></div>
-            <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Known built-ins only; project/plugin skills appear in the per-session list once running.</span>
+            <span class="hint-text">Unchecked skills are turned off (<code>skillOverrides</code>), reclaiming their per-turn tokens. Trimming here applies from the start — the skill roster is fixed when the conversation begins. Only skills Clodex already knows about are listed; in <strong>Clodex optimized</strong> anything else it learns of by the time the session starts is turned off too, and the rest appear in the per-session list once running.</span>
           </label>
           <label id="inject-skills-row">Custom skills
             <div id="input-inject-skills-list" class="agent-checklist"></div>

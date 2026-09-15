@@ -34,7 +34,19 @@ parse. Folded into `skillsSeen`, so a box whose run dirs went still has them.
 
 Takes `{name}` for a seat or `{cwd}` for the defaults dialog, which has no
 session and so no transcript to scan. These were two separate unions, and the
-defaults copy silently missed every DISCOVERED skill — `design`, `dataviz` —
+defaults copy silently missed every DISCOVERED skill — a plugin's, a project's —
 which could therefore never be pre-unchecked. The defaults shape is deliberately
 NARROWER (no `outOfScope`/`disabledSkills`/`skillLib`/`injectSkills`): a default
 disabled-list must not inherit one seat's per-session state.
+
+`names` is filtered through `isSkillDenyDirective`: a seat's `disabledSkills`
+feeds the union and may hold `*` or `!name`, neither of which is a skill. A
+directive that reached the list would draw as a checkbox row and collect into
+someone's off list as a skill by that literal name.
+
+## applySessionSkills
+
+PERSISTS only. The settings file the CLI reads is written by `setupClaudeHook`,
+whose one call site is `session-manager.js`'s spawn arm, so a skill toggled from
+the per-session popover applies on the seat's next fresh start — which is what
+the popover's own confirm text says when it offers "Restart fresh".

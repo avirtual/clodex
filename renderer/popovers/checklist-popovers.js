@@ -21,6 +21,7 @@ const {
   setIntentCatalogCache, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf,
 } = require('../lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
+const { skillOffSetFor } = require('../../skills-off');
 const { parseSkillFrontmatter } = require('../../skills-util');
 const { esc } = require('../lib/format');
 const { capsFor } = require('../lib/provider-caps');
@@ -165,7 +166,8 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     const caps = capsFor(skillsTypeOf(name, source));
     skillsDisabledPersisted = res.disabledSkills || [];
     if (caps.skillRoster) {
-      const offSet = res.allOff ? new Set(res.names || []) : new Set(skillsDisabledPersisted);
+      const offSet = skillOffSetFor(res.names || [],
+        res.allOff ? ['*', ...skillsDisabledPersisted] : skillsDisabledPersisted);
       renderSkillChecklist(popoverSkillsList, res.names || [], offSet,
         res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope });
     }

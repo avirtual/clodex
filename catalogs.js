@@ -14,6 +14,8 @@
 // - DEFAULT_WORKSPACE_ID / AGENT_NAME_RE / THEME_KEYS — shared identifiers the
 //   stores validate against and main.js reuses.
 
+const { deferredSkillDeny } = require('./skills-off');
+
 // Per-session tool gating (Claude-only). The known built-in tool catalog —
 // the universe a user picks from when deciding what to disable. This is the
 // standalone source of truth: clodex must work without wirescope, so the list
@@ -76,14 +78,11 @@ const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.incl
 // checked here (clodex can't see the other source, and only ever writes
 // "off" overrides, never "on", so it can't re-enable it).
 const CLAUDE_SKILLS = [
-  // Review & analysis
   'code-review', 'security-review', 'review', 'deep-research', 'verify',
-  // Codebase setup & config
   'init', 'update-config', 'simplify',
-  // Execution & control flow
   'run', 'loop', 'schedule',
-  // API & help
   'claude-api', 'keybindings-help', 'fewer-permission-prompts',
+  'design', 'dataviz', 'artifact-design', 'artifact-diagramming', 'artifact-capabilities',
 ];
 
 // Empirical gate (Q2): whether our layer-4 `--settings` `skillOverrides:{x:"on"}`
@@ -97,9 +96,12 @@ const CLAUDE_SKILLS = [
 // is the same mechanism the popover already ships.
 const SKILL_REENABLE_CONFIRMED = false;
 
-const OPTIMIZED_SKILLS = ['code-review', 'security-review', 'review', 'verify', 'simplify', 'claude-api'];
+const OPTIMIZED_SKILLS = [
+  'code-review', 'security-review', 'review', 'verify', 'simplify', 'claude-api',
+  'dataviz', 'artifact-diagramming',
+];
 
-const DEFAULT_SKILL_DENY_FLOOR = CLAUDE_SKILLS.filter((s) => !OPTIMIZED_SKILLS.includes(s));
+const DEFAULT_SKILL_DENY_FLOOR = deferredSkillDeny(OPTIMIZED_SKILLS);
 
 const DEFAULT_BUILTIN_DENY_FLOOR = ['Plan', 'claude', 'claude-code-guide', 'statusline-setup'];
 

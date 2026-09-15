@@ -21,6 +21,25 @@ blocks a release.
   another's while still carrying a single run's `# tree:`/`# head:` header. Each
   publish is now one run's whole output. The published names are unchanged, and
   the second run of a pair still replaces the first's dump.
+- Fixed: "Clodex optimized" now turns off the built-in skills that only appear
+  after a seat has run its first turn. Optimized mode used to write a snapshot
+  of the skills known while the dialog was open, so every skill the CLI
+  announced afterwards arrived enabled and you paid a create → first turn → edit
+  skills → reload cycle to remove skills that were always going to appear. It
+  now stores the denial the way a lean team template already did — "everything
+  known at spawn except this keep list" — resolved when the session starts.
+  This also corrects 5.68.0's skills curation: that release said both modes
+  differ in every category, which was true, but the keep list named six skills
+  this box has never seen the CLI offer, while the deny floor named only real
+  ones. Optimized now also keeps `dataviz` and `artifact-diagramming` (charts and
+  inline diagrams are ordinary repo work) and turns off `design`,
+  `artifact-design` and `artifact-capabilities` (Artifact-publishing flows),
+  alongside the existing review and setup skills. Standard mode is unchanged and
+  still writes no skill denial, and your own saved skill defaults — including an
+  explicitly empty one — still win over the shipped floor. A skill Clodex has
+  never seen on this box still can't be denied before it appears. Creating
+  into a sandbox or a peer box still sends that box a plain list rather than the
+  deferred shape, so an older Clodex on the far side can't misread it.
 
 ## 5.68.0 — 2026-09-15 — Optimized mode really is curated, and four fixes where Clodex showed or kept the wrong thing
 

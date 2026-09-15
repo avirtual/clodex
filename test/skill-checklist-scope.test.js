@@ -51,6 +51,7 @@ function withDom(fn) {
 }
 
 const { renderSkillChecklist, collectSkillChecklist } = withDom(() => require('../renderer/lib/checklists'));
+const { skillOffSetFor } = require('../skills-off');
 
 // The measured shape: the roster plus the app/-scoped names, as readSkillCatalog
 // now unions and marks them.
@@ -194,6 +195,9 @@ function drawPeerRoster(sc) {
       sc,
       argsSkillsList,
       renderSkillChecklist,
+      // Real, not a stub: the off set this block draws from must be the one the
+      // spawn resolves, and that agreement is the point of the shared module.
+      skillOffSetFor,
     };
     const names = Object.keys(env);
     new Function(...names, peerSkillBlock())(...names.map((n) => env[n]));

@@ -23,6 +23,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const { capsFor } = require('../renderer/lib/provider-caps');
+const { skillOffSetFor, skillDenyIsDeferred } = require('../skills-off');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
 
@@ -644,7 +645,7 @@ test('the cwd change listener and Browse redraw gates through one template-aware
     'the cwd gate redraw helper');
   for (const frag of [
     "{ forTemplate: dialogMode === 'template' }",
-    'new Set(collectSkillChecklist(inputSkillsList))',
+    'new Set(newSessionSkillDenyList())',
     'new Set(collectToolChecklist(inputToolsList))',
     'modeSkillDenySet()',
     'modeToolDenySet()',
@@ -688,8 +689,10 @@ test('a cwd redraw preserves the template rows the operator unticked', () => {
 // on for the one template that ships lean. Runs the SHIPPED function against the
 // real checklist, then collects: a source-shape grep would pass over an off-set
 // built from the wrong names.
-const REFRESH_SKILLS_FN = extract(
-  /\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills');
+const REFRESH_SKILLS_FN = [
+  extract(/\n(function resetNewSessionSkillCollector\([\s\S]*?\n\})\n/, 'resetNewSessionSkillCollector'),
+  extract(/\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills'),
+].join('\n');
 const SKILL_NAMES = ['alpha', 'beta', 'gamma'];
 
 // withDom cannot wrap this one: it restores `document` in a synchronous finally,
@@ -707,6 +710,11 @@ async function drawSkillsForTemplate(disabledSkills) {
       inputSkillsList,
       renderSkillChecklist: checklists.renderSkillChecklist,
       advisoryEffective: (e) => e || {},
+      // Real, not stubs: what the rows draw must be what the spawn resolves.
+      skillOffSetFor, skillDenyIsDeferred,
+      newSessionSkillsDeferred: false,
+      newSessionSkillsDrawn: [],
+      newSessionSkillsAsked: [],
       window: { api: { getSkillCatalogFor: async () => ({ ok: true, names: [...SKILL_NAMES], effective: {} }) } },
     };
     const names = Object.keys(env);

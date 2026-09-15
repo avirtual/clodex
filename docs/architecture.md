@@ -863,15 +863,24 @@ accept teardown removes.
   per-process skill root (docs/notes/skill-delivery.md). Every path it writes
   and every builder it uses arrives injected, so the app's most destructive
   `rmSync` can be aimed at a temp root by a test. A third CLI is one entry.
-- **skills-off.js** — `expandSkillsOff(disabledSkills, { known, injectSkills })`:
-  the `"*"` sentinel a template writes for "every skill off". A template cannot
-  list skill names — they differ per box — so the sentinel is resolved at spawn
-  against the catalog `createSessionManager`'s `knownSkillNames` dep supplies
-  (engine unions CLAUDE_SKILLS, `skillsSeen`, and the effective overrides). It
-  returns the sorted union minus the sentinel and minus the seat's injected
-  skills under either spelling (bare or `clodex-skills:<name>`), and returns a
-  list without `*` untouched. The persisted entry keeps the raw sentinel, so a
-  restart re-expands against a catalog that has grown since.
+- **skills-off.js** — the deferred skill-denial vocabulary. A stored
+  `disabledSkills` may hold DIRECTIVES beside plain names: `"*"` ("every skill
+  this box knows at spawn") and `"!name"` (an exemption from that sweep). Neither
+  can be resolved when it is written — skill names differ per box and the CLI
+  announces some only once a seat has run — so `expandSkillsOff(disabledSkills,
+  { known, injectSkills })` resolves them at spawn against the catalog
+  `createSessionManager`'s `knownSkillNames` dep supplies (engine unions
+  CLAUDE_SKILLS, `skillsSeen`, and the effective overrides), returning the sorted
+  union minus the directives, minus the exemptions, and minus the seat's injected
+  skills under either spelling (bare or `clodex-skills:<name>`). A list with no
+  directive comes back untouched. `deferredSkillDeny(keep)` builds the shape
+  (`DEFAULT_SKILL_DENY_FLOOR` is one), `skillOffSetFor(names, list)` is what every
+  checklist renders from, and `isSkillDenyDirective` is what keeps a directive out
+  of a name list. The persisted entry keeps the directives raw, so a restart
+  re-expands against a catalog that has grown since. `skillDenyForPeer` is the
+  wire guard: a create routed to a BOX gets `[]` rather than a directive list,
+  because a peer older than this vocabulary reads `!x` as a skill name and would
+  deny its whole roster.
 - **skill-roster.js** — `classifySkillRoster`: splits a transcript's
   `skill_listing` attachments into the session's roster (`isInitial: true`,
   last one wins) and the DIRECTORY-SCOPED sets (`isInitial: false`, keyed by

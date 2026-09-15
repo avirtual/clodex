@@ -11,6 +11,7 @@ const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
 } = require('../catalogs');
 const { BUILTIN_AGENTS } = require('../agents-util');
+const { expandSkillsOff, skillDenyKeepList } = require('../skills-off');
 
 test('CLAUDE_TOOLS: non-empty, unique, includes the staples', () => {
   assert.ok(Array.isArray(CLAUDE_TOOLS) && CLAUDE_TOOLS.length > 0);
@@ -61,17 +62,23 @@ test('DEFAULT_TOOL_DENY_FLOOR: derived from the allow list, which holds only rea
 // Same shape for skills. Before t913 this floor did not exist and
 // getDefaultSkillDeny() returned [] when the `*` key was absent, which made the
 // Mode selector a literal no-op for the whole skills category on a fresh root.
-test('DEFAULT_SKILL_DENY_FLOOR: non-empty, derived, and partitions CLAUDE_SKILLS', () => {
+// t918 made it deferred, so the partition is asserted over the EXPANSION.
+test('DEFAULT_SKILL_DENY_FLOOR: deferred, derived, and partitions CLAUDE_SKILLS when expanded', () => {
   assert.ok(Array.isArray(DEFAULT_SKILL_DENY_FLOOR));
-  assert.ok(DEFAULT_SKILL_DENY_FLOOR.length > 0,
-    'an empty skill floor makes optimized and standard render the same set');
+  assert.ok(DEFAULT_SKILL_DENY_FLOOR.includes('*'),
+    'a floor without the sentinel is a snapshot: a skill the CLI announces after the dialog closed arrives ON');
   for (const s of OPTIMIZED_SKILLS) {
     assert.ok(CLAUDE_SKILLS.includes(s), `OPTIMIZED_SKILLS: ${s} not in CLAUDE_SKILLS`);
   }
-  assert.deepStrictEqual(DEFAULT_SKILL_DENY_FLOOR.filter((s) => OPTIMIZED_SKILLS.includes(s)), [],
-    'the floor must not deny a curated skill');
-  assert.strictEqual(DEFAULT_SKILL_DENY_FLOOR.length + OPTIMIZED_SKILLS.length, CLAUDE_SKILLS.length,
-    'floor + allow list partition the skill catalog exactly');
+  assert.deepStrictEqual(skillDenyKeepList(DEFAULT_SKILL_DENY_FLOOR), [...OPTIMIZED_SKILLS],
+    'the exemptions ARE the keep list — a floor that exempts something else denies a curated skill');
+  const expanded = expandSkillsOff(DEFAULT_SKILL_DENY_FLOOR, { known: [...CLAUDE_SKILLS] });
+  assert.deepStrictEqual(expanded, CLAUDE_SKILLS.filter((s) => !OPTIMIZED_SKILLS.includes(s)).sort(),
+    'floor + allow list partition the skill catalog exactly, once the sentinel is resolved');
+  assert.ok(expandSkillsOff(DEFAULT_SKILL_DENY_FLOOR, { known: ['a-skill-shipped-next-month'] })
+    .includes('a-skill-shipped-next-month'),
+    'a skill in NO list when the dialog closed must still land in the off list at spawn — the half a '
+    + 'materialised floor cannot do, and the whole defect t918 exists to fix');
   // The tool half carries this bound and the skill half did not, which is the
   // asymmetry that let the tool floor rot in the first place: an allow list
   // grown to 13-of-14 keeps every other pin here green.
@@ -94,6 +101,11 @@ test('DEFAULT_BUILTIN_DENY_FLOOR: a subset of BUILTIN_AGENTS, sparing exactly Ex
 
 test('CLAUDE_SKILLS + re-enable gate', () => {
   assert.ok(Array.isArray(CLAUDE_SKILLS) && CLAUDE_SKILLS.includes('code-review'));
+  for (const s of ['design', 'dataviz', 'artifact-design', 'artifact-diagramming', 'artifact-capabilities']) {
+    assert.ok(CLAUDE_SKILLS.includes(s),
+      `the shipping CLI offers '${s}' and the seed does not name it — on a fresh root the seed is the ONLY `
+      + 'thing `*` can expand against, so a name missing here is a skill optimized mode cannot deny');
+  }
   assert.strictEqual(SKILL_REENABLE_CONFIRMED, false);
 });
 
