@@ -358,10 +358,13 @@ fail=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="fail" {n=$3} END{print n+0}')
 # The cost of a fixed path is that a second tree's failure clobbers the first
 # before anyone reads it. The box-wide lock above already serializes runs, and
 # the header written below names the tree, the commit and the time, so a
-# foreign dump is detectable on sight rather than silently misread.
+# foreign dump is detectable on sight rather than silently misread — which holds
+# only while each publish is one run's WHOLE body, hence the per-pid staging
+# name below: the two published names are fixed, the tmp is not.
 keep_dir=${CLODEX_HOME:-$HOME/.clodex}/test-failures
 keep=$keep_dir/last.txt
 keep_red=$keep_dir/last-red.txt
+keep_tmp=$keep.$$.tmp
 # Display form for the digest line, which is capped at 180 chars and where the
 # failing NAMES are the more valuable half. Empty $HOME would make the pattern
 # `/*` and match everything, so the guard is not decorative.
@@ -457,10 +460,10 @@ save_failing_output() {
         }
       }
     '
-  } > "$keep.tmp" 2>/dev/null || { rm -f "$keep.tmp" 2>/dev/null; return 1; }
+  } > "$keep_tmp" 2>/dev/null || { rm -f "$keep_tmp" 2>/dev/null; return 1; }
   # Rename, because the reader is an agent running `cat` outside this script's
   # lock: writing in place lets it read a half-written dump as the whole truth.
-  mv "$keep.tmp" "$keep" 2>/dev/null || { rm -f "$keep.tmp" 2>/dev/null; return 1; }
+  mv "$keep_tmp" "$keep" 2>/dev/null || { rm -f "$keep_tmp" 2>/dev/null; return 1; }
 }
 
 if [ "$tests" -eq 0 ]; then

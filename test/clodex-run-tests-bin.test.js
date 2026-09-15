@@ -74,6 +74,10 @@ function stubRecord(root) {
   return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null;
 }
 
+function keptIndices(kept, re) {
+  return [...String(kept).matchAll(re)].map((m) => Number(m[1]));
+}
+
 // The digest carries the run's own wall time, which is elapsed real time and so
 // cannot be a literal in a fixture. WALL stands in for it and expands to a
 // SHAPE — everything else in the line is still matched byte for byte, anchored
@@ -385,6 +389,97 @@ test('keep: output with no `Failed tests:` block falls back to a raw tail, never
     assert.match(r.kept, /a failure described in its own words/,
       'the raw tail did not survive, so the file is a confident silence');
     assert.match(r.kept, /raw tail follows/, 'and it does not say that it is a fallback');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const OVER_CAP_FAILS = 2100;
+
+test('keep: an over-cap failing section is CUT, and what survives is its EARLIEST rows', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        "console.log('Failed tests:');",
+        `for (let i = 0; i < ${OVER_CAP_FAILS}; i += 1) console.log(' ✖ fail-row-' + i + ' (1.0ms)');`,
+        `console.log('TOTALS: 5 pass, ${OVER_CAP_FAILS} fail, ${OVER_CAP_FAILS + 5} tests');`,
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'ENTER: nothing was preserved, so there is no reduction to judge');
+    const rows = keptIndices(r.kept, /^ *✖ fail-row-(\d+) \(/gm);
+    assert.strictEqual(rows.length, 1999,
+      `nothing but this cap bounds the dump an agent reads after a red: ${OVER_CAP_FAILS} failing `
+      + 'rows must come out at the 2000-line cap less the `Failed tests:` header that shares it, '
+      + `got ${rows.length}`);
+    assert.strictEqual(rows[0], 0,
+      'the first failing row was cut away: the head is the half a reader opens the file for');
+    assert.strictEqual(rows[rows.length - 1], 1998,
+      'the surviving rows are not the LEADING ones, so this reduction is a tail or a middle');
+    assert.match(r.kept, /^## \(\d+ further failure lines dropped\)$/m,
+      'the section was cut without saying so, which reads as a complete failure list');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const OVER_CAP_DIAG = 500;
+
+test('keep: an over-cap diagnostics section keeps BOTH ends and drops its middle', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        `for (let i = 0; i < ${OVER_CAP_DIAG}; i += 1) console.log('diag-' + i + '-end');`,
+        "console.log('Failed tests:');",
+        "console.log(' ✖ the failing subtest (1.3ms)');",
+        "console.log('TOTALS: 5 pass, 1 fail, 6 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'ENTER: nothing was preserved, so there is no reduction to judge');
+    const diag = keptIndices(r.kept, /^diag-(\d+)-end$/gm);
+    assert.strictEqual(diag.length, 400,
+      `${OVER_CAP_DIAG} diagnostic lines must come out at the 400-line cap, got ${diag.length}`);
+    assert.strictEqual(diag[0], 0,
+      'the opening diagnostics were cut, where the run announces what it is doing');
+    assert.strictEqual(diag[199], 199, 'the kept head is not the first half of the cap');
+    assert.strictEqual(diag[200], 300,
+      'the drop did not land in the MIDDLE: this reduction kept a contiguous run, not both ends');
+    assert.strictEqual(diag[399], 499,
+      'the closing diagnostics were cut, which is where the summary and the escapes sit');
+    assert.match(r.kept, /^## \(100 diagnostic lines dropped\)$/m,
+      'the section was cut without saying so, or it said the wrong count');
+    assert.match(r.kept, /^ *✖ the failing subtest \(1\.3ms\)$/m,
+      'the diagnostics cap reached the failing rows, which are buffered apart from it');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const OVER_CAP_RAW = 500;
+
+test('keep: an over-cap raw fallback keeps the LATEST lines, never the opening ones', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        `for (let i = 0; i < ${OVER_CAP_RAW}; i += 1) console.log('raw-' + i + '-end');`,
+        "console.log('TOTALS: 5 pass, 1 fail, 6 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'ENTER: nothing was preserved, so there is no reduction to judge');
+    assert.match(r.kept, /raw tail follows/, 'ENTER: this is not the raw-fallback arm');
+    const raw = keptIndices(r.kept, /^raw-(\d+)-end$/gm);
+    assert.ok(raw.length <= 400,
+      `${OVER_CAP_RAW} unrecognised lines must come out at or under the 400-line cap, got ${raw.length}`);
+    assert.strictEqual(raw[raw.length - 1], OVER_CAP_RAW - 1,
+      'the final lines were cut: an unrecognised reporter describes its failure at the END');
+    assert.ok(raw[0] >= 100,
+      `the EARLIEST lines were the ones kept, so this is a head cut: kept from raw-${raw[0]}-end`);
+    assert.strictEqual(raw[raw.length - 1] - raw[0], raw.length - 1,
+      'the kept lines are not one contiguous run, so this reduction dropped a middle');
+    assert.match(r.kept, /^## \(\d+ earlier lines dropped\)$/m,
+      'the tail was cut without saying so, which reads as the whole of the run');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

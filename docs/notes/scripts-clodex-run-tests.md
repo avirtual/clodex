@@ -28,14 +28,27 @@ takes the same dir via `CLODEX_TEST_LOCK_DIR`, so both serialize on one mutex.
 
 What is NOT serialized is this bin's own write: the lock belongs to the child,
 which has exited by the time `preserve` runs, so two runs finishing together can
-write the same path, and the tmp name they stage through is fixed too, so the
-loss there is not bounded to one whole dump: two `preserve`s truncating the same
-tmp can interleave and the first `rename` publishes a mixed body. That needs the
-two front ends to resolve different lock roots, which they can — both take it
-from cwd — so it is rare rather than impossible. It is the same accepted cost
-the `.sh` header records for a second tree's failure clobbering the first. A
-dump is attributable on sight because its `# tree:`, `# head:` and `# start:`
-headers name the run that produced it.
+publish the same path. That needs the two front ends to resolve different lock
+roots, which they can — both take it from cwd — so it is rare rather than
+impossible.
+
+The staging name carries the writer's pid (`${KEEP}.<pid>.tmp` here,
+`$keep.$$.tmp` in `test-digest.sh`), so concurrent writers never share a tmp and
+what each `rename` publishes is one run's whole body. Pid alone is enough:
+a name is only contended between processes that are alive at the same time, and
+a pid is unique among those — across both front ends, which draw from the same
+OS namespace. A reused pid implies its predecessor is gone, and each writer
+truncates its tmp and writes it whole, so a successor inheriting a leaked name
+rewrites it rather than splicing into it. A bounded name space also means the
+SIGKILL path, which runs no cleanup, leaves at most one file per pid rather than
+littering the directory the way a random suffix would.
+
+What survives deliberately is last-writer-wins on the published path: the second
+run's dump replaces the first before anyone reads it. That is the same accepted
+cost the `.sh` header records for a second tree's failure clobbering the first,
+and it is tolerable for the same reason — a whole dump from a real run is
+attributable on sight, because its `# tree:`, `# head:` and `# start:` headers
+name the run that produced it.
 
 The failing arm names the path BEFORE the failing names, even though the names
 are the more valuable half: the line is cut at 180, the file holds every failing

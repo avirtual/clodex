@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: a preserved failing-run dump is now written through a staging file
+  named for the writing process, in both the shipped `clodex-run-tests` grant
+  and the `test-digest.sh` one. Two runs finishing at the same moment used to
+  stage through one fixed name, so the file published to
+  `~/.clodex/test-failures/last.txt` could hold one run's lines spliced into
+  another's while still carrying a single run's `# tree:`/`# head:` header. Each
+  publish is now one run's whole output. The published names are unchanged, and
+  the second run of a pair still replaces the first's dump.
+
 ## 5.68.0 — 2026-09-15 — Optimized mode really is curated, and four fixes where Clodex showed or kept the wrong thing
 
 - Fixed: when a ticket's verify suite failed and then re-measured green, the
