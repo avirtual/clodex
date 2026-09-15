@@ -6,23 +6,23 @@
 //
 // Two rules this file exists to enforce, both from t30:
 //
-//   • NO URL BEFORE THERE IS A LIVE ONE. The affordance never composes a URL —
-//     the only URL is the one the supervisor reports while its forward is up.
-//     (peer-tunnel's dead-peer sentinel http://127.0.0.1:1 is a wire-tunnel
-//     placeholder and must never surface as a web link.)
+//   • NO TUNNEL URL BEFORE THERE IS A LIVE ONE. The `url` field carries only
+//     what the supervisor reports while its forward is up; a pinned-but-unbound
+//     local port is not a service, and peer-tunnel's dead-peer sentinel
+//     http://127.0.0.1:1 must never surface as a web link. t923's direct address
+//     is not a forward and not bound by this — see the url-kind arm.
 //   • A TOKEN-GATED BOX IS NOT A LINK. web-host.js answers an unauthenticated
 //     request with a bare 401 — no login form — and a freshly opened tab carries
 //     no ?token=/Bearer/cookie. So a gated peer's affordance says the box needs
 //     a token rather than promising something to click.
 //
-// A peer reached by plain URL has no transport Clodex can drive a forward over,
-// so the affordance says so rather than silently hiding. That is now the ONLY
-// such peer: between t30 and t36 a cloud-transport peer was refused here too
-// (the supervisor could only build an `ssh -L`), and the tip said "Clodex can
-// only tunnel to a web UI over ssh" — a sentence that was true when written and
-// false one release later. It is gone; a cloud peer gets a real button.
+// Both ROUTING refusals this file used to state are gone: a cloud peer's at t36
+// ("Clodex can only tunnel to a web UI over ssh" — true when written, false one
+// release later), a url peer's at t923. See docs/notes/renderer-lib-peer-web-view.md.
 
 'use strict';
+
+const { directWebUrl } = require('../../peer-web-url');
 
 // Is this peer reached over a transport Clodex dials itself? The wire tunnel row
 // IS the signal on this side — the renderer never sees the peer record. A row
@@ -104,12 +104,20 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   if (!webHost && phase === 'closed') return { show: false, enabled: false, action: null, phase, tip: '', url: null, tokenGated };
 
   if (!forwardable && phase === 'closed') {
-    // The url-only limitation, stated rather than hidden — a silently missing
-    // button reads as "this box has no web UI", which is a different and false
-    // claim. (Before t36 a cloud peer landed here too; it no longer does.)
+    const direct = directWebUrl(st && st.url, webHost && webHost.port);
+    if (!direct) {
+      // Shown-but-disabled, not hidden — a silently missing button reads as
+      // "this box has no web UI", which is a different and false claim.
+      return {
+        show: true, enabled: false, action: null, phase, url: null, tokenGated,
+        tip: `${label}'s address can't be read, so there is nothing to open`,
+      };
+    }
     return {
-      show: true, enabled: false, action: null, phase, url: null, tokenGated,
-      tip: `${label} is reached by URL — Clodex can only tunnel to a web UI over a transport it dials itself`,
+      show: true, enabled: true, action: 'open', phase, url: null, tokenGated,
+      tip: tokenGated
+        ? `${label}'s web UI is at ${direct} — the box requires a token, so you'll get a URL to open with ?token=…`
+        : `Open ${label}'s web UI at ${direct} — no tunnel needed`,
     };
   }
 

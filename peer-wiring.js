@@ -13,6 +13,8 @@
 // manager, log, SELF_LABEL and scheduleAppMenuRefresh (from the app-menus
 // destructure) are all defined at the call site and value-inject byte-identical.
 
+const { directWebUrl } = require('./peer-web-url');
+
 function createPeerWiring(deps) {
   const {
     manager, log, SELF_LABEL, scheduleAppMenuRefresh,
@@ -411,11 +413,23 @@ function createPeerWiring(deps) {
     return getWebTunnelManager();
   }
 
-  // Open the web view for one peer. Refuses rather than guesses on every missing
-  // input: an unknown peer, a peer with no forwardable transport (url-only — the
-  // supervisor phrases that one, since it owns the kind list), and no live
-  // webHost in the peer's hello (nothing to forward to; a guessed port is exactly
-  // the lie t30a exists to prevent).
+  function openPeerWebDirect(key, rec, webHost, tokenGated) {
+    const url = directWebUrl(rec.url, webHost.port);
+    if (!url) return { ok: false, error: 'this peer has no usable web address: its URL could not be read' };
+    if (!tokenGated) {
+      try { openExternal(url); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
+      log.info('peer', `web view for ${key} opened directly at ${url} — no tunnel needed`);
+    } else {
+      log.info('peer', `web view for ${key} is at ${url} (token required — not opened)`);
+    }
+    return { ok: true, direct: true, url, tokenGated };
+  }
+
+  // Open the web view for one peer. Refuses rather than guesses on the two
+  // missing inputs that are still fatal: an unknown peer, and no live webHost in
+  // the peer's hello (nothing to reach; a guessed port is exactly the lie t30a
+  // exists to prevent). No forwardable transport is NOT one of them since t923 —
+  // openPeerWebDirect above opens it; see docs/notes/peer-wiring.md.
   //
   // The whole record's transport fields are handed to the supervisor rather than
   // sshHost alone (t36). Naming one field here was the door a kubectl peer was
@@ -426,19 +440,17 @@ function createPeerWiring(deps) {
     const key = String(id);
     const rec = (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
     if (!rec) return { ok: false, error: 'no such peer' };
-    // Asked of the supervisor, which owns the kind table — not re-derived here
-    // from a `rec.sshHost || rec.ssm || …` chain, which is a list to forget a
-    // kind from. Required lazily, like the managers below.
-    const { destinationOf } = require('./web-tunnel');
-    const dest = destinationOf(rec);
-    if (!dest) {
-      return { ok: false, error: 'this peer is reached by URL — Clodex can only tunnel to a web UI over a transport it dials itself (ssh, SSM, kubectl, GCP IAP, Azure Bastion)' };
-    }
     const conn = getPeerManager() && getPeerManager().get(key);
     const st = conn ? conn.status() : null;
     const webHost = st && st.webHost;
     if (!webHost) return { ok: false, error: 'this peer reports no web frontend' };
     const tokenGated = webHost.tokenGated === true;
+    // Asked of the supervisor, which owns the kind table — not re-derived here
+    // from a `rec.sshHost || rec.ssm || …` chain, which is a list to forget a
+    // kind from. Required lazily, like the managers below.
+    const { destinationOf } = require('./web-tunnel');
+    const dest = destinationOf(rec);
+    if (!dest) return openPeerWebDirect(key, rec, webHost, tokenGated);
     // Decided BEFORE the tunnel starts, so the once-per-tunnel firstUp emit can
     // never race ahead of the decision and pop a 401 at the operator.
     if (tokenGated) webPopAllowed.delete(key); else webPopAllowed.add(key);
