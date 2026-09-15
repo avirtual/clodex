@@ -39,6 +39,7 @@ const { initStores } = require('../stores');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { createTeamManifest } = require('../team-manifest');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ONE seed dir for the whole file, minted on first use: initStores SEEDS the
 // shipped library into whatever registryDir it is handed, and re-seeding it per
@@ -52,7 +53,7 @@ const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 // per subject, and the first one to fire would delete the dir the remaining
 // fixtures still share.
 let SEED_DIR = null;
-const seedDir = () => (SEED_DIR ||= fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-seed-')));
+const seedDir = () => (SEED_DIR ||= mkTmpRoot('clodex-t482-seed-'));
 after(() => { if (SEED_DIR) { try { fsReal.rmSync(SEED_DIR, { recursive: true, force: true }); } catch {} } });
 
 // A REAL repo with REAL worktrees, for the reason reviewer-round-end.test.js
@@ -62,7 +63,7 @@ after(() => { if (SEED_DIR) { try { fsReal.rmSync(SEED_DIR, { recursive: true, f
 // was written to return. `landed` is an ancestor of master; `pending` carries a
 // commit master does not have.
 function mkRepo() {
-  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-repo-'));
+  const dir = mkTmpRoot('clodex-t482-repo-');
   const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git(['init', '-q', '-b', 'master']);
   git(['config', 'user.email', 't@t.t']);
@@ -84,9 +85,9 @@ function mkRepo() {
 // run, and the destructive subjects are precisely the ones that would NOT clean
 // up after themselves if the code under test regressed.
 function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-'));
+  const home = mkTmpRoot('clodex-t482-');
   const repoDir = mkRepo();
-  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-ud-'));
+  const userData = mkTmpRoot('clodex-t482-ud-');
   const tmpDirs = [home, repoDir, userData];
   if (t) t.after(() => { for (const d of tmpDirs) { try { fsReal.rmSync(d, { recursive: true, force: true }); } catch {} } });
   const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });

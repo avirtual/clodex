@@ -24,6 +24,7 @@ const path = require('path');
 const { HoldKeeper } = require('../wire/hold');
 const { HoldEntryStore } = require('../wire/hold-store');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
 
@@ -44,7 +45,7 @@ function makeObj(overrides = {}) {
 // the ledger across the restart is not a shortcut — it is the only way the
 // warm/cold distinction after a restart means anything.
 function machine(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hold-restart-'));
+  const dir = mkTmpRoot('hold-restart-');
   t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
   const file = path.join(dir, 'wire-hold-entries.json');
   const clock = { t: 1_000_000 };

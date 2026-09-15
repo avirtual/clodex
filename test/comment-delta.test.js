@@ -8,6 +8,7 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const { commentDelta } = require('../scripts/comment-delta.js');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'comment-delta.js');
 
@@ -42,7 +43,7 @@ const T_AFTER = [
 ].join('\n');
 
 function makeRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-cdelta-')));
+  const root = fs.realpathSync(mkTmpRoot('clx-cdelta-'));
   const git = (...a) => execFileSync('git', ['-C', root, ...a], { stdio: 'ignore' });
   execFileSync('git', ['init', '-q', '-b', 'master', root], { stdio: 'ignore' });
   git('config', 'user.email', 't@t');

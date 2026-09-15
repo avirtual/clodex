@@ -29,6 +29,7 @@ const { HOST_API_VERSION } = require('../plugin-api');
 const gitScm = require('../plugins/workbench/git-scm');
 const fsExplorer = require('../plugins/workbench/fs-explorer');
 const workbenchEngine = require('../plugins/workbench/engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Every leaf method the plugin can call, recording (method, args) instead of
 // touching a real repo. Returning a tagged envelope lets each row's plumbing be
@@ -84,7 +85,7 @@ const nocwd = { name: 'bare', type: 'bash', cwd: null, workspaceId: 'ws-1' };
 // the row used the active root or the session cwd, which is exactly the question
 // some of these tests exist to answer.
 function boot({ worktrees = null, repos = null } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-workbench-test-'));
+  const dir = mkTmpRoot('clodex-workbench-test-');
   const calls = [];
   const rec = makeRecorder(calls);
   const restore = stubLocalLeaves(calls);
@@ -362,7 +363,7 @@ test('wt.apply refuses a REAL directory that is not a worktree of this repo', as
   // directory genuinely exists, so effectiveRoot's statSync would happily keep
   // it. The refusal has to come from validation, not from the path being fake.
   const { engine, calls, cleanup } = boot();
-  const outsider = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-outsider-'));
+  const outsider = mkTmpRoot('clodex-outsider-');
   try {
     assert.ok(fs.statSync(outsider).isDirectory(), 'fixture really exists');
     const res = await engine.dispatch('workbench', 'wt.apply', ['seat', outsider], 'desktop');
@@ -426,7 +427,7 @@ test('wt.selected reports the session cwd and never leaks across sessions', asyn
 test('a selected root that no longer exists DROPS to the session cwd, it does not error', async () => {
   // Select a real worktree, then delete it underneath the selection — which is
   // what `git worktree remove` (or our own Remove button) does in practice.
-  const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-gone-'));
+  const gone = mkTmpRoot('clodex-gone-');
   const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', gone] });
   const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', gone], 'desktop');
   assert.strictEqual(applied.ok, true, 'a genuine worktree is selectable');
@@ -449,7 +450,7 @@ test('a selected root that no longer exists DROPS to the session cwd, it does no
 test('the selection moves EVERY scoped row together — Files and Source cannot diverge', async () => {
   // A real directory AND a declared worktree of the session's repo: both are
   // required now, since apply validates and effectiveRoot re-checks at use time.
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wt-'));
+  const real = mkTmpRoot('clodex-wt-');
   const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', real] });
   const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', real], 'desktop');
   assert.strictEqual(applied.ok, true, 'selection succeeded');
@@ -489,7 +490,7 @@ test('the peer refusal is untouched by selection — fsScope still runs first', 
 //     asserted above and by the mutual-exclusion pair below.
 
 test('fs.setRoot accepts a real absolute directory and moves EVERY scoped row', async () => {
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-'));
+  const real = mkTmpRoot('clodex-folder-');
   const { engine, calls, cleanup } = boot();
   try {
     const res = await engine.dispatch('workbench', 'fs.setRoot', ['seat', real], 'desktop');
@@ -507,7 +508,7 @@ test('fs.setRoot accepts a real absolute directory and moves EVERY scoped row', 
 });
 
 test('fs.setRoot refuses a file, a missing path and a relative path — and writes nothing', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-bad-'));
+  const dir = mkTmpRoot('clodex-folder-bad-');
   const filePath = path.join(dir, 'a.txt');
   fs.writeFileSync(filePath, 'x');
   const { engine, calls, cleanup } = boot();
@@ -542,7 +543,7 @@ test('fs.setRoot refuses a file, a missing path and a relative path — and writ
 });
 
 test('fs.setRoot with null clears back to the session cwd', async () => {
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-clear-'));
+  const real = mkTmpRoot('clodex-folder-clear-');
   const { engine, calls, cleanup } = boot();
   try {
     assert.strictEqual((await engine.dispatch('workbench', 'fs.setRoot', ['seat', real], 'desktop')).ok,
@@ -562,8 +563,8 @@ test('fs.setRoot with null clears back to the session cwd', async () => {
 test('a folder root and a worktree root are MUTUALLY EXCLUSIVE, in both directions', async () => {
   // One map, one entry per session — so this is structural, not a precedence
   // rule. Both directions, because a second map would satisfy one of them.
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wt-x-'));
-  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-x-'));
+  const wt = mkTmpRoot('clodex-wt-x-');
+  const folder = mkTmpRoot('clodex-folder-x-');
   const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', wt] });
   const rootOfNextList = async () => {
     calls.length = 0;
@@ -594,7 +595,7 @@ test('a folder root and a worktree root are MUTUALLY EXCLUSIVE, in both directio
 });
 
 test('fs.setRoot refuses a peer session with the exact "remote" string', async () => {
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-peer-'));
+  const real = mkTmpRoot('clodex-folder-peer-');
   const { engine, calls, cleanup } = boot();
   try {
     assert.deepStrictEqual(
@@ -616,7 +617,7 @@ test('fs.setRoot refuses a peer session with the exact "remote" string', async (
 });
 
 test('a folder root that vanishes DROPS to the session cwd, like a worktree does', async () => {
-  const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-gone-'));
+  const gone = mkTmpRoot('clodex-folder-gone-');
   const { engine, cleanup } = boot();
   assert.strictEqual((await engine.dispatch('workbench', 'fs.setRoot', ['seat', gone], 'desktop')).ok,
     true, 'ENTER: the folder root is set before it is destroyed');
@@ -754,8 +755,8 @@ test('wt.apply resolves from the ACTIVE ROOT, so a folder root in repo B offers 
   // The `worktrees` fixture cannot express this — it answers the same set for
   // every root. `repos` is cwd-sensitive, which is what makes the assertions
   // below about the resolution and not about the fixture.
-  const repoB = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-b-'));
-  const wtB = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-b-wt-'));
+  const repoB = mkTmpRoot('clodex-repo-b-');
+  const wtB = mkTmpRoot('clodex-repo-b-wt-');
   // wtB maps to B's list as well: `git worktree list` answers the same set from
   // ANY tree of the repo, and the row relies on that to switch tree-to-tree.
   const { engine, calls, cleanup } = boot({
@@ -794,7 +795,7 @@ test('wt.apply resolves from the ACTIVE ROOT, so a folder root in repo B offers 
 
     // Still refuses a directory that is a worktree of NEITHER repo: the rule
     // widened with the root, it did not disappear.
-    const outsider = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-outsider-b-'));
+    const outsider = mkTmpRoot('clodex-outsider-b-');
     try {
       assert.deepStrictEqual(
         await engine.dispatch('workbench', 'wt.apply', ['seat', outsider], 'desktop'),

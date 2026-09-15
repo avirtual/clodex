@@ -15,6 +15,7 @@ const path = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
 const { resolveProxyAgentId } = require('../proxy-util');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A persistence double that behaves like the real store on the two operations
 // the labeling path uses: upsert spread-merges, get returns the merged entry.
@@ -199,7 +200,7 @@ const { projectDirFor } = require('../clodex-paths');
 
 // One temp HOME per test, so nothing touches the operator's ~/.clodex.
 function mkHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-home-'));
+  const home = mkTmpRoot('clodex-home-');
   return { home, registryDir: path.join(home, '.clodex') };
 }
 
@@ -216,9 +217,9 @@ for (const [shape, taskDirOf] of [
   ['a spec FILE, not a dir', (_proj, name) => `tasks/${name}/SPEC.md`],
 ]) {
   test(`closing a ticket writes COST.json into the RESOLVED task dir (${shape})`, async () => {
-    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+    const userData = mkTmpRoot('clodex-ud-');
     fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify(LEDGER));
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+    const repo = mkTmpRoot('clodex-repo-');
     const { home, registryDir } = mkHome();
     const taskName = `t293-fixture-${shape.replace(/[^a-z]+/gi, '-')}`;
     // Where the code must put it — under the projects root for this repo.
@@ -308,9 +309,9 @@ const ROLE_SEATS = [
 ];
 
 function mkRoleRig(seats = ROLE_SEATS, gitWorktree = undefined) {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify(ROLE_LEDGER));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+  const repo = mkTmpRoot('clodex-repo-');
   const { home, registryDir } = mkHome();
   const persistence = mkPersistence(seats);
   const { m } = mkManager({ persistence, userData, home, registryDir, gitWorktree });
@@ -781,9 +782,9 @@ test('a seat-pinned ticket is billed exactly, and an unstaffed role measures not
 });
 
 test('a taskDir that escapes the projects root writes nothing at all', async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
-  const escapeTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-outside-'));
+  const userData = mkTmpRoot('clodex-ud-');
+  const repo = mkTmpRoot('clodex-repo-');
+  const escapeTarget = mkTmpRoot('clodex-outside-');
   const { home, registryDir } = mkHome();
   const { m } = mkManager({ persistence: mkPersistence(), userData, home, registryDir });
   m._teamLiveSeatNames = () => [];
@@ -803,8 +804,8 @@ test('a taskDir that escapes the projects root writes nothing at all', async () 
 });
 
 test('a ticket with no taskDir writes nothing, and a broken ledger still records waste', async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+  const userData = mkTmpRoot('clodex-ud-');
+  const repo = mkTmpRoot('clodex-repo-');
   const { home, registryDir } = mkHome();
   const projDir = projectDirFor(registryDir, repo);
   // No wire-totals.json at all: the read fails and the rollup must degrade to
@@ -919,11 +920,11 @@ const readLedger = (teamsDir) => {
 };
 
 test('closing a ticket appends a ticket row to the TEAM ledger beside COST.json', async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify(LEDGER));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+  const repo = mkTmpRoot('clodex-repo-');
   const { home, registryDir } = mkHome();
-  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+  const teamsDir = mkTmpRoot('clodex-teams-');
   const taskName = 't7-ledger';
 
   const persistence = mkPersistence([{
@@ -953,12 +954,12 @@ test('closing a ticket appends a ticket row to the TEAM ledger beside COST.json'
 });
 
 test('a standing seat books its spend at a boundary, and books the DELTA next time', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
     version: 1,
     sessions: { 's1': { cost: 4, requests: 10, turns: 2, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 } },
   }));
-  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+  const teamsDir = mkTmpRoot('clodex-teams-');
 
   // No ticketId and no reviewFor: a standing seat, which is the whole condition.
   const persistence = mkPersistence([{ name: 'team-lead', sessionId: 's1', sessionIds: ['s1'] }]);
@@ -981,11 +982,11 @@ test('a standing seat books its spend at a boundary, and books the DELTA next ti
 });
 
 test('a TICKET seat and a REVIEWER are skipped — their spend is already booked once', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
     version: 1, sessions: { 's1': { cost: 9, requests: 1, turns: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } },
   }));
-  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
+  const teamsDir = mkTmpRoot('clodex-teams-');
   const persistence = mkPersistence([
     { name: 'team-hand-7', sessionId: 's1', sessionIds: ['s1'], ephemeral: true, ticketId: 't7' },
     { name: 'team-reviewer-1', sessionId: 's1', sessionIds: ['s1'], ephemeral: true, reviewFor: 'team-hand-7' },
@@ -1061,14 +1062,14 @@ test('all three standing-seat boundaries are hooked, and stamp BEFORE the record
 // defect is entirely in WHEN the second call happens relative to the record
 // drop, which a direct call cannot stage.
 test('a retired reviewer books its round ONCE, even though the exit outlives its record', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
+  const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
     version: 1,
     sessions: { 'rev-1': { cost: 6, requests: 12, turns: 3, inputTokens: 40, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 } },
   }));
-  const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teams-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-reg-'));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
+  const teamsDir = mkTmpRoot('clodex-teams-');
+  const registryDir = mkTmpRoot('clodex-reg-');
+  const repo = mkTmpRoot('clodex-repo-');
 
   const rec = {
     name: 'team-reviewer-1', sessionId: 'rev-1', sessionIds: ['rev-1'],

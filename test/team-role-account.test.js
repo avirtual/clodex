@@ -23,6 +23,7 @@ const os = require('node:os');
 
 const { createTicketMethods } = require('../team-tickets');
 const { createTeamManifest, formatRoster } = require('../team-manifest');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ACCOUNTS = [
   { label: 'default', configDir: '/home/u/.claude' },
@@ -31,8 +32,8 @@ const ACCOUNTS = [
 ];
 
 function mkBox(t, accounts = ACCOUNTS) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 't830-home-'));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't830-root-'));
+  const home = mkTmpRoot('t830-home-');
+  const root = mkTmpRoot('t830-root-');
   const teamsDir = path.join(home, 'teams');
   const dir = path.join(teamsDir, 'clodex');
   fs.mkdirSync(dir, { recursive: true });

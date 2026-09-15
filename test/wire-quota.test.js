@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const { QuotaStore, parseQuotaHeaders, snapshotFrom } = require('../wire/quota');
 const { shapeQuota, quotaChip, pickQuota, QUOTA_429_RECENT_S } = require('../proxy-util');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Measured verbatim off a forwarded turn on this box, 2026-08-15. Kept whole
 // (unused headers included) so a parse that starts reading a new field is
@@ -297,7 +298,7 @@ test('snapshotAll: nothing observed is an empty list, not a row of nulls', () =>
 test('QuotaStore: a reading survives a restart, with its absolute reset intact', () => {
   // An in-memory reading is blank until the first turn after launch, which for
   // an idle fleet can be a long time.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-quota-'));
+  const dir = mkTmpRoot('clodex-quota-');
   const file = path.join(dir, 'wire-quota.sqlite');
   try {
     const a = new QuotaStore({ path: file });
@@ -319,7 +320,7 @@ test('QuotaStore: a reading survives a restart, with its absolute reset intact',
 test('QuotaStore: an unopenable db degrades to memory rather than taking down the wire', () => {
   const errors = [];
   // A directory path can never be a sqlite file.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-quota-'));
+  const dir = mkTmpRoot('clodex-quota-');
   try {
     const store = new QuotaStore({ path: dir, onError: (m) => errors.push(m) });
     assert.strictEqual(errors.length, 1);

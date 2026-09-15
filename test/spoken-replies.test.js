@@ -15,6 +15,7 @@ const {
   DEFAULT_VOICE, DEFAULT_RATE, MIN_RATE, MAX_RATE, SAY_BIN,
 } = require('../speaker');
 const { isTurnEndEntry, isInterruptEntry } = require('../transcript');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // --- the discriminator ------------------------------------------------------
 
@@ -107,7 +108,7 @@ function runWatcher(entries) {
   const path = require('node:path');
   const { createJsonlWatcher } = require('../jsonl-watcher');
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-watcher-'));
+  const dir = mkTmpRoot('clodex-watcher-');
   const file = path.join(dir, 'transcript.jsonl');
   fs.writeFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
 

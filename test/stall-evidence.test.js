@@ -15,6 +15,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
@@ -115,7 +116,7 @@ test('the LAST tool wins when several completed calls precede it', () => {
 // ── readTail ───────────────────────────────────────────────────────────────
 
 test('readTail returns only the tail of a large file, and the tail is what parses', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stall-tail-'));
+  const dir = mkTmpRoot('stall-tail-');
   const file = path.join(dir, 'transcript.jsonl');
   const filler = jsonl(...Array.from({ length: 4000 }, (_, i) => use('Filler', `f${i}`)));
   fs.writeFileSync(file, filler + jsonl(use('Bash', 'last')));
@@ -734,7 +735,7 @@ test('t389: the error is reachable through readTail on a megabyte transcript', (
   // transcripts: when a transcript ends on an API error, the record starts at
   // most 2957 bytes from EOF (p90 1985) — so the existing 64KB window reaches it
   // in every observed case, and this pins that end to end rather than trusting it.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stall-apierr-'));
+  const dir = mkTmpRoot('stall-apierr-');
   const file = path.join(dir, 'transcript.jsonl');
   const filler = jsonl(...Array.from({ length: 4000 }, (_, i) => use('Filler', `f${i}`)));
   fs.writeFileSync(file, filler + jsonl(apiErr(E529), { type: 'last-prompt', prompt: 'go' }));

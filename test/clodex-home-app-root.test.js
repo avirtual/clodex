@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createEngine } = require('../engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The operator's live tree, which no case here may resolve to.
 const APP_ROOT = path.join(os.homedir(), '.clodex');
@@ -26,7 +27,7 @@ const APP_ROOT = path.join(os.homedir(), '.clodex');
 // A decoy CLODEX_HOME carrying a team the app must not see. The name is
 // improbable enough that a hit could only have come from this tree.
 function mkDecoyHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-decoy-home-'));
+  const home = mkTmpRoot('clx-decoy-home-');
   const teamDir = path.join(home, 'teams', 'decoy-team-from-env');
   fs.mkdirSync(teamDir, { recursive: true });
   fs.writeFileSync(path.join(teamDir, 'team.json'), JSON.stringify({
@@ -54,7 +55,7 @@ async function withDecoyHome(fn) {
 
 test('an injected REGISTRY_DIR outranks CLODEX_HOME for the in-app team layer', async () => {
   await withDecoyHome(() => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-home-'));
+    const tmp = mkTmpRoot('clx-eng-home-');
     try {
       // An explicit registryDir, not the real home (t359): the discriminator here
       // is that a team planted in CLODEX_HOME stays invisible, and a root that is
@@ -83,7 +84,7 @@ test('the exec child is given CLODEX_HOME=REGISTRY_DIR rather than inheriting th
   const { isFilenameToken, parseAndValidate } = require('../exec-schema');
 
   await withDecoyHome(async (decoy) => {
-    const REGISTRY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-exec-home-'));
+    const REGISTRY_DIR = mkTmpRoot('clx-exec-home-');
     try {
       const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
       fs.mkdirSync(execDir, { recursive: true });
@@ -147,7 +148,7 @@ test('the exec child is given CLODEX_HOME=REGISTRY_DIR rather than inheriting th
 test('an un-injected registryDir follows CLODEX_HOME into the compose mounts', async () => {
   const { createSandbox } = require('../sandbox');
   await withDecoyHome(async (home) => {
-    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-sbx-ud-'));
+    const userData = mkTmpRoot('clx-sbx-ud-');
     try {
       const box = createSandbox({
         getUserDataPath: () => userData,

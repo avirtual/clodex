@@ -18,6 +18,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   computeModuleDigest, isStale, writeHostStamp, readHostStamp, staleNotice,
@@ -31,7 +32,7 @@ const REPO = path.join(__dirname, '..');
 // produce identical stats, which would make a "digest changed" test flaky in
 // exactly the direction that hides a real failure.
 function mkTree() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-hs-'));
+  const root = mkTmpRoot('clodex-hs-');
   const src = path.join(root, 'src');
   const run = path.join(root, 'run');
   fs.mkdirSync(src); fs.mkdirSync(run);

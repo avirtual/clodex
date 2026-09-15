@@ -51,6 +51,7 @@ const { parseRemindSpec } = require('../remind-schedule');
 const { createSessionManager } = require('../session-manager');
 const { createMemoryStore, digestTiers } = require('../memory-store');
 const { intentEnabled } = require('../intent-catalog');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const T0 = Date.UTC(2026, 7, 14, 9, 0, 0);
 
@@ -75,8 +76,8 @@ function fakeClock(startMs) {
 // body no shipped write path can produce — which is exactly the mistake that
 // would make this file green over the wrong string.
 function mkFixture() {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t390-'));
-  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t390-ud-'));
+  const home = mkTmpRoot('clodex-t390-');
+  const userData = mkTmpRoot('clodex-t390-ud-');
 
   const stores = initStores(userData, { log: console, registryDir: home });
   const clock = fakeClock(T0);

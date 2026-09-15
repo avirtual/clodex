@@ -37,6 +37,7 @@ const {
 const registry = require('../intent-registry');
 const { validateManifest, readBundle } = require('../plugin-loader');
 const { createPluginHostEngine } = require('../plugin-host-engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The registry's plugin table is MODULE-LEVEL (that is what makes a plugin verb
 // live on all three feeds by construction), so every registration is undone in a
@@ -450,7 +451,7 @@ test('allowlistFromChecked is seat-blind — an unsurfaced row cannot be checked
 // ── The host wiring: manifest scope reaches the registry ────────────────────
 
 function mkEngine() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-scope-'));
+  const dir = mkTmpRoot('clodex-scope-');
   let ui = {};
   const engine = createPluginHostEngine({
     manager: {

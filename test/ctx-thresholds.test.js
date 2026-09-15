@@ -35,6 +35,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   ctxReminderFor, ctxThresholdsFor, modelFamily, sanitizeCtxThresholds,
@@ -50,7 +51,7 @@ const BASE = '44430fd';
 // ---------------------------------------------------------------------------
 
 function loadBaseModule(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t619-base-'));
+  const dir = mkTmpRoot('clodex-t619-base-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const src = execFileSync('git', ['show', `${BASE}:ctx-reminder.js`], {
     cwd: path.join(__dirname, '..'), encoding: 'utf-8',
@@ -149,7 +150,7 @@ test('the baseline retune fires 25k earlier than the base commit did', (t) => {
 
 test('invariant 4: a real settings file lacking the key resolves to the shipped default', (t) => {
   const { initStores } = require('../stores');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t619-abs-'));
+  const dir = mkTmpRoot('clodex-t619-abs-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // A settings file as written before this key existed.
   fs.writeFileSync(path.join(dir, 'ui-settings.json'),
@@ -500,7 +501,7 @@ test('invariant 5: the decision stays pure — tokens and thresholds, nothing el
 
 test('settings round-trip: written, reloaded, and surviving a save that never mentions the key', (t) => {
   const { initStores } = require('../stores');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t619-rt-'));
+  const dir = mkTmpRoot('clodex-t619-rt-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { uiSettings } = initStores(dir, { registryDir: path.join(dir, 'run') });
 

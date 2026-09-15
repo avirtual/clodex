@@ -29,6 +29,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawn, spawnSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'test-digest.sh');
 
@@ -119,7 +120,7 @@ function lockHarness(dir, sleepSeconds) {
 }
 
 function mkHarness(sleepSeconds = 0) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-lock-'));
+  const dir = mkTmpRoot('clx-lock-');
   const sh = path.join(dir, 'run.sh');
   fs.writeFileSync(sh, lockHarness(dir, sleepSeconds), { mode: 0o755 });
   return { dir, sh, lock: path.join(dir, '.test-digest.lock') };
@@ -286,7 +287,7 @@ function refusalFor(state, lastMs) {
   const fn = ['last_run_ms', 'etime_seconds', 'lock_refusal']
     .map((name) => shellFunction(src, name)).join('\n');
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-refusal-'));
+  const dir = mkTmpRoot('clx-refusal-');
   const lock = path.join(dir, '.test-digest.lock');
   const last = path.join(dir, '.test-digest.last');
   if (lastMs !== undefined) fs.writeFileSync(last, `${lastMs}\n`);
@@ -390,7 +391,7 @@ function refusalAgainstFreshHolder(lastMs) {
     const src = fs.readFileSync(SCRIPT, 'utf-8');
     const fn = ['last_run_ms', 'etime_seconds', 'lock_refusal']
       .map((name) => shellFunction(src, name)).join('\n');
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-nap-'));
+    const dir = mkTmpRoot('clx-nap-');
     try {
       const lock = path.join(dir, '.test-digest.lock');
       const last = path.join(dir, '.test-digest.last');
@@ -472,7 +473,7 @@ const ROOT = path.join(__dirname, '..');
 // (a copy of the runner + its one require) and the assertions never touch the
 // lock of the run they are part of.
 function withFakeLock(holderPid, check, { lastMs, agedMs } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  const root = mkTmpRoot('runner-root-');
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
@@ -559,7 +560,7 @@ test('nap: a completed sweep records its wall time for the next refusal to read'
   // The whole mechanism rests on this file: with nothing recorded, every
   // refusal falls back to a guess. A run that measures the suite and then says
   // nothing about how long it took leaves the next caller as blind as before.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  const root = mkTmpRoot('runner-root-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
     for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -626,7 +627,7 @@ test('nap: a named-file run records nothing — it never measured the suite', ()
   // and these subjects), and those runs are a fraction of it. Recording them
   // would drive the estimate to a couple of seconds every single sweep, and the
   // refusal would then tell a caller to nap 2m against a 5-minute suite.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  const root = mkTmpRoot('runner-root-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
     for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -654,7 +655,7 @@ test('nap: a named-file run records nothing — it never measured the suite', ()
 // Reproduced here by holding the lock and running a NAMED FILE, which must still
 // run.
 test('lock: a named-file run ignores a held lock — the suite spawns this runner', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  const root = mkTmpRoot('runner-root-');
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
@@ -689,7 +690,7 @@ test('lock: a named-file run ignores a held lock — the suite spawns this runne
 // 6 tests red and ~12 minutes of spawnSync timeouts, i.e. the ticket loop
 // rejecting every ticket for a defect in its own harness.
 test('lock: the lock override does NOT leak into the test children', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  const root = mkTmpRoot('runner-root-');
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
@@ -739,7 +740,7 @@ test('lock: the lock override does NOT leak into the test children', () => {
 // component — ENOTDIR comes from any non-directory parent, so this needs no
 // root-owned or /dev path.
 test('lock: a lock dir that cannot be created is refused BY NAME', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  const root = mkTmpRoot('runner-root-');
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
@@ -796,7 +797,7 @@ test('lock: npm test reclaims a lock whose holder is dead, and releases on exit'
 function runDigest({
   tap, exit, cwd, seed, holdLock, then, home: homeIn,
 }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t88-'));
+  const root = mkTmpRoot('clx-t88-');
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
   fs.mkdirSync(path.join(root, 'bin'));
@@ -968,7 +969,7 @@ test('nap: a digest run records its wall time iff it actually measured the suite
 test("digest: the tree named is the script's own checkout, not the caller's cwd", () => {
   // The exact shape of the observed bug: caller in one tree, run in another.
   // The marker is only worth anything if it tracks the tree that RAN.
-  const caller = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t88-CALLER-'));
+  const caller = mkTmpRoot('clx-t88-CALLER-');
   try {
     const r = runDigest({ ...PASS_CASE, cwd: caller });
     assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
@@ -997,7 +998,7 @@ test("digest: the tree named is the script's own checkout, not the caller's cwd"
 // durations dates instantly, and regenerating means a wording change in node
 // fails these tests rather than silently passing against a frozen copy.
 function captureRealTap({ fillers = 0, bigDiff = false, escape = false } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-cap-'));
+  const dir = mkTmpRoot('clx-t363-cap-');
   try {
     const src = [
       "const { test } = require('node:test');",
@@ -1180,7 +1181,7 @@ test('keep: the green digest names only its own run, never the red it just prese
 });
 
 test('keep: the preserved red is ONE file, overwritten, not a growing set', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t916-home-'));
+  const home = mkTmpRoot('clx-t916-home-');
   try {
     const first = runDigest({ ...RICH_FAIL_CASE, then: PASS_CASE, home });
     assert.ok(first.keptRed !== null, 'ENTER: the first cycle preserved nothing to overwrite');
@@ -1219,7 +1220,7 @@ test('keep: a stale dump from an earlier failure is replaced, not appended to', 
   // Bounding by SHAPE rather than by a sweep: one fixed file, overwritten. This
   // is what makes it impossible to grow a second t187 (a log measured at
   // 1.16 MB/day). If it ever appends, it grows forever with nothing to prune it.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  const root = mkTmpRoot('clx-t363-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
     fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
@@ -1288,7 +1289,7 @@ test('keep: an unwritable destination costs the dump, never the digest', () => {
   // output can break it, this change made the harness worse than the defect.
   // A regular FILE where the directory must go is the cheapest real mkdir -p
   // failure, and needs no permission games that a root-run suite would skip.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  const root = mkTmpRoot('clx-t363-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
     fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
@@ -1337,7 +1338,7 @@ test('keep: TAP the trimmer does not recognise falls back to raw, never to empty
 // Runs the SHIPPED script over arbitrary TAP and returns the preserved file.
 // Separate from runDigest so a fixture can be built from a real capture.
 function keepFor(tap, exit = 1) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  const root = mkTmpRoot('clx-t363-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
     fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
@@ -1454,7 +1455,7 @@ test('keep: a bare `...` inside a big diff does not truncate the block early', (
 test('keep: the digest shows the home-relative path a reader can actually type', () => {
   // The only form a user ever sees, and no other subject reaches it: every other
   // fixture puts CLODEX_HOME outside $HOME, so the tilde branch never runs.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  const root = mkTmpRoot('clx-t363-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
     fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
@@ -1532,7 +1533,7 @@ test('digest: a digest path cannot be added without the tree marker', () => {
 // authorization is `git worktree list` — a fake directory tree would let a test
 // pass against an allowlist that never ran.
 function mkRepo() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t358-')));
+  const base = fs.realpathSync(mkTmpRoot('clx-t358-'));
   const root = path.join(base, 'root');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
@@ -1604,7 +1605,7 @@ test('tree: a path that is not a worktree of this repo is REFUSED, never fallen 
   // this ticket's bug exactly: the caller asked about its branch and would read
   // master's green as its own. So the refusal must be loud AND must not measure.
   const { base, root } = mkRepo();
-  const outsider = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t358-OUTSIDER-'));
+  const outsider = mkTmpRoot('clx-t358-OUTSIDER-');
   const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
   try {
     const r = runWithPayload(root, JSON.stringify({ tree: outsider }), env);

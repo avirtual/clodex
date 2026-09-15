@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'check-syntax.sh');
 
@@ -56,7 +57,7 @@ function runScript(script, cwd, payload) {
 // own path, so it has to live in the fixture), plus a worktree on a branch —
 // the shape every hand actually runs in.
 function withFixture(fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-check-syntax-'));
+  const dir = mkTmpRoot('clodex-check-syntax-');
   try {
     const repo = path.join(dir, 'repo');
     fs.mkdirSync(repo);
@@ -175,7 +176,7 @@ test('check-syntax: the base is the LOCAL master, not a stale origin/HEAD', () =
 // only on the remote is the case that distinguishes "prefer local" from "ignore
 // the remote", and only this test enters it.
 test('check-syntax: with no local main/master, the base falls back to origin/HEAD', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-check-syntax-remote-'));
+  const dir = mkTmpRoot('clodex-check-syntax-remote-');
   try {
     const repo = path.join(dir, 'repo');
     fs.mkdirSync(repo);
@@ -239,7 +240,7 @@ test('check-syntax: a clean tree on a branch with NO commits is the one truthful
 // files, which is the very behaviour being rejected — the point is that a branch
 // with a genuine error must not come back green.
 test('check-syntax: with no trunk at all, a self-comparison is refused rather than reported green', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-check-syntax-notrunk-'));
+  const dir = mkTmpRoot('clodex-check-syntax-notrunk-');
   try {
     const repo = path.join(dir, 'repo');
     fs.mkdirSync(repo);
@@ -430,7 +431,7 @@ test('check-syntax: the digest is a single bounded line in every state', () => {
 // false green.
 test('check-syntax: a path outside the repo is refused, not silently checked against the root', () => {
   withFixture(({ check }) => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-not-a-worktree-'));
+    const outside = mkTmpRoot('clodex-not-a-worktree-');
     try {
       const r = check(outside);
       assert.strictEqual(r.status, 1);
@@ -454,7 +455,7 @@ test('check-syntax: an empty tree value is refused rather than falling through t
 // wrong-tree path draws, and dropping it here would reintroduce the bug behind a
 // clean tree instead of a committed one.
 test('check-syntax: a clean tree with no resolvable base refuses instead of reporting green', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-check-syntax-unborn-'));
+  const dir = mkTmpRoot('clodex-check-syntax-unborn-');
   try {
     const repo = path.join(dir, 'repo');
     fs.mkdirSync(repo);

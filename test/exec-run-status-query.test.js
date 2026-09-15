@@ -18,6 +18,7 @@ const { EventEmitter } = require('node:events');
 
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate } = require('../exec-schema');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const settle = async () => {
   await new Promise((r) => setImmediate(r));
@@ -25,7 +26,7 @@ const settle = async () => {
 };
 
 function harness({ grants = ['digest'], defs = { digest: LONG } } = {}) {
-  const REGISTRY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-statusq-'));
+  const REGISTRY_DIR = mkTmpRoot('clx-statusq-');
   const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
   fs.mkdirSync(execDir, { recursive: true });
   for (const [name, entry] of Object.entries(defs)) {

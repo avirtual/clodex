@@ -41,6 +41,15 @@ function trackTmpRoot(root) {
   return root;
 }
 
+// A scratch directory INSIDE a parent that is already tracked, and deliberately
+// not registered: the sweep removes its parent recursively, and listing it
+// separately would make sweep() glob `<nested>-*` inside a directory that no
+// longer exists by the time its turn comes. Exists so no test file needs a raw
+// mkdtempSync — the source-shape pin in test/tmp-roots-pin.test.js allows none.
+function mkTmpDirIn(parent, prefix) {
+  return fs.mkdtempSync(path.join(parent, prefix));
+}
+
 // TOP-LEVEL `after`, and that is the whole safety argument. node:test runs
 // top-level subjects sequentially and top-level `after` hooks last, so a
 // subject whose assertion is that a directory is STILL ON DISK (destroy()
@@ -124,4 +133,4 @@ after(sweep);
 // rmSync({ force: true }) over an already-removed path is a no-op.
 process.on('exit', sweep);
 
-module.exports = { mkTmpRoot, trackTmpRoot };
+module.exports = { mkTmpRoot, trackTmpRoot, mkTmpDirIn };

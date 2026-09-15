@@ -14,9 +14,10 @@ const path = require('path');
 const readline = require('readline');
 
 const { createSessionInfo, trackedSessionIds, sumAgentCost, compactSummary } = require('../session-info');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-sinfo-'));
+  return mkTmpRoot('clodex-sinfo-');
 }
 
 test('trackedSessionIds unions history with the live id', () => {

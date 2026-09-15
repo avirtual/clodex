@@ -17,6 +17,7 @@ const path = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate } = require('../exec-schema');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The dispatcher spawns on setImmediate, and the spawn itself is preceded by one
 // more hop; two flushes is what the sibling clodex-home test settled on.
@@ -26,7 +27,7 @@ const settle = async () => {
 };
 
 function harness({ resolveTeam, entry }) {
-  const REGISTRY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-teamroot-'));
+  const REGISTRY_DIR = mkTmpRoot('clx-teamroot-');
   const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
   fs.mkdirSync(execDir, { recursive: true });
   fs.writeFileSync(path.join(execDir, 'digest.json'), JSON.stringify(entry));

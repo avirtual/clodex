@@ -973,7 +973,7 @@ test('the live observer emits nothing, exits 0, and records the call it is about
   assert.ok(!/require\('\.\//.test(body), 'no relative require inside a generated body');
   assert.match(body, /bash-live/, 'it reaches the module by an absolute path baked in at generation');
 
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-live-cwd-'));
+  const cwd = mkTmpRoot('clodex-live-cwd-');
   const payload = JSON.stringify({
     hook_event_name: 'PreToolUse', tool_name: 'Bash',
     tool_input: { command: 'sleep 5' }, tool_use_id: 'tu-live-1',

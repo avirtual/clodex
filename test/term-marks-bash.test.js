@@ -27,6 +27,7 @@ const { buildTermShim, bashSupport } = require('../term-shim');
 const { createDrawerPtys } = require('../drawer-pty');
 const { createMarkParser, formatCommand } = require('../term-marks');
 const { pidAlive, reapPty } = require('./lib/pty-reap');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A bash too old for PS0 cannot be shimmed at all, so it is not a machine this
 // property can be measured on. Resolved through bashSupport rather than a
@@ -76,7 +77,7 @@ function waitFor(pred, ms = SETTLE_MS) {
 // there rather than appended to the generated file. Appending would put their
 // hook AFTER ours and test an ordering that cannot happen.
 async function withShell(run, { profile, env: envOver } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-bash-marks-'));
+  const dir = mkTmpRoot('clodex-bash-marks-');
   const home = path.join(dir, 'home');
   fs.mkdirSync(home, { recursive: true });
   if (profile) fs.writeFileSync(path.join(home, '.bash_profile'), profile);

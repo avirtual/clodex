@@ -32,6 +32,7 @@ const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/tickets-viewer/engine');
 const { defaultClodexHome } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, VIEWER_ACTOR,
@@ -54,14 +55,14 @@ const {
 const HOUR = 60 * 60 * 1000;
 
 function boot() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tv-home-'));
+  const home = mkTmpRoot('clodex-tv-home-');
   const teams = path.join(home, 'teams');
   fs.mkdirSync(teams, { recursive: true });
   // The HOME, not teams/ or projects/: they must be repointed together or the
   // fixture's manifests would be read against the operator's real boards.
   setClodexHomeForTest(home);
 
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tv-data-'));
+  const dataDir = mkTmpRoot('clodex-tv-data-');
   const removals = [];
   // Every spec this engine delivers, so the delivery cases assert what a seat
   // was actually told rather than only that a write returned ok.

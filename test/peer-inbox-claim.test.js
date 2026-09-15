@@ -46,6 +46,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { PeerConnection, PeerManager } = require('../peer-client');
 const { createSandbox, SANDBOX_PEER_ID } = require('../sandbox');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SELF = 'us';
 
@@ -254,7 +255,7 @@ test('peer-wiring routes a peer-inbox emit to the session manager and never to t
   }
 });
 
-const TMP_REGISTRY = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t840-registry-'));
+const TMP_REGISTRY = mkTmpRoot('clx-t840-registry-');
 process.on('exit', () => { try { fs.rmSync(TMP_REGISTRY, { recursive: true, force: true }); } catch {} });
 
 function fakeSettings(initial = {}) {

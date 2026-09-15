@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'release.sh');
@@ -36,7 +37,7 @@ const SUBTITLE_SED = expressionFromScript(
 const sh = (cmd) => execFileSync('bash', ['-c', cmd], { encoding: 'utf-8' });
 
 function withChangelog(text, fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-changelog-'));
+  const dir = mkTmpRoot('clodex-changelog-');
   const file = path.join(dir, 'CHANGELOG.md');
   fs.writeFileSync(file, text);
   try { return fn(file); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -124,7 +125,7 @@ const PROLOGUE = (() => {
 // Runs the real prologue, then whatever probe lines the caller adds, and reports
 // what reached stdout versus what reached the log.
 function withPrologue(argv, probe, env = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-release-log-'));
+  const dir = mkTmpRoot('clodex-release-log-');
   const log = path.join(dir, 'verbose.log');
   try {
     const stdout = execFileSync('bash', ['-c', `set -euo pipefail\n${PROLOGUE}\n${probe}`, '--', ...argv],
@@ -184,7 +185,7 @@ test('release: a non-empty CI forces quiet without the flag', () => {
 // The log names the failure that produced it, so quiet mode must not swallow the
 // one message the operator needs, nor make them guess where the detail went.
 test('release --quiet: die() prints the message AND the log path, and exits nonzero', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-release-die-'));
+  const dir = mkTmpRoot('clodex-release-die-');
   const log = path.join(dir, 'verbose.log');
   try {
     let status = 0, stderr = '';

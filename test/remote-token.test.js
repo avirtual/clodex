@@ -9,6 +9,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   TOKEN_KEY, remoteEnvPath,
@@ -16,7 +17,7 @@ const {
 } = require('../remote-token');
 
 function tmpUserData() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remotetok-'));
+  const dir = mkTmpRoot('remotetok-');
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 

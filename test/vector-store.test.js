@@ -10,10 +10,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createVectorStore, sidecarPath, BYTES_PER_DIM } = require('../vector-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const D = 8;
 function mk(dims = D, model = 'test-model') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-vec-'));
+  const dir = mkTmpRoot('clx-vec-');
   const file = path.join(dir, 'vec.bin');
   return { dir, file, store: createVectorStore({ file, dims, model }) };
 }
@@ -222,7 +223,7 @@ test('vector-store: a corrupt sidecar costs a re-embed, not a crash', () => {
 });
 
 test('vector-store: an absent file is an empty store, not an error', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-vec-'));
+  const dir = mkTmpRoot('clx-vec-');
   const store = createVectorStore({ file: path.join(dir, 'nope', 'vec.bin'), dims: D, model: 'm' });
   assert.strictEqual(store.size(), 0);
   assert.deepStrictEqual(store.search(axis(0)), []);

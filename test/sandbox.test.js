@@ -9,11 +9,12 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot, mkTmpDirIn } = require('./lib/tmp-roots');
 
 // A throwaway userData dir for the tests that let writeComposeFile actually
 // write; removed on process exit.
-const TMP_USERDATA = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-sandbox-'));
-const TMP_REGISTRY = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-registry-'));
+const TMP_USERDATA = mkTmpRoot('clx-sandbox-');
+const TMP_REGISTRY = mkTmpRoot('clx-registry-');
 process.on('exit', () => { try { fs.rmSync(TMP_USERDATA, { recursive: true, force: true }); } catch {} });
 process.on('exit', () => { try { fs.rmSync(TMP_REGISTRY, { recursive: true, force: true }); } catch {} });
 
@@ -213,7 +214,7 @@ function roBinds(yaml) {
 }
 
 function libFixture(dirs) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-lib-'));
+  const root = mkTmpRoot('clx-lib-');
   process.on('exit', () => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
   for (const d of dirs) fs.mkdirSync(path.join(root, d), { recursive: true });
   return root;
@@ -509,7 +510,7 @@ test('translatePath: a blank or relative host path is unreachable (never transla
 test('translateHostPath: reads the live config (workDir + mounts) via getConfig', () => {
   const ud = freshUserData();
   const settings = fakeSettings();
-  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'mnt-'));
+  const dir = mkTmpDirIn(TMP_USERDATA, 'mnt-');
   const sb = createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => ud });
   sb.setConfig({ workDir: '/Users/me/work' });
   assert.deepStrictEqual(sb.translateHostPath('/Users/me/work/a'), { container: '/home/clodex/work/a' });
@@ -525,7 +526,7 @@ test('translateHostPath: reads the live config (workDir + mounts) via getConfig'
 test('setConfig: persists valid mounts (cleaned shape), derived target stays dynamic', () => {
   const ud = freshUserData();
   const settings = fakeSettings();
-  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'mnt-'));
+  const dir = mkTmpDirIn(TMP_USERDATA, 'mnt-');
   const sb = createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => ud });
   const r = sb.setConfig({ mounts: [{ host: dir, ro: true }, { host: '  ' }] });
   assert.ok(!r.error, 'valid mounts accepted');
@@ -547,7 +548,7 @@ test('setConfig: rejects a non-existent mount source, persists nothing', () => {
 test('setConfig: rejects a mount whose source is a file, not a folder', () => {
   const ud = freshUserData();
   const settings = fakeSettings();
-  const filePath = path.join(fs.mkdtempSync(path.join(TMP_USERDATA, 'f-')), 'a.txt');
+  const filePath = path.join(mkTmpDirIn(TMP_USERDATA, 'f-'), 'a.txt');
   fs.writeFileSync(filePath, 'x');
   const sb = createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => ud });
   const r = sb.setConfig({ mounts: [{ host: filePath }] });
@@ -558,7 +559,7 @@ test('setConfig: rejects a mount whose source is a file, not a folder', () => {
 test('setConfig: a shadow-target mount is refused at save, not just at generate', () => {
   const ud = freshUserData();
   const settings = fakeSettings();
-  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'mnt-'));
+  const dir = mkTmpDirIn(TMP_USERDATA, 'mnt-');
   const sb = createSandbox({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => ud });
   const r = sb.setConfig({ mounts: [{ host: dir, container: '/home/clodex/work' }] });
   assert.strictEqual(r.ok, false);
@@ -871,7 +872,7 @@ test('down: succeeds and leaves the peer row in place (offline affordance)', asy
 });
 
 test('down: keeps the box state dir — surviving a stop IS the durability', async () => {
-  const reg = fs.mkdtempSync(path.join(TMP_USERDATA, 'reg-'));
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
   const sb = createSandbox({
     spawn: fakeSpawn({ code: 0 }),
     getUiSettings: () => fakeSettings(),
@@ -982,7 +983,7 @@ test('rebuild: a build failure surfaces stderr and does NOT register the peer', 
 
 // A userData dir unique to a test, so its compose.yaml doesn't cross-talk.
 function freshUserData() {
-  return fs.mkdtempSync(path.join(TMP_USERDATA, 'ud-'));
+  return mkTmpDirIn(TMP_USERDATA, 'ud-');
 }
 
 test('up twice with our own ports "busy" keeps the three ports byte-stable', async () => {
@@ -1161,7 +1162,7 @@ test('writeComposeFile: references the auth env_file once the token exists, neve
 
 test('writeComposeFile: ensure-dirs the host library sources and binds them read-only', async () => {
   const ud = freshUserData();
-  const reg = fs.mkdtempSync(path.join(TMP_USERDATA, 'reg-'));
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
     getUiSettings: () => fakeSettings(),
     getUserDataPath: () => ud,
@@ -1184,7 +1185,7 @@ test('writeComposeFile: ensure-dirs the host library sources and binds them read
 
 test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxes/<id> and binds them', async () => {
   const ud = freshUserData();
-  const reg = fs.mkdtempSync(path.join(TMP_USERDATA, 'reg-'));
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
   const sb = createSandbox({
     getUiSettings: () => fakeSettings(),
     getUserDataPath: () => ud,
@@ -1542,7 +1543,7 @@ test('manager: remove() stops the box, drops its peer row + registry row, keeps 
 });
 
 test('manager: remove() deletes the box state dir, and nothing above it', async () => {
-  const reg = fs.mkdtempSync(path.join(TMP_USERDATA, 'reg-'));
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
   const settings = fakeBoxSettings([{ id: 'proj', label: 'proj', config: {} }]);
   const mgr = createSandboxManager({
     spawn: recordingSpawn([]),
@@ -1630,7 +1631,7 @@ function gitIn(dir, args) {
 // commit, so a test can tell WHICH commit the src worktree is parked on without
 // comparing shas by hand.
 function tempRepo(marker = 'one') {
-  const dir = fs.mkdtempSync(path.join(TMP_USERDATA, 'repo-'));
+  const dir = mkTmpDirIn(TMP_USERDATA, 'repo-');
   gitIn(dir, ['init', '-q', '-b', 'master']);
   gitIn(dir, ['config', 'user.name', 'Clodex']);
   gitIn(dir, ['config', 'user.email', 'clodex@localhost']);
@@ -1782,7 +1783,7 @@ test('up: an unresolvable ref fails with the exact error and leaves src untouche
 });
 
 test('up: a ref on a repoRoot that is not a git checkout says so, and does not fall back', async () => {
-  const notARepo = fs.mkdtempSync(path.join(TMP_USERDATA, 'asar-'));
+  const notARepo = mkTmpDirIn(TMP_USERDATA, 'asar-');
   const { sb } = refSandbox(notARepo, { isPackaged: () => true, appVersion: '9.9.9' });
   sb.setConfig({ ref: 'master' });
   const r = await sb.up();

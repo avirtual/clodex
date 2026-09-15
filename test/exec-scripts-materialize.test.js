@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { EXEC_SCRIPTS, materializeExecScripts } = require('../bin-materialize');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -35,7 +36,7 @@ test('EXEC_SCRIPTS are dependency-free (no local require) — a flat copy is suf
 });
 
 test('materializeExecScripts copies the scripts flat into <root>/bin, overwrite-always', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'execbin-'));
+  const root = mkTmpRoot('execbin-');
   try {
     const { binDir, copied } = materializeExecScripts({ root, srcDir: ROOT });
     assert.strictEqual(copied, EXEC_SCRIPTS.length, 'every exec script copied');

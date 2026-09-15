@@ -25,6 +25,7 @@ const { createSessionManager } = require('../session-manager');
 const { isDraftOpen } = require('../proxy-util');
 const { parkDelivery, drainPending, hasPending, hasActivePending } = require('../pending-store');
 const { composerHasDraft, composerIsEmpty } = require('../renderer/lib/voice-submit');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,7 +45,7 @@ async function settleQueue(h) { await h.m._injectQueueFor(h.s).enqueue(SENTINEL)
 const DRAFT_STALE_MS = 150;
 
 function boot({ draftStale = DRAFT_STALE_MS, recorderStale = 0 } = {}) {
-  const PENDING_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-vdraft-'));
+  const PENDING_DIR = mkTmpRoot('clodex-vdraft-');
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     InjectQueue,

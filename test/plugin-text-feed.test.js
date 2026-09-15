@@ -38,13 +38,14 @@ const path = require('node:path');
 
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Grants live on the persistence entry, so the engine needs a persistence
 // getter. `entries` is a plain object the test mutates between deliveries —
 // a revoke is a WRITE to it, which is what makes the read-at-delivery
 // property (rather than read-at-subscribe) testable.
 function mkEngine(entries = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-textfeed-'));
+  const dir = mkTmpRoot('clodex-textfeed-');
   let ui = {};
   // Every persistence read is recorded: the read is a synchronous whole-file
   // sessions.json parse, so WHEN it happens is a property of its own, not just
@@ -207,7 +208,7 @@ test('an unknown session, or no persistence at all, delivers nothing', async () 
 
   // A host built with no persistence getter must fail CLOSED, not open: this is
   // the Phase-1 shape and any construction failure path.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-textfeed-np-'));
+  const dir = mkTmpRoot('clodex-textfeed-np-');
   try {
     const seen = [];
     const engine = createPluginHostEngine({
@@ -935,7 +936,7 @@ test('JsonlWatcher hands its flushed text the touches that accompanied it', () =
   // here: a test that reconstructs the loop asserts its own reconstruction, and
   // the accumulation being tested is one line inside that loop. Only the 250ms
   // polling/symlink half needs a live watcher, and this skips just that.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-jsonlw-'));
+  const dir = mkTmpRoot('clodex-jsonlw-');
   const f = path.join(dir, 'transcript.jsonl');
   try {
     fs.writeFileSync(f, [
@@ -984,7 +985,7 @@ test('a symlink repoint drops the old transcript\'s pending touches', () => {
   const { createJsonlWatcher } = require('../jsonl-watcher');
   const { pathFor, runDirFor } = require('../clodex-paths');
 
-  const reg = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repoint-'));
+  const reg = mkTmpRoot('clodex-repoint-');
   try {
     const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: reg });
     fs.mkdirSync(runDirFor(reg, 'seat'), { recursive: true });
@@ -1034,7 +1035,7 @@ test('a repoint flushes pending TEXT too — the mirror image of the same lie', 
   const { createJsonlWatcher } = require('../jsonl-watcher');
   const { pathFor, runDirFor } = require('../clodex-paths');
 
-  const reg = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repoint2-'));
+  const reg = mkTmpRoot('clodex-repoint2-');
   try {
     const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: reg });
     fs.mkdirSync(runDirFor(reg, 'seat'), { recursive: true });

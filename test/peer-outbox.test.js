@@ -8,13 +8,14 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins, validOrigin,
   markOutboxOrigin, outboxKnowsOrigin,
 } = require('../peer-outbox');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-outbox-'));
+  return mkTmpRoot('clodex-outbox-');
 }
 
 // Deterministic monotonic seq for ordering assertions.

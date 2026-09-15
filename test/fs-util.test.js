@@ -8,9 +8,10 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('../fs-util');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'fs-util-'));
+  return mkTmpRoot('fs-util-');
 }
 
 test('ensureDir: creates nested dirs, idempotent', () => {

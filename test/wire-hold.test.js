@@ -9,6 +9,7 @@ const path = require('path');
 const { HoldKeeper, holdDecision, pingOutcome, rearmPlan } = require('../wire/hold');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { WireProxy } = require('../wire/proxy');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
 
@@ -810,7 +811,7 @@ test('keychainServiceFor derives the CLI\'s suffixed item name', () => {
     assert.equal(keychainServiceFor(dir), expected, String(dir));
   }
 
-  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'wire-hold-cred-'));
+  const tmpdir = mkTmpRoot('wire-hold-cred-');
   fs.writeFileSync(path.join(tmpdir, '.credentials.json'),
     '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-file","expiresAt":9999999999999}}');
   assert.equal(readClaudeAuth(tmpdir).accessToken, 'sk-ant-oat01-file');

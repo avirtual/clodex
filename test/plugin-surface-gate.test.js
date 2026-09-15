@@ -39,6 +39,7 @@ const { validateManifest } = require('../plugin-loader');
 const { createPluginLoader } = require('../plugin-loader');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { registerIpcHandlers } = require('../ipc-handlers');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGINS_DIR = path.join(ROOT, 'plugins');
@@ -123,7 +124,7 @@ test('a malformed `surfaces` is refused by name rather than silently ignored', (
 // here — the annotation audit below has to see every shipped plugin's rows, not
 // only the default-on ones.
 function bootBothSurfaces() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-surface-gate-'));
+  const dir = mkTmpRoot('clodex-surface-gate-');
   const cwd = path.join(dir, 'seat-cwd');
   fs.mkdirSync(cwd, { recursive: true });
 
@@ -332,7 +333,7 @@ test('the three _host methods taking a caller-supplied path are desktop-only', a
   // the plumbing the web plugin UI needs keeps answering, which is the half that
   // proves the carve-out is a carve-out and not a table that stopped working.
   const b = bootBothSurfaces();
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-web-register-'));
+  const scratch = mkTmpRoot('clodex-web-register-');
   try {
     const calls = [
       ['plugins.validateCandidate', [scratch]],

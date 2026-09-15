@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-run-tests.js');
 
@@ -21,7 +22,7 @@ const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-run-tests.js');
 // process.cwd(), which is already resolved, so an unresolved fixture path would
 // mismatch both the leaf name and the lock dir it asserts.
 function mkRoot() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'crt-')));
+  return fs.realpathSync(mkTmpRoot('crt-'));
 }
 
 const ARGV_FILE = 'stub-argv.json';

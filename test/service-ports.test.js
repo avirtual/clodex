@@ -11,6 +11,7 @@ const {
   DEFAULT_WIRESCOPE_PORT, DEFAULT_REMOTE_PORT,
 } = require('../service-ports');
 const { initStores } = require('../stores');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 test('coercePort takes 1–65535 as int or decimal string, rejects the rest', () => {
   assert.equal(coercePort(7900), 7900);
@@ -106,7 +107,7 @@ test('proxyUrl follows CLODEX_WIRESCOPE_PORT only on loopback', () => {
 });
 
 function withStores(fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'svcport-'));
+  const dir = mkTmpRoot('svcport-');
   const saved = { w: process.env.CLODEX_WIRESCOPE_PORT, r: process.env.CLODEX_REMOTE_PORT };
   delete process.env.CLODEX_WIRESCOPE_PORT;
   delete process.env.CLODEX_REMOTE_PORT;

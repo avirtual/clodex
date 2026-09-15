@@ -19,6 +19,7 @@ const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The seams are consumed deep inside createEngine and never exported, so capture
 // the dep bundles at their two construction sites. Both modules are require()d
@@ -32,7 +33,7 @@ function engineSeamTargets(seams) {
   let rwDeps = null;
   smMod.createSessionManager = (deps) => { smDeps = deps; return origSm(deps); };
   rwMod.createRemoteWiring = (deps) => { rwDeps = deps; return origRw(deps); };
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t282-'));
+  const tmp = mkTmpRoot('clx-t282-');
   try {
     require('../engine').createEngine({
       userDataPath: tmp,

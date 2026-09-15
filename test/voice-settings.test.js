@@ -15,12 +15,13 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { readVoiceMode, writeVoiceMode, readVoiceTrigger, VOICE_MODES } = require('../voice-settings');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A temp HOME whose .claude/settings.json holds `body` verbatim (a string is
 // written raw, so a case can express a CORRUPT file — the one shape JSON.stringify
 // cannot produce). `body === null` writes no file at all.
 function withHome(body, fn) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voice-'));
+  const home = mkTmpRoot('clodex-voice-');
   try {
     if (body !== null) {
       fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
@@ -125,7 +126,7 @@ for (const c of CASES) {
 }
 
 test('the read never writes, and never creates the file it missed', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voice-'));
+  const home = mkTmpRoot('clodex-voice-');
   try {
     readVoiceMode({ homeDir: home });
     assert.equal(fs.existsSync(path.join(home, '.claude')), false, 'no .claude/ created');
@@ -150,7 +151,7 @@ test('the read never writes, and never creates the file it missed', () => {
 // A temp HOME whose .claude/keybindings.json holds `body`. Same shape as
 // withHome above; kept separate because it writes a different file.
 function withKeys(body, fn) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-keys-'));
+  const home = mkTmpRoot('clodex-keys-');
   try {
     if (body !== null) {
       fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
@@ -252,7 +253,7 @@ test('the trigger read never writes, and never creates the file it missed', () =
 // file by hand under a live session and watching it move; a fixture claiming it
 // would be asserting a state it cannot reach.
 function withWrite(body, fn) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicew-'));
+  const home = mkTmpRoot('clodex-voicew-');
   try {
     if (body !== null) {
       fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
@@ -509,7 +510,7 @@ test('writeVoiceMode reports a write it could not perform rather than throwing',
 // a mutant that skips the write entirely; asserting only the mode passes for one
 // that clobbered the link. Neither alone pins the behaviour.
 test('writeVoiceMode writes THROUGH a symlinked settings.json, not over it', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicesym-'));
+  const home = mkTmpRoot('clodex-voicesym-');
   try {
     const store = path.join(home, 'dotfiles');
     fs.mkdirSync(store, { recursive: true });
@@ -540,7 +541,7 @@ test('writeVoiceMode writes THROUGH a symlinked settings.json, not over it', () 
 // regular file either way, so no link can be destroyed here. This guards that
 // the dangling-link refusal does not fire on a resolvable directory link.
 test('writeVoiceMode writes through a symlinked .claude directory', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicesymd-'));
+  const home = mkTmpRoot('clodex-voicesymd-');
   try {
     const store = path.join(home, 'dotfiles-claude');
     fs.mkdirSync(store, { recursive: true });
@@ -562,7 +563,7 @@ test('writeVoiceMode writes through a symlinked .claude directory', () => {
 // fallback — the link is a structure the user put there deliberately and its
 // target may simply be an unmounted drive, so this refuses instead.
 test('writeVoiceMode refuses a dangling symlink rather than replacing it with a file', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicedang-'));
+  const home = mkTmpRoot('clodex-voicedang-');
   try {
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     const link = path.join(home, '.claude', 'settings.json');
