@@ -2176,10 +2176,10 @@ function newSessionSkillDenyList() {
   if (!newSessionSkillsDrawn.length) return newSessionSkillsAsked;
   const off = collectSkillChecklist(inputSkillsList);
   if (!newSessionSkillsDeferred) return off;
-  if (!off.length) return [];
   const toggleable = new Set(Array.from(
     inputSkillsList.querySelectorAll('input[type="checkbox"]:not(:disabled)'),
   ).map((cb) => cb.value));
+  if (!off.length) return toggleable.size ? [] : newSessionSkillsAsked.slice();
   const denied = new Set(off);
   const keptRows = newSessionSkillsDrawn.filter((n) => toggleable.has(n) && !denied.has(n));
   const keptUndrawn = skillDenyKeepList(newSessionSkillsAsked).filter((n) => !toggleable.has(n));
@@ -7072,7 +7072,7 @@ function collectPrefsSkillDefaults() {
   ).map((cb) => cb.value));
   const off = collectSkillChecklist(prefsSkillsList);
   if (skillDenyIsDeferred(prefsSkillDenyStored)) {
-    if (!off.length) return [];
+    if (!off.length) return toggleable.size ? [] : prefsSkillDenyStored.slice();
     const denied = new Set(off);
     const keptRows = prefsSkillNamesDrawn.filter((n) => toggleable.has(n) && !denied.has(n));
     const keptUndrawn = skillDenyKeepList(prefsSkillDenyStored).filter((n) => !toggleable.has(n));

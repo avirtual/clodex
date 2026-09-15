@@ -80,7 +80,7 @@ const SHIPPED = [
 // seat in this mode. The settings payload and catalog come from the given
 // engine, so no literal here can stand in for what the app would store.
 async function dialogDisabledSkills(engine, mode, {
-  thenPlaceInSandbox = false, lowerLayerOff = null, afterRender = null,
+  thenPlaceInSandbox = false, lowerLayerOff = null, afterRender = null, allReadOnly = false,
 } = {}) {
   const handlers = new Map();
   registerIpcHandlers({
@@ -99,7 +99,9 @@ async function dialogDisabledSkills(engine, mode, {
   // runs them. Only `effective` is dropped; the names stay as served.
   const catalog = {
     ...served,
-    effective: lowerLayerOff ? { [lowerLayerOff]: { value: 'off', source: 'global' } } : {},
+    effective: allReadOnly
+      ? Object.fromEntries(served.names.map((n) => [n, { value: 'off', source: 'global' }]))
+      : (lowerLayerOff ? { [lowerLayerOff]: { value: 'off', source: 'global' } } : {}),
     canReenable: false,
   };
   if (lowerLayerOff) {
@@ -162,9 +164,8 @@ async function dialogDisabledSkills(engine, mode, {
   } finally { global.document = had; }
 }
 
-// The Preferences default, through the SHIPPED pair. Same engine catalog as the
-// dialog helper above, so a divergence between the two collectors is visible.
-async function prefsSkillDefault(engine, stored, { afterRender = null } = {}) {
+// The Preferences default, through the SHIPPED pair.
+async function prefsSkillDefault(engine, stored, { afterRender = null, lowerLayerOff = null } = {}) {
   const handlers = new Map();
   registerIpcHandlers({
     ...engine, ...engine.stores,
@@ -189,7 +190,18 @@ async function prefsSkillDefault(engine, stored, { afterRender = null } = {}) {
       skillDenyKeepList: mod.skillDenyKeepList,
       prefsSkillDenyStored: [],
       prefsSkillNamesDrawn: [],
-      window: { api: { getSkillCatalogFor: async () => ({ ...served, effective: {} }) } },
+      window: {
+        api: {
+          getSkillCatalogFor: async () => ({
+            ...served,
+            // Every row read-only: a global-settings off clodex cannot re-enable.
+            effective: lowerLayerOff
+              ? Object.fromEntries(served.names.map((n) => [n, { value: 'off', source: 'global' }]))
+              : {},
+            canReenable: false,
+          }),
+        },
+      },
       afterRender: afterRender || (() => {}),
     };
     const names = Object.keys(env);
@@ -542,8 +554,39 @@ test('t918 pin 9: Preferences can still express "deny nothing", and the floor is
       cb.checked = false;
     },
   });
-  assert.ok(one.saved.includes('*') && !one.saved.includes('!dataviz'),
+  assert.ok(one.saved.includes('*'),
     'one row off still means "deny everything at spawn, except the ones left ticked"');
+  assert.deepStrictEqual(
+    require('../skills-off').skillDenyKeepList(one.saved).sort(),
+    require('../skills-off').skillDenyKeepList(floor).filter((n) => n !== 'dataviz').sort(),
+    'exactly the floor\'s keeps minus the one just unticked — a collector that dropped every exemption '
+    + 'and returned a bare `["*"]` would satisfy a "does not include !dataviz" check');
+});
+
+test('t918 pin 10: an all-read-only render saves the stored floor, not an empty default', async () => {
+  // `off` is [] when nothing COULD be ticked, not only when the operator ticked
+  // everything — collectSkillChecklist skips disabled rows. Storing [] there is
+  // unrecoverable: stores.js reads an explicit [] as "deny nothing" forever, and
+  // the shipped floor cannot be got back from this UI.
+  const box = freshBox();
+  const floor = box.engine.stores.agentDefaults.getDefaultSkillDeny();
+  const locked = await prefsSkillDefault(box.engine, floor, { lowerLayerOff: true });
+  assert.ok(locked.rows.length && locked.rows.every((r) => !r.checked),
+    'ENTER: rows drew and every one is read-only, so the collect is empty for the other reason');
+  assert.deepStrictEqual(locked.saved, floor,
+    'a render clodex owns no row in must save the stored list back verbatim');
+});
+
+test('t918 pin 11: the New Session collector keeps the asked floor when no row is toggleable', async () => {
+  // The twin of pin 10. `newSessionSkillsDrawn.length` guards the UNPAINTED
+  // container; an all-read-only one is painted and still collects [].
+  const box = freshBox();
+  const locked = await dialogDisabledSkills(box.engine, 'optimized', { allReadOnly: true });
+  assert.ok(locked.rows.length && locked.rows.every((r) => !r.checked),
+    'ENTER: rows drew and none is clodex\'s to toggle');
+  assert.deepStrictEqual([...locked.persisted].sort(),
+    [...box.engine.stores.agentDefaults.getDefaultSkillDeny()].sort(),
+    'the asked floor rides through, rather than collapsing to "deny nothing"');
 });
 
 // createEngine leaves background timers running; the same force-exit every other

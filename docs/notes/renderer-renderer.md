@@ -70,8 +70,14 @@ no denial at all.
 ## collectPrefsSkillDefaults
 
 The same two rules as `newSessionSkillDenyList` — the toggleable filter and the
-empty-off collapse — plus `keptUndrawn`: a `!name` exemption
-for a skill this cwd does not currently render has no row to read, and dropping
-it would silently deny that skill the next time Preferences was opened
+empty-off collapse — and both collectors also carry `keptUndrawn`: a `!name`
+exemption for a skill this cwd does not currently render has no row to read, and
+dropping it would silently deny that skill the next time the dialog was opened
 anywhere. It is the skills mirror of the `carried` list the undeferred branch
 keeps for the same reason.
+
+The collapse asks whether anything COULD be ticked, not whether the operator
+ticked it: `collectSkillChecklist` skips disabled rows, so an all-read-only
+render and a catalog fetch that threw both collect `[]`. Saving `[]` there would
+be unrecoverable — `stores.js` reads an explicit `[]` as "deny nothing" forever —
+so an empty `toggleable` returns the stored list instead.
