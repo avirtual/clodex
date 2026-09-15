@@ -28,9 +28,9 @@ const path = require('node:path');
 
 const { parkDelivery, drainPending, agentDir } = require('../pending-store');
 const { createTeamManifest } = require('../team-manifest');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, mkTmpDirIn } = require('./lib/tmp-roots');
 
-function tmpRoot(tag) { return mkTmpRoot(`clodex-${tag}-`); }
+function tmpRoot(tag) { return mkTmpDirIn(mkTmpRoot('clodex-atomic-'), `${tag}-`); }
 
 // Count fsyncs during fn. Patching the real fs module is what makes this an
 // end-to-end check: every module here shares that one instance.
