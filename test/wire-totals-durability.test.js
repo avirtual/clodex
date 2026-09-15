@@ -25,18 +25,18 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
 const { WireTelemetry } = require('../wire-telemetry');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The persist pair is reached through the manager rather than rebuilt here, so
 // this pins the bytes production actually writes. Everything _ensureWire does
 // around it (a listening proxy, a warmth sqlite) is out of reach of a unit test,
 // which is why the pair is its own method.
 function mkPersist(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-totals-'));
+  const root = mkTmpRoot('clx-totals-');
   if (t) t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
