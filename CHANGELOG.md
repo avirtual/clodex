@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Optimized mode really is curated, and four fixes where Clodex showed or kept the wrong thing
+## Unreleased
+
+## 5.68.0 — 2026-09-15 — Optimized mode really is curated, and four fixes where Clodex showed or kept the wrong thing
 
 - Fixed: when a ticket's verify suite failed and then re-measured green, the
   evidence of the failing run survives. The merge notice now names the tests
