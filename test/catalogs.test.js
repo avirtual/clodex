@@ -59,12 +59,11 @@ test('DEFAULT_TOOL_DENY_FLOOR: derived from the allow list, which holds only rea
     'optimized must keep a minority of the catalog, or it is not a curated subset');
 });
 
-// Same shape for skills, but the floor is a DEFERRED list (t918): `*` plus a
-// `!name` exemption per kept skill, resolved at spawn against the box's known
-// set rather than materialised here. The partition property the pre-t918 form
-// asserted directly is still asserted, one step further on — over the EXPANSION
-// against CLAUDE_SKILLS, which is what the seat actually gets on a root whose
-// skills-seen.json holds nothing more than the seed.
+// Same shape for skills. Before t913 this floor did not exist and
+// getDefaultSkillDeny() returned [] when the `*` key was absent, which made the
+// Mode selector a literal no-op for the whole skills category on a fresh root.
+// t918 made it DEFERRED — `*` plus one `!name` exemption per kept skill — so the
+// partition it used to assert directly is asserted over the EXPANSION instead.
 test('DEFAULT_SKILL_DENY_FLOOR: deferred, derived, and partitions CLAUDE_SKILLS when expanded', () => {
   assert.ok(Array.isArray(DEFAULT_SKILL_DENY_FLOOR));
   assert.ok(DEFAULT_SKILL_DENY_FLOOR.includes('*'),
@@ -77,11 +76,10 @@ test('DEFAULT_SKILL_DENY_FLOOR: deferred, derived, and partitions CLAUDE_SKILLS 
   const expanded = expandSkillsOff(DEFAULT_SKILL_DENY_FLOOR, { known: [...CLAUDE_SKILLS] });
   assert.deepStrictEqual(expanded, CLAUDE_SKILLS.filter((s) => !OPTIMIZED_SKILLS.includes(s)).sort(),
     'floor + allow list partition the skill catalog exactly, once the sentinel is resolved');
-  // And the half deferral buys that a snapshot cannot: a name nobody has listed
-  // anywhere. This is the t918 defect stated at the catalog layer.
   assert.ok(expandSkillsOff(DEFAULT_SKILL_DENY_FLOOR, { known: ['a-skill-shipped-next-month'] })
     .includes('a-skill-shipped-next-month'),
-    'a skill known only at spawn must land in the off list — that is the whole point of the sentinel');
+    'a skill in NO list when the dialog closed must still land in the off list at spawn — the half a '
+    + 'materialised floor cannot do, and the whole defect t918 exists to fix');
   // The tool half carries this bound and the skill half did not, which is the
   // asymmetry that let the tool floor rot in the first place: an allow list
   // grown to 13-of-14 keeps every other pin here green.
@@ -104,12 +102,10 @@ test('DEFAULT_BUILTIN_DENY_FLOOR: a subset of BUILTIN_AGENTS, sparing exactly Ex
 
 test('CLAUDE_SKILLS + re-enable gate', () => {
   assert.ok(Array.isArray(CLAUDE_SKILLS) && CLAUDE_SKILLS.includes('code-review'));
-  // t918: the seed is the ONLY thing a fresh root (no skills-seen.json, no
-  // transcript) can expand `*` against, so a seed missing what the CLI really
-  // offers denies nothing on exactly the new-install case. These five were
-  // reported by a live session on the shipping CLI.
   for (const s of ['design', 'dataviz', 'artifact-design', 'artifact-diagramming', 'artifact-capabilities']) {
-    assert.ok(CLAUDE_SKILLS.includes(s), `the shipping CLI offers '${s}' and the seed does not name it`);
+    assert.ok(CLAUDE_SKILLS.includes(s),
+      `the shipping CLI offers '${s}' and the seed does not name it — on a fresh root the seed is the ONLY `
+      + 'thing `*` can expand against, so a name missing here is a skill optimized mode cannot deny');
   }
   assert.strictEqual(SKILL_REENABLE_CONFIRMED, false);
 });

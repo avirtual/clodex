@@ -644,7 +644,7 @@ test('the cwd change listener and Browse redraw gates through one template-aware
     'the cwd gate redraw helper');
   for (const frag of [
     "{ forTemplate: dialogMode === 'template' }",
-    'new Set(collectSkillChecklist(inputSkillsList))',
+    'new Set(newSessionSkillDenyList())',
     'new Set(collectToolChecklist(inputToolsList))',
     'modeSkillDenySet()',
     'modeToolDenySet()',

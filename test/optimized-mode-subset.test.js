@@ -146,12 +146,10 @@ async function runDialog(settings, { type = 'claude', openIn, switchTo } = {}) {
         },
       },
       advisoryEffective: (e) => e || {},
-      // The deferral helpers are a real module, not stubs: the off-set the rows
-      // draw from is exactly what `!name` exemptions resolve to at spawn, so a
-      // divergence between render and spawn shows up here as wrong rows.
+      // Real module, not stubs: the off-set the rows draw is then exactly what
+      // `!name` resolves to at spawn, so render and spawn cannot disagree here.
       skillOffSetFor, skillDenyIsDeferred,
-      // renderer.js keeps these as module-level lets beside the function; the
-      // extraction takes the function only, so the harness supplies the binding.
+      // Module-level lets beside the extracted function; the harness binds them.
       newSessionSkillsDeferred: false,
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],
@@ -339,11 +337,9 @@ test('t913: both floors are DERIVED from the allow lists, never re-listed by han
   assert.match(src, /const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS\.filter\(\(t\) => !OPTIMIZED_TOOLS\.includes\(t\)\);/,
     'DEFAULT_TOOL_DENY_FLOOR must be derived from OPTIMIZED_TOOLS, not listed — a hand-listed floor '
     + 'silently keeps every future tool ON in optimized');
-  // The skill half derives the same way but through `deferredSkillDeny` (t918):
-  // the value is `['*', '!keep', …]`, resolved at SPAWN. The property this
-  // guards is unchanged — a hand-listed floor keeps every future skill ON in
-  // optimized — and the deferred shape strengthens it, because the sentinel now
-  // also covers skills that are in no list at all when the dialog closes.
+  // The skill half derives the same way but through `deferredSkillDeny` (t918),
+  // so the value is `['*', '!keep', …]` and resolves at SPAWN. Same property,
+  // strengthened: the sentinel also covers skills in no list at all yet.
   assert.match(src, /const DEFAULT_SKILL_DENY_FLOOR = deferredSkillDeny\(OPTIMIZED_SKILLS\);/,
     'DEFAULT_SKILL_DENY_FLOOR must be derived from OPTIMIZED_SKILLS, not listed');
   assert.ok(!/const DEFAULT_SKILL_DENY_FLOOR = \[/.test(src),

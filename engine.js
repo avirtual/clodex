@@ -1144,6 +1144,12 @@ const speaker = createSpeaker({
 // instead, which is a settings:get from a surface the operator opened.
 const voiceCatalog = createVoiceCatalog();
 
+const knownSkillNames = () => [...new Set([
+  ...CLAUDE_SKILLS,
+  ...skillsSeen.list(),
+  ...Object.keys(readEffectiveSkillState(null).overrides),
+])];
+
 const SessionManager = createSessionManager({
     AGENT_NAME_RE,
     COMPACT_CONTINUATION_DELAY,
@@ -1234,11 +1240,7 @@ const SessionManager = createSessionManager({
     bodyModeFor,
     intentEnabledFor,
     intentEnabledForSeat,
-    knownSkillNames: () => [...new Set([
-      ...CLAUDE_SKILLS,
-      ...skillsSeen.list(),
-      ...Object.keys(readEffectiveSkillState(null).overrides),
-    ])],
+    knownSkillNames,
     pluginGrammarLines,
     pluginRowFor,
     validIntentNames,
@@ -2341,6 +2343,7 @@ const toolCache = createToolCache({ whichBin });
 
   return {
     manager, stores, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
+    knownSkillNames,
     refreshRemoteToken,
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),

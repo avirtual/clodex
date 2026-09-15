@@ -2439,7 +2439,7 @@ inputPlacement.addEventListener('change', () => applyPlacement());
 function redrawGatesForCwd() {
   const opts = { forTemplate: dialogMode === 'template' };
   refreshNewSessionSkills(
-    opts.forTemplate ? new Set(collectSkillChecklist(inputSkillsList)) : modeSkillDenySet(), opts);
+    opts.forTemplate ? new Set(newSessionSkillDenyList()) : modeSkillDenySet(), opts);
   refreshNewSessionTools(
     opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : modeToolDenySet(), opts);
 }
