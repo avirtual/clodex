@@ -23,6 +23,7 @@
 const { esc } = require('./lib/format');
 const { splitModelArg } = require('./lib/args-model');
 const { deniedIntentCount } = require('../intent-catalog');
+const { isSkillDenyDirective, skillDenyIsDeferred, skillDenyKeepList } = require('../skills-off');
 
 // Scope caption for a library row (point 7 of the scope feature): a dim label
 // derived from the two optional frontmatter keys — `workspace: <name>` and/or
@@ -812,8 +813,14 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     const model = splitModelArg(t.extraArgs).model;
     if (model) parts.push(`model: ${model}`);
     if ((t.agents || []).length) parts.push(`${t.agents.length} agent${t.agents.length > 1 ? 's' : ''}`);
-    const gated = (t.disabledTools || []).length + (t.disabledSkills || []).length + (t.denyBuiltins || []).length;
+    const skillDeny = t.disabledSkills || [];
+    const deniedSkills = skillDeny.filter((n) => !isSkillDenyDirective(n));
+    const gated = (t.disabledTools || []).length + deniedSkills.length + (t.denyBuiltins || []).length;
     if (gated) parts.push(`−${gated} gated`);
+    if (skillDenyIsDeferred(skillDeny)) {
+      const keeps = skillDenyKeepList(skillDeny).length;
+      parts.push(keeps ? `skills: all but ${keeps}` : 'skills: all off');
+    }
     // Send-side intent gating is a separate axis from the tool/skill/agent denies
     // above (those bound what the seat can DO; this bounds what [agent:…] verbs it
     // can SEND). Absent/all-enabled → 0 → no chip, matching the −N gated chip's

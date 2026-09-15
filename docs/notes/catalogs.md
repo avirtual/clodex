@@ -46,9 +46,10 @@ The curation is measured against what the shipping CLI offers a seat, not
 against what reads well: `design`, `artifact-design` and `artifact-capabilities`
 are Artifact-publishing flows (canvases, polls, viewer identity) and are denied;
 `dataviz` and `artifact-diagramming` are charts and inline SVG, which is
-ordinary repo work, and are kept. Before t918 the keep list named six skills the
-CLI no longer offers at all, so optimized kept only phantoms while the floor
-denied only real skills — inverted, not absent.
+ordinary repo work, and are kept. Before t918 the keep list named six skills
+this box has never observed the CLI offer, while the deny floor named only real
+ones — the curation pointed away from what a seat actually loads. Those six are
+still KEPT: never observed here is not evidence they do not exist.
 
 The seed exists because a skill disabled at a LOWER layer never reaches the
 injected roster, so the transcript cannot surface it; it is also the only thing

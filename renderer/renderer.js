@@ -38,7 +38,7 @@ const {
 const { evalRendererModule } = require('./lib/plugin-module-eval');
 const { pluginOrigin } = require('./lib/plugin-origin');
 const { prefsGate } = require('./lib/prefs-gate');
-const { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList } = require('../skills-off');
+const { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require('../skills-off');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
@@ -1881,6 +1881,7 @@ function populateChecklistsFromCatalogs(cat) {
   renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
   setSkillLibCache(cat.skills || []);
   renderInjectChecklist(inputInjectSkillsList, new Set(), null, newSessionSeat());
+  resetNewSessionSkillCollector(modeSkillDenySet());
   renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
   setClaudeToolsCache(cat.claudeTools || []);
   renderToolChecklist(inputToolsList, modeToolDenySet());
@@ -2153,11 +2154,14 @@ function advisoryEffective(effective, forTemplate) {
 let newSessionSkillsDeferred = false;
 let newSessionSkillsDrawn = [];
 let newSessionSkillsAsked = [];
-async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = false } = {}) {
-  if (inputType.value !== 'claude') return;
+function resetNewSessionSkillCollector(disabledSet) {
   newSessionSkillsDeferred = skillDenyIsDeferred(disabledSet);
   newSessionSkillsAsked = [...disabledSet];
   newSessionSkillsDrawn = [];
+}
+async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = false } = {}) {
+  if (inputType.value !== 'claude') return;
+  resetNewSessionSkillCollector(disabledSet);
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getSkillCatalogFor(cwd);
   if (!res || !res.ok) { renderSkillChecklist(inputSkillsList, [], disabledSet); return; }
@@ -2172,8 +2176,14 @@ function newSessionSkillDenyList() {
   if (!newSessionSkillsDrawn.length) return newSessionSkillsAsked;
   const off = collectSkillChecklist(inputSkillsList);
   if (!newSessionSkillsDeferred) return off;
+  if (!off.length) return [];
+  const toggleable = new Set(Array.from(
+    inputSkillsList.querySelectorAll('input[type="checkbox"]:not(:disabled)'),
+  ).map((cb) => cb.value));
   const denied = new Set(off);
-  return deferredSkillDeny(newSessionSkillsDrawn.filter((n) => !denied.has(n)));
+  const keptRows = newSessionSkillsDrawn.filter((n) => toggleable.has(n) && !denied.has(n));
+  const keptUndrawn = skillDenyKeepList(newSessionSkillsAsked).filter((n) => !toggleable.has(n));
+  return deferredSkillDeny([...keptRows, ...keptUndrawn]);
 }
 async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
   if (inputType.value !== 'claude') return;
@@ -2692,7 +2702,7 @@ async function doCreate() {
       const spec = boxHasCreate2(boxId)
         ? {
             name, type, cwd, extraArgs, resumeId, fork, proxy, agents, denyBuiltins,
-            disabledTools, disabledSkills, injectSkills, stripLevel,
+            disabledTools, disabledSkills: skillDenyForPeer(disabledSkills), injectSkills, stripLevel,
             systemPromptFile, appendPromptFiles,
             ...(Array.isArray(intents) ? { intents } : {}),
           }

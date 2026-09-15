@@ -45,9 +45,27 @@ the unticked rows: when the drawn deny set was DEFERRED (`*`), it re-emits a
 deferred list naming the rows still TICKED, so a hand edit in Advanced — which
 flips the mode selector to `custom` — narrows the keep list instead of
 collapsing deferral into a snapshot of today's catalog. `newSessionSkillsDrawn`
-being empty means no render landed (a non-claude type, a failed catalog fetch),
-and then the asked-for list passes through rather than being replaced by the
-empty collect of an unpainted container.
+being empty means no render landed (a non-claude type, a failed catalog fetch,
+or the sandbox fill, which draws the container empty), and then the asked-for
+list passes through rather than being replaced by the empty collect of an
+unpainted container — `resetNewSessionSkillCollector` is what both draw sites
+call so the three globals can never describe an earlier render.
+
+Nothing off at all collapses to `[]`: after a Check All the ticks say "deny
+nothing", and re-emitting `['*', …every drawn name]` would still deny whatever
+the CLI announces later. The keeps are filtered through the TOGGLEABLE rows, as
+`collectPrefsSkillDefaults` does — a read-only row is owned by a lower layer or
+policy, and turning it into a `!name` exemption would carry this box's local
+`skillOverrides` onto every other box the template travels to, inverted.
+
+## skillDenyForPeer
+
+Directives are a t918 vocabulary, and a pre-t918 `expandSkillsOff` reads `!x` as
+a plain skill name — with `*` also present it would write `{"!x":"off"}` and deny
+every other skill on the far box. The peer hello carries no cap that says
+otherwise (`create2` predates this), so a create routed to a box gets `[]` rather
+than a directive list: exactly the pre-t918 behaviour for that path, which sent
+no denial at all.
 
 ## collectPrefsSkillDefaults
 

@@ -22,15 +22,17 @@ blocks a release.
   known at spawn except this keep list" — resolved when the session starts.
   This also corrects 5.68.0's skills curation: that release said both modes
   differ in every category, which was true, but the keep list named six skills
-  the CLI no longer offers while the deny floor named only real ones. Optimized
-  now keeps `dataviz` and `artifact-diagramming` (charts and inline diagrams are
-  ordinary repo work) and turns off `design`, `artifact-design` and
-  `artifact-capabilities` (Artifact-publishing flows), alongside the existing
-  review and setup skills. Standard mode is unchanged and still writes no skill
-  denial, and your own saved skill defaults — including an explicitly empty one —
-  still win over the shipped floor. A skill Clodex has never seen on this box
-  still can't be denied before it appears, but turning it off in the session's
-  Skills popover takes effect without a restart.
+  this box has never seen the CLI offer, while the deny floor named only real
+  ones. Optimized now also keeps `dataviz` and `artifact-diagramming` (charts and
+  inline diagrams are ordinary repo work) and turns off `design`,
+  `artifact-design` and `artifact-capabilities` (Artifact-publishing flows),
+  alongside the existing review and setup skills. Standard mode is unchanged and
+  still writes no skill denial, and your own saved skill defaults — including an
+  explicitly empty one — still win over the shipped floor. A skill Clodex has
+  never seen on this box still can't be denied before it appears, but turning it
+  off in the session's Skills popover takes effect without a restart. Creating
+  into a sandbox or a peer box still sends that box a plain list rather than the
+  deferred shape, so an older Clodex on the far side can't misread it.
 
 ## 5.68.0 — 2026-09-15 — Optimized mode really is curated, and four fixes where Clodex showed or kept the wrong thing
 
