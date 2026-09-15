@@ -284,9 +284,12 @@ which is resolved against this box's skill catalog at spawn. Every surface that
 edits a skill list — the template editor, the New Session dialog, a session's
 Skills popover, a peer's Edit settings — renders that sentinel as **every row
 unticked**, which is what the seat actually runs with, and re-ticking rows there
-turns skills back on. A save from any of them writes the explicit list of names
-it was showing, so the sentinel does not survive one: the template then carries
-that box's names rather than "whatever this box knows".
+turns skills back on. A save from a session's Skills popover or a peer's Edit
+settings writes the explicit list of names it was showing, so the sentinel does
+not survive one: the session then carries that box's names rather than "whatever
+this box knows". The template editor and the New Session dialog keep it: a save
+there re-emits `"*"` plus a `"!name"` exemption per row left ticked, so the
+template stays portable and a skill the box learns of later is still denied.
 
 **To add your own:** drop a JSON def in `~/.clodex/teams/<name>/exec/` — or in
 `~/.clodex/library/exec/` when you want every team to share it — write the

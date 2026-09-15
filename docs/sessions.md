@@ -243,9 +243,11 @@ conversations being born), `run/<name>/hook.json` (the `--settings` payload:
 statusline, hooks, `ANTHROPIC_BASE_URL` routing — wire base wins over proxy
 base —, `permissions.deny` from denyBuiltins ∪ disabledTools, `skillOverrides`
 for disabled skills — a `"*"` entry in `disabledSkills` is the sentinel for
-"every skill this box knows", expanded against the live catalog at spawn
-(injected skills excepted) while the persisted entry keeps the raw `*` so a
-restart re-expands), plus the attention/statusline/acks/pending/ctxwarn scripts
+"every skill this box knows" and a `"!name"` entry exempts one from that sweep,
+both expanded against the live catalog at spawn (injected skills excepted) while
+the persisted entry keeps them raw so a restart re-expands; "Clodex optimized"
+stores exactly that shape, which is how a skill the CLI announces only after the
+dialog closed is still denied), plus the attention/statusline/acks/pending/ctxwarn scripts
 and the two Bash-console ones — `bash-console.sh` (PostToolUse/PostToolUseFailure,
 the settled record) and `bash-live.sh` (PreToolUse, the in-flight observer) —
 plus `bash-guard.sh` (PreToolUse, after the observer: denies a whole-tree
