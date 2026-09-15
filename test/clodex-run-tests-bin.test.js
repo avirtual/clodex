@@ -46,16 +46,28 @@ function writeStub(root, { body, exit }) {
   ].join('\n'));
 }
 
-function run(root, payload) {
+function run(root, payload, { home = path.join(root, 'home') } = {}) {
   const res = spawnSync(process.execPath, [SCRIPT], {
     cwd: root,
     input: payload,
     encoding: 'utf8',
     timeout: 60000,
+    env: { ...process.env, HOME: home, CLODEX_HOME: path.join(home, '.clodex') },
   });
   const lines = String(res.stderr || '').split('\n').filter((l) => l.trim());
-  return { code: res.status, digest: lines.length ? lines[lines.length - 1] : '', stdout: res.stdout };
+  const dir = path.join(home, '.clodex', 'test-failures');
+  const readIf = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null);
+  return {
+    code: res.status,
+    digest: lines.length ? lines[lines.length - 1] : '',
+    stdout: res.stdout,
+    keepDir: dir,
+    kept: readIf(path.join(dir, 'last.txt')),
+    keptRed: readIf(path.join(dir, 'last-red.txt')),
+  };
 }
+
+const KEEP_SHOW = '~/.clodex/test-failures/last.txt';
 
 function stubRecord(root) {
   const p = path.join(root, ARGV_FILE);
@@ -118,7 +130,7 @@ test('a red run: the failing NAMES ride the digest and the exit code survives', 
       exit: 1,
     });
     const r = run(root, '{}');
-    assertDigest(r.digest, `[${path.basename(root)}] 2/3 green, 1 failing (${WALL}): alpha`);
+    assertDigest(r.digest, `[${path.basename(root)}] 2/3 green, 1 failing (${WALL}) (${KEEP_SHOW}): alpha`);
     assert.strictEqual(r.code, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -172,6 +184,8 @@ test('a runner that prints no TOTALS is reported as "nothing measured", never as
     const r = run(root, '{}');
     assert.strictEqual(r.code, 7, 'the runner\'s own exit code is the verdict');
     assert.ok(r.digest.startsWith(`[${path.basename(root)}] no "TOTALS:`), r.digest);
+    assert.ok(r.digest.includes(`(${KEEP_SHOW})`),
+      `the arm with the least information most needs the dump named; got ${r.digest}`);
     assert.ok(r.digest.includes('boom: cannot start'),
       'the runner\'s last line is the only diagnosis the seat gets');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -213,7 +227,8 @@ test('a runner that executed ZERO tests is a failure, not a 0/0 green', () => {
     writeStub(root, { body: "console.log('TOTALS: 0 pass, 0 fail, 0 tests');", exit: 0 });
     const r = run(root, '{}');
     assert.strictEqual(r.code, 1, 'exit 0 here would report a green over a run that verified nothing');
-    assert.strictEqual(r.digest, `[${path.basename(root)}] runner executed ZERO tests (exit 0)`);
+    assert.strictEqual(r.digest,
+      `[${path.basename(root)}] runner executed ZERO tests (exit 0) (${KEEP_SHOW})`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -231,8 +246,145 @@ test('a long failing list is CUT, so the digest fits what the dispatcher returns
     const r = run(root, '{}');
     assert.strictEqual(r.code, 1);
     assert.strictEqual(r.digest.length, 180, `the failing line is cut to 180, got ${r.digest.length}`);
-    assert.ok(new RegExp(`^\\[${path.basename(root)}\\] 0/40 green, 40 failing \\(${WALL_RE}\\): failing-test-name-0`).test(r.digest),
-      'the counts and the first names survive the cut — they are the head of the line');
+    assert.ok(new RegExp(`^\\[${path.basename(root)}\\] 0/40 green, 40 failing \\(${WALL_RE}\\) `
+      + `\\(${KEEP_SHOW.replace(/[.]/g, '\\.')}\\): failing-test-name-0`).test(r.digest),
+    'the counts, the duration and the preserved PATH survive the cut — a truncated name is still '
+      + 'recoverable from the file, a truncated path from nothing');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const DOT_RED = [
+  "console.log('.....X');",
+  "console.log('');",
+  "console.log('Failed tests:');",
+  "console.log('');",
+  "console.log(' ✖ the failing subtest (1.3ms)');",
+  "console.log('  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:');",
+  "console.log('  + actual - expected');",
+  "console.log('  +   b: 2');",
+  "console.log('  -   b: 3');",
+  "console.log('      at TestContext.<anonymous> (/x/a.test.js:4:44)');",
+  "console.log('TOTALS: 5 pass, 1 fail, 6 tests');",
+].join('\n');
+
+test('keep: a failing run preserves the assertion text, diff and stack it produced', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: DOT_RED, exit: 1 });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'a red run preserved nothing: the shipped grant emits 180 chars and '
+      + 'the evidence behind them exists nowhere else');
+    assert.match(r.kept, /^ *✖ the failing subtest \(1\.3ms\)$/m, 'the failing row is not in the file');
+    assert.match(r.kept, /Expected values to be strictly deep-equal/,
+      'the assertion text did not survive — it is the half the digest line cannot carry');
+    assert.match(r.kept, /\+ {3}b: 2/, 'the diff did not survive');
+    assert.match(r.kept, /at TestContext\.<anonymous> \(\/x\/a\.test\.js:4:44\)/,
+      'the stack did not survive');
+    assert.match(r.kept, /^# tree: {2}/m, 'the dump does not name the tree it measured');
+    assert.match(r.kept, /^# count: 5\/6 green, 1 failing \(exit 1\)$/m,
+      'the dump does not carry the verdict it is evidence for');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: the dump lands outside the measured tree, under CLODEX_HOME', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: DOT_RED, exit: 1 });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'ENTER: nothing was preserved, so there is no location to judge');
+    assert.ok(!fs.existsSync(path.join(root, 'test-failures')),
+      'the dump landed INSIDE the measured tree, which is a worktree the loop removes under it');
+    assert.ok(r.digest.includes(`(${KEEP_SHOW})`),
+      `the digest must name the file or nobody can find it; got ${r.digest}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: a green run retires the red it followed rather than destroying it', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: DOT_RED, exit: 1 });
+    const red = run(root, '{}');
+    assert.ok(red.kept !== null, 'ENTER: the red run preserved nothing, so the green arm below '
+      + 'has no evidence to retire');
+
+    writeStub(root, { body: "console.log('TOTALS: 6 pass, 0 fail, 6 tests');", exit: 0 });
+    const green = run(root, '{}');
+    assertDigest(green.digest, `[${path.basename(root)}] 6/6 green (${WALL})`,
+      'the green line gained a path: it would point at evidence about a DIFFERENT run');
+    assert.strictEqual(green.kept, null,
+      'the current-run name still holds the older failure, which the next reader takes for '
+      + 'evidence about the green run');
+    assert.ok(green.keptRed !== null, 'the green run destroyed the red it followed');
+    assert.match(green.keptRed, /Expected values to be strictly deep-equal/,
+      'the retired file lost the assertion text, which is what made it worth keeping');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: the preserved files are TWO fixed names, overwritten, never a growing set', () => {
+  const root = mkRoot();
+  const home = path.join(root, 'shared-home');
+  try {
+    writeStub(root, { body: DOT_RED, exit: 1 });
+    run(root, '{}', { home });
+    writeStub(root, { body: "console.log('TOTALS: 6 pass, 0 fail, 6 tests');", exit: 0 });
+    const first = run(root, '{}', { home });
+    assert.ok(first.keptRed !== null, 'ENTER: the first cycle retired nothing to overwrite');
+
+    writeStub(root, {
+      body: [
+        "console.log('Failed tests:');",
+        "console.log(' ✖ a different failing subtest (1.0ms)');",
+        "console.log('TOTALS: 5 pass, 1 fail, 6 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    run(root, '{}', { home });
+    writeStub(root, { body: "console.log('TOTALS: 6 pass, 0 fail, 6 tests');", exit: 0 });
+    const second = run(root, '{}', { home });
+    assert.match(String(second.keptRed), /a different failing subtest/,
+      'the second cycle did not overwrite the first: the name now holds stale evidence');
+    assert.deepStrictEqual(fs.readdirSync(second.keepDir).sort(), ['last-red.txt'],
+      'the dump directory grew a file per cycle — fixed names are what bound it without a prune');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: a lock refusal preserves nothing and destroys nothing — it measured nothing', () => {
+  const root = mkRoot();
+  const home = path.join(root, 'shared-home');
+  try {
+    writeStub(root, { body: DOT_RED, exit: 1 });
+    const red = run(root, '{}', { home });
+    assert.ok(red.kept !== null, 'ENTER: nothing was preserved for the refusal to threaten');
+
+    const refusal = 'run-tests: another suite run is already going (pid 1234567, running 2:05) -'
+      + ' waited 30s, not starting a second. Do not re-emit: emit [agent:remind in 6m] re-run the'
+      + ' suite, END YOUR TURN.';
+    writeStub(root, { body: `console.error(${JSON.stringify(refusal)});`, exit: 1 });
+    const r = run(root, '{}', { home });
+    assert.ok(r.digest.includes('[agent:remind in 6m]'), 'ENTER: this is not the refusal arm');
+    assert.strictEqual(r.kept, red.kept,
+      'a refused run rewrote the dump: it ran no tests, so anything it writes replaces real '
+      + 'evidence with the text of a run that never started');
+    assert.strictEqual(r.keptRed, null, 'and it must not retire one either');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: output with no `Failed tests:` block falls back to a raw tail, never to empty', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        "console.log('some reporter this bin has never seen');",
+        "console.log('with a failure described in its own words');",
+        "console.log('TOTALS: 5 pass, 1 fail, 6 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'an unrecognised reporter cost the evidence entirely');
+    assert.match(r.kept, /a failure described in its own words/,
+      'the raw tail did not survive, so the file is a confident silence');
+    assert.match(r.kept, /raw tail follows/, 'and it does not say that it is a fallback');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
