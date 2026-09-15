@@ -223,8 +223,8 @@ for (let m = TOTALS_RE.exec(stdout); m; m = TOTALS_RE.exec(stdout)) totals = m;
 
 const hay = `${stdout}\n${stderr}`;
 
-const keptFor = (count, structured) => (preserve({
-  measure, head: headLine, startedIso, count, hay, structured,
+const keptFor = (count, structured, body = hay) => (preserve({
+  measure, head: headLine, startedIso, count, hay: body, structured,
 }) ? ` (${keepShow()})` : '');
 
 if (!totals) {
@@ -233,7 +233,7 @@ if (!totals) {
   const refusal = lockRefusal(lines);
   if (refusal) emit(refusal, 1, 200);
   const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
-  const at = keptFor(`no summary (exit ${code})`, false);
+  const at = keptFor(`no summary (exit ${code})`, false, combined);
   emit(
     `[${LEAF}] no "TOTALS: <n> pass, <n> fail, <n> tests" line (exit ${code})${at}; last: ${last}`,
     exitCode,

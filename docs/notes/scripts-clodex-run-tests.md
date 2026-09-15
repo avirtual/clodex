@@ -28,8 +28,11 @@ takes the same dir via `CLODEX_TEST_LOCK_DIR`, so both serialize on one mutex.
 
 What is NOT serialized is this bin's own write: the lock belongs to the child,
 which has exited by the time `preserve` runs, so two runs finishing together can
-write the same path. The `.tmp`+`rename` makes each write atomic to a reader —
-the loss is one whole dump, never a torn one — and it is the same accepted cost
+write the same path, and the tmp name they stage through is fixed too, so the
+loss there is not bounded to one whole dump: two `preserve`s truncating the same
+tmp can interleave and the first `rename` publishes a mixed body. That needs the
+two front ends to resolve different lock roots, which they can — both take it
+from cwd — so it is rare rather than impossible. It is the same accepted cost
 the `.sh` header records for a second tree's failure clobbering the first. A
 dump is attributable on sight because its `# tree:`, `# head:` and `# start:`
 headers name the run that produced it.

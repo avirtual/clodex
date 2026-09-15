@@ -28,7 +28,8 @@ blocks a release.
   run's output to `~/.clodex/test-failures/last.txt` and names it on the digest
   line. It previously kept nothing at all — a red suite gave you one 180-char
   line of test names, and the assertion text, diff and stack behind them existed
-  nowhere afterwards. Both files are fixed names that the next run overwrites,
+  nowhere afterwards. Both files are fixed names — `last.txt` overwritten by the
+  next failing run, `last-red.txt` by the next green one that follows a failure —
   so nothing accumulates to prune.
 
 - Fixed: a Codex seat's transcript no longer shows the internal `[agent:from
