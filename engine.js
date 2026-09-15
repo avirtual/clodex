@@ -863,6 +863,7 @@ const { initStores } = require('./stores');
 const { createAccounts, sweepAccountMove } = require('./accounts');
 const { restoreSessionsForWorkspace: restoreSessionsCore } = require('./session-restore');
 const { CLAUDE_TOOLS, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED, DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS } = require('./catalogs');
+const { isSkillDenyDirective } = require('./skills-off');
 
 // Short lowercase base36 token (park/resend handles). Concatenates random
 // draws so trailing-zero truncation can't shorten the result below `len`.
@@ -1750,7 +1751,7 @@ function readSkillCatalog({ name = null, cwd = null } = {}) {
     ...scan.outOfScope.map((s) => s.name),
     ...disabled,
     ...Object.keys(eff.overrides),
-  ])].filter((n) => n !== '*').sort();
+  ])].filter((n) => !isSkillDenyDirective(n)).sort();
   const base = {
     ok: true,
     names,

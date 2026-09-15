@@ -38,6 +38,7 @@ const {
 const { evalRendererModule } = require('./lib/plugin-module-eval');
 const { pluginOrigin } = require('./lib/plugin-origin');
 const { prefsGate } = require('./lib/prefs-gate');
+const { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList } = require('../skills-off');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
@@ -2149,16 +2150,30 @@ function advisoryEffective(effective, forTemplate) {
   if (!forTemplate) return eff;
   return Object.fromEntries(Object.entries(eff).map(([k, v]) => [k, { ...v, advisory: true }]));
 }
+let newSessionSkillsDeferred = false;
+let newSessionSkillsDrawn = [];
+let newSessionSkillsAsked = [];
 async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = false } = {}) {
   if (inputType.value !== 'claude') return;
+  newSessionSkillsDeferred = skillDenyIsDeferred(disabledSet);
+  newSessionSkillsAsked = [...disabledSet];
+  newSessionSkillsDrawn = [];
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getSkillCatalogFor(cwd);
   if (!res || !res.ok) { renderSkillChecklist(inputSkillsList, [], disabledSet); return; }
   const names = res.names || [];
-  const offSet = disabledSet.has('*') ? new Set(names) : disabledSet;
+  newSessionSkillsDrawn = [...names];
+  const offSet = skillOffSetFor(names, disabledSet);
   renderSkillChecklist(inputSkillsList, names, offSet,
     advisoryEffective(res.effective, forTemplate),
     { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
+}
+function newSessionSkillDenyList() {
+  if (!newSessionSkillsDrawn.length) return newSessionSkillsAsked;
+  const off = collectSkillChecklist(inputSkillsList);
+  if (!newSessionSkillsDeferred) return off;
+  const denied = new Set(off);
+  return deferredSkillDeny(newSessionSkillsDrawn.filter((n) => !denied.has(n)));
 }
 async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
   if (inputType.value !== 'claude') return;
@@ -2623,7 +2638,7 @@ function collectFormConfig() {
     ...(toolsAllow.length ? { tools: toolsAllow } : {}),
     denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
     disabledTools: type === 'claude' ? collectToolChecklist(inputToolsList) : [],
-    disabledSkills: type === 'claude' ? collectSkillChecklist(inputSkillsList) : [],
+    disabledSkills: type === 'claude' ? newSessionSkillDenyList() : [],
     injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
     stripLevel: type === 'claude' ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
     systemPromptFile: agentType ? (inputSystemPrompt.value || null) : null,
@@ -7029,13 +7044,15 @@ function readTerminalReports() {
 }
 
 let prefsSkillDenyStored = [];
+let prefsSkillNamesDrawn = [];
 
 async function renderPrefsSkillDefaults(stored) {
   prefsSkillDenyStored = Array.isArray(stored) ? stored.slice() : [];
   let res = null;
   try { res = await window.api.getSkillCatalogFor(homeDir); } catch { res = null; }
   const names = (res && res.ok && res.names) || [];
-  renderSkillChecklist(prefsSkillsList, names, new Set(prefsSkillDenyStored),
+  prefsSkillNamesDrawn = [...names];
+  renderSkillChecklist(prefsSkillsList, names, skillOffSetFor(names, prefsSkillDenyStored),
     (res && res.effective) || {}, { skillsLocked: res && res.skillsLocked, canReenable: res && res.canReenable });
 }
 
@@ -7043,8 +7060,15 @@ function collectPrefsSkillDefaults() {
   const toggleable = new Set(Array.from(
     prefsSkillsList.querySelectorAll('input[type="checkbox"]:not(:disabled)'),
   ).map((cb) => cb.value));
+  const off = collectSkillChecklist(prefsSkillsList);
+  if (skillDenyIsDeferred(prefsSkillDenyStored)) {
+    const denied = new Set(off);
+    const keptRows = prefsSkillNamesDrawn.filter((n) => toggleable.has(n) && !denied.has(n));
+    const keptUndrawn = skillDenyKeepList(prefsSkillDenyStored).filter((n) => !toggleable.has(n));
+    return deferredSkillDeny([...keptRows, ...keptUndrawn]);
+  }
   const carried = prefsSkillDenyStored.filter((n) => !toggleable.has(n));
-  return [...new Set([...collectSkillChecklist(prefsSkillsList), ...carried])];
+  return [...new Set([...off, ...carried])];
 }
 
 async function openPrefs() {
@@ -7423,7 +7447,8 @@ async function openArgsDialog(name, argsSource = null) {
     const sc = skillCatalog;
     argsSkillsDisabledPersisted = sc.disabledSkills || [];
     if (caps.skillRoster) {
-      const offSet = sc.allOff ? new Set(sc.names || []) : new Set(sc.disabledSkills || []);
+      const offSet = skillOffSetFor(sc.names || [],
+        sc.allOff ? ['*', ...(sc.disabledSkills || [])] : (sc.disabledSkills || []));
       renderSkillChecklist(argsSkillsList, sc.names || [], offSet,
         sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
     }
