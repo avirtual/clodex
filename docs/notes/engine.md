@@ -43,3 +43,10 @@ disabled-list must not inherit one seat's per-session state.
 feeds the union and may hold `*` or `!name`, neither of which is a skill. A
 directive that reached the list would draw as a checkbox row and collect into
 someone's off list as a skill by that literal name.
+
+## applySessionSkills
+
+PERSISTS only. The settings file the CLI reads is written by `setupClaudeHook`,
+whose one call site is `session-manager.js`'s spawn arm, so a skill toggled from
+the per-session popover applies on the seat's next fresh start — which is what
+the popover's own confirm text says when it offers "Restart fresh".

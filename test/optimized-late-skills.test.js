@@ -162,6 +162,54 @@ async function dialogDisabledSkills(engine, mode, {
   } finally { global.document = had; }
 }
 
+// The Preferences default, through the SHIPPED pair. Same engine catalog as the
+// dialog helper above, so a divergence between the two collectors is visible.
+async function prefsSkillDefault(engine, stored, { afterRender = null } = {}) {
+  const handlers = new Map();
+  registerIpcHandlers({
+    ...engine, ...engine.stores,
+    handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn), log: silent,
+  });
+  const served = handlers.get('settings:skillCatalogFor')(null, null);
+  assert.ok(served.ok && served.names.length, 'ENTER: the engine served a non-empty skill catalog');
+
+  const had = global.document;
+  global.document = { createElement: el, addEventListener() {} };
+  try {
+    const prefsSkillsList = el('div');
+    const mod = require('../skills-off');
+    const env = {
+      prefsSkillsList,
+      homeDir: os.homedir(),
+      renderSkillChecklist: checklists.renderSkillChecklist,
+      collectSkillChecklist: checklists.collectSkillChecklist,
+      skillOffSetFor: mod.skillOffSetFor,
+      deferredSkillDeny: mod.deferredSkillDeny,
+      skillDenyIsDeferred: mod.skillDenyIsDeferred,
+      skillDenyKeepList: mod.skillDenyKeepList,
+      prefsSkillDenyStored: [],
+      prefsSkillNamesDrawn: [],
+      window: { api: { getSkillCatalogFor: async () => ({ ...served, effective: {} }) } },
+      afterRender: afterRender || (() => {}),
+    };
+    const names = Object.keys(env);
+    const shipped = [
+      extract(/\n(async function renderPrefsSkillDefaults\([\s\S]*?\n\})\n/, 'renderPrefsSkillDefaults'),
+      extract(/\n(function collectPrefsSkillDefaults\([\s\S]*?\n\})\n/, 'collectPrefsSkillDefaults'),
+    ].join('\n');
+    const run = new Function(...names, `${shipped}
+      return (async () => {
+        await renderPrefsSkillDefaults(${JSON.stringify(stored)});
+        afterRender(prefsSkillsList);
+        return { saved: collectPrefsSkillDefaults(), rows: prefsSkillsList.children.map((r) => {
+          const cb = r.children.find((x) => x.tagName === 'input');
+          return { name: cb.value, checked: cb.checked };
+        }) };
+      })();`);
+    return await run(...names.map((n) => env[n]));
+  } finally { global.document = had; }
+}
+
 // A session-manager wired to the REAL setupClaudeHook, so the assertion lands on
 // the settings file the CLI reads, and to the engine's own `knownSkillNames` —
 // the same dep the app passes, read at spawn.
@@ -461,6 +509,41 @@ test('t918 pin 8: Check All means deny nothing, not "deny whatever arrives later
   assert.ok(all.rows.length, 'ENTER: rows drew, so there was something to tick');
   assert.deepStrictEqual(all.persisted, [],
     'the ticks say "deny nothing"; re-emitting `*` would still deny whatever the CLI announces later');
+});
+
+test('t918 pin 9: Preferences can still express "deny nothing", and the floor is not a dead end', async () => {
+  const box = freshBox();
+  const floor = box.engine.stores.agentDefaults.getDefaultSkillDeny();
+  assert.ok(require('../skills-off').skillDenyIsDeferred(floor),
+    'ENTER: the shipped floor really is deferred — against a plain list this collector never branched');
+
+  // Check All in Preferences: one click, and it means "deny nothing by default".
+  const all = await prefsSkillDefault(box.engine, floor, {
+    afterRender: (list) => {
+      for (const r of list.children) {
+        const cb = r.children.find((x) => x.tagName === 'input');
+        if (cb && !cb.disabled) cb.checked = true;
+      }
+    },
+  });
+  assert.ok(all.rows.length, 'ENTER: rows drew, so there was something to tick');
+  assert.deepStrictEqual(all.saved, [],
+    'every row ticked must save [], not `*` plus today\'s names: the latter denies every skill announced '
+    + 'later AND is sticky — the deferred list comes back next visit, so [] becomes unreachable from the UI');
+
+  // The rest of the collector is unchanged: untick one row and the deferral and
+  // its keep list survive.
+  const one = await prefsSkillDefault(box.engine, floor, {
+    afterRender: (list) => {
+      const cb = list.children
+        .map((r) => r.children.find((x) => x.tagName === 'input'))
+        .find((c) => c && c.value === 'dataviz' && !c.disabled);
+      assert.ok(cb, 'ENTER: a toggleable row to untick');
+      cb.checked = false;
+    },
+  });
+  assert.ok(one.saved.includes('*') && !one.saved.includes('!dataviz'),
+    'one row off still means "deny everything at spawn, except the ones left ticked"');
 });
 
 // createEngine leaves background timers running; the same force-exit every other

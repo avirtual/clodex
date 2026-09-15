@@ -69,7 +69,8 @@ no denial at all.
 
 ## collectPrefsSkillDefaults
 
-Same rule for the Preferences default, plus `keptUndrawn`: a `!name` exemption
+The same two rules as `newSessionSkillDenyList` — the toggleable filter and the
+empty-off collapse — plus `keptUndrawn`: a `!name` exemption
 for a skill this cwd does not currently render has no row to read, and dropping
 it would silently deny that skill the next time Preferences was opened
 anywhere. It is the skills mirror of the `carried` list the undeferred branch

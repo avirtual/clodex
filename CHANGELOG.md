@@ -29,8 +29,7 @@ blocks a release.
   alongside the existing review and setup skills. Standard mode is unchanged and
   still writes no skill denial, and your own saved skill defaults — including an
   explicitly empty one — still win over the shipped floor. A skill Clodex has
-  never seen on this box still can't be denied before it appears, but turning it
-  off in the session's Skills popover takes effect without a restart. Creating
+  never seen on this box still can't be denied before it appears. Creating
   into a sandbox or a peer box still sends that box a plain list rather than the
   deferred shape, so an older Clodex on the far side can't misread it.
 

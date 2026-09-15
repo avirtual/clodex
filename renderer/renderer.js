@@ -7072,6 +7072,7 @@ function collectPrefsSkillDefaults() {
   ).map((cb) => cb.value));
   const off = collectSkillChecklist(prefsSkillsList);
   if (skillDenyIsDeferred(prefsSkillDenyStored)) {
+    if (!off.length) return [];
     const denied = new Set(off);
     const keptRows = prefsSkillNamesDrawn.filter((n) => toggleable.has(n) && !denied.has(n));
     const keptUndrawn = skillDenyKeepList(prefsSkillDenyStored).filter((n) => !toggleable.has(n));

@@ -77,7 +77,4 @@ always going to appear.
 What this does NOT change: the checkbox list still renders what is KNOWN now.
 Unknown skills become DENIED, not visible. One residual class survives — a skill
 in neither the seed nor `skills-seen.json` when the seat spawns cannot be denied
-at spawn — but the CLI honours a layer-4 `skillOverrides` "off" mid-session, so
-recovering from that is one toggle in the per-session popover with no restart.
-That is the "off" direction only and says nothing about `SKILL_REENABLE_CONFIRMED`,
-which gates the opposite question.
+at spawn.
