@@ -88,7 +88,7 @@ function preserve({
     if (structured) out.push('## no `Failed tests:` block matched — raw tail follows');
     out.push(...tailCap(lines, RAW_CAP));
   }
-  const tmp = `${KEEP}.tmp`;
+  const tmp = `${KEEP}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(tmp, `${out.join('\n')}\n`);
     fs.renameSync(tmp, KEEP);
