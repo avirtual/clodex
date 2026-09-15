@@ -19,7 +19,8 @@ function trackedJs() {
   return out.split('\n').filter((f) => f && !f.includes('node_modules'));
 }
 
-const HOLE = /\u0000(\d+)\u0000/g;
+const HOLE = /\u0000(\d+)\u0000/;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function maskSource(src) {
   const values = [];
@@ -112,8 +113,13 @@ function maskSource(src) {
 const literal = (captured, values) => {
   const head = captured.split('${')[0];
   const m = new RegExp(HOLE.source).exec(head);
-  return m ? values[Number(m[1])].split('${')[0] : '';
+  return {
+    prefix: m ? values[Number(m[1])] : '',
+    interpolated: captured.includes('${'),
+  };
 };
+
+const lineOf = (src, index) => src.slice(0, index).split('\n').length;
 const forwards = (param) => new RegExp(
   `\\b(?:__MINTERS__)\\(\\s*${param}\\s*[,)]`
   + `|${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*${param}\\s*[,)]`);
@@ -136,7 +142,8 @@ function mintersIn(src, maxPasses = Infinity, premasked = false) {
     let grew = false;
     for (const fn of fns) {
       if (minters.has(fn.name)) continue;
-      const re = new RegExp(forwards(fn.param).source.replace('__MINTERS__', () => [...minters].join('|')));
+      const re = new RegExp(forwards(escapeRe(fn.param)).source
+        .replace('__MINTERS__', () => [...minters].map(escapeRe).join('|')));
       if (re.test(fn.body)) { minters.add(fn.name); grew = true; }
     }
     if (!grew) break;
@@ -149,39 +156,38 @@ let cachedScan = null;
 function scanPrefixes() {
   if (cachedScan) return cachedScan;
   const rawShape = new RegExp(`${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*(['"\`])([^'"\`]*)\\1`, 'g');
-  const helperShape = new RegExp(`\\b(?:${SEEDS.join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g');
+  const helperShape = new RegExp(`(?<![.\\w$])(?:${SEEDS.map(escapeRe).join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g');
   const raw = new Map();
   const helper = new Map();
   const viaWrapper = new Map();
   const viaConst = new Map();
+  const interpolated = [];
   for (const rel of trackedJs()) {
     const { masked: src, values } = maskSource(fs.readFileSync(path.join(REPO, rel), 'utf8'));
-    for (const m of src.matchAll(rawShape)) {
-      const p = literal(m[2], values);
-      if (p && !raw.has(p)) raw.set(p, rel);
-    }
-    for (const m of src.matchAll(helperShape)) {
-      const p = literal(m[2], values);
-      if (p && !helper.has(p)) helper.set(p, rel);
-    }
+    const take = (map, m, group, where) => {
+      const { prefix, interpolated: dynamic } = literal(m[group], values);
+      if (dynamic) interpolated.push(`${rel}:${lineOf(src, m.index)} (${prefix}\${…})`);
+      else if (prefix && !map.has(prefix)) map.set(prefix, where);
+    };
+    for (const m of src.matchAll(rawShape)) take(raw, m, 2, rel);
+    for (const m of src.matchAll(helperShape)) take(helper, m, 2, rel);
     const minters = mintersIn(src, Infinity, true);
     for (const name of minters) {
       if (SEEDS.includes(name)) continue;
-      for (const c of src.matchAll(new RegExp(`\\b${name}\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))) {
-        const p = literal(c[2], values);
-        if (p && !viaWrapper.has(p)) viaWrapper.set(p, `${rel} via ${name}()`);
+      for (const c of src.matchAll(new RegExp(`(?<![.\\w$])${escapeRe(name)}\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))) {
+        take(viaWrapper, c, 2, `${rel} via ${name}()`);
       }
     }
-    const alt = [...minters].join('|');
+    const alt = [...minters].map(escapeRe).join('|');
     for (const c of src.matchAll(/const\s+([A-Z][A-Z0-9_]*)\s*=\s*(['"`])([^'"`]*)\2/g)) {
-      const p = literal(c[3], values);
-      if (!p) continue;
-      const used = new RegExp(forwards(c[1]).source.replace('__MINTERS__', () => alt));
-      if (used.test(src) && !viaConst.has(p)) viaConst.set(p, `${rel} via const ${c[1]}`);
+      const { prefix, interpolated: dynamic } = literal(c[3], values);
+      if (dynamic || !prefix) continue;
+      const used = new RegExp(forwards(escapeRe(c[1])).source.replace('__MINTERS__', () => alt));
+      if (used.test(src) && !viaConst.has(prefix)) viaConst.set(prefix, `${rel} via const ${c[1]}`);
     }
   }
   const union = new Map([...raw, ...helper, ...viaWrapper, ...viaConst]);
-  cachedScan = { raw, helper, viaWrapper, viaConst, union };
+  cachedScan = { raw, helper, viaWrapper, viaConst, union, interpolated };
   return cachedScan;
 }
 
@@ -234,6 +240,17 @@ test('a wrapper body stops at its own closing brace, so a neighbour\'s mint is n
     + 'ever passed to it as a tmp prefix, and PREFIXES is interpolated into the deletion pattern');
 });
 
+test('no mint site builds its prefix by interpolation — the sweep cannot match those roots', () => {
+  const { interpolated } = scanPrefixes();
+  assert.deepStrictEqual(interpolated, [],
+    'These sites mint with a template-interpolated prefix, and tmp-sweep.sh can never remove the roots '
+    + 'they leave behind: it anchors mkdtemp\'s six random characters DIRECTLY after the prefix, so a root '
+    + `named clodex-menu-<tag>-A1b2c3 does not match clodex-menu-. Worse, the scan truncates at the `
+    + 'interpolation, so the truncated stem lands in PREFIXES and the coverage test above certifies these '
+    + 'roots as swept while they accumulate forever. Mint with a LITERAL prefix and put the varying part '
+    + `in a file or a subdirectory under the root instead:\n  ${interpolated.join('\n  ')}`);
+});
+
 test('the scan seeds itself from every $TMPDIR-minting export of test/lib/tmp-roots.js', () => {
   const helper = require('./lib/tmp-roots.js');
   const exported = Object.keys(helper);
@@ -253,7 +270,7 @@ test('the scan seeds itself from every $TMPDIR-minting export of test/lib/tmp-ro
   const decl = code.indexOf('function mkTmpDirIn');
   assert.ok(decl >= 0, 'ENTER: mkTmpDirIn must be declared as a function for its body to be readable');
   const body = bodyAt(code, code.indexOf('{', decl));
-  assert.match(body, /mkdtempSync\(path\.join\(parent,/,
+  assert.match(body, new RegExp(`${MINT}\\(path\\.join\\(parent,`),
     'ENTER: mkTmpDirIn must still mint under its `parent` argument rather than under os.tmpdir(). If it '
     + 'ever mints a direct child of $TMPDIR it belongs in SEEDS, and excluding it would leak every root it makes.');
 });
@@ -267,7 +284,7 @@ test('a mint call written inside a string or a comment is not collected as a min
   const collect = (src) => {
     const { masked, values } = maskSource(src);
     return [...masked.matchAll(new RegExp(`\\b(?:${SEEDS.join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))]
-      .map((m) => literal(m[2], values)).filter(Boolean);
+      .map((m) => literal(m[2], values).prefix).filter(Boolean);
   };
   assert.deepStrictEqual(collect(real), ['real-'],
     'ENTER: a genuine mkTmpRoot call must still be collected, or masking has simply blinded the scan');
@@ -279,7 +296,7 @@ test('a mint call written inside a string or a comment is not collected as a min
       + 'which would have shipped `prefix` into PREFIXES and made `prefixA1b2c3` a deletion target anywhere in $TMPDIR.');
   }
   assert.deepStrictEqual(collect(quoted + real + lineComment), ['real-'],
-    'and masking must not shift the offsets of the real call sites around the masked ones');
+    'and a real call sitting between two masked ones is still collected');
 });
 
 test('the live prose case in test/tmp-roots-pin.test.js is masked, not merely absent', () => {
@@ -289,7 +306,7 @@ test('the live prose case in test/tmp-roots-pin.test.js is masked, not merely ab
     + 'message, or this regression case no longer exists in the tree and this test proves nothing');
   const { masked, values } = maskSource(src);
   const collected = [...masked.matchAll(new RegExp(`\\b(?:${SEEDS.join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))]
-    .map((m) => literal(m[2], values)).filter(Boolean);
+    .map((m) => literal(m[2], values).prefix).filter(Boolean);
   assert.ok(collected.includes('tmp-roots-pin-'),
     'the real mkTmpRoot(\'tmp-roots-pin-\') call in that file must still be collected');
   assert.ok(!collected.includes('prefix'),
@@ -345,14 +362,19 @@ test('every prefix the suite mints is covered by tmp-sweep.sh', () => {
 
 test('tmp-sweep.sh lists each prefix in full rather than collapsing it to a family root', () => {
   const listed = scriptPrefixes();
-  assert.ok(listed.includes('clodex-'),
-    'ENTER: the clodex- family root must be listed, or the collapse check below proves nothing');
-  const alternation = new RegExp(`^(?:${listed.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})[A-Za-z0-9]{6}(?:-.*)?$`);
-  assert.ok(!/^(?:clodex-)[A-Za-z0-9]{6}(?:-.*)?$/.test('clodex-pend-a1b2c3'),
-    'ENTER: the six-character anchor is what makes a family root non-transitive; if clodex- ever matches '
-    + 'clodex-pend-<six> on its own, the collapse this test forbids would become safe and this test is stale');
-  assert.ok(alternation.test('clodex-pend-a1b2c3'),
-    'a root minted as clodex-pend-<six> must match: listing clodex- alone does NOT cover it, because the '
+  const collapsible = listed.filter((p) => listed.some((q) => q !== p && q.startsWith(p)));
+  assert.ok(collapsible.length > 0,
+    'ENTER: the list must contain at least one entry that is a string-prefix of another, or there is '
+    + 'nothing a collapse could have thrown away and this test proves nothing');
+  const stem = collapsible[0];
+  const longer = listed.find((q) => q !== stem && q.startsWith(stem));
+  const probe = `${longer}a1b2c3`;
+  const alternation = new RegExp(`^(?:${listed.map(escapeRe).join('|')})[A-Za-z0-9]{6}(?:-.*)?$`);
+  assert.ok(!new RegExp(`^(?:${escapeRe(stem)})[A-Za-z0-9]{6}(?:-.*)?$`).test(probe),
+    `ENTER: the six-character anchor is what makes a family root non-transitive; if ${stem} ever matched `
+    + `${probe} on its own, the collapse this test forbids would become safe and this test is stale`);
+  assert.ok(alternation.test(probe),
+    `a root minted as ${longer}<six> must match: listing ${stem} alone does NOT cover it, because the `
     + 'six-character anchor sits directly after the prefix. Collapsing the list by string-prefix dropped '
     + '241,305 of 300,478 matching roots when measured.');
 });

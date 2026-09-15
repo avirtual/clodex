@@ -33,12 +33,12 @@ const { initStores } = require('../stores.js');
 const { createPluginLoader } = require('../plugin-loader');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, mkTmpDirIn } = require('./lib/tmp-roots');
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 function tmpdir(tag) {
-  return mkTmpRoot(`clodex-menu-${tag}-`);
+  return mkTmpDirIn(mkTmpRoot('clodex-menu-'), `${tag}-`);
 }
 
 // A real uiSettings store rooted in a throwaway userData dir — the same shape

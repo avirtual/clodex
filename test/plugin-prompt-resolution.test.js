@@ -25,7 +25,7 @@ const {
   splitPluginPromptRef, bundleForPromptRef,
   resolvePluginSystemPromptFile, resolvePluginPromptBody, pluginTemplateRows,
 } = require('../plugin-prompt-refs');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, mkTmpDirIn } = require('./lib/tmp-roots');
 
 const SYS = 'You are a reviewer.\n';
 const APP_A = 'Rule A.\n';
@@ -35,7 +35,7 @@ const APP_B = 'Rule B.\n';
 // directory: resolvePluginSystemPromptFile returns a PATH and accessSync's it,
 // so a fictional dir would make the system arm answer null for the wrong reason.
 function mkBundle({ id = 'rev', shipped = false, prompts = null, templates = [] } = {}) {
-  const root = mkTmpRoot(`clodex-t679-res-${id}-`);
+  const root = mkTmpDirIn(mkTmpRoot('clodex-t679-res-'), `${id}-`);
   const rows = prompts || [
     { name: 'strict', kind: 'system', body: SYS },
     { name: 'a', kind: 'append', body: APP_A },

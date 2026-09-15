@@ -56,9 +56,9 @@ basepath-
 boxed-
 ce-cwd-
 ce-home-
-clodex-
 clodex-2team-
 clodex-arch-
+clodex-atomic-
 clodex-bash-marks-
 clodex-bundles-
 clodex-candidate-

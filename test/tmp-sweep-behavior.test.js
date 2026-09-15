@@ -25,10 +25,18 @@ function plant(parent, name, ageDays, fill) {
   return dir;
 }
 
+const MINE = 'clodex-sweeptest-';
+
 function fixture() {
-  const parent = path.join(mkTmpRoot('clodex-sweeptest-'), 'T');
+  const parent = path.join(mkTmpRoot(MINE), 'T');
   fs.mkdirSync(parent, { recursive: true });
   return parent;
+}
+
+function listedPrefixes() {
+  const block = fs.readFileSync(SCRIPT, 'utf8').match(/\nPREFIXES='\n([\s\S]*?)\n'\n/);
+  assert.ok(block, 'ENTER: the PREFIXES block must be findable');
+  return block[1].split('\n').map((p) => p.trim()).filter(Boolean);
 }
 
 function run(parent, args = []) {
@@ -39,7 +47,7 @@ function run(parent, args = []) {
 
 test('ENTER: plant() ages a root AFTER filling it, so the fixtures below are really as old as they claim', () => {
   const parent = fixture();
-  const filled = plant(parent, 'clodex-aging', AGED_DAYS,
+  const filled = plant(parent, `${MINE}aging`, AGED_DAYS,
     (dir) => fs.mkdirSync(path.join(dir, 'inner'), { recursive: true }));
   const ageMs = Date.now() - fs.statSync(filled).mtimeMs;
   assert.ok(ageMs > (AGED_DAYS - 1) * 86400_000,
@@ -48,8 +56,11 @@ test('ENTER: plant() ages a root AFTER filling it, so the fixtures below are rea
 });
 
 test('ENTER: the scratch parent satisfies the per-user-temp gate, or every case below is only testing a refusal', () => {
+  assert.ok(listedPrefixes().includes(MINE),
+    `ENTER: the fixtures below are named ${MINE}<suffix>, so tmp-sweep.sh must actually list ${MINE} — `
+    + 'otherwise every removal case is measuring a prefix miss rather than the gate it names');
   const parent = fixture();
-  plant(parent, 'clodex-aaaaaa', AGED_DAYS);
+  plant(parent, `${MINE}aaaaaa`, AGED_DAYS);
   const r = run(parent);
   assert.strictEqual(r.status, 0,
     `ENTER: the script must accept a TMPDIR nested under the real one, got status ${r.status}: ${r.stderr}`);
@@ -59,7 +70,7 @@ test('ENTER: the scratch parent satisfies the per-user-temp gate, or every case 
 
 test('a bare invocation removes nothing — dry-run is the default, not an option', () => {
   const parent = fixture();
-  const aged = plant(parent, 'clodex-bbbbbb', AGED_DAYS);
+  const aged = plant(parent, `${MINE}bbbbbb`, AGED_DAYS);
   const r = run(parent);
   assert.strictEqual(r.status, 0);
   assert.ok(fs.existsSync(aged), 'a bare run must leave the directory on disk');
@@ -69,11 +80,11 @@ test('a bare invocation removes nothing — dry-run is the default, not an optio
 
 test('--yes removes the aged matching root and spares everything else', () => {
   const parent = fixture();
-  const aged = plant(parent, 'clodex-cccccc', AGED_DAYS);
-  const fresh = plant(parent, 'clodex-dddddd', 0);
+  const aged = plant(parent, `${MINE}cccccc`, AGED_DAYS);
+  const fresh = plant(parent, `${MINE}dddddd`, 0);
   const foreign = plant(parent, 'somebody-eeeeee', AGED_DAYS);
-  const shortSuffix = plant(parent, 'clodex-short', AGED_DAYS);
-  const agedFile = path.join(parent, 'clodex-ffffff');
+  const shortSuffix = plant(parent, `${MINE}short`, AGED_DAYS);
+  const agedFile = path.join(parent, `${MINE}ffffff`);
   fs.writeFileSync(agedFile, 'not a directory');
   age(agedFile, AGED_DAYS);
 
@@ -82,14 +93,15 @@ test('--yes removes the aged matching root and spares everything else', () => {
   assert.ok(!fs.existsSync(aged), 'the aged matching root is the one thing that must go');
   assert.ok(fs.existsSync(fresh), 'a fresh root is a running suite\'s live fixture — the age gate must spare it');
   assert.ok(fs.existsSync(foreign), 'a prefix we do not mint belongs to another process');
-  assert.ok(fs.existsSync(shortSuffix), 'mkdtemp appends six characters; `clodex-short` was not minted by us');
+  assert.ok(fs.existsSync(shortSuffix),
+    `mkdtemp appends six characters; ${MINE}short was not minted by us`);
   assert.ok(fs.existsSync(agedFile), 'a matching FILE is not a scratch root');
 });
 
 test('--older-than widens the age gate but never reaches a root younger than it', () => {
   const parent = fixture();
-  const twoDays = plant(parent, 'clodex-gggggg', 2);
-  const tenDays = plant(parent, 'clodex-hhhhhh', 10);
+  const twoDays = plant(parent, `${MINE}gggggg`, 2);
+  const tenDays = plant(parent, `${MINE}hhhhhh`, 10);
 
   const narrow = run(parent, ['--older-than', '120']);
   assert.match(narrow.stdout, /would remove 1 director/,
@@ -111,7 +123,7 @@ test('a prefix carrying a regex metacharacter refuses the run instead of widenin
   assert.ok(block, 'ENTER: the PREFIXES block must be findable, or the poisoning below is a no-op');
 
   const poisoned = path.join(parent, 'poisoned-sweep.sh');
-  fs.writeFileSync(poisoned, original.replace(block[0], "\nPREFIXES='\nclodex-\n.*\n'\n"));
+  fs.writeFileSync(poisoned, original.replace(block[0], `\nPREFIXES='\n${MINE}\n.*\n'\n`));
 
   const victim = plant(parent, 'somebody-elses-data', AGED_DAYS);
   const r = cp.spawnSync('bash', [poisoned, '--yes'], {
@@ -126,7 +138,7 @@ test('a prefix carrying a regex metacharacter refuses the run instead of widenin
 
 test('a root whose INNER directory blocks removal is still counted as a survivor', () => {
   const parent = fixture();
-  const root = plant(parent, 'clodex-kkkkkk', AGED_DAYS, (dir) => {
+  const root = plant(parent, `${MINE}kkkkkk`, AGED_DAYS, (dir) => {
     fs.mkdirSync(path.join(dir, 'locked', 'deeper'), { recursive: true });
   });
   const inner = path.join(root, 'locked');
@@ -152,9 +164,9 @@ test('a root whose INNER directory blocks removal is still counted as a survivor
 
 test('a root that cannot be removed is reported, not fatal, and the rest of the batch still goes', () => {
   const parent = fixture();
-  const poisoned = plant(parent, 'clodex-iiiiii', AGED_DAYS,
+  const poisoned = plant(parent, `${MINE}iiiiii`, AGED_DAYS,
     (dir) => fs.mkdirSync(path.join(dir, 'inner'), { recursive: true }));
-  const ordinary = plant(parent, 'clodex-jjjjjj', AGED_DAYS);
+  const ordinary = plant(parent, `${MINE}jjjjjj`, AGED_DAYS);
   fs.chmodSync(poisoned, 0o000);
   try {
     const r = run(parent, ['--yes']);
