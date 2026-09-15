@@ -15,11 +15,13 @@
 #   scripts/tmp-sweep.sh --yes             # actually remove
 #
 # Deleting the wrong thing in $TMPDIR destroys another process's live data, so
-# every gate below fails CLOSED. Four of them, independently sufficient:
+# every gate below fails CLOSED:
 #   - dry-run unless --yes
 #   - an age floor of 1 hour (a running suite's roots are minutes old)
+#   - $TMPDIR must be a per-user temp dir, checked literal and resolved
 #   - direct children of $TMPDIR only, never followed through a symlink
-#   - names matching an enumerated prefix AND mkdtemp's own suffix shape
+#   - names matching an enumerated prefix AND mkdtemp's own suffix shape,
+#     with every prefix required to be free of regex metacharacters
 set -uo pipefail
 
 # Every prefix the suite mints, enumerated from the source rather than guessed:
@@ -644,7 +646,7 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die "--older-than needs a value (hours)"
       HOURS="$2"; shift ;;
     --older-than=*) HOURS="${1#*=}" ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^set -uo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument '$1'" ;;
   esac
   shift
