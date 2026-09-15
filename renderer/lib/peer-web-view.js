@@ -78,7 +78,7 @@ function tunnelPhase(webTunnel) {
 //   action   — 'open' | 'close' | null (what a click does)
 //   phase    — see tunnelPhase
 //   tip      — the button's tooltip/aria text
-//   url      — a live URL, or null. NEVER composed here.
+//   url      — a live FORWARD's URL, or null. Never composed, only relayed.
 //   tokenGated
 function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   const st = status || null;
