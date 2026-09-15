@@ -40,18 +40,38 @@ unioned with the helper so the role-resolved and started cases it covers are kep
 
 ## reapFromSnapshot
 
-Every discovered pid is signalled INDIVIDUALLY through `sigkillPid`, whose `> 0`
-refusal is the whole safety property — never a process group, never a negated pid,
-never a command-line match. `process.kill` reads a non-positive pid as a broadcast
-(-1 = every process the user may signal, 0 = our own process group), and a reaper
-walks a whole tree, so it multiplies that blast radius by every pid it finds. The
-guard's own header carries the incident: a fixture's `pid: -1` once SIGKILLed ~277
-processes three times over, swallowed by a bare `catch {}`.
+TWO guards, and the ORDER matters: ownership is checked before discovery is even
+consulted, because the sign of a pid says nothing about whose it is.
 
-Must run BEFORE `pty.kill()`. A descendant is found by its ppid chain back to the
-pty, and the kernel reparents the pty's children to init the moment it exits —
-where `walkPtyTree` deliberately does not follow. Run after the kill, the snapshot
-is empty exactly when there was something to reap.
+`ptyOwnership` is the primary one. A pty we spawned is always a DIRECT child of
+this process, so `ppid === ownerPid` is the ownership proof, and it reads from the
+same snapshot the walk uses — no second `ps`, no new seam. Only `ours` reaps;
+`foreign` warns and reaps nothing; `gone` is silent, because a pty that has
+already exited is the ordinary teardown race and not worth a line. This exists
+because the sign-only version took the operator's laptop down twice: `pid: 1` is
+POSITIVE, passes every `> 0` check, and launchd parents the entire machine — 542
+of 543 processes, measured with `descendantPids` against a live snapshot, and
+`killAll` would do it once per seat.
+
+`sigkillPid`'s `> 0` refusal is the second, applied to every discovered pid
+individually — never a process group, never a negated pid, never a command-line
+match. `process.kill` reads a non-positive pid as a broadcast, and a fixture's
+`pid: -1` once SIGKILLed ~277 processes three times over, swallowed by a bare
+`catch {}`.
+
+Must run BEFORE `pty.kill()`, and that ordering now carries both guards. A
+descendant is found by its ppid chain back to the pty, and the kernel reparents
+the pty's children to init the moment it exits — where `walkPtyTree` deliberately
+does not follow. It is also what makes the ownership proof available at all: once
+the pty has exited it is no longer in the snapshot, so ownership reads `gone` and
+the reap is skipped.
+
+`ownerPid` defaults to `process.pid` and that default is correct for all three
+call sites, which run in the engine — the process that spawns every pty. It is
+safe rather than a trap because it fails CLOSED in both directions: a caller
+reaping on behalf of some other process, or called from a process that did not
+spawn the pty, reads `foreign` and reaps nothing, loudly. Forgetting it costs a
+missed reap and a log line, never a wider blast radius.
 
 ## psSnapshotSync
 
