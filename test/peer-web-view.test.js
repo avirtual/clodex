@@ -5,12 +5,12 @@
 // WHEN the button shows, what it says, and whether a URL may be shown lives
 // here, where it can be asserted.
 //
-// The two rules it enforces, both from t30:
-//   • no URL before there is a live one — the affordance never composes one, and
-//     peer-tunnel's dead-peer sentinel http://127.0.0.1:1 must never surface as
-//     a web link;
-//   • a token-gated box is not a link — web-host answers a bare 401, so the
-//     affordance says the box needs a token rather than promising a click.
+// The rules it enforces: no TUNNEL url before there is a live one (t30) — the
+// dead-peer sentinel http://127.0.0.1:1 is not a web link; a token-gated box is
+// not a link (t30) — web-host answers a bare 401; and the route is TOLD, not
+// inferred (t925) — `status.direct` picks the arm, because the tunnel row it was
+// read from before is seeded only after the first repaint. Assert the TIP and
+// not just `url`: t925's wrong address rode the tip while `url` stayed null.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -19,14 +19,16 @@ const { webViewAffordance, tunnelPhase, isSshPeer } = require('../renderer/lib/p
 
 const sshTunnel = { id: 'p1', sshHost: 'box', state: 'up', localPort: 40001 };
 const online = (webHost) => ({ id: 'p1', label: 'box', host: 'box', online: true, webHost });
+const urlPeer = (webHost, url) => ({ ...online(webHost), url, direct: true });
 const WEB = { port: 8080, tokenGated: false };
 const WEB_GATED = { port: 8080, tokenGated: true };
 
 // ── The URL rule ─────────────────────────────────────────────────────────────
 
-test('SECURITY-adjacent: no URL is ever produced unless the tunnel is UP and reported one', () => {
+test('SECURITY-adjacent: no tunnel URL is ever produced unless the tunnel is UP and reported one', () => {
   // The affordance is never allowed to assemble `http://127.0.0.1:${port}` from
-  // a pinned-but-not-forwarded port — a port that is reserved is not a service.
+  // a pinned-but-not-forwarded local port — a port that is reserved is not a
+  // service. t923's direct address is not a local port and rides the tip.
   const cases = [
     undefined,
     { id: 'p1', state: 'down', url: null, localPort: 40001 },
@@ -127,17 +129,41 @@ test('gave-up with no error text still reads as a retry, not as a broken tip', (
   assert.doesNotMatch(a.tip, /undefined|null|\(\)/, 'no placeholder text leaks into the UI');
 });
 
-// ── The url-only limitation, stated rather than hidden ───────────────────────
+// ── t923: the url-kind peer OPENS, and its tip carries the address ───────────
 
-test('a URL-only peer gets a DISABLED button — never a silent absence', () => {
-  // Hiding it would read as "this box has no web UI", which is a different and
-  // false claim: the box may well serve one, we just cannot tunnel to it.
-  const a = webViewAffordance({ status: online(WEB), tunnel: null });
-  assert.equal(a.show, true, 'the limitation is visible');
-  assert.equal(a.enabled, false, 'but not clickable');
-  assert.equal(a.action, null);
-  assert.match(a.tip, /reached by URL/i, 'and it says why');
-  assert.strictEqual(a.url, null);
+test('t923 PIN: a url-kind peer gets an ENABLED button whose tip names the composed address', () => {
+  const a = webViewAffordance({
+    status: urlPeer(WEB, 'https://box.example:7900'), tunnel: null,
+  });
+  assert.equal(a.show, true);
+  assert.equal(a.enabled, true, 'the arrow refused BECAUSE there was no tunnel — the one case needing none');
+  assert.equal(a.action, 'open');
+  assert.match(a.tip, /https:\/\/box\.example:8080/, 'the peer\'s own host and its ADVERTISED port');
+  assert.doesNotMatch(a.tip, /localhost|127\.0\.0\.1/,
+    'never a loopback: a tip composed from localhost passes on the dev box and lies on the next one');
+  assert.doesNotMatch(a.tip, /can only tunnel/i, 'and the refusal sentence is gone');
+  assert.strictEqual(a.url, null,
+    'and `url` still means only "a live forward reports this" — the direct address rides the tip');
+});
+
+test('t923: a url-kind peer whose OWN url is unreadable keeps the disabled button, never a hidden one', () => {
+  for (const url of [undefined, null, '', 'not a url', 'ftp://box.example', '127.0.0.1:7900']) {
+    const a = webViewAffordance({ status: urlPeer(WEB, url), tunnel: null });
+    assert.equal(a.show, true,
+      `${JSON.stringify(url)}: hiding it would read as "this box has no web UI", a different and false claim`);
+    assert.equal(a.enabled, false, `${JSON.stringify(url)}: but there is no address to offer, so not clickable`);
+    assert.equal(a.action, null);
+    assert.doesNotMatch(a.tip, /undefined|null|http/, `${JSON.stringify(url)}: no half-composed address in the tip`);
+  }
+});
+
+test('t923: a GATED url peer is still not a link — the tip says token and names the address to append it to', () => {
+  const a = webViewAffordance({
+    status: urlPeer(WEB_GATED, 'https://box.example'), tunnel: null,
+  });
+  assert.equal(a.tokenGated, true);
+  assert.match(a.tip, /token/i, 'the gate is stated');
+  assert.match(a.tip, /https:\/\/box\.example:8080/, 'with the address to append it to');
 });
 
 test('t36: a CLOUD peer gets a real, ENABLED button — the ssh-only refusal is gone', () => {
@@ -202,12 +228,29 @@ test('every tip names the transport the operator is ACTUALLY getting', () => {
   // And an ssh peer still says ssh — the phrase is per-transport, not removed.
   const ssh = webViewAffordance({ status: online(WEB), tunnel: { id: 'p1', sshHost: 'box' } });
   assert.match(ssh.tip, /over ssh/, 'an ssh peer is still described as ssh');
+
+  for (const [tunnel, phase] of [[undefined, 'closed'], [null, 'closed']]) {
+    const a = webViewAffordance({ status: { ...online(WEB), direct: false }, tunnel });
+    assert.equal(a.phase, phase);
+    assert.doesNotMatch(a.tip, /over /,
+      `tunnel=${JSON.stringify(tunnel)}: no transport is named — transportPhrase falls back to 'over ssh', the `
+      + 'same map-miss guess t925 took out of the ROUTE decision, and it would tell a kubectl operator in the '
+      + 'pre-seed window to debug an ssh they never use');
+    assert.doesNotMatch(a.tip, /\s{2}|\s+…|\s+—/, 'and no gap is left where the phrase was');
+  }
+  const connectingRowless = webViewAffordance({
+    status: { ...online(WEB), direct: false }, tunnel: null, webTunnel: { id: 'p1', state: 'down' },
+  });
+  assert.equal(connectingRowless.phase, 'connecting',
+    'reachable row-less: a click in the pre-seed window sets peerWebTunnels while peerTunnels is still empty');
+  assert.doesNotMatch(connectingRowless.tip, /over /, 'the connecting tip names none either');
+  assert.doesNotMatch(connectingRowless.tip, /\s{2}|\s+…/, 'and reads cleanly without it');
 });
 
 test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees the peer record', () => {
   // Still the NARROW question (the deploy/setup flow is genuinely ssh-only:
   // it copies files and runs a shell, which a port-forward carries neither of).
-  // The web-view gate is isForwardablePeer, below — they must not be conflated.
+  // The web-view route is `status.direct`, below — they must not be conflated.
   assert.equal(isSshPeer({ sshHost: 'box' }), true);
   assert.equal(isSshPeer({ id: 'p1' }), false, 'a tunnel row with no ssh host is not ssh');
   assert.equal(isSshPeer({ kubectl: { target: 'svc/x' } }), false, 'a cloud peer is not an ssh peer');
@@ -215,15 +258,36 @@ test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees t
   assert.equal(isSshPeer(undefined), false);
 });
 
-test('isForwardablePeer: a tunnel row at all means Clodex dials it — url-only has none', () => {
-  const { isForwardablePeer } = require('../renderer/lib/peer-web-view');
-  assert.equal(isForwardablePeer({ sshHost: 'box' }), true);
-  for (const kind of ['ssm', 'kubectl', 'gcloud', 'az']) {
-    assert.equal(isForwardablePeer({ id: 'p1', [kind]: { target: 'x', instance: 'x', bastion: 'x' } }), true,
-      `${kind} is dialable — a kind missing here is a peer whose web view silently never opens`);
+test('t925 PIN: before the tunnel rows are seeded, a forwardable peer keeps the TUNNEL tip — no loopback in it', () => {
+  for (const tunnel of [undefined, null]) {
+    const a = webViewAffordance({
+      status: { ...online(WEB), url: 'http://127.0.0.1:40001', direct: false }, tunnel,
+    });
+    const what = `tunnel=${JSON.stringify(tunnel)}`;
+    assert.doesNotMatch(a.tip, /127\.0\.0\.1|localhost/,
+      `${what}: onPeerState repaints before peerList seeds the rows, so a forwardable peer really does paint `
+      + 'row-less while resolvePeerUrls has rewritten its status.url to the forward`s own loopback. Reading the '
+      + 'miss as "url peer" composed an address from it — and the TIP is where that showed, while a.url stayed null');
+    assert.doesNotMatch(a.tip, /no tunnel needed/i, `${what}: a forward is exactly what this peer needs`);
+    assert.match(a.tip, /^Open box's web UI/, `${what}: it falls to the ordinary open arm`);
+    assert.doesNotMatch(a.tip, /over /,
+      `${what}: and names NO transport — with no row, the kind is unconfirmed, and "over ssh" at a kubectl peer `
+      + 'is the false-but-plausible sentence t36 removed. transportPhrase defaults to ssh, so it must not be asked');
+    assert.strictEqual(a.url, null, `${what}: and still no url before a live forward reports one`);
   }
-  assert.equal(isForwardablePeer(null), false, 'a url-only peer has no tunnel row');
-  assert.equal(isForwardablePeer({ id: 'p1' }), false, 'and neither has a row with no transport');
+});
+
+test('t925: `direct` is read as a strict fact — an absent or non-true value is never the direct route', () => {
+  for (const direct of [undefined, null, false, 0, '', 'true', 1, {}]) {
+    const a = webViewAffordance({
+      status: { ...online(WEB), url: 'https://box.example:7900', direct }, tunnel: null,
+    });
+    assert.doesNotMatch(a.tip, /box\.example:8080/,
+      `direct=${JSON.stringify(direct)}: only a strict true routes direct — a status from a main predating the `
+      + 'field must fall to the tunnel arms, because the direct arm is the one that PRODUCES an address');
+  }
+  const yes = webViewAffordance({ status: urlPeer(WEB, 'https://box.example:7900'), tunnel: null });
+  assert.match(yes.tip, /box\.example:8080/, 'and a strict true does');
 });
 
 // ── No web host reported ─────────────────────────────────────────────────────

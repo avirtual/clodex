@@ -133,6 +133,15 @@ function initPeersUi({
     }
     if (res.status) peerWebTunnels.set(id, res.status);
     renderPeers();
+    if (res.direct) {
+      showToast(
+        res.tokenGated
+          ? `${label}'s web UI is at ${res.url} — it needs a token, so open it with ?token=…`
+          : `Opened ${label}'s web UI at ${res.url}.`,
+        { kind: res.tokenGated ? 'warm' : 'peer-ui' },
+      );
+      return;
+    }
     showToast(
       a.tokenGated
         ? `${label}'s web UI needs a token — connecting over ssh, then you'll get the URL to open with ?token=…`

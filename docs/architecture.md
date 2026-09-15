@@ -644,6 +644,11 @@ accept teardown removes.
   "look at that box's GUI" is a click. Same supervisor as `peer-tunnel.js` under
   different policy; the file says only what makes a web-view forward different,
   and each difference is a parameter rather than a fork.
+- **peer-web-url.js** — the web-UI address of a peer Clodex reaches by plain
+  URL: its own scheme and host, the port its hello advertises. The one producer
+  for both halves of that open — main pops what it returns and the renderer's
+  tip promises it — so the tooltip cannot name an address the click does not go
+  to. Pure leaf, `null` on anything it cannot read rather than a guess.
 - **peer-deploy.js** + **ssh-run.js** — deploy-wizard classification +
   one-shot ssh transport.
 - **peer-input-queue.js** — PendingInput buffer behind type-to-take.

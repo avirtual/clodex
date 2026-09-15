@@ -34177,13 +34177,31 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     }
   });
 
+  // peer-web-url.js
+  var require_peer_web_url = __commonJS({
+    "peer-web-url.js"(exports, module) {
+      "use strict";
+      function directWebUrl(peerUrl, port) {
+        if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+        let u;
+        try {
+          u = new URL(String(peerUrl));
+        } catch {
+          return null;
+        }
+        if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+        if (!u.hostname) return null;
+        return `${u.protocol}//${u.hostname}:${port}`;
+      }
+      module.exports = { directWebUrl };
+    }
+  });
+
   // renderer/lib/peer-web-view.js
   var require_peer_web_view = __commonJS({
     "renderer/lib/peer-web-view.js"(exports, module) {
       "use strict";
-      function isForwardablePeer(tunnel) {
-        return !!(tunnel && (tunnel.sshHost || cloudTransportName(tunnel)));
-      }
+      var { directWebUrl } = require_peer_web_url();
       function isSshPeer(tunnel) {
         return !!(tunnel && tunnel.sshHost);
       }
@@ -34216,21 +34234,33 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const st = status || null;
         const webHost = st && st.webHost;
         const phase = tunnelPhase(webTunnel);
-        const forwardable = isForwardablePeer(tunnel);
-        const how = transportPhrase(tunnel);
+        const direct = !!(st && st.direct === true);
+        const how = tunnel ? ` ${transportPhrase(tunnel)}` : "";
         const label = st && (st.host || st.label) || "peer";
         const tokenGated = !!(webHost && webHost.tokenGated === true);
         const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
         if (!webHost && phase === "closed") return { show: false, enabled: false, action: null, phase, tip: "", url: null, tokenGated };
-        if (!forwardable && phase === "closed") {
+        if (direct && phase === "closed") {
+          const address = directWebUrl(st && st.url, webHost && webHost.port);
+          if (!address) {
+            return {
+              show: true,
+              enabled: false,
+              action: null,
+              phase,
+              url: null,
+              tokenGated,
+              tip: `${label}'s address can't be read, so there is nothing to open`
+            };
+          }
           return {
             show: true,
-            enabled: false,
-            action: null,
+            enabled: true,
+            action: "open",
             phase,
             url: null,
             tokenGated,
-            tip: `${label} is reached by URL \u2014 Clodex can only tunnel to a web UI over a transport it dials itself`
+            tip: tokenGated ? `${label}'s web UI is at ${address} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI at ${address} \u2014 no tunnel needed`
           };
         }
         if (phase === "open") {
@@ -34252,7 +34282,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             phase,
             url: null,
             tokenGated,
-            tip: `Connecting to ${label}'s web UI ${how}\u2026 click to cancel`
+            tip: `Connecting to ${label}'s web UI${how}\u2026 click to cancel`
           };
         }
         if (phase === "gave-up") {
@@ -34274,14 +34304,13 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           phase,
           url: null,
           tokenGated,
-          tip: tokenGated ? `Open ${label}'s web UI ${how} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI ${how}`
+          tip: tokenGated ? `Open ${label}'s web UI${how} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI${how}`
         };
       }
       module.exports = {
         webViewAffordance,
         tunnelPhase,
         isSshPeer,
-        isForwardablePeer,
         cloudTransportName,
         transportPhrase
       };
@@ -34475,6 +34504,13 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           }
           if (res.status) peerWebTunnels.set(id, res.status);
           renderPeers();
+          if (res.direct) {
+            showToast(
+              res.tokenGated ? `${label}'s web UI is at ${res.url} \u2014 it needs a token, so open it with ?token=\u2026` : `Opened ${label}'s web UI at ${res.url}.`,
+              { kind: res.tokenGated ? "warm" : "peer-ui" }
+            );
+            return;
+          }
           showToast(
             a.tokenGated ? `${label}'s web UI needs a token \u2014 connecting over ssh, then you'll get the URL to open with ?token=\u2026` : `Opening ${label}'s web UI \u2014 connecting over ssh\u2026`,
             { kind: a.tokenGated ? "warm" : "peer-ui" }

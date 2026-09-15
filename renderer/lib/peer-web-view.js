@@ -4,31 +4,31 @@
 // and untested by the R1 rule, so everything here that could be gotten wrong
 // lives in this leaf instead.
 //
-// Two rules this file exists to enforce, both from t30:
+// Three rules this file exists to enforce:
 //
-//   • NO URL BEFORE THERE IS A LIVE ONE. The affordance never composes a URL —
-//     the only URL is the one the supervisor reports while its forward is up.
-//     (peer-tunnel's dead-peer sentinel http://127.0.0.1:1 is a wire-tunnel
-//     placeholder and must never surface as a web link.)
-//   • A TOKEN-GATED BOX IS NOT A LINK. web-host.js answers an unauthenticated
-//     request with a bare 401 — no login form — and a freshly opened tab carries
-//     no ?token=/Bearer/cookie. So a gated peer's affordance says the box needs
-//     a token rather than promising something to click.
+//   • NO TUNNEL URL BEFORE THERE IS A LIVE ONE (t30). The `url` field carries
+//     only what the supervisor reports while its forward is up; a
+//     pinned-but-unbound local port is not a service, and peer-tunnel's
+//     dead-peer sentinel http://127.0.0.1:1 must never surface as a web link.
+//     t923's direct address is not a forward and not bound by this — see the
+//     url-kind arm.
+//   • A TOKEN-GATED BOX IS NOT A LINK (t30). web-host.js answers an
+//     unauthenticated request with a bare 401 — no login form — and a freshly
+//     opened tab carries no ?token=/Bearer/cookie. So a gated peer's affordance
+//     says the box needs a token rather than promising something to click.
+//   • NEVER GUESS WHICH ROUTE A PEER TAKES (t925). Which arm a closed-phase peer
+//     gets is read from `status.direct`, which main sets from the same
+//     destinationOf a click is routed with. Inferring it from a missing tunnel
+//     row promised an ssh peer a loopback address during the window before the
+//     rows are seeded.
 //
-// A peer reached by plain URL has no transport Clodex can drive a forward over,
-// so the affordance says so rather than silently hiding. That is now the ONLY
-// such peer: between t30 and t36 a cloud-transport peer was refused here too
-// (the supervisor could only build an `ssh -L`), and the tip said "Clodex can
-// only tunnel to a web UI over ssh" — a sentence that was true when written and
-// false one release later. It is gone; a cloud peer gets a real button.
+// Both ROUTING refusals this file used to state are gone: a cloud peer's at t36
+// ("Clodex can only tunnel to a web UI over ssh" — true when written, false one
+// release later), a url peer's at t923. See docs/notes/renderer-lib-peer-web-view.md.
 
 'use strict';
 
-// Is this peer reached over a transport Clodex dials itself? The wire tunnel row
-// IS the signal on this side — the renderer never sees the peer record. A row
-// exists for exactly the peers TunnelManager could dial, so its mere presence is
-// the answer; a url-only peer has no row at all.
-function isForwardablePeer(tunnel) { return !!(tunnel && (tunnel.sshHost || cloudTransportName(tunnel))); }
+const { directWebUrl } = require('../../peer-web-url');
 
 // Kept for callers that need the narrower question (ssh specifically — e.g. the
 // deploy/setup flow, which copies files and runs a shell and genuinely is ssh-only).
@@ -78,14 +78,14 @@ function tunnelPhase(webTunnel) {
 //   action   — 'open' | 'close' | null (what a click does)
 //   phase    — see tunnelPhase
 //   tip      — the button's tooltip/aria text
-//   url      — a live URL, or null. NEVER composed here.
+//   url      — a live FORWARD's URL, or null. Never composed, only relayed.
 //   tokenGated
 function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   const st = status || null;
   const webHost = st && st.webHost;
   const phase = tunnelPhase(webTunnel);
-  const forwardable = isForwardablePeer(tunnel);
-  const how = transportPhrase(tunnel);
+  const direct = !!(st && st.direct === true);
+  const how = tunnel ? ` ${transportPhrase(tunnel)}` : '';
   const label = (st && (st.host || st.label)) || 'peer';
   // `=== true`, matching peer-client's hello normalization (the single producer,
   // which already coerces to a strict boolean) and peer-wiring's pop decision.
@@ -103,13 +103,21 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   // to prevent, and hiding its only close button would be the same bug.
   if (!webHost && phase === 'closed') return { show: false, enabled: false, action: null, phase, tip: '', url: null, tokenGated };
 
-  if (!forwardable && phase === 'closed') {
-    // The url-only limitation, stated rather than hidden — a silently missing
-    // button reads as "this box has no web UI", which is a different and false
-    // claim. (Before t36 a cloud peer landed here too; it no longer does.)
+  if (direct && phase === 'closed') {
+    const address = directWebUrl(st && st.url, webHost && webHost.port);
+    if (!address) {
+      // Shown-but-disabled, not hidden — a silently missing button reads as
+      // "this box has no web UI", which is a different and false claim.
+      return {
+        show: true, enabled: false, action: null, phase, url: null, tokenGated,
+        tip: `${label}'s address can't be read, so there is nothing to open`,
+      };
+    }
     return {
-      show: true, enabled: false, action: null, phase, url: null, tokenGated,
-      tip: `${label} is reached by URL — Clodex can only tunnel to a web UI over a transport it dials itself`,
+      show: true, enabled: true, action: 'open', phase, url: null, tokenGated,
+      tip: tokenGated
+        ? `${label}'s web UI is at ${address} — the box requires a token, so you'll get a URL to open with ?token=…`
+        : `Open ${label}'s web UI at ${address} — no tunnel needed`,
     };
   }
 
@@ -124,7 +132,7 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   if (phase === 'connecting') {
     return {
       show: true, enabled: true, action: 'close', phase, url: null, tokenGated,
-      tip: `Connecting to ${label}'s web UI ${how}… click to cancel`,
+      tip: `Connecting to ${label}'s web UI${how}… click to cancel`,
     };
   }
   if (phase === 'gave-up') {
@@ -137,12 +145,12 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   return {
     show: true, enabled: true, action: 'open', phase, url: null, tokenGated,
     tip: tokenGated
-      ? `Open ${label}'s web UI ${how} — the box requires a token, so you'll get a URL to open with ?token=…`
-      : `Open ${label}'s web UI ${how}`,
+      ? `Open ${label}'s web UI${how} — the box requires a token, so you'll get a URL to open with ?token=…`
+      : `Open ${label}'s web UI${how}`,
   };
 }
 
 module.exports = {
-  webViewAffordance, tunnelPhase, isSshPeer, isForwardablePeer,
+  webViewAffordance, tunnelPhase, isSshPeer,
   cloudTransportName, transportPhrase,
 };
