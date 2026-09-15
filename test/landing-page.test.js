@@ -64,6 +64,10 @@ test('every reference is a github.com/clodex.sh anchor or a real file under docs
     }
     const local = value.split('#')[0].split('?')[0];
     if (!local) continue;
+    if (/\.md$/i.test(local)) {
+      bad.push(`${where}: ${value} — Pages does not render .md; link https://github.com/avirtual/clodex/blob/master/docs/<file>.md instead`);
+      continue;
+    }
     const resolved = path.join(DOCS, local);
     if (!fs.existsSync(resolved)) bad.push(`${where}: ${value} — no such file under docs/`);
   }
