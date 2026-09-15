@@ -43,35 +43,35 @@ unioned with the helper so the role-resolved and started cases it covers are kep
 TWO guards, and the ORDER matters: ownership is checked before discovery is even
 consulted, because the sign of a pid says nothing about whose it is.
 
-`ptyOwnership` is the primary one. A pty we spawned is always a DIRECT child of
-this process, so `ppid === ownerPid` is the ownership proof, and it reads from the
-same snapshot the walk uses — no second `ps`, no new seam. Only `ours` reaps;
-`foreign` warns and reaps nothing; `gone` is silent, because a pty that has
-already exited is the ordinary teardown race and not worth a line. This exists
-because the sign-only version took the operator's laptop down twice: `pid: 1` is
-POSITIVE, passes every `> 0` check, and launchd parents the entire machine — 542
-of 543 processes, measured with `descendantPids` against a live snapshot, and
-`killAll` would do it once per seat.
+`ptyOwnership` is the primary one: a pty we spawned is always a DIRECT child of
+this process, so `ppid === ownerPid` proves it, read from the same snapshot the
+walk uses — no second `ps`, no new seam. Only `ours` reaps; `foreign` warns and
+reaps nothing; `gone` is silent (an exited pty is the ordinary teardown race).
+The sign-only version took the operator's laptop down twice: `pid: 1` is POSITIVE,
+passes every `> 0` check, and launchd parents the machine — 542 of 543 processes,
+measured, and `killAll` would do it once per seat. `test/term-marks-bash.test.js`
+pins the ppid assumption against a real node-pty, because if node-pty ever puts a
+helper in between, every reap silently becomes a no-op.
 
 `sigkillPid`'s `> 0` refusal is the second, applied to every discovered pid
-individually — never a process group, never a negated pid, never a command-line
-match. `process.kill` reads a non-positive pid as a broadcast, and a fixture's
-`pid: -1` once SIGKILLed ~277 processes three times over, swallowed by a bare
-`catch {}`.
+individually — never a group, never a negated pid, never a command-line match.
 
-Must run BEFORE `pty.kill()`, and that ordering now carries both guards. A
-descendant is found by its ppid chain back to the pty, and the kernel reparents
-the pty's children to init the moment it exits — where `walkPtyTree` deliberately
-does not follow. It is also what makes the ownership proof available at all: once
-the pty has exited it is no longer in the snapshot, so ownership reads `gone` and
-the reap is skipped.
+Must run BEFORE `pty.kill()`, and that ordering carries both guards: the kernel
+reparents the pty's children to init the moment it exits, where `walkPtyTree`
+does not follow, and the pty's own row is what the ownership proof needs.
 
-`ownerPid` defaults to `process.pid` and that default is correct for all three
-call sites, which run in the engine — the process that spawns every pty. It is
-safe rather than a trap because it fails CLOSED in both directions: a caller
-reaping on behalf of some other process, or called from a process that did not
-spawn the pty, reads `foreign` and reaps nothing, loudly. Forgetting it costs a
-missed reap and a log line, never a wider blast radius.
+`ownerPid` defaults to `process.pid`, correct for all three call sites (all in the
+engine, which spawns every pty). Safe rather than a trap because it fails CLOSED
+both ways: the wrong answer is always `foreign`/`gone` — reap nothing, plus a log
+line — never a wider blast radius.
+
+## kill
+
+The 5-second backstop `setTimeout` is armed SYNCHRONOUSLY, before the
+`await reapPtyDescendants(...)`, with `ptyPid` hoisted for the same reason.
+Fixtures mock `setTimeout`, call `kill()` un-awaited, and end their turn — so a
+backstop armed a few microtask hops later races the runner's `mock.reset()`, and
+when the reset wins a REAL five-second timer is armed on a fixture pid.
 
 ## psSnapshotSync
 

@@ -2868,9 +2868,10 @@ function createSessionManager(deps) {
       }
       try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
-      await reapPtyDescendants({ ptyPid: s.pty.pid, name, log, childProcess });
+      const ptyPid = s.pty.pid;
+      setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess });
       try { s.pty.kill(); } catch {}
-      setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
     // Poll the map the kill path actually releases. engine.js has its own copy
@@ -2951,9 +2952,10 @@ function createSessionManager(deps) {
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
-      await reapPtyDescendants({ ptyPid: s.pty.pid, name, log, childProcess });
+      const ptyPid = s.pty.pid;
+      setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess });
       try { s.pty.kill(); } catch {}
-      setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
     _renameDirs(oldName, newName) {

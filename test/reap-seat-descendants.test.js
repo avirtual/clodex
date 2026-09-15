@@ -74,8 +74,38 @@ function seat(m, name, pid) {
   return s;
 }
 
+// ── The file-scoped signal fence ──
+//
+// Installed for the WHOLE file, not per subject, because the thing that escapes a
+// per-subject stub is the 5-second backstop: `kill()` arms
+// `setTimeout(() => sigkillPid(s.pty.pid, ...), 5000)` with a real timer, and a
+// `finally` that restores `process.kill` the instant `await m.kill(...)` resolves
+// tears the stub down about five seconds BEFORE that timer fires. Node will not
+// exit with the timer pending, so it is guaranteed to fire, not merely likely —
+// against the restored, real `process.kill`. Review round 1 measured what this
+// file did before the fence: five real `SIGKILL`s at pid 4242 and one at pid 1,
+// every single run. 4242 is an ordinary live pid on a box that has been up a
+// while, which is this file's own argument from its header.
+//
+// Only pids THIS FILE spawned are allowed through to the OS. Everything else is
+// recorded. That is what makes the header's claim — a test for a guard against
+// killing the machine must not kill the machine — true of the file as written,
+// and it covers the real-tree subjects' trailing backstop too: that one signals
+// an already-dead `sh.pid`, which is a pid-recycle window of its own.
+const realKill = process.kill.bind(process);
+const spawnedByUs = new Set();
+let signalled = [];
+
+process.kill = (pid, sig) => {
+  if (spawnedByUs.has(pid)) return realKill(pid, sig);
+  signalled.push({ pid, sig });
+  return true;
+};
+
+// `alive` and `reapFixture` must reach the real OS: they only ever ask about, or
+// clean up, pids this file spawned.
 function alive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { realKill(pid, 0); return true; } catch { return false; }
 }
 
 async function goneWithin(pid, ms) {
@@ -95,21 +125,28 @@ async function goneWithin(pid, ms) {
 // the shell execs it and REPLACES itself — one process, no descendant, and the
 // tree this file needs never exists. The ENTER subject caught exactly that.
 function spawnTree() {
-  return childProcess.spawn('/bin/sh', ['-c', 'sleep 120; :'], { stdio: 'ignore' });
+  const sh = childProcess.spawn('/bin/sh', ['-c', 'sleep 120; :'], { stdio: 'ignore' });
+  spawnedByUs.add(sh.pid);
+  return sh;
 }
 
+// The discovered child joins the allowlist: the real-tree subjects require the
+// reaper's SIGKILL to actually reach it, since what they assert is that a real
+// process DIED. Only ever called on a shell this file spawned.
 function childPidOf(parentPid) {
   const out = childProcess.execFileSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' });
   const kids = out.split('\n').map((l) => l.trim().split(/\s+/))
     .filter((f) => f.length === 2 && Number(f[1]) === parentPid)
     .map((f) => Number(f[0]));
-  return kids.length ? kids[0] : null;
+  if (!kids.length) return null;
+  spawnedByUs.add(kids[0]);
+  return kids[0];
 }
 
 // Cleanup runs even when an assertion throws: a leaked `sleep 120` is this
 // file's own version of the orphan it exists to pin.
 function reapFixture(...pids) {
-  for (const p of pids) { if (p > 0) { try { process.kill(p, 'SIGKILL'); } catch {} } }
+  for (const p of pids) { if (p > 0) { try { realKill(p, 'SIGKILL'); } catch {} } }
 }
 
 test('ENTER: the fixture really does build a live descendant under the seat pid', async () => {
@@ -179,8 +216,9 @@ test('archive(): a real descendant of the seat pty is dead afterwards', async ()
 // a stale pid the OS has recycled — and nothing but a real ownership proof
 // refuses it.
 //
-// Nothing here signals anything — process.kill is captured. A test for a guard
-// against killing the machine must not kill the machine when the guard is gone.
+// Nothing here reaches the OS: the file-scoped fence records every pid this file
+// did not spawn, the 5-second backstop included. A test for a guard against
+// killing the machine must not kill the machine when the guard is gone.
 const FOREIGN_TREES = [
   {
     what: 'pid 1 (launchd), the shape that took the machine down',
@@ -202,23 +240,23 @@ for (const tree of FOREIGN_TREES) {
     const m = mkManager({ info: () => {}, warn: (_c, msg) => warned.push(String(msg)), error: () => {} });
 
     const realExecFile = childProcess.execFile;
-    const realKill = process.kill;
-    const seen = [];
+    signalled = [];
     childProcess.execFile = (file, args, opts, cb) => {
       const done = typeof opts === 'function' ? opts : cb;
       done(null, tree.rows, '');
       return { on() {} };
     };
-    process.kill = (pid, sig) => { seen.push({ pid, sig }); };
     try {
       seat(m, 'dummy', tree.ptyPid);
       await m.kill('dummy');
     } finally {
       childProcess.execFile = realExecFile;
-      process.kill = realKill;
     }
 
-    assert.deepStrictEqual(seen, [],
+    // The pty pid itself is excluded, not overlooked: `pty.kill()` and its
+    // 5-second backstop are the seat's OWN pre-existing path and are not what
+    // this subject is about. What must be empty is everything BENEATH it.
+    assert.deepStrictEqual(signalled.filter((c) => c.pid !== tree.ptyPid), [],
       `the reaper signalled beneath pty pid ${tree.ptyPid}, which this process does not own. pid 1 is launchd: `
       + 'every process on the box is its descendant, and this suite seeds `pty: { pid: 1 }` in dozens of '
       + 'fixtures — it reaped 542 of 543 processes on the operator\'s laptop, twice, during a suite run. But '
@@ -238,23 +276,20 @@ for (const tree of FOREIGN_TREES) {
 test('ENTER: the same shape, owned, really does reap — so the refusal above is the guard', async () => {
   const m = mkManager();
   const realExecFile = childProcess.execFile;
-  const realKill = process.kill;
-  const seen = [];
+  signalled = [];
   childProcess.execFile = (file, args, opts, cb) => {
     const done = typeof opts === 'function' ? opts : cb;
     done(null, `4242 ${process.pid} 0:01.00\n500 4242 0:02.00\n502 500 0:04.00\n`, '');
     return { on() {} };
   };
-  process.kill = (pid, sig) => { seen.push({ pid, sig }); };
   try {
     seat(m, 'owned', 4242);
     await m.kill('owned');
   } finally {
     childProcess.execFile = realExecFile;
-    process.kill = realKill;
   }
 
-  assert.deepStrictEqual(seen.map((c) => c.pid).sort((a, b) => a - b), [500, 502],
+  assert.deepStrictEqual(signalled.filter((c) => c.pid !== 4242).map((c) => c.pid).sort((a, b) => a - b), [500, 502],
     'an OWNED tree must still be reaped, descendants-of-descendants included. If this is empty the ownership '
     + 'guard is refusing everything and the reaper does nothing at all, which the absence-assertions above '
     + 'cannot distinguish from working correctly.');
@@ -270,12 +305,11 @@ for (const bad of BROADCAST_PIDS) {
     const m = mkManager({ info: () => {}, warn: (_c, msg) => warned.push(String(msg)), error: () => {} });
 
     // Discovery is faked at the `ps` seam so a non-positive pid arrives the only
-    // way it could in production — out of the snapshot itself. Capturing rather
-    // than executing process.kill is deliberate: if the guard is missing this
-    // test must REPORT the broadcast, never perform it on the developer's box.
+    // way it could in production — out of the snapshot itself. Recording rather
+    // than executing is the fence's doing: if the guard is missing this test must
+    // REPORT the broadcast, never perform it on the developer's box.
     const realExecFile = childProcess.execFile;
-    const realKill = process.kill;
-    const seen = [];
+    signalled = [];
     // The seat pty is parented to OUR pid, not to 1: the ownership guard refuses
     // a tree it does not own before discovery is consulted, so a snapshot that
     // fails ownership would vacuum this subject out — it would pass with nothing
@@ -286,16 +320,14 @@ for (const bad of BROADCAST_PIDS) {
       done(null, `4242 ${process.pid} 0:01.00\n${bad} 4242 0:02.00\n`, '');
       return { on() {} };
     };
-    process.kill = (pid, sig) => { seen.push({ pid, sig }); };
     try {
       seat(m, 'z', 4242);
       await m.kill('z');
     } finally {
       childProcess.execFile = realExecFile;
-      process.kill = realKill;
     }
 
-    assert.deepStrictEqual(seen.filter((c) => !(c.pid > 0)), [],
+    assert.deepStrictEqual(signalled.filter((c) => !(c.pid > 0)), [],
       `the reaper passed pid ${bad} to process.kill. Non-positive pids are BROADCASTS, not ids: -1 signals `
       + 'every process the user may signal (this really happened — ~277 processes, three times, through a '
       + 'bare `catch {}`) and 0 signals our own process group. A reaper walks a whole TREE, so it multiplies '
