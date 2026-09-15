@@ -38,3 +38,13 @@ writing looks freshly born and that membership test weakens to nothing.
 
 Each probe is ~26ms of SYNCHRONOUS work on the Electron main thread, so `PROBE_BACKOFF_MS` stops
 a never-resolving call paying that twice a second (5.2% -> 0.30% duty cycle over 5 minutes).
+
+## `isGone`
+
+`fs.watch` can drop an unlink notification ENTIRELY, not merely deliver it late: with four
+write+unlink loops running alongside, 0 events arrived in 15s, at a 200ms poll as well as a
+10ms one, while raw `fs.watch` in isolation lost 0 of 10. `retire` is reachable only from that
+event, so before this probe a vanished file left the row `finished: false` forever -- and since
+`FINALIZED_GRACE_MS` counts from `finishedAt`, the grace never started and the row leaked
+rather than expiring. Reconciling in `read` puts finalize latency at 0-1ms idle and under churn
+alike. Only ENOENT/ENOTDIR count as gone: EACCES and EIO mean unreadable, not finished.
