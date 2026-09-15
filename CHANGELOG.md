@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.69.0 — 2026-09-16
+
 - clodex.sh is a real landing page now. What it served was an animated "How it
   works" explainer last touched when the product was v3.5 — no install path, no
   link to the repo, and no sign of teams, peering, `clodexctl`, headless nodes,
