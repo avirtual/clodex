@@ -130,8 +130,7 @@ async function dialogDisabledSkills(engine, mode, {
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],
       window: { api: { getSkillCatalogFor: async () => catalog } },
-      // The rest of populateChecklistsFromCatalogs. Only the skill arm is real;
-      // the others draw categories this file says nothing about.
+      // The rest of populateChecklistsFromCatalogs — only its skill arm is real.
       setAgentLibCache: noop, renderAgentChecklist: noop,
       setSkillLibCache: noop, renderInjectChecklist: noop,
       setClaudeToolsCache: noop, renderToolChecklist: noop, renderBuiltinChecklist: noop,
@@ -351,8 +350,6 @@ test('t918 pin 3: standard writes no skill denial, and an explicit empty choice 
     "the operator's own skill list, verbatim and undeferred");
 });
 
-// --- r2: the paths that feed the collector something other than a host render --
-
 test('t918 pin 4: switching Placement to a sandbox re-asks for the floor, never this Mac\'s names', async () => {
   const box = freshBox();
   const host = await dialogDisabledSkills(box.engine, 'optimized');
@@ -391,9 +388,7 @@ test('t918 pin 5: a box create sends a plain list, because an old peer reads `!x
   assert.deepStrictEqual(skillDenyForPeer(['review', 'init']), ['review', 'init'],
     'a plain list is understood by every version and passes through');
 
-  // What the far box would do with it. This is the pre-t918 expandSkillsOff:
-  // `!dataviz` is not a directive to it, so it lands as a denied skill name AND
-  // `*` sweeps everything else.
+  // The pre-t918 expandSkillsOff, which reads `!dataviz` as an ordinary name.
   const oldPeerExpand = (list, known) => (!list.includes('*') ? list
     : [...new Set([...list, ...known])].filter((n) => n !== '*').sort());
   const onOldPeer = oldPeerExpand(floor, ['dataviz', 'design', 'box-only-skill']);
@@ -410,9 +405,8 @@ test('t918 pin 5: a box create sends a plain list, because an old peer reads `!x
 });
 
 test('t918 pin 7: a lean `["*"]` template loaded into the dialog saves as `*` again, not as this box\'s names', async () => {
-  // The divergence docs/teams.md now asserts in prose: a popover save collapses
-  // the sentinel to names (t769), the template editor and New Session keep it.
-  // Without this the prose is the only thing holding the claim up.
+  // The divergence docs/teams.md asserts in prose: a popover save collapses the
+  // sentinel to names (t769), the template editor and New Session keep it.
   const box = freshBox();
   box.engine.stores.agentDefaults.setDefaultSkillDeny(['*']);
   const { persisted, rows } = await dialogDisabledSkills(box.engine, 'optimized');
@@ -439,10 +433,9 @@ test('t918 pin 7: a lean `["*"]` template loaded into the dialog saves as `*` ag
 
 test('t918 pin 6: a read-only row never becomes a keep', async () => {
   const box = freshBox();
-  // `design` is a name the floor DENIES, so nothing in the asked list asks to
-  // keep it; a lower-layer off makes its row read-only, which takes it out of
-  // the collected off list — and the un-filtered collector read that absence as
-  // "still ticked" and emitted it as a keep.
+  // The floor DENIES `design`, so no keep asks for it; a lower-layer off makes
+  // its row read-only, which takes it out of the collected off list — and an
+  // unfiltered collector reads that absence as "still ticked".
   const locked = await dialogDisabledSkills(box.engine, 'optimized', { lowerLayerOff: 'design' });
   const row = locked.rows.find((r) => r.name === 'design');
   assert.ok(row && !row.checked,
@@ -454,8 +447,8 @@ test('t918 pin 6: a read-only row never becomes a keep', async () => {
 });
 
 test('t918 pin 8: Check All means deny nothing, not "deny whatever arrives later"', async () => {
-  // A separate test from pin 6 deliberately: both guard the same collector and a
-  // shared one would stop at the first assert, masking the second defect.
+  // Separate from pin 6 deliberately: both guard the same collector, and a
+  // shared test stops at the first assert, masking the second defect.
   const box = freshBox();
   const all = await dialogDisabledSkills(box.engine, 'optimized', {
     afterRender: (list) => {
