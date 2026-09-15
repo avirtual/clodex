@@ -284,7 +284,7 @@ test('t717: collectFormConfig collects intents and exec grants for both agent ty
   // The CLI-roster settings stay claude-only: codex consumes none of them, and
   // widening them would pretend to enforce something.
   for (const claudeOnly of ['collectAgentChecklist', 'collectBuiltinChecklist', 'collectToolChecklist',
-    'collectSkillChecklist']) {
+    'newSessionSkillDenyList']) {
     assert.ok(new RegExp(`type === 'claude' \\? ${claudeOnly}\\(`).test(fn),
       `${claudeOnly} must stay gated on claude alone`);
   }
