@@ -187,6 +187,7 @@ function createPeerWiring(deps) {
     // load-order freedom; peer-tunnel owns the kind list, so the question
     // "does this peer use a managed cloud transport" is asked of it.
     const { hasCloudTransport } = require('./peer-tunnel');
+    const { destinationOf } = require('./web-tunnel');
     if (!getPeerManager()) return;
     const s = getUiSettings().get();
     const resolved = [];
@@ -206,11 +207,12 @@ function createPeerWiring(deps) {
       // "do you have a tunnel for this peer?" is not enough: it answers null
       // while the tunnel is merely DOWN, which is exactly when the placeholder
       // has to keep the connection object alive.
+      const direct = !destinationOf(p);
       if (p.sshHost || hasCloudTransport(p)) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
-        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox });
+        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox, direct });
       } else {
-        resolved.push({ id: p.id, label: p.label, url: p.url, token, inbox: p.inbox });
+        resolved.push({ id: p.id, label: p.label, url: p.url, token, inbox: p.inbox, direct });
       }
     }
     getPeerManager().sync(resolved);
@@ -415,7 +417,12 @@ function createPeerWiring(deps) {
 
   function openPeerWebDirect(key, rec, webHost, tokenGated) {
     const url = directWebUrl(rec.url, webHost.port);
-    if (!url) return { ok: false, error: 'this peer has no usable web address: its URL could not be read' };
+    if (!url) {
+      return {
+        ok: false,
+        error: 'Clodex can neither tunnel to nor reach this peer\'s web UI — its transport configuration is incomplete',
+      };
+    }
     if (!tokenGated) {
       try { openExternal(url); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
       log.info('peer', `web view for ${key} opened directly at ${url} — no tunnel needed`);
@@ -425,11 +432,11 @@ function createPeerWiring(deps) {
     return { ok: true, direct: true, url, tokenGated };
   }
 
-  // Open the web view for one peer. Refuses rather than guesses on the two
-  // missing inputs that are still fatal: an unknown peer, and no live webHost in
-  // the peer's hello (nothing to reach; a guessed port is exactly the lie t30a
-  // exists to prevent). No forwardable transport is NOT one of them since t923 —
-  // openPeerWebDirect above opens it; see docs/notes/peer-wiring.md.
+  // Open the web view for one peer. Refuses rather than guesses on three
+  // missing inputs: an unknown peer, no live webHost in the peer's hello (a
+  // guessed port is exactly the lie t30a exists to prevent), and — in
+  // openPeerWebDirect above — neither a dialable destination nor a readable
+  // url, which is no route at all. See docs/notes/peer-wiring.md.
   //
   // The whole record's transport fields are handed to the supervisor rather than
   // sshHost alone (t36). Naming one field here was the door a kubectl peer was

@@ -18,7 +18,15 @@ means "a live forward reports this", which the renderer's own `phase === 'open'`
 close-tip reads; widening it would make the two meanings indistinguishable to
 every consumer.
 
-## isForwardablePeer
+t925: which arm a closed-phase peer takes is read from `status.direct`, set by
+`peer-wiring.js`'s `resolvePeerUrls` from the same `destinationOf` main routes a
+click with. The tunnel ROW cannot answer it: `peers-ui.js`'s `onPeerState` paints
+before `peerList()` seeds the rows, so a row's absence means "not yet" as often
+as "no transport" — and reading a miss as "url peer" gave an ssh peer an enabled
+button pointing at our own loopback. `isForwardablePeer` was that miss-read and
+is gone; `isSshPeer` remains for the deploy flow, which is genuinely ssh-only.
 
-Still the routing question for the tunnel arms, but no longer a gate on whether
-the button works at all — since t923 both answers open something.
+## transportPhrase
+
+Names the forward being opened, so it is asked of the tunnel row and not of
+`status.direct` — by the time any arm using it renders, a row exists.

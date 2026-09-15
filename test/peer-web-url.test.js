@@ -46,6 +46,13 @@ test('t923: a port that is not a usable integer yields null — the t30a rule, a
   assert.equal(directWebUrl('http://box.example', 1), 'http://box.example:1');
 });
 
+test('t923: CREDENTIALS in the record never reach the composed address', () => {
+  assert.equal(directWebUrl('http://user:pass@box.example:7900', 7902), 'http://box.example:7902',
+    'userinfo handed to openExternal would put the operator`s password in a browser history and a shell log');
+  assert.equal(directWebUrl('http://user@evil.com@good.com', 7902), 'http://good.com:7902',
+    'the host is what follows the LAST @ — reading up to the first would dial evil.com');
+});
+
 test('t923: an unreadable or non-http url yields null rather than throwing into a repaint', () => {
   for (const url of [
     undefined, null, '', '   ', 'box.example:7900', '/relative', 'not a url',

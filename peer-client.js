@@ -111,7 +111,7 @@ function isSecureBase(raw) {
 }
 
 class PeerConnection {
-  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes, claimInbox }) {
+  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes, claimInbox, direct }) {
     this.id = id;
     this.label = label;
     this.url = url.replace(/\/+$/, '');
@@ -121,6 +121,7 @@ class PeerConnection {
     // peer restart (PeerManager.sync), so it's fixed for a connection's lifetime.
     this._token = (typeof token === 'string' && token) ? token : null;
     this._emit = emit;
+    this._direct = direct === true;
     this._claimInbox = !!claimInbox;
     this._inboxClaiming = false;
     this._inboxClaimAgain = false;
@@ -199,6 +200,7 @@ class PeerConnection {
   status() {
     return {
       id: this.id, label: this.label, url: this.url,
+      direct: this._direct,
       online: this.online,
       host: this.hello ? this.hello.host : null,
       version: this.hello ? this.hello.version : null,
@@ -963,6 +965,7 @@ class PeerManager {
         id: String(p.id), label: String(p.label || p.id), url: String(p.url),
         token: (typeof p.token === 'string' && p.token) ? p.token : null,
         claimInbox: p.inbox === 'claim',
+        direct: p.direct === true,
       });
     }
     for (const [id, conn] of this._peers) {
@@ -975,6 +978,9 @@ class PeerManager {
         // with the old connection, so the UI must shed its tabs; the new
         // connection re-announces via peer-state.
         this._emit('peer-removed', id);
+      } else if (w.direct !== conn._direct) {
+        conn._direct = w.direct;
+        this._emit('peer-state', id, conn.status());
       }
     }
     for (const [id, w] of wanted) {

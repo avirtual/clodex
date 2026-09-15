@@ -11,9 +11,8 @@
 //     browser. The tunnel still opens (that is what makes the box reachable);
 //     the pop is what would lie.
 //   • WHAT TO REFUSE. Every missing input is refused rather than guessed: an
-//     unknown peer, a url-only peer (nothing to forward over), and a peer whose
-//     hello reports no web frontend. A guessed port is exactly the lie t30a
-//     exists to prevent.
+//     unknown peer, and a peer whose hello reports no web frontend. A guessed
+//     port is exactly the lie t30a exists to prevent.
 //
 // t36 moved the transport gate: this layer no longer names `sshHost`, it asks
 // web-tunnel's destinationOf. What the tests below pin is that the whole cloud
@@ -282,7 +281,7 @@ test('t923: a url peer whose own url is unreadable is refused — never a half-c
     try {
       const res = h.wiring.openPeerWeb('p1');
       assert.equal(res.ok, false, `${JSON.stringify(url)} → refused`);
-      assert.match(res.error, /no usable web address/i);
+      assert.match(res.error, /transport configuration is incomplete/i);
       assert.deepEqual(h.externals, [], 'and nothing was popped');
       assert.deepEqual(h.opened, [], 'nor tunnelled');
     } finally { h.restore(); }
@@ -319,7 +318,7 @@ test('t36: a CLOUD peer is NOT refused at the door, and its block reaches the su
   }
 });
 
-test('t36: a cloud peer missing a REQUIRED field is refused, not half-dialled', () => {
+test('t36: a cloud peer with an incomplete block and no url is refused by BOTH paths, not half-dialled', () => {
   // An incomplete block has nothing to dial. Refusing beats spawning a vendor
   // CLI that fails a moment later with its own worse message.
   const h = makeWiring({
@@ -329,8 +328,9 @@ test('t36: a cloud peer missing a REQUIRED field is refused, not half-dialled', 
   try {
     const res = h.wiring.openPeerWeb('p1');
     assert.equal(res.ok, false);
-    assert.match(res.error, /no usable web address/i,
-      'since t923 it reaches the DIRECT path and is refused there — an unusable transport and no url either');
+    assert.match(res.error, /transport configuration is incomplete/i,
+      'since t923 it falls through to the DIRECT path and is refused there — an unusable transport and no url '
+      + 'either, which is what the sentence must say: this record has no `url` field to call unreadable');
     assert.deepEqual(h.opened, [], 'and no tunnel was attempted');
     assert.deepEqual(h.externals, [], 'nor any browser popped at a guess');
   } finally { h.restore(); }

@@ -4,17 +4,23 @@
 // and untested by the R1 rule, so everything here that could be gotten wrong
 // lives in this leaf instead.
 //
-// Two rules this file exists to enforce, both from t30:
+// Three rules this file exists to enforce:
 //
-//   • NO TUNNEL URL BEFORE THERE IS A LIVE ONE. The `url` field carries only
-//     what the supervisor reports while its forward is up; a pinned-but-unbound
-//     local port is not a service, and peer-tunnel's dead-peer sentinel
-//     http://127.0.0.1:1 must never surface as a web link. t923's direct address
-//     is not a forward and not bound by this — see the url-kind arm.
-//   • A TOKEN-GATED BOX IS NOT A LINK. web-host.js answers an unauthenticated
-//     request with a bare 401 — no login form — and a freshly opened tab carries
-//     no ?token=/Bearer/cookie. So a gated peer's affordance says the box needs
-//     a token rather than promising something to click.
+//   • NO TUNNEL URL BEFORE THERE IS A LIVE ONE (t30). The `url` field carries
+//     only what the supervisor reports while its forward is up; a
+//     pinned-but-unbound local port is not a service, and peer-tunnel's
+//     dead-peer sentinel http://127.0.0.1:1 must never surface as a web link.
+//     t923's direct address is not a forward and not bound by this — see the
+//     url-kind arm.
+//   • A TOKEN-GATED BOX IS NOT A LINK (t30). web-host.js answers an
+//     unauthenticated request with a bare 401 — no login form — and a freshly
+//     opened tab carries no ?token=/Bearer/cookie. So a gated peer's affordance
+//     says the box needs a token rather than promising something to click.
+//   • NEVER GUESS WHICH ROUTE A PEER TAKES (t925). Which arm a closed-phase peer
+//     gets is read from `status.direct`, which main sets from the same
+//     destinationOf a click is routed with. Inferring it from a missing tunnel
+//     row promised an ssh peer a loopback address during the window before the
+//     rows are seeded.
 //
 // Both ROUTING refusals this file used to state are gone: a cloud peer's at t36
 // ("Clodex can only tunnel to a web UI over ssh" — true when written, false one
@@ -23,12 +29,6 @@
 'use strict';
 
 const { directWebUrl } = require('../../peer-web-url');
-
-// Is this peer reached over a transport Clodex dials itself? The wire tunnel row
-// IS the signal on this side — the renderer never sees the peer record. A row
-// exists for exactly the peers TunnelManager could dial, so its mere presence is
-// the answer; a url-only peer has no row at all.
-function isForwardablePeer(tunnel) { return !!(tunnel && (tunnel.sshHost || cloudTransportName(tunnel))); }
 
 // Kept for callers that need the narrower question (ssh specifically — e.g. the
 // deploy/setup flow, which copies files and runs a shell and genuinely is ssh-only).
@@ -84,7 +84,7 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   const st = status || null;
   const webHost = st && st.webHost;
   const phase = tunnelPhase(webTunnel);
-  const forwardable = isForwardablePeer(tunnel);
+  const direct = !!(st && st.direct === true);
   const how = transportPhrase(tunnel);
   const label = (st && (st.host || st.label)) || 'peer';
   // `=== true`, matching peer-client's hello normalization (the single producer,
@@ -103,7 +103,7 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   // to prevent, and hiding its only close button would be the same bug.
   if (!webHost && phase === 'closed') return { show: false, enabled: false, action: null, phase, tip: '', url: null, tokenGated };
 
-  if (!forwardable && phase === 'closed') {
+  if (direct && phase === 'closed') {
     const direct = directWebUrl(st && st.url, webHost && webHost.port);
     if (!direct) {
       // Shown-but-disabled, not hidden — a silently missing button reads as
@@ -151,6 +151,6 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
 }
 
 module.exports = {
-  webViewAffordance, tunnelPhase, isSshPeer, isForwardablePeer,
+  webViewAffordance, tunnelPhase, isSshPeer,
   cloudTransportName, transportPhrase,
 };
