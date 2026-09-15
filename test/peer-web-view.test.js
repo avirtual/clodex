@@ -5,19 +5,12 @@
 // WHEN the button shows, what it says, and whether a URL may be shown lives
 // here, where it can be asserted.
 //
-// The rules it enforces:
-//   • no TUNNEL url before there is a live one (t30) — the `url` field carries
-//     only what the supervisor reports, and peer-tunnel's dead-peer sentinel
-//     http://127.0.0.1:1 must never surface as a web link;
-//   • a token-gated box is not a link (t30) — web-host answers a bare 401, so
-//     the affordance says the box needs a token rather than promising a click;
-//   • the route is TOLD, not inferred (t925) — `status.direct` decides which arm
-//     a closed-phase peer takes, because the tunnel row it used to be read from
-//     is seeded after the first repaint.
-//
-// Assert the TIP, not just `url`. The t925 bug composed a loopback address and
-// put it in the tip while leaving `url` null, and every assertion here read
-// `url` — so the operator saw a wrong address that no test could fail on.
+// The rules it enforces: no TUNNEL url before there is a live one (t30) — the
+// dead-peer sentinel http://127.0.0.1:1 is not a web link; a token-gated box is
+// not a link (t30) — web-host answers a bare 401; and the route is TOLD, not
+// inferred (t925) — `status.direct` picks the arm, because the tunnel row it was
+// read from before is seeded only after the first repaint. Assert the TIP and
+// not just `url`: t925's wrong address rode the tip while `url` stayed null.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -26,9 +19,6 @@ const { webViewAffordance, tunnelPhase, isSshPeer } = require('../renderer/lib/p
 
 const sshTunnel = { id: 'p1', sshHost: 'box', state: 'up', localPort: 40001 };
 const online = (webHost) => ({ id: 'p1', label: 'box', host: 'box', online: true, webHost });
-// A url-kind peer as main reports it: `direct` is the verdict resolvePeerUrls
-// computed from destinationOf, not something the renderer works out. Its `url`
-// is the peer's own wire address, which the direct arm recomposes.
 const urlPeer = (webHost, url) => ({ ...online(webHost), url, direct: true });
 const WEB = { port: 8080, tokenGated: false };
 const WEB_GATED = { port: 8080, tokenGated: true };
@@ -252,21 +242,15 @@ test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees t
 });
 
 test('t925 PIN: before the tunnel rows are seeded, a forwardable peer keeps the TUNNEL tip — no loopback in it', () => {
-  // The interleaving this exists for: peers-ui`s onPeerState calls renderPeers
-  // immediately, while peerTunnels is seeded only by the later peerList reply.
-  // So an ssh/cloud peer really does paint with `tunnel === undefined`, and
-  // resolvePeerUrls has by then rewritten its status.url to the forward`s own
-  // loopback address. Reading the missing row as "url peer" composed
-  // http://127.0.0.1:<webHost.port> from it and offered an ENABLED button whose
-  // tip said "no tunnel needed" — at a port on OUR machine that nothing binds.
-  // `direct: false` is main`s verdict and the only thing this may turn on.
   for (const tunnel of [undefined, null]) {
     const a = webViewAffordance({
       status: { ...online(WEB), url: 'http://127.0.0.1:40001', direct: false }, tunnel,
     });
     const what = `tunnel=${JSON.stringify(tunnel)}`;
     assert.doesNotMatch(a.tip, /127\.0\.0\.1|localhost/,
-      `${what}: the TIP is the surface the operator reads, and a.url being null hid this for a whole release`);
+      `${what}: onPeerState repaints before peerList seeds the rows, so a forwardable peer really does paint `
+      + 'row-less while resolvePeerUrls has rewritten its status.url to the forward`s own loopback. Reading the '
+      + 'miss as "url peer" composed an address from it — and the TIP is where that showed, while a.url stayed null');
     assert.doesNotMatch(a.tip, /no tunnel needed/i, `${what}: a forward is exactly what this peer needs`);
     assert.match(a.tip, /over ssh/, `${what}: it falls to the ordinary open arm, which names the forward`);
     assert.strictEqual(a.url, null, `${what}: and still no url before a live forward reports one`);
@@ -274,16 +258,13 @@ test('t925 PIN: before the tunnel rows are seeded, a forwardable peer keeps the 
 });
 
 test('t925: `direct` is read as a strict fact — an absent or non-true value is never the direct route', () => {
-  // A status from a main that predates the field, or a half-built fixture, must
-  // fall to the tunnel arms rather than compose an address. The direct arm is
-  // the one that PRODUCES a URL, so an ambiguous read has to land on the side
-  // that produces none.
   for (const direct of [undefined, null, false, 0, '', 'true', 1, {}]) {
     const a = webViewAffordance({
       status: { ...online(WEB), url: 'https://box.example:7900', direct }, tunnel: null,
     });
     assert.doesNotMatch(a.tip, /box\.example:8080/,
-      `direct=${JSON.stringify(direct)}: only a strict true routes direct`);
+      `direct=${JSON.stringify(direct)}: only a strict true routes direct — a status from a main predating the `
+      + 'field must fall to the tunnel arms, because the direct arm is the one that PRODUCES an address');
   }
   const yes = webViewAffordance({ status: urlPeer(WEB, 'https://box.example:7900'), tunnel: null });
   assert.match(yes.tip, /box\.example:8080/, 'and a strict true does');
