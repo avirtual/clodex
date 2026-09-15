@@ -265,25 +265,28 @@ test('output is visible WHILE the writer is still appending, not only after it c
 // assertions produce the diagnosis and the failure message stays theirs.
 //
 // The one subject below needs this and its siblings do not. `finished` is set in
-// retire(), reachable ONLY from the fs.watch name-event loop: no read can force
-// it, so the test is waiting on the KERNEL's unlink event and not on work it
-// drives itself. Measured latency on an idle box is 11ms, but the whole suite
-// running at once stretches it past any fixed sleep worth writing -- and a
-// deadline poll is strictly stronger than a longer sleep, staying fast when the
-// event is fast and spending time only when it must. Every other fixture here
-// sleeps only to let a read it makes itself observe the disk, which readdir and
-// statSync answer synchronously.
+// retire(), reachable ONLY from the fs.watch name-event loop, so no read can
+// force it: the test waits on the KERNEL's unlink event, not on work it drives
+// itself. Every other fixture here sleeps only to let a read it makes itself
+// observe the disk, which readdir and statSync answer synchronously -- a copy of
+// this file with every sleep cut to 1ms failed this subject alone, 43 of 44
+// still green.
 //
-// The ceiling stays under FINALIZED_GRACE_MS (5000), counted from the finalize:
-// past that the finalized row is dropped entirely, and a poll that outlived the
-// grace would report an absent row rather than an unset flag. Measured here:
-// 259ms for the unlink event on an otherwise idle box, so 4000 is the margin the
-// 120ms sleep never had.
-async function readUntil(read, want, timeoutMs = 4000) {
+// That event's latency has a HEAVY TAIL, which is what made a fixed sleep
+// hopeless rather than merely tight. Instrumented here, time from unlinkSync to
+// the finalize: 78ms / 400ms / 699ms on three idle runs, and 326-1237ms with
+// eight CPU hogs alongside. The 120ms this replaced was under the IDLE median.
+// A deadline poll costs the fast case nothing and spends time only when it must.
+//
+// The long wait is safe in the other direction too: before the finalize the row
+// is held by neither expiry in read(). FINALIZED_GRACE_MS is counted from
+// `finishedAt`, which is still null, and the RESOLVE_WINDOW_MS drop requires
+// `!row.offset`, which PARTIAL has already made nonzero.
+async function readUntil(read, want, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
   let rows = read();
   while (!want(rows) && Date.now() < deadline) {
-    await sleep(5);
+    await sleep(10);
     rows = read();
   }
   return rows;
