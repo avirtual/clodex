@@ -576,7 +576,7 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die "--older-than needs a value (hours)"
       HOURS="$2"; shift ;;
     --older-than=*) HOURS="${1#*=}" ;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument '$1'" ;;
   esac
   shift
@@ -622,8 +622,8 @@ LISTFILE="$(mktemp "$TMP/clodex-tmpsweep-XXXXXX")" || die "cannot create work fi
 trap 'rm -f "$LISTFILE"' EXIT
 
 # ONE enumeration pass over $TMPDIR, because that directory is huge: a single
-# readdir of it costs ~170ms, and the full filtered walk measured 17.8s against
-# 332,600 entries. Per-prefix passes would multiply that by 122.
+# readdir of it costs ~170ms, and the full filtered walk measured 24s against
+# 332,600 entries. Per-prefix passes would multiply that by the prefix count.
 #
 # -P never follows a symlink, so a symlinked entry cannot take the sweep out of
 # $TMPDIR; -mindepth/-maxdepth 1 keep it to direct children; -type d means a
