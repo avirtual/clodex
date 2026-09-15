@@ -78,13 +78,9 @@ const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.incl
 // checked here (clodex can't see the other source, and only ever writes
 // "off" overrides, never "on", so it can't re-enable it).
 const CLAUDE_SKILLS = [
-  // Review & analysis
   'code-review', 'security-review', 'review', 'deep-research', 'verify',
-  // Codebase setup & config
   'init', 'update-config', 'simplify',
-  // Execution & control flow
   'run', 'loop', 'schedule',
-  // API & help
   'claude-api', 'keybindings-help', 'fewer-permission-prompts',
   'design', 'dataviz', 'artifact-design', 'artifact-diagramming', 'artifact-capabilities',
 ];

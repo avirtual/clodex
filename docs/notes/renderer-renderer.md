@@ -37,3 +37,22 @@ be dropped. The args guard reads the snapshot's length for the same reason.
 Plugins… popovers, which stay open across that refill too; both guards read the
 snapshot's length. All four fills are position-pinned by
 `test/plugin-dialog-snapshot.test.js`.
+
+## newSessionSkillDenyList
+
+The New Session / template dialog's skill collector. It does NOT simply return
+the unticked rows: when the drawn deny set was DEFERRED (`*`), it re-emits a
+deferred list naming the rows still TICKED, so a hand edit in Advanced — which
+flips the mode selector to `custom` — narrows the keep list instead of
+collapsing deferral into a snapshot of today's catalog. `newSessionSkillsDrawn`
+being empty means no render landed (a non-claude type, a failed catalog fetch),
+and then the asked-for list passes through rather than being replaced by the
+empty collect of an unpainted container.
+
+## collectPrefsSkillDefaults
+
+Same rule for the Preferences default, plus `keptUndrawn`: a `!name` exemption
+for a skill this cwd does not currently render has no row to read, and dropping
+it would silently deny that skill the next time Preferences was opened
+anywhere. It is the skills mirror of the `carried` list the undeferred branch
+keeps for the same reason.
