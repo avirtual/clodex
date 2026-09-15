@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- clodex.sh is a real landing page now. What it served was an animated "How it
+  works" explainer last touched when the product was v3.5 — no install path, no
+  link to the repo, and no sign of teams, peering, `clodexctl`, headless nodes,
+  plugins, wirescope or voice. The new page is the README's own tour: the
+  screenshot, why a fleet needs more than a grid of terminals, one paragraph per
+  subsystem, and the DMG and `clodexctl` install steps. It is static — no
+  JavaScript, and nothing it loads comes from off-site. The old animated
+  walkthrough is kept at `/how-it-works.html` and linked from the footer.
+
 ## 5.68.1 — 2026-09-15
 
 - Fixed: ending a session now also kills whatever its CLI left running. Killing,
