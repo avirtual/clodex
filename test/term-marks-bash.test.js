@@ -21,6 +21,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const { buildTermShim, bashSupport } = require('../term-shim');
 const { createDrawerPtys } = require('../drawer-pty');
@@ -184,6 +185,36 @@ function assertRanIntact(res, typed, expected, message) {
   }
   assert.strictEqual(res.record.exitCode, expected, message);
 }
+
+// The assumption the descendant reaper rests on, pinned against a REAL node-pty
+// rather than a fixture. `ptyOwnership` (session-manager.js) proves a seat is ours
+// by `ppid === process.pid` before it will reap anything beneath it, and that is
+// only correct while node-pty leaves the spawned process a DIRECT child of us.
+//
+// If node-pty ever keeps `spawn-helper` resident between us and the shell, or
+// sessions move to a utility process, every teardown silently stops reaping — one
+// `warn` per kill, no reap, suite still green — and the orphaned-test-runner bug
+// this guards comes back with nothing to announce it. A silent-forever no-op is
+// the one way that design can hurt, which is why the assumption is pinned here,
+// where a real pty exists, and not only in the reaper's own fixtures.
+test('a real node-pty child is a DIRECT child of this process', opts, async () => {
+  await withShell(async ({ proc }) => {
+    const p = proc();
+    assert.ok(p && p.pid > 0, 'ENTER: the pty must really have spawned, or the ppid below reads nothing');
+
+    const out = execFileSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' });
+    const row = out.split('\n').map((l) => l.trim().split(/\s+/))
+      .find((f) => f.length === 2 && Number(f[0]) === p.pid);
+    assert.ok(row, `the spawned pty (pid ${p.pid}) must appear in a ps snapshot — the reaper discovers it there`);
+
+    assert.strictEqual(Number(row[1]), process.pid,
+      `node-pty's spawned process reports ppid ${row[1]}, not this process (${process.pid}). The descendant `
+      + 'reaper proves ownership with `ppid === process.pid` before it reaps, so if node-pty now puts a helper '
+      + 'process in between, EVERY seat teardown reads `foreign`, reaps nothing, and only writes a warn — the '
+      + 'orphaned test runners come back and the suite stays green. Fix the ownership check to match the new '
+      + 'process shape; do NOT relax it to a liveness or magic-value test.');
+  });
+});
 
 test('a real bash reports a command, its text and its exit code', opts, async () => {
   await withShell(async ({ exec }) => {

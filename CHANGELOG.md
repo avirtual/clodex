@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: ending a session now also kills whatever its CLI left running. Killing,
+  archiving or destroying a seat used to signal only the session's own process,
+  so a command the agent had started underneath it — a test run, a build — kept
+  running with nothing left to stop it; two such runs were found an hour later
+  using a core each. Quitting the app sweeps every session the same way. Each
+  leftover process is targeted individually and killed outright, with no
+  grace period.
 - Fixed: a finished foreground Bash call no longer stays "live" in the pane. Its
   output file is deleted when the call ends, and Clodex noticed that deletion
   only through a filesystem notification the OS drops when the disk is busy —

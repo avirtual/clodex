@@ -173,7 +173,7 @@ const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
-const { didGrow } = require('./stall-evidence');
+const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { effectiveModel } = require('./accounts');
@@ -299,6 +299,52 @@ function sigkillPid(pid, name, log) {
     return;
   }
   try { process.kill(pid, 'SIGKILL'); } catch {}
+}
+
+function psSnapshotSync(childProcess) {
+  try {
+    return parsePsRows(childProcess.execFileSync(
+      'ps', ['-axo', 'pid=,ppid=,time='], { timeout: 5000, encoding: 'utf8' },
+    ));
+  } catch { return null; }
+}
+
+function psSnapshot(childProcess) {
+  return new Promise((resolve) => {
+    try {
+      childProcess.execFile('ps', ['-axo', 'pid=,ppid=,time='], { timeout: 5000 }, (err, stdout) => {
+        resolve(err ? null : parsePsRows(stdout));
+      });
+    } catch { resolve(null); }
+  });
+}
+
+function ptyOwnership(rows, ptyPid, ownerPid) {
+  const row = rows.find((r) => r.pid === ptyPid);
+  if (!row) return 'gone';
+  return row.ppid === ownerPid ? 'ours' : 'foreign';
+}
+
+function reapFromSnapshot({ rows, ptyPid, name, log, ownerPid = process.pid }) {
+  if (!rows || !(ptyPid > 0)) return 0;
+  const owned = ptyOwnership(rows, ptyPid, ownerPid);
+  if (owned !== 'ours') {
+    if (owned === 'foreign' && log) {
+      log.warn('session', `refusing to reap beneath ${name} pid=${ptyPid}: that process is not a child of this one `
+        + `(pid ${ownerPid}), so the tree under it belongs to someone else. A pty we spawned is always our direct `
+        + `child; anything else is a stale or stubbed pid, and pid 1 reached this way would signal the whole machine`);
+    }
+    return 0;
+  }
+  const pids = descendantPids(rows, ptyPid);
+  for (const pid of pids) sigkillPid(pid, `${name} descendant`, log);
+  if (pids.length && log) log.info('session', `reaped ${pids.length} descendant(s) of ${name} pid=${ptyPid}`);
+  return pids.length;
+}
+
+async function reapPtyDescendants({ ptyPid, name, log, childProcess }) {
+  if (!(ptyPid > 0)) return 0;
+  return reapFromSnapshot({ rows: await psSnapshot(childProcess), ptyPid, name, log });
 }
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
@@ -2822,8 +2868,10 @@ function createSessionManager(deps) {
       }
       try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
+      const ptyPid = s.pty.pid;
+      setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess });
       try { s.pty.kill(); } catch {}
-      setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
     // Poll the map the kill path actually releases. engine.js has its own copy
@@ -2904,8 +2952,10 @@ function createSessionManager(deps) {
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
+      const ptyPid = s.pty.pid;
+      setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess });
       try { s.pty.kill(); } catch {}
-      setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
     _renameDirs(oldName, newName) {
@@ -3828,8 +3878,10 @@ function createSessionManager(deps) {
       for (const s of this.sessions.values()) {
         s._shuttingDown = true;
       }
+      const rows = psSnapshotSync(childProcess);
       for (const [name] of this.sessions) {
         const s = this.sessions.get(name);
+        reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log });
         try { s.pty.kill(); } catch {}
       }
     }

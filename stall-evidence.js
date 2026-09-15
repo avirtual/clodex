@@ -307,30 +307,31 @@ function parseCpuTime(text) {
   return Math.round(((h * 3600) + (min * 60) + sec) * 1000);
 }
 
-// Accumulated CPU over a pid AND all its descendants, in ms, or null.
+// `ps -axo pid=,ppid=,time=` stdout to rows. No command column is requested, so
+// every row is exactly three fields and anything else is dropped.
+function parsePsRows(stdout) {
+  const rows = [];
+  for (const line of String(stdout || '').split('\n')) {
+    const f = line.trim().split(/\s+/);
+    if (f.length !== 3) continue;
+    const p = Number(f[0]);
+    const pp = Number(f[1]);
+    if (!Number.isInteger(p) || !Number.isInteger(pp)) continue;
+    rows.push({ pid: p, ppid: pp, timeText: f[2] });
+  }
+  return rows;
+}
+
+// A pty's process tree from ONE `ps` snapshot, or null when the root is absent.
 //
-// The CLI pid alone is the wrong thing to measure: a seat whose turn is inside a
-// long tool call has its CPU in the CHILD, its transcript flat (nothing is
-// written until the tool_result), and its activity state idle. All three signals
-// lie in the same direction, so a healthy seat classifies `wedged`. Measured
-// twice on 2026-08-15 — 16 busy-loop children at ~88% each while the CLI pid
-// accrued almost nothing. Summing the subtree is what separates that from a real
-// wedge, whose tree is as flat as its root.
-//
-// Null when the root pid is ABSENT from the rows — the process died, and null is
-// "no CPU signal" everywhere in this module. A guessed 0 is the wedge verdict, so
-// it would alarm about a seat that is merely gone.
-//
-// Rows are `{ pid, ppid, timeText }`. Descendants are found by walking the
-// parent->children map, so a child reparented to init (ppid 1) is NOT counted:
-// a backgrounded subshell orphans when its parent exits, and counting strangers
-// under init would let any unrelated process on the box suppress a real wedge.
-// Test-pinned, because the obvious "why doesn't the tree see my background
-// build" fix is to widen this walk.
-//
-// The visited set is what makes a malformed `ps` snapshot (a pid appearing as
-// its own ancestor across a racy read) terminate instead of hanging the sweep.
-function sumTreeCpuMs(psRows, rootPid) {
+// Descendants come from the parent->children map, so a child reparented to init
+// (ppid 1) is NOT in the result: counting strangers under init would let any
+// unrelated process suppress a real wedge, and would let a reaper signal a
+// process that was never this seat's. Test-pinned, because the obvious "why
+// doesn't the tree see my background build" fix is to widen this walk. The
+// visited set is what makes a malformed snapshot (a pid appearing as its own
+// ancestor across a racy read) terminate instead of hanging the sweep.
+function walkPtyTree(psRows, rootPid) {
   if (!Array.isArray(psRows) || !Number.isInteger(rootPid) || rootPid <= 0) return null;
   const byParent = new Map();
   let rootRow = null;
@@ -342,23 +343,51 @@ function sumTreeCpuMs(psRows, rootPid) {
     byParent.get(r.ppid).push(r);
   }
   if (!rootRow) return null;
-  let total = 0;
+  const descendants = [];
   const seen = new Set([rootPid]);
   const stack = [rootRow];
   while (stack.length) {
     const row = stack.pop();
-    // A row whose own TIME is unparseable contributes nothing rather than
-    // poisoning the whole sum to null: the subtree's other rows are still real
-    // evidence, and null here would read as "no CPU signal" for a live tree.
-    const ms = parseCpuTime(row.timeText);
-    if (ms != null) total += ms;
     for (const kid of (byParent.get(row.pid) || [])) {
       if (seen.has(kid.pid)) continue;
       seen.add(kid.pid);
+      descendants.push(kid);
       stack.push(kid);
     }
   }
+  return { rootRow, descendants };
+}
+
+// Accumulated CPU over a pid AND all its descendants, in ms, or null.
+//
+// The CLI pid alone is the wrong thing to measure: a seat whose turn is inside a
+// long tool call has its CPU in the CHILD, its transcript flat, and its activity
+// state idle. All three signals lie in the same direction, so a healthy seat
+// classifies `wedged`. Measured twice on 2026-08-15 — 16 busy-loop children at
+// ~88% each while the CLI pid accrued almost nothing. Summing the subtree is what
+// separates that from a real wedge, whose tree is as flat as its root.
+//
+// Null when the root pid is ABSENT — the process died, and null is "no CPU
+// signal" everywhere in this module. A guessed 0 is the wedge verdict.
+function sumTreeCpuMs(psRows, rootPid) {
+  const tree = walkPtyTree(psRows, rootPid);
+  if (!tree) return null;
+  let total = 0;
+  for (const row of [tree.rootRow, ...tree.descendants]) {
+    // An unparseable TIME contributes nothing rather than poisoning the sum to
+    // null, which would read as "no CPU signal" for a live tree.
+    const ms = parseCpuTime(row.timeText);
+    if (ms != null) total += ms;
+  }
   return total;
+}
+
+// Every pid BENEATH a pty, root excluded (it has its own kill path). Empty, never
+// null: the caller signals each element, so "nothing found" must reap nothing.
+function descendantPids(psRows, rootPid) {
+  const tree = walkPtyTree(psRows, rootPid);
+  if (!tree) return [];
+  return tree.descendants.map((r) => r.pid);
 }
 
 // Is a reviewer seat alive? Two signals, and it takes BOTH being flat to call a
@@ -469,6 +498,7 @@ function formatReviewSeatClause({ seat, verdict, cpuRead = true, flatFor = null,
 
 module.exports = {
   readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
-  parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
+  parseCpuTime, sumTreeCpuMs, parsePsRows, descendantPids, classifyReviewSeat,
+  formatReviewSeatClause, didGrow,
   CPU_RATE_MS_PER_MIN, MIN_GAP_MS, API_ERROR_MAX,
 };
