@@ -104,8 +104,8 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
   if (!webHost && phase === 'closed') return { show: false, enabled: false, action: null, phase, tip: '', url: null, tokenGated };
 
   if (direct && phase === 'closed') {
-    const direct = directWebUrl(st && st.url, webHost && webHost.port);
-    if (!direct) {
+    const address = directWebUrl(st && st.url, webHost && webHost.port);
+    if (!address) {
       // Shown-but-disabled, not hidden — a silently missing button reads as
       // "this box has no web UI", which is a different and false claim.
       return {
@@ -116,8 +116,8 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
     return {
       show: true, enabled: true, action: 'open', phase, url: null, tokenGated,
       tip: tokenGated
-        ? `${label}'s web UI is at ${direct} — the box requires a token, so you'll get a URL to open with ?token=…`
-        : `Open ${label}'s web UI at ${direct} — no tunnel needed`,
+        ? `${label}'s web UI is at ${address} — the box requires a token, so you'll get a URL to open with ?token=…`
+        : `Open ${label}'s web UI at ${address} — no tunnel needed`,
     };
   }
 
