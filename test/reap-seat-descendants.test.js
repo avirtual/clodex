@@ -23,6 +23,21 @@
 // the operator's whole desktop three times over. A reaper multiplies that blast
 // radius by the size of a process tree, so a non-positive pid arriving from
 // discovery must reap NOTHING and say so in the log.
+//
+// The third subject is why the sign test is NOT enough, measured twice on the
+// operator's laptop when an earlier version of this reaper took the machine down
+// during a suite run. Dozens of fixtures across this suite seed `pty: { pid: 1 }`
+// as a dummy. 1 is POSITIVE, so every guard above passes it — and 1 is launchd,
+// so every process on the box is its descendant: 542 of 543 processes, measured.
+// The sign of a pid says nothing about whose it is.
+//
+// The invariant that does: a pty we spawned is ALWAYS a direct child of this
+// process, so `ppid === process.pid` is ownership, and it is already in the same
+// snapshot discovery walks. A pid that is absent is stale; a pid that is present
+// but parented elsewhere belongs to someone else. Neither may be reaped beneath.
+// Do not relax this to "pid is alive" or "pid is not 1" — aliveness is what makes
+// a stale pid dangerous rather than harmless, and 1 is one value out of an
+// unbounded set of real pids a fixture could name.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -150,6 +165,77 @@ test('archive(): a real descendant of the seat pty is dead afterwards', async ()
   } finally { reapFixture(sh.pid, sleepPid); }
 });
 
+// ── The ownership guard ──
+
+// A LIVE pid this process does not own, with real descendants beneath it. This
+// is the fixture shape that took the operator's machine down twice: `pid: 1` is
+// positive, so every sign-based guard passes it, and launchd parents everything.
+//
+// Nothing here signals anything — process.kill is captured. A test for a guard
+// against killing the machine must not kill the machine when the guard is gone.
+test('a seat pty this process does not own reaps NOTHING, however many descendants it has', async () => {
+  const warned = [];
+  const m = mkManager({ info: () => {}, warn: (_c, msg) => warned.push(String(msg)), error: () => {} });
+
+  const realExecFile = childProcess.execFile;
+  const realKill = process.kill;
+  const seen = [];
+  // pid 1 parented to 0, exactly as launchd appears in a real snapshot, with
+  // three processes beneath it standing in for the 542 that were really there.
+  childProcess.execFile = (file, args, opts, cb) => {
+    const done = typeof opts === 'function' ? opts : cb;
+    done(null, '1 0 0:01.00\n500 1 0:02.00\n501 1 0:03.00\n502 500 0:04.00\n', '');
+    return { on() {} };
+  };
+  process.kill = (pid, sig) => { seen.push({ pid, sig }); };
+  try {
+    seat(m, 'dummy', 1);
+    await m.kill('dummy');
+  } finally {
+    childProcess.execFile = realExecFile;
+    process.kill = realKill;
+  }
+
+  assert.deepStrictEqual(seen, [],
+    'the reaper signalled beneath a pty pid this process does not own. pid 1 is launchd: every process on the '
+    + 'box is its descendant, and this suite seeds `pty: { pid: 1 }` in dozens of fixtures. That is not a '
+    + 'hypothetical — it reaped 542 of 543 processes on the operator\'s laptop, twice, during a suite run. '
+    + 'A pty we spawned is always a direct child of this process; anything else must reap nothing.');
+
+  assert.ok(warned.some((m2) => /not a child of this one/.test(m2)),
+    'the refusal must reach the log. The ~277-process incident was invisible for exactly this reason: a bare '
+    + 'catch swallowed it, so nothing said why the desktop had died.');
+});
+
+// ENTER: the subject above asserts an ABSENCE, which is equally true of a reaper
+// that was never called, a snapshot that never parsed, and a tree with nothing in
+// it. This proves the same fixture DOES reap when ownership holds — so the empty
+// result above is the guard's doing and not the fixture's.
+test('ENTER: the same shape, owned, really does reap — so the refusal above is the guard', async () => {
+  const m = mkManager();
+  const realExecFile = childProcess.execFile;
+  const realKill = process.kill;
+  const seen = [];
+  childProcess.execFile = (file, args, opts, cb) => {
+    const done = typeof opts === 'function' ? opts : cb;
+    done(null, `4242 ${process.pid} 0:01.00\n500 4242 0:02.00\n502 500 0:04.00\n`, '');
+    return { on() {} };
+  };
+  process.kill = (pid, sig) => { seen.push({ pid, sig }); };
+  try {
+    seat(m, 'owned', 4242);
+    await m.kill('owned');
+  } finally {
+    childProcess.execFile = realExecFile;
+    process.kill = realKill;
+  }
+
+  assert.deepStrictEqual(seen.map((c) => c.pid).sort((a, b) => a - b), [500, 502],
+    'an OWNED tree must still be reaped, descendants-of-descendants included. If this is empty the ownership '
+    + 'guard is refusing everything and the reaper does nothing at all, which the absence-assertions above '
+    + 'cannot distinguish from working correctly.');
+});
+
 // ── The broadcast guard ──
 
 const BROADCAST_PIDS = [0, -1, -999];
@@ -166,9 +252,14 @@ for (const bad of BROADCAST_PIDS) {
     const realExecFile = childProcess.execFile;
     const realKill = process.kill;
     const seen = [];
+    // The seat pty is parented to OUR pid, not to 1: the ownership guard refuses
+    // a tree it does not own before discovery is consulted, so a snapshot that
+    // fails ownership would vacuum this subject out — it would pass with nothing
+    // signalled, for a reason that has nothing to do with the broadcast guard
+    // under test. The bad pid has to arrive from a tree we genuinely own.
     childProcess.execFile = (file, args, opts, cb) => {
       const done = typeof opts === 'function' ? opts : cb;
-      done(null, `4242 1 0:01.00\n${bad} 4242 0:02.00\n`, '');
+      done(null, `4242 ${process.pid} 0:01.00\n${bad} 4242 0:02.00\n`, '');
       return { on() {} };
     };
     process.kill = (pid, sig) => { seen.push({ pid, sig }); };

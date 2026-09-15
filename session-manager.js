@@ -319,8 +319,23 @@ function psSnapshot(childProcess) {
   });
 }
 
-function reapFromSnapshot({ rows, ptyPid, name, log }) {
+function ptyOwnership(rows, ptyPid, ownerPid) {
+  const row = rows.find((r) => r.pid === ptyPid);
+  if (!row) return 'gone';
+  return row.ppid === ownerPid ? 'ours' : 'foreign';
+}
+
+function reapFromSnapshot({ rows, ptyPid, name, log, ownerPid = process.pid }) {
   if (!rows || !(ptyPid > 0)) return 0;
+  const owned = ptyOwnership(rows, ptyPid, ownerPid);
+  if (owned !== 'ours') {
+    if (owned === 'foreign' && log) {
+      log.warn('session', `refusing to reap beneath ${name} pid=${ptyPid}: that process is not a child of this one `
+        + `(pid ${ownerPid}), so the tree under it belongs to someone else. A pty we spawned is always our direct `
+        + `child; anything else is a stale or stubbed pid, and pid 1 reached this way would signal the whole machine`);
+    }
+    return 0;
+  }
   const pids = descendantPids(rows, ptyPid);
   for (const pid of pids) sigkillPid(pid, `${name} descendant`, log);
   if (pids.length && log) log.info('session', `reaped ${pids.length} descendant(s) of ${name} pid=${ptyPid}`);
