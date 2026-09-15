@@ -120,6 +120,9 @@ const literal = (captured, values) => {
 };
 
 const lineOf = (src, index) => src.slice(0, index).split('\n').length;
+
+const callSiteRe = (names) => new RegExp(
+  `(?<![.\\w$])(?:${names.map(escapeRe).join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g');
 const forwards = (param) => new RegExp(
   `\\b(?:__MINTERS__)\\(\\s*${param}\\s*[,)]`
   + `|${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*${param}\\s*[,)]`);
@@ -156,7 +159,7 @@ let cachedScan = null;
 function scanPrefixes() {
   if (cachedScan) return cachedScan;
   const rawShape = new RegExp(`${MINT}\\s*\\([\\s\\S]{0,200}?tmpdir\\(\\)\\s*\\)?\\s*,\\s*(['"\`])([^'"\`]*)\\1`, 'g');
-  const helperShape = new RegExp(`(?<![.\\w$])(?:${SEEDS.map(escapeRe).join('|')})\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g');
+  const helperShape = callSiteRe(SEEDS);
   const raw = new Map();
   const helper = new Map();
   const viaWrapper = new Map();
@@ -174,7 +177,7 @@ function scanPrefixes() {
     const minters = mintersIn(src, Infinity, true);
     for (const name of minters) {
       if (SEEDS.includes(name)) continue;
-      for (const c of src.matchAll(new RegExp(`(?<![.\\w$])${escapeRe(name)}\\(\\s*(['"\`])([^'"\`]*)\\1`, 'g'))) {
+      for (const c of src.matchAll(callSiteRe([name]))) {
         take(viaWrapper, c, 2, `${rel} via ${name}()`);
       }
     }
@@ -238,6 +241,23 @@ test('a wrapper body stops at its own closing brace, so a neighbour\'s mint is n
   assert.ok(!found.has('innocent'),
     'innocent() does not mint — attributing its neighbour\'s mkTmpRoot to it would collect every literal '
     + 'ever passed to it as a tmp prefix, and PREFIXES is interpolated into the deletion pattern');
+});
+
+test('a mint name reached through a property or a longer identifier is not a call site', () => {
+  const collect = (src) => [...src.matchAll(callSiteRe(['mkTmpRoot']))].map((m) => m[2]);
+  assert.deepStrictEqual(collect("mkTmpRoot('real-')"), ['real-'],
+    'ENTER: a genuine bare call must be collected, or the exclusions below prove nothing');
+  for (const [what, src] of [
+    ['a property access', "vendor.mkTmpRoot('not-ours-')"],
+    ['a longer identifier ending in the name', "xmkTmpRoot('not-ours-')"],
+    ['an underscore-prefixed name', "_mkTmpRoot('not-ours-')"],
+    ['a dollar-prefixed name', "$mkTmpRoot('not-ours-')"],
+  ]) {
+    assert.deepStrictEqual(collect(src), [],
+      `${what} is a DIFFERENT function that happens to end in our mint's name. \b matches after a `
+      + 'dot, so it would collect this literal into PREFIXES and make it a deletion pattern against '
+      + "somebody else's directories. Only the shape ratchet stands between that and the sweep.");
+  }
 });
 
 test('no mint site builds its prefix by interpolation — the sweep cannot match those roots', () => {
