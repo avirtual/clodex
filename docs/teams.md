@@ -290,6 +290,11 @@ not survive one: the session then carries that box's names rather than "whatever
 this box knows". The template editor and the New Session dialog keep it: a save
 there re-emits `"*"` plus a `"!name"` exemption per row left ticked, so the
 template stays portable and a skill the box learns of later is still denied.
+Re-ticking every row is the exception — that saves `[]`, since the ticks then say
+"deny nothing" and a sweep with a total exemption list would still catch whatever
+the box learns next. A read-only row (off in a lower layer, or policy-locked)
+never becomes an exemption either: it is this box's local state, and on the next
+box it would read as "turn this on".
 
 **To add your own:** drop a JSON def in `~/.clodex/teams/<name>/exec/` — or in
 `~/.clodex/library/exec/` when you want every team to share it — write the

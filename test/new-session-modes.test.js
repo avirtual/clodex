@@ -689,8 +689,10 @@ test('a cwd redraw preserves the template rows the operator unticked', () => {
 // on for the one template that ships lean. Runs the SHIPPED function against the
 // real checklist, then collects: a source-shape grep would pass over an off-set
 // built from the wrong names.
-const REFRESH_SKILLS_FN = extract(
-  /\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills');
+const REFRESH_SKILLS_FN = [
+  extract(/\n(function resetNewSessionSkillCollector\([\s\S]*?\n\})\n/, 'resetNewSessionSkillCollector'),
+  extract(/\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills'),
+].join('\n');
 const SKILL_NAMES = ['alpha', 'beta', 'gamma'];
 
 // withDom cannot wrap this one: it restores `document` in a synchronous finally,

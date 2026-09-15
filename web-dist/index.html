@@ -23082,11 +23082,15 @@ ${i3.join("\n")}
         const keep = new Set(skillDenyKeepList(list));
         return new Set((Array.isArray(names) ? names : []).filter((n) => !keep.has(n)));
       }
+      function skillDenyForPeer(disabledSkills) {
+        const list = Array.isArray(disabledSkills) ? disabledSkills : [];
+        return list.some((n) => isSkillDenyDirective(n)) ? [] : list;
+      }
       function expandSkillsOff(disabledSkills, { known = [], injectSkills = [] } = {}) {
         if (!Array.isArray(disabledSkills)) return disabledSkills;
         const deferred = disabledSkills.includes("*");
         const keep = skillDenyKeepList(disabledSkills);
-        if (!deferred && !keep.length) return disabledSkills;
+        if (!disabledSkills.some(isSkillDenyDirective)) return disabledSkills;
         const exempt = /* @__PURE__ */ new Set();
         for (const n of [...Array.isArray(injectSkills) ? injectSkills : [], ...keep]) {
           if (typeof n !== "string" || !n) continue;
@@ -23107,7 +23111,8 @@ ${i3.join("\n")}
         skillOffSetFor,
         skillDenyKeepList,
         skillDenyIsDeferred,
-        isSkillDenyDirective
+        isSkillDenyDirective,
+        skillDenyForPeer
       };
     }
   });
@@ -27252,6 +27257,7 @@ helper=${d.helperPath}`;
       var { esc } = require_format();
       var { splitModelArg } = require_args_model();
       var { deniedIntentCount } = require_intent_catalog();
+      var { isSkillDenyDirective, skillDenyIsDeferred, skillDenyKeepList } = require_skills_off();
       function scopeMetaFromContent(content) {
         const m = String(content || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
         const meta = {};
@@ -27968,8 +27974,14 @@ Opening it here and saving would overwrite the file with what this editor could 
           const model = splitModelArg(t.extraArgs).model;
           if (model) parts.push(`model: ${model}`);
           if ((t.agents || []).length) parts.push(`${t.agents.length} agent${t.agents.length > 1 ? "s" : ""}`);
-          const gated = (t.disabledTools || []).length + (t.disabledSkills || []).length + (t.denyBuiltins || []).length;
+          const skillDeny = t.disabledSkills || [];
+          const deniedSkills = skillDeny.filter((n) => !isSkillDenyDirective(n));
+          const gated = (t.disabledTools || []).length + deniedSkills.length + (t.denyBuiltins || []).length;
           if (gated) parts.push(`\u2212${gated} gated`);
+          if (skillDenyIsDeferred(skillDeny)) {
+            const keeps = skillDenyKeepList(skillDeny).length;
+            parts.push(keeps ? `skills: all but ${keeps}` : "skills: all off");
+          }
           const deniedIntents = deniedIntentCount(t.intents);
           if (deniedIntents) parts.push(`\u{1F512}${deniedIntents} intent${deniedIntents > 1 ? "s" : ""}`);
           if ((t.injectSkills || []).length) parts.push(`+${t.injectSkills.length} skill${t.injectSkills.length > 1 ? "s" : ""}`);
@@ -36329,7 +36341,7 @@ ${detail}` });
       var { evalRendererModule } = require_plugin_module_eval();
       var { pluginOrigin } = require_plugin_origin();
       var { prefsGate } = require_prefs_gate();
-      var { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList } = require_skills_off();
+      var { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require_skills_off();
       var { planNewSession } = require_focus_policy();
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
@@ -38043,6 +38055,7 @@ ${detail}` });
         renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         setSkillLibCache(cat.skills || []);
         renderInjectChecklist(inputInjectSkillsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
+        resetNewSessionSkillCollector(modeSkillDenySet());
         renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
         setClaudeToolsCache(cat.claudeTools || []);
         renderToolChecklist(inputToolsList, modeToolDenySet());
@@ -38278,11 +38291,14 @@ ${detail}` });
       var newSessionSkillsDeferred = false;
       var newSessionSkillsDrawn = [];
       var newSessionSkillsAsked = [];
-      async function refreshNewSessionSkills(disabledSet = /* @__PURE__ */ new Set(), { forTemplate = false } = {}) {
-        if (inputType.value !== "claude") return;
+      function resetNewSessionSkillCollector(disabledSet) {
         newSessionSkillsDeferred = skillDenyIsDeferred(disabledSet);
         newSessionSkillsAsked = [...disabledSet];
         newSessionSkillsDrawn = [];
+      }
+      async function refreshNewSessionSkills(disabledSet = /* @__PURE__ */ new Set(), { forTemplate = false } = {}) {
+        if (inputType.value !== "claude") return;
+        resetNewSessionSkillCollector(disabledSet);
         const cwd = expandPath(inputCwd.value.trim()) || homeDir;
         const res = await window.api.getSkillCatalogFor(cwd);
         if (!res || !res.ok) {
@@ -38304,8 +38320,14 @@ ${detail}` });
         if (!newSessionSkillsDrawn.length) return newSessionSkillsAsked;
         const off = collectSkillChecklist(inputSkillsList);
         if (!newSessionSkillsDeferred) return off;
+        if (!off.length) return [];
+        const toggleable = new Set(Array.from(
+          inputSkillsList.querySelectorAll('input[type="checkbox"]:not(:disabled)')
+        ).map((cb) => cb.value));
         const denied = new Set(off);
-        return deferredSkillDeny(newSessionSkillsDrawn.filter((n) => !denied.has(n)));
+        const keptRows = newSessionSkillsDrawn.filter((n) => toggleable.has(n) && !denied.has(n));
+        const keptUndrawn = skillDenyKeepList(newSessionSkillsAsked).filter((n) => !toggleable.has(n));
+        return deferredSkillDeny([...keptRows, ...keptUndrawn]);
       }
       async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
         if (inputType.value !== "claude") return;
@@ -38799,7 +38821,7 @@ ${detail}` });
               agents,
               denyBuiltins,
               disabledTools,
-              disabledSkills,
+              disabledSkills: skillDenyForPeer(disabledSkills),
               injectSkills,
               stripLevel,
               systemPromptFile,

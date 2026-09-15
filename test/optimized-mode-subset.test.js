@@ -81,6 +81,7 @@ const SHIPPED = [
   extract(/\n(function setModeSelect\([\s\S]*?\n\})\n/, 'setModeSelect'),
   extract(/\n(function applyModeFields\([\s\S]*?\n\})\n/, 'applyModeFields'),
   extract(/\n(function populateHostCatalogs\([\s\S]*?\n\})\n/, 'populateHostCatalogs'),
+  extract(/\n(function resetNewSessionSkillCollector\([\s\S]*?\n\})\n/, 'resetNewSessionSkillCollector'),
   extract(/\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills'),
   extract(/\n(async function refreshNewSessionTools\([\s\S]*?\n\})\n/, 'refreshNewSessionTools'),
 ].join('\n');

@@ -877,7 +877,10 @@ accept teardown removes.
   (`DEFAULT_SKILL_DENY_FLOOR` is one), `skillOffSetFor(names, list)` is what every
   checklist renders from, and `isSkillDenyDirective` is what keeps a directive out
   of a name list. The persisted entry keeps the directives raw, so a restart
-  re-expands against a catalog that has grown since.
+  re-expands against a catalog that has grown since. `skillDenyForPeer` is the
+  wire guard: a create routed to a BOX gets `[]` rather than a directive list,
+  because a peer older than this vocabulary reads `!x` as a skill name and would
+  deny its whole roster.
 - **skill-roster.js** — `classifySkillRoster`: splits a transcript's
   `skill_listing` attachments into the session's roster (`isInitial: true`,
   last one wins) and the DIRECTORY-SCOPED sets (`isInitial: false`, keyed by

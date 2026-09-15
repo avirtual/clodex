@@ -37,11 +37,14 @@ function el(tag) {
     querySelectorAll(sel) {
       // Spelled out rather than pattern-matched: a stub answering every selector
       // with everything would make the collect below vacuous.
-      assert.strictEqual(sel, 'input[type="checkbox"]:not(:checked):not(:disabled)');
+      const OFF = 'input[type="checkbox"]:not(:checked):not(:disabled)';
+      const TOGGLEABLE = 'input[type="checkbox"]:not(:disabled)';
+      assert.ok(sel === OFF || sel === TOGGLEABLE, `unexpected selector: ${sel}`);
       const flat = [];
       const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
       walk(e);
-      return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox' && !c.checked && !c.disabled);
+      return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox' && !c.disabled
+        && (sel === TOGGLEABLE || !c.checked));
     },
   };
   let text = '';
@@ -67,14 +70,18 @@ function extract(re, what) {
 
 const SHIPPED = [
   extract(/\n(function modeSkillDenySet\([\s\S]*?\n\})\n/, 'modeSkillDenySet'),
+  extract(/\n(function resetNewSessionSkillCollector\([\s\S]*?\n\})\n/, 'resetNewSessionSkillCollector'),
   extract(/\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills'),
   extract(/\n(function newSessionSkillDenyList\([\s\S]*?\n\})\n/, 'newSessionSkillDenyList'),
+  extract(/\n(function populateChecklistsFromCatalogs\([\s\S]*?\n\})\n/, 'populateChecklistsFromCatalogs'),
 ].join('\n');
 
 // What the New Session dialog would persist as `disabledSkills` for a claude
 // seat in this mode. The settings payload and catalog come from the given
 // engine, so no literal here can stand in for what the app would store.
-async function dialogDisabledSkills(engine, mode) {
+async function dialogDisabledSkills(engine, mode, {
+  thenPlaceInSandbox = false, lowerLayerOff = null, afterRender = null,
+} = {}) {
   const handlers = new Map();
   registerIpcHandlers({
     ...engine,
@@ -90,14 +97,23 @@ async function dialogDisabledSkills(engine, mode) {
   // a skill off there renders read-only and never enters clodex's off list —
   // correct in the product, and here it would make the pins depend on whose box
   // runs them. Only `effective` is dropped; the names stay as served.
-  const catalog = { ...served, effective: {} };
+  const catalog = {
+    ...served,
+    effective: lowerLayerOff ? { [lowerLayerOff]: { value: 'off', source: 'global' } } : {},
+    canReenable: false,
+  };
+  if (lowerLayerOff) {
+    assert.ok(served.names.includes(lowerLayerOff),
+      `ENTER: '${lowerLayerOff}' is in the served catalog — a read-only row that never draws pins nothing`);
+  }
   const settings = handlers.get('settings:get')();
 
   const had = global.document;
   global.document = { createElement: el, addEventListener() {} };
   try {
     const inputSkillsList = el('div');
-    const { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred } = require('../skills-off');
+    const noop = () => {};
+    const { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList } = require('../skills-off');
     const env = {
       inputMode: { value: mode },
       inputType: { value: 'claude' },
@@ -109,16 +125,35 @@ async function dialogDisabledSkills(engine, mode) {
       renderSkillChecklist: checklists.renderSkillChecklist,
       collectSkillChecklist: checklists.collectSkillChecklist,
       advisoryEffective: (e) => e || {},
-      skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred,
+      skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList,
       newSessionSkillsDeferred: false,
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],
       window: { api: { getSkillCatalogFor: async () => catalog } },
+      // The rest of populateChecklistsFromCatalogs. Only the skill arm is real;
+      // the others draw categories this file says nothing about.
+      setAgentLibCache: noop, renderAgentChecklist: noop,
+      setSkillLibCache: noop, renderInjectChecklist: noop,
+      setClaudeToolsCache: noop, renderToolChecklist: noop, renderBuiltinChecklist: noop,
+      modeToolDenySet: () => new Set(), modeBuiltinDenySet: () => new Set(),
+      refreshNewSessionExecCommands: noop,
+      refreshNewSessionPlugins: () => Promise.resolve(),
+      refreshNewSessionIntents: noop,
+      setPromptLibCache: noop, libraryPromptCache: (p) => p,
+      fillSystemPromptSelect: noop, renderAppendChecklist: noop,
+      setProxyControls: noop, newSessionSeat: () => ({ plugins: [] }),
+      inputAgentsList: el('div'), inputInjectSkillsList: el('div'),
+      inputToolsList: el('div'), inputBuiltinsList: el('div'),
+      inputAppendList: el('div'), inputSystemPrompt: { value: '' },
+      inputProxyMode: { value: '' }, inputProxyUrl: { value: '' },
+      afterRender: afterRender || noop,
     };
     const names = Object.keys(env);
     const run = new Function(...names, `${SHIPPED}
       return (async () => {
         await refreshNewSessionSkills(modeSkillDenySet());
+        ${thenPlaceInSandbox ? 'populateChecklistsFromCatalogs({ skills: [], claudeTools: [] });' : ''}
+        afterRender(inputSkillsList);
         return { persisted: newSessionSkillDenyList(), rows: inputSkillsList.children.map((r) => {
           const cb = r.children.find((x) => x.tagName === 'input');
           return { name: cb.value, checked: cb.checked };
@@ -314,6 +349,118 @@ test('t918 pin 3: standard writes no skill denial, and an explicit empty choice 
   const curated = await dialogDisabledSkills(box3.engine, 'optimized');
   assert.deepStrictEqual(curated.persisted.sort(), ['init', 'review'],
     "the operator's own skill list, verbatim and undeferred");
+});
+
+// --- r2: the paths that feed the collector something other than a host render --
+
+test('t918 pin 4: switching Placement to a sandbox re-asks for the floor, never this Mac\'s names', async () => {
+  const box = freshBox();
+  const host = await dialogDisabledSkills(box.engine, 'optimized');
+  assert.ok(host.rows.length >= 5,
+    'ENTER: the host render drew rows — a collector that never held names cannot go stale');
+
+  const { persisted, rows } = await dialogDisabledSkills(box.engine, 'optimized',
+    { thenPlaceInSandbox: true });
+  assert.deepStrictEqual(rows, [],
+    'ENTER: the sandbox fill empties the container — the box serves its own catalog and has none yet');
+
+  // The failure this forbids: the host render's names survive as the KEEP list,
+  // so the far box denies (its catalog − this Mac's) — exempting the skills
+  // optimized means to deny and denying ones the operator never saw.
+  const floor = box.engine.stores.agentDefaults.getDefaultSkillDeny();
+  const asKeep = new Set(floor.filter((n) => n.startsWith('!')).map((n) => n.slice(1)));
+  const localOnly = host.rows.map((r) => r.name).filter((n) => !asKeep.has(n));
+  assert.ok(localOnly.length >= 3,
+    'ENTER: this Mac drew names the floor does not keep — otherwise a stale collector would be indistinguishable');
+  for (const local of localOnly) {
+    assert.ok(!persisted.includes(`!${local}`),
+      `'${local}' was drawn from THIS Mac's catalog — exempting it on the far box inverts the denial`);
+  }
+  assert.deepStrictEqual([...persisted].sort(), [...floor].sort(),
+    'the floor passes through unresolved, for the far box to resolve against its own catalog');
+});
+
+test('t918 pin 5: a box create sends a plain list, because an old peer reads `!x` as a skill name', async () => {
+  const { skillDenyForPeer, expandSkillsOff } = require('../skills-off');
+  const floor = require('../catalogs').DEFAULT_SKILL_DENY_FLOOR;
+  assert.ok(floor.includes('*') && floor.some((n) => n.startsWith('!')),
+    'ENTER: the floor really is a directive list — otherwise this pin is about nothing');
+
+  assert.deepStrictEqual(skillDenyForPeer(floor), [],
+    'a directive list must not cross the create-on-peer wire: pre-t918 that path sent no denial at all');
+  assert.deepStrictEqual(skillDenyForPeer(['review', 'init']), ['review', 'init'],
+    'a plain list is understood by every version and passes through');
+
+  // What the far box would do with it. This is the pre-t918 expandSkillsOff:
+  // `!dataviz` is not a directive to it, so it lands as a denied skill name AND
+  // `*` sweeps everything else.
+  const oldPeerExpand = (list, known) => (!list.includes('*') ? list
+    : [...new Set([...list, ...known])].filter((n) => n !== '*').sort());
+  const onOldPeer = oldPeerExpand(floor, ['dataviz', 'design', 'box-only-skill']);
+  assert.ok(onOldPeer.includes('box-only-skill') && onOldPeer.includes('!dataviz'),
+    'ENTER: an old peer denies every known name and writes the exemption as a literal — the shape being avoided');
+  assert.ok(!expandSkillsOff(floor, { known: ['dataviz', 'design'] }).includes('dataviz'),
+    'a t918 peer would have honoured it — the send-plain choice is about versions, not about the shape being wrong');
+
+  const renderer = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
+  assert.match(renderer, /disabledSkills: skillDenyForPeer\(disabledSkills\)/,
+    'the box-create spec must route through it — the host spawn arm keeps the directives');
+});
+
+test('t918 pin 7: a lean `["*"]` template loaded into the dialog saves as `*` again, not as this box\'s names', async () => {
+  // The divergence docs/teams.md now asserts in prose: a popover save collapses
+  // the sentinel to names (t769), the template editor and New Session keep it.
+  // Without this the prose is the only thing holding the claim up.
+  const box = freshBox();
+  box.engine.stores.agentDefaults.setDefaultSkillDeny(['*']);
+  const { persisted, rows } = await dialogDisabledSkills(box.engine, 'optimized');
+  assert.ok(rows.length && rows.every((r) => !r.checked),
+    'ENTER: `*` renders as every row unticked — that is what the seat runs with');
+  assert.strictEqual(persisted[0], '*',
+    'a save must stay portable: names frozen here are this box\'s catalog, not "whatever the box knows"');
+  assert.deepStrictEqual(persisted, ['*'],
+    'nothing was re-ticked, so there is no exemption to carry');
+
+  // And re-ticking one row narrows the sweep rather than collapsing it.
+  const narrowed = await dialogDisabledSkills(box.engine, 'optimized', {
+    afterRender: (list) => {
+      const cb = list.children
+        .map((r) => r.children.find((x) => x.tagName === 'input'))
+        .find((c) => c && c.value === 'dataviz' && !c.disabled);
+      assert.ok(cb, 'ENTER: the row to re-tick drew and is toggleable');
+      cb.checked = true;
+    },
+  });
+  assert.deepStrictEqual(narrowed.persisted, ['*', '!dataviz'],
+    'one tick is one exemption — every other skill, including ones announced later, stays denied');
+});
+
+test('t918 pin 6: a read-only row never becomes a keep, and Check All means deny nothing', async () => {
+  const box = freshBox();
+  // `design` is a name the floor DENIES, so nothing in the asked list asks to
+  // keep it; a lower-layer off makes its row read-only, which takes it out of
+  // the collected off list — and the un-filtered collector read that absence as
+  // "still ticked" and emitted it as a keep.
+  const locked = await dialogDisabledSkills(box.engine, 'optimized', { lowerLayerOff: 'design' });
+  const row = locked.rows.find((r) => r.name === 'design');
+  assert.ok(row && !row.checked,
+    'ENTER: the read-only row drew unticked — clodex cannot re-enable a lower-layer off');
+  assert.ok(!locked.persisted.includes('!design'),
+    "a row this box owns from a LOWER layer must not travel as a keep: on another box it would read as 'turn it on'");
+  assert.ok(locked.persisted.includes('*'),
+    'and the denial is still deferred — dropping the read-only row is not dropping the mechanism');
+
+  // Check All: every toggleable row ticked, so the collect is empty.
+  const all = await dialogDisabledSkills(box.engine, 'optimized', {
+    afterRender: (list) => {
+      for (const r of list.children) {
+        const cb = r.children.find((x) => x.tagName === 'input');
+        if (cb && !cb.disabled) cb.checked = true;
+      }
+    },
+  });
+  assert.deepStrictEqual(all.persisted, [],
+    'the ticks say "deny nothing"; re-emitting `*` would still deny whatever the CLI announces later');
 });
 
 // createEngine leaves background timers running; the same force-exit every other

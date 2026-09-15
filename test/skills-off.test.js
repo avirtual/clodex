@@ -11,7 +11,7 @@ const assert = require('node:assert');
 
 const {
   expandSkillsOff, deferredSkillDeny, skillOffSetFor,
-  skillDenyKeepList, skillDenyIsDeferred, isSkillDenyDirective,
+  skillDenyKeepList, skillDenyIsDeferred, isSkillDenyDirective, skillDenyForPeer,
 } = require('../skills-off');
 
 test('a list with no sentinel comes back untouched', () => {
@@ -101,6 +101,19 @@ test('deferredSkillDeny builds the shape, and round-trips through skillDenyKeepL
   assert.deepStrictEqual(deferredSkillDeny(['*', '!a', 'b']), ['*', '!b']);
   for (const d of ['*', '!a']) assert.ok(isSkillDenyDirective(d));
   assert.ok(!isSkillDenyDirective('a'));
+});
+
+test('skillDenyForPeer drops a list the far box may be too old to read', () => {
+  // The vocabulary is t918's. A pre-t918 expandSkillsOff sees `!k` as an
+  // ordinary name, writes skillOverrides:{"!k":"off"} and — `*` being present —
+  // denies every other skill it knows. That path sent NO denial before t918, so
+  // dropping to [] keeps it exactly where it was rather than inverting it.
+  assert.deepStrictEqual(skillDenyForPeer(deferredSkillDeny(['k'])), []);
+  assert.deepStrictEqual(skillDenyForPeer(['*']), [], 'the bare sentinel is a directive too');
+  assert.deepStrictEqual(skillDenyForPeer(['a', 'b']), ['a', 'b'],
+    'a plain list means the same thing on every version and must not be weakened');
+  assert.deepStrictEqual(skillDenyForPeer([]), []);
+  assert.deepStrictEqual(skillDenyForPeer(undefined), []);
 });
 
 test('skillOffSetFor renders the same skills the spawn will deny', () => {
