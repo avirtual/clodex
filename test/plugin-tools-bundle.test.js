@@ -195,15 +195,11 @@ test('verify.js stages a plugin\'s own subdirectories, so an engine can require 
     entry: { engine: 'engine.js' },
   }, null, 2));
 
-  // verify.js does not report its scratch path, and it mints that path with
-  // mkdtempSync under os.tmpdir() — which in the child is whatever TMPDIR says.
-  // Handing the run a private TMPDIR makes the stage dir the only thing another
-  // process could ever put there, so the probe below observes this subject's
-  // dir and nothing else. A scan of the shared os.tmpdir() cannot make that
-  // distinction: three seats running suites on one box put concurrent
-  // `clodex-verify-*` dirs in it.
-  // `clodex-verify-data-*` (the UI-settings tmp dir verify.js also mints) lands
-  // in the same private root, so it is excluded by prefix rather than by count.
+  // verify.js does not report its scratch path; it mints one under os.tmpdir(),
+  // which in the child is whatever TMPDIR says. A private TMPDIR makes a
+  // concurrent process structurally incapable of appearing in the probe below —
+  // a scan of the shared tmpdir cannot tell this subject's `clodex-verify-*`
+  // dir from another seat's.
   const verifyTmp = mkTmpRoot('clx-t678-verifytmp-');
   const isStageDir = (f) => f.startsWith('clodex-verify-') && !f.startsWith('clodex-verify-data-');
 
