@@ -34202,9 +34202,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     "renderer/lib/peer-web-view.js"(exports, module) {
       "use strict";
       var { directWebUrl } = require_peer_web_url();
-      function isForwardablePeer(tunnel) {
-        return !!(tunnel && (tunnel.sshHost || cloudTransportName(tunnel)));
-      }
       function isSshPeer(tunnel) {
         return !!(tunnel && tunnel.sshHost);
       }
@@ -34237,15 +34234,15 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const st = status || null;
         const webHost = st && st.webHost;
         const phase = tunnelPhase(webTunnel);
-        const forwardable = isForwardablePeer(tunnel);
+        const direct = !!(st && st.direct === true);
         const how = transportPhrase(tunnel);
         const label = st && (st.host || st.label) || "peer";
         const tokenGated = !!(webHost && webHost.tokenGated === true);
         const url = phase === "open" && webTunnel && webTunnel.url ? webTunnel.url : null;
         if (!webHost && phase === "closed") return { show: false, enabled: false, action: null, phase, tip: "", url: null, tokenGated };
-        if (!forwardable && phase === "closed") {
-          const direct = directWebUrl(st && st.url, webHost && webHost.port);
-          if (!direct) {
+        if (direct && phase === "closed") {
+          const direct2 = directWebUrl(st && st.url, webHost && webHost.port);
+          if (!direct2) {
             return {
               show: true,
               enabled: false,
@@ -34263,7 +34260,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             phase,
             url: null,
             tokenGated,
-            tip: tokenGated ? `${label}'s web UI is at ${direct} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI at ${direct} \u2014 no tunnel needed`
+            tip: tokenGated ? `${label}'s web UI is at ${direct2} \u2014 the box requires a token, so you'll get a URL to open with ?token=\u2026` : `Open ${label}'s web UI at ${direct2} \u2014 no tunnel needed`
           };
         }
         if (phase === "open") {
@@ -34314,7 +34311,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         webViewAffordance,
         tunnelPhase,
         isSshPeer,
-        isForwardablePeer,
         cloudTransportName,
         transportPhrase
       };
