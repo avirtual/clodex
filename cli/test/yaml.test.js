@@ -89,6 +89,19 @@ const QUOTING = [
   ['a #c', 'v: "a #c"\n'],
   ['tab\there', 'v: "tab\\there"\n'],
   ['bell\x07', 'v: "bell\\u0007"\n'],
+  ['del\x7f', 'v: "del\\u007f"\n'],
+  ['.inf', 'v: ".inf"\n'],
+  ['.Inf', 'v: ".Inf"\n'],
+  ['.INF', 'v: ".INF"\n'],
+  ['-.inf', 'v: "-.inf"\n'],
+  ['+.inf', 'v: "+.inf"\n'],
+  ['.nan', 'v: ".nan"\n'],
+  ['.NaN', 'v: ".NaN"\n'],
+  ['.NAN', 'v: ".NAN"\n'],
+  ['12:30', 'v: "12:30"\n'],
+  ['1:02:03', 'v: "1:02:03"\n'],
+  ['-1:30', 'v: "-1:30"\n'],
+  ['1:02:03.5', 'v: "1:02:03.5"\n'],
   ['a\n\n', 'v: "a\\n\\n"\n'],
   ['plain text', 'v: plain text\n'],
   ['ok-1', 'v: ok-1\n'],
@@ -96,6 +109,8 @@ const QUOTING = [
   ['/w/one', 'v: /w/one\n'],
   ['a#b', 'v: a#b\n'],
   ['x:y', 'v: x:y\n'],
+  ['9:99', 'v: 9:99\n'],
+  ['infinity', 'v: infinity\n'],
 ];
 
 test('every quoting trigger renders as its literal row, and the safe ones stay bare', () => {
@@ -104,20 +119,26 @@ test('every quoting trigger renders as its literal row, and the safe ones stay b
     assert.strictEqual(toYaml({ v: input }), expected, `row ${JSON.stringify(input)}`);
     seen.push(input);
   }
-  assert.strictEqual(seen.length, QUOTING.length, `ENTER: every row ran (${seen.length})`);
-  for (const marker of ['', 'yes', 'off', '1e3', ' leading', 'a: b', 'plain text']) {
+  for (const marker of ['', 'yes', 'off', '1e3', ' leading', 'a: b', 'del\x7f', '.inf', '-.inf', '.NaN', '12:30', 'plain text', '9:99']) {
     assert.ok(seen.includes(marker), `ENTER: the table still carries the ${JSON.stringify(marker)} row`);
   }
   const bare = seen.filter((s) => !toYaml({ v: s }).startsWith('v: "'));
-  assert.deepStrictEqual(bare, ['plain text', 'ok-1', '1.2.3', '/w/one', 'a#b', 'x:y'],
+  assert.deepStrictEqual(bare, ['plain text', 'ok-1', '1.2.3', '/w/one', 'a#b', 'x:y', '9:99', 'infinity'],
     'ENTER: the table mixes quoted and bare rows, so it can express an exception');
 });
 
 test('a quoted scalar is a JSON string of the original', () => {
-  for (const s of ['a: b', 'tab\there', '"dquote', 'a\n\n', '']) {
+  for (const s of ['a: b', 'tab\there', '"dquote', 'a\n\n', '', 'del\x7f', '12:30', '.inf']) {
     const body = toYaml({ v: s }).slice('v: '.length, -1);
     assert.strictEqual(JSON.parse(body), s, `round-trip of ${JSON.stringify(s)}`);
   }
+});
+
+test('DEL never rides out raw — in a value, in a key, anywhere a quoted form is built', () => {
+  const out = toYaml({ 'k\x7f': 'v\x7f' });
+  assert.strictEqual(out, '"k\\u007f": "v\\u007f"\n');
+  assert.ok(!out.includes('\x7f'), 'a raw DEL byte reached the output');
+  assert.strictEqual(JSON.parse(out.split(': ')[1].trim()), 'v\x7f');
 });
 
 test('a multi-line string ending in a newline is a | block scalar', () => {

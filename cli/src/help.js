@@ -215,7 +215,7 @@ const VERB_REGISTRY = [
     flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json)']],
     examples: ['clodexctl delete session doomed', 'clodexctl delete session doomed --force -o json'],
     notes: [
-      'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In -o json/non-interactive mode --force is required (there is no prompt to answer).',
+      'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In -o json|yaml/non-interactive mode --force is required (there is no prompt to answer).',
     ],
   },
   {
@@ -383,7 +383,7 @@ const VERB_REGISTRY = [
       'clodexctl undeploy node mybox --host ssh://user@box',
     ],
     notes: [
-      'The whole teardown is READ FROM THE CONTEXT record (`deploy.flavor` and friends, stamped by deploy), exactly as `upgrade` reads it: fargate deletes the CloudFormation stack (stray tasks stopped first), helm is `helm uninstall` + the StatefulSet PVC, docker is `docker rm -f` + the named data volume. The record also names the TARGET and where it lives — the fargate `stack` (which differs from the context name whenever deploy was given --ctx), the helm `release`/`namespace`/`kubeContext`, the docker `dockerHost` — so a flag is needed only to override one. A context that records no flavor is refused by name and takes --fargate|--helm|--docker to force it; a FORCED flavor tears down the name you typed, with no record to read. An ssh/ssm record is not supported (teardown needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
+      'The whole teardown is READ FROM THE CONTEXT record (`deploy.flavor` and friends, stamped by deploy), exactly as `upgrade` reads it: fargate deletes the CloudFormation stack (stray tasks stopped first), helm is `helm uninstall` + the StatefulSet PVC, docker is `docker rm -f` + the named data volume. The record also names the TARGET and where it lives — the fargate `stack` (which differs from the context name whenever deploy was given --ctx), the helm `release`/`namespace`/`kubeContext`, the docker `dockerHost` — so a flag is needed only to override one. A context that records no flavor is refused by name and takes --fargate|--helm|--docker to force it; a FORCED flavor tears down the NAME YOU TYPED rather than the record\'s target, and says so when the record names a different one (the record is still read for region/profile when its flavor matches). An ssh/ssm record is not supported (teardown needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
       'Teardown is DESTRUCTIVE and confirm-by-default: it previews what dies, then prompts for the exact name; --force skips the prompt (scripts). --dry-run and -o json without --force in a non-TTY refuse rather than silently destroy.',
       'DATA doctrine: a full teardown removes the persistent store too — helm\'s StatefulSet PVC (survives `helm uninstall` by k8s design) and docker\'s named data volume (survives `docker rm -f`). --keep-data opts out and names what was kept. fargate is stateless (nothing to keep).',
       'fargate resolves the region flag > the record\'s pinned region (deploy pins it) > the ctx\'s ssm half > aws default, stops any stray (non-service) tasks that would block cluster teardown, then `delete-stack`. Secrets enter Secrets Manager\'s recovery window (gone in 7–30 days). A pre-existing --cluster the stack did not create is never deleted.',
@@ -495,7 +495,7 @@ function renderIndex() {
   lines.push('GLOBAL FLAGS (any verb)');
   lines.push('  --ctx NAME               use a named context (overrides current)');
   lines.push('  --url URL --token T      one-shot direct context (no file needed)');
-  lines.push('  -o json                  machine-stable output on read verbs');
+  lines.push('  -o json|yaml             machine-stable output on read verbs');
   lines.push('  -h, --help   -V, --version');
   lines.push('');
   lines.push('ENV (between file and flags; flags win)   CLODEX_URL   CLODEX_TOKEN');
@@ -538,7 +538,7 @@ function renderVerb(e) {
     for (const n of e.notes) lines.push(`  - ${n}`);
   }
   lines.push('');
-  lines.push('Global flags (--ctx/--url/--token/-o json) and exit codes: clodexctl --help');
+  lines.push('Global flags (--ctx/--url/--token/-o json|yaml) and exit codes: clodexctl --help');
   return lines.join('\n');
 }
 

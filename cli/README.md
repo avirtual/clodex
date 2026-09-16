@@ -10,6 +10,32 @@ Contexts, transports, the read/write verbs, `exec` (command→result), `attach`
 (a live terminal on any session), and `logs -f` (follow) are all here — the
 whole client.
 
+## kubectl users start here
+
+Two words first, because they are the only ones that are not kubectl's:
+a **node** is a running Clodex engine (the desktop app, or a headless install
+on a box) — it is what a context points at; a **sandbox** is a container a node
+hosts. A **session** is the agent seat you actually talk to, and it is the
+thing a pod is in this analogy.
+
+| kubectl | clodexctl |
+|---|---|
+| `kubectl get pods` | `clodexctl get sessions` |
+| `kubectl describe pod X` | `clodexctl describe session X` |
+| `kubectl logs X` | `clodexctl logs X` |
+| `kubectl exec X -- cmd` | `clodexctl exec X cmd` |
+| `kubectl attach X` | `clodexctl attach X` |
+| `kubectl delete pod X` | `clodexctl delete session X` |
+| `kubectl config use-context X` | `clodexctl ctx use X` |
+| `kubectl api-resources` | `clodexctl api-resources` |
+| `kubectl port-forward L:R` | `clodexctl port-forward L:R` |
+| `-o json\|yaml\|wide\|name` | `-o json\|yaml\|wide\|name` |
+
+The grammar is the same one kubectl trained you on — `<verb> <resource> [name]`
+— and so are the habits: `get` for a table, `describe` for the full object,
+`-o json` to pipe it. `describe` has no `-o json` here, exactly as kubectl's
+does not; use `get <resource> <name> -o json` for machine output.
+
 ## A live terminal on a container in Fargate, from your laptop
 
 Three commands take you from "a task is running somewhere in a customer's VPC"
@@ -651,8 +677,7 @@ clodexctl deploy node mynode --helm --set persistence.enabled=false --dry-run
   a **hard error**, not a quiet fall-back to reverting your overrides.
 - Collision on the ctx name is **kept** unless `--force`; `--no-ctx` opts out.
   `--dry-run` prints the cluster/namespace/release/chart, the exact helm argv
-  (placeholder token paths), and the ctx entry to be written. A host literally
-  named `helm` still works via `deploy ssh helm`.
+  (placeholder token paths), and the ctx entry to be written.
 
 ## Exit codes (contract)
 
