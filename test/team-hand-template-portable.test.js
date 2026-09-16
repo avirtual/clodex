@@ -98,12 +98,14 @@ test('it names the team-project append stem — the file the operator must write
   assert.ok(!fs.existsSync(shipped), 'shipping this file would defeat the named-missing-file mechanism');
 });
 
-test('the stock hand is lean by default: no model pin, and every skill off', () => {
-  // The first team stood up from the bootstrap skill came up with Fable-class
-  // hands carrying every installed skill, and was stopped on cost. The skills
-  // sentinel is the only portable "none", because a template cannot name skills
-  // that differ per box.
-  assert.strictEqual(tpl.extraArgs, undefined, 'no model pin: seats follow the box default');
+test('the stock hand pins a 1M-context model, and every skill off', () => {
+  // The skills sentinel is the only portable "none", because a template cannot
+  // name skills that differ per box.
+  assert.match(
+    (tpl.extraArgs || []).join(' '),
+    /--model \S+\[1m\]/,
+    'the ruling is 1M everywhere: without a --model the seat follows the CLI default, which is the 200k window',
+  );
   assert.deepStrictEqual(tpl.disabledSkills, ['*']);
 });
 
