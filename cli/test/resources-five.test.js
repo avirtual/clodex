@@ -2,9 +2,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
-const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 const TOKEN = 'sekret';
 
@@ -35,14 +35,22 @@ const TEAM_ALPHA = {
   name: 'alpha', root: '/proj/alpha', sandboxed: false, lead: 'alpha-lead',
   roles: { lead: { dispatch: 'session' }, hand: { dispatch: 'worktree' } },
   kit: null, file: 'alpha.json', dir: '/teams/alpha', watchdogMs: 900000, version: 2,
-  droppedFields: [], activity: { roles: { lead: { dispatch: 'session', live: ['alpha-lead'], open: [], last: null } } },
+  droppedFields: [],
+  activity: {
+    ok: true,
+    team: 'alpha',
+    roles: { lead: { dispatch: 'session', live: [{ seat: 'alpha-lead', ticket: null, step: null }], open: [], last: null } },
+    reviewer: { live: [], last: null },
+    counts: { open: 2, verify: 0, done24h: 1 },
+    tickets: { open: [{ id: 't1', title: 'alpha open', assignee: 'hand', step: 'working', since: null, round: null }], landed: [] },
+  },
 };
 
 const TICKETS = [
-  { id: 't1', team: 'alpha', state: 'open', assignee: 'hand', title: 'alpha open', branch: 't1-work' },
-  { id: 't2', team: 'alpha', state: 'done', assignee: 'hand', title: 'alpha done', branch: 't2-work' },
-  { id: 't1', team: 'beta', state: 'done', assignee: 'other', title: 'beta done', branch: null },
-  { id: 't7', team: 'beta', state: 'open', assignee: 'other', title: 'beta only', branch: 't7-work' },
+  { id: 't1', team: 'alpha', state: 'open', assignee: 'hand', title: 'alpha open', worktree: { path: '/wt/t1', branch: 't1-work' } },
+  { id: 't2', team: 'alpha', state: 'done', assignee: 'hand', title: 'alpha done', worktree: { path: '/wt/t2', branch: 't2-work' } },
+  { id: 't1', team: 'beta', state: 'done', assignee: 'other', title: 'beta done' },
+  { id: 't7', team: 'beta', state: 'open', assignee: 'other', title: 'beta only' },
 ];
 
 const SANDBOXES = [{ id: 'boxy', label: 'Boxy' }, { id: 'tiny', label: 'Tiny' }];
@@ -137,7 +145,7 @@ async function cli(argv, port, extra = {}) {
     stdout: (s) => (stdout += s),
     stderr: (s) => (stderr += s),
     env: {},
-    contextsFile: path.join(os.tmpdir(), 'nonexistent-clodexctl-t933', 'contexts.json'),
+    contextsFile: path.join(NO_CTX_ROOT, 'contexts.json'),
     spawnFn: () => { throw new Error('spawnFn called — the verb reached a transport'); },
     ...extra,
   });
@@ -149,6 +157,8 @@ async function withNode(opts, fn) {
   const port = await listen(server);
   try { return await fn(port, seen); } finally { server.close(); }
 }
+
+const NO_CTX_ROOT = mkTmpRoot('r5-noctx-');
 
 const lines = (s) => s.replace(/\n$/, '').split('\n');
 
@@ -216,7 +226,7 @@ test('get tickets renders ID TEAM STATE TITLE, and -o wide adds ASSIGNEE BRANCH'
     assert.deepStrictEqual(lines(wide.stdout), [
       'ID  TEAM   STATE  TITLE       ASSIGNEE  BRANCH',
       't1  alpha  open   alpha open  hand      t1-work',
-      't7  beta   open   beta only   other     t7-work',
+      't7  beta   open   beta only   other',
     ]);
     const name = await cli(['get', 'tickets', '-o', 'name'], port);
     assert.deepStrictEqual(lines(name.stdout), ['ticket/t1', 'ticket/t7']);
@@ -333,8 +343,14 @@ test('describe team renders roles one per line and activity as its own block', a
     ]);
     assert.deepStrictEqual(l.slice(l.indexOf('activity:')), [
       'activity:',
-      '  lead  {"dispatch":"session","live":["alpha-lead"],"open":[],"last":null}',
-    ]);
+      '  ok  true',
+      '  team  alpha',
+      '  roles:',
+      '    lead  {"dispatch":"session","live":[{"seat":"alpha-lead","ticket":null,"step":null}],"open":[],"last":null}',
+      '  reviewer  {"live":[],"last":null}',
+      '  counts  {"open":2,"verify":0,"done24h":1}',
+      '  tickets  {"open":[{"id":"t1","title":"alpha open","assignee":"hand","step":"working","since":null,"round":null}],"landed":[]}',
+    ], `every key of the engine's activity block survives: ${stdout}`);
   });
 });
 
@@ -366,7 +382,15 @@ test('describe ticket renders the full record as a key block', async () => {
       'state:    open',
       'assignee: other',
       'title:    beta only',
-      'branch:   t7-work',
+    ]);
+    const wt = await cli(['describe', 'ticket', 't2'], port);
+    assert.deepStrictEqual(lines(wt.stdout), [
+      'id:       t2',
+      'team:     alpha',
+      'state:    done',
+      'assignee: hand',
+      'title:    alpha done',
+      'worktree: {"path":"/wt/t2","branch":"t2-work"}',
     ]);
   });
 });

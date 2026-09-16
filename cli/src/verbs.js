@@ -27,15 +27,18 @@ async function get({ client, ctx, printer, flags, args }) {
     if (target.name) throw new CliError(EXIT.USAGE, 'get workspaces takes no name (try: describe workspace <name>)');
     return getWorkspaces({ client, printer, flags, label });
   }
-  if (target.resource !== 'catalogs') {
+  if (NODE_LISTS[target.resource]) {
     if (target.name) {
       throw new CliError(EXIT.USAGE,
         `get ${target.plural} takes no name (try: describe ${target.singular} ${target.name})`);
     }
     return getNodeResource({ client, printer, flags, label, plural: target.plural, singular: target.singular });
   }
-  if (target.name) throw new CliError(EXIT.USAGE, 'get catalogs takes no name');
-  return getCatalogs({ client, printer, flags });
+  if (target.resource === 'catalogs') {
+    if (target.name) throw new CliError(EXIT.USAGE, 'get catalogs takes no name');
+    return getCatalogs({ client, printer, flags });
+  }
+  throw new CliError(EXIT.USAGE, `get ${target.plural} is not supported (try: describe ${target.singular} <name>)`);
 }
 
 const NODE_LISTS = {
@@ -145,7 +148,7 @@ async function describe({ client, ctx, printer, flags, args }) {
     printer.line(out.renderDescribe(body.session || {}));
     return;
   }
-  if (NODE_LISTS[target.resource]) {
+  if (NODE_DESCRIBERS[target.resource]) {
     return describeNodeResource({ client, printer, label, plural: target.plural, singular: target.singular, name: target.name, flags });
   }
   const name = target.name;

@@ -90,7 +90,8 @@ function renderTickets(tickets) {
 
 function renderTicketsWide(tickets) {
   const rows = (tickets || []).map((t) => [
-    t.id || '', t.team || '', t.state || '', t.title || '', t.assignee || '', t.branch || '',
+    t.id || '', t.team || '', t.state || '', t.title || '', t.assignee || '',
+    (t.worktree && t.worktree.branch) || '',
   ]);
   return table(['ID', 'TEAM', 'STATE', 'TITLE', 'ASSIGNEE', 'BRANCH'], rows);
 }
@@ -139,9 +140,11 @@ function describeTeam(team) {
   const { roles, activity, ...rest } = team || {};
   const lines = [renderDescribe(rest), 'roles:'];
   for (const [name, def] of Object.entries(roles || {})) lines.push(`  ${name}  ${describeValue(def)}`);
-  lines.push('', 'activity:');
-  for (const [name, def] of Object.entries((activity && activity.roles) || {})) {
-    lines.push(`  ${name}  ${describeValue(def)}`);
+  lines.push('activity:');
+  for (const [key, value] of Object.entries(activity || {})) {
+    if (key !== 'roles') { lines.push(`  ${key}  ${describeValue(value)}`); continue; }
+    lines.push('  roles:');
+    for (const [name, def] of Object.entries(value || {})) lines.push(`    ${name}  ${describeValue(def)}`);
   }
   return lines.join('\n');
 }

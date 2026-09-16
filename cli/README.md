@@ -246,7 +246,8 @@ unique per team, so an id on two boards answers with the teams to pick from
 (exit `2`) rather than guessing. `agents` is the **subagent library** — running
 agents are `get sessions`.
 
-Everything but `sessions` and `catalogs` needs the node's resources API: an
+Only `get sessions` and `get catalogs` run against a node of any version;
+every other resource needs the node's resources API: an
 older node, or one that simply does not have that resource (a headless node
 hosts no sandboxes), answers with the upgrade line and exit `1`.
 
