@@ -1,5 +1,5 @@
 'use strict';
-// deploy-fargate.test.js — the `deploy fargate <stack>` flavor: one command
+// deploy-fargate.test.js — the `deploy node <stack> --fargate` flavor: one command
 // from the packaged CloudFormation template to a verified Fargate node. Pure
 // argv builders (secret VALUES never in argv), stack-name validation, the
 // ClusterName-defaults-to-stack rule, the Bedrock skip-oauth branch, the
@@ -197,7 +197,7 @@ test('deploy fargate happy path: preflight→deploy→oauth→wire-token→ctx�
   const contextsFile = tmpCtxFile();
   const tf = tokenFile();
   let verifiedWith = null;
-  const { code, stdout } = await cli(['deploy', 'fargate', 'clodex-node', '--region', 'us-west-2', '--token-file', tf], {
+  const { code, stdout } = await cli(['deploy', 'node', 'clodex-node', '--fargate', '--region', 'us-west-2', '--token-file', tf], {
     execFn: fakeAws(rec),
     probeFargate: async (entry, token) => { verifiedWith = { entry, token }; return { app: 'clodex', host: 'node', version: '9.9.9', caps: [] }; },
     contextsFile,
@@ -241,7 +241,7 @@ test('deploy fargate happy path: preflight→deploy→oauth→wire-token→ctx�
 test('deploy fargate: --cluster overrides the default; --profile flows through', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code } = await cli(['deploy', 'fargate', 's', '--cluster', 'shared', '--profile', 'prod', '--use-bedrock'], {
+  const { code } = await cli(['deploy', 'node', 's', '--fargate', '--cluster', 'shared', '--profile', 'prod', '--use-bedrock'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -260,7 +260,7 @@ test('deploy fargate: --cluster overrides the default; --profile flows through',
 
 test('deploy fargate --use-bedrock: NO oauth secret is touched (put-secret-value never runs)', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -272,7 +272,7 @@ test('deploy fargate --use-bedrock: NO oauth secret is touched (put-secret-value
 
 test('deploy fargate: no token file (non-Bedrock) → LOUD warn + manual PutTokenCommand, deploy still succeeds', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--no-ctx'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -285,7 +285,7 @@ test('deploy fargate: no token file (non-Bedrock) → LOUD warn + manual PutToke
 test('deploy fargate: CLODEX_CLAUDE_TOKEN_FILE env supplies the token file', async () => {
   const rec = {};
   const tf = tokenFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--no-ctx'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
     env: { CLODEX_CLAUDE_TOKEN_FILE: tf },
   });
@@ -297,7 +297,7 @@ test('deploy fargate: CLODEX_CLAUDE_TOKEN_FILE env supplies the token file', asy
 
 test('deploy fargate: a missing --token-file fails fast (USAGE) before any AWS call', async () => {
   let ran = false;
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--token-file', '/no/such/token'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--token-file', '/no/such/token'], {
     execFn: async () => { ran = true; return { stdout: '' }; },
     probeFargate: async () => ({}),
   });
@@ -310,7 +310,7 @@ test('deploy fargate --persistent false: infra only — prints RunTaskCommand, S
   const rec = {};
   const contextsFile = tmpCtxFile();
   let probed = false;
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--persistent', 'false', '--use-bedrock'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--persistent', 'false', '--use-bedrock'], {
     execFn: fakeAws(rec), probeFargate: async () => { probed = true; return {}; }, contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -328,7 +328,7 @@ test('deploy fargate: re-run is an idempotent update — --no-fail-on-empty-chan
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: 's', contexts: { s: { ssm: { ecs: 's/s-node' }, token: WIRE } } }));
-  const { code } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--force'], {
+  const { code } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--force'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -343,7 +343,7 @@ test('deploy fargate --dry-run: plan only — deploy/put/get argv with a file://
   let ran = false;
   const contextsFile = tmpCtxFile();
   const tf = tokenFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--region', 'eu-west-1', '--token-file', tf,
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--region', 'eu-west-1', '--token-file', tf,
     '--subnets', 'subnet-x', '--security-group', 'sg-x', '--dry-run'], {
     execFn: async () => { ran = true; return { stdout: '' }; },
     probeFargate: async () => { throw new Error('should not verify'); },
@@ -363,7 +363,7 @@ test('deploy fargate --dry-run: plan only — deploy/put/get argv with a file://
 });
 
 test('deploy fargate: the wire token value never rides the dry-run (no fetch happens at all)', async () => {
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--subnets', 'subnet-x', '--security-group', 'sg-x', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--subnets', 'subnet-x', '--security-group', 'sg-x', '--dry-run'], {
     execFn: async () => { throw new Error('nothing runs on --dry-run'); },
     probeFargate: async () => ({}),
   });
@@ -374,7 +374,7 @@ test('deploy fargate: the wire token value never rides the dry-run (no fetch hap
 test('deploy fargate: verify failure → nonzero exit; ctx already saved, message points at ctx test', async () => {
   const { CliError } = require('../src/errors');
   const contextsFile = tmpCtxFile();
-  const { code, stdout, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws({}),
     probeFargate: async () => { throw new CliError(EXIT.CONNECT, 'no running task for family s-node'); },
     contextsFile,
@@ -393,7 +393,7 @@ test('deploy fargate: verify failure with a SKIPPED ctx (collision, no --force) 
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { s: { url: 'http://old' } } }));
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws({}),
     probeFargate: async () => { throw new CliError(EXIT.CONNECT, 'no running task'); },
     contextsFile,
@@ -408,7 +408,7 @@ test('deploy fargate: verify failure with a SKIPPED ctx (collision, no --force) 
 
 test('deploy fargate --no-ctx: verifies but saves nothing', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws({}), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -422,14 +422,14 @@ test('deploy fargate: ctx collision kept unless --force (verify still runs on th
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { s: { url: 'http://old' } } }));
   let probed = 0;
-  const skip = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const skip = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws({}), probeFargate: async () => { probed++; return { app: 'clodex' }; }, contextsFile,
   });
   assert.strictEqual(skip.code, 0);
   assert.match(skip.stdout, /already exists — kept it/);
   assert.strictEqual(probed, 1);   // verify ran against the fresh entry regardless
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.s.url, 'http://old');
-  const force = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--force'], {
+  const force = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--force'], {
     execFn: fakeAws({}), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(force.code, 0);
@@ -439,7 +439,7 @@ test('deploy fargate: ctx collision kept unless --force (verify still runs on th
 
 test('deploy fargate --json: NDJSON step/ok + context + verify, no token leak', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '-o', 'json'], {
     execFn: fakeAws({}), probeFargate: async () => ({ app: 'clodex', host: 's', version: '1.0', caps: [] }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -456,7 +456,7 @@ test('deploy fargate --json: NDJSON step/ok + context + verify, no token leak', 
 test('deploy fargate: the stack wire token being empty/malformed → SERVER, no ctx/verify', async () => {
   const contextsFile = tmpCtxFile();
   let probed = false;
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws({}, { wire: '   ' }),   // whitespace-only → malformed
     probeFargate: async () => { probed = true; return {}; }, contextsFile,
   });
@@ -468,7 +468,7 @@ test('deploy fargate: the stack wire token being empty/malformed → SERVER, no 
 
 test('deploy fargate: cloudformation deploy failure → SERVER with aws stderr, nothing downstream', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws({}, { deployFail: 'ROLLBACK_COMPLETE: resource X failed' }),
     probeFargate: async () => { throw new Error('should not verify'); }, contextsFile,
   });
@@ -480,7 +480,7 @@ test('deploy fargate: cloudformation deploy failure → SERVER with aws stderr, 
 
 test('deploy fargate: --param validates KEY=VALUE; a bad token → USAGE before any AWS call', async () => {
   let ran = false;
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--param', 'not-a-pair'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--param', 'not-a-pair'], {
     execFn: async () => { ran = true; return { stdout: '' }; }, probeFargate: async () => ({}),
   });
   assert.strictEqual(code, EXIT.USAGE);
@@ -489,7 +489,7 @@ test('deploy fargate: --param validates KEY=VALUE; a bad token → USAGE before 
 });
 
 test('deploy fargate: --assign-public-ip rejects a non-ENABLED/DISABLED value', async () => {
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--assign-public-ip', 'yes'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--assign-public-ip', 'yes'], {
     execFn: async () => ({ stdout: '' }), probeFargate: async () => ({}),
   });
   assert.strictEqual(code, EXIT.USAGE);
@@ -529,7 +529,7 @@ test('fargateSgInboundWarning: factory-benign → null; a real inbound rule → 
 
 test('deploy fargate: both --subnets and --security-group given → ZERO ec2 calls, explicit ids used', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx',
+  const { code } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx',
     '--subnets', 'subnet-A,subnet-B', '--security-group', 'sg-X'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
   });
@@ -543,7 +543,7 @@ test('deploy fargate: both --subnets and --security-group given → ZERO ec2 cal
 
 test('deploy fargate: BOTH flags missing → full detect, resolved ids in overrides, ENABLED implied, loud lines', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -564,7 +564,7 @@ test('deploy fargate: BOTH flags missing → full detect, resolved ids in overri
 
 test('deploy fargate: only --security-group given → detect SUBNETS only (one describe path skipped)', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx', '--security-group', 'sg-mine'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx', '--security-group', 'sg-mine'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -579,7 +579,7 @@ test('deploy fargate: only --security-group given → detect SUBNETS only (one d
 
 test('deploy fargate: only --subnets given → detect SG only, NO implied public ip (subnets were explicit)', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx', '--subnets', 'subnet-mine'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx', '--subnets', 'subnet-mine'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -595,7 +595,7 @@ test('deploy fargate: explicit --assign-public-ip DISABLED SURVIVES auto-detecte
   // break-verify of the implied-ENABLED rule: a user who deliberately passes
   // DISABLED (private subnets they detect for) must NOT be overridden.
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx', '--assign-public-ip', 'DISABLED'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx', '--assign-public-ip', 'DISABLED'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -606,7 +606,7 @@ test('deploy fargate: explicit --assign-public-ip DISABLED SURVIVES auto-detecte
 
 test('deploy fargate: no default VPC → USAGE naming BOTH flags, nothing deployed', async () => {
   const rec = {};
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws(rec, { vpc: '' }), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, EXIT.USAGE);
@@ -616,7 +616,7 @@ test('deploy fargate: no default VPC → USAGE naming BOTH flags, nothing deploy
 });
 
 test('deploy fargate: default VPC with no default-for-az subnets → USAGE naming both flags', async () => {
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws({}, { subnets: [] }), probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, EXIT.USAGE);
@@ -626,7 +626,7 @@ test('deploy fargate: default VPC with no default-for-az subnets → USAGE namin
 
 test('deploy fargate: an auto-detected SG with a real inbound rule → loud WARNING, deploy PROCEEDS', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws(rec, { sgInbound: [{ IpProtocol: 'tcp', FromPort: 22, ToPort: 22, IpRanges: [{ CidrIp: '0.0.0.0/0' }] }] }),
     probeFargate: async () => ({ app: 'clodex' }),
   });
@@ -637,7 +637,7 @@ test('deploy fargate: an auto-detected SG with a real inbound rule → loud WARN
 });
 
 test('deploy fargate: a factory default SG (all-self rule) → NO warning', async () => {
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws({}, { sgInbound: [{ IpProtocol: '-1', UserIdGroupPairs: [{ GroupId: 'sg-default' }] }] }),
     probeFargate: async () => ({ app: 'clodex' }),
   });
@@ -647,7 +647,7 @@ test('deploy fargate: a factory default SG (all-self rule) → NO warning', asyn
 
 test('deploy fargate --dry-run: detection RUNS (read-only) and the plan carries the resolved ids', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--dry-run'], {
     execFn: fakeAws(rec), probeFargate: async () => { throw new Error('no verify on dry-run'); },
   });
   assert.strictEqual(code, 0);
@@ -661,7 +661,7 @@ test('deploy fargate --dry-run: detection RUNS (read-only) and the plan carries 
 });
 
 test('deploy fargate --json --dry-run: the dry-run event carries network{vpcId,subnets,securityGroup,assignPublicIp,autoDetected}', async () => {
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--dry-run', '-o', 'json'], {
     execFn: fakeAws({}), probeFargate: async () => { throw new Error('no verify'); },
   });
   assert.strictEqual(code, 0);
@@ -683,7 +683,7 @@ test('fargateConfigureGetRegionArgs: profile-aware, NEVER carries --region', () 
 
 test('deploy fargate: ctx entry stamps webPort 8080 (the image web GUI port)', async () => {
   const contextsFile = tmpCtxFile();
-  const { code } = await cli(['deploy', 'fargate', 's', '--region', 'us-west-2', '--use-bedrock'], {
+  const { code } = await cli(['deploy', 'node', 's', '--fargate', '--region', 'us-west-2', '--use-bedrock'], {
     execFn: fakeAws({}), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -694,7 +694,7 @@ test('deploy fargate: ctx entry stamps webPort 8080 (the image web GUI port)', a
 test('deploy fargate: no --region → resolved from the profile, pinned into ctx + identity line', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws(rec, { configRegion: 'us-west-2' }), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -717,7 +717,7 @@ test('deploy fargate: no --region → resolved from the profile, pinned into ctx
 test('deploy fargate: no --region, AWS_REGION env set and profile config differs → env wins the record', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws(rec, { configRegion: 'us-east-1' }),   // profile config says east…
     env: { AWS_REGION: 'us-west-2' },                      // …but env steers the deploy west
     probeFargate: async () => ({ app: 'clodex' }), contextsFile,
@@ -733,7 +733,7 @@ test('deploy fargate: no --region, AWS_REGION env set and profile config differs
 
 test('deploy fargate: AWS_DEFAULT_REGION honored when AWS_REGION unset (aws CLI precedence)', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws({}, { configRegion: 'us-east-1' }),
     env: { AWS_DEFAULT_REGION: 'eu-central-1' },
     probeFargate: async () => ({ app: 'clodex' }), contextsFile,
@@ -746,7 +746,7 @@ test('deploy fargate: AWS_DEFAULT_REGION honored when AWS_REGION unset (aws CLI 
 
 test('deploy fargate: no --region and the profile has none → WARNING, region left unpinned', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
     execFn: fakeAws({}, { configRegion: '' }),   // unset key → aws exits non-zero → runAws throws
     probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
@@ -760,7 +760,7 @@ test('deploy fargate: no --region and the profile has none → WARNING, region l
 test('deploy fargate: explicit --region is unchanged — no configure query, pinned as given', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--region', 'eu-west-1', '--use-bedrock'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--region', 'eu-west-1', '--use-bedrock'], {
     execFn: fakeAws(rec), probeFargate: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -773,7 +773,7 @@ test('deploy fargate: explicit --region is unchanged — no configure query, pin
 
 test('deploy fargate --dry-run: prints the resolved region line (read-only resolution runs)', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--dry-run'], {
     execFn: fakeAws(rec, { configRegion: 'ap-south-1' }), probeFargate: async () => { throw new Error('no verify'); },
   });
   assert.strictEqual(code, 0);
@@ -783,7 +783,7 @@ test('deploy fargate --dry-run: prints the resolved region line (read-only resol
 });
 
 test('deploy fargate --json --dry-run: the dry-run event carries the resolved region', async () => {
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--dry-run', '-o', 'json'], {
     execFn: fakeAws({}, { configRegion: 'us-west-2' }), probeFargate: async () => { throw new Error('no verify'); },
   });
   assert.strictEqual(code, 0);
@@ -801,7 +801,7 @@ test('parseForwardSpec: an ssm-ecs ctx with webPort 8080 resolves `web` → 8080
 });
 
 test('deploy fargate: an ec2 describe failure rides the runAws CliError shape', async () => {
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: fakeAws({}, { vpcFail: 'AccessDenied: not authorized to DescribeVpcs' }),
     probeFargate: async () => ({ app: 'clodex' }),
   });
@@ -820,7 +820,7 @@ test('deploy fargate: malformed SG describe output (unparseable JSON) → USAGE,
     if (j.includes('ec2 describe-security-groups')) return { stdout: 'not-json <<<garbage>>>' };
     return fakeAws(rec)(cmd, args);   // everything else answers normally
   };
-  const { code, stderr } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--no-ctx'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock', '--no-ctx'], {
     execFn: gibberish, probeFargate: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, EXIT.USAGE);
@@ -844,7 +844,7 @@ test('fargateSgInboundWarning: a mixed self-ref + CIDR permission → warns, nam
 test('deploy fargate: bad stack name (dots/underscore/leading digit) → USAGE, nothing runs', async () => {
   for (const bad of ['my.stack', 'a_b', '1node']) {
     let ran = false;
-    const { code, stderr } = await cli(['deploy', 'fargate', bad], {
+    const { code, stderr } = await cli(['deploy', 'node', bad, '--fargate'], {
       execFn: async () => { ran = true; return { stdout: '' }; }, probeFargate: async () => ({}),
     });
     assert.strictEqual(code, EXIT.USAGE, bad);
@@ -853,14 +853,14 @@ test('deploy fargate: bad stack name (dots/underscore/leading digit) → USAGE, 
   }
 });
 
-test('deploy fargate: no stack name → USAGE', async () => {
-  const { code, stderr } = await cli(['deploy', 'fargate'], { execFn: async () => ({ stdout: '' }) });
+test('deploy node --fargate: no stack name → USAGE', async () => {
+  const { code, stderr } = await cli(['deploy', 'node', '--fargate'], { execFn: async () => ({ stdout: '' }) });
   assert.strictEqual(code, EXIT.USAGE);
-  assert.match(stderr, /deploy fargate needs a stack name/);
+  assert.match(stderr, /deploy node needs a name/);
 });
 
 test('deploy fargate: missing aws binary (ENOENT) → CONNECT with the aws hint', async () => {
-  const { code, stderr } = await cli(['deploy', 'fargate', 's'], {
+  const { code, stderr } = await cli(['deploy', 'node', 's', '--fargate'], {
     execFn: async () => { const e = new Error('spawn aws ENOENT'); e.code = 'ENOENT'; throw e; },
     probeFargate: async () => ({}),
   });
@@ -868,18 +868,18 @@ test('deploy fargate: missing aws binary (ENOENT) → CONNECT with the aws hint'
   assert.match(stderr, /aws CLI not found/);
 });
 
-// ── dispatch: `deploy fargate` routes; `deploy ssh fargate` stays ssh ─────────
+// ── dispatch: --fargate routes to the fargate flavor ─────────────────────────
 
-test('deploy fargate routes to the fargate flavor', async () => {
-  // "My.Stack" is a valid ssh dest but an invalid fargate stack name — the "bad
-  // stack name" USAGE error proves dispatch routed to the fargate validator.
-  const { code, stderr } = await cli(['deploy', 'fargate', 'My.Stack'], { execFn: async () => ({ stdout: '' }) });
+test('deploy node --fargate routes to the fargate flavor', async () => {
+  // "My.Stack" passes the generic node-name shape but is an invalid fargate
+  // stack name — the "bad stack name" USAGE error proves the fargate validator ran.
+  const { code, stderr } = await cli(['deploy', 'node', 'My.Stack', '--fargate'], { execFn: async () => ({ stdout: '' }) });
   assert.strictEqual(code, EXIT.USAGE);
   assert.match(stderr, /bad stack name/);
 });
 
-test('deploy ssh fargate still routes to the ssh flavor (host literally named fargate)', async () => {
-  const { code } = await cli(['deploy', 'ssh', 'fargate'], {
+test('a node literally NAMED fargate still routes on the flag, not the name', async () => {
+  const { code } = await cli(['deploy', 'node', 'fargate', '--ssh', 'user@box'], {
     spawnFn: () => { const e = new Error('spawn ssh ENOENT'); e.code = 'ENOENT'; throw e; },
   });
   assert.strictEqual(code, EXIT.CONNECT);   // ssh flavor's "could not start ssh"

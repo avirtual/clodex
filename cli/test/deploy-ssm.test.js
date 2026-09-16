@@ -1,5 +1,5 @@
 'use strict';
-// deploy-ssm.test.js — the `deploy ssm <name> --target …` flavor: the OS flavor
+// deploy-ssm.test.js — the `deploy node <name> --ssm i-…` flavor: the OS flavor
 // (dedicated clodex host user + systemd --user service, NOT docker) over AWS SSM
 // RunCommand. Pure builders (wrapper + argv), the poll loop (pseudo-streaming +
 // terminal statuses) against fake execFn sequences, and the full verb through
@@ -338,14 +338,14 @@ function tmpCtxFile() { return path.join(mkTmpRoot('clodexctl-ssm-'), 'contexts.
 
 test('deploy ssm --no-wirescope: the sent wrapper embeds CLODEX_NO_WIRESCOPE=1; absent without the flag', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--no-wirescope', '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'mybox', '--ssm', 'i-1', '--no-wirescope', '--no-ctx'], {
     execFn: fakeAws(rec),
     probeSsm: async () => ({ app: 'clodex', host: 'mybox' }),
   });
   assert.strictEqual(code, 0);
   assert.match(rec.sentScript, /CLODEX_NO_WIRESCOPE='1'/);
   const rec2 = {};
-  await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--no-ctx'], {
+  await cli(['deploy', 'node', 'mybox', '--ssm', 'i-1', '--no-ctx'], {
     execFn: fakeAws(rec2),
     probeSsm: async () => ({ app: 'clodex', host: 'mybox' }),
   });
@@ -356,7 +356,7 @@ test('deploy ssm happy path: preflight→send→poll→verify→ctx (ssm kind + 
   const rec = {};
   const contextsFile = tmpCtxFile();
   let verifiedWith = null;
-  const { code, stdout } = await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--region', 'us-west-2', '--profile', 'p'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'mybox', '--ssm', 'i-1', '--region', 'us-west-2', '--profile', 'p'], {
     execFn: fakeAws(rec),
     probeSsm: async (entry, token) => { verifiedWith = { entry, token }; return { app: 'clodex', host: 'mybox', version: '9.9.9', caps: [] }; },
     contextsFile,
@@ -391,7 +391,7 @@ test('deploy ssm --claude-token-file: OAuth token delivered over the WIRE, NEVER
   const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-oauth-secret\n');
   let delivered = null;
-  const { code, stdout } = await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--claude-token-file', tf], {
+  const { code, stdout } = await cli(['deploy', 'node', 'mybox', '--ssm', 'i-1', '--claude-token-file', tf], {
     execFn: fakeAws(rec),
     probeSsm: async () => ({ app: 'clodex', host: 'mybox', version: '9', caps: [] }),
     deliverToken: async (entry, wireToken, oauth) => { delivered = { entry, wireToken, oauth }; return { ok: true }; },
@@ -415,7 +415,7 @@ test('deploy ssm --claude-token-file: OAuth token delivered over the WIRE, NEVER
 test('deploy ssm --claude-token-file --dry-run: token noted by presence only, absent from wrapper', async () => {
   const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-drysecret\n');
-  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--claude-token-file', tf, '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--claude-token-file', tf, '--dry-run'], {
     execFn: async () => ({ stdout: '{}' }), probeSsm: async () => ({}),
     deliverToken: async () => { throw new Error('should not deliver on dry-run'); },
   });
@@ -428,7 +428,7 @@ test('deploy ssm --claude-token-file: a bad token file fails fast BEFORE any aws
   const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'empty'); fs.writeFileSync(tf, '\n');
   let awsCalled = false;
-  const { code, stderr } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--claude-token-file', tf], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--claude-token-file', tf], {
     execFn: async () => { awsCalled = true; return { stdout: '{}' }; },
     probeSsm: async () => ({}), deliverToken: async () => ({ ok: true }),
   });
@@ -501,7 +501,7 @@ test('deploy ssm --port non-default: remotePort saved on the ssm entry + wrapper
   const rec = {};
   const contextsFile = tmpCtxFile();
   let entrySeen = null;
-  const { code } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--port', '8100'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--port', '8100'], {
     execFn: fakeAws(rec), probeSsm: async (e) => { entrySeen = e; return { app: 'clodex' }; }, contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -514,7 +514,7 @@ test('deploy ssm --port non-default: remotePort saved on the ssm entry + wrapper
 
 test('deploy ssm --branch/--repo: flow into the installer preamble', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--branch', 'dev', '--repo', 'https://example.com/fork', '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--branch', 'dev', '--repo', 'https://example.com/fork', '--no-ctx'], {
     execFn: fakeAws(rec), probeSsm: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -524,7 +524,7 @@ test('deploy ssm --branch/--repo: flow into the installer preamble', async () =>
 
 test('deploy ssm --no-ctx: verifies but saves nothing', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--no-ctx'], {
     execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -543,7 +543,7 @@ test('deploy ssm: a Failed command relays the output tail → EXIT.SERVER, no ve
     if (j.includes('get-command-invocation')) return { stdout: JSON.stringify({ Status: 'Failed', ResponseCode: 1, StandardOutputContent: '::step install\n::fail install installer-rc=1\n', StandardErrorContent: 'npm-install-failed' }) };
     throw new Error('x');
   };
-  const { code, stdout, stderr } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1'], {
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], {
     execFn, probeSsm: async () => { verified = true; return {}; }, contextsFile,
   });
   assert.strictEqual(code, EXIT.SERVER);
@@ -561,7 +561,7 @@ test('deploy ssm: a Cancelled command → EXIT.SERVER with the distinct message'
     if (j.includes('get-command-invocation')) return { stdout: JSON.stringify({ Status: 'Cancelled', ResponseCode: null, StandardOutputContent: '', StandardErrorContent: '' }) };
     throw new Error('x');
   };
-  const { code, stderr } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--no-ctx'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--no-ctx'], {
     execFn, probeSsm: async () => { throw new Error('should not verify'); },
   });
   assert.strictEqual(code, EXIT.SERVER);
@@ -574,7 +574,7 @@ test('deploy ssm: preflight offline → EXIT.CONNECT, nothing sent', async () =>
     rec.calls.push(argv.join(' '));
     return { stdout: JSON.stringify({ InstanceInformationList: [] }) };   // not registered
   };
-  const { code, stderr } = await cli(['deploy', 'ssm', 'n', '--target', 'i-ghost'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--ssm', 'i-ghost'], {
     execFn, probeSsm: async () => { throw new Error('should not verify'); },
   });
   assert.strictEqual(code, EXIT.CONNECT);
@@ -582,15 +582,15 @@ test('deploy ssm: preflight offline → EXIT.CONNECT, nothing sent', async () =>
   assert.ok(!rec.calls.some((c) => c.includes('send-command')), 'never sent a command');
 });
 
-test('deploy ssm: --target required', async () => {
-  const { code, stderr } = await cli(['deploy', 'ssm', 'n'], { execFn: async () => ({ stdout: '{}' }) });
+test('deploy node --ssm: the instance value is required', async () => {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--ssm', '--no-ctx'], { execFn: async () => ({ stdout: '{}' }) });
   assert.strictEqual(code, EXIT.USAGE);
-  assert.match(stderr, /needs --target/);
+  assert.match(stderr, /--ssm needs a value/);
 });
 
 test('deploy ssm: bad node name → usage error, no aws call', async () => {
   let ran = false;
-  const { code, stderr } = await cli(['deploy', 'ssm', 'bad name!', '--target', 'i-1'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'bad name!', '--ssm', 'i-1'], {
     execFn: async () => { ran = true; return { stdout: '{}' }; },
   });
   assert.strictEqual(code, EXIT.USAGE);
@@ -605,7 +605,7 @@ test('deploy ssm: --branch/--repo with a heredoc-delimiter newline is rejected (
   const evil = 'x\nCLODEX_EOF_0000000000000000\nid > /tmp/pwned\n:';
   for (const flag of ['--branch', '--repo']) {
     let ran = false;
-    const { code, stderr } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', flag, evil], {
+    const { code, stderr } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', flag, evil], {
       execFn: async () => { ran = true; return { stdout: '{}' }; },
       probeSsm: async () => { throw new Error('should not verify'); },
     });
@@ -619,7 +619,7 @@ test('deploy ssm --dry-run: a newline-injected --branch never renders an executa
   // Even if validation were bypassed, --dry-run must not print a wrapper whose
   // injected payload is a live line. Validation rejects it first (USAGE), so the
   // payload string never reaches stdout at all.
-  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--branch', 'x\nid > /tmp/pwned', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--branch', 'x\nid > /tmp/pwned', '--dry-run'], {
     execFn: async () => ({ stdout: '{}' }), probeSsm: async () => ({}),
   });
   assert.strictEqual(code, EXIT.USAGE);
@@ -629,7 +629,7 @@ test('deploy ssm --dry-run: a newline-injected --branch never renders an executa
 test('deploy ssm --dry-run: composes argv + wrapper, runs nothing, token is a placeholder', async () => {
   let ran = false;
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--region', 'us-west-2', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--region', 'us-west-2', '--dry-run'], {
     execFn: async () => { ran = true; return { stdout: '{}' }; },
     probeSsm: async () => { throw new Error('should not verify'); },
     contextsFile,
@@ -647,7 +647,7 @@ test('deploy ssm --dry-run: composes argv + wrapper, runs nothing, token is a pl
 
 test('deploy ssm --json: NDJSON preflight/command/marker/verify/context, no token leak', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '-o', 'json'], {
     execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex', host: 'n', version: '1.0', caps: [] }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -666,11 +666,11 @@ test('deploy ssm: ctx collision kept unless --force', async () => {
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { n: { url: 'http://old' } } }));
-  const skip = await cli(['deploy', 'ssm', 'n', '--target', 'i-1'], { execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
+  const skip = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], { execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
   assert.strictEqual(skip.code, 0);
   assert.match(skip.stdout, /already exists — kept it/);
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n.url, 'http://old');
-  const force = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--force'], { execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
+  const force = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--force'], { execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
   assert.strictEqual(force.code, 0);
   assert.match(force.stdout, /context "n" updated/);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n;
@@ -678,20 +678,20 @@ test('deploy ssm: ctx collision kept unless --force', async () => {
   assert.match(saved.token, /^[0-9a-f]{48}$/);
 });
 
-// ── dispatch: `deploy ssm` routes; `deploy ssh ssm` stays the ssh flavor ──────
+// ── dispatch: --ssm routes to the ssm flavor; a node NAMED ssm is fine ───────
 
-test('deploy ssm routes to the ssm flavor', async () => {
-  // Missing --target reaches the ssm verb's validator (proves routing).
-  const { code, stderr } = await cli(['deploy', 'ssm', 'n'], { execFn: async () => ({ stdout: '{}' }) });
+test('deploy node --ssm routes to the ssm flavor', async () => {
+  // A bad node name reaches the ssm verb's validator (proves routing).
+  const { code, stderr } = await cli(['deploy', 'node', 'bad name!', '--ssm', 'i-1'], { execFn: async () => ({ stdout: '{}' }) });
   assert.strictEqual(code, EXIT.USAGE);
-  assert.match(stderr, /deploy ssm needs --target/);
+  assert.match(stderr, /bad node name/);
 });
 
-test('deploy ssh ssm still routes to the ssh flavor (host literally named ssm)', async () => {
-  // 'ssm' is the ssh dest here; the ssh verb accepts it and tries to deploy —
+test('a node literally NAMED ssm still routes on the flag, not the name', async () => {
+  // 'ssm' is the node name here; --ssh picks the flavor, so the ssh verb runs —
   // stub spawnFn so no real ssh runs; a spawn error surfaces as CONNECT, proving
-  // it reached the ssh flavor (not the ssm verb, which would need --target).
-  const { code } = await cli(['deploy', 'ssh', 'ssm'], {
+  // it reached the ssh flavor rather than the ssm one.
+  const { code } = await cli(['deploy', 'node', 'ssm', '--ssh', 'user@box'], {
     spawnFn: () => { const e = new Error('spawn ssh ENOENT'); e.code = 'ENOENT'; throw e; },
   });
   assert.strictEqual(code, EXIT.CONNECT);   // ssh flavor's "could not start ssh"

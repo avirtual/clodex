@@ -1,5 +1,5 @@
 'use strict';
-// deploy-docker.test.js — the `deploy docker <name>` flavor: pure argv/host
+// deploy-docker.test.js — the `deploy node <name> --docker` flavor: pure argv/host
 // helpers, and the full flow through main.run against a FAKE docker child (the
 // spawnFn seam) that records argv + env, prints a container id, and exits 0/1.
 // Verify (hello poll) is injected via io.pollHello so no real wire is touched.
@@ -104,7 +104,7 @@ test('deploy docker happy path: argv composed, verified, local url ctx saved', a
   const rec = {};
   const pollCalls = [];
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'mybox'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'mybox', '--docker'], {
     spawnFn: fakeDocker(rec),
     pollHello: async (ctx) => { pollCalls.push(ctx); return { ok: true, hello: { app: 'clodex', host: 'mybox', version: '9.9.9', caps: [] } }; },
     contextsFile,
@@ -137,7 +137,7 @@ test('deploy docker happy path: argv composed, verified, local url ctx saved', a
 
 test('deploy docker --no-wirescope: -e CLODEX_WIRESCOPE=off rides the run argv', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'docker', 'n', '--no-wirescope', '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--docker', '--no-wirescope', '--no-ctx'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, hello: { app: 'clodex' } }),
   });
@@ -148,7 +148,7 @@ test('deploy docker --no-wirescope: -e CLODEX_WIRESCOPE=off rides the run argv',
 test('deploy docker --tag/--image/--port/--volume: argv + non-default url', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code } = await cli(['deploy', 'docker', 'n', '--port', '8100', '--tag', 'v1.2.3', '--volume', '/h:/c:ro'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--docker', '--port', '8100', '--tag', 'v1.2.3', '--volume', '/h:/c:ro'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, hello: { app: 'clodex' } }),
     contextsFile,
@@ -166,7 +166,7 @@ test('deploy docker --tag/--image/--port/--volume: argv + non-default url', asyn
 
 test('deploy docker --image overrides repo+tag entirely', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'docker', 'n', '--image', 'my.reg/clodex:pinned', '--tag', 'ignored'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--docker', '--image', 'my.reg/clodex:pinned', '--tag', 'ignored'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, hello: {} }),
   });
@@ -178,7 +178,7 @@ test('deploy docker --host: DOCKER_HOST in child env, remote ssh ctx saved', asy
   const rec = {};
   const pollCalls = [];
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'edge', '--host', 'user@box', '--port', '8100'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'edge', '--docker', '--host', 'user@box', '--port', '8100'], {
     spawnFn: fakeDocker(rec),
     pollHello: async (ctx) => { pollCalls.push(ctx); return { ok: true, hello: { app: 'clodex', host: 'edge' } }; },
     contextsFile,
@@ -200,7 +200,7 @@ test('deploy docker --host: DOCKER_HOST in child env, remote ssh ctx saved', asy
 
 test('deploy docker --env-file: passed to docker argv, never read (no fs access)', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'docker', 'n', '--env-file', '/nope/does/not/exist.env'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--docker', '--env-file', '/nope/does/not/exist.env'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, hello: {} }),
   });
@@ -211,7 +211,7 @@ test('deploy docker --env-file: passed to docker argv, never read (no fs access)
 test('deploy docker: 401 during verify → success-with-note, ctx still saved', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'gated'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'gated', '--docker'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, tokenGated: true }),
     contextsFile,
@@ -230,7 +230,7 @@ test('deploy docker: 401 during verify → success-with-note, ctx still saved', 
 test('deploy docker --dry-run: composes but spawns nothing, saves nothing', async () => {
   let spawned = false;
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'n', '--host', 'user@box', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--docker', '--host', 'user@box', '--dry-run'], {
     spawnFn: () => { spawned = true; throw new Error('should not spawn'); },
     pollHello: async () => { throw new Error('should not poll'); },
     contextsFile,
@@ -246,7 +246,7 @@ test('deploy docker --dry-run: composes but spawns nothing, saves nothing', asyn
 test('deploy docker --no-ctx: verifies but saves nothing', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'n', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--docker', '--no-ctx'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, hello: { app: 'clodex' } }),
     contextsFile,
@@ -262,11 +262,11 @@ test('deploy docker: ctx collision kept unless --force', async () => {
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { n: { url: 'http://old' } } }));
-  const skip = await cli(['deploy', 'docker', 'n'], { spawnFn: fakeDocker(rec), pollHello: async () => ({ ok: true, hello: {} }), contextsFile });
+  const skip = await cli(['deploy', 'node', 'n', '--docker'], { spawnFn: fakeDocker(rec), pollHello: async () => ({ ok: true, hello: {} }), contextsFile });
   assert.strictEqual(skip.code, 0);
   assert.match(skip.stdout, /already exists — kept it/);
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n.url, 'http://old');
-  const force = await cli(['deploy', 'docker', 'n', '--force'], { spawnFn: fakeDocker({}), pollHello: async () => ({ ok: true, hello: {} }), contextsFile });
+  const force = await cli(['deploy', 'node', 'n', '--docker', '--force'], { spawnFn: fakeDocker({}), pollHello: async () => ({ ok: true, hello: {} }), contextsFile });
   assert.strictEqual(force.code, 0);
   assert.match(force.stdout, /context "n" updated/);
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n.url, 'http://127.0.0.1:7900');
@@ -276,7 +276,7 @@ test('deploy docker: nonzero docker exit relays stderr → EXIT.SERVER, no verif
   const rec = {};
   let polled = false;
   const contextsFile = tmpCtxFile();
-  const { code, stderr } = await cli(['deploy', 'docker', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--docker'], {
     spawnFn: fakeDocker(rec, { exitCode: 1, stderr: 'docker: Error response from daemon: conflict.\n' }),
     pollHello: async () => { polled = true; return { ok: true }; },
     contextsFile,
@@ -288,7 +288,7 @@ test('deploy docker: nonzero docker exit relays stderr → EXIT.SERVER, no verif
 });
 
 test('deploy docker: missing docker binary (ENOENT) → EXIT.SERVER + install hint', async () => {
-  const { code, stderr } = await cli(['deploy', 'docker', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--docker'], {
     spawnFn: () => { const e = new Error('spawn docker ENOENT'); e.code = 'ENOENT'; throw e; },
     pollHello: async () => ({ ok: true }),
   });
@@ -298,7 +298,7 @@ test('deploy docker: missing docker binary (ENOENT) → EXIT.SERVER + install hi
 
 test('deploy docker: bad node name is a usage error, no spawn', async () => {
   let spawned = false;
-  const { code, stderr } = await cli(['deploy', 'docker', 'bad name!'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'bad name!', '--docker'], {
     spawnFn: () => { spawned = true; throw new Error('x'); },
     pollHello: async () => ({ ok: true }),
   });
@@ -307,16 +307,16 @@ test('deploy docker: bad node name is a usage error, no spawn', async () => {
   assert.strictEqual(spawned, false);
 });
 
-test('deploy docker: no name → usage error', async () => {
-  const { code, stderr } = await cli(['deploy', 'docker'], { spawnFn: () => { throw new Error('x'); }, pollHello: async () => ({ ok: true }) });
+test('deploy node --docker: no name → usage error', async () => {
+  const { code, stderr } = await cli(['deploy', 'node', '--docker'], { spawnFn: () => { throw new Error('x'); }, pollHello: async () => ({ ok: true }) });
   assert.strictEqual(code, 2);
-  assert.match(stderr, /deploy docker needs a node name/);
+  assert.match(stderr, /deploy node needs a name/);
 });
 
 test('deploy docker --json: run + verify + context objects, no secrets', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'n', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--docker', '-o', 'json'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, hello: { app: 'clodex', host: 'n', version: '1.0', caps: [] } }),
     contextsFile,
@@ -329,7 +329,7 @@ test('deploy docker --json: run + verify + context objects, no secrets', async (
 
 test('deploy docker --json 401: verify tokenGated + context tokenGated', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'n', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--docker', '-o', 'json'], {
     spawnFn: fakeDocker({}),
     pollHello: async () => ({ ok: true, tokenGated: true }),
     contextsFile,
@@ -342,7 +342,7 @@ test('deploy docker --json 401: verify tokenGated + context tokenGated', async (
 
 test('deploy docker: verify timeout throws EXIT.SERVER, no ctx', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout, stderr } = await cli(['deploy', 'docker', 'n'], {
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 'n', '--docker'], {
     spawnFn: fakeDocker({}),
     pollHello: async () => { throw new (require('../src/errors').CliError)(1, 'container is up but its wire did not answer within 60s'); },
     contextsFile,
@@ -352,19 +352,13 @@ test('deploy docker: verify timeout throws EXIT.SERVER, no ctx', async () => {
   assert.strictEqual(fs.existsSync(contextsFile), false);
 });
 
-// ── dispatch sniff: ssh flavor unchanged, `ssh` alias works ──────────────────
+// ── dispatch: --ssh routes to the ssh flavor ─────────────────────────────────
 
-test('deploy <user@host> still routes to the ssh flavor (byte-unchanged dispatch)', async () => {
+test('deploy node <name> --ssh routes to the ssh flavor', async () => {
   // A bad ssh dest reaches the ssh verb's validator (proves routing), not docker.
-  const { code, stderr } = await cli(['deploy', 'host:7900'], { spawnFn: () => { throw new Error('x'); } });
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--ssh', 'host:7900'], { spawnFn: () => { throw new Error('x'); } });
   assert.strictEqual(code, 2);
   assert.match(stderr, /bad ssh destination/);
-});
-
-test('deploy ssh <dest> alias routes to the ssh flavor', async () => {
-  const { code, stderr } = await cli(['deploy', 'ssh', 'host:7900'], { spawnFn: () => { throw new Error('x'); } });
-  assert.strictEqual(code, 2);
-  assert.match(stderr, /bad ssh destination/);   // 'host:7900' is the dest, validated by ssh verb
 });
 
 // ── unit: pollHello against a real local wire (url transport, no spawn) ───────
@@ -438,7 +432,7 @@ test('t54: an ssh-flavor and a docker-flavor deploy of the SAME host are disting
   // colliding the field would be less load-bearing and this test should say so.
   const contextsFile = tmpCtxFile();
   const sshRec = {};
-  const { code: sshCode } = await cli(['deploy', 'user@box', '--name', 'viassh'], {
+  const { code: sshCode } = await cli(['deploy', 'node', 'viassh', '--ssh', 'user@box'], {
     spawnFn: fakeSsh(sshRec),
     probeHello: async () => ({ app: 'clodex', host: 'box', version: '9.9.9' }),
     contextsFile,
@@ -446,7 +440,7 @@ test('t54: an ssh-flavor and a docker-flavor deploy of the SAME host are disting
   assert.strictEqual(sshCode, 0);
 
   const dockRec = {};
-  const { code: dockCode } = await cli(['deploy', 'docker', 'viadocker', '--host', 'user@box'], {
+  const { code: dockCode } = await cli(['deploy', 'node', 'viadocker', '--docker', '--host', 'user@box'], {
     spawnFn: fakeDocker(dockRec),
     pollHello: async () => ({ ok: true, hello: { app: 'clodex' } }),
     contextsFile,

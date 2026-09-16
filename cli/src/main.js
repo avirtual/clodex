@@ -13,6 +13,7 @@ const { openTransport } = require('./transport');
 const { makePrinter } = require('./output');
 const { CliError, EXIT } = require('./errors');
 const V = require('./verbs');
+const R = require('./resources');
 const D = require('./deploy');
 const U = require('./undeploy');
 const UP = require('./upgrade');
@@ -70,7 +71,7 @@ function renamedSecondLine(verb, tok) {
   const table = RENAMED_SECOND[verb];
   if (!table) return null;
   if (!tok || tok === 'node') return null;
-  const to = table[tok] || table['*'];
+  const to = table[tok] || (R.resolveResource(tok) ? null : table['*']);
   if (!to) return null;
   return `clodexctl ${verb} ${tok} was renamed: use clodexctl ${to(tok)}`;
 }
