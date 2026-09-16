@@ -151,10 +151,6 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
 
   if (!json) log(dryRun ? `dry-run — the ${flavor} deploy path would run:` : `upgrading via the ${flavor} deploy path…`);
   await plan.run();
-  if (inferred && !dryRun && D.stampInferredDeploy(ctxName, inferred, io)) {
-    if (json) emit({ type: 'context', action: 'stamped', name: ctxName, flavor: inferred.flavor });
-    else printer.line(`stamped the inferred deploy record onto context "${ctxName}" — the next upgrade reads it instead of inferring`);
-  }
   if (json) emit({ type: 'upgrade', ok: true, ctx: ctxName, flavor, from: from || null, to: to || null, dryRun });
   return EXIT.OK;
 }

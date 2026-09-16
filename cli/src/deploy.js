@@ -1026,18 +1026,6 @@ function inferredFlavorLine(ctxName, dep) {
   return `context "${ctxName}" records no deploy flavor — inferred helm from its kubectl transport (release "${dep.release}", namespace "${dep.namespace}"${dep.kubeContext ? `, kube context "${dep.kubeContext}"` : ''}): the kubectl transport is written by the helm flavor alone`;
 }
 
-function stampInferredDeploy(ctxName, dep, io = {}) {
-  let store;
-  try { store = contexts.load(io.contextsFile, { warn: () => {} }); }
-  catch { return false; }
-  const entry = store.contexts[ctxName];
-  if (!entry || typeof entry !== 'object') return false;
-  if (entry.deploy && typeof entry.deploy === 'object' && entry.deploy.flavor) return false;
-  entry.deploy = { flavor: dep.flavor, release: dep.release, namespace: dep.namespace, kubeContext: dep.kubeContext || null };
-  contexts.save(store, io.contextsFile);
-  return true;
-}
-
 function helmChartPath() {
   return path.join(__dirname, '..', 'deploy', 'helm', 'clodex');
 }
@@ -1834,7 +1822,7 @@ module.exports = {
   runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
   HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
   helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
-  TRANSPORT_KINDS, transportKind, inferDeployFromTransport, inferredFlavorLine, stampInferredDeploy,
+  TRANSPORT_KINDS, transportKind, inferDeployFromTransport, inferredFlavorLine,
   ssaConflictHint,
   helmGetValuesArgs, parseCarriedValues, HELM_NEVER_CARRY,
   FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,

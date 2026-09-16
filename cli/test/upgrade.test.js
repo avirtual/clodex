@@ -318,7 +318,28 @@ test('helm: a recordless KUBECTL node upgrades — the helm plan runs against th
   assert.ok(rec.helmArgs, 'and the upgrade itself reached helm');
 });
 
-test('helm: a recordless kubectl node with NO namespace falls back to the packaged default', async () => {
+test('inferDeployFromTransport: what it returns, and the three shapes it REFUSES to guess from', () => {
+  assert.deepStrictEqual(
+    D.inferDeployFromTransport('ctxname', { kubectl: { target: 'svc/mynode', namespace: 'agents', context: 'prod' } }),
+    { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
+    'the release comes from the target\'s svc/ name — deploy.js writes svc/<release>, and the ctx may be named something else');
+  assert.deepStrictEqual(
+    D.inferDeployFromTransport('ctxname', { kubectl: { target: 'svc/mynode' } }),
+    { flavor: 'helm', release: 'mynode', namespace: D.DEFAULT_HELM_NAMESPACE, kubeContext: null },
+    'a transport with no namespace must resolve to the packaged default HERE, so every caller agrees on which namespace was inferred');
+  assert.strictEqual(
+    D.inferDeployFromTransport('ctxname', { kubectl: { target: 'pod/whatever' } }).release, 'ctxname',
+    'a target that is not svc/<name> falls back to the ctx name rather than inventing a release from it');
+
+  assert.strictEqual(D.inferDeployFromTransport('c', { ssh: 'user@box' }), null,
+    'the ssh transport is the ambiguous one — the whole point is that it is NOT guessed');
+  assert.strictEqual(D.inferDeployFromTransport('c', { kubectl: { target: 'svc/c' }, deploy: { flavor: 'nomad' } }), null,
+    'a stored flavor means there is nothing to infer — returning a guess here would let it override the record');
+  assert.strictEqual(D.inferDeployFromTransport('c', { kubectl: { target: '' } }), null,
+    'an empty target names no release, and a release guessed from nothing is what the refusal exists to prevent');
+});
+
+test('helm: a recordless kubectl node with NO namespace reaches helm on the packaged default', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile(RECORDLESS_KUBECTL_CTX({ target: 'svc/mynode' }));
   const { code } = await cli(['upgrade', 'node', 'mynode'], {
@@ -332,7 +353,7 @@ test('helm: a recordless kubectl node with NO namespace falls back to the packag
     'and no --kube-context is invented from nothing: helm/kubectl resolving their own current context is the honest fallback');
 });
 
-test('helm: a successful upgrade STAMPS the inferred record, so the next run reads instead of infers', async () => {
+test('helm: a successful upgrade leaves the record STAMPED, so the next run reads instead of infers', async () => {
   const contextsFile = tmpCtxFile(RECORDLESS_KUBECTL_CTX({ target: 'svc/mynode', namespace: 'agents', context: 'prod' }));
   const { code } = await cli(['upgrade', 'node', 'mynode'], {
     contextsFile, execFn: fakeK8s({}), probeVersion: reports('1.0.0'),
@@ -341,7 +362,7 @@ test('helm: a successful upgrade STAMPS the inferred record, so the next run rea
   assert.strictEqual(code, EXIT.OK);
   const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(after.contexts.mynode.deploy, { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
-    'the record must be stamped in the same shape deployHelmVerb writes — an inference repeated forever is one transport change away from being wrong silently');
+    'the inferred namespace/context must reach the delegate and land in the record — an inference repeated forever is one transport change away from being wrong silently');
   const rec2 = {};
   const { code: c2, stdout: s2 } = await cli(['upgrade', 'node', 'mynode', '--force'], {
     contextsFile, execFn: fakeK8s(rec2), probeVersion: reports('1.0.0'),
@@ -359,7 +380,9 @@ test('helm: a --dry-run on a recordless kubectl node stamps NOTHING', async () =
   assert.strictEqual(code, EXIT.OK);
   const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.strictEqual(after.contexts.mynode.deploy, undefined,
-    'a dry-run must not write the record — it is the mode that promises to change nothing');
+    'a dry-run must not write the record — it is the mode that promises to change nothing, and the inference must not become the exception');
+  assert.deepStrictEqual(after.contexts.mynode.kubectl, { target: 'svc/mynode', namespace: 'agents', context: 'prod' },
+    'and it leaves the transport it inferred FROM untouched too');
 });
 
 test('a STORED flavor always beats the transport: a kubectl node recorded as "nomad" still refuses by name', async () => {
