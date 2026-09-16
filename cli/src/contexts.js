@@ -200,5 +200,5 @@ function defaultWarn(msg) { process.stderr.write(`clodexctl: warning: ${msg}\n`)
 // test/stores.test.js, which explains why widening this surface is how a leaf
 // stops being a leaf).
 module.exports = {
-  cliDir, contextsPath, load, save, validateEntry, resolve, TRANSPORT_KINDS,
+  cliDir, contextsPath, load, save, validateEntry, resolve,
 };

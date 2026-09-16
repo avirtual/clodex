@@ -167,7 +167,6 @@ test('undeploy node: a recordless KUBECTL node tears down as helm, against the t
     kubectl: { target: 'svc/mynode', namespace: 'agents', context: 'prod' }, webPort: 8080, token: 'W',
   } } });
   const r = await cli(['undeploy', 'node', 'mynode', '--force'], { execFn: fakeHelm(rec), contextsFile });
-  // The teardown itself is the consequence: the refusal used to stop it.
   const uninstall = rec.calls.find((c) => c.join(' ').includes('helm uninstall'));
   assert.ok(uninstall, 'the helm teardown must run — the kubectl transport has one writer, so the flavor is not a guess');
   assert.ok(uninstall.join(' ').includes('--namespace agents'), uninstall.join(' '));

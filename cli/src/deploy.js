@@ -998,9 +998,11 @@ const DEFAULT_HELM_NAMESPACE = 'clodex';
 const HELM_RELEASE_RE = /^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$/;
 const K8S_NS_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
+const TRANSPORT_KINDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az'];
+
 function transportKind(entry) {
   if (!entry || typeof entry !== 'object') return null;
-  return contexts.TRANSPORT_KINDS.find((k) => entry[k] != null) || null;
+  return TRANSPORT_KINDS.find((k) => entry[k] != null) || null;
 }
 
 function inferDeployFromTransport(ctxName, entry) {
@@ -1832,7 +1834,7 @@ module.exports = {
   runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
   HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
   helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
-  transportKind, inferDeployFromTransport, inferredFlavorLine, stampInferredDeploy,
+  TRANSPORT_KINDS, transportKind, inferDeployFromTransport, inferredFlavorLine, stampInferredDeploy,
   ssaConflictHint,
   helmGetValuesArgs, parseCarriedValues, HELM_NEVER_CARRY,
   FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,

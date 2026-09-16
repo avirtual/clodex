@@ -15,6 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const U = require('../src/upgrade');
 const D = require('../src/deploy');
+const C = require('../src/contexts');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
 const { mkTmpRoot } = require('../../test/lib/tmp-roots');
@@ -277,7 +278,23 @@ test('helm: --force-conflicts reaches the delegate, and is absent by default (t5
     'a plain upgrade must NEVER force — taking ownership of whatever disagrees is not something an operator should get without asking');
 });
 
-// ── the kubectl transport is unambiguous: only the helm flavor writes it ──────
+test('the transport names the refusal prints are the transports contexts.js ACCEPTS', () => {
+  const minimal = {
+    url: 'http://x', ssh: 'user@box', tunnel: ['ssh', '-L', '{port}:localhost:7900', 'box'],
+    ssm: { target: 'i-1' }, kubectl: { target: 'svc/x' }, gcloud: { instance: 'i' },
+    az: { bastion: 'b', resourceGroup: 'g', target: 't' },
+  };
+  assert.deepStrictEqual(Object.keys(minimal).sort(), [...D.TRANSPORT_KINDS].sort(),
+    'every kind clodexctl can store must have a sample here, or this test stops covering it');
+  for (const kind of D.TRANSPORT_KINDS) {
+    const entry = { [kind]: minimal[kind] };
+    C.validateEntry(entry);
+    assert.strictEqual(D.transportKind(entry), kind,
+      `the refusal must NAME ${kind} — "its transport cannot answer it" with no noun is the vague message this replaced`);
+  }
+  assert.strictEqual(D.transportKind({ webPort: 8080 }), null,
+    'and an entry with no transport at all falls back to the generic word rather than crashing');
+});
 
 const RECORDLESS_KUBECTL_CTX = (kubectl) => ({
   mynode: { kubectl, webPort: 8080, token: 'tok' },
@@ -290,8 +307,6 @@ test('helm: a recordless KUBECTL node upgrades — the helm plan runs against th
     contextsFile, execFn: fakeK8s(rec), probeVersion: reports('1.0.0'),
     probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
   });
-  // The CONSEQUENCE first: the cluster call is what proves the plan ran, and it
-  // is what the refusal used to prevent.
   const status = rec.calls.find((c) => c[0] === 'helm' && c[1] === 'status');
   assert.ok(status, 'the helm plan must actually run — a recordless kubectl node is unambiguously helm, and refusing it is what this fixes');
   assert.ok(status.join(' ').includes('--namespace agents'), status.join(' '));
@@ -327,7 +342,6 @@ test('helm: a successful upgrade STAMPS the inferred record, so the next run rea
   const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(after.contexts.mynode.deploy, { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
     'the record must be stamped in the same shape deployHelmVerb writes — an inference repeated forever is one transport change away from being wrong silently');
-  // And the second run needs no inference at all.
   const rec2 = {};
   const { code: c2, stdout: s2 } = await cli(['upgrade', 'node', 'mynode', '--force'], {
     contextsFile, execFn: fakeK8s(rec2), probeVersion: reports('1.0.0'),

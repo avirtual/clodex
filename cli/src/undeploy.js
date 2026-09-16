@@ -173,8 +173,6 @@ async function undeployVerb({ printer, flags, args, io = {} }) {
   if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a name (e.g. undeploy node mybox)');
   const forced = forcedFlavor(flags);
   const { known, stored, entry, inferred } = storedDeploy(name, io);
-  // A forced flag keeps reading the STORED record only: it must be able to say
-  // it is overriding what the context records, and an inference is not that.
   const dep = stored || (forced ? null : inferred);
   const flavor = forced || (dep ? String(dep.flavor) : null);
   if (!flavor) {
