@@ -552,6 +552,8 @@ remind-gone-ud-
 remind-race-reg-
 remind-race-ud-
 remote-resources-
+remote-wt-
+remote-wt-nr-
 remotetok-
 remsched-reg-
 remsched-ud-
