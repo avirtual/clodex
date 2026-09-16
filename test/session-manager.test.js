@@ -15922,6 +15922,8 @@ test('spawn worktree: a bare `worktree:` is refused, never a silent unisolated s
 // arranged for it. Real git, because the whole mechanism is git's linked-worktree
 // on-disk shape.
 
+const CREATE_STAMPS_CREATED_AT = 1_700_000_000_000;
+
 function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   // A temp clodex HOME, not a team dir: the board resolves under it off the
   // project root, and it must be the same home the manager gets as REGISTRY_DIR.
@@ -16016,6 +16018,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   m._sendToSession = () => {};
   const seat = (name, cwd = repo) => {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
+    if (upserted.includes(name)) persistence.upsert({ name, createdAt: CREATE_STAMPS_CREATED_AT });
     return m.sessions.get(name);
   };
   // The two teardowns a ticket seat actually gets, kept apart because the
