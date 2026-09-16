@@ -496,7 +496,6 @@ crt-
 ct-parity-
 cteam-
 ctx-
-ctxv-
 cwdlink-
 cwdout-
 cwdproj-
@@ -526,6 +525,7 @@ ipc-team-home-
 ipc-team-root-
 legib-home-
 legib-proj-
+nodev-
 notif-reg-
 notif-ud-
 outer-
