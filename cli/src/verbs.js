@@ -842,12 +842,25 @@ function ctxShow({ store, printer, flags, args }) {
   }
 }
 
+// The node KIND vocabulary is the flag that created the record, not the
+// transport family it shares: --ssm-ecs and --ssm both store an `ssm` object,
+// and the two dial differently enough that a listing collapsing them to `ssm`
+// hides which one an operator is looking at. entryKind stays coarse for the
+// GUI console's own ctx rendering, which pins the family spelling.
+function nodeKind(e) {
+  const family = entryKind(e);
+  if (family === 'ssm') return e.ssm && e.ssm.ecs ? 'ssm-ecs' : 'ssm';
+  if (family === 'gcloud') return 'gcloud-iap';
+  if (family === 'az') return 'az-bastion';
+  return family;
+}
+
 function nodeRow(name, entry, current) {
   const e = entry || {};
   return {
     name,
     current: name === current,
-    kind: entryKind(e),
+    kind: nodeKind(e),
     locator: entryTarget(e),
     remotePort: e.remotePort || null,
     tokenSet: !!e.token,
@@ -906,7 +919,8 @@ function nodeDescribe({ store, printer, args }) {
 }
 
 function nodeCreate(bundle) {
-  const { store, saveStore, printer, flags, args } = bundle;
+  const { store, saveStore, printer, flags } = bundle;
+  const { rest: args } = takeResourceWord(bundle.args, 'create', CREATABLE);
   if (flags.import) {
     if (args.length) throw new CliError(EXIT.USAGE, `create node --import takes no name ("${args[0]}" is extra)`);
     return ctxImport(bundle);
@@ -918,7 +932,8 @@ function nodeCreate(bundle) {
   printer.line(`node "${name}" created${store.current === name ? ' (current)' : ''}`);
 }
 
-async function nodeDelete({ store, saveStore, printer, flags, args, prompt = defaultPrompt }) {
+async function nodeDelete({ store, saveStore, printer, flags, args: raw, prompt = defaultPrompt }) {
+  const { rest: args } = takeResourceWord(raw, 'delete', DELETABLE);
   const name = requireName(args[0], 'delete node', 'node');
   if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   if (!flags.force && flags.json) {
@@ -935,7 +950,8 @@ async function nodeDelete({ store, saveStore, printer, flags, args, prompt = def
   else printer.line(`node "${name}" deleted`);
 }
 
-function nodeUse({ store, saveStore, printer, args }) {
+function nodeUse({ store, saveStore, printer, args: raw }) {
+  const { rest: args } = takeResourceWord(raw, 'use', USABLE);
   const name = requireName(args[0], 'use node', 'node');
   if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   store.current = name;
@@ -1020,6 +1036,7 @@ module.exports = {
   create, createSession, dm, input, exec, execPty, sessionType,
   delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
   ctxAdd, ctxUse, ctxCurrent, ctxList, ctxRm, ctxShow, ctxImport,
+  nodeList, nodeCurrent, nodeDescribe, nodeCreate, nodeDelete, nodeUse, nodeRows,
   entryKind, entryTarget,
-  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
+  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE, USABLE,
 };

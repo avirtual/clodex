@@ -1,7 +1,8 @@
 // main.js — argv → verb dispatch. Owns the orchestration every wire verb
 // shares: resolve the context, open its transport, build a WireClient, run the
-// verb, and ALWAYS close the transport (reap the tunnel child). ctx verbs are
-// local-file only and skip all of that.
+// verb, and ALWAYS close the transport (reap the tunnel child). The `node`
+// resource is a CLIENT-SIDE record (the contexts file) and skips all of that —
+// only `describe node --test` opens a transport, and it owns that itself.
 //
 // run(argv, io) returns an exit code (never calls process.exit itself) so it is
 // fully testable; bin/clodexctl.js is the thin process shim around it.
@@ -25,13 +26,14 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'help', 'version'],
+  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'help', 'version'],
   multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', 'remote-port': 'remotePort' },
 };
 
-// Wire verbs and their handler. ctx is dispatched specially (subverbs).
+// Wire verbs and their handler. A `node` target on get/describe/create/delete
+// is intercepted before any of these run — it is a local record.
 const WIRE_VERBS = {
   info: V.info, get: V.get, describe: V.describe, 'api-resources': V.apiResources,
   version: V.version, logs: V.logs, query: V.query,
@@ -75,6 +77,20 @@ const RENAMED_SECOND = {
   upgrade: {
     '*': (tok) => `upgrade node ${tok}`,
   },
+  ctx: {
+    '': () => 'get nodes',
+    add: () => 'create node <name> --url URL (or --ssh/--ssm/--ssm-ecs/--kubectl/--gcloud-iap/--az-bastion/--tunnel)',
+    use: () => 'use node <name>',
+    current: () => 'get nodes --current',
+    list: () => 'get nodes',
+    ls: () => 'get nodes',
+    show: () => 'describe node [name]',
+    rm: () => 'delete node <name>',
+    remove: () => 'delete node <name>',
+    import: () => 'create node --import',
+    test: () => 'describe node [name] --test',
+    '*': () => 'get nodes',
+  },
 };
 
 const RENAMED_HELP_EXIT = 1;
@@ -83,9 +99,18 @@ function renamedLine(old) {
   return `clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`;
 }
 
+// The DELETED verb families point per-sub. `ctx` is deleted whole, so every
+// sub — and the bare word — points; the others are alive under a `node`
+// resource word, so `<verb> node …` and a real resource spelling are left to
+// run.
 function renamedSecondLine(verb, tok, flags = {}) {
   const table = RENAMED_SECOND[verb];
   if (!table) return null;
+  if (verb === 'ctx') {
+    const sub = tok || '';
+    const to = table[sub] || table['*'];
+    return `clodexctl ctx${sub ? ` ${sub}` : ''} was renamed: use clodexctl ${to(sub, flags)}`;
+  }
   if (!tok || tok === 'node') return null;
   const to = table[tok] || (R.resolveResource(tok) ? null : table['*']);
   if (!to) return null;
@@ -135,7 +160,7 @@ function applyOutput(flags, verb) {
 // WIRE_VERBS' keys this is the canonical set of top-level verbs users type —
 // help.js's registry is pinned complete against it (help.test.js), so a new
 // verb can't ship without a help entry.
-const SPECIAL_VERBS = ['ctx', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'web'];
+const SPECIAL_VERBS = ['use', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'web'];
 const TOP_VERBS = [...Object.keys(WIRE_VERBS), ...SPECIAL_VERBS];
 
 async function run(argv, io = {}) {
@@ -183,7 +208,10 @@ async function run(argv, io = {}) {
     printer.format = flags.output === 'yaml' ? 'yaml' : 'json';
     const secondLine = renamedSecondLine(verb, rest[0], flags);
     if (secondLine) throw new CliError(RENAMED_HELP_EXIT, secondLine);
-    if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
+    if (verb === 'use') return await dispatchNode(verb, rest, flags, printer, io);
+    if (NODE_VERBS[verb] && isNodeTarget(verb, rest)) {
+      return await dispatchNode(verb, rest, flags, printer, io);
+    }
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
     if (verb === 'undeploy') {
       const { rest: after } = V.takeResourceWord(rest, 'undeploy', V.DEPLOYABLE);
@@ -219,24 +247,41 @@ async function run(argv, io = {}) {
   }
 }
 
-// ctx subverbs. `test` needs a transport; the rest are pure file ops.
-async function dispatchCtx(rest, flags, printer, io) {
-  const sub = rest[0];
-  const args = rest.slice(1);
+// The verbs a `node` target reaches. `use` is node-only, so it never consults
+// this table — it takes its resource word through checkResourceWord and lands
+// here directly.
+const NODE_VERBS = {
+  get: V.nodeList,
+  describe: V.nodeDescribe,
+  create: V.nodeCreate,
+  delete: V.nodeDelete,
+  use: V.nodeUse,
+};
+
+// Does this argv name the node resource? The FIRST positional decides, in the
+// spelling parseTarget accepts (plural, singular, or the slash form) — so
+// `get sessions` and `delete session x` are untouched and still route to the
+// wire. `create node --import` carries no name and is the same shape.
+function isNodeTarget(verb, rest) {
+  const first = rest[0];
+  if (typeof first !== 'string') return false;
+  const token = first.indexOf('/') > 0 ? first.slice(0, first.indexOf('/')) : first;
+  const entry = R.resolveResource(token);
+  return !!entry && entry.singular === 'node';
+}
+
+// The node resource: a local record in the contexts file. No transport opens
+// here — `describe node --test` is the one exception and dials from nodeTest.
+async function dispatchNode(verb, args, flags, printer, io) {
   const store = contexts.load(io.contextsFile, { warn: (m) => (io.stderr || ((s) => process.stderr.write(s)))(`clodexctl: warning: ${m}\n`) });
   const saveStore = (s) => contexts.save(s, io.contextsFile);
-  const bundle = { store, saveStore, printer, flags, args, env: io.env || process.env };
-  switch (sub) {
-    case 'add': V.ctxAdd(bundle); return EXIT.OK;
-    case 'use': V.ctxUse(bundle); return EXIT.OK;
-    case 'current': V.ctxCurrent(bundle); return EXIT.OK;
-    case 'list': case 'ls': V.ctxList(bundle); return EXIT.OK;
-    case 'rm': case 'remove': V.ctxRm(bundle); return EXIT.OK;
-    case 'show': V.ctxShow(bundle); return EXIT.OK;
-    case 'import': V.ctxImport(bundle); return EXIT.OK;
-    case 'test': return await ctxTest(store, flags, printer, io);
-    default: throw new CliError(EXIT.USAGE, `unknown ctx subcommand: ${sub || '(none)'} (add/use/current/list/rm/show/import/test)`);
-  }
+  if (verb === 'describe' && flags.test) return await nodeTest(store, args, flags, printer, io);
+  const handler = NODE_VERBS[verb];
+  if (!handler) throw new CliError(EXIT.USAGE, `${verb} node is not supported`);
+  return await handler({
+    store, saveStore, printer, flags, args,
+    env: io.env || process.env, prompt: io.prompt,
+  }) ?? EXIT.OK;
 }
 
 const DEPLOY_FLAVORS = [
@@ -261,10 +306,12 @@ async function dispatchDeploy(rest, flags, printer, io) {
   return EXIT.OK;
 }
 
-// ctx test — the tunnel-diagnosis surface. Open the transport, GET hello, and
-// report identity or the failure with the child's stderr relayed VERBATIM.
-async function ctxTest(store, flags, printer, io) {
-  const ctx = contexts.resolve(store, { ctxName: flags.ctx || null, env: io.env || process.env, flags });
+// describe node --test — the tunnel-diagnosis surface, and the ONLY node verb
+// that opens a transport. GET hello, then report identity or the failure with
+// the child's stderr relayed VERBATIM.
+async function nodeTest(store, args, flags, printer, io) {
+  const target = R.parseTarget(args, 'describe');
+  const ctx = contexts.resolve(store, { ctxName: target.name || flags.ctx || null, env: io.env || process.env, flags });
   if (flags.verbose) {
     printer.line(`transport: ${V.entryKind(ctx)} ${V.entryTarget(ctx)}`);
   }
@@ -279,7 +326,7 @@ async function ctxTest(store, flags, printer, io) {
   try {
     if (flags.verbose) printer.line(`base: ${t.baseUrl}`);
     const client = new WireClient(t.baseUrl, ctx.token);
-    const hello = await client.get('/api/peer/hello', 'ctx test');
+    const hello = await client.get('/api/peer/hello', 'describe node --test');
     printer.line(`OK — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} caps=[${(hello.caps || []).join(' ')}]`);
     return EXIT.OK;
   } finally {
