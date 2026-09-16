@@ -6061,10 +6061,6 @@ input.env-locked {
   font-style: italic;
   text-transform: none;
 }
-.peer-state-upgrade {
-  color: var(--error);
-  font-style: normal;
-}
 .peer-actions {
   display: flex;
   align-items: center;
@@ -34325,7 +34321,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
   var require_peer_state_text = __commonJS({
     "renderer/lib/peer-state-text.js"(exports, module) {
       "use strict";
-      var NEEDS_UPGRADE_TEXT = "needs upgrade";
       var NEEDS_UPGRADE_TIP = "needs upgrade \u2014 this node does not serve sessions/attach";
       function peerStateText({ status, tunnel } = {}) {
         const st = status || {};
@@ -34335,10 +34330,10 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           }
           return { text: "offline", tip: null, needsUpgrade: false };
         }
-        if (st.needsUpgrade) return { text: NEEDS_UPGRADE_TEXT, tip: NEEDS_UPGRADE_TIP, needsUpgrade: true };
+        if (st.needsUpgrade) return { text: "", tip: NEEDS_UPGRADE_TIP, needsUpgrade: true };
         return { text: "", tip: null, needsUpgrade: false };
       }
-      module.exports = { peerStateText, NEEDS_UPGRADE_TEXT, NEEDS_UPGRADE_TIP };
+      module.exports = { peerStateText, NEEDS_UPGRADE_TIP };
     }
   });
 
@@ -34580,13 +34575,13 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
               header.dataset.tip = `Clodex v${st.version} \xB7 caps: ${capList}${st.platform ? ` \xB7 ${st.platform}` : ""}${upgradeTip}`;
               if (getOurAppVersion()) sev = versionSeverity(getOurAppVersion(), st.version);
             }
-            const nameSev = sev === "patch" || sev === "minor" || sev === "major" ? ` peer-sev-${sev}` : "";
+            const nameSev = state.needsUpgrade ? " peer-sev-major" : sev === "patch" || sev === "minor" || sev === "major" ? ` peer-sev-${sev}` : "";
             const hostLabel = peerDisplayHost(st);
             const canCreate = peerSupportsCreate(st);
             const off = st.online ? "" : "disabled";
             const isBox = boxIds.has(id);
             const webView = isBox ? { show: false } : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
-            header.innerHTML = `<span class="peer-caret">&#9662;</span><span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` + (!expanded && rows.length ? `<span class="peer-count">${rows.length}</span>` : "") + `<span class="peer-state${state.needsUpgrade ? " peer-state-upgrade" : ""}">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
+            header.innerHTML = `<span class="peer-caret">&#9662;</span><span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` + (!expanded && rows.length ? `<span class="peer-count">${rows.length}</span>` : "") + `<span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
             header.querySelector(".peer-eye").addEventListener("click", (e) => {
               e.stopPropagation();
               openPeerSelectPopover(id, e.currentTarget);

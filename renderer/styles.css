@@ -4630,7 +4630,6 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
    follows it) hug the right edge; when there's no state text the empty span
    still consumes the free space and pushes the icons right. */
 .peer-state { margin-left: auto; font-style: italic; text-transform: none; }
-.peer-state-upgrade { color: var(--error); font-style: normal; }
 /* Right-aligned host action strip: ＋ new session · ↻ restart Clodex · ◎ choose
    visible sessions. */
 .peer-actions { display: flex; align-items: center; gap: 1px; flex: none; margin-left: 4px; }

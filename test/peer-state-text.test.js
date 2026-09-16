@@ -4,13 +4,13 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { peerStateText, NEEDS_UPGRADE_TEXT } = require('../renderer/lib/peer-state-text');
+const { peerStateText } = require('../renderer/lib/peer-state-text');
 
 const PEERS_UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'peers-ui.js'), 'utf-8');
 
-test('an online peer with needsUpgrade reads "needs upgrade", and carries a tip that says why', () => {
+test('an online peer with needsUpgrade shows NO state word (the cue is the name colour), and carries a tip that says why', () => {
   const s = peerStateText({ status: { online: true, needsUpgrade: true } });
-  assert.strictEqual(s.text, NEEDS_UPGRADE_TEXT);
+  assert.strictEqual(s.text, '', 'a state word widens the row and breaks the sidebar layout');
   assert.strictEqual(s.needsUpgrade, true);
   assert.match(s.tip, /sessions\/attach/);
 });
@@ -40,4 +40,9 @@ test('peers-ui renders the state word through esc(), never into an attribute', (
     PEERS_UI_SRC.includes("require('./lib/peer-state-text')"),
     'peers-ui builds its state word somewhere other than the pinned builder',
   );
+  assert.ok(
+    PEERS_UI_SRC.includes("state.needsUpgrade ? ' peer-sev-major'"),
+    'the upgrade cue must ride the peer NAME colour, not a text label',
+  );
+  assert.ok(!PEERS_UI_SRC.includes('peer-state-upgrade'), 'the text-label class was removed with the label');
 });

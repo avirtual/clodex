@@ -192,7 +192,7 @@ function initPeersUi({
         header.dataset.tip = `Clodex v${st.version} · caps: ${capList}${st.platform ? ` · ${st.platform}` : ''}${upgradeTip}`;
         if (getOurAppVersion()) sev = versionSeverity(getOurAppVersion(), st.version);
       }
-      const nameSev = (sev === 'patch' || sev === 'minor' || sev === 'major') ? ` peer-sev-${sev}` : '';
+      const nameSev = state.needsUpgrade ? ' peer-sev-major' : (sev === 'patch' || sev === 'minor' || sev === 'major') ? ` peer-sev-${sev}` : '';
       const hostLabel = peerDisplayHost(st);
       const canCreate = peerSupportsCreate(st);
       const off = st.online ? '' : 'disabled';
@@ -205,7 +205,7 @@ function initPeersUi({
         (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : '') +
         `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` +
         ((!expanded && rows.length) ? `<span class="peer-count">${rows.length}</span>` : '') +
-        `<span class="peer-state${state.needsUpgrade ? ' peer-state-upgrade' : ''}">${esc(stateText)}</span>` +
+        `<span class="peer-state">${esc(stateText)}</span>` +
         `<span class="peer-actions">` +
           (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : '') +
           (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}’s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : '') +
