@@ -37,6 +37,8 @@ Download `Clodex-x.y.z-arm64.dmg` from [Releases](https://github.com/avirtual/cl
 
 First launch: right-click `Clodex.app` → **Open**. If macOS says the app is damaged, run `xattr -cr /Applications/Clodex.app` — the app is ad-hoc signed, not notarized.
 
+Everything else you would do from a terminal — build from source, run headless or in Docker, deploy a node, drive the fleet with `clodexctl` — is one page: **[docs/how-to.md](docs/how-to.md)**.
+
 **Requirements** — Apple Silicon Mac, macOS 12+ (Intel and Linux [build from source](#building-from-source); Linux servers run the headless engine). Plus whichever CLIs you want to drive: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) and/or [Codex](https://github.com/openai/codex) (`codex` in PATH).
 
 **`clodexctl`** drives the same fleet from a terminal — no Electron, no app required (Node 20+):
