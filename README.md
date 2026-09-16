@@ -140,7 +140,7 @@ clodexctl web prod                             # the node's full GUI in your loc
 - **`ctx import`** is the zero-setup on-ramp: it reads the desktop app's own stores (read-only) and adopts everything the GUI already knows — the local engine, every peered machine, every sandbox — tokens included, never printed. If you use the GUI, your whole fleet is addressable from the terminal in one command.
 - **`attach`** streams the session's screen and forwards your keystrokes through any of those tunnels; `Ctrl-\` detaches, `--read-only` shoulder-surfs. **`exec`** routes by session type: agents get a prompt and a wait-for-reply, bash sessions get the command's output.
 - **`deploy`** turns a bare box into a Clodex node in one command — `deploy node <name> --ssh user@host` over ssh, `--ssm i-…` over AWS SSM (zero ingress), `--docker` for a container node. Idempotent (re-run = update), streamed ✓/✗ steps, verified end-to-end through the real tunnel, context saved. `--claude-token-file` delivers your Claude credential over the encrypted wire — never argv, never CloudTrail.
-- **`web`** opens a foreground tunnel to the node's web GUI and pops your browser; `port-forward LOCAL:REMOTE` covers any other port. Read verbs take `-o json|yaml|wide|name`, the same four kubectl gives you.
+- **`web`** opens a foreground tunnel to the node's web GUI and pops your browser; `port-forward LOCAL:REMOTE` covers any other port. `get` takes `-o json|yaml|wide|name`, the same four kubectl gives you; the other read verbs take `-o json|yaml`.
 
 ### Headless nodes & the web GUI
 

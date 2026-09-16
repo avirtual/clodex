@@ -11,13 +11,18 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — clodexctl speaks kubectl
 
+- **One resource grammar for the node API and `clodexctl`.** Every command is now `<verb> <resource> [name]` over the nouns a Clodex node has: `sessions`, `workspaces`, `peers`, `teams`, `tickets`, `sandboxes`, `agents`, `worktrees` and `catalogs`. Someone who knows the nouns can guess the command; `clodexctl api-resources` lists what the node in front of you serves.
+- **Reads.** `get <resource>` and `describe <resource> <name>` cover all nine resources, with `--team`/`--state` on tickets and `--repo DIR` on worktrees (a new read-only `GET /api/worktrees?repo=` route lists a repo's git worktrees). Every read verb takes `-o json`, `-o yaml`, `-o wide` or `-o name`; streaming output under `-o yaml` is a `---`-separated multi-document stream. `ctx current` prints the active context name.
+- **Session operations are session subresources.** Transcript, query, attach, control, input, resize, dm, restart, args and skills all live under `/api/sessions/:name/<sub>`, and kill is `DELETE /api/sessions/:name`. The old top-level routes are gone with no alias. A peer running an older Clodex is marked in red in the sidebar and offered Update Clodex instead of a stream that would silently fail; a newer `clodexctl` against an older node fails with one line naming the upgrade.
+- **Writes read as resource verbs.** `create session`, `delete session`, `patch session`, `restart session`, and `restart node` for the engine itself. `run` and the old `exec` merged into one `exec` (asks and waits by default; `--pty` types into a live terminal), `send` became `dm`, and `skills`/`args` became `get session <name> --subresource skills|args|transcript`. Each removed spelling exits with a one-line pointer at its replacement.
+- **Deploy verbs take the same shape.** `deploy node <name> --ssh user@host | --ssm i-INSTANCE | --docker | --helm | --fargate`; `undeploy node <name>` reads the flavor and the teardown target from the saved context rather than a typed token; `upgrade node [ctx]`. The positional is always the context name.
+- **The node resource document is version 2.** `GET /api/resources` now reports version 2, reflecting the route moves above; `clodexctl` gates on which resources a node serves rather than on the number, so a node still serving version 1 keeps working with the verbs it has.
+- **A how-to page.** `docs/how-to.md` walks through running Clodex from the DMG or from source, building it, running a node headless or in Docker, deploying to a server, Kubernetes or Fargate, and the everyday `clodexctl` commands; `cli/README.md` opens with a kubectl-users table and a glossary (node = a running engine, sandbox = a container a node hosts).
 - A ticket started on a worktree role is no longer handed to another seat of that role while its own seat is still starting up.
 - Direct messages no longer append a reply-format reminder on every delivery; a dm that cannot be answered is marked (no reply path) instead.
-- The node API now serves its peers, teams, tickets, sandboxes and agent library read-only: `GET /api/<resource>` and `GET /api/<resource>/<id>` for each, listed in `GET /api/resources`. Tickets take `?team=` and `?state=`; a ticket id that exists in more than one team asks you to name the team.
 - Ticket hands can no longer poll: a third identical shell command in a row is denied by a hook with a one-line reason, and launching a subagent or a background command now tells the seat to end its turn and wait for the result.
-- `clodexctl get` and `describe` now cover `peers`, `teams`, `tickets`, `sandboxes` and `agents`, with `--team`/`--state` on tickets, and `ctx current` prints the active context name.
 
 ## 5.70.0 — 2026-09-16
 

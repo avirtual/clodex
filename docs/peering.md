@@ -110,7 +110,7 @@ every live seat on the box, so the CLI gates it behind `--force` in
 cap instead.
 
 `version` in the resources document is a DOCUMENT revision, bumped when routes
-move under existing rows — it went to `2` for the T5–T7 route moves that
+move under existing rows — it went to `2` for the route moves that
 shipped under `1`. It is deliberately NOT a compatibility gate: clodexctl asks
 whether the resource and verb it wants are present in `resources`, never what
 the number says, so an older node's `version: 1` document is accepted as long

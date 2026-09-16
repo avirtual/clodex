@@ -212,7 +212,7 @@ const VERB_REGISTRY = [
     summary: 'HARD DELETE a resource on the engine (no resume)',
     usage: 'delete session <name> [--force] [-o json|yaml]',
     args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to delete']],
-    flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json)']],
+    flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json|yaml)']],
     examples: ['clodexctl delete session doomed', 'clodexctl delete session doomed --force -o json'],
     notes: [
       'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In -o json|yaml/non-interactive mode --force is required (there is no prompt to answer).',
@@ -228,7 +228,7 @@ const VERB_REGISTRY = [
     args: [['resource', 'session | node — REQUIRED (a bare `restart <name>` is a usage error)'], ['name', 'session to restart (session form only)']],
     flags: [
       ['--fresh', 'session form: start a NEW conversation (default resumes the existing one)'],
-      ['--force', 'node form: skip the confirm (REQUIRED with -o json)'],
+      ['--force', 'node form: skip the confirm (REQUIRED with -o json|yaml)'],
     ],
     examples: ['clodexctl restart session bob', 'clodexctl restart session bob --fresh', 'clodexctl restart node --force'],
     notes: [
@@ -368,7 +368,7 @@ const VERB_REGISTRY = [
     args: [['name', 'the saved context name (its record says which teardown to run)']],
     flags: [
       ['--fargate | --helm | --docker', 'force the flavor when the context does not record one'],
-      ['--force', 'skip the type-the-name confirmation (required in -o json/non-TTY)'],
+      ['--force', 'skip the type-the-name confirmation (required in -o json|yaml/non-TTY)'],
       ['--keep-ctx', 'do not remove the saved context'],
       ['--dry-run', 'print every command that would run; execute nothing destructive'],
       ['--region R --profile P', 'AWS selectors (default: the ctx\'s pinned region/profile, else aws default) [fargate]'],
