@@ -250,6 +250,18 @@ test('describe workspace reads the list and renders the one row', async () => {
   });
 });
 
+test('describe checks the resources API too — an old node gets the upgrade line', async () => {
+  for (const argv of [['describe', 'session', 'bob'], ['describe', 'workspace', 'main'], ['describe', 'catalogs']]) {
+    await withNode({ old: true }, async (port, seen) => {
+      const { code, stderr } = await cli(argv, port);
+      assert.strictEqual(code, 1, `${argv.join(' ')} must exit 1 against an old node`);
+      assert.match(stderr, /does not serve \w+ \w+; run: clodexctl upgrade node /);
+      assert.deepStrictEqual(seen, ['/api/resources', '/api/peer/hello'],
+        `${argv.join(' ')} must probe resources and stop, never fetch the object`);
+    });
+  }
+});
+
 test('describe workspace <unknown> is a not-found, not an empty block', async () => {
   await withNode({}, async (port) => {
     const { code, stderr } = await cli(['describe', 'workspace', 'nope'], port);
@@ -331,8 +343,9 @@ test('`clodexctl sessions` points at the new spelling, exit 2, and RUNS NOTHING'
 
 test('a renamed verb never reaches the wire even with a live node and flags', async () => {
   await withNode({}, async (port, seen) => {
-    const { code } = await cli(['sessions', '-o', 'json'], port);
+    const { code, stderr } = await cli(['sessions', '-o', 'json'], port);
     assert.strictEqual(code, 2);
+    assert.strictEqual(stderr, 'clodexctl: clodexctl sessions was renamed: use clodexctl get sessions\n');
     assert.deepStrictEqual(seen, [], 'the stub node saw no request at all');
   });
 });
