@@ -655,7 +655,7 @@ async function del(bundle) {
 async function deleteSession({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
   const name = requireName(args[0], 'delete session');
   if (!flags.force && flags.json) {
-    throw new CliError(EXIT.USAGE, 'delete session needs --force in -o json/non-interactive mode (wire delete is a hard delete, no resume)');
+    throw new CliError(EXIT.USAGE, 'delete session needs --force in -o json|yaml/non-interactive mode (wire delete is a hard delete, no resume)');
   }
   await R.requireResource(client, 'sessions', 'delete', R.ctxLabel(ctx, flags));
   if (!flags.force) {
@@ -702,7 +702,7 @@ async function patchSession({ client, ctx, printer, flags, args }) {
 
 async function restartNode({ client, printer, flags, prompt = defaultPrompt }) {
   if (!flags.force) {
-    if (flags.json) throw new CliError(EXIT.USAGE, 'restart node needs --force in -o json/non-interactive mode');
+    if (flags.json) throw new CliError(EXIT.USAGE, 'restart node needs --force in -o json|yaml/non-interactive mode');
     const ok = await prompt('restart the WHOLE engine? All sessions relaunch. [y/N]: ');
     if (!/^y(es)?$/i.test(String(ok).trim())) throw new CliError(EXIT.USAGE, 'aborted');
   }

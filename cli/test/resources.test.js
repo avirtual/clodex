@@ -132,6 +132,20 @@ test('requireResource: an OLD node (no /api/resources at all) fails the subresou
     (e) => e.exitCode === EXIT.SERVER && /does not serve sessions\/transcript get/.test(e.message));
 });
 
+test('requireResource gates on RESOURCE PRESENCE, never on the document version number', async () => {
+  const row = { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { transcript: ['get'] } };
+  for (const version of [1, 2, 99, '2', null, undefined]) {
+    const c = client({ '/api/resources': { ok: true, version, resources: [row] }, '/api/peer/hello': { ok: true, host: 'anybox', version: '9.9.9' } });
+    await R.requireResource(c, 'sessions', 'get', 'prod');
+    await R.requireResource(c, 'sessions', 'get', 'prod', 'transcript');
+  }
+  const stale = client({ '/api/resources': { ok: true, version: 99, resources: [] }, '/api/peer/hello': { ok: true, host: 'anybox', version: '9.9.9' } });
+  await assert.rejects(
+    () => R.requireResource(stale, 'sessions', 'get', 'prod'),
+    (e) => e.exitCode === EXIT.SERVER && /does not serve sessions get/.test(e.message),
+    'a high version number does not buy a resource the document omits');
+});
+
 test('ctxLabel names the node the upgrade line tells you to upgrade', () => {
   assert.strictEqual(R.ctxLabel({ name: 'prod' }, {}), 'prod');
   assert.strictEqual(R.ctxLabel({}, { url: 'http://h:1' }), 'http://h:1');

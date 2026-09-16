@@ -70,7 +70,7 @@ const RESOURCES = [
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
 ];
 
-const RESOURCES_VERSION = 1;
+const RESOURCES_VERSION = 2;
 
 const RESOURCE_CALLBACK = {
   workspaces: '_listWorkspaces',
@@ -1197,7 +1197,7 @@ class RemoteServer {
       return Promise.resolve()
         .then(() => this._listWorktrees(repo))
         .then((out) => (out && out.ok
-          ? this._json(res, 200, { ok: true, repo, worktrees: out.worktrees || [] })
+          ? this._json(res, 200, { ok: true, repo: out.repo || repo, worktrees: out.worktrees || [] })
           : this._json(res, 404, { ok: false, error: (out && out.error) || 'Not inside a git repository' })))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }

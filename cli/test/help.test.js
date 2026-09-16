@@ -85,6 +85,14 @@ test('the index renders every group title and every verb', async () => {
   assert.match(stdout, /clodexctl help <verb>/);
 });
 
+test('both footers spell the output flag `-o json|yaml` — yaml is not a second-class citizen', async () => {
+  const idx = renderIndex();
+  assert.match(idx, /\n {2}-o json\|yaml {13}machine-stable output on read verbs\n/);
+  assert.doesNotMatch(idx, /-o json {2}/, 'the index footer still carries the json-only spelling');
+  const { stdout } = await cli(['get', '--help']);
+  assert.match(stdout, /Global flags \(--ctx\/--url\/--token\/-o json\|yaml\) and exit codes: clodexctl --help/);
+});
+
 test('bare clodexctl prints the index (exit 0)', async () => {
   const { code, stdout } = await cli([]);
   assert.strictEqual(code, 0);

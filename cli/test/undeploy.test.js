@@ -258,6 +258,18 @@ test('undeploy node: a flavor FLAG forces the teardown when the record has none'
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
 });
 
+test('undeploy node <ctx> --fargate: a FORCED target that differs from the record is named, not silently swapped', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'prod', contexts: { prod: {
+    token: 'W', deploy: { flavor: 'helm', release: 'prod-release', namespace: 'agents' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'prod', '--fargate', '--force'], { execFn: fakeAws(rec, { clusterParam: 'prod' }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /--fargate forces the target: tearing down "prod" \(the name you typed\), NOT the helm "prod-release" that context "prod" records/);
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('delete-stack --stack-name prod')), 'the typed name is what was deleted');
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('prod-release')), "the record's target never reached an argv");
+});
+
 // ── fargate flow ─────────────────────────────────────────────────────────────
 
 // A scripted aws execFn for undeploy. Records calls; answers describe-stacks,
@@ -463,6 +475,37 @@ test('undeploy fargate ctx cleanup: same-named cluster in ANOTHER region keeps i
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.ok(saved.contexts.other, 'differing pinned region → ctx kept');
   assert.ok(!saved.contexts.sameRegion, 'matching region cluster-half → removed');
+});
+
+// NIT pin (T11b r2): the by-name ctx match is the CONTEXT KEY torn down, never
+// the record's stack — a SECOND context literally named after that stack is a
+// different deployment and must survive.
+test('undeploy fargate ctx cleanup: a second context named after the stack is NOT collateral', async () => {
+  const contextsFile = tmpCtxFile({ current: 'prod', contexts: {
+    prod: { ssm: { ecs: 'prod-cluster/prod-node', region: 'us-west-2' }, token: 'A',
+      deploy: { flavor: 'fargate', stack: 'shared-stack', region: 'us-west-2' } },
+    'shared-stack': { url: 'http://127.0.0.1:7901', token: 'B' },
+  } });
+  const r = await cli(['undeploy', 'node', 'prod', '--force'], { execFn: fakeAws({}, { clusterParam: 'prod-cluster' }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.ok(!saved.contexts.prod, 'the context that was torn down is gone');
+  assert.ok(saved.contexts['shared-stack'], 'the unrelated context sharing the stack name was removed as collateral');
+  assert.match(r.stdout, /^removed context "prod" \(was current — cleared\)$/m, 'only the one context is reported removed');
+});
+
+// The forced path has no context key routing it, so the stack name IS the key
+// to clean up — the fallback must still fire.
+test('undeploy fargate --fargate (no record): the typed stack name is still the ctx cleaned up', async () => {
+  const contextsFile = tmpCtxFile({ current: 'clodex-node', contexts: {
+    'clodex-node': { url: 'http://127.0.0.1:7900', token: 'A' },
+    keeper: { url: 'http://127.0.0.1:7901', token: 'B' },
+  } });
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--force'], { execFn: fakeAws({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.ok(!saved.contexts['clodex-node'], 'the forced name is the ctx key and is removed');
+  assert.ok(saved.contexts.keeper, 'nothing else is touched');
 });
 
 // NIT pin: a describe-stacks failure that is NOT a not-found (throttle, expired

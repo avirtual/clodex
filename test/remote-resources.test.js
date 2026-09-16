@@ -618,7 +618,7 @@ test('GET /api/resources: the document a fully-injected node serves', async () =
   await withNode({}, async (port) => {
     const r = await req(port, '/api/resources');
     assert.strictEqual(r.status, 200);
-    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, version: 1, resources: RESOURCES });
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, version: 2, resources: RESOURCES });
   });
 });
 
@@ -993,12 +993,26 @@ test('GET /api/worktrees?repo=: 200 with every field listWorktrees builds, for a
     }
     assert.deepStrictEqual(body, {
       ok: true,
-      repo: dir,
+      repo: fs.realpathSync(dir),
       worktrees: [
         { path: fs.realpathSync(dir), branch: 'master', head: 'HEAD8CHR', isMain: true, detached: false, locked: false, prunable: false },
         { path: fs.realpathSync(linked), branch: 'side', head: 'HEAD8CHR', isMain: false, detached: false, locked: false, prunable: false },
       ],
     });
+  });
+});
+
+test('GET /api/worktrees: `repo` is git\'s TOPLEVEL, not the path that was asked for', { skip: !gitAvailable() }, async () => {
+  const { dir } = makeRepoWithWorktree();
+  const sub = path.join(dir, 'deep', 'er');
+  fs.mkdirSync(sub, { recursive: true });
+  const top = fs.realpathSync(dir);
+  await withNode({ listWorktrees: realWorktrees.listWorktrees }, async (port) => {
+    const r = await req(port, `/api/worktrees?repo=${encodeURIComponent(sub)}`);
+    assert.strictEqual(r.status, 200, r.body);
+    const body = JSON.parse(r.body);
+    assert.strictEqual(body.repo, top, 'the subdirectory that was requested came back instead of the toplevel');
+    assert.ok(body.worktrees.some((w) => w.path === top), 'the toplevel is the anchor every worktree path shares');
   });
 });
 

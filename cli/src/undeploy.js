@@ -31,7 +31,7 @@ const HELM_PVC_NAME = (name) => `state-${name}-0`;
 // ── shared: confirm gate ─────────────────────────────────────────────────────
 async function confirmTeardown({ name, noun, flags, io }) {
   if (flags.force) return;
-  if (flags.json) throw new CliError(EXIT.USAGE, `undeploy needs --force in -o json/non-interactive mode (teardown is a destructive, unrecoverable delete)`);
+  if (flags.json) throw new CliError(EXIT.USAGE, `undeploy needs --force in -o json|yaml/non-interactive mode (teardown is a destructive, unrecoverable delete)`);
   const isTTY = io.isTTY != null ? io.isTTY : !!(process.stdin && process.stdin.isTTY);
   if (!isTTY) throw new CliError(EXIT.USAGE, `undeploy needs --force in non-interactive mode (no TTY to confirm this destructive delete)`);
   const prompt = io.prompt || defaultPrompt;
@@ -186,6 +186,11 @@ async function undeployVerb({ printer, flags, args, io = {} }) {
   }
   const target = (!forced && dep) ? String(dep.stack || dep.release || name) : name;
   const routed = dep && String(dep.flavor) === flavor ? dep : null;
+  const recorded = (forced && dep) ? String(dep.stack || dep.release || '') : '';
+  if (recorded && recorded !== target) {
+    if (flags.json) printer.json({ type: 'forced-target', flavor, target, recordedFlavor: String(dep.flavor), recordedTarget: recorded });
+    else printer.line(`--${flavor} forces the target: tearing down "${target}" (the name you typed), NOT the ${dep.flavor} "${recorded}" that context "${name}" records`);
+  }
   const bundle = { printer, flags, args: [target], io, ctxName: name, dep: routed };
   if (flavor === 'fargate') return undeployFargate(bundle);
   if (flavor === 'helm') return undeployHelm(bundle);
@@ -313,7 +318,7 @@ async function undeployFargate({ printer, flags, args, io, ctxName = null, dep =
   //    agree (or be absent) — a same-named cluster in ANOTHER region is a
   //    different deployment; don't drop its ctx.
   ctxCleanup({ flags, printer, io, matchFn: (name, entry) => {
-    if (name === stackName || name === ctxKey) return true;
+    if (name === ctxKey) return true;
     const ecs = entry && entry.ssm && entry.ssm.ecs;
     if (!(typeof ecs === 'string' && ecs.includes('/') && ecs.split('/')[0] === cluster)) return false;
     const entryRegion = entry.ssm.region;

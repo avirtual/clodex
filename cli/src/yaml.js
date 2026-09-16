@@ -1,16 +1,22 @@
 'use strict';
 
 const BARE_KEY = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-const TYPE_WORDS = /^(?:true|false|null|yes|no|on|off|~)$/i;
+const TYPE_WORDS = /^(?:true|false|null|yes|no|on|off|~|[-+]?\.inf|\.nan)$/i;
 const LEAD_SPECIAL = /^[-?:,[\]{}#&*!|>'"%@` ]/;
 const TRAIL_SPECIAL = /[ :]$/;
 const CTRL_OTHER = new RegExp('[\\u0000-\\u0009\\u000B-\\u001F\\u007F]');
 const RADIX_NUM = /^[-+]?0[xXoObB][0-9a-fA-F_]+$/;
 const PLAIN_NUM = /^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?$/;
+const SEXAGESIMAL = /^[-+]?\d+(?::[0-5]?\d)+(?:\.\d*)?$/;
 
 function numericLooking(s) {
   if (RADIX_NUM.test(s)) return true;
+  if (SEXAGESIMAL.test(s)) return true;
   return PLAIN_NUM.test(s) && /[0-9]/.test(s);
+}
+
+function quoteText(s) {
+  return JSON.stringify(s).replace(//g, '\\u007f');
 }
 
 function needsQuote(s) {
@@ -47,16 +53,16 @@ function isObj(v) {
 }
 
 function keyText(k) {
-  return BARE_KEY.test(k) ? k : JSON.stringify(k);
+  return BARE_KEY.test(k) ? k : quoteText(k);
 }
 
 function scalarText(v) {
   if (v === null || v === undefined) return 'null';
-  if (v instanceof Date) return JSON.stringify(v.toISOString());
+  if (v instanceof Date) return quoteText(v.toISOString());
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'null';
   const s = typeof v === 'string' ? v : String(v);
-  return needsQuote(s) ? JSON.stringify(s) : s;
+  return needsQuote(s) ? quoteText(s) : s;
 }
 
 function liveKeys(obj) {
