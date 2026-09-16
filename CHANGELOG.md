@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.70.0 — 2026-09-16
+
 - The shipped team templates now pin `claude-opus-5[1m]`, so your leads, hands
   and reviewers get the 1M context window instead of whatever the CLI defaults
   to. A library template you edited yourself keeps your model; an untouched one
