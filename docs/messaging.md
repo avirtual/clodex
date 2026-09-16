@@ -136,17 +136,19 @@ cold session re-bills its whole context). Held Claude targets get the message
 **parked** (`_parkHeldDelivery`); Codex/dead targets get a plain bounce
 (Codex has no drain hook, so it can't be a park target).
 
-**Build** — `_buildDeliveryText`: `[agent:from <senderTag>]` prefix + body +
-reply trailer `(reply: start a line with [agent:dm <sender>])`. The trailer
-is parenthesized and non-column-1 so it can never self-fire; it's emitted ONLY
-when the advertised reply path exists on both ends — the RECEIVER's `dm` intent
-is enabled (fresh persistence read) AND the SENDER is dm-reachable NOW
-(`_isDmReachable`: a live local agent session, or an online federated peer
-`name@origin`). This subsumes the old `user`/`reminder` special-cases (neither
-is a reachable agent) and drops the trailer for external senders like a `nc -U`
-wake script's `from:"t1-wake"` that no session answers. Coupled to
-`_deliverMessage`'s drop-if-absent — widen `_isDmReachable` if local dm parking
-ever covers absent targets. Bodies over
+**Build** — `_buildDeliveryText`: `[agent:from <senderTag>]` prefix + body, and
+on a dm whose reply would DROP, the marker `(no reply path)`. Polarity is
+inverted against the old reply trailer: an answerable dm costs zero bytes, and
+the marker is emitted only when the reply path is missing on one end — the
+RECEIVER's `dm` intent is off (fresh persistence read), or the SENDER is not
+dm-reachable NOW (`_isDmReachable`: a live local agent session, or an online
+federated peer `name@origin`), as with a `nc -U` wake script's `from:"t1-wake"`
+that no session answers. It is parenthesized and non-column-1 so it can never
+self-fire. Non-dm mtypes and `SYSTEM_SENDERS` (`team`, `reminder`, `user`, …)
+get nothing at all: nobody answers them, so a fault marker would be noise —
+and that check precedes reachability, which goes true by accident the moment a
+seat is named `team`. Coupled to `_deliverMessage`'s drop-if-absent — widen
+`_isDmReachable` if local dm parking ever covers absent targets. Bodies over
 `MSG_SPILL_THRESHOLD` (500B) spill to `~/.clodex/messages/` — Claude gets
 `@<path> ` (trailing space closes autocomplete; the file auto-attaches),
 Codex gets a read-with-Read pointer.
@@ -304,7 +306,8 @@ announced in hello — in that order, case-insensitively, through the one
 - **Loop guard**: claimed mail is delivered through `_gatedDeliver`
   directly — NEVER `_handleIntent` — so a federated dm can't re-route.
   The sender tag uses OUR configured label for that peer (not the box's
-  origin string) so the reply trailer routes back through our own config.
+  origin string) so a reply to that `[agent:from]` address routes back through
+  our own config.
 - `SELF_LABEL` = `CLODEX_LABEL` if set and it clears peer-outbox's
   `validOrigin` gate, else the hostname minus `.local` (the fallback also
   covers a blank or rejected value, which logs one warning). It is the origin
@@ -454,7 +457,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
   that batches or reflows text before scanning must preserve line identity.
 - Claimed federated DMs never pass through `_handleIntent` (loop guard).
 - Ctrl-U is its own PTY write with a settle gap, never prefixed to the text.
-- The reply trailer must stay parenthesized/non-column-1.
+- The no-reply marker must stay parenthesized/non-column-1.
 - Park ids are matched structurally, never by suffix; uniqueness is
   cross-directory.
 - Parked mail survives everything except explicit user-kill.

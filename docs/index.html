@@ -78,7 +78,7 @@
 
       <article class="card">
         <h3>DM federation</h3>
-        <p>Agents on peered Clodexes message each other directly: <code>[agent:dm name@peer]</code> crosses the wire, remote agents show up in <code>[agent:who]</code>, and reply trailers teach the return address. The tunnel only dials one way, so replies from the box queue in a durable per-origin outbox — nothing is lost across restarts or dropped streams. With relay mesh enabled, two boxes peered to the same Clodex can reach each other through the hub; sender identity is never rewritten, and relays are capped at one hop.</p>
+        <p>Agents on peered Clodexes message each other directly: <code>[agent:dm name@peer]</code> crosses the wire, remote agents show up in <code>[agent:who]</code>, and a dm whose reply would drop is marked <code>(no reply path)</code> so nobody answers into a void. The tunnel only dials one way, so replies from the box queue in a durable per-origin outbox — nothing is lost across restarts or dropped streams. With relay mesh enabled, two boxes peered to the same Clodex can reach each other through the hub; sender identity is never rewritten, and relays are capped at one hop.</p>
       </article>
 
       <article class="card">

@@ -6676,20 +6676,20 @@ function createSessionManager(deps) {
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
       const prefix = `[agent:from ${senderName}]`;
 
-      // The reply nudge is parenthesized and never at column 1, so IntentScanner
-      // (which fires only on a cleaned line STARTING with [agent:) cannot mistake it
-      // for a real intent. Emitted only when the path it advertises exists on BOTH
-      // ends: the receiver's `dm` intent is enabled AND the sender is dm-reachable
-      // right now — otherwise it teaches a reply address that silently drops.
-      // The SYSTEM_SENDERS check must come BEFORE reachability, not lean on it:
-      // reachability asks "is a session called this?", which is true by accident
-      // the moment someone names a seat `team`.
-      const trailer = (mtype === 'dm'
-          && !SYSTEM_SENDERS.has(senderName)
-          && intentEnabled('dm', getPersistence().get(target.name)?.intents)
-          && this._isDmReachable(senderName))
-        ? `(reply: start a line with [agent:dm ${senderName}], close the body with a bare [agent:end] line)`
-        : '';
+      // The marker is parenthesized and never at column 1, so IntentScanner (which
+      // fires only on a cleaned line STARTING with [agent:) cannot mistake it for a
+      // real intent. Polarity is INVERTED against the reply address it replaced: the
+      // common path — receiver's `dm` intent enabled AND sender dm-reachable right
+      // now — costs zero bytes, and the marker appears only when a reply would
+      // silently drop. System senders are excluded before either check: nothing
+      // answers them, but a seat told `(no reply path)` on a roster notice would
+      // read a fault into a delivery that has none.
+      const answerable = mtype === 'dm' && !SYSTEM_SENDERS.has(senderName);
+      const trailer = (!answerable
+          || (intentEnabled('dm', getPersistence().get(target.name)?.intents)
+            && this._isDmReachable(senderName)))
+        ? ''
+        : '(no reply path)';
 
       if (body.length > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
@@ -6699,13 +6699,13 @@ function createSessionManager(deps) {
         // trailing space after the path closes the @-autocomplete popup —
         // without it the deferred Enter can land on the popup and select a
         // DIFFERENT file (observed live: pointer said msg-2, body was msg-3).
-        // The trailer rides the pointer line (not the spilled file, which may be
+        // The marker rides the pointer line (not the spilled file, which may be
         // read after the register has already drifted).
         return target.agentType === 'claude'
           ? `${marked} Message (${body.length} bytes) attached: @${filePath} ${trailer}`
           : `${marked} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
       }
-      return `${prefix} ${body}${trailer ? '\n' + trailer : ''}`;
+      return `${prefix} ${body}${trailer ? ' ' + trailer : ''}`;
     }
 
     // `onWrite` fires when the text is DURABLE — parked to disk, or released by the
