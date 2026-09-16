@@ -56,7 +56,7 @@ function stub(opts = {}) {
         if (verdict === 'hang') { held.push(res); return; }   // wedge: never respond
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: verdict || [] }));
       }
-      if (p === '/api/send') {
+      if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) {
         if (opts.sendHangs) { held.push(res); return; }
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
@@ -156,7 +156,7 @@ test('run: a normal turnEnd still returns promptly (grace/abort must not stall s
     sessions: [{ name: 'bob', type: 'claude' }],
     onEventsOpen: (state, seen) => {
       const iv = setInterval(() => {
-        if (seen.some((s) => s.url === '/api/send')) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'bob', state: 'idle', turnEnd: true })}\n\n`); }
+        if (seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url))) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'bob', state: 'idle', turnEnd: true })}\n\n`); }
       }, 20);
     },
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },

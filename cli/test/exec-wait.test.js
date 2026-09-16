@@ -73,7 +73,7 @@ function sseStub(opts = {}) {
       if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: (opts.transcript && opts.transcript(seen)) || [] }));
       }
-      if (p === '/api/send') { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
+      if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
       res.writeHead(404); res.end(JSON.stringify({ ok: false, error: 'no route' }));
     });
   });
@@ -221,7 +221,7 @@ test('send --wait: busy→turnEnd → new entries printed, snapshot respected', 
     onEventsOpen: (state) => {
       // After the send lands, fire a turn-end activity for our session.
       const iv = setInterval(() => {
-        if (seen.some((s) => s.url === '/api/send')) {
+        if (seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url))) {
           clearInterval(iv);
           state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'other', state: 'idle', turnEnd: true })}\n\n`); // ignored
           state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'bob', state: 'idle', turnEnd: true })}\n\n`);
@@ -251,7 +251,7 @@ test('send --wait: turnEnd for a different session is ignored (times out)', asyn
   const { server } = sseStub({
     onEventsOpen: (state, seen) => {
       const iv = setInterval(() => {
-        if (seen.some((s) => s.url === '/api/send')) {
+        if (seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url))) {
           clearInterval(iv);
           // Only OTHER sessions end their turn — ours never does.
           state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'someoneelse', state: 'idle', turnEnd: true })}\n\n`);
@@ -274,7 +274,7 @@ test('send --wait: transcript flush lags turnEnd → retries, never prints a bar
   const { server, seen } = sseStub({
     onEventsOpen: (state, seen) => {
       const iv = setInterval(() => {
-        if (seen.some((s) => s.url === '/api/send')) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'murmur', state: 'idle', turnEnd: true })}\n\n`); }
+        if (seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url))) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'murmur', state: 'idle', turnEnd: true })}\n\n`); }
       }, 20);
     },
     transcript: () => {
@@ -298,7 +298,7 @@ test('send --wait --json: {ok,name,entries,timedOut} shape', async () => {
   const { server } = sseStub({
     onEventsOpen: (state, seen) => {
       const iv = setInterval(() => {
-        if (seen.some((s) => s.url === '/api/send')) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'bob', state: 'idle', turnEnd: true })}\n\n`); }
+        if (seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url))) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name: 'bob', state: 'idle', turnEnd: true })}\n\n`); }
       }, 20);
     },
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },
@@ -320,6 +320,6 @@ test('send without --wait: unchanged fire-and-forget', async () => {
   const { code, stdout } = await cli(['send', 'bob', 'hi'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /fire-and-forget/);
-  assert.deepStrictEqual(seen.map((s) => s.url), ['/api/send']); // no events feed opened
+  assert.deepStrictEqual(seen.map((s) => s.url), ['/api/sessions/murmur/dm']); // no events feed opened
   server.close();
 });

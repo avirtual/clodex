@@ -89,7 +89,7 @@ function wireDoors({ seatIntents = undefined } = {}) {
   return { m, injected, send: opts.send, deliverDm: opts.deliverDm };
 }
 
-test('t886: the operator door (/api/send) delivers the canonical [agent:from user] shape', () => {
+test('t886: the operator door (POST /api/sessions/:name/dm) delivers the canonical [agent:from user] shape', () => {
   const { injected, send } = wireDoors();
   const out = send('seat', 'ship it');
   assert.deepStrictEqual(out, { ok: true });

@@ -171,6 +171,8 @@ const WALK_ID = {
 
 const TRANSCRIPT_OUT = { ok: true, messages: [{ seq: 1, role: 'user', text: 'hi' }, { seq: 2, role: 'assistant', text: 'yo' }], cursor: 1, complete: true };
 const QUERY_OUT = { ok: true, report: { usd: 1.5 } };
+const ARGS_OUT = { ok: true, type: 'claude', extraArgs: ['--x'], catalogs: { agents: ['a1'] } };
+const SKILLS_OUT = { ok: true, names: ['pdf'], disabledSkills: [], injectSkills: [] };
 
 function subresourceFixture() {
   const calls = [];
@@ -197,18 +199,52 @@ function subresourceFixture() {
         calls.push({ route: 'query', name, kind, args });
         return name === 'ghost' ? { ok: false, error: 'no such session' } : QUERY_OUT;
       },
+      send: (name, text) => {
+        calls.push({ route: 'dm', name, text });
+        return name === 'ghost' ? { ok: false, error: 'no such session' } : { ok: true };
+      },
+      killSession: (name) => {
+        calls.push({ route: 'kill', name });
+        return name === 'ghost' ? { ok: false, error: 'no such session' } : { ok: true, name };
+      },
+      restartSession: (name, opts) => {
+        calls.push({ route: 'restart', name, fresh: !!(opts && opts.fresh) });
+        return name === 'ghost' ? { ok: false, error: 'Session not found in persistence' } : { ok: true, restarted: true };
+      },
+      getSessionArgs: (name) => {
+        calls.push({ route: 'argsGet', name });
+        return name === 'ghost' ? { ok: false } : ARGS_OUT;
+      },
+      setSessionArgs: (name, patch) => {
+        calls.push({ route: 'argsSet', name, patch });
+        return name === 'ghost' ? { ok: false, error: 'Session not found in persistence' } : { ok: true, restarted: !!patch.restart };
+      },
+      getSkillCatalog: (name) => {
+        calls.push({ route: 'skillsGet', name });
+        return name === 'ghost' ? { ok: false } : SKILLS_OUT;
+      },
+      setSessionSkills: (name, disabledSkills, injectSkills) => {
+        calls.push({ route: 'skillsSet', name, disabledSkills, injectSkills });
+        return name === 'ghost' ? { ok: false, error: 'Session not found in persistence' } : { ok: true };
+      },
     },
   };
 }
 
 const SUB_WALK = {
-  transcript: { method: 'GET' },
-  query: { method: 'POST', body: () => JSON.stringify({ kind: 'report', args: {} }) },
-  attach: { method: 'GET', stream: true },
-  control: { method: 'POST', body: () => JSON.stringify({ action: 'acquire', client: 'walk' }), capture: (st, res) => { st.token = JSON.parse(res.body).token; } },
-  input: { method: 'POST', body: (st) => JSON.stringify({ token: st.token, data: 'x' }) },
-  resize: { method: 'POST', body: (st) => JSON.stringify({ token: st.token, cols: 90, rows: 25 }) },
+  transcript: { get: { method: 'GET' } },
+  query: { post: { method: 'POST', body: () => JSON.stringify({ kind: 'report', args: {} }) } },
+  attach: { get: { method: 'GET', stream: true } },
+  control: { post: { method: 'POST', body: () => JSON.stringify({ action: 'acquire', client: 'walk' }), capture: (st, res) => { st.token = JSON.parse(res.body).token; } } },
+  input: { post: { method: 'POST', body: (st) => JSON.stringify({ token: st.token, data: 'x' }) } },
+  resize: { post: { method: 'POST', body: (st) => JSON.stringify({ token: st.token, cols: 90, rows: 25 }) } },
+  dm: { post: { method: 'POST', body: () => JSON.stringify({ text: 'hi' }) } },
+  restart: { post: { method: 'POST', body: () => JSON.stringify({ fresh: false }) } },
+  args: { get: { method: 'GET' }, patch: { method: 'PATCH', body: () => JSON.stringify({ extraArgs: ['--y'] }) } },
+  skills: { get: { method: 'GET' }, patch: { method: 'PATCH', body: () => JSON.stringify({ disabledSkills: [] }) } },
 };
+
+const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE' };
 
 test('RESOURCES: every (resource, verb) answers on a fully-injected node, and every name is a literal path in remote.js', async () => {
   const seen = [];
@@ -226,8 +262,10 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
           assert.ok(WALK_ID[r.name], `no walk id seeded for ${r.name}.get — the walk cannot exercise it`);
         }
         const p = single ? `/api/${r.name}/${WALK_ID[r.name]}` : `/api/${r.name}`;
-        const res = await req(port, p);
-        assert.strictEqual(res.status, 200, `${r.name}.${verb} → GET ${p} answered ${res.status}: ${res.body}`);
+        const method = VERB_WALK[verb];
+        assert.ok(method, `no walk method seeded for the ${verb} verb — the walk cannot exercise it`);
+        const res = await req(port, p, { method });
+        assert.strictEqual(res.status, 200, `${r.name}.${verb} → ${method} ${p} answered ${res.status}: ${res.body}`);
         seen.push(`${r.name}.${verb}`);
       }
       const subs = Object.entries(r.subresources || {})
@@ -237,9 +275,9 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
           REMOTE_SRC.includes(`sub === '${sub}'`),
           `remote.js dispatches on no literal sub === '${sub}' — the constant advertises a subresource the router does not name`,
         );
-        const walk = SUB_WALK[sub];
-        assert.ok(walk, `no walk shape seeded for ${r.name}/${sub} — the walk cannot exercise it`);
         for (const verb of verbs) {
+          const walk = SUB_WALK[sub] && SUB_WALK[sub][verb];
+          assert.ok(walk, `no walk shape seeded for ${r.name}/${sub}.${verb} — the walk cannot exercise it`);
           assert.strictEqual(walk.method.toLowerCase(), verb, `${r.name}/${sub} advertises ${verb}, the walk sends ${walk.method}`);
           const p = `/api/${r.name}/${WALK_ID[r.name]}/${sub}`;
           const body = walk.body ? walk.body(walkState) : undefined;
@@ -252,12 +290,14 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     }
   });
   assert.deepStrictEqual(seen, [
-    'sessions.list', 'sessions.get', 'sessions/transcript.get', 'sessions/query.post',
-    'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'sessions/attach.get', 'workspaces.list',
+    'sessions.list', 'sessions.get', 'sessions.delete', 'sessions/transcript.get', 'sessions/query.post',
+    'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'sessions/dm.post',
+    'sessions/restart.post', 'sessions/args.get', 'sessions/args.patch', 'sessions/skills.get',
+    'sessions/skills.patch', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'catalogs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 20, 'the walk entered 14 resource verbs plus the 6 session subresources');
+  assert.strictEqual(seen.length, 27, 'the walk entered 14 resource verbs, the sessions delete, and the 12 session subresource verbs');
   assert.strictEqual(RESOURCES.length, 8, 'the walk covered fewer than the 8 shipped resources');
 });
 
@@ -392,6 +432,125 @@ test('sessions/control|input|resize: control-token semantics and resize bounds, 
   });
 });
 
+test('the OLD session-write paths are gone — 404, no alias, no legacy shim', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  await withNode(fixture.opts, async (port) => {
+    assert.strictEqual((await post(port, '/api/send', JSON.stringify({ name: 'alice', text: 'hi' }))).status, 404, 'POST /api/send still answers');
+    assert.strictEqual((await post(port, '/api/kill/alice', '{}')).status, 404, 'POST /api/kill/:name still answers');
+    assert.strictEqual((await post(port, '/api/restart-session/alice', '{}')).status, 404, 'POST /api/restart-session/:name still answers');
+    assert.strictEqual((await req(port, '/api/session-args/alice')).status, 404, 'GET /api/session-args/:name still answers');
+    assert.strictEqual((await post(port, '/api/session-args/alice', '{}')).status, 404, 'POST /api/session-args/:name still answers');
+    assert.strictEqual((await req(port, '/api/skill-catalog/alice')).status, 404, 'GET /api/skill-catalog/:name still answers');
+    assert.strictEqual((await post(port, '/api/session-skills/alice', '{}')).status, 404, 'POST /api/session-skills/:name still answers');
+    assert.strictEqual(fixture.calls.length, 0, 'no old-path request reached a callback');
+  });
+  for (const old of ["'/api/send'", "'/api/kill/'", "'/api/restart-session/'", "'/api/session-args/'", "'/api/skill-catalog/'", "'/api/session-skills/'"]) {
+    assert.ok(!REMOTE_SRC.includes(old), `remote.js still spells the old ${old} path`);
+  }
+});
+
+test('POST /api/sessions/:name/dm: the path names the session — a body `name` is ignored, never obeyed', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  await withNode(fixture.opts, async (port) => {
+    const r = await post(port, '/api/sessions/alice/dm', JSON.stringify({ name: 'bob', text: 'hi' }));
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: 'hi' }, 'the path name won over the body name');
+
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: '   ' }))).status, 400, 'whitespace-only text is empty');
+    assert.deepStrictEqual(
+      JSON.parse((await post(port, '/api/sessions/alice/dm', JSON.stringify({ name: 'alice' }))).body),
+      { ok: false, error: 'empty message' },
+    );
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', 'not json')).status, 400, 'bad JSON is a 400');
+    const miss = await post(port, '/api/sessions/ghost/dm', JSON.stringify({ text: 'hi' }));
+    assert.strictEqual(miss.status, 404, 'a not-ok callback result is still a 404');
+  });
+});
+
+test('DELETE /api/sessions/:name and POST .../restart: the statuses the deleted kill/restart-session routes served', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  await withNode(fixture.opts, async (port) => {
+    const k = await req(port, '/api/sessions/alice', { method: 'DELETE' });
+    assert.strictEqual(k.status, 200);
+    assert.deepStrictEqual(JSON.parse(k.body), { ok: true, name: 'alice' });
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'kill', name: 'alice' });
+    assert.strictEqual((await req(port, '/api/sessions/ghost', { method: 'DELETE' })).status, 404);
+
+    assert.strictEqual((await post(port, '/api/sessions/alice/restart', JSON.stringify({ fresh: true }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'restart', name: 'alice', fresh: true });
+    assert.strictEqual((await post(port, '/api/sessions/alice/restart', '')).status, 200, 'an empty body is a plain restart');
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'restart', name: 'alice', fresh: false });
+    assert.strictEqual((await post(port, '/api/sessions/alice/restart', 'not json')).status, 400, 'bad JSON is a 400');
+    assert.strictEqual((await post(port, '/api/sessions/ghost/restart', '{}')).status, 404);
+  });
+  await withNode({ ...fixture.opts, restartSession: null }, async (port) => {
+    const r = await post(port, '/api/sessions/alice/restart', '{}');
+    assert.strictEqual(r.status, 501);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'restart not available' });
+  });
+});
+
+test('sessions/args and sessions/skills: GET reads, PATCH writes, and the merge-patch body reaches the owner', async () => {
+  const fixture = subresourceFixture();
+  const patch = (port, p, body) => req(port, p, { method: 'PATCH', body, headers: { 'content-type': 'application/json' } });
+  await withNode(fixture.opts, async (port) => {
+    const a = await req(port, '/api/sessions/alice/args');
+    assert.strictEqual(a.status, 200);
+    assert.deepStrictEqual(JSON.parse(a.body), ARGS_OUT);
+    assert.strictEqual((await req(port, '/api/sessions/ghost/args')).status, 404);
+
+    assert.strictEqual((await patch(port, '/api/sessions/alice/args', JSON.stringify({ extraArgs: ['--y'], restart: true }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'argsSet', name: 'alice', patch: { extraArgs: ['--y'], restart: true } });
+    assert.strictEqual((await patch(port, '/api/sessions/alice/args', 'not json')).status, 400);
+
+    const sk = await req(port, '/api/sessions/alice/skills');
+    assert.strictEqual(sk.status, 200);
+    assert.deepStrictEqual(JSON.parse(sk.body), SKILLS_OUT);
+    assert.strictEqual((await req(port, '/api/sessions/ghost/skills')).status, 404);
+
+    assert.strictEqual((await patch(port, '/api/sessions/alice/skills', JSON.stringify({ disabledSkills: ['xlsx'], injectSkills: ['my'] }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'skillsSet', name: 'alice', disabledSkills: ['xlsx'], injectSkills: ['my'] });
+    assert.strictEqual((await patch(port, '/api/sessions/alice/skills', 'not json')).status, 400);
+  });
+  await withNode({ ...fixture.opts, getSessionArgs: null, setSessionSkills: null }, async (port) => {
+    assert.deepStrictEqual(JSON.parse((await req(port, '/api/sessions/alice/args')).body), { ok: false, error: 'args not available' });
+    assert.deepStrictEqual(JSON.parse((await patch(port, '/api/sessions/alice/skills', '{}')).body), { ok: false, error: 'skills not available' });
+  });
+});
+
+test('verb gating: a node without killSession drops `delete` from the sessions verbs AND 501s DELETE', async () => {
+  const fixture = subresourceFixture();
+  await withNode({ ...fixture.opts, killSession: null }, async (port) => {
+    const doc = JSON.parse((await req(port, '/api/resources')).body);
+    const sessions = doc.resources.find((r) => r.name === 'sessions');
+    assert.deepStrictEqual(sessions.verbs, ['list', 'get'], 'the document advertises a delete this node cannot serve');
+    const r = await req(port, '/api/sessions/alice', { method: 'DELETE' });
+    assert.strictEqual(r.status, 501);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'delete not available' });
+    assert.strictEqual(fixture.calls.length, 0, 'the refused DELETE reached no callback');
+  });
+});
+
+test('per-verb subresource gating: args keeps get and drops patch when only setSessionArgs is absent', async () => {
+  const fixture = subresourceFixture();
+  await withNode({ ...fixture.opts, setSessionArgs: null }, async (port) => {
+    const doc = JSON.parse((await req(port, '/api/resources')).body);
+    const sessions = doc.resources.find((r) => r.name === 'sessions');
+    assert.deepStrictEqual(sessions.subresources.args, ['get'], 'the read half must survive a missing write callback');
+    assert.strictEqual((await req(port, '/api/sessions/alice/args')).status, 200);
+    const w = await req(port, '/api/sessions/alice/args', { method: 'PATCH', body: '{}', headers: { 'content-type': 'application/json' } });
+    assert.strictEqual(w.status, 501);
+  });
+  await withNode({ ...fixture.opts, getSessionArgs: null, setSessionArgs: null }, async (port) => {
+    const doc = JSON.parse((await req(port, '/api/resources')).body);
+    const sessions = doc.resources.find((r) => r.name === 'sessions');
+    assert.ok(!('args' in sessions.subresources), 'a subresource with no servable verb is dropped whole');
+  });
+});
+
 test('subresource gating: a node with the attach/control callbacks nulled omits them from the document AND 501s the routes', async () => {
   const fixture = subresourceFixture();
   const nulled = { ...fixture.opts, getAttachInfo: null, sendInput: null, resizePty: null };
@@ -399,19 +558,21 @@ test('subresource gating: a node with the attach/control callbacks nulled omits 
     const doc = JSON.parse((await req(port, '/api/resources')).body);
     const sessions = doc.resources.find((r) => r.name === 'sessions');
     assert.deepStrictEqual(
-      Object.keys(sessions.subresources), ['transcript', 'query'],
+      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills'],
       'the document advertises a subresource this node cannot serve',
     );
     assert.strictEqual((await req(port, '/api/sessions/alice/attach')).status, 501);
 
-    for (const [sub] of Object.entries(sessions.subresources)) {
-      const walk = SUB_WALK[sub];
-      const body = walk.body ? walk.body({ token: null }) : undefined;
-      const res = await req(port, `/api/sessions/alice/${sub}`, {
-        method: walk.method, body, stream: walk.stream,
-        headers: body ? { 'content-type': 'application/json' } : {},
-      });
-      assert.strictEqual(res.status, 200, `served ${sub} answered ${res.status}: ${res.body}`);
+    for (const [sub, verbs] of Object.entries(sessions.subresources)) {
+      for (const verb of verbs) {
+        const walk = SUB_WALK[sub][verb];
+        const body = walk.body ? walk.body({ token: null }) : undefined;
+        const res = await req(port, `/api/sessions/alice/${sub}`, {
+          method: walk.method, body, stream: walk.stream,
+          headers: body ? { 'content-type': 'application/json' } : {},
+        });
+        assert.strictEqual(res.status, 200, `served ${sub}.${verb} answered ${res.status}: ${res.body}`);
+      }
     }
   });
 });

@@ -222,9 +222,9 @@ test("no args callbacks → 'args' cap absent and endpoints 501", async () => {
   try {
     const hello = await req(server, 'GET', '/api/peer/hello');
     assert.ok(!hello.body.caps.includes('args'), "'args' not advertised without callbacks");
-    const get = await req(server, 'GET', '/api/session-args/alpha');
+    const get = await req(server, 'GET', '/api/sessions/alpha/args');
     assert.equal(get.status, 501);
-    const post = await req(server, 'POST', '/api/session-args/alpha', { restart: false });
+    const post = await req(server, 'PATCH', '/api/sessions/alpha/args', { restart: false });
     assert.equal(post.status, 501);
   } finally { server.stop(); }
 });
@@ -242,22 +242,22 @@ test("args callbacks wired → 'args' cap + GET returns args+catalogs + POST pas
     const hello = await req(server, 'GET', '/api/peer/hello');
     assert.ok(hello.body.caps.includes('args'), "'args' advertised when wired");
 
-    const get = await req(server, 'GET', '/api/session-args/alpha');
+    const get = await req(server, 'GET', '/api/sessions/alpha/args');
     assert.equal(get.status, 200);
     assert.equal(get.body.type, 'claude');
     assert.deepEqual(get.body.catalogs.agents, ['a1']);
     assert.equal(get.body.catalogs.proxyUrl, 'http://p');
 
-    const missing = await req(server, 'GET', '/api/session-args/ghost');
+    const missing = await req(server, 'GET', '/api/sessions/ghost/args');
     assert.equal(missing.status, 404, 'unknown name → 404');
 
     // restart:false → the owner reports restarted:false (no respawn).
-    const post = await req(server, 'POST', '/api/session-args/alpha', { extraArgs: ['--bar'], restart: false });
+    const post = await req(server, 'PATCH', '/api/sessions/alpha/args', { extraArgs: ['--bar'], restart: false });
     assert.equal(post.status, 200);
     assert.equal(post.body.restarted, false);
     assert.deepEqual(calls.at(-1).patch.extraArgs, ['--bar'], 'patch reached the owner callback');
 
-    const restart = await req(server, 'POST', '/api/session-args/alpha', { restart: true });
+    const restart = await req(server, 'PATCH', '/api/sessions/alpha/args', { restart: true });
     assert.equal(restart.body.restarted, true);
   } finally { server.stop(); }
 });

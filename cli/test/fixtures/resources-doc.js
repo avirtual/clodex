@@ -1,8 +1,11 @@
 'use strict';
 
 const SESSIONS_ROW = {
-  name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'],
-  subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'] },
+  name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'],
+  subresources: {
+    transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'],
+    dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'],
+  },
 };
 
 const RESOURCES_DOC = {
@@ -21,4 +24,9 @@ function docWithout(sub) {
   return { ...RESOURCES_DOC, resources: [{ ...SESSIONS_ROW, subresources }, ...RESOURCES_DOC.resources.slice(1)] };
 }
 
-module.exports = { SESSIONS_ROW, RESOURCES_DOC, docWithout };
+function docWithoutVerb(verb) {
+  const verbs = SESSIONS_ROW.verbs.filter((v) => v !== verb);
+  return { ...RESOURCES_DOC, resources: [{ ...SESSIONS_ROW, verbs }, ...RESOURCES_DOC.resources.slice(1)] };
+}
+
+module.exports = { SESSIONS_ROW, RESOURCES_DOC, docWithout, docWithoutVerb };
