@@ -602,6 +602,42 @@ test('logs --follow is refused, in every spelling, while plain logs is not', asy
   svc.dispose();
 });
 
+// The drawer builds its printer at execute() time, BEFORE the line is parsed
+// and so before the output format is known — the same ordering main.js has.
+// This runs against a live socket, because the claim is that the format reaches
+// the printer this path constructed, which only a real rendered block shows.
+test('get sessions -o yaml through the drawer prints YAML, not a json line', async () => {
+  const http = require('node:http');
+  const payload = { ok: true, sessions: [{ name: 'bob', type: 'claude', cwd: '/w/one' }] };
+  const server = http.createServer((req, res) => {
+    if (servesResources(req, res)) return;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {},
+    openTransport: async () => ({ baseUrl: base, close() {} }),
+  });
+  try {
+    await svc.run('ctx add prod --url http://prod.example --token STORED_TOKEN_L');
+    const b = await svc.run('get sessions -o yaml');
+    assert.strictEqual(b.exitCode, 0, `ENTER: the read ran (${b.output.slice(0, 200)})`);
+    assert.strictEqual(b.output,
+      'ok: true\n'
+      + 'sessions:\n'
+      + '  - name: bob\n'
+      + '    type: claude\n'
+      + '    cwd: /w/one\n');
+    const j = await svc.run('get sessions -o json');
+    assert.strictEqual(j.output, `${JSON.stringify(payload)}\n`, 'json on the same path is unchanged');
+  } finally {
+    svc.dispose();
+    await new Promise((r) => server.close(r));
+  }
+});
+
 // The block cap. Reachable only since the allowlist admitted `exec`/`run`:
 // exec accumulates every output frame with no byte limit, so a plausible line
 // (`exec box "cat big.log"`) arrives at done() as an unbounded string that then
