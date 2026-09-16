@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- The shipped team templates now pin `claude-opus-5[1m]`, so a new install's
+  leads, hands and reviewers get the 1M context window instead of whatever the
+  CLI defaults to. Existing installs are untouched — your own templates keep
+  the model you set.
+
 ## 5.69.0 — 2026-09-16
 
 - clodex.sh is a real landing page now. What it served was an animated "How it

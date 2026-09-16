@@ -199,6 +199,7 @@ test('createTeam with kit:default writes the default hand template, whole', () =
     denyBuiltins: [],
     disabledTools: libTools,
     disabledSkills: ['*'],
+    extraArgs: ['--model', 'claude-opus-5[1m]'],
     injectSkills: [],
     stripLevel: 2,
     systemPromptFile: null,
