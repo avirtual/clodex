@@ -501,8 +501,6 @@ test('a literal --json in a verbatim tail or a tunnel argv is still just text', 
     'only the token --arg consumes is skipped, not the rest of the line');
 });
 
-// ── T11a: `deploy node <name> --<flavor>` ───────────────────────────────────
-
 test('deploy without the resource word is a usage error naming it, nothing runs', async () => {
   let dialled = false;
   const io = { spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
