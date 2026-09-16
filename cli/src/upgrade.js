@@ -1,6 +1,5 @@
 // Standalone, like the rest of cli/: node:* + sibling CLI modules only, never an
-// app require(). Routing is on entry.deploy.flavor and never on the transport —
-// an ssh deploy and a remote docker deploy store byte-identical ssh entries.
+// app require().
 'use strict';
 
 const fs = require('fs');
@@ -102,11 +101,19 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
   const entry = store.contexts[ctxName];
   if (!entry) throw new CliError(EXIT.USAGE, `no such context: ${ctxName}`);
 
-  // 1. ROUTE — on the stored flavor, never on the transport.
-  const dep = entry.deploy;
+  // 1. ROUTE — on the stored flavor, else on a transport only one flavor writes.
+  let dep = entry.deploy;
+  let inferred = null;
   if (!dep || typeof dep !== 'object' || !dep.flavor) {
-    throw new CliError(EXIT.USAGE,
-      `context "${ctxName}" does not record how it was deployed, so upgrade cannot tell which path to take — it was created before clodexctl stored that (or by hand). Re-run the flavor's deploy instead: it upgrades in place and stamps the record, so this works next time. Which flavor it is is the one thing this build cannot determine, and guessing it from the transport is exactly the ambiguity the record exists to remove (an ssh deploy and a remote docker deploy save identical transports).`);
+    inferred = D.inferDeployFromTransport(ctxName, entry);
+    if (!inferred) {
+      const kind = D.transportKind(entry);
+      throw new CliError(EXIT.USAGE,
+        `context "${ctxName}" does not record how it was deployed, so upgrade cannot tell which path to take — it was created before clodexctl stored that (or by hand). Re-run the flavor's deploy instead: it upgrades in place and stamps the record, so this works next time. Its ${kind || 'transport'} transport cannot answer it either, which is exactly the ambiguity the record exists to remove (an ssh deploy and a remote docker deploy save identical transports).`);
+    }
+    dep = inferred;
+    if (json) emit({ type: 'inferred-flavor', ctx: ctxName, flavor: inferred.flavor, from: 'kubectl', release: inferred.release, namespace: inferred.namespace, kubeContext: inferred.kubeContext });
+    else log(D.inferredFlavorLine(ctxName, dep));
   }
   const flavor = String(dep.flavor);
   if (KNOWN_UNSUPPORTED.includes(flavor)) {

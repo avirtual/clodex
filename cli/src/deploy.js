@@ -998,6 +998,34 @@ const DEFAULT_HELM_NAMESPACE = 'clodex';
 const HELM_RELEASE_RE = /^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$/;
 const K8S_NS_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
+const TRANSPORT_KINDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az'];
+
+function transportKind(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  return TRANSPORT_KINDS.find((k) => entry[k] != null) || null;
+}
+
+function inferDeployFromTransport(ctxName, entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const dep = entry.deploy;
+  if (dep && typeof dep === 'object' && dep.flavor) return null;
+  const k = entry.kubectl;
+  if (!k || typeof k !== 'object' || Array.isArray(k)) return null;
+  const target = k.target == null ? '' : String(k.target);
+  if (!target) return null;
+  const svc = /^svc\/([^/]+)$/.exec(target);
+  return {
+    flavor: 'helm',
+    release: svc ? svc[1] : String(ctxName),
+    namespace: k.namespace ? String(k.namespace) : DEFAULT_HELM_NAMESPACE,
+    kubeContext: k.context ? String(k.context) : null,
+  };
+}
+
+function inferredFlavorLine(ctxName, dep) {
+  return `context "${ctxName}" records no deploy flavor — inferred helm from its kubectl transport (release "${dep.release}", namespace "${dep.namespace}"${dep.kubeContext ? `, kube context "${dep.kubeContext}"` : ''}): the kubectl transport is written by the helm flavor alone`;
+}
+
 function helmChartPath() {
   return path.join(__dirname, '..', 'deploy', 'helm', 'clodex');
 }
@@ -1794,6 +1822,7 @@ module.exports = {
   runAws, ssmPreflight, ssmSendCommand, ssmPoll, ssmMarkerLines, parseHelloMarker, ssmVerifyHello, deploySsmVerb,
   HELM_TIMEOUT, DEFAULT_HELM_NAMESPACE, HELM_RELEASE_RE, K8S_NS_RE,
   helmChartPath, helmArgv, helmStatusArgs, releaseSecretArgs, runVendor, helmVerifyHello, deployHelmVerb,
+  TRANSPORT_KINDS, transportKind, inferDeployFromTransport, inferredFlavorLine,
   ssaConflictHint,
   helmGetValuesArgs, parseCarriedValues, HELM_NEVER_CARRY,
   FARGATE_TEMPLATE, FARGATE_STACK_RE, FARGATE_PARAM_RE, FARGATE_VERIFY_TIMEOUT_MS, FARGATE_VERIFY_POLL_MS,
