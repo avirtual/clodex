@@ -74,6 +74,7 @@ function captureRemoteOptions(extraDeps) {
     claimOutbox: () => [], listOutboxOrigins: () => [],
     manager: { sessions: new Map(), create: async () => ({}) },
     proxyPoller: { snapshot: () => null },
+    gitWorktree: { listWorktrees: async () => ({ ok: true, repo: '/repo', worktrees: [] }) },
     restartClodex: () => {}, restartSession: () => {}, peerProxyView: () => null,
     readSessionArgs: () => ({ ok: false }), applySessionArgs: () => ({ ok: true }),
     readSkillCatalog: () => ({ ok: false }), applySessionSkills: () => ({ ok: false }),
