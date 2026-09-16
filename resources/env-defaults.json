@@ -21,6 +21,6 @@
   },
   "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": {
     "value": "1",
-    "note": "Removes the skills the CLI ships in its own binary (docx, pptx, xlsx, pdf and the rest) from every seat's prompt; Clodex's own plugin skills and .claude/skills/ stay."
+    "note": "Removes the workflow skills the CLI ships in its own binary (init, review, simplify, security-review and the rest) from every seat's prompt; plugin skills, account-synced skills and .claude/skills/ stay."
   }
 }
