@@ -43,6 +43,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 const { PeerConnection } = require('../peer-client');
 const { STALE_MS } = require('../cli/src/sse-guard');
+const { serveDialect } = require('./lib/peer-dialect');
 
 // The reconnect floor and one doubling off it (peer-client's RECONNECT_MIN_MS).
 // Named here because the pre-fix ceiling is exactly ONE doubling: resetting on
@@ -117,9 +118,8 @@ function box({ mode = 'die', limit = null } = {}) {
   };
   const server = http.createServer((req, res) => {
     const p = req.url.split('?')[0];
-    if (p === '/api/peer/hello') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'h', caps: [], version: '1' }));
+    if (serveDialect(p, res)) {
+      // no-op: hello + /api/resources answered
     } else if (p === '/api/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, sessions: [] }));
