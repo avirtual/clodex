@@ -314,10 +314,6 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
   });
 }
 
-function deltaFrom(msgs, snapshot) {
-  return (msgs || []).slice(snapshot);
-}
-
 function lastSeqOf(msgs) {
   const list = msgs || [];
   const last = list.length ? list[list.length - 1] : null;
@@ -887,7 +883,7 @@ function defaultPrompt(question) {
 
 module.exports = {
   info, get, describe, apiResources, version, filterWorkspace,
-  logs, deltaFrom, query,
+  logs, query,
   create, createSession, dm, input, exec, execPty, sessionType,
   delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
   ctxAdd, ctxUse, ctxCurrent, ctxList, ctxRm, ctxShow, ctxImport,
