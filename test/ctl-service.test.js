@@ -602,11 +602,7 @@ test('logs --follow is refused, in every spelling, while plain logs is not', asy
   svc.dispose();
 });
 
-// The drawer builds its printer at execute() time, BEFORE the line is parsed
-// and so before the output format is known — the same ordering main.js has.
-// This runs against a live socket, because the claim is that the format reaches
-// the printer this path constructed, which only a real rendered block shows.
-test('get sessions -o yaml through the drawer prints YAML, not a json line', async () => {
+test('get sessions -o yaml through the drawer prints YAML: the format reaches the printer execute() built before the line was parsed', async () => {
   const http = require('node:http');
   const payload = { ok: true, sessions: [{ name: 'bob', type: 'claude', cwd: '/w/one' }] };
   const server = http.createServer((req, res) => {
