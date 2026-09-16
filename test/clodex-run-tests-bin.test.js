@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFileSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-run-tests.js');
@@ -40,6 +40,7 @@ function writeStub(root, { body, exit }) {
     '  argv: process.argv.slice(2),',
     '  lockDir: process.env.CLODEX_TEST_LOCK_DIR || null,',
     '  lockWait: process.env.CLODEX_TEST_LOCK_WAIT_MS || null,',
+    '  lock: process.env.CLODEX_TEST_LOCK || null,',
     '  cwd: process.cwd(),',
     '}));',
     body,
@@ -498,4 +499,182 @@ test('the runner\'s stdout is never forwarded — the seat gets one stderr line'
     assert.strictEqual(r.stdout, '', 'forwarding the runner\'s stdout would blow the def\'s maxBytes');
     assertDigest(r.digest, `[${path.basename(root)}] 2/2 green (${WALL})`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const SCRIPT_TEXT = fs.readFileSync(SCRIPT, 'utf8');
+
+function listFromScript(name) {
+  const m = new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`).exec(SCRIPT_TEXT);
+  assert.ok(m, `${name} is not a literal array in the shipped bin — the fixture cannot read it`);
+  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+}
+
+const OWN_SCANNERS = listFromScript('OWN_SCANNERS');
+const LOCK_BOUND = listFromScript('LOCK_BOUND');
+
+function git(root, ...args) {
+  execFileSync('git', [
+    '-C', root,
+    '-c', 'user.email=t@t', '-c', 'user.name=t',
+    '-c', 'commit.gpgsign=false',
+    ...args,
+  ], { stdio: 'ignore' });
+}
+
+function put(root, rel, body) {
+  const abs = path.join(root, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, body);
+}
+
+const EMPTY_TEST = "require('node:test').test('x', () => {});\n";
+
+function mkBranchRepo(root, { extraOnMaster = {}, onBranch = () => {}, stub = {} } = {}) {
+  writeStub(root, { body: stub.body || "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: stub.exit ?? 0 });
+  git(root, 'init', '-q', '-b', 'master');
+  for (const s of OWN_SCANNERS) put(root, s, EMPTY_TEST);
+  for (const [rel, body] of Object.entries(extraOnMaster)) put(root, rel, body);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'base');
+  git(root, 'checkout', '-q', '-b', 'feature');
+  onBranch({ put: (rel, body) => put(root, rel, body), git: (...a) => git(root, ...a) });
+}
+
+test('scope: the default passes NO positional args — today\'s full run, byte for byte', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, { onBranch: ({ put: p }) => p('test/alpha.test.js', `${EMPTY_TEST}// edited\n`) });
+    const rec = (() => { run(root, '{}'); return stubRecord(root); })();
+    assert.deepStrictEqual(rec.argv, ['--reporter=dot'],
+      'a default-scope run must still sweep: one positional arg turns off the suite lock');
+    assert.strictEqual(rec.lock, null, 'and it must not set the force-lock override');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: the argv is exactly changed ∪ by-subject ∪ scanners, and nothing else', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'test/alpha.test.js': EMPTY_TEST,
+        'test/deleted.test.js': EMPTY_TEST,
+        'test/unrelated.test.js': EMPTY_TEST,
+        'test/widget-require.test.js': `${EMPTY_TEST}require('../lib/widget');\n`,
+        'test/shape.test.js': `${EMPTY_TEST}const SUBJECT = 'renderer/renderer.js';\n`,
+        'test/fixtures/decoy.test.js': `${EMPTY_TEST}require('../../lib/widget');\n`,
+        'lib/widget.js': 'module.exports = 1;\n',
+        'renderer/renderer.js': 'module.exports = 2;\n',
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('test/alpha.test.js', `${EMPTY_TEST}// edited on the branch\n`);
+        p('lib/widget.js', 'module.exports = 3;\n');
+        p('renderer/renderer.js', 'module.exports = 4;\n');
+        g('rm', '-q', 'test/deleted.test.js');
+        g('add', '-A');
+        g('commit', '-qm', 'branch work');
+        p('test/untracked.test.js', EMPTY_TEST);
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.ok(rec.argv.includes('test/widget-require.test.js'),
+      'ENTER: the by-subject row is empty, so this asserts nothing about subject selection');
+    assert.ok(rec.argv.includes('test/shape.test.js'),
+      'ENTER: the literal-path row is empty, so the source-shape tests would go unrun');
+    assert.deepStrictEqual(rec.argv, [
+      '--reporter=dot',
+      'test/alpha.test.js',
+      'test/untracked.test.js',
+      'test/shape.test.js',
+      'test/widget-require.test.js',
+      ...OWN_SCANNERS,
+    ], 'the selected set is the union in changed → by-subject → scanners order, with no duplicates');
+    assert.ok(!rec.argv.includes('test/unrelated.test.js'),
+      'a test that names neither a changed module nor the tree is not the branch\'s to run');
+    assert.ok(!rec.argv.includes('test/fixtures/decoy.test.js'),
+      'a hit inside a fixture directory is a fixture, not a test file');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 4} files: `
+      + '2 changed, 2 by subject, ' + `${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: a test file the branch DELETED is not handed to the runner', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: { 'test/deleted.test.js': EMPTY_TEST },
+      onBranch: ({ git: g }) => {
+        g('rm', '-q', 'test/deleted.test.js');
+        g('commit', '-qm', 'drop a test');
+      },
+    });
+    run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.ok(!rec.argv.includes('test/deleted.test.js'),
+      'the deletion is in the branch diff, but run-tests.js refuses a whole run over a missing path');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: a branch equal to master with a clean tree refuses, runner never spawned', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root);
+    const r = run(root, '{"scope":"own"}');
+    assert.strictEqual(r.code, 1, 'nothing was measured, so this is not a green');
+    assert.strictEqual(
+      r.digest,
+      `[${path.basename(root)}] own: nothing to compare — branch equals master and the tree is clean`,
+    );
+    assert.strictEqual(stubRecord(root), null,
+      'the runner must not run at all: a scoped run over an empty set would report a green');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: CLODEX_TEST_LOCK is set only when the set reaches a port-binding file', () => {
+  const portBound = LOCK_BOUND[0];
+  const clean = mkRoot();
+  try {
+    mkBranchRepo(clean, {
+      extraOnMaster: { 'test/alpha.test.js': EMPTY_TEST },
+      onBranch: ({ put: p, git: g }) => {
+        p('test/alpha.test.js', `${EMPTY_TEST}// edited\n`);
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    run(clean, '{"scope":"own"}');
+    const rec = stubRecord(clean);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.strictEqual(rec.lock, null,
+      'a set that binds no real port must skip the box-wide mutex — that is the whole point of own');
+  } finally { fs.rmSync(clean, { recursive: true, force: true }); }
+
+  const bound = mkRoot();
+  try {
+    mkBranchRepo(bound, {
+      extraOnMaster: { [portBound]: EMPTY_TEST },
+      onBranch: ({ put: p, git: g }) => {
+        p(portBound, `${EMPTY_TEST}// edited\n`);
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    run(bound, '{"scope":"own"}');
+    const rec = stubRecord(bound);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.ok(rec.argv.includes(portBound), `ENTER: ${portBound} was not selected at all`);
+    assert.strictEqual(rec.lock, '1',
+      `${portBound} binds a real port, so this run must serialize like a full one or both deadlock`);
+  } finally { fs.rmSync(bound, { recursive: true, force: true }); }
+});
+
+test('OWN_SCANNERS and LOCK_BOUND name files that exist in THIS repo', () => {
+  const repo = path.join(__dirname, '..');
+  assert.ok(OWN_SCANNERS.length >= 12, `the scanner list collapsed to ${OWN_SCANNERS.length}`);
+  assert.ok(LOCK_BOUND.length >= 1, 'the port-binding list is empty, so no scoped run ever locks');
+  for (const rel of [...OWN_SCANNERS, ...LOCK_BOUND]) {
+    assert.ok(fs.existsSync(path.join(repo, rel)),
+      `${rel} is listed in the shipped bin but no longer exists — every own run would refuse`);
+  }
 });
