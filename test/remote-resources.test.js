@@ -6,6 +6,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 const { createRemoteWiring } = require('../remote-wiring');
 const { RemoteServer, RESOURCES } = require('../remote');
 const { createTicketsStore } = require('../tickets-store');
@@ -38,6 +39,11 @@ const TICKETS_BETA = [
 ];
 
 const AGENT_MD = '---\ndescription: a library agent\nmodel: opus\n---\nbody text\n';
+
+const FAKE_REPO = path.join(os.tmpdir(), 'clodex-walk-repo');
+const FAKE_WORKTREES = [
+  { path: FAKE_REPO, branch: 'master', head: 'abcdef12', isMain: true, detached: false, locked: false, prunable: false },
+];
 
 function makeDeps() {
   const root = mkTmpRoot('remote-resources-');
@@ -94,6 +100,11 @@ function makeDeps() {
     getTunnelManager: () => ({ statuses: () => [{ id: 'boxy', kind: 'ssh', state: 'up' }] }),
     getWebTunnelManager: () => ({ statuses: () => [{ id: 'boxy', kind: 'ssh', state: 'down' }] }),
     getSandboxManager: () => sandboxManager,
+    gitWorktree: {
+      listWorktrees: async (repo) => (repo === FAKE_REPO
+        ? { ok: true, repo, worktrees: FAKE_WORKTREES }
+        : { ok: false, error: 'Not inside a git repository', repo: null, worktrees: [] }),
+    },
     restartClodex: () => {}, restartSession: () => {}, peerProxyView: () => null,
     readSessionArgs: () => ({ ok: false }), applySessionArgs: () => ({ ok: true }),
     readSkillCatalog: () => ({ ok: false }), applySessionSkills: () => ({ ok: false }),
@@ -168,6 +179,8 @@ async function withNode(extra, fn) {
 const WALK_ID = {
   sessions: 'alice', peers: 'boxy', teams: 'alpha', tickets: 't7', sandboxes: 'boxy', agents: 'scout',
 };
+
+const WALK_QUERY = { worktrees: `?repo=${encodeURIComponent(FAKE_REPO)}` };
 
 const TRANSCRIPT_OUT = { ok: true, messages: [{ seq: 1, role: 'user', text: 'hi' }, { seq: 2, role: 'assistant', text: 'yo' }], cursor: 1, complete: true };
 const QUERY_OUT = { ok: true, report: { usd: 1.5 } };
@@ -261,7 +274,7 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
         if (single) {
           assert.ok(WALK_ID[r.name], `no walk id seeded for ${r.name}.get — the walk cannot exercise it`);
         }
-        const p = single ? `/api/${r.name}/${WALK_ID[r.name]}` : `/api/${r.name}`;
+        const p = single ? `/api/${r.name}/${WALK_ID[r.name]}` : `/api/${r.name}${WALK_QUERY[r.name] || ''}`;
         const method = VERB_WALK[verb];
         assert.ok(method, `no walk method seeded for the ${verb} verb — the walk cannot exercise it`);
         const res = await req(port, p, { method });
@@ -295,10 +308,10 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'sessions/restart.post', 'sessions/args.get', 'sessions/args.patch', 'sessions/skills.get',
     'sessions/skills.patch', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
-    'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'catalogs.get',
+    'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'worktrees.list', 'catalogs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 27, 'the walk entered 14 resource verbs, the sessions delete, and the 12 session subresource verbs');
-  assert.strictEqual(RESOURCES.length, 8, 'the walk covered fewer than the 8 shipped resources');
+  assert.strictEqual(seen.length, 28, 'the walk entered 15 resource verbs, the sessions delete, and the 12 session subresource verbs');
+  assert.strictEqual(RESOURCES.length, 9, 'the walk covered fewer than the 9 shipped resources');
 });
 
 test('GET /api/sessions/:name/transcript: the status and body the deleted /api/transcript/ served, limit and since threaded', async () => {
@@ -634,14 +647,14 @@ test('workspaces: 501 and absent from /api/resources when listWorkspaces is not 
   await withNode({ listWorkspaces: null }, async (port) => {
     assert.strictEqual((await req(port, '/api/workspaces')).status, 501);
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'catalogs']);
+    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees', 'catalogs']);
   });
 });
 
 test('catalogs: absent from /api/resources when getCatalogs is not injected', async () => {
   await withNode({ getCatalogs: null }, async (port) => {
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents']);
+    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees']);
   });
 });
 
@@ -948,6 +961,91 @@ test('agents: 501 and absent from /api/resources when listAgents is not injected
   });
 });
 
+function gitAvailable() {
+  try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+function makeRepoWithWorktree() {
+  const dir = mkTmpRoot('remote-wt-');
+  const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  run('init', '-q', '-b', 'master');
+  run('config', 'user.email', 't@example.com');
+  run('config', 'user.name', 'Test');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hi\n');
+  run('add', '-A');
+  run('commit', '-qm', 'init');
+  const linked = `${dir}-linked`;
+  run('worktree', 'add', '-q', '-b', 'side', linked);
+  return { dir, linked };
+}
+
+const realWorktrees = { listWorktrees: (repo) => require('../git-worktree').listWorktrees(repo) };
+
+test('GET /api/worktrees?repo=: 200 with every field listWorktrees builds, for a real repo with a linked tree', { skip: !gitAvailable() }, async () => {
+  const { dir, linked } = makeRepoWithWorktree();
+  await withNode({ listWorktrees: realWorktrees.listWorktrees }, async (port) => {
+    const r = await req(port, `/api/worktrees?repo=${encodeURIComponent(dir)}`);
+    assert.strictEqual(r.status, 200, r.body);
+    const body = JSON.parse(r.body);
+    for (const w of body.worktrees) {
+      assert.match(w.head, /^[0-9a-f]{8}$/, `head is not 8 hex chars: ${w.head}`);
+      w.head = 'HEAD8CHR';
+    }
+    assert.deepStrictEqual(body, {
+      ok: true,
+      repo: dir,
+      worktrees: [
+        { path: fs.realpathSync(dir), branch: 'master', head: 'HEAD8CHR', isMain: true, detached: false, locked: false, prunable: false },
+        { path: fs.realpathSync(linked), branch: 'side', head: 'HEAD8CHR', isMain: false, detached: false, locked: false, prunable: false },
+      ],
+    });
+  });
+});
+
+test('GET /api/worktrees: 400 when repo is missing, empty or relative — the callback is never reached', async () => {
+  let calls = 0;
+  await withNode({ listWorktrees: (repo) => { calls += 1; return { ok: true, repo, worktrees: [] }; } }, async (port) => {
+    for (const q of ['', '?repo=', '?repo=relative%2Fpath', '?repo=.']) {
+      const r = await req(port, `/api/worktrees${q}`);
+      assert.strictEqual(r.status, 400, `${q} answered ${r.status}: ${r.body}`);
+      assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'repo must be an absolute path' });
+    }
+    const good = await req(port, `/api/worktrees?repo=${encodeURIComponent(path.join(os.tmpdir(), 'x'))}`);
+    assert.strictEqual(good.status, 200, 'an absolute repo still reaches the callback');
+  });
+  assert.strictEqual(calls, 1, 'only the absolute path reached the callback');
+});
+
+test('GET /api/worktrees: 404 with the callback error for an absolute dir in no git repo', { skip: !gitAvailable() }, async () => {
+  const notRepo = mkTmpRoot('remote-wt-nr-');
+  await withNode({ listWorktrees: realWorktrees.listWorktrees }, async (port) => {
+    const r = await req(port, `/api/worktrees?repo=${encodeURIComponent(notRepo)}`);
+    assert.strictEqual(r.status, 404, r.body);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'Not inside a git repository' });
+  });
+});
+
+test('worktrees: 501 and absent from /api/resources when listWorktrees is not injected', async () => {
+  await withNode({ listWorktrees: null }, async (port) => {
+    const r = await req(port, `/api/worktrees?repo=${encodeURIComponent(os.tmpdir())}`);
+    assert.strictEqual(r.status, 501);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'worktrees not available' });
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r2 => r2.name);
+    assert.ok(!names.includes('worktrees'), `worktrees is still advertised: ${names.join(',')}`);
+  });
+  await withNode({}, async (port) => {
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r2 => r2.name);
+    assert.ok(names.includes('worktrees'), 'a wired node DOES advertise worktrees — the absence above is the injection, not the constant');
+  });
+});
+
+test('wiring: engine-shaped deps produce a listWorktrees callback — gitWorktree is mandatory, not a capability gate', () => {
+  const { deps } = makeDeps();
+  const opts = captureOptions(deps);
+  assert.strictEqual(typeof opts.listWorktrees, 'function', 'the wiring hands the server a worktree lister');
+  assert.strictEqual(typeof opts.listPeers, 'function', 'the other callbacks are unaffected');
+});
+
 const SECRET_KEYS = ['token', 'auth', 'secret', 'password'];
 
 function findSecretKey(value, trail = '$') {
@@ -975,6 +1073,7 @@ test('no read-only resource response carries a token/auth/secret/password key at
     '/api/tickets', '/api/tickets?team=alpha', '/api/tickets/t7',
     '/api/sandboxes', '/api/sandboxes/boxy',
     '/api/agents', '/api/agents/scout',
+    `/api/worktrees?repo=${encodeURIComponent(FAKE_REPO)}`,
     '/api/sessions', '/api/sessions/alice', '/api/workspaces',
   ];
   await withNode({}, async (port) => {

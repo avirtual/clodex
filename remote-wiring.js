@@ -34,7 +34,7 @@ function createRemoteWiring(deps) {
     DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
     parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
     claimOutbox, listOutboxOrigins,
-    manager, proxyPoller, loadManifest, listTeams,
+    manager, proxyPoller, loadManifest, listTeams, gitWorktree,
     getPeerManager, getTunnelManager, getWebTunnelManager, getSandboxManager,
     restartClodex, restartSession, peerProxyView,
     readSessionArgs, applySessionArgs,
@@ -166,6 +166,7 @@ function createRemoteWiring(deps) {
         .map(({ name, description, model, tools, disallowedTools }) => ({ name, description, model, tools, disallowedTools }));
       cbs.getAgent = (name) => getAgentLibrary().raw(name);
     }
+    cbs.listWorktrees = (repo) => gitWorktree.listWorktrees(repo);
     return cbs;
   }
 

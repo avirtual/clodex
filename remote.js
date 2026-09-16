@@ -66,6 +66,7 @@ const RESOURCES = [
   { name: 'tickets', singular: 'ticket', scope: 'team', verbs: ['list', 'get'] },
   { name: 'sandboxes', singular: 'sandbox', scope: 'node', verbs: ['list', 'get'] },
   { name: 'agents', singular: 'agent', scope: 'node', verbs: ['list', 'get'] },
+  { name: 'worktrees', singular: 'worktree', scope: 'node', verbs: ['list'] },
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
 ];
 
@@ -78,6 +79,7 @@ const RESOURCE_CALLBACK = {
   tickets: '_listTickets',
   sandboxes: '_listSandboxes',
   agents: '_listAgents',
+  worktrees: '_listWorktrees',
   catalogs: '_getCatalogs',
 };
 
@@ -111,7 +113,7 @@ class RemoteServer {
                 hostLabel, version, srcDir, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs,
                 listPeers, getPeer, listTeams, getTeam, listTickets,
-                listSandboxes, getSandbox, listAgents, getAgent,
+                listSandboxes, getSandbox, listAgents, getAgent, listWorktrees,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications,
@@ -156,6 +158,7 @@ class RemoteServer {
     this._getSandbox = getSandbox || null;
     this._listAgents = listAgents || null;
     this._getAgent = getAgent || null;
+    this._listWorktrees = listWorktrees || null;
     this._getSessionArgs = getSessionArgs || null;
     this._setSessionArgs = setSessionArgs || null;
     this._getSkillCatalog = getSkillCatalog || null;
@@ -1184,6 +1187,19 @@ class RemoteServer {
       const content = this._getAgent ? this._getAgent(name) : null;
       if (content == null) return this._json(res, 404, { ok: false, error: 'Agent not found' });
       return this._json(res, 200, { ok: true, agent: { name, content } });
+    }
+    if (req.method === 'GET' && p === '/api/worktrees') {
+      if (!this._listWorktrees) return this._json(res, 501, { ok: false, error: 'worktrees not available' });
+      const repo = url.searchParams.get('repo');
+      if (!repo || !path.isAbsolute(repo)) {
+        return this._json(res, 400, { ok: false, error: 'repo must be an absolute path' });
+      }
+      return Promise.resolve()
+        .then(() => this._listWorktrees(repo))
+        .then((out) => (out && out.ok
+          ? this._json(res, 200, { ok: true, repo, worktrees: out.worktrees || [] })
+          : this._json(res, 404, { ok: false, error: (out && out.error) || 'Not inside a git repository' })))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
     if (req.method === 'GET' && p === '/api/inbox') {
       if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });

@@ -10,6 +10,7 @@ const TABLE = [
   { plural: 'tickets', singular: 'ticket' },
   { plural: 'sandboxes', singular: 'sandbox' },
   { plural: 'agents', singular: 'agent' },
+  { plural: 'worktrees', singular: 'worktree' },
   { plural: 'catalogs', singular: 'catalogs' },
 ];
 

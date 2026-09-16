@@ -1,6 +1,7 @@
 'use strict';
 
 const readline = require('readline');
+const path = require('path');
 const { CliError, EXIT } = require('./errors');
 const out = require('./output');
 const imp = require('./import');
@@ -50,6 +51,7 @@ const NODE_LISTS = {
   tickets: { key: 'tickets', plain: 'renderTickets', wide: 'renderTicketsWide' },
   sandboxes: { key: 'sandboxes', plain: 'renderSandboxes', wide: 'renderSandboxes' },
   agents: { key: 'agents', plain: 'renderAgents', wide: 'renderAgentsWide' },
+  worktrees: { key: 'worktrees', plain: 'renderWorktrees', wide: 'renderWorktreesWide', nameKey: 'path' },
 };
 
 const TICKET_ID_RE = /^t\d+$/;
@@ -72,6 +74,13 @@ function ticketState(flags) {
   return want;
 }
 
+function worktreeQuery(flags) {
+  if (flags.repo == null || String(flags.repo) === '') {
+    throw new CliError(EXIT.USAGE, 'get worktrees needs --repo DIR');
+  }
+  return `?repo=${encodeURIComponent(path.resolve(String(flags.repo)))}`;
+}
+
 function requireTicketId(id) {
   if (!TICKET_ID_RE.test(id)) throw new CliError(EXIT.USAGE, `not a ticket id: ${id} (ids look like t42)`);
   return id;
@@ -85,12 +94,18 @@ function ambiguousTicket(e, id) {
 
 async function getNodeResource({ client, printer, flags, label, plural, singular }) {
   const spec = NODE_LISTS[plural];
-  const query = plural === 'tickets' ? ticketQuery(flags) : '';
+  let query = '';
+  if (plural === 'tickets') query = ticketQuery(flags);
+  if (plural === 'worktrees') query = worktreeQuery(flags);
   await R.requireResource(client, plural, 'list', label);
   const body = await client.get(`/api/${plural}${query}`, `get ${plural}`);
   const rows = body[spec.key] || [];
   if (flags.json) { printer.json(body); return; }
-  if (flags.output === 'name') { printer.line(out.renderNames(singular, rows)); return; }
+  if (flags.output === 'name') {
+    const named = spec.nameKey ? rows.map((r) => ({ name: r && r[spec.nameKey] })) : rows;
+    printer.line(out.renderNames(singular, named));
+    return;
+  }
   printer.line(out[flags.output === 'wide' ? spec.wide : spec.plain](rows));
 }
 
@@ -170,6 +185,10 @@ async function describe({ client, ctx, printer, flags, args }) {
   }
   if (NODE_DESCRIBERS[target.resource]) {
     return describeNodeResource({ client, printer, label, plural: target.plural, singular: target.singular, name: target.name, flags });
+  }
+  if (NODE_LISTS[target.resource]) {
+    throw new CliError(EXIT.USAGE,
+      `describe ${target.singular} is not supported (try: get ${target.plural})`);
   }
   const name = target.name;
   if (!name) throw new CliError(EXIT.USAGE, 'describe workspace needs a name');
