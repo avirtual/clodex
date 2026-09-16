@@ -320,6 +320,6 @@ test('send without --wait: unchanged fire-and-forget', async () => {
   const { code, stdout } = await cli(['send', 'bob', 'hi'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /fire-and-forget/);
-  assert.deepStrictEqual(seen.map((s) => s.url), ['/api/sessions/murmur/dm']); // no events feed opened
+  assert.deepStrictEqual(seen.map((s) => s.url), ['/api/resources', '/api/sessions/bob/dm']); // no events feed opened
   server.close();
 });

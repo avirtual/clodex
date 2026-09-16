@@ -597,9 +597,11 @@ async function exec({ client, ctx, printer, flags, args, mode = null, knownType 
 
 async function kill({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
   const name = requireName(args[0], 'kill');
+  if (!flags.force && flags.json) {
+    throw new CliError(EXIT.USAGE, 'kill needs --force in -o json/non-interactive mode (wire kill is a hard delete, no resume)');
+  }
   await R.requireResource(client, 'sessions', 'delete', R.ctxLabel(ctx, flags));
   if (!flags.force) {
-    if (flags.json) throw new CliError(EXIT.USAGE, 'kill needs --force in -o json/non-interactive mode (wire kill is a hard delete, no resume)');
     const ok = await prompt(`kill "${name}"? This is a HARD DELETE on the engine — no resume. Type the name to confirm: `);
     if (String(ok).trim() !== name) throw new CliError(EXIT.USAGE, 'aborted — confirmation did not match');
   }
