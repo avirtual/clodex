@@ -140,16 +140,35 @@ test('-o wide and -o name are valid ONLY on get', async () => {
   }
 });
 
-test('-o yaml is a usage error naming it as not yet supported', async () => {
-  const { code, stderr } = await cli(['get', 'sessions', '-o', 'yaml'], null);
-  assert.strictEqual(code, 2);
-  assert.match(stderr, /-o yaml is not supported yet/);
+test('get sessions -o yaml prints the wire payload as YAML', async () => {
+  await withNode({}, async (port) => {
+    const { code, stdout } = await cli(['get', 'sessions', '-o', 'yaml'], port);
+    assert.strictEqual(code, 0);
+    assert.strictEqual(stdout,
+      'ok: true\n'
+      + 'sessions:\n'
+      + '  - name: bob\n'
+      + '    type: claude\n'
+      + '    activity: idle\n'
+      + '    cwd: /w/one\n'
+      + '    workspace: main\n'
+      + '  - name: builder-long\n'
+      + '    type: codex\n'
+      + '    activity: working\n'
+      + '    cwd: /w/two/deeper\n'
+      + '    workspace: side\n'
+      + '  - name: sh\n'
+      + '    type: bash\n'
+      + '    activity: ""\n'
+      + '    cwd: /\n'
+      + '    workspace: main\n');
+  });
 });
 
 test('an unknown -o format is a usage error listing the real ones', async () => {
   const { code, stderr } = await cli(['get', 'sessions', '-o', 'toml'], null);
   assert.strictEqual(code, 2);
-  assert.match(stderr, /unknown output format: toml \(json\|wide\|name\)/);
+  assert.match(stderr, /unknown output format: toml \(json\|yaml\|wide\|name\)/);
 });
 
 test('-n filters sessions CLIENT-SIDE, with no extra request and no capability check', async () => {

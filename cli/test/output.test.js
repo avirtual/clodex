@@ -30,6 +30,33 @@ test('makePrinter.json emits one compact line', () => {
   assert.strictEqual(buf, '{"a":1}\n');
 });
 
+test('makePrinter defaults to format json, and json output is byte-for-byte unchanged by the seam', () => {
+  let buf = '';
+  const p = O.makePrinter((s) => (buf += s));
+  assert.strictEqual(p.format, 'json');
+  p.json({ a: 1, b: ['x', null] });
+  p.json({ a: 2 });
+  assert.strictEqual(buf, '{"a":1,"b":["x",null]}\n{"a":2}\n');
+});
+
+test('makePrinter under format yaml emits toYaml, not a json line', () => {
+  let buf = '';
+  const p = O.makePrinter((s) => (buf += s));
+  p.format = 'yaml';
+  p.json({ a: 1, b: ['x', null] });
+  assert.strictEqual(buf, 'a: 1\nb:\n  - x\n  - null\n');
+});
+
+test('under yaml every streamed doc after the first is preceded by ---', () => {
+  let buf = '';
+  const p = O.makePrinter((s) => (buf += s));
+  p.format = 'yaml';
+  p.json({ seq: 1 });
+  p.json({ seq: 2 });
+  p.json({ seq: 3 });
+  assert.strictEqual(buf, 'seq: 1\n---\nseq: 2\n---\nseq: 3\n');
+});
+
 test('stripAnsi removes SGR, cursor moves, private modes, OSC titles', () => {
   const ESC = '\x1b';
   const s = `${ESC}[32mgreen${ESC}[0m ${ESC}]0;title\x07plain${ESC}[2J${ESC}[H${ESC}[?25l done`;

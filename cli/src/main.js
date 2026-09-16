@@ -76,13 +76,12 @@ function findDeletedJsonFlag(argv) {
   return false;
 }
 
-const OUTPUT_FORMATS = ['json', 'wide', 'name'];
+const OUTPUT_FORMATS = ['json', 'yaml', 'wide', 'name'];
 const GET_ONLY_FORMATS = ['wide', 'name'];
 
 function applyOutput(flags, verb) {
   if (flags.output == null) return;
   const fmt = String(flags.output);
-  if (fmt === 'yaml') throw new CliError(EXIT.USAGE, '-o yaml is not supported yet');
   if (!OUTPUT_FORMATS.includes(fmt)) {
     throw new CliError(EXIT.USAGE, `unknown output format: ${fmt} (${OUTPUT_FORMATS.join('|')})`);
   }
@@ -92,7 +91,7 @@ function applyOutput(flags, verb) {
   if (verb === 'describe') {
     throw new CliError(EXIT.USAGE, `describe has no -o ${fmt} (it is a composed human view; use get)`);
   }
-  if (fmt === 'json') flags.json = true;
+  if (fmt === 'json' || fmt === 'yaml') flags.json = true;
 }
 
 // Verbs handled OUTSIDE WIRE_VERBS (their own dispatch above). Together with
@@ -144,6 +143,7 @@ async function run(argv, io = {}) {
 
   try {
     applyOutput(flags, verb);
+    printer.format = flags.output === 'yaml' ? 'yaml' : 'json';
     if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
     if (verb === 'undeploy') return await U.undeployVerb({ printer, flags, args: rest, io });

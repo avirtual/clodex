@@ -83,6 +83,50 @@ test('get sessions -o json: raw payload passthrough', async () => {
   server.close();
 });
 
+test('get session -o yaml: the same payload, as YAML', async () => {
+  const payload = { ok: true, session: { name: 'bob', type: 'claude', cwd: '/w/one', activity: 'idle', stats: { turns: 2 } } };
+  const { server } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify(payload)); });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['get', 'session', 'bob', '-o', 'yaml'], port);
+  assert.strictEqual(code, 0);
+  assert.strictEqual(stdout,
+    'ok: true\n'
+    + 'session:\n'
+    + '  name: bob\n'
+    + '  type: claude\n'
+    + '  cwd: /w/one\n'
+    + '  activity: idle\n'
+    + '  stats:\n'
+    + '    turns: 2\n');
+  server.close();
+});
+
+test('logs -o yaml one-shot: one document, no separator', async () => {
+  const { server } = stub((req, res) => {
+    res.writeHead(200); res.end(JSON.stringify({ ok: true, messages: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo: there' }] }));
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['logs', 'bob', '-o', 'yaml'], port);
+  assert.strictEqual(code, 0);
+  assert.strictEqual(stdout,
+    'ok: true\n'
+    + 'messages:\n'
+    + '  - role: user\n'
+    + '    text: hi\n'
+    + '  - role: assistant\n'
+    + '    text: "yo: there"\n');
+  server.close();
+});
+
+test('-o yaml on describe is the describe usage error, unchanged', async () => {
+  const { server } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true })); });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['describe', 'session', 'bob', '-o', 'yaml'], port);
+  assert.strictEqual(code, 2);
+  assert.strictEqual(stderr, 'clodexctl: describe has no -o yaml (it is a composed human view; use get)\n');
+  server.close();
+});
+
 test('logs --tail maps to ?limit and renders role-prefixed lines', async () => {
   const { server, seen } = stub((req, res) => {
     res.writeHead(200); res.end(JSON.stringify({ ok: true, messages: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }] }));

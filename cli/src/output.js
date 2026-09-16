@@ -3,6 +3,8 @@
 // Pure string builders + a thin print seam (injectable for tests).
 'use strict';
 
+const { toYaml } = require('./yaml');
+
 function jsonLine(obj) { return JSON.stringify(obj); }
 
 // Strip ANSI escape sequences from raw PTY output so piped `exec` text is clean.
@@ -209,9 +211,16 @@ function table(headers, rows) {
 
 // A print seam so tests can capture without touching real stdout.
 function makePrinter(write = (s) => process.stdout.write(s)) {
+  let emitted = 0;
   return {
+    format: 'json',
     line(s) { write(s + '\n'); },
-    json(obj) { write(jsonLine(obj) + '\n'); },
+    json(obj) {
+      if (this.format !== 'yaml') { write(jsonLine(obj) + '\n'); emitted++; return; }
+      if (emitted > 0) write('---\n');
+      write(toYaml(obj));
+      emitted++;
+    },
   };
 }
 

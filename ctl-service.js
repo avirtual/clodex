@@ -446,6 +446,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     let token = null;
     try {
       main.applyOutput(flags, verb);
+      printer.format = flags.output === 'yaml' ? 'yaml' : 'json';
       if (verb === 'ctx') {
         const out = await runCtx(rest, { flags, printer, io, V, errors });
         return done(buf, out, currentName());
