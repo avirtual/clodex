@@ -5,6 +5,7 @@
 // hence get+set. No electron require here: this runs under a headless host.
 
 const { pathFor } = require('./clodex-paths');
+const { createTicketsStore } = require('./tickets-store');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
 const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
@@ -33,7 +34,8 @@ function createRemoteWiring(deps) {
     DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
     parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
     claimOutbox, listOutboxOrigins,
-    manager, proxyPoller, loadManifest,
+    manager, proxyPoller, loadManifest, listTeams,
+    getPeerManager, getTunnelManager, getWebTunnelManager, getSandboxManager,
     restartClodex, restartSession, peerProxyView,
     readSessionArgs, applySessionArgs,
     readSkillCatalog, applySessionSkills,
@@ -88,6 +90,83 @@ function createRemoteWiring(deps) {
         ctxPct: (ctx && ctx.pct != null) ? ctx.pct : null,
       },
     };
+  }
+
+  const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR });
+
+  function peerRows() {
+    const rows = getPeerManager() ? getPeerManager().statuses() : [];
+    const tunnels = new Map((getTunnelManager() ? getTunnelManager().statuses() : []).map((t) => [t.id, t]));
+    const webTuns = new Map(
+      ((getWebTunnelManager && getWebTunnelManager()) ? getWebTunnelManager().statuses() : []).map((t) => [t.id, t]),
+    );
+    for (const st of rows) {
+      st.tunnel = tunnels.get(st.id) || null;
+      st.webTunnel = webTuns.get(st.id) || null;
+    }
+    return rows;
+  }
+
+  function ticketRows() {
+    let names;
+    try { names = listTeams(); } catch { return []; }
+    const out = [];
+    for (const team of names) {
+      let root;
+      try { root = loadManifest(team).root; } catch { continue; }
+      for (const t of ticketsStore.load(root)) {
+        if (t && t.id) out.push({ ...t, team });
+      }
+    }
+    return out;
+  }
+
+  function resourceCallbacks() {
+    const cbs = {};
+    if (typeof getPeerManager === 'function') {
+      cbs.listPeers = () => peerRows();
+      cbs.getPeer = (id) => peerRows().find((p) => p && p.id === id) || null;
+    }
+    if (typeof listTeams === 'function') {
+      cbs.listTeams = () => {
+        let names;
+        try { names = listTeams(); } catch { return []; }
+        return names.map((name) => ({ name }));
+      };
+      cbs.getTeam = (name) => {
+        let team;
+        try { team = loadManifest(name); } catch { return null; }
+        let activity = null;
+        try { activity = manager.teamActivity(name); } catch {}
+        return { ...team, activity };
+      };
+      cbs.listTickets = () => ticketRows();
+    }
+    const sandboxes = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
+    if (sandboxes) {
+      cbs.listSandboxes = () => sandboxes.list();
+      cbs.getSandbox = async (id) => {
+        const row = sandboxes.list().find((b) => b && b.id === id);
+        if (!row) return null;
+        const inst = sandboxes.get(id);
+        if (!inst) return null;
+        const st = await inst.status();
+        return {
+          id: row.id,
+          label: row.label,
+          state: st && st.state != null ? st.state : null,
+          ref: st && st.ref != null ? st.ref : null,
+          sha: st && st.sha != null ? st.sha : null,
+          ports: st && st.ports ? st.ports : null,
+        };
+      };
+    }
+    if (typeof getAgentLibrary === 'function') {
+      cbs.listAgents = () => getAgentLibrary().list()
+        .map(({ name, description, model, tools, disallowedTools }) => ({ name, description, model, tools, disallowedTools }));
+      cbs.getAgent = (name) => getAgentLibrary().raw(name);
+    }
+    return cbs;
   }
 
   function spawnTeamLead(name, teamName) {
@@ -167,6 +246,7 @@ function createRemoteWiring(deps) {
           return sess && !sess._dead ? sessionRow(sess) : null;
         },
         listWorkspaces: () => getWorkspaces().list(),
+        ...resourceCallbacks(),
         getTranscript: (name, limit, since) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType) return { ok: false, error: 'Session not found' };

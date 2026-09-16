@@ -8,6 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { relayVersionOk, isQualifiedSender } = require('./relay-protocol');
 const { makeTokenGate } = require('./auth-token');
+const { BOX_ID_RE } = require('./sandbox');
 
 // A bind host counts as loopback when nothing off-box can reach it — the case
 // where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
@@ -60,14 +61,29 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 const RESOURCES = [
   { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: {} },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
+  { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
+  { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
+  { name: 'tickets', singular: 'ticket', scope: 'team', verbs: ['list', 'get'] },
+  { name: 'sandboxes', singular: 'sandbox', scope: 'node', verbs: ['list', 'get'] },
+  { name: 'agents', singular: 'agent', scope: 'node', verbs: ['list', 'get'] },
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
 ];
 
 const RESOURCES_VERSION = 1;
 
-const RESOURCE_CALLBACK = { workspaces: '_listWorkspaces', catalogs: '_getCatalogs' };
+const RESOURCE_CALLBACK = {
+  workspaces: '_listWorkspaces',
+  peers: '_listPeers',
+  teams: '_listTeams',
+  tickets: '_listTickets',
+  sandboxes: '_listSandboxes',
+  agents: '_listAgents',
+  catalogs: '_getCatalogs',
+};
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const TICKET_ID_RE = /^t\d+$/;
+const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const SSE_HEARTBEAT_MS = 25000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
@@ -77,6 +93,8 @@ class RemoteServer {
   constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp,
                 hostLabel, version, srcDir, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs,
+                listPeers, getPeer, listTeams, getTeam, listTickets,
+                listSandboxes, getSandbox, listAgents, getAgent,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications,
@@ -112,6 +130,15 @@ class RemoteServer {
     this._killSession = killSession || null;
     this._restartSession = restartSession || null;
     this._getCatalogs = getCatalogs || null;
+    this._listPeers = listPeers || null;
+    this._getPeer = getPeer || null;
+    this._listTeams = listTeams || null;
+    this._getTeam = getTeam || null;
+    this._listTickets = listTickets || null;
+    this._listSandboxes = listSandboxes || null;
+    this._getSandbox = getSandbox || null;
+    this._listAgents = listAgents || null;
+    this._getAgent = getAgent || null;
     this._getSessionArgs = getSessionArgs || null;
     this._setSessionArgs = setSessionArgs || null;
     this._getSkillCatalog = getSkillCatalog || null;
@@ -1037,6 +1064,87 @@ class RemoteServer {
           .then(() => this._json(res, 200, { ok: true }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
+    }
+    if (req.method === 'GET' && p === '/api/peers') {
+      if (!this._listPeers) return this._json(res, 501, { ok: false, error: 'peers not available' });
+      const peers = (this._listPeers() || []).map(({ sessions, ...rest }) => rest);
+      return this._json(res, 200, { ok: true, peers });
+    }
+    if (req.method === 'GET' && p.startsWith('/api/peers/')) {
+      if (!this._listPeers) return this._json(res, 501, { ok: false, error: 'peers not available' });
+      const id = decodeURIComponent(p.slice('/api/peers/'.length));
+      if (!NAME_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad peer id' });
+      const peer = this._getPeer ? this._getPeer(id) : null;
+      if (!peer) return this._json(res, 404, { ok: false, error: 'Peer not found' });
+      return this._json(res, 200, { ok: true, peer });
+    }
+    if (req.method === 'GET' && p === '/api/teams') {
+      if (!this._listTeams) return this._json(res, 501, { ok: false, error: 'teams not available' });
+      return this._json(res, 200, { ok: true, teams: this._listTeams() || [] });
+    }
+    if (req.method === 'GET' && p.startsWith('/api/teams/')) {
+      if (!this._listTeams) return this._json(res, 501, { ok: false, error: 'teams not available' });
+      const name = decodeURIComponent(p.slice('/api/teams/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad team name' });
+      const team = this._getTeam ? this._getTeam(name) : null;
+      if (!team) return this._json(res, 404, { ok: false, error: 'Team not found' });
+      return this._json(res, 200, { ok: true, team });
+    }
+    if (req.method === 'GET' && p === '/api/tickets') {
+      if (!this._listTickets) return this._json(res, 501, { ok: false, error: 'tickets not available' });
+      const team = url.searchParams.get('team');
+      if (team != null && !NAME_RE.test(team)) return this._json(res, 400, { ok: false, error: 'bad team name' });
+      const state = url.searchParams.get('state') || 'all';
+      if (!TICKET_STATES.includes(state)) {
+        return this._json(res, 400, { ok: false, error: `bad state "${state}" — one of ${TICKET_STATES.join(', ')}` });
+      }
+      let tickets = this._listTickets() || [];
+      if (team != null) tickets = tickets.filter((t) => t && t.team === team);
+      if (state !== 'all') tickets = tickets.filter((t) => t && t.state === state);
+      return this._json(res, 200, { ok: true, tickets });
+    }
+    if (req.method === 'GET' && p.startsWith('/api/tickets/')) {
+      if (!this._listTickets) return this._json(res, 501, { ok: false, error: 'tickets not available' });
+      const id = decodeURIComponent(p.slice('/api/tickets/'.length));
+      if (!TICKET_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad ticket id' });
+      const team = url.searchParams.get('team');
+      if (team != null && !NAME_RE.test(team)) return this._json(res, 400, { ok: false, error: 'bad team name' });
+      let hits = (this._listTickets() || []).filter((t) => t && t.id === id);
+      if (team != null) hits = hits.filter((t) => t.team === team);
+      if (hits.length > 1) {
+        return this._json(res, 400, {
+          ok: false, error: 'ambiguous ticket id', candidates: hits.map((t) => t.team),
+        });
+      }
+      if (!hits.length) return this._json(res, 404, { ok: false, error: 'Ticket not found' });
+      return this._json(res, 200, { ok: true, ticket: hits[0] });
+    }
+    if (req.method === 'GET' && p === '/api/sandboxes') {
+      if (!this._listSandboxes) return this._json(res, 501, { ok: false, error: 'sandboxes not available' });
+      return this._json(res, 200, { ok: true, sandboxes: this._listSandboxes() || [] });
+    }
+    if (req.method === 'GET' && p.startsWith('/api/sandboxes/')) {
+      if (!this._listSandboxes) return this._json(res, 501, { ok: false, error: 'sandboxes not available' });
+      const id = decodeURIComponent(p.slice('/api/sandboxes/'.length));
+      if (!BOX_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad sandbox id' });
+      return Promise.resolve()
+        .then(() => (this._getSandbox ? this._getSandbox(id) : null))
+        .then((sandbox) => (sandbox
+          ? this._json(res, 200, { ok: true, sandbox })
+          : this._json(res, 404, { ok: false, error: 'Sandbox not found' })))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    }
+    if (req.method === 'GET' && p === '/api/agents') {
+      if (!this._listAgents) return this._json(res, 501, { ok: false, error: 'agents not available' });
+      return this._json(res, 200, { ok: true, agents: this._listAgents() || [] });
+    }
+    if (req.method === 'GET' && p.startsWith('/api/agents/')) {
+      if (!this._listAgents) return this._json(res, 501, { ok: false, error: 'agents not available' });
+      const name = decodeURIComponent(p.slice('/api/agents/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad agent name' });
+      const content = this._getAgent ? this._getAgent(name) : null;
+      if (content == null) return this._json(res, 404, { ok: false, error: 'Agent not found' });
+      return this._json(res, 200, { ok: true, agent: { name, content } });
     }
     if (req.method === 'GET' && p === '/api/inbox') {
       if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
