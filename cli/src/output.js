@@ -110,6 +110,20 @@ function renderAgentsWide(agents) {
   return table(['NAME', 'MODEL', 'DESCRIPTION', 'TOOLS'], rows);
 }
 
+function renderWorktrees(worktrees) {
+  const rows = (worktrees || []).map((w) => [w.path || '', w.branch || '', w.head || '']);
+  return table(['PATH', 'BRANCH', 'HEAD'], rows);
+}
+
+function renderWorktreesWide(worktrees) {
+  const yes = (v) => (v ? 'yes' : '');
+  const rows = (worktrees || []).map((w) => [
+    w.path || '', w.branch || '', w.head || '',
+    yes(w.isMain), yes(w.detached), yes(w.locked), yes(w.prunable),
+  ]);
+  return table(['PATH', 'BRANCH', 'HEAD', 'MAIN', 'DETACHED', 'LOCKED', 'PRUNABLE'], rows);
+}
+
 function renderResources(resources) {
   const rows = (resources || []).map((r) => [
     r.name || '',
@@ -204,7 +218,7 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
 module.exports = {
   jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
   renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes,
-  renderAgents, renderAgentsWide, renderResources, renderDescribe,
+  renderAgents, renderAgentsWide, renderWorktrees, renderWorktreesWide, renderResources, renderDescribe,
   describePeer, describeTeam, describeSandbox, describeAgent,
   renderTranscript, renderInfo, table, makePrinter,
 };

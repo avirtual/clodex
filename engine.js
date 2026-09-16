@@ -1787,7 +1787,7 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
   parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
   claimOutbox, listOutboxOrigins,
-  manager, proxyPoller, loadManifest, listTeams,
+  manager, proxyPoller, loadManifest, listTeams, gitWorktree,
   getPeerManager: () => peerManager,
   getTunnelManager: () => tunnelManager,
   getWebTunnelManager: () => webTunnelManager,

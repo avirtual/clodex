@@ -55,7 +55,13 @@ containers — the list is `{id, label}`, the single get adds `state`, `ref`,
 `sha` and `ports`; a headless node has no sandbox manager, so both 501 and the
 resource is absent from `/api/resources`), `GET /api/agents` +
 `/api/agents/:name` (the subagent library — the list is the per-agent metadata,
-the single get is `{name, content}`),
+the single get is `{name, content}`), `GET /api/worktrees?repo=` (the git
+worktrees of the repo containing an ABSOLUTE `repo` path — 200
+`{ok:true, repo, worktrees:[{path, branch, head, isMain, detached, locked,
+prunable}]}`; a missing or relative `repo` is a 400
+`{error:'repo must be an absolute path'}`, a path in no git repo a 404, and a
+node wiring no worktree callback 501s with the resource absent from
+`/api/resources`),
 `GET /api/peer/hello` (identity + caps + `dmOrigins` +
 `srcDir` + `webHost` + `wirescope`), `GET /api/sessions/:name/attach` (per-session SSE: b64 scrollback replay
 + telemetry seed), `POST /api/sessions/:name/control|input|resize` (input+resize

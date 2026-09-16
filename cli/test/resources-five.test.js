@@ -16,6 +16,7 @@ const FULL_RESOURCES = [
   { name: 'tickets', singular: 'ticket', scope: 'team', verbs: ['list', 'get'] },
   { name: 'sandboxes', singular: 'sandbox', scope: 'node', verbs: ['list', 'get'] },
   { name: 'agents', singular: 'agent', scope: 'node', verbs: ['list', 'get'] },
+  { name: 'worktrees', singular: 'worktree', scope: 'node', verbs: ['list'] },
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
 ];
 
@@ -61,6 +62,12 @@ const AGENTS = [
   { name: 'tester', description: 'runs the suite', model: 'haiku', tools: 'Bash,Read', disallowedTools: 'Write' },
 ];
 const AGENT_MD = '---\ndescription: a library agent\nmodel: opus\n---\nbody text\n';
+
+const WORKTREE_REPO = '/abs/x';
+const WORKTREES = [
+  { path: '/abs/x', branch: 'master', head: 'abcdef12', isMain: true, detached: false, locked: false, prunable: false },
+  { path: '/abs/x-side', branch: null, head: '12345678', isMain: false, detached: true, locked: true, prunable: true },
+];
 
 function node({ old = false, omit = null } = {}) {
   const seen = [];
@@ -127,6 +134,13 @@ function node({ old = false, omit = null } = {}) {
         return send(200, { ok: true, agents: AGENTS });
       }
       if (p === '/api/agents/scout') return send(200, { ok: true, agent: { name: 'scout', content: AGENT_MD } });
+
+      if (p === '/api/worktrees') {
+        if (gone('worktrees')) return send(501, { ok: false, error: 'worktrees not available' });
+        const repo = u.searchParams.get('repo');
+        if (repo !== WORKTREE_REPO) return send(404, { ok: false, error: 'Not inside a git repository' });
+        return send(200, { ok: true, repo, worktrees: WORKTREES });
+      }
 
       return send(404, { ok: false, error: 'not found' });
     });
@@ -262,6 +276,83 @@ test('get agents renders NAME MODEL DESCRIPTION; -o wide adds TOOLS', async () =
     ]);
     const name = await cli(['get', 'agents', '-o', 'name'], port);
     assert.deepStrictEqual(lines(name.stdout), ['agent/scout', 'agent/tester']);
+  });
+});
+
+test('get worktrees --repo renders PATH BRANCH HEAD; -o wide adds MAIN DETACHED LOCKED PRUNABLE', async () => {
+  await withNode({}, async (port, seen) => {
+    const { code, stdout } = await cli(['get', 'worktrees', '--repo', WORKTREE_REPO], port);
+    assert.strictEqual(code, 0, stdout);
+    assert.deepStrictEqual(lines(stdout), [
+      'PATH         BRANCH  HEAD',
+      '/abs/x       master  abcdef12',
+      '/abs/x-side          12345678',
+    ]);
+    assert.deepStrictEqual(seen, ['/api/resources', `/api/worktrees?repo=${encodeURIComponent(WORKTREE_REPO)}`],
+      'one list call, with the repo on the query string');
+    const wide = await cli(['get', 'worktrees', '--repo', WORKTREE_REPO, '-o', 'wide'], port);
+    assert.deepStrictEqual(lines(wide.stdout), [
+      'PATH         BRANCH  HEAD      MAIN  DETACHED  LOCKED  PRUNABLE',
+      '/abs/x       master  abcdef12  yes',
+      '/abs/x-side          12345678        yes       yes     yes',
+    ]);
+    assert.ok(lines(wide.stdout)[2].includes('12345678'),
+      'the second worktree row survives — a one-row table would pass the header assertion alone');
+  });
+});
+
+test('get worktrees -o name is worktree/<path>, and -o json is the wire object', async () => {
+  await withNode({}, async (port) => {
+    const name = await cli(['get', 'worktrees', '--repo', WORKTREE_REPO, '-o', 'name'], port);
+    assert.strictEqual(name.code, 0);
+    assert.deepStrictEqual(lines(name.stdout), ['worktree//abs/x', 'worktree//abs/x-side'],
+      'the identity of a worktree is its path, not a name field it does not have');
+    const json = await cli(['get', 'worktrees', '--repo', WORKTREE_REPO, '-o', 'json'], port);
+    assert.deepStrictEqual(JSON.parse(json.stdout), { ok: true, repo: WORKTREE_REPO, worktrees: WORKTREES });
+    assert.strictEqual(JSON.parse(json.stdout).worktrees[1].branch, null,
+      'the detached row keeps its null branch through -o json');
+  });
+});
+
+test('get worktrees with no --repo is a usage error with ZERO requests', async () => {
+  await withNode({}, async (port, seen) => {
+    const { code, stderr, stdout } = await cli(['get', 'worktrees'], port);
+    assert.strictEqual(code, 2);
+    assert.match(stderr, /get worktrees needs --repo DIR/);
+    assert.strictEqual(stdout, '');
+    assert.deepStrictEqual(seen, [], 'the flag is required here, so the node is never dialled — not even /api/resources');
+    const ok = await cli(['get', 'worktrees', '--repo', WORKTREE_REPO], port);
+    assert.strictEqual(ok.code, 0, 'and with the flag the same verb still works');
+  });
+});
+
+test('get worktrees --repo . resolves client-side to an absolute path', async () => {
+  await withNode({}, async (port, seen) => {
+    await cli(['get', 'worktrees', '--repo', '.'], port);
+    const abs = path.resolve('.');
+    assert.deepStrictEqual(seen, ['/api/resources', `/api/worktrees?repo=${encodeURIComponent(abs)}`],
+      'the node is asked about an absolute path, which is all its 400 arm admits');
+    assert.ok(path.isAbsolute(decodeURIComponent(seen[1].split('repo=')[1])), 'and it really is absolute');
+  });
+});
+
+test('describe worktree is a usage error, not a dial — there is no single get', async () => {
+  await withNode({}, async (port, seen) => {
+    const { code, stderr } = await cli(['describe', 'worktree', '/abs/x'], port);
+    assert.strictEqual(code, 2);
+    assert.match(stderr, /describe worktree is not supported \(try: get worktrees\)/);
+    assert.deepStrictEqual(seen, [], 'no route was dialled for a verb the resource does not advertise');
+  });
+});
+
+test('a node whose /api/resources omits worktrees answers get worktrees with the D.5 upgrade line', async () => {
+  await withNode({ omit: 'worktrees' }, async (port) => {
+    const { code, stderr } = await cli(['get', 'worktrees', '--repo', WORKTREE_REPO], port);
+    assert.strictEqual(code, 1, 'D.5 says exit 1');
+    assert.strictEqual(stderr,
+      `clodexctl: node newbox (5.80.0) does not serve worktrees list; run: clodexctl upgrade node http://127.0.0.1:${port}\n`);
+    const agents = await cli(['get', 'agents'], port);
+    assert.strictEqual(agents.code, 0, 'the other resources are untouched by one absence');
   });
 });
 

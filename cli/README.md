@@ -238,6 +238,7 @@ adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
 | `tickets` | ID TEAM STATE TITLE [ASSIGNEE, BRANCH] | `describe ticket <id> [--team T]` — the full record |
 | `sandboxes` | ID LABEL | `describe sandbox <id>` — state, ref, sha, ports |
 | `agents` | NAME MODEL DESCRIPTION [TOOLS] | `describe agent <name>` — the definition verbatim |
+| `worktrees` | PATH BRANCH HEAD [MAIN, DETACHED, LOCKED, PRUNABLE] | none — list only, `--repo DIR` required |
 | `catalogs` | a labeled block (a singleton, no rows) | `describe catalogs` |
 
 `get tickets` shows the **open** board unless you pass `--state`; `-o json`
@@ -274,6 +275,7 @@ Read (all but `describe` support `-o json` — stable raw wire payload):
 | `get tickets [--team T] [--state S]` | `GET /api/resources` → `GET /api/tickets?team=&state=` (human default `state=open`) |
 | `get sandboxes` | `GET /api/resources` → `GET /api/sandboxes` |
 | `get agents` | `GET /api/resources` → `GET /api/agents` |
+| `get worktrees --repo DIR` | `GET /api/resources` → `GET /api/worktrees?repo=` (DIR is resolved to an absolute path client-side) |
 | `get catalogs` | `GET /api/catalogs` |
 | `describe <singular> <name>` / `describe catalogs` | the same routes, `/:name` for a single object, rendered as a labeled block (no `-o json`) |
 | `ctx current` | none — prints the current context name from the local file (exit `5` when none) |
