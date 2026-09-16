@@ -40,6 +40,21 @@ actually serve; advertised as the `resources` cap, which is unconditional),
 and `GET /api/sessions?workspace=<name or id>` (the list narrowed to one
 workspace; an unknown value is an empty list), `GET /api/workspaces` (this
 node's workspaces — `{id, name, open, lastFocusedAt}`, no window geometry),
+`GET /api/peers` + `/api/peers/:id` (this node's peers, composed with their
+tunnel and webTunnel status as the GUI's own list is — the list rows drop the
+per-peer `sessions` array and the single get keeps it), `GET /api/teams` +
+`/api/teams/:name` (this node's teams — the list is `{name}` rows, the single
+get is the manifest plus live `activity`), `GET /api/tickets` +
+`/api/tickets/:id` (every team's board, each row tagged with its `team`;
+`?team=NAME` and `?state=open|done|cancelled|all` narrow it, default `all`, any
+other state is a 400 — a ticket id is unique per team, so a bare id that exists
+on two boards answers 400 `{error:'ambiguous ticket id', candidates}` and
+`?team=` picks one), `GET /api/sandboxes` + `/api/sandboxes/:id` (this node's
+containers — the list is `{id, label}`, the single get adds `state`, `ref`,
+`sha` and `ports`; a headless node has no sandbox manager, so both 501 and the
+resource is absent from `/api/resources`), `GET /api/agents` +
+`/api/agents/:name` (the subagent library — the list is the per-agent metadata,
+the single get is `{name, content}`),
 `GET /api/peer/hello` (identity + caps + `dmOrigins` +
 `srcDir` + `webHost` + `wirescope`), `GET /api/attach/:name` (per-session SSE: b64 scrollback replay
 + telemetry seed), `POST /api/control|input|resize/:name` (input+resize

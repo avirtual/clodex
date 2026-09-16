@@ -8,6 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createRemoteWiring } = require('../remote-wiring');
 const { RemoteServer, RESOURCES } = require('../remote');
+const { createTicketsStore } = require('../tickets-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const REMOTE_SRC = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf-8');
@@ -17,8 +18,48 @@ const WORKSPACES = [
   { id: 'ws-beta', name: 'Beta', bounds: null },
 ];
 
+const PEER_STATUS = {
+  id: 'boxy', label: 'Boxy', url: 'http://127.0.0.1:7070', direct: true, online: true,
+  host: 'boxy-host', version: '9.9.9', caps: ['send'], platform: 'linux', srcDir: null,
+  webHost: null, wirescope: null, sessions: [{ name: 'remote-seat', type: 'claude' }],
+};
+
+const TEAM_ALPHA = { root: null, lead: 'alpha-lead', roles: { lead: { dispatch: 'session' } } };
+const TEAM_BETA = { root: null, lead: 'beta-lead', roles: { lead: { dispatch: 'session' } } };
+
+const TICKETS_ALPHA = [
+  { id: 't1', state: 'open', assignee: 'hand', title: 'alpha open' },
+  { id: 't2', state: 'done', assignee: 'hand', title: 'alpha done' },
+  { id: 't9', state: 'cancelled', assignee: null, title: 'alpha cancelled' },
+];
+const TICKETS_BETA = [
+  { id: 't1', state: 'done', assignee: 'other', title: 'beta done' },
+  { id: 't7', state: 'open', assignee: 'other', title: 'beta only' },
+];
+
+const AGENT_MD = '---\ndescription: a library agent\nmodel: opus\n---\nbody text\n';
+
 function makeDeps() {
   const root = mkTmpRoot('remote-resources-');
+  const registry = path.join(root, 'registry');
+  const alphaRoot = path.join(root, 'proj-alpha');
+  const betaRoot = path.join(root, 'proj-beta');
+  const teams = {
+    alpha: { ...TEAM_ALPHA, name: 'alpha', root: alphaRoot },
+    beta: { ...TEAM_BETA, name: 'beta', root: betaRoot },
+  };
+  const seedStore = createTicketsStore({ fs, path, clodexHome: registry });
+  seedStore.save(alphaRoot, TICKETS_ALPHA);
+  seedStore.save(betaRoot, TICKETS_BETA);
+
+  const sandboxInstances = {
+    boxy: { status: async () => ({ state: 'running', ref: 'master', sha: 'deadbeef', ports: { web: 7080 } }) },
+  };
+  const sandboxManager = {
+    list: () => [{ id: 'boxy', label: 'Boxy' }],
+    get: (id) => sandboxInstances[id] || null,
+  };
+
   let srv = null;
   const createCalls = [];
   const manager = {
@@ -28,6 +69,7 @@ function makeDeps() {
       ['ghost', { name: 'ghost', type: 'claude', cwd: path.join(root, 'g'), workspaceId: 'ws-alpha', _dead: true }],
     ]),
     create: async (...args) => { createCalls.push(args); return { name: args[0], type: args[1], pid: 7 }; },
+    teamActivity: (name) => ({ roles: { lead: { dispatch: 'session', live: [`${name}-lead`], open: [], last: null } } }),
   };
   const workspaces = {
     list: () => WORKSPACES.map(w => ({ ...w })),
@@ -39,11 +81,19 @@ function makeDeps() {
     log: { info() {}, error() {} },
     DEFAULT_WORKSPACE_ID: 'ws-alpha',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
-    REGISTRY_DIR: path.join(root, 'registry'), OUTBOX_DIR: path.join(root, 'outbox'), SELF_LABEL: 'testnode',
+    REGISTRY_DIR: registry, OUTBOX_DIR: path.join(root, 'outbox'), SELF_LABEL: 'testnode',
     parseCtxFile: () => null, ensureDir: () => {}, homeRelativize: (x) => x,
     claimOutbox: () => [], listOutboxOrigins: () => [],
     manager, proxyPoller: { snapshot: () => null },
-    loadManifest: (n) => { throw new Error(`no such team "${n}"`); },
+    loadManifest: (n) => {
+      if (!teams[n]) throw new Error(`no such team "${n}"`);
+      return teams[n];
+    },
+    listTeams: () => Object.keys(teams).sort(),
+    getPeerManager: () => ({ statuses: () => [{ ...PEER_STATUS, sessions: [...PEER_STATUS.sessions] }] }),
+    getTunnelManager: () => ({ statuses: () => [{ id: 'boxy', kind: 'ssh', state: 'up' }] }),
+    getWebTunnelManager: () => ({ statuses: () => [{ id: 'boxy', kind: 'ssh', state: 'down' }] }),
+    getSandboxManager: () => sandboxManager,
     restartClodex: () => {}, restartSession: () => {}, peerProxyView: () => null,
     readSessionArgs: () => ({ ok: false }), applySessionArgs: () => ({ ok: true }),
     readSkillCatalog: () => ({ ok: false }), applySessionSkills: () => ({ ok: false }),
@@ -51,7 +101,13 @@ function makeDeps() {
     fetchSessionFiles: () => {}, fetchFilePeek: () => {}, fetchFileDiff: () => {},
     CLAUDE_TOOLS: ['Bash', 'Read'],
     getPromptLibrary: () => ({ list: () => [] }),
-    getAgentLibrary: () => ({ list: () => [] }),
+    getAgentLibrary: () => ({
+      list: () => [{
+        name: 'scout', description: 'a library agent', model: 'opus', tools: 'Read',
+        disallowedTools: '', file: 'scout.md', meta: { description: 'a library agent' }, body: 'body text',
+      }],
+      raw: (n) => (n === 'scout' ? AGENT_MD : null),
+    }),
     getSkillLibrary: () => ({ list: () => [] }),
     getPersistence: () => ({ get: () => undefined, setStripLevel: () => {} }),
     getUiSettings: () => uiSettings,
@@ -97,6 +153,10 @@ async function withNode(extra, fn) {
   try { return await fn(s.port, { createCalls }); } finally { s.stop(); }
 }
 
+const WALK_ID = {
+  sessions: 'alice', peers: 'boxy', teams: 'alpha', tickets: 't7', sandboxes: 'boxy', agents: 'scout',
+};
+
 test('RESOURCES: every (resource, verb) answers on a fully-injected node, and every name is a literal path in remote.js', async () => {
   const seen = [];
   await withNode({}, async (port) => {
@@ -106,18 +166,23 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
         `remote.js spells no literal '/api/${r.name}' — the constant advertises a path the router does not name`,
       );
       for (const verb of r.verbs) {
-        const p = verb === 'list' || r.singular === r.name
-          ? `/api/${r.name}`
-          : `/api/${r.name}/alice`;
+        const single = !(verb === 'list' || r.singular === r.name);
+        if (single) {
+          assert.ok(WALK_ID[r.name], `no walk id seeded for ${r.name}.get — the walk cannot exercise it`);
+        }
+        const p = single ? `/api/${r.name}/${WALK_ID[r.name]}` : `/api/${r.name}`;
         const res = await req(port, p);
-        assert.notStrictEqual(res.status, 404, `${r.name}.${verb} → GET ${p} answered 404`);
+        assert.strictEqual(res.status, 200, `${r.name}.${verb} → GET ${p} answered ${res.status}: ${res.body}`);
         seen.push(`${r.name}.${verb}`);
       }
     }
   });
-  assert.deepStrictEqual(seen, ['sessions.list', 'sessions.get', 'workspaces.list', 'catalogs.get'],
-    'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.ok(RESOURCES.length >= 3, 'the walk covered fewer than the 3 shipped resources');
+  assert.deepStrictEqual(seen, [
+    'sessions.list', 'sessions.get', 'workspaces.list',
+    'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
+    'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'catalogs.get',
+  ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
+  assert.strictEqual(RESOURCES.length, 8, 'the walk covered fewer than the 8 shipped resources');
 });
 
 test('GET /api/resources: the document a fully-injected node serves', async () => {
@@ -153,14 +218,14 @@ test('workspaces: 501 and absent from /api/resources when listWorkspaces is not 
   await withNode({ listWorkspaces: null }, async (port) => {
     assert.strictEqual((await req(port, '/api/workspaces')).status, 501);
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'catalogs']);
+    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'catalogs']);
   });
 });
 
 test('catalogs: absent from /api/resources when getCatalogs is not injected', async () => {
   await withNode({ getCatalogs: null }, async (port) => {
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'workspaces']);
+    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents']);
   });
 });
 
@@ -228,4 +293,303 @@ test('GET /api/sessions?workspace=: an unknown value is an empty list, not an er
     assert.strictEqual(r.status, 200);
     assert.deepStrictEqual(JSON.parse(r.body), { ok: true, sessions: [] });
   });
+});
+
+const PEER_ROW = {
+  id: 'boxy', label: 'Boxy', url: 'http://127.0.0.1:7070', direct: true, online: true,
+  host: 'boxy-host', version: '9.9.9', caps: ['send'], platform: 'linux', srcDir: null,
+  webHost: null, wirescope: null,
+  tunnel: { id: 'boxy', kind: 'ssh', state: 'up' },
+  webTunnel: { id: 'boxy', kind: 'ssh', state: 'down' },
+};
+
+test('GET /api/peers: the composed row, with the per-peer sessions array dropped', async () => {
+  await withNode({}, async (port) => {
+    const r = await req(port, '/api/peers');
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, peers: [PEER_ROW] });
+    assert.ok(!('sessions' in JSON.parse(r.body).peers[0]), 'a list row carries no sessions array');
+  });
+});
+
+test('GET /api/peers/:id: 200 keeps sessions, 404 unknown, 400 bad id', async () => {
+  await withNode({}, async (port) => {
+    const r = await req(port, '/api/peers/boxy');
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(JSON.parse(r.body), {
+      ok: true, peer: { ...PEER_ROW, sessions: [{ name: 'remote-seat', type: 'claude' }] },
+    });
+    const miss = await req(port, '/api/peers/nobody');
+    assert.strictEqual(miss.status, 404);
+    assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Peer not found' });
+    const bad = await req(port, '/api/peers/bad%20id');
+    assert.strictEqual(bad.status, 400);
+    assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'bad peer id' });
+  });
+});
+
+test('peers: 501 and absent from /api/resources when listPeers is not injected', async () => {
+  await withNode({ listPeers: null }, async (port) => {
+    assert.strictEqual((await req(port, '/api/peers')).status, 501);
+    assert.strictEqual((await req(port, '/api/peers/boxy')).status, 501);
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
+    assert.ok(!names.includes('peers'), `peers is still advertised: ${names.join(',')}`);
+  });
+});
+
+test('GET /api/teams: the name rows, and the single get folds in activity', async () => {
+  await withNode({}, async (port) => {
+    const list = await req(port, '/api/teams');
+    assert.strictEqual(list.status, 200);
+    assert.deepStrictEqual(JSON.parse(list.body), { ok: true, teams: [{ name: 'alpha' }, { name: 'beta' }] });
+    const one = await req(port, '/api/teams/alpha');
+    assert.strictEqual(one.status, 200);
+    const { team } = JSON.parse(one.body);
+    assert.strictEqual(team.name, 'alpha');
+    assert.strictEqual(team.lead, 'alpha-lead');
+    assert.deepStrictEqual(team.activity, {
+      roles: { lead: { dispatch: 'session', live: ['alpha-lead'], open: [], last: null } },
+    }, 'the single get folds in teamActivity');
+  });
+});
+
+test('GET /api/teams/:name: 404 unknown, 400 bad name', async () => {
+  await withNode({}, async (port) => {
+    const miss = await req(port, '/api/teams/nosuch');
+    assert.strictEqual(miss.status, 404);
+    assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Team not found' });
+    const bad = await req(port, '/api/teams/bad%20name');
+    assert.strictEqual(bad.status, 400);
+    assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'bad team name' });
+  });
+});
+
+test('teams: 501 and absent from /api/resources when listTeams is not injected', async () => {
+  await withNode({ listTeams: null }, async (port) => {
+    assert.strictEqual((await req(port, '/api/teams')).status, 501);
+    assert.strictEqual((await req(port, '/api/teams/alpha')).status, 501);
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
+    assert.ok(!names.includes('teams'), `teams is still advertised: ${names.join(',')}`);
+  });
+});
+
+test('GET /api/tickets: every board, each row tagged with its team', async () => {
+  await withNode({}, async (port) => {
+    const r = await req(port, '/api/tickets');
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(JSON.parse(r.body), {
+      ok: true,
+      tickets: [
+        { id: 't1', state: 'open', assignee: 'hand', title: 'alpha open', team: 'alpha' },
+        { id: 't2', state: 'done', assignee: 'hand', title: 'alpha done', team: 'alpha' },
+        { id: 't9', state: 'cancelled', assignee: null, title: 'alpha cancelled', team: 'alpha' },
+        { id: 't1', state: 'done', assignee: 'other', title: 'beta done', team: 'beta' },
+        { id: 't7', state: 'open', assignee: 'other', title: 'beta only', team: 'beta' },
+      ],
+    }, 'both seeded boards are walked — a one-team walk cannot see the ambiguity rule at all');
+  });
+});
+
+test('GET /api/tickets?team=&state=: the two filters, and the four-value state enum', async () => {
+  await withNode({}, async (port) => {
+    const ids = async (q) => JSON.parse((await req(port, `/api/tickets${q}`)).body)
+      .tickets.map(t => `${t.team}/${t.id}`);
+    assert.deepStrictEqual(await ids('?team=alpha'), ['alpha/t1', 'alpha/t2', 'alpha/t9']);
+    assert.deepStrictEqual(await ids('?state=open'), ['alpha/t1', 'beta/t7']);
+    assert.deepStrictEqual(await ids('?state=done'), ['alpha/t2', 'beta/t1']);
+    assert.deepStrictEqual(await ids('?state=cancelled'), ['alpha/t9']);
+    assert.deepStrictEqual(await ids('?state=all'), await ids(''), 'all is the default');
+    assert.deepStrictEqual(await ids('?team=beta&state=open'), ['beta/t7'], 'the filters compose');
+  });
+});
+
+test('GET /api/tickets?state=: a value outside the enum is a 400, not an empty list', async () => {
+  await withNode({}, async (port) => {
+    const r = await req(port, '/api/tickets?state=review');
+    assert.strictEqual(r.status, 400, 'review is a loop step, not one of the four stored states');
+    assert.deepStrictEqual(JSON.parse(r.body), {
+      ok: false, error: 'bad state "review" — one of open, done, cancelled, all',
+    });
+    assert.strictEqual((await req(port, '/api/tickets?state=')).status, 200, 'an empty state reads as the default');
+  });
+});
+
+test('GET /api/tickets/:id: an id on two boards is ambiguous, and names both candidates', async () => {
+  await withNode({}, async (port) => {
+    const r = await req(port, '/api/tickets/t1');
+    assert.strictEqual(r.status, 400);
+    assert.deepStrictEqual(JSON.parse(r.body), {
+      ok: false, error: 'ambiguous ticket id', candidates: ['alpha', 'beta'],
+    });
+    const scoped = await req(port, '/api/tickets/t1?team=beta');
+    assert.strictEqual(scoped.status, 200, '?team= disambiguates');
+    assert.deepStrictEqual(JSON.parse(scoped.body).ticket, {
+      id: 't1', state: 'done', assignee: 'other', title: 'beta done', team: 'beta',
+    });
+  });
+});
+
+test('GET /api/tickets/:id: a unique id resolves with no ?team=, 404 unknown, 400 bad id', async () => {
+  await withNode({}, async (port) => {
+    const uniq = await req(port, '/api/tickets/t7');
+    assert.strictEqual(uniq.status, 200);
+    assert.deepStrictEqual(JSON.parse(uniq.body).ticket, {
+      id: 't7', state: 'open', assignee: 'other', title: 'beta only', team: 'beta',
+    });
+    const miss = await req(port, '/api/tickets/t404');
+    assert.strictEqual(miss.status, 404);
+    assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Ticket not found' });
+    assert.strictEqual((await req(port, '/api/tickets/t7?team=alpha')).status, 404,
+      'a real id on the wrong board is a miss, not a hit');
+    const bad = await req(port, '/api/tickets/nope');
+    assert.strictEqual(bad.status, 400);
+    assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'bad ticket id' });
+  });
+});
+
+test('tickets: 501 and absent from /api/resources when listTickets is not injected', async () => {
+  await withNode({ listTickets: null }, async (port) => {
+    assert.strictEqual((await req(port, '/api/tickets')).status, 501);
+    assert.strictEqual((await req(port, '/api/tickets/t1')).status, 501);
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
+    assert.ok(!names.includes('tickets'), `tickets is still advertised: ${names.join(',')}`);
+  });
+});
+
+test('GET /api/sandboxes: the id/label list, and the single get adds the async status', async () => {
+  await withNode({}, async (port) => {
+    const list = await req(port, '/api/sandboxes');
+    assert.strictEqual(list.status, 200);
+    assert.deepStrictEqual(JSON.parse(list.body), { ok: true, sandboxes: [{ id: 'boxy', label: 'Boxy' }] });
+    const one = await req(port, '/api/sandboxes/boxy');
+    assert.strictEqual(one.status, 200);
+    assert.deepStrictEqual(JSON.parse(one.body), {
+      ok: true,
+      sandbox: { id: 'boxy', label: 'Boxy', state: 'running', ref: 'master', sha: 'deadbeef', ports: { web: 7080 } },
+    });
+  });
+});
+
+test('GET /api/sandboxes/:id: 404 unknown, 400 on an id BOX_ID_RE refuses', async () => {
+  await withNode({}, async (port) => {
+    const miss = await req(port, '/api/sandboxes/nosuch');
+    assert.strictEqual(miss.status, 404);
+    assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Sandbox not found' });
+    const bad = await req(port, '/api/sandboxes/Bad.Id');
+    assert.strictEqual(bad.status, 400, 'BOX_ID_RE admits no dots and no capitals');
+    assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'bad sandbox id' });
+  });
+});
+
+test('sandboxes: 501 and absent from /api/resources on a node with no sandbox manager', async () => {
+  await withNode({ listSandboxes: null }, async (port) => {
+    assert.strictEqual((await req(port, '/api/sandboxes')).status, 501);
+    assert.strictEqual((await req(port, '/api/sandboxes/boxy')).status, 501);
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
+    assert.ok(!names.includes('sandboxes'), `sandboxes is still advertised: ${names.join(',')}`);
+  });
+});
+
+test('headless: no sandbox manager means no sandbox callbacks are wired at all', async () => {
+  const { deps } = makeDeps();
+  const opts = captureOptions({ ...deps, getSandboxManager: () => null });
+  assert.strictEqual(opts.listSandboxes, undefined, 'a headless node wires no sandbox list');
+  assert.strictEqual(opts.getSandbox, undefined, 'a headless node wires no sandbox get');
+  assert.strictEqual(typeof opts.listPeers, 'function', 'the other four are unaffected');
+});
+
+test('GET /api/agents: the library rows, and the single get returns name + content', async () => {
+  await withNode({}, async (port) => {
+    const list = await req(port, '/api/agents');
+    assert.strictEqual(list.status, 200);
+    assert.deepStrictEqual(JSON.parse(list.body), {
+      ok: true,
+      agents: [{ name: 'scout', description: 'a library agent', model: 'opus', tools: 'Read', disallowedTools: '' }],
+    });
+    const one = await req(port, '/api/agents/scout');
+    assert.strictEqual(one.status, 200);
+    assert.deepStrictEqual(JSON.parse(one.body), { ok: true, agent: { name: 'scout', content: AGENT_MD } });
+  });
+});
+
+test('GET /api/agents/:name: 404 unknown, 400 bad name', async () => {
+  await withNode({}, async (port) => {
+    const miss = await req(port, '/api/agents/nosuch');
+    assert.strictEqual(miss.status, 404);
+    assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Agent not found' });
+    const bad = await req(port, '/api/agents/bad%20name');
+    assert.strictEqual(bad.status, 400);
+    assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'bad agent name' });
+  });
+});
+
+test('agents: 501 and absent from /api/resources when listAgents is not injected', async () => {
+  await withNode({ listAgents: null }, async (port) => {
+    assert.strictEqual((await req(port, '/api/agents')).status, 501);
+    assert.strictEqual((await req(port, '/api/agents/scout')).status, 501);
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
+    assert.ok(!names.includes('agents'), `agents is still advertised: ${names.join(',')}`);
+  });
+});
+
+const SECRET_KEYS = ['token', 'auth', 'secret', 'password'];
+
+function findSecretKey(value, trail = '$') {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      const hit = findSecretKey(value[i], `${trail}[${i}]`);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  for (const [k, v] of Object.entries(value)) {
+    if (SECRET_KEYS.includes(k.toLowerCase())) return `${trail}.${k}`;
+    const hit = findSecretKey(v, `${trail}.${k}`);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+test('no read-only resource response carries a token/auth/secret/password key at any depth', async () => {
+  const paths = [
+    '/api/resources',
+    '/api/peers', '/api/peers/boxy',
+    '/api/teams', '/api/teams/alpha',
+    '/api/tickets', '/api/tickets?team=alpha', '/api/tickets/t7',
+    '/api/sandboxes', '/api/sandboxes/boxy',
+    '/api/agents', '/api/agents/scout',
+    '/api/sessions', '/api/sessions/alice', '/api/workspaces',
+  ];
+  await withNode({}, async (port) => {
+    for (const p of paths) {
+      const r = await req(port, p);
+      assert.strictEqual(r.status, 200, `${p} answered ${r.status}, so the walk read no body`);
+      const hit = findSecretKey(JSON.parse(r.body));
+      assert.strictEqual(hit, null, `GET ${p} leaks a secret-shaped key at ${hit}`);
+    }
+  });
+  assert.strictEqual(findSecretKey({ a: [{ b: { token: 'x' } }] }), '$.a[0].b.token',
+    'the walker finds a key nested under an array — otherwise every assertion above passes vacuously');
+});
+
+test('route order: /api/peer/hello and /api/peer/roster still match ahead of the /api/peers branches', async () => {
+  await withNode({}, async (port) => {
+    const hello = await req(port, '/api/peer/hello');
+    assert.strictEqual(hello.status, 200);
+    assert.strictEqual(JSON.parse(hello.body).app, 'clodex', '/api/peer/hello is the hello, not a peer row');
+    const roster = await req(port, '/api/peer/roster', {
+      method: 'POST', body: JSON.stringify({ rv: 1, via: 'hub', roster: [] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    assert.notStrictEqual(roster.status, 404, '/api/peer/roster still reaches the relay handler');
+  });
+  assert.ok(
+    REMOTE_SRC.indexOf("p === '/api/peer/hello'") < REMOTE_SRC.indexOf("p === '/api/peers'"),
+    'the hello branch must be spelled before the peers branch',
+  );
+  assert.ok(
+    REMOTE_SRC.indexOf("p === '/api/peer/roster'") < REMOTE_SRC.indexOf("p === '/api/peers'"),
+    'the roster branch must be spelled before the peers branch',
+  );
 });
