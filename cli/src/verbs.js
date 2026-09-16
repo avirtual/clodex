@@ -258,7 +258,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
   if (flags.json) { for (const m of messages) printer.json(m); }
   else if (messages.length) printer.line(out.renderTranscript(messages));
 
-  let snapshot = messages.length;   // running entry-count watermark
+  let lastSeq = lastSeqOf(messages);
   let refetching = false;           // coalesce overlapping activity frames
   let pending = false;
 
@@ -272,10 +272,9 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
     if (refetching) { pending = true; return; }
     refetching = true;
     try {
-      const after = await client.get(`${transcriptPath(name)}?limit=500`, 'logs -f (refetch)');
-      const all = after.messages || [];
-      const fresh = deltaFrom(all, snapshot);
-      snapshot = all.length;
+      const after = await client.get(`${transcriptPath(name)}?since=${lastSeq + 1}&limit=500`, 'logs -f (refetch)');
+      const fresh = after.messages || [];
+      if (fresh.length) lastSeq = Math.max(lastSeq, lastSeqOf(fresh));
       emit(fresh);
     } finally {
       refetching = false;
@@ -299,11 +298,12 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
     else { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); offSignal = () => { process.off('SIGINT', onSig); process.off('SIGTERM', onSig); }; }
 
     const guard = openGuarded(client, '/api/events', 'logs -f (events)', {
-      // On (re)connect, silently re-snapshot to the current length so a
+      // On (re)connect, silently re-read the current last seq so a
       // reconnect never re-prints old lines (no gap markers in v1).
       onOpen: async () => {
-        const snap = await client.get(`${transcriptPath(name)}?limit=500`, 'logs -f (resnapshot)');
-        snapshot = (snap.messages || []).length;
+        const snap = await client.get(`${transcriptPath(name)}?since=${lastSeq + 1}&limit=500`, 'logs -f (resnapshot)');
+        const seen = snap.messages || [];
+        if (seen.length) lastSeq = Math.max(lastSeq, lastSeqOf(seen));
       },
       onEvent: (event, data) => {
         if (event !== 'activity' || !data || data.name !== name) return;

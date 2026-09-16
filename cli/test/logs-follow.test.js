@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
 const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
+const { serverTranscriptPage } = require('./fixtures/transcript-page');
 
 const TOKEN = 'sekret';
 
@@ -44,7 +45,7 @@ function followStub(opts = {}) {
       if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         // Each call returns the next scripted snapshot (last one sticks).
         const msgs = opts.transcript ? opts.transcript(tIdx++, seen) : [];
-        res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: msgs }));
+        res.writeHead(200); return res.end(JSON.stringify(serverTranscriptPage(msgs, req.url)));
       }
       res.writeHead(404); res.end('{}');
     });
@@ -109,7 +110,7 @@ test('logs -f --json: NDJSON, one object per entry (tail + delta), never a growi
   // Each line parses as its own object (NDJSON), not a single array.
   const objs = lines.map((l) => JSON.parse(l));
   assert.ok(objs.every((o) => o && typeof o === 'object' && !Array.isArray(o)));
-  assert.deepStrictEqual(objs[0], { role: 'user', text: 'q1' });
+  assert.deepStrictEqual(objs[0], { role: 'user', text: 'q1', seq: 0 });
   assert.ok(objs.some((o) => o.role === 'assistant' && o.text === 'a2'));
   server.close();
 });
@@ -147,6 +148,74 @@ test('logs -f: Ctrl-C exits 0 (pager, not a failure)', async () => {
   const port = await listen(server);
   const { code } = await cli(['logs', 'bob', '-f'], port, { tty: sig.tty });
   assert.strictEqual(code, 0);
+  server.close();
+});
+
+const bulk = (n) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `old${i}` }));
+const transcriptUrls = (seen) => seen.filter((s) => /\/transcript(\?|$)/.test(s.url)).map((s) => s.url);
+const pairsOf = (url) => [...new URL(url, 'http://x').searchParams.entries()];
+
+test('logs -f: a 600-entry transcript still prints the new entry — the cursor is seq, not a count', async () => {
+  const sig = fakeSignalTty();
+  const OLD = bulk(600);
+  const { server } = followStub({
+    onEventsOpen: (state) => {
+      setTimeout(() => activity(state.events, 'bob'), 40);
+      setTimeout(() => sig.signal(), 140);
+    },
+    transcript: (i) => (i <= 1 ? OLD : [...OLD, { role: 'assistant', text: 'brand new' }]),
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['logs', 'bob', '-f'], port, { tty: sig.tty });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /\[assistant\] brand new/);
+  assert.strictEqual((stdout.match(/old599/g) || []).length, 1, 'the tail entry printed once, not re-printed by the refetch');
+  server.close();
+});
+
+test('logs -f: the refetch asks for since=<lastSeq+1> of the page it last emitted', async () => {
+  const sig = fakeSignalTty();
+  const OLD = bulk(600);
+  const { server, seen } = followStub({
+    onEventsOpen: (state) => {
+      setTimeout(() => activity(state.events, 'bob'), 40);
+      setTimeout(() => sig.signal(), 140);
+    },
+    transcript: (i) => (i <= 1 ? OLD : [...OLD, { role: 'assistant', text: 'brand new' }]),
+  });
+  const port = await listen(server);
+  const { code } = await cli(['logs', 'bob', '-f'], port, { tty: sig.tty });
+  assert.strictEqual(code, 0);
+  const urls = transcriptUrls(seen);
+  assert.ok(urls.length >= 3, 'tail, resnapshot and at least one refetch');
+  const refetch = urls[urls.length - 1];
+  const pairs = pairsOf(refetch);
+  assert.ok(pairs.length >= 1, 'the refetch URL parsed into at least one query pair');
+  assert.deepStrictEqual(pairs, [['since', '600'], ['limit', '500']], 'the initial tail ended at seq 599');
+  server.close();
+});
+
+test('logs -f: the reconnect re-snapshot asks with since too, and prints no duplicate', async () => {
+  const sig = fakeSignalTty();
+  let firstEvents = true;
+  const OLD = bulk(600);
+  const { server, seen } = followStub({
+    onEventsOpen: (state) => {
+      if (firstEvents) { firstEvents = false; setTimeout(() => { try { state.events.end(); } catch {} }, 40); }
+      else { setTimeout(() => activity(state.events, 'bob'), 30); setTimeout(() => sig.signal(), 160); }
+    },
+    transcript: (i) => (i <= 2 ? OLD : [...OLD, { role: 'assistant', text: 'after reconnect' }]),
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['logs', 'bob', '-f'], port, { tty: sig.tty });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /\[assistant\] after reconnect/);
+  assert.strictEqual((stdout.match(/old599/g) || []).length, 1, 'no dup across reconnect');
+  const eventsOpens = seen.filter((s) => s.url === '/api/events').length;
+  assert.strictEqual(eventsOpens, 2, 'the stream really did reconnect');
+  const resnapshots = transcriptUrls(seen).filter((u) => /since=/.test(u));
+  assert.ok(resnapshots.length >= 2, 'both the first open and the reconnect re-snapshotted with a cursor');
+  for (const u of resnapshots) assert.deepStrictEqual(pairsOf(u), [['since', '600'], ['limit', '500']]);
   server.close();
 });
 
