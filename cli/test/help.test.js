@@ -110,12 +110,22 @@ test('`help <verb>` renders the same per-verb view', async () => {
   assert.match(stdout, /NOTES/);
 });
 
+// The resource-word verbs are ONE entry each at the granularity `help <verb>`
+// is invoked, and the entry must show every resource form the verb dispatches —
+// `restart` is the case with two, and they do very different things.
+test('`help restart` shows BOTH resource forms', async () => {
+  const { code, stdout } = await cli(['help', 'restart']);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /restart session <name>/);
+  assert.match(stdout, /restart node/);
+});
+
 test('`<verb> --help` with a bogus ctx still short-circuits (no resolve)', async () => {
   // --ctx names a context that cannot exist; a non-short-circuiting path would
   // try to resolve it and fail USAGE. Help must win first.
-  const { code, stdout } = await cli(['run', '--help', '--ctx', 'does-not-exist']);
+  const { code, stdout } = await cli(['exec', '--help', '--ctx', 'does-not-exist']);
   assert.strictEqual(code, 0);
-  assert.match(stdout, /^run —/);
+  assert.match(stdout, /^exec —/);
 });
 
 // ── 4. unknown verb ──────────────────────────────────────────────────────────

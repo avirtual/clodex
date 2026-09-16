@@ -33,8 +33,8 @@ test('greedy flag consumes the rest as an argv array', () => {
 });
 
 test('-- passes the tail verbatim (incl. leading dashes)', () => {
-  const r = parse(['send', 'x', '--', '--not-a-flag', 'hello'], OPTS);
-  assert.deepStrictEqual(r._, ['send', 'x', '--not-a-flag', 'hello']);
+  const r = parse(['dm', 'x', '--', '--not-a-flag', 'hello'], OPTS);
+  assert.deepStrictEqual(r._, ['dm', 'x', '--not-a-flag', 'hello']);
 });
 
 test('alias maps short + hyphenated names', () => {

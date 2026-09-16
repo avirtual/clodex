@@ -389,8 +389,53 @@ test('every RENAMED_VERBS key answers, and none of them is a live verb', async (
     assert.ok(!TOP_VERBS.includes(old), `${old} is renamed but still dispatched`);
     const { code, stderr } = await cli([old], null);
     assert.strictEqual(code, 2, `${old} must exit 2`);
-    assert.match(stderr, new RegExp(`clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`));
+    assert.match(stderr, new RegExp(`clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   }
+});
+
+// The T8 rename set, named LITERALLY. The loop above is derived from the table
+// and so holds for a table that lost an entry; this is the list the ruling
+// fixed, and it must not shrink. Each old spelling is dead argv: exit 2 with
+// the pointer, and nothing dialled.
+test('every T8-removed spelling is gone and points at its replacement', async () => {
+  const removed = {
+    run: 'exec',
+    spawn: 'create session',
+    kill: 'delete session',
+    'restart-app': 'restart node',
+    skills: 'get session <name> --subresource skills',
+    args: 'get session … --subresource args / patch session',
+    send: 'dm',
+  };
+  const { TOP_VERBS } = require('../src/main');
+  for (const [old, to] of Object.entries(removed)) {
+    assert.strictEqual(RENAMED_VERBS[old], to, `${old} must point at "${to}"`);
+    assert.ok(!TOP_VERBS.includes(old), `${old} must not be dispatched`);
+    let dialled = false;
+    const { code, stderr } = await cli([old, 'x'], null, {
+      spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+    });
+    assert.strictEqual(code, 2, `${old} must exit 2`);
+    assert.ok(stderr.includes(`clodexctl ${old} was renamed: use clodexctl ${to}`), `${old}: ${stderr}`);
+    assert.strictEqual(dialled, false, `${old} must run nothing`);
+  }
+});
+
+// The bare `restart <name>` form is the one removal that is NOT a renamed key:
+// `restart` survives as a verb, so the pointer table cannot catch it. The
+// resource word is mandatory and its absence must name the word, ahead of any
+// context resolution.
+test('bare `restart <name>` is a usage error naming the resource word', async () => {
+  let dialled = false;
+  const { code, stderr } = await cli(['restart', 'bob'], null, {
+    spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+  });
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /restart bob is not supported \(session\|node\)/);
+  assert.strictEqual(dialled, false, 'no transport, no context resolution');
+  const bare = await cli(['restart'], null);
+  assert.strictEqual(bare.code, 2);
+  assert.match(bare.stderr, /restart needs a resource \(session\|node\)/);
 });
 
 test('--json prints its replacement, exits 2, and runs nothing', async () => {
@@ -412,16 +457,16 @@ test('--json is caught in EVERY argv position, including ahead of the verb and a
 });
 
 test('a literal --json in a verbatim tail or a tunnel argv is still just text', async () => {
-  const passthrough = await cli(['send', 'bob', '--', '--json'], null);
+  const passthrough = await cli(['dm', 'bob', '--', '--json'], null);
   assert.doesNotMatch(passthrough.stderr, /--json was replaced/, 'a payload after -- is not a flag');
   const tunnel = await cli(['ctx', 'add', 'k', '--url', 'http://h', '--tunnel', 'sh', '-c', '--json'], null);
   assert.doesNotMatch(tunnel.stderr, /--json was replaced/);
-  for (const argv of [['spawn', 'x', '--type', 'codex', '--arg', '--json'], ['args', 'set', 'x', '--arg', '--json']]) {
+  for (const argv of [['create', 'session', 'x', '--type', 'codex', '--arg', '--json'], ['patch', 'session', 'x', '--arg', '--json']]) {
     const passed = await cli(argv, null);
     assert.doesNotMatch(passed.stderr, /--json was replaced/,
       `${argv.join(' ')} rides extraArgs verbatim; --json there is the agent's flag, not ours`);
   }
-  const afterArg = await cli(['spawn', 'x', '--arg', '-v', '--json'], null);
+  const afterArg = await cli(['create', 'session', 'x', '--arg', '-v', '--json'], null);
   assert.match(afterArg.stderr, /--json was replaced by -o json/,
     'only the token --arg consumes is skipped, not the rest of the line');
 });
