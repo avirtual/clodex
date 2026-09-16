@@ -576,8 +576,6 @@ test('every RENAMED_SECOND second token answers with its own pointer, exit 1', a
   const { RENAMED_SECOND } = require('../src/main');
   for (const [verb, table] of Object.entries(RENAMED_SECOND)) {
     for (const tok of Object.keys(table)) {
-      // '*' is the per-verb fallback: it is keyed by no literal token, so the
-      // walk exercises it through a token no resource name can collide with.
       const typed = tok === '*' ? 'zzz-not-a-resource' : tok;
       const { code, stderr } = await cli([verb, typed, 'x'], null, {
         spawnFn: () => { throw new Error('spawnFn called'); },
@@ -614,11 +612,9 @@ test('`upgrade <ctx>` — any non-node first positional — points at the node s
   assert.strictEqual(code, 1, stderr);
   assert.ok(stderr.includes('clodexctl upgrade mynode was renamed: use clodexctl upgrade node mynode'), stderr);
   assert.strictEqual(dialled, false, 'the pointer runs nothing');
-  // bare `upgrade` has no second token to point at — it is the resource-word usage error.
   const bare = await cli(['upgrade'], null);
-  assert.strictEqual(bare.code, 2);
+  assert.strictEqual(bare.code, 2, 'bare upgrade has no second token to point at — it is the resource-word usage error');
   assert.match(bare.stderr, /upgrade needs a resource \(node\)/);
-  // and `upgrade node` with no ctx and no current context keeps its own text.
   const noCtx = await cli(['upgrade', 'node'], null);
   assert.strictEqual(noCtx.code, 2);
   assert.match(noCtx.stderr, /upgrade needs a context — `clodexctl upgrade node <ctx>`/);

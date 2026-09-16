@@ -177,15 +177,12 @@ test('undeploy node: two flavor flags are mutually exclusive; no name is a usage
   assert.match(noResource.stderr, /undeploy needs a resource \(node\)/);
 });
 
-// THE PIN for the record path: no flavor FLAG at all — the stored
-// deploy.flavor is the only thing that can route this teardown.
 test('undeploy node <name>: the flavor is READ FROM THE CONTEXT RECORD, no flag passed', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900', deploy: { flavor: 'docker' } } } });
   const r = await cli(['undeploy', 'node', 'mybox', '--force'], { runDocker: fakeRunDocker(rec), contextsFile });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'), 'the docker teardown ran off the record alone');
-  // and a helm record routes to the helm teardown from the same argv shape.
   const recH = {};
   const cfH = tmpCtxFile({ current: 'mynode', contexts: { mynode: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: null }, deploy: { flavor: 'helm' } } } });
   const rH = await cli(['undeploy', 'node', 'mynode', '--force'], { execFn: fakeHelm(recH), contextsFile: cfH });

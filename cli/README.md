@@ -571,8 +571,7 @@ clodexctl deploy node mybox --ssm i-… --branch dev --dry-run   # print the arg
 - **Model credentials** belong on the **instance role** (Bedrock) or seeded
   manually on the box — the same guidance as the ssh flavor.
 - **ssh-reachable boxes** should prefer plain `deploy node <name> --ssh user@host`; **`--ssm`
-  is for instances you reach only through SSM**. A host literally named `ssm`
-  still works via `deploy ssh ssm`.
+  is for instances you reach only through SSM**.
 
 ### `deploy node <name> --helm` — a Kubernetes node in one command
 
