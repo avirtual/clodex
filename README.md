@@ -219,6 +219,8 @@ npm run dist:mac       # arm64 DMG
 
 For headless Linux nodes, `clodexctl deploy` does everything; the manual playbook is in [`peering/`](peering/).
 
+Running, building and driving it from the command line — DMG, source, headless, Docker, the everyday `clodexctl` verbs — is one page: [docs/how-to.md](docs/how-to.md).
+
 ## License
 
 [Apache 2.0](LICENSE)
