@@ -31,4 +31,14 @@ older than the document itself and is classified without any round trip.
 
 t938: while `needsUpgrade` is true no SSE is opened at all. Every attach against
 such a node 404s, and the reconnect backoff would hammer it indefinitely; the
-attach entry carries an error string naming the upgrade instead.
+attach entry carries an error string naming the upgrade instead. Because that
+skips arming the backoff timer, the guard needs a clearing edge — see
+`_setNeedsUpgrade`.
+
+## _setNeedsUpgrade
+
+t938: clearing the flag re-opens every wanted attachment. `_probeDialect`'s fetch
+is async, so on the hello that follows an upgrade the `wasOffline` re-open loop in
+`_helloLoop` runs while the flag is still true and is refused; without this edge
+the pane stays blank until the user detaches and re-attaches, because `attach()`
+returns early for an already-wanted entry.

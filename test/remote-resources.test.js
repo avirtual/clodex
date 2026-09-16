@@ -135,12 +135,14 @@ function captureOptions(deps) {
 
 function req(port, pathname, opts = {}) {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const r = http.request({ host: '127.0.0.1', port, path: pathname, method: opts.method || 'GET', headers: opts.headers || {} }, (res) => {
       if (opts.stream) {
         let body = '';
         res.on('data', (d) => {
           body += d;
           if (opts.until && !body.includes(opts.until)) return;
+          settled = true;
           r.destroy();
           resolve({ status: res.statusCode, body });
         });
@@ -148,9 +150,9 @@ function req(port, pathname, opts = {}) {
       }
       let body = '';
       res.on('data', (d) => { body += d; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      res.on('end', () => { settled = true; resolve({ status: res.statusCode, body }); });
     });
-    r.on('error', (e) => { if (!opts.stream) reject(e); });
+    r.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
     if (opts.body) r.write(opts.body);
     r.end();
   });
@@ -228,7 +230,9 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
         assert.strictEqual(res.status, 200, `${r.name}.${verb} → GET ${p} answered ${res.status}: ${res.body}`);
         seen.push(`${r.name}.${verb}`);
       }
-      for (const [sub, verbs] of Object.entries(r.subresources || {})) {
+      const subs = Object.entries(r.subresources || {})
+        .sort(([a], [b]) => (a === 'attach' ? 1 : 0) - (b === 'attach' ? 1 : 0));
+      for (const [sub, verbs] of subs) {
         assert.ok(
           REMOTE_SRC.includes(`sub === '${sub}'`),
           `remote.js dispatches on no literal sub === '${sub}' — the constant advertises a subresource the router does not name`,
@@ -249,7 +253,7 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
   });
   assert.deepStrictEqual(seen, [
     'sessions.list', 'sessions.get', 'sessions/transcript.get', 'sessions/query.post',
-    'sessions/attach.get', 'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'workspaces.list',
+    'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'catalogs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');

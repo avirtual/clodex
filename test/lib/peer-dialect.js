@@ -5,8 +5,8 @@ const CURRENT_SUBRESOURCES = {
 };
 const OLD_SUBRESOURCES = { transcript: ['get'], query: ['post'] };
 
-function helloBody(caps = ['resources']) {
-  return { ok: true, app: 'clodex', host: 'h', version: '1', caps };
+function helloBody(caps = ['resources'], version = '1') {
+  return { ok: true, app: 'clodex', host: 'h', version, caps };
 }
 
 function resourcesBody(subresources) {
@@ -20,13 +20,13 @@ function resourcesBody(subresources) {
   };
 }
 
-function serveDialect(p, res, dialect = 'current') {
+function serveDialect(p, res, dialect = 'current', version = '1') {
   const json = (body) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
   };
   if (p === '/api/peer/hello') {
-    json(helloBody(dialect === 'none' ? [] : ['resources']));
+    json(helloBody(dialect === 'none' ? [] : ['resources'], version));
     return true;
   }
   if (p === '/api/resources') {

@@ -132,8 +132,10 @@ already re-fires on every version or caps move, which is every way the far
 side's dialect can change under a live connection. A hello with no `resources`
 cap is classified true without the round trip. While it is true `_openAttach`
 refuses to open the SSE at all: every attach on such a node 404s, and the
-backoff would hammer it forever. The renderer shows `needs upgrade` in the peer
-header and offers the existing Update Clodex button.
+backoff would hammer it forever — so clearing the flag is what re-opens every
+wanted attachment, since the probe is async and the hello's own re-open loop
+runs while the flag is still true. The renderer shows `needs upgrade` in the
+peer header and offers the existing Update Clodex button.
 
 **Split HTTP agent pools are load-bearing** (SETTLED, fixed a live bug):
 short requests use a keepAlive pool (8 sockets); SSE streams use an

@@ -7,19 +7,19 @@ const { PeerConnection } = require('../peer-client');
 const { serveDialect } = require('./lib/peer-dialect');
 
 function box(dialect) {
-  const state = { attaches: 0, resourceFetches: 0, helloTicks: 0, streams: [] };
+  const state = { attaches: 0, resourceFetches: 0, helloTicks: 0, streams: [], dialect, version: '1' };
   const server = http.createServer((req, res) => {
     const p = req.url.split('?')[0];
     if (p === '/api/peer/hello') state.helloTicks++;
     if (p === '/api/resources') state.resourceFetches++;
-    if (serveDialect(p, res, dialect)) return;
+    if (serveDialect(p, res, state.dialect, state.version)) return;
     if (p === '/api/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, sessions: [] }));
     }
     if (/^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
       state.attaches++;
-      if (dialect !== 'current') return res.writeHead(404).end();
+      if (state.dialect !== 'current') return res.writeHead(404).end();
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.flushHeaders();
       return state.streams.push(res);
@@ -112,6 +112,34 @@ test('_openAttach opens NO stream while needsUpgrade is true — the 404 is neve
     const att = conn._attachments.get('alpha');
     assert.strictEqual(att.req, null, 'no stream is held');
     assert.match(att.error || '', /older Clodex|sessions\/attach/, 'the attach entry names the upgrade');
+  } finally { teardown(conn, server, state); }
+});
+
+test('a wanted attachment re-opens by itself when the node is upgraded — no detach/attach cycle', async () => {
+  const { server, state } = box('old');
+  const port = await listen(server);
+  const conn = connect(port, 30);
+  conn.start();
+  try {
+    await waitFor('needsUpgrade to go true', () => conn.needsUpgrade === true);
+    conn.attach('alpha');
+    await new Promise((r) => setTimeout(r, 150));
+    assert.strictEqual(state.attaches, 0, 'the guard let a request through to the old node');
+
+    state.dialect = 'current';
+    state.version = '2';
+
+    await waitFor('needsUpgrade to clear after the upgrade', () => conn.needsUpgrade === false);
+    await waitFor('the attachment to hold a live stream again', () => {
+      const a = conn._attachments.get('alpha');
+      return a && a.req;
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.strictEqual(state.attaches, 1,
+      `the re-open fired ${state.attaches}x — it must open exactly one stream, not one per hello tick`);
+    const att = conn._attachments.get('alpha');
+    assert.strictEqual(att.wanted, true, 'the attachment was never detached and re-attached');
+    assert.strictEqual(att.error, null, 'the upgrade error string outlived the upgrade');
   } finally { teardown(conn, server, state); }
 });
 

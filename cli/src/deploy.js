@@ -822,10 +822,10 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
   const t = await openTransport(entry, { spawnFn, execFn });
   try {
     const client = new WireClient(t.baseUrl, wireToken);
+    await R.requireResource(client, 'sessions', 'post', ctxName, 'control');
     // 1. throwaway bash session (as the clodex user the engine runs as). The
     //    engine REJECTS a create without cwd; /tmp exists on any box we deploy.
     await client.post('/api/sessions', 'deploy ssm (token session)', { name: sessName, type: 'bash', cwd: '/tmp' });
-    await R.requireResource(client, 'sessions', 'post', ctxName, 'control');
     const acq = await client.post(`/api/sessions/${encodeURIComponent(sessName)}/control`, 'deploy ssm (token control)', { action: 'acquire', client: 'clodexctl' });
     const ctrlToken = acq && acq.token;
     if (!ctrlToken) throw new CliError(EXIT.SERVER, 'token delivery: could not acquire session control');

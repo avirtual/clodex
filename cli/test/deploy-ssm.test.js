@@ -472,7 +472,7 @@ test('deliverClaudeToken: wire dance — bash session, control acquire, drop-in 
   assert.ok(seen.some((s) => s.url === '/api/peer/hello'), 'engine polled back after restart');
 });
 
-test('deliverClaudeToken: an old node fails with the D.5 upgrade line before any control acquire', async () => {
+test('deliverClaudeToken: an old node fails with the D.5 upgrade line before any session is created', async () => {
   const http = require('node:http');
   const seen = [];
   const server = http.createServer((req, res) => {
@@ -493,6 +493,8 @@ test('deliverClaudeToken: an old node fails with the D.5 upgrade line before any
   );
   server.close();
   assert.ok(!seen.some((s) => /\/control$/.test(s.url)), 'the acquire went out anyway — the gate is not ahead of it');
+  assert.ok(!seen.some((s) => s.method === 'POST' && s.url === '/api/sessions'),
+    'a throwaway clodex-token- session was created on the box and then abandoned by the D.5 throw');
 });
 
 test('deploy ssm --port non-default: remotePort saved on the ssm entry + wrapper', async () => {

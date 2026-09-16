@@ -302,6 +302,11 @@ class PeerConnection {
   _setNeedsUpgrade(v) {
     if (this.needsUpgrade === v) return;
     this.needsUpgrade = v;
+    if (!v && this.online) {
+      for (const [name, att] of this._attachments) {
+        if (att.wanted && !att.req) this._openAttach(name, att);
+      }
+    }
     this._emit('peer-state', this.id, this.status());
   }
 
@@ -391,8 +396,7 @@ class PeerConnection {
   }
 
   _openAttach(name, att) {
-    // opening guards the window between request start and onOpen — the
-    // hello-loop wake path and the backoff timer can both land here.
+    // opening guards the window between request start and onOpen.
     if (att.req || att.opening || !att.wanted || this._stopped) return;
     if (this.needsUpgrade) {
       att.error = `${this.label} runs an older Clodex that does not serve sessions/attach — update it`;
