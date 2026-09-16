@@ -390,11 +390,12 @@ function warnEnvMismatch(printer, sentKeys, applied) {
   }
 }
 
-const CREATABLE = ['session'];
-const DELETABLE = ['session'];
+const CREATABLE = ['session', 'node'];
+const DELETABLE = ['session', 'node'];
 const PATCHABLE = ['session'];
 const RESTARTABLE = ['session', 'node'];
 const DEPLOYABLE = ['node'];
+const USABLE = ['node'];
 
 const NAMELESS_RESOURCES = new Set(['restart node']);
 
@@ -414,7 +415,7 @@ function takeResourceWord(args, verb, supported) {
   return { word: singular, rest };
 }
 
-const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE, deploy: DEPLOYABLE, undeploy: DEPLOYABLE, upgrade: DEPLOYABLE };
+const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE, deploy: DEPLOYABLE, undeploy: DEPLOYABLE, upgrade: DEPLOYABLE, use: USABLE };
 
 function checkResourceWord(verb, args) {
   const supported = RESOURCE_VERBS[verb];
@@ -740,8 +741,7 @@ async function restartNode({ client, printer, flags, prompt = defaultPrompt }) {
 }
 
 
-function ctxAdd({ store, saveStore, printer, flags, args }) {
-  const name = requireName(args[0], 'ctx add');
+function entryFromFlags(flags) {
   const entry = {};
   if (flags.url) entry.url = String(flags.url);
   if (flags.ssh) entry.ssh = String(flags.ssh);
@@ -778,6 +778,12 @@ function ctxAdd({ store, saveStore, printer, flags, args }) {
   if (flags.remotePort) entry.remotePort = parseIntOr(flags.remotePort, 'remote-port');
   if (flags.token) entry.token = String(flags.token);
   validateEntry(entry);
+  return entry;
+}
+
+function ctxAdd({ store, saveStore, printer, flags, args }) {
+  const name = requireName(args[0], 'ctx add');
+  const entry = entryFromFlags(flags);
   store.contexts[name] = entry;
   if (!store.current) store.current = name;
   saveStore(store);
@@ -836,6 +842,107 @@ function ctxShow({ store, printer, flags, args }) {
   }
 }
 
+function nodeRow(name, entry, current) {
+  const e = entry || {};
+  return {
+    name,
+    current: name === current,
+    kind: entryKind(e),
+    locator: entryTarget(e),
+    remotePort: e.remotePort || null,
+    tokenSet: !!e.token,
+  };
+}
+
+function nodeRows(store) {
+  return Object.keys(store.contexts).map((n) => nodeRow(n, store.contexts[n], store.current));
+}
+
+const NODE_EMPTY = '(no nodes — add one with `clodexctl create node <name> --url …`)';
+
+function nodeList({ store, printer, flags, args }) {
+  if (flags.current) return nodeCurrent({ store, printer });
+  const target = R.parseTarget(args, 'get');
+  if (target.name) {
+    throw new CliError(EXIT.USAGE, `get nodes takes no name (try: describe node ${target.name})`);
+  }
+  const rows = nodeRows(store);
+  if (flags.json) { printer.json({ current: store.current, nodes: rows }); return; }
+  if (flags.output === 'name') { printer.line(out.renderNames('node', rows)); return; }
+  if (rows.length === 0) { printer.line(NODE_EMPTY); return; }
+  if (flags.output === 'wide') {
+    printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR', 'REMOTE-PORT', 'TOKEN'],
+      rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator, r.remotePort || '', r.tokenSet ? '(set)' : '(none)'])));
+    return;
+  }
+  printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR'],
+    rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator])));
+}
+
+function nodeCurrent({ store, printer }) {
+  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current node (clodexctl use node <name>)');
+  printer.line(store.current);
+}
+
+function nodeName(store, args, verb) {
+  const target = R.parseTarget(args, verb);
+  const name = target.name || store.current;
+  if (!name) throw new CliError(EXIT.USAGE, `${verb} node needs a name (or set a current node)`);
+  return name;
+}
+
+function nodeDescribe({ store, printer, args }) {
+  const name = nodeName(store, args, 'describe');
+  const e = store.contexts[name];
+  if (!e) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  const r = nodeRow(name, e, store.current);
+  printer.line([
+    `name        ${name}${r.current ? ' (current)' : ''}`,
+    `kind        ${r.kind}`,
+    `locator     ${r.locator}`,
+    r.remotePort ? `remotePort  ${r.remotePort}` : null,
+    `token       ${r.tokenSet ? '(set)' : '(none)'}`,
+  ].filter(Boolean).join('\n'));
+}
+
+function nodeCreate(bundle) {
+  const { store, saveStore, printer, flags, args } = bundle;
+  if (flags.import) {
+    if (args.length) throw new CliError(EXIT.USAGE, `create node --import takes no name ("${args[0]}" is extra)`);
+    return ctxImport(bundle);
+  }
+  const name = requireName(args[0], 'create node', 'node');
+  store.contexts[name] = entryFromFlags(flags);
+  if (!store.current) store.current = name;
+  saveStore(store);
+  printer.line(`node "${name}" created${store.current === name ? ' (current)' : ''}`);
+}
+
+async function nodeDelete({ store, saveStore, printer, flags, args, prompt = defaultPrompt }) {
+  const name = requireName(args[0], 'delete node', 'node');
+  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  if (!flags.force && flags.json) {
+    throw new CliError(EXIT.USAGE, 'delete node needs --force in -o json|yaml/non-interactive mode (there is no prompt to answer)');
+  }
+  if (!flags.force) {
+    const ok = await prompt(`delete node "${name}"? Type the name to confirm: `);
+    if (String(ok).trim() !== name) throw new CliError(EXIT.USAGE, 'aborted — confirmation did not match');
+  }
+  delete store.contexts[name];
+  if (store.current === name) store.current = null;
+  saveStore(store);
+  if (flags.json) printer.json({ name, deleted: true, current: store.current });
+  else printer.line(`node "${name}" deleted`);
+}
+
+function nodeUse({ store, saveStore, printer, args }) {
+  const name = requireName(args[0], 'use node', 'node');
+  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  store.current = name;
+  saveStore(store);
+  printer.line(`current node: ${name}`);
+}
+
 function ctxImport({ store, saveStore, printer, flags, env }) {
   const meta = imp.resolveDataDir({ dataDirFlag: flags['data-dir'], env });
   const candidates = imp.collectCandidates(meta.dir);
@@ -888,9 +995,9 @@ function transcriptPath(name) {
 }
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-function requireName(v, verb) {
-  if (v == null || v === '') throw new CliError(EXIT.USAGE, `${verb} needs a session name`);
-  if (!NAME_RE.test(v)) throw new CliError(EXIT.USAGE, `bad session name "${v}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
+function requireName(v, verb, noun = 'session') {
+  if (v == null || v === '') throw new CliError(EXIT.USAGE, `${verb} needs a ${noun} name`);
+  if (!NAME_RE.test(v)) throw new CliError(EXIT.USAGE, `bad ${noun} name "${v}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
   return v;
 }
 
