@@ -256,6 +256,56 @@ JSEOF
 exit 0
 `, { mode: 0o700 });
 
+    const pollStatePath = pathFor(REGISTRY_DIR, name, 'pollState');
+    const pollGuardScriptPath = pathFor(REGISTRY_DIR, name, 'pollGuardScript');
+    fs.writeFileSync(pollGuardScriptPath, `#!/bin/bash
+[ -n "$CLODEX_TICKET" ] || exit 0
+IN="$(cat)"
+${INTERP} - "$CLODEX_TICKET" "$IN" "${pollStatePath}" <<'JSEOF' 2>/dev/null
+try {
+  const fs = require("fs");
+  const ticket = process.argv[2];
+  const statePath = process.argv[4];
+  if (!ticket || !statePath) process.exit(0);
+  let d = null;
+  try { d = JSON.parse(process.argv[3]); } catch (e) { process.exit(0); }
+  if (!d || d.agent_id) process.exit(0);
+  const put = (body) => {
+    try {
+      const t = statePath + ".tmp." + process.pid;
+      fs.writeFileSync(t, body);
+      fs.renameSync(t, statePath);
+    } catch (e) {}
+  };
+  const ev = d.hook_event_name;
+  const tool = d.tool_name;
+  if (ev === "UserPromptSubmit") { put(""); process.exit(0); }
+  if (ev === "PostToolUse") {
+    const spawned = tool === "Agent" || tool === "Task";
+    const bg = tool === "Bash" && d.tool_input && d.tool_input.run_in_background === true;
+    if (!spawned && !bg) process.exit(0);
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: {
+      hookEventName: "PostToolUse",
+      additionalContext: "Result arrives as a notification: do not poll for it. End your turn now unless you have unrelated work." } }));
+    process.exit(0);
+  }
+  if (tool !== "Bash") { put(""); process.exit(0); }
+  const cmd = d.tool_input && d.tool_input.command;
+  if (typeof cmd !== "string" || !cmd.trim()) process.exit(0);
+  const norm = cmd.trim().replace(/\\s+/g, " ");
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch (e) {}
+  const n = (prev && prev.cmd === norm && typeof prev.n === "number" && prev.n > 0) ? prev.n + 1 : 1;
+  put(JSON.stringify({ cmd: norm, n: n }));
+  if (n < 3) process.exit(0);
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: {
+    hookEventName: "PreToolUse", permissionDecision: "deny",
+    permissionDecisionReason: "ticket " + ticket + ": third identical Bash call in a row (" + norm.slice(0, 60) + "). Polling cannot make a result arrive sooner and each poll re-bills your whole context. END YOUR TURN — the exec, monitor, subagent or reminder result wakes you. If you genuinely must re-run it, do other work first." } }));
+} catch (e) {}
+JSEOF
+exit 0
+`, { mode: 0o700 });
+
     const ackPath = pathFor(REGISTRY_DIR, name, 'acks');
     const ackScriptPath = pathFor(REGISTRY_DIR, name, 'acksScript');
     fs.writeFileSync(ackScriptPath, `#!/bin/bash
@@ -558,6 +608,7 @@ JSEOF
             // mid-loop would land it between two tool calls.
             { type: 'command', command: noticeScriptPath },
             { type: 'command', command: ctxwarnScriptPath },
+            { type: 'command', command: pollGuardScriptPath },
           ]
         }],
         PreToolUse: [{
@@ -565,6 +616,11 @@ JSEOF
           hooks: [
             { type: 'command', command: liveScriptPath },
             { type: 'command', command: guardScriptPath },
+          ]
+        }, {
+          matcher: '',
+          hooks: [
+            { type: 'command', command: pollGuardScriptPath },
           ]
         }],
         PostToolUse: [{
@@ -576,6 +632,16 @@ JSEOF
           matcher: 'Bash',
           hooks: [
             { type: 'command', command: consoleScriptPath },
+          ]
+        }, {
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: pollGuardScriptPath },
+          ]
+        }, {
+          matcher: 'Agent|Task',
+          hooks: [
+            { type: 'command', command: pollGuardScriptPath },
           ]
         }],
         PostToolUseFailure: [{

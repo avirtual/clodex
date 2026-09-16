@@ -38,3 +38,12 @@ Hooks are FAIL-OPEN: one pointing at a nonexistent script leaves the Bash call
 working and the model still gets its output. `CLAUDE_CODE_SHELL_PREFIX` is the
 opposite, measured FATAL — a missing prefix script failed every Bash call in the
 session AND killed the SessionEnd hook. Never add one.
+
+## pollGuardScript
+
+A NON-Bash tool resets the count rather than being ignored: the edit-run-edit-run
+loop repeats one test command indefinitely and is legitimate, so only an
+UNBROKEN run of three is polling.
+Gated on `CLODEX_TICKET` like the git-add guard — the signal (three identical
+read-only commands, no user input between) measured 0 false positives on 440
+non-hand sessions, but a lead driving a repl is not what it was measured on.
