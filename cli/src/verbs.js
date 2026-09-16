@@ -366,6 +366,7 @@ const CREATABLE = ['session'];
 const DELETABLE = ['session'];
 const PATCHABLE = ['session'];
 const RESTARTABLE = ['session', 'node'];
+const DEPLOYABLE = ['node'];
 
 const NAMELESS_RESOURCES = new Set(['restart node']);
 
@@ -385,7 +386,7 @@ function takeResourceWord(args, verb, supported) {
   return { word: singular, rest };
 }
 
-const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE };
+const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE, deploy: DEPLOYABLE };
 
 function checkResourceWord(verb, args) {
   const supported = RESOURCE_VERBS[verb];
@@ -885,5 +886,5 @@ module.exports = {
   delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
   ctxAdd, ctxUse, ctxCurrent, ctxList, ctxRm, ctxShow, ctxImport,
   entryKind, entryTarget,
-  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, checkResourceWord, RESOURCE_VERBS,
+  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
 };

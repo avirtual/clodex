@@ -130,13 +130,6 @@ function sshDeployArgs(host, sshOpts = []) {
   return [...SSH_DEPLOY_ARGS, ...sshOpts, host, 'bash -s'];
 }
 
-function deriveCtxName(dest) {
-  const host = String(dest || '').split('@').pop() || '';
-  const short = host.split(':')[0].split('.')[0];
-  const stem = short.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
-  return NAME_RE.test(stem) ? stem : '';
-}
-
 function runDeploy({ host, sshOpts = [], stdin, spawnFn = spawn, onLine = null, onStderr = null, timeoutMs = DEPLOY_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     let child;
@@ -191,8 +184,10 @@ function parsePortOr(v) {
 }
 
 async function deployVerb({ printer, flags, args, io = {} }) {
-  const dest = args[0];
-  if (!dest) throw new CliError(EXIT.USAGE, 'deploy needs an ssh destination (e.g. user@host)');
+  const ctxName = args[0];
+  if (!NAME_RE.test(String(ctxName || ''))) throw new CliError(EXIT.USAGE, `bad node name "${ctxName}" — use ${NAME_RE.source}`);
+  const dest = flags.ssh ? String(flags.ssh) : null;
+  if (!dest) throw new CliError(EXIT.USAGE, 'deploy node --ssh needs an ssh destination (e.g. --ssh user@host)');
   if (!DEST_RE.test(dest)) throw new CliError(EXIT.USAGE, `bad ssh destination "${dest}" — use user@host / host / IP (set a port in ~/.ssh/config, not host:port)`);
 
   const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
@@ -205,12 +200,11 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   const script = readScript();
   const preamble = buildPreamble({ port, repo, branch, src, claudeToken, noWirescope });
   const stdin = preamble + script;
-  const ctxName = flags.name ? String(flags.name) : deriveCtxName(dest);
   const json = !!flags.json;
   const emit = (obj) => printer.json(obj);
 
   if (flags['dry-run']) {
-    if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, claudeToken: !!claudeToken, noWirescope, ctxName: flags['no-ctx'] ? null : (ctxName || null) }); return; }
+    if (json) { emit({ type: 'dry-run', host: dest, port, repo, branch, src: src || null, scriptBytes: script.length, claudeToken: !!claudeToken, noWirescope, ctxName: flags['no-ctx'] ? null : ctxName }); return; }
     printer.line([
       `dry-run — would deploy to ${dest}:`,
       `  port    ${port}`,
@@ -220,7 +214,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
       `  script  ${script.length} bytes (${scriptPath()})`,
       claudeToken ? '  claude  token from --claude-token-file (rides ssh stdin, redacted)' : null,
       noWirescope ? '  wirescope disabled (CLODEX_WIRESCOPE=off drop-in; python venv/pip deps skipped)' : null,
-      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${ctxName || '(none — pass --name)'}`,
+      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${ctxName}`,
     ].filter(Boolean).join('\n'));
     return;
   }
@@ -262,7 +256,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     if (json) { emit({ type: 'error', reason: 'need-sudo', sudoCmds }); }
     else {
       printer.line('');
-      printer.line(`deploy needs root on ${dest}. Run these on the box, then re-run \`clodexctl deploy ${dest}\`:`);
+      printer.line(`deploy needs root on ${dest}. Run these on the box, then re-run \`clodexctl deploy node ${ctxName} --ssh ${dest}\`:`);
       for (const c of sudoCmds) printer.line(`  ${c}`);
     }
     throw new CliError(EXIT.SERVER, `deploy incomplete — ${sudoCmds.length} sudo command(s) must be run on ${dest} first`);
@@ -288,16 +282,11 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
   }
-  if (!ctxName) {
-    if (json) emit({ type: 'context', action: 'skipped', reason: 'no valid name — pass --name' });
-    else printer.line(`(no context saved — could not derive a name from ${dest}; pass --name)`);
-    return;
-  }
   const store = safeLoadContexts(io);
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
   if (exists && !flags.force) {
     if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });
-    else printer.line(`context "${ctxName}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${ctxName} sessions`);
+    else printer.line(`context "${ctxName}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${ctxName} get sessions`);
     return;
   }
   // webPort (T42): the installer enables the web GUI on wire-port+1 (loopback);
@@ -312,7 +301,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   contexts.save(store, io.contextsFile);
   if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName, webPort });
   else {
-    printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} sessions`);
+    printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} get sessions`);
     printer.line(`  see it in your browser: clodexctl web ${ctxName}`);
   }
 }
@@ -475,7 +464,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
   if (exists && !flags.force) {
     if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
-    else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
+    else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} get sessions`);
     return;
   }
   const dep = { flavor: 'docker', container: CONTAINER_PREFIX + name, ...(dockerHost ? { dockerHost } : {}) };
@@ -487,7 +476,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   contexts.save(store, io.contextsFile);
   const hint = probe.tokenGated ? ' (token-gated — add your token: clodexctl ctx add …)' : '';
   if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, tokenGated: !!probe.tokenGated });
-  else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'}${hint} — you can now: clodexctl --ctx ${name} sessions`);
+  else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'}${hint} — you can now: clodexctl --ctx ${name} get sessions`);
 }
 
 // ── ssm flavor ──
@@ -858,10 +847,10 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
 
 async function deploySsmVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
-  if (!name) throw new CliError(EXIT.USAGE, 'deploy ssm needs a node name (e.g. deploy ssm mybox --target i-…)');
+  if (!name) throw new CliError(EXIT.USAGE, 'deploy node --ssm needs a node name (e.g. deploy node mybox --ssm i-…)');
   if (!NAME_RE.test(name)) throw new CliError(EXIT.USAGE, `bad node name "${name}" — use ${NAME_RE.source}`);
-  const target = flags.target ? String(flags.target) : null;
-  if (!target) throw new CliError(EXIT.USAGE, 'deploy ssm needs --target i-INSTANCE');
+  const target = flags.ssm ? String(flags.ssm) : null;
+  if (!target) throw new CliError(EXIT.USAGE, 'deploy node --ssm needs an instance (e.g. --ssm i-INSTANCE)');
 
   const region = flags.region ? String(flags.region) : null;
   const profile = flags.profile ? String(flags.profile) : null;
@@ -982,7 +971,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
   if (exists && !flags.force) {
     if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
-    else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} sessions`);
+    else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} get sessions`);
     return;
   }
   const webPort = port + 1;
@@ -991,7 +980,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   contexts.save(store, io.contextsFile);
   if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, webPort });
   else {
-    printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} sessions`);
+    printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} get sessions`);
     printer.line(`  see it in your browser: clodexctl web ${name}`);
   }
 }
@@ -1388,7 +1377,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
       contexts.save(store, io.contextsFile);
       ctxSaved = true;
       if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name });
-      else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} sessions`);
+      else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} get sessions`);
     }
   }
 
@@ -1763,7 +1752,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
       contexts.save(store, io.contextsFile);
       ctxSaved = true;
       if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName });
-      else printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} sessions`);
+      else printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} get sessions`);
     }
   }
 
@@ -1795,7 +1784,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
 
 module.exports = {
   DEFAULT_REPO, DEFAULT_BRANCH, DEFAULT_PORT, DEPLOY_TIMEOUT_MS, SSH_DEPLOY_ARGS, SSH_EXIT, NAME_RE, DEST_RE, REF_RE,
-  shSingleQuote, scriptPath, readScript, buildPreamble, readClaudeToken, buildTokenDropinScript, parseMarker, sshDeployArgs, deriveCtxName,
+  shSingleQuote, scriptPath, readScript, buildPreamble, readClaudeToken, buildTokenDropinScript, parseMarker, sshDeployArgs,
   runDeploy, probeHello, deployVerb, deliverClaudeToken,
   DOCKER_IMAGE_REPO, DOCKER_DEFAULT_TAG, CONTAINER_PREFIX, CONTAINER_WIRE_PORT, CONTAINER_WEB_PORT,
   DOCKER_VERIFY_TIMEOUT_MS, DOCKER_VERIFY_POLL_MS,

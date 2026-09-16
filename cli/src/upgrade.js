@@ -335,7 +335,7 @@ async function planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, 
       from: from.version, toVersion: null, toRef: null, targetLine, warnings, reverts,
       run: () => D.deploySsmVerb({
         printer,
-        flags: { ...flags, force: true, target,
+        flags: { ...flags, force: true, ssm: target,
           ...(dep.region && !flags.region ? { region: String(dep.region) } : {}),
           ...(dep.profile && !flags.profile ? { profile: String(dep.profile) } : {}),
           ...(port && flags.port == null ? { port } : {}) },
@@ -350,11 +350,8 @@ async function planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, 
     from: from.version, toVersion: null, toRef: null, targetLine, warnings, reverts,
     run: () => D.deployVerb({
       printer,
-      // --name pins the ctx this updates. Without it deployVerb re-derives a
-      // name from the host, which need not equal the context we were asked to
-      // upgrade — and would then write a SECOND entry beside it.
-      flags: { ...flags, force: true, name: ctxName, ...(port && flags.port == null ? { port } : {}) },
-      args: [host], io,
+      flags: { ...flags, force: true, ssh: host, ...(port && flags.port == null ? { port } : {}) },
+      args: [ctxName], io,
     }),
   };
 }
