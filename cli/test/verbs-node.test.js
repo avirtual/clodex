@@ -220,6 +220,11 @@ for (const [argv, expected] of POINTERS) {
     assert.ok(r.stderr.includes(`was renamed: use clodexctl ${expected}`), `${argv.join(' ')}: ${r.stderr}`);
     assert.strictEqual(dialled, false, `${argv.join(' ')} must run nothing`);
     assert.strictEqual(r.stdout, '', 'the pointer goes to stderr — stdout stays scriptable');
+    // The OWN row, not the `*` fallback. Several subs point at `get nodes` and
+    // so does `*`, so deleting one of their rows leaves the assertion above
+    // green on the fallback's answer — the row is what this test names.
+    const sub = argv[1];
+    if (sub) assert.strictEqual(typeof RENAMED_SECOND.ctx[sub], 'function', `ctx.${sub} must have its own row`);
   });
 }
 
