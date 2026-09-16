@@ -2179,10 +2179,15 @@ function newSessionSkillDenyList() {
   const toggleable = new Set(Array.from(
     inputSkillsList.querySelectorAll('input[type="checkbox"]:not(:disabled)'),
   ).map((cb) => cb.value));
-  if (!off.length) return toggleable.size ? [] : newSessionSkillsAsked.slice();
+  const askedKeeps = new Set(skillDenyKeepList(newSessionSkillsAsked));
+  if (!off.length) {
+    if (!toggleable.size) return newSessionSkillsAsked.slice();
+    if ([...toggleable].every((n) => askedKeeps.has(n))) return newSessionSkillsAsked.slice();
+    return [];
+  }
   const denied = new Set(off);
   const keptRows = newSessionSkillsDrawn.filter((n) => toggleable.has(n) && !denied.has(n));
-  const keptUndrawn = skillDenyKeepList(newSessionSkillsAsked).filter((n) => !toggleable.has(n));
+  const keptUndrawn = [...askedKeeps].filter((n) => !toggleable.has(n));
   return deferredSkillDeny([...keptRows, ...keptUndrawn]);
 }
 async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {

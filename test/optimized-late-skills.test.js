@@ -529,6 +529,36 @@ test('t918 pin 8: Check All means deny nothing, not "deny whatever arrives later
     'the ticks say "deny nothing"; re-emitting `*` would still deny whatever the CLI announces later');
 });
 
+test('t950: a keep-everything default rides through New Session — only a TICK means "deny nothing"', async () => {
+  const { deferredSkillDeny, skillDenyKeepList } = require('../skills-off');
+  const box = freshBox();
+  const keepAll = deferredSkillDeny(box.engine.knownSkillNames());
+  box.engine.stores.agentDefaults.setDefaultSkillDeny(keepAll);
+
+  const untouched = await dialogDisabledSkills(box.engine, 'optimized');
+  assert.ok(untouched.rows.length && untouched.rows.every((r) => r.checked),
+    'ENTER: every row drew TICKED from the default alone — otherwise this is pin 8\'s case, not this one');
+  assert.deepStrictEqual(untouched.persisted, keepAll,
+    'the deferred default rides through: an explicit [] here is unrecoverable at spawn');
+  const { expandSkillsOff } = require('../skills-off');
+  assert.deepStrictEqual(expandSkillsOff(untouched.persisted, { known: ['synced-tomorrow'] }),
+    ['synced-tomorrow'],
+    'and the seat still denies what the CLI announces after it was created');
+
+  const narrowed = await dialogDisabledSkills(box.engine, 'optimized', {
+    afterRender: (list) => {
+      const cb = list.children
+        .map((r) => r.children.find((x) => x.tagName === 'input'))
+        .find((c) => c && c.value === 'dataviz' && !c.disabled);
+      assert.ok(cb, 'ENTER: a toggleable row to untick');
+      cb.checked = false;
+    },
+  });
+  assert.ok(!skillDenyKeepList(narrowed.persisted).includes('dataviz'),
+    'the unticked row is dropped from the keeps');
+  assert.ok(narrowed.persisted.includes('*'), 'and the denial is still deferred');
+});
+
 test('t950: Check All in Preferences keeps every drawn skill and still denies the ones synced later', async () => {
   const box = freshBox();
   const floor = box.engine.stores.agentDefaults.getDefaultSkillDeny();
