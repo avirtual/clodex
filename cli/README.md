@@ -223,6 +223,34 @@ already has `--url` for the rare ad-hoc case.)
 The token travels **only** as an `Authorization: Bearer` header from
 in-process fetch — never in argv (ps-visible), never in a URL, never logged.
 
+## Resources
+
+`get` lists, `describe` composes one object. Both take the plural or the
+singular, and `<singular>/<name>` wherever `<singular> <name>` works. `-o wide`
+adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
+
+| Resource | `get` columns (`-o wide` adds) | `describe` target |
+|---|---|---|
+| `sessions` | NAME TYPE ACTIVITY CWD [WORKSPACE] | `describe session <name>` — the row, every field |
+| `workspaces` | ID NAME | `describe workspace <name>` |
+| `peers` | ID LABEL ONLINE HOST VERSION [URL, PLATFORM] | `describe peer <id>` — plus its sessions |
+| `teams` | NAME | `describe team <name>` — root, lead, roles, activity |
+| `tickets` | ID TEAM STATE TITLE [ASSIGNEE, BRANCH] | `describe ticket <id> [--team T]` — the full record |
+| `sandboxes` | ID LABEL | `describe sandbox <id>` — state, ref, sha, ports |
+| `agents` | NAME MODEL DESCRIPTION [TOOLS] | `describe agent <name>` — the definition verbatim |
+| `catalogs` | a labeled block (a singleton, no rows) | `describe catalogs` |
+
+`get tickets` shows the **open** board unless you pass `--state`; `-o json`
+sends no state and returns every one, the server's own default. A ticket id is
+unique per team, so an id on two boards answers with the teams to pick from
+(exit `2`) rather than guessing. `agents` is the **subagent library** — running
+agents are `get sessions`.
+
+Only `get sessions` and `get catalogs` run against a node of any version;
+every other resource needs the node's resources API: an
+older node, or one that simply does not have that resource (a headless node
+hosts no sandboxes), answers with the upgrade line and exit `1`.
+
 ## Verbs
 
 > **`clodexctl help <verb>` is the authoritative per-verb reference.** Help is
@@ -241,8 +269,14 @@ Read (all but `describe` support `-o json` — stable raw wire payload):
 | `get sessions [-n W] [-A] [-o wide\|name]` | `GET /api/sessions` (the `-n` filter is client-side) |
 | `get session <name>` | `GET /api/resources` (capability check) → `GET /api/sessions/:name` |
 | `get workspaces` | `GET /api/resources` → `GET /api/workspaces` |
+| `get peers` | `GET /api/resources` → `GET /api/peers` |
+| `get teams` | `GET /api/resources` → `GET /api/teams` |
+| `get tickets [--team T] [--state S]` | `GET /api/resources` → `GET /api/tickets?team=&state=` (human default `state=open`) |
+| `get sandboxes` | `GET /api/resources` → `GET /api/sandboxes` |
+| `get agents` | `GET /api/resources` → `GET /api/agents` |
 | `get catalogs` | `GET /api/catalogs` |
-| `describe session\|workspace <name>` / `describe catalogs` | the same routes, rendered as a labeled block (no `-o json`) |
+| `describe <singular> <name>` / `describe catalogs` | the same routes, `/:name` for a single object, rendered as a labeled block (no `-o json`) |
+| `ctx current` | none — prints the current context name from the local file (exit `5` when none) |
 | `api-resources` | `GET /api/resources` — what this node serves |
 | `version` | `GET /api/peer/hello` — client version plus the node's |
 | `logs <name> [--tail N] [-f\|--follow]` | `GET /api/resources` (capability check) → `GET /api/sessions/:name/transcript?limit=N` (+ `GET /api/events` when `-f`) |

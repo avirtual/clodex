@@ -55,6 +55,39 @@ test('ctx add/use/list/show/rm round-trip through the file', async () => {
   assert.strictEqual(JSON.parse(r.stdout).contexts.home, undefined);
 });
 
+test('ctx current prints the name ALONE, and follows ctx use', async () => {
+  const f = tmpCtx();
+  await cli(['ctx', 'add', 'home', '--url', 'http://127.0.0.1:7900'], f);
+  await cli(['ctx', 'add', 'work', '--url', 'http://127.0.0.1:7901'], f);
+  let r = await cli(['ctx', 'current'], f);
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, 'home\n', 'the name alone — kubectl config current-context');
+  assert.strictEqual(r.stderr, '');
+  r = await cli(['ctx', 'use', 'work'], f);
+  assert.strictEqual(r.code, 0);
+  r = await cli(['ctx', 'current'], f);
+  assert.strictEqual(r.stdout, 'work\n');
+});
+
+test('ctx current with no current context exits 5 and names the fix', async () => {
+  const f = tmpCtx();
+  let r = await cli(['ctx', 'current'], f);
+  assert.strictEqual(r.code, 5, 'EXIT.NOTFOUND — there is no current context to print');
+  assert.strictEqual(r.stdout, '', 'nothing on stdout, so `$(clodexctl ctx current)` is empty not garbage');
+  assert.match(r.stderr, /no current context \(clodexctl ctx use <name>\)/);
+
+  await cli(['ctx', 'add', 'home', '--url', 'http://127.0.0.1:7900'], f);
+  await cli(['ctx', 'rm', 'home'], f);
+  r = await cli(['ctx', 'current'], f);
+  assert.strictEqual(r.code, 5);
+});
+
+test('an unknown ctx subcommand lists current among the real ones', async () => {
+  const r = await cli(['ctx', 'nope'], tmpCtx());
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /unknown ctx subcommand: nope \(add\/use\/current\/list\/rm\/show\/import\/test\)/);
+});
+
 test('ctx add tunnel: greedy argv, {port} required', async () => {
   const f = tmpCtx();
   let r = await cli(['ctx', 'add', 'k8s', '--token', 't', '--tunnel', 'kubectl', 'port-forward', 'pod/x', '{port}:7900'], f);

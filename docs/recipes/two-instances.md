@@ -91,7 +91,10 @@ They are ordinary peers, over loopback:
 1. In A's Settings, add a peer at `http://127.0.0.1:<B's wire port>` with B's
    `CLODEX_REMOTE_TOKEN`, and **give that peer a label**. Use the same word B
    exports as `CLODEX_LABEL` — `box-b` — so the two names agree.
-2. Once the hello lands, B's agents appear in A's `[agent:who]` as
+2. Check the peer took, from either instance: `clodexctl get peers` against A's
+   wire prints `ID LABEL ONLINE HOST VERSION`, and `describe peer <id>` adds the
+   sessions B is running.
+3. Once the hello lands, B's agents appear in A's `[agent:who]` as
    `name@<that peer label>`, and A's agents dm them at that address:
 
 ```

@@ -9,11 +9,13 @@ router in both directions — every advertised `(resource, verb)` must answer
 something other than 404 on a fully-injected node, and every `name` must appear
 as a literal `/api/<name>` path in this file.
 
-A resource's LIST callback is the single gate for both its 501 and its absence
-from the document: `RESOURCE_CALLBACK` and every route branch read the same
-one, so a node cannot advertise a resource whose routes refuse. The single-get
-callback is never the gate — a node with a list and no get would otherwise
-advertise nothing while serving the list.
+`RESOURCE_CALLBACK` names ONE callback per resource, and that callback is the
+single gate for both the 501 and the absence from the document: every route
+branch of that resource reads the same one, so a node cannot advertise a
+resource whose routes refuse. For the six that list it is the LIST callback,
+never the single-get — a node with a list and no get would otherwise advertise
+nothing while serving the list; `catalogs` has no list, so its gate is its get
+callback. `sessions` names no callback at all and is therefore never absent.
 
 ## TICKET_ID_RE
 

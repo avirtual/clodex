@@ -5,6 +5,11 @@ const { CliError, EXIT } = require('./errors');
 const TABLE = [
   { plural: 'sessions', singular: 'session' },
   { plural: 'workspaces', singular: 'workspace' },
+  { plural: 'peers', singular: 'peer' },
+  { plural: 'teams', singular: 'team' },
+  { plural: 'tickets', singular: 'ticket' },
+  { plural: 'sandboxes', singular: 'sandbox' },
+  { plural: 'agents', singular: 'agent' },
   { plural: 'catalogs', singular: 'catalogs' },
 ];
 

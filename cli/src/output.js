@@ -55,6 +55,61 @@ function renderWorkspaces(workspaces) {
   return table(['ID', 'NAME'], rows);
 }
 
+function renderPeers(peers) {
+  const rows = (peers || []).map((p) => [
+    p.id || '',
+    p.label || '',
+    p.online ? 'true' : 'false',
+    p.host || '',
+    p.version || '',
+  ]);
+  return table(['ID', 'LABEL', 'ONLINE', 'HOST', 'VERSION'], rows);
+}
+
+function renderPeersWide(peers) {
+  const rows = (peers || []).map((p) => [
+    p.id || '',
+    p.label || '',
+    p.online ? 'true' : 'false',
+    p.host || '',
+    p.version || '',
+    p.url || '',
+    p.platform || '',
+  ]);
+  return table(['ID', 'LABEL', 'ONLINE', 'HOST', 'VERSION', 'URL', 'PLATFORM'], rows);
+}
+
+function renderTeams(teams) {
+  return table(['NAME'], (teams || []).map((t) => [t.name || '']));
+}
+
+function renderTickets(tickets) {
+  const rows = (tickets || []).map((t) => [t.id || '', t.team || '', t.state || '', t.title || '']);
+  return table(['ID', 'TEAM', 'STATE', 'TITLE'], rows);
+}
+
+function renderTicketsWide(tickets) {
+  const rows = (tickets || []).map((t) => [
+    t.id || '', t.team || '', t.state || '', t.title || '', t.assignee || '',
+    (t.worktree && t.worktree.branch) || '',
+  ]);
+  return table(['ID', 'TEAM', 'STATE', 'TITLE', 'ASSIGNEE', 'BRANCH'], rows);
+}
+
+function renderSandboxes(sandboxes) {
+  return table(['ID', 'LABEL'], (sandboxes || []).map((s) => [s.id || '', s.label || '']));
+}
+
+function renderAgents(agents) {
+  const rows = (agents || []).map((a) => [a.name || '', a.model || '', a.description || '']);
+  return table(['NAME', 'MODEL', 'DESCRIPTION'], rows);
+}
+
+function renderAgentsWide(agents) {
+  const rows = (agents || []).map((a) => [a.name || '', a.model || '', a.description || '', a.tools || '']);
+  return table(['NAME', 'MODEL', 'DESCRIPTION', 'TOOLS'], rows);
+}
+
 function renderResources(resources) {
   const rows = (resources || []).map((r) => [
     r.name || '',
@@ -72,6 +127,38 @@ function renderDescribe(obj) {
   return entries
     .map(([k, v]) => `${(k + ':').padEnd(w + 1)} ${describeValue(v)}`)
     .join('\n');
+}
+
+function describePeer(peer) {
+  const { sessions, ...rest } = peer || {};
+  const lines = [renderDescribe(rest), 'sessions:'];
+  for (const s of sessions || []) lines.push(`  ${(s && (s.name || s.id)) || ''}`);
+  return lines.join('\n');
+}
+
+function describeTeam(team) {
+  const { roles, activity, ...rest } = team || {};
+  const lines = [renderDescribe(rest), 'roles:'];
+  for (const [name, def] of Object.entries(roles || {})) lines.push(`  ${name}  ${describeValue(def)}`);
+  lines.push('activity:');
+  for (const [key, value] of Object.entries(activity || {})) {
+    if (key !== 'roles') { lines.push(`  ${key}  ${describeValue(value)}`); continue; }
+    lines.push('  roles:');
+    for (const [name, def] of Object.entries(value || {})) lines.push(`    ${name}  ${describeValue(def)}`);
+  }
+  return lines.join('\n');
+}
+
+function describeSandbox(sandbox) {
+  const { ports, ...rest } = sandbox || {};
+  const lines = [renderDescribe(rest), 'ports:'];
+  for (const [name, port] of Object.entries(ports || {})) lines.push(`  ${name}  ${describeValue(port)}`);
+  return lines.join('\n');
+}
+
+function describeAgent(agent) {
+  const { content, ...rest } = agent || {};
+  return `${renderDescribe(rest)}\n\n${content == null ? '' : String(content)}`;
 }
 
 function describeValue(v) {
@@ -114,4 +201,10 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
   };
 }
 
-module.exports = { jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces, renderResources, renderDescribe, renderTranscript, renderInfo, table, makePrinter };
+module.exports = {
+  jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
+  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes,
+  renderAgents, renderAgentsWide, renderResources, renderDescribe,
+  describePeer, describeTeam, describeSandbox, describeAgent,
+  renderTranscript, renderInfo, table, makePrinter,
+};

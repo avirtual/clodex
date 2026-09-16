@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createCtlService, tokenize, refuse, aliasCtx, ALLOWED, MAX_BLOCK_CHARS } = require('../ctl-service');
+const { createCtlService, tokenize, refuse, aliasCtx, ALLOWED, CTX_SUBS, MAX_BLOCK_CHARS } = require('../ctl-service');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpCtxFile() {
@@ -212,6 +212,23 @@ test('ctx use is STATEFUL across runs — the reason this is a REPL', async () =
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
   assert.strictEqual(onDisk.current, 'alpha');
   svc.dispose();
+});
+
+test('ctx current runs through the service, and CTX_SUBS is the full ctx family', async () => {
+  const { svc } = mkService();
+  const none = await svc.run('ctx current');
+  assert.strictEqual(none.exitCode, 5, 'no current context yet — EXIT.NOTFOUND');
+  assert.match(none.output, /no current context/);
+  assert.doesNotMatch(none.output, /unknown ctx subcommand/, 'runCtx admits it before the switch');
+
+  await svc.run('ctx add alpha --url http://alpha.example');
+  const b = await svc.run('ctx current');
+  assert.strictEqual(b.exitCode, 0, `ctx current ran (${b.output})`);
+  assert.strictEqual(b.output, 'alpha\n', 'the name alone, no refusal and no table');
+  svc.dispose();
+
+  assert.deepStrictEqual(CTX_SUBS,
+    ['add', 'use', 'current', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test']);
 });
 
 test('ctx show redacts the token, and the block is scrubbed besides', async () => {

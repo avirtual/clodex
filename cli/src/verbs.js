@@ -27,8 +27,68 @@ async function get({ client, ctx, printer, flags, args }) {
     if (target.name) throw new CliError(EXIT.USAGE, 'get workspaces takes no name (try: describe workspace <name>)');
     return getWorkspaces({ client, printer, flags, label });
   }
-  if (target.name) throw new CliError(EXIT.USAGE, 'get catalogs takes no name');
-  return getCatalogs({ client, printer, flags });
+  if (NODE_LISTS[target.resource]) {
+    if (target.name) {
+      throw new CliError(EXIT.USAGE,
+        `get ${target.plural} takes no name (try: describe ${target.singular} ${target.name})`);
+    }
+    return getNodeResource({ client, printer, flags, label, plural: target.plural, singular: target.singular });
+  }
+  if (target.resource === 'catalogs') {
+    if (target.name) throw new CliError(EXIT.USAGE, 'get catalogs takes no name');
+    return getCatalogs({ client, printer, flags });
+  }
+  throw new CliError(EXIT.USAGE, `get ${target.plural} is not supported (try: describe ${target.singular} <name>)`);
+}
+
+const NODE_LISTS = {
+  peers: { key: 'peers', plain: 'renderPeers', wide: 'renderPeersWide' },
+  teams: { key: 'teams', plain: 'renderTeams', wide: 'renderTeams' },
+  tickets: { key: 'tickets', plain: 'renderTickets', wide: 'renderTicketsWide' },
+  sandboxes: { key: 'sandboxes', plain: 'renderSandboxes', wide: 'renderSandboxes' },
+  agents: { key: 'agents', plain: 'renderAgents', wide: 'renderAgentsWide' },
+};
+
+const TICKET_ID_RE = /^t\d+$/;
+const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
+
+function ticketQuery(flags) {
+  const parts = [];
+  if (flags.team != null) parts.push(`team=${encodeURIComponent(String(flags.team))}`);
+  const state = ticketState(flags);
+  if (state != null) parts.push(`state=${encodeURIComponent(state)}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
+function ticketState(flags) {
+  if (flags.state == null) return flags.json ? null : 'open';
+  const want = String(flags.state);
+  if (!TICKET_STATES.includes(want)) {
+    throw new CliError(EXIT.USAGE, `unknown ticket state: ${want} (${TICKET_STATES.join('|')})`);
+  }
+  return want;
+}
+
+function requireTicketId(id) {
+  if (!TICKET_ID_RE.test(id)) throw new CliError(EXIT.USAGE, `not a ticket id: ${id} (ids look like t42)`);
+  return id;
+}
+
+function ambiguousTicket(e, id) {
+  const candidates = e && e.body && e.body.candidates;
+  if (!Array.isArray(candidates) || !candidates.length) return e;
+  return new CliError(EXIT.USAGE, `ticket ${id} exists in teams: ${candidates.join(', ')} — add --team`);
+}
+
+async function getNodeResource({ client, printer, flags, label, plural, singular }) {
+  const spec = NODE_LISTS[plural];
+  const query = plural === 'tickets' ? ticketQuery(flags) : '';
+  await R.requireResource(client, plural, 'list', label);
+  const body = await client.get(`/api/${plural}${query}`, `get ${plural}`);
+  const rows = body[spec.key] || [];
+  if (flags.json) { printer.json(body); return; }
+  if (flags.output === 'name') { printer.line(out.renderNames(singular, rows)); return; }
+  printer.line(out[flags.output === 'wide' ? spec.wide : spec.plain](rows));
 }
 
 async function getSessions({ client, printer, flags }) {
@@ -88,6 +148,9 @@ async function describe({ client, ctx, printer, flags, args }) {
     printer.line(out.renderDescribe(body.session || {}));
     return;
   }
+  if (NODE_DESCRIBERS[target.resource]) {
+    return describeNodeResource({ client, printer, label, plural: target.plural, singular: target.singular, name: target.name, flags });
+  }
   const name = target.name;
   if (!name) throw new CliError(EXIT.USAGE, 'describe workspace needs a name');
   await R.requireResource(client, 'workspaces', 'list', label);
@@ -95,6 +158,33 @@ async function describe({ client, ctx, printer, flags, args }) {
   const ws = (body.workspaces || []).find((w) => w.name === name || w.id === name);
   if (!ws) throw new CliError(EXIT.NOTFOUND, `describe workspace failed: no workspace ${name}`);
   printer.line(out.renderDescribe(ws));
+}
+
+const NODE_DESCRIBERS = {
+  peers: { key: 'peer', render: 'describePeer' },
+  teams: { key: 'team', render: 'describeTeam' },
+  tickets: { key: 'ticket', render: 'renderDescribe' },
+  sandboxes: { key: 'sandbox', render: 'describeSandbox' },
+  agents: { key: 'agent', render: 'describeAgent' },
+};
+
+async function describeNodeResource({ client, printer, label, plural, singular, name, flags }) {
+  if (name == null || name === '') throw new CliError(EXIT.USAGE, `describe ${singular} needs a name`);
+  const want = name;
+  const spec = NODE_DESCRIBERS[plural];
+  let query = '';
+  if (plural === 'tickets') {
+    requireTicketId(want);
+    query = flags.team != null ? `?team=${encodeURIComponent(String(flags.team))}` : '';
+  }
+  await R.requireResource(client, plural, 'get', label);
+  let body;
+  try {
+    body = await client.get(`/api/${plural}/${encodeURIComponent(want)}${query}`, `describe ${singular}`);
+  } catch (e) {
+    throw plural === 'tickets' ? ambiguousTicket(e, want) : e;
+  }
+  printer.line(out[spec.render](body[spec.key] || {}));
 }
 
 async function apiResources({ client, ctx, printer, flags }) {
@@ -596,6 +686,11 @@ function ctxUse({ store, saveStore, printer, args }) {
   printer.line(`current context: ${name}`);
 }
 
+function ctxCurrent({ store, printer }) {
+  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current context (clodexctl ctx use <name>)');
+  printer.line(store.current);
+}
+
 function ctxList({ store, printer, flags }) {
   const names = Object.keys(store.contexts);
   if (flags.json) { printer.json({ current: store.current, contexts: store.contexts }); return; }
@@ -710,7 +805,7 @@ module.exports = {
   info, get, describe, apiResources, version, filterWorkspace,
   logs, deltaFrom, query, argsGet, skills,
   spawn, send, input, exec, run, sessionType, kill, restart, argsSet, restartApp,
-  ctxAdd, ctxUse, ctxList, ctxRm, ctxShow, ctxImport,
+  ctxAdd, ctxUse, ctxCurrent, ctxList, ctxRm, ctxShow, ctxImport,
   entryKind, entryTarget,
   requireName, parseIntOr, QUERY_KINDS,
 };
