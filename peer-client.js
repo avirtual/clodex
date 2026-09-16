@@ -150,6 +150,7 @@ class PeerConnection {
     this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
     this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
     this.online = false;
+    this.needsUpgrade = false;        // far side is online but too old to serve the sessions subresource wire
     this.hello = null;                // { host, version, caps, platform, srcDir }
     this.sessions = [];               // last fetched session list
     this._helloTimer = null;
@@ -202,6 +203,7 @@ class PeerConnection {
       id: this.id, label: this.label, url: this.url,
       direct: this._direct,
       online: this.online,
+      needsUpgrade: this.needsUpgrade,
       host: this.hello ? this.hello.host : null,
       version: this.hello ? this.hello.version : null,
       caps: this.hello ? this.hello.caps : [],
@@ -252,6 +254,7 @@ class PeerConnection {
         const lostShell = prev && peerHasShellCap(prev.caps) && !peerHasShellCap(next.caps);
         this.hello = next;
         if (lostShell) this._dropAllWterm('revoked');
+        if (identityChanged) this._probeDialect(next);
         this._setOnline(true);
         if (wasOffline) {
           this._refreshSessions();
@@ -283,6 +286,27 @@ class PeerConnection {
       }
       this._helloTimer = setTimeout(() => this._helloLoop(), this._helloIntervalMs);
     });
+  }
+
+// One fetch per hello identity, not per tick: identityChanged already re-runs
+// on a version or caps change, which is every way the far side's dialect can
+// move under a live connection. A node whose hello carries no `resources` cap
+// is older than the document itself and needs no round trip to classify.
+  _probeDialect(hello) {
+    if (!(hello.caps || []).includes('resources')) return this._setNeedsUpgrade(true);
+    this._request('GET', '/api/resources', null, (err, body) => {
+      if (this._stopped) return;
+      if (err || !body || !body.ok) return;
+      const sessions = (body.resources || []).find((r) => r && r.name === 'sessions');
+      const subs = sessions && sessions.subresources;
+      this._setNeedsUpgrade(!(subs && Array.isArray(subs.attach)));
+    });
+  }
+
+  _setNeedsUpgrade(v) {
+    if (this.needsUpgrade === v) return;
+    this.needsUpgrade = v;
+    this._emit('peer-state', this.id, this.status());
   }
 
 // Both the hello-tick path and the SSE doorbell can fire for the same mail:
@@ -363,7 +387,7 @@ class PeerConnection {
     if (!att) return { ok: true };
     att.wanted = false;
     clearTimeout(att.timer);
-    if (att.token) this._request('POST', `/api/control/${encodeURIComponent(name)}`, { action: 'release', token: att.token }, () => {});
+    if (att.token) this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'release', token: att.token }, () => {});
     att.token = null;
     if (att.req) { try { att.req.destroy(); } catch {} att.req = null; }
     this._attachments.delete(name);
@@ -374,8 +398,15 @@ class PeerConnection {
     // opening guards the window between request start and onOpen — the
     // hello-loop wake path and the backoff timer can both land here.
     if (att.req || att.opening || !att.wanted || this._stopped) return;
+    // A node too old for the sessions subresource wire 404s every attach, and
+    // the backoff would hammer it forever. Report the upgrade once instead.
+    if (this.needsUpgrade) {
+      att.error = `${this.label} runs an older Clodex that does not serve sessions/attach — update it`;
+      return;
+    }
+    att.error = null;
     att.opening = true;
-    this._sse(`/api/attach/${encodeURIComponent(name)}`, {
+    this._sse(`/api/sessions/${encodeURIComponent(name)}/attach`, {
       onEvent: (event, data) => {
         if (event === 'replay') {
           // Fresh replay = fresh terminal: the renderer resets before
@@ -427,7 +458,7 @@ class PeerConnection {
     const att = this._attachments.get(name);
     if (!att) return cb({ ok: false, error: 'not attached' });
     if (on) {
-      this._request('POST', `/api/control/${encodeURIComponent(name)}`, { action: 'acquire', client: this.clientLabel() }, (err, body) => {
+      this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'acquire', client: this.clientLabel() }, (err, body) => {
         if (err || !body || !body.ok) return cb({ ok: false, error: err ? err.message : (body && body.error) || 'acquire failed' });
         att.token = body.token;
         cb({ ok: true });
@@ -436,14 +467,14 @@ class PeerConnection {
       const token = att.token;
       att.token = null;
       if (!token) return cb({ ok: true });
-      this._request('POST', `/api/control/${encodeURIComponent(name)}`, { action: 'release', token }, () => cb({ ok: true }));
+      this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'release', token }, () => cb({ ok: true }));
     }
   }
 
   input(name, data, cb) {
     const att = this._attachments.get(name);
     if (!att || !att.token) return cb({ ok: false, error: 'not in control' });
-    this._request('POST', `/api/input/${encodeURIComponent(name)}`, { token: att.token, data }, (err, body) => {
+    this._request('POST', `/api/sessions/${encodeURIComponent(name)}/input`, { token: att.token, data }, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
     });
   }
@@ -457,7 +488,7 @@ class PeerConnection {
   resize(name, cols, rows, cb) {
     const att = this._attachments.get(name);
     if (!att || !att.token) return cb({ ok: false, error: 'not in control' });
-    this._request('POST', `/api/resize/${encodeURIComponent(name)}`, { token: att.token, cols, rows }, (err, body) => {
+    this._request('POST', `/api/sessions/${encodeURIComponent(name)}/resize`, { token: att.token, cols, rows }, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
     });
   }
