@@ -214,20 +214,21 @@ test('ctx use is STATEFUL across runs — the reason this is a REPL', async () =
   svc.dispose();
 });
 
-test('CTX_SUBS is the full ctx family, and ctx current runs through the service', async () => {
-  assert.deepStrictEqual(CTX_SUBS,
-    ['add', 'use', 'current', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test']);
-
+test('ctx current runs through the service, and CTX_SUBS is the full ctx family', async () => {
   const { svc } = mkService();
   const none = await svc.run('ctx current');
   assert.strictEqual(none.exitCode, 5, 'no current context yet — EXIT.NOTFOUND');
   assert.match(none.output, /no current context/);
+  assert.doesNotMatch(none.output, /unknown ctx subcommand/, 'runCtx admits it before the switch');
 
   await svc.run('ctx add alpha --url http://alpha.example');
   const b = await svc.run('ctx current');
   assert.strictEqual(b.exitCode, 0, `ctx current ran (${b.output})`);
   assert.strictEqual(b.output, 'alpha\n', 'the name alone, no refusal and no table');
   svc.dispose();
+
+  assert.deepStrictEqual(CTX_SUBS,
+    ['add', 'use', 'current', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test']);
 });
 
 test('ctx show redacts the token, and the block is scrubbed besides', async () => {
