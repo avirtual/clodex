@@ -45,6 +45,9 @@ while `_spawnTicketSeat`'s synchronous reservation stub does not — so the reco
 answers "has a session ever existed under this name" with no second field to keep
 in sync. `ephemeral` alone cannot: a one-shot seat that genuinely died keeps its
 ephemeral record, and reading that as pending would freeze the degraded-pin
-inheritance `_ticketAssigneeSeat` depends on. Every rollback arm in
-`_spawnTicketSeat` removes the stub, so a failed mint leaves no ticket pinned to
-a name nothing will answer for.
+inheritance `_ticketAssigneeSeat` depends on.
+
+A quit or crash between the synchronous stub and `create()`'s `createdAt` write
+leaves a stub that suppresses the degrade for good, where the ticket used to be
+inherited. Bounded: `task start` on such a ticket refuses and names Delete
+Session…, which drops the record and restores the degrade.

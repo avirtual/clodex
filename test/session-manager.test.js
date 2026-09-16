@@ -8355,12 +8355,12 @@ function mkPersist(seed = {}) {
   };
 }
 
-const MINT_WEDGED_AT_TREE_ACQUISITION = { createWorktree: () => new Promise(() => {}) };
+const GIT_NEVER_REACHED_IN_THIS_SYNC_TEST = { createWorktree: () => new Promise(() => {}) };
 
 test('t937: a ticket whose seat is still being minted is NOT advanced onto a live sibling', () => {
   const P = mkPersist();
   const f = mkTasks({
-    getPersistence: () => P.api, gitWorktree: MINT_WEDGED_AT_TREE_ACQUISITION,
+    getPersistence: () => P.api, gitWorktree: GIT_NEVER_REACHED_IN_THIS_SYNC_TEST,
     AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
   });
   f.team.roles.hand.dispatch = 'worktree';
@@ -8446,6 +8446,36 @@ test('t937: _advanceSeat skips a queue head that resolves to another seat, and d
     'and delivers to nobody — dispatching here sends team-hand-2`s advance to team-hand-1');
   assert.strictEqual(f.one('t1').assignee, 'hand',
     'the assignee is left alone: the skip must not re-pin the ticket on its way past');
+});
+
+test('t937: the skip walks PAST a head owned elsewhere — the seat still gets its own ticket behind it', () => {
+  const P = mkPersist();
+  const f = mkTasks({ getPersistence: () => P.api });
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'filed against the role' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.seat('team-hand-1'); f.seat('team-hand-2');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand-2', id: null, body: 'the closer`s own queued work' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand-2', id: null, body: 'the ticket being closed' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't3', body: '' });
+
+  const queue = f.m._openTicketsFor(f.team, 'team-hand-2', 't3');
+  assert.deepStrictEqual(queue.map((t) => t.id), ['t1', 't2'],
+    'ENTER: a TWO-element queue whose HEAD is the foreign one — a one-element queue cannot tell a skip from an abort');
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), 'team-hand-1',
+    'ENTER: the head resolves to the other seat');
+  assert.strictEqual(f.one('t2').assignee, 'team-hand-2', 'ENTER: and element [1] is this seat`s own pinned ticket');
+  f.gated.length = 0;
+
+  const next = f.m._advanceSeat(f.team, 'team-hand-2', f.one('t3'));
+
+  assert.strictEqual(next && next.id, 't2',
+    'the foreign head is stepped over, not treated as the end of the queue — aborting here starves the seat until a human pokes it');
+  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]),
+    [['team-hand-2', replayBody('t2', 'the closer`s own queued work')]],
+    'and exactly its own ticket is delivered, to it');
+  assert.strictEqual(f.one('t1').assignee, 'hand', 'the ticket walked past keeps its assignee');
 });
 
 test('t89 reject WAKES the assignee: reopening a ticket is a work assignment, not a status notice', () => {
@@ -16018,7 +16048,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   m._sendToSession = () => {};
   const seat = (name, cwd = repo) => {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
-    if (upserted.includes(name)) persistence.upsert({ name, createdAt: CREATE_STAMPS_CREATED_AT });
+    persistence.upsert({ name, createdAt: CREATE_STAMPS_CREATED_AT });
     return m.sessions.get(name);
   };
   // The two teardowns a ticket seat actually gets, kept apart because the

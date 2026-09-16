@@ -3329,8 +3329,9 @@ function createTicketMethods(deps, shared) {
       };
       if (isRoleKey(a)) return firstSeatFor(a);
       if (live.includes(a)) return a;
+      if (ticket.worktree) return null;
       if (this._seatMintPending(a)) return a;
-      if (ticket.worktree || !isRoleKey(ticket.role)) return null;
+      if (!isRoleKey(ticket.role)) return null;
       return firstSeatFor(ticket.role);
     },
 
@@ -4391,7 +4392,8 @@ function createTicketMethods(deps, shared) {
     },
 
     // Every open ticket resolving to `seatName`, oldest first — advance takes the
-    // head, replay takes the whole list. ONE resolver on purpose: a second copy
+    // first that still resolves to the seat, replay walks the whole list. ONE
+    // resolver on purpose: a second copy
     // of the role-or-name match would let advance and replay disagree about which
     // tickets are a seat's, invisibly.
     // Order is FIFO by openedAt, ties broken by numeric id — array order is not
@@ -4459,11 +4461,11 @@ function createTicketMethods(deps, shared) {
     _advanceSeat(team, seatName, closed) {
       if (team && team.solo) return null;
       if (!ticketStarted(closed)) return null;
-      const next = this._openTicketsFor(team, seatName, closed && closed.id)[0];
+      const queue = this._openTicketsFor(team, seatName, closed && closed.id);
+      const next = queue.find((t) => this._ticketAssigneeSeat(team, t) === seatName);
       if (!next) return null;
-      if (this._ticketAssigneeSeat(team, next) !== seatName) {
-        log.info('intent', `advance for ${seatName} skipped ${next.id}: it resolves to another seat`);
-        return null;
+      if (next !== queue[0]) {
+        log.info('intent', `advance for ${seatName} skipped ${queue.indexOf(next)} ticket(s) ahead of ${next.id}: they resolve to another seat`);
       }
       // Handing a queued ticket to a seat IS its dispatch — the only one it gets —
       // so it re-pins like the two lead-driven paths. Reloaded from the store
