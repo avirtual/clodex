@@ -59,7 +59,7 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 }
 
 const RESOURCES = [
-  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { transcript: ['get'], query: ['post'] } },
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'] } },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
   { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
   { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
@@ -79,6 +79,15 @@ const RESOURCE_CALLBACK = {
   sandboxes: '_listSandboxes',
   agents: '_listAgents',
   catalogs: '_getCatalogs',
+};
+
+const SUBRESOURCE_CALLBACK = {
+  sessions: {
+    attach: '_getAttachInfo',
+    control: '_sendInput',
+    input: '_sendInput',
+    resize: '_resizePty',
+  },
 };
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
@@ -508,6 +517,15 @@ class RemoteServer {
     return RESOURCES.filter((r) => {
       const cb = RESOURCE_CALLBACK[r.name];
       return !cb || !!this[cb];
+    }).map((r) => {
+      if (!r.subresources) return r;
+      const gates = SUBRESOURCE_CALLBACK[r.name] || {};
+      const subresources = {};
+      for (const [sub, verbs] of Object.entries(r.subresources)) {
+        const cb = gates[sub];
+        if (!cb || this[cb]) subresources[sub] = verbs;
+      }
+      return { ...r, subresources };
     });
   }
 
@@ -603,6 +621,89 @@ class RemoteServer {
     });
   }
 
+  // Read side: raw PTY stream with best-effort scrollback replay. The
+  // replay reconstructs recent output, NOT exact terminal state — clients
+  // must reset their terminal before applying it, and re-replay on
+  // reconnect rather than resuming.
+  _handleAttach(name, req, res) {
+    if (!this._getAttachInfo) return this._json(res, 501, { ok: false, error: 'attach not available' });
+    const info = this._getAttachInfo(name);
+    if (!info || !info.ok) return this._json(res, 404, { ok: false, error: 'no such session' });
+    this._sse(req, res);
+    const cur = this._control.get(name);
+    const hello = {
+      b64: (info.scrollback || Buffer.alloc(0)).toString('base64'),
+      cols: info.cols || 80, rows: info.rows || 24,
+      holder: cur ? cur.client : null,
+    };
+    try { res.write(`event: replay\ndata: ${JSON.stringify(hello)}\n\n`); } catch {}
+    if (info.telemetry && (info.telemetry.proxy || info.telemetry.ctx)) {
+      try { res.write(`event: telemetry\ndata: ${JSON.stringify(info.telemetry)}\n\n`); } catch {}
+    }
+    let set = this._attach.get(name);
+    if (!set) { set = new Set(); this._attach.set(name, set); }
+    set.add(res);
+    this._clients.delete(res);   // attach feeds are per-session, not the global events feed
+    req.on('close', () => {
+      set.delete(res);
+      if (set.size === 0) { this._attach.delete(name); this._setControl(name, null); }
+    });
+  }
+
+  _handleControl(name, req, res) {
+    if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'control not available' });
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const info = this._getAttachInfo ? this._getAttachInfo(name) : null;
+      if (!info || !info.ok) return this._json(res, 404, { ok: false, error: 'no such session' });
+      if (msg.action === 'acquire') {
+        const client = String(msg.client || 'peer').slice(0, 64);
+        const token = crypto.randomBytes(16).toString('hex');
+        this._setControl(name, { token, client });
+        return this._json(res, 200, { ok: true, token });
+      }
+      if (msg.action === 'release') {
+        if (String(msg.token || '') !== this._controlToken(name)) {
+          return this._json(res, 403, { ok: false, error: 'not the control holder' });
+        }
+        this._setControl(name, null);
+        return this._json(res, 200, { ok: true });
+      }
+      return this._json(res, 400, { ok: false, error: 'bad action' });
+    });
+  }
+
+  _handleInput(name, req, res) {
+    if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'input not available' });
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      if (String(msg.token || '') !== this._controlToken(name)) {
+        return this._json(res, 403, { ok: false, error: 'not the control holder' });
+      }
+      const out = this._sendInput(name, String(msg.data || ''));
+      return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
+    });
+  }
+
+  _handleResize(name, req, res) {
+    if (!this._resizePty) return this._json(res, 501, { ok: false, error: 'resize not available' });
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      if (String(msg.token || '') !== this._controlToken(name)) {
+        return this._json(res, 403, { ok: false, error: 'not the control holder' });
+      }
+      const cols = parseInt(msg.cols, 10), rows = parseInt(msg.rows, 10);
+      if (!(cols >= 20 && cols <= 500 && rows >= 5 && rows <= 300)) {
+        return this._json(res, 400, { ok: false, error: 'bad dimensions' });
+      }
+      const out = this._resizePty(name, cols, rows);
+      return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
+    });
+  }
+
   _route(req, res) {
     if (!this._authGate(req, res)) return;
     const url = new URL(req.url, 'http://localhost');
@@ -643,6 +744,10 @@ class RemoteServer {
       if (req.method === 'GET' && sub === undefined) return this._handleSessionGet(name, res);
       if (req.method === 'GET' && sub === 'transcript') return this._handleTranscript(name, url, res);
       if (req.method === 'POST' && sub === 'query') return this._handleQuery(name, req, res);
+      if (req.method === 'GET' && sub === 'attach') return this._handleAttach(name, req, res);
+      if (req.method === 'POST' && sub === 'control') return this._handleControl(name, req, res);
+      if (req.method === 'POST' && sub === 'input') return this._handleInput(name, req, res);
+      if (req.method === 'POST' && sub === 'resize') return this._handleResize(name, req, res);
       return this._json(res, 404, { ok: false, error: 'not found' });
     }
     if (req.method === 'GET' && p === '/api/workspaces') {
@@ -689,94 +794,6 @@ class RemoteServer {
         // consumer distinguishes "this box has no wirescope" from "this box is
         // too old to say" — both mean no forward, but only one is a bug report.
         wirescope: this._wirescope(),
-      });
-    }
-    // Read side: raw PTY stream with best-effort scrollback replay. The
-    // replay reconstructs recent output, NOT exact terminal state — clients
-    // must reset their terminal before applying it, and re-replay on
-    // reconnect rather than resuming.
-    if (req.method === 'GET' && p.startsWith('/api/attach/')) {
-      if (!this._getAttachInfo) return this._json(res, 501, { ok: false, error: 'attach not available' });
-      const name = decodeURIComponent(p.slice('/api/attach/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      const info = this._getAttachInfo(name);
-      if (!info || !info.ok) return this._json(res, 404, { ok: false, error: 'no such session' });
-      this._sse(req, res);
-      const cur = this._control.get(name);
-      const hello = {
-        b64: (info.scrollback || Buffer.alloc(0)).toString('base64'),
-        cols: info.cols || 80, rows: info.rows || 24,
-        holder: cur ? cur.client : null,
-      };
-      try { res.write(`event: replay\ndata: ${JSON.stringify(hello)}\n\n`); } catch {}
-      if (info.telemetry && (info.telemetry.proxy || info.telemetry.ctx)) {
-        try { res.write(`event: telemetry\ndata: ${JSON.stringify(info.telemetry)}\n\n`); } catch {}
-      }
-      let set = this._attach.get(name);
-      if (!set) { set = new Set(); this._attach.set(name, set); }
-      set.add(res);
-      this._clients.delete(res);   // attach feeds are per-session, not the global events feed
-      req.on('close', () => {
-        set.delete(res);
-        if (set.size === 0) { this._attach.delete(name); this._setControl(name, null); }
-      });
-      return;
-    }
-    if (req.method === 'POST' && p.startsWith('/api/control/')) {
-      if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'control not available' });
-      const name = decodeURIComponent(p.slice('/api/control/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        const info = this._getAttachInfo ? this._getAttachInfo(name) : null;
-        if (!info || !info.ok) return this._json(res, 404, { ok: false, error: 'no such session' });
-        if (msg.action === 'acquire') {
-          const client = String(msg.client || 'peer').slice(0, 64);
-          const token = crypto.randomBytes(16).toString('hex');
-          this._setControl(name, { token, client });
-          return this._json(res, 200, { ok: true, token });
-        }
-        if (msg.action === 'release') {
-          if (String(msg.token || '') !== this._controlToken(name)) {
-            return this._json(res, 403, { ok: false, error: 'not the control holder' });
-          }
-          this._setControl(name, null);
-          return this._json(res, 200, { ok: true });
-        }
-        return this._json(res, 400, { ok: false, error: 'bad action' });
-      });
-    }
-    if (req.method === 'POST' && p.startsWith('/api/input/')) {
-      if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'input not available' });
-      const name = decodeURIComponent(p.slice('/api/input/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        if (String(msg.token || '') !== this._controlToken(name)) {
-          return this._json(res, 403, { ok: false, error: 'not the control holder' });
-        }
-        const out = this._sendInput(name, String(msg.data || ''));
-        return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
-      });
-    }
-    if (req.method === 'POST' && p.startsWith('/api/resize/')) {
-      if (!this._resizePty) return this._json(res, 501, { ok: false, error: 'resize not available' });
-      const name = decodeURIComponent(p.slice('/api/resize/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        if (String(msg.token || '') !== this._controlToken(name)) {
-          return this._json(res, 403, { ok: false, error: 'not the control holder' });
-        }
-        const cols = parseInt(msg.cols, 10), rows = parseInt(msg.rows, 10);
-        if (!(cols >= 20 && cols <= 500 && rows >= 5 && rows <= 300)) {
-          return this._json(res, 400, { ok: false, error: 'bad dimensions' });
-        }
-        const out = this._resizePty(name, cols, rows);
-        return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
       });
     }
     // ---- Peer terminal (t219) ----
