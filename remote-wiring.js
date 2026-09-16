@@ -64,6 +64,7 @@ function createRemoteWiring(deps) {
     });
   }
 
+  // An unrouted bash session leaves every stat below null — the viewer tolerates it.
   function sessionRow(sess) {
     const p = proxyPoller.snapshot(sess.name);
     let ctx = null;
@@ -156,8 +157,7 @@ function createRemoteWiring(deps) {
         // Agents AND bash: bash sessions are IPC-private (no registry/socket/who)
         // but ARE exposed on the peer surface for visibility/attach/control. The
         // wire payload carries sess.type so the viewer buckets bash like a local
-        // bash row (no ctx badge/telemetry — the stats below come back null for
-        // an unrouted bash session, which the viewer already tolerates).
+        // bash row.
         getSessions: () =>
           Array.from(manager.sessions.values())
             .filter(sess => !sess._dead)
