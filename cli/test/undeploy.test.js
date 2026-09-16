@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const U = require('../src/undeploy');
+const D = require('../src/deploy');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
 const { mkTmpRoot } = require('../../test/lib/tmp-roots');
@@ -200,6 +201,26 @@ test('undeploy node: a STORED flavor beats the transport — a kubectl node reco
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.match(r.stderr, /records deploy flavor "nomad", which this clodexctl cannot tear down/,
     'the inference is a fallback for a MISSING record, never an override of one — otherwise a newer clodexctl\'s node gets torn down by the wrong path');
+  assert.doesNotMatch(r.stderr, /inferred helm/, 'and it must not even claim to have inferred one');
+  assert.strictEqual(
+    D.inferDeployFromTransport('future', JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.future), null,
+    'the helper itself must refuse to infer past a stored flavor — this is the call undeploy makes before choosing a teardown');
+});
+
+test('undeploy node: a forced --helm on a recordless kubectl node claims NO record it does not have', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: {
+    kubectl: { target: 'svc/otherrelease', namespace: 'agents', context: 'prod' }, token: 'W',
+  } } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--helm', '--force'], { execFn: fakeHelm(rec), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /that context "mynode" records/,
+    'an INFERENCE must never be reported as something the context records — the word "records" is the claim, and the context records nothing');
+  assert.doesNotMatch(r.stdout, /inferred helm from its kubectl transport/,
+    'and nothing is inferred when the operator already named the flavor — the inference exists to fill a gap they just filled');
+  const uninstall = rec.calls.find((c) => c.join(' ').includes('helm uninstall'));
+  assert.ok(uninstall.join(' ').includes('uninstall mynode'),
+    'a forced flag tears down the name TYPED, not the svc/ release an inference would have preferred');
 });
 
 test('undeploy node: a flavor this build cannot tear down → USAGE by name', async () => {
