@@ -135,7 +135,7 @@ test('query: bad kind is a usage error (exit 2), no request made', async () => {
 // A no-op sleep so the post-spawn liveness check adds no wall-clock wait.
 const NOSLEEP = { sleepFn: async () => {} };
 
-test('spawn: model rides extraArgs, not a top-level field', async () => {
+test('create session: model rides extraArgs, not a top-level field', async () => {
   const { server, seen } = stub((req, res, rec) => {
     res.writeHead(200);
     // POST creates; the follow-up liveness GET must see the session alive.
@@ -145,7 +145,7 @@ test('spawn: model rides extraArgs, not a top-level field', async () => {
     res.end(JSON.stringify({ ok: true, name: 'b', type: 'claude', pid: 9 }));
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['spawn', 'b', '--cwd', '/w', '--type', 'claude', '--model', 'opus', '--arg', '--foo'], port, NOSLEEP);
+  const { code, stdout } = await cli(['create', 'session', 'b', '--cwd', '/w', '--type', 'claude', '--model', 'opus', '--arg', '--foo'], port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.strictEqual(seen[0].method, 'POST');
   assert.strictEqual(seen[0].url, '/api/sessions');
@@ -155,7 +155,7 @@ test('spawn: model rides extraArgs, not a top-level field', async () => {
   server.close();
 });
 
-test('spawn: dead-on-arrival child (gone from the live list) reports WHY, not a bare pid', async () => {
+test('create session: dead-on-arrival child (gone from the live list) reports WHY, not a bare pid', async () => {
   const { server, seen } = stub((req, res, rec) => {
     res.writeHead(200);
     // Spawn returns a pid, but the liveness GET shows the session already gone.
@@ -165,7 +165,7 @@ test('spawn: dead-on-arrival child (gone from the live list) reports WHY, not a 
     res.end(JSON.stringify({ ok: true, name: 'w2', type: 'claude', pid: 4242 }));
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['spawn', 'w2', '--cwd', '/w', '--type', 'claude'], port, NOSLEEP);
+  const { code, stdout } = await cli(['create', 'session', 'w2', '--cwd', '/w', '--type', 'claude'], port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.match(stdout, /exited immediately/);
   assert.match(stdout, /claude` CLI isn't installed on the node/);
@@ -177,14 +177,14 @@ test('spawn: dead-on-arrival child (gone from the live list) reports WHY, not a 
   server.close();
 });
 
-test('spawn --json: carries alive:false when the child is dead on arrival', async () => {
+test('create session --json: carries alive:false when the child is dead on arrival', async () => {
   const { server } = stub((req, res, rec) => {
     res.writeHead(200);
     if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [] }));
     res.end(JSON.stringify({ ok: true, name: 'w2', type: 'claude', pid: 4242 }));
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['spawn', 'w2', '--type', 'claude', '-o', 'json'], port, NOSLEEP);
+  const { code, stdout } = await cli(['create', 'session', 'w2', '--type', 'claude', '-o', 'json'], port, NOSLEEP);
   assert.strictEqual(code, 0);
   const obj = JSON.parse(stdout);
   assert.strictEqual(obj.alive, false);
@@ -192,7 +192,7 @@ test('spawn --json: carries alive:false when the child is dead on arrival', asyn
   server.close();
 });
 
-test('spawn: a liveness read failure stays optimistic (alive unknown → normal line)', async () => {
+test('create session: a liveness read failure stays optimistic (alive unknown → normal line)', async () => {
   let n = 0;
   const { server } = stub((req, res, rec) => {
     if (rec.method === 'GET' && rec.url === '/api/sessions') {
@@ -203,7 +203,7 @@ test('spawn: a liveness read failure stays optimistic (alive unknown → normal 
     n++;
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['spawn', 'w3', '--type', 'claude'], port, NOSLEEP);
+  const { code, stdout } = await cli(['create', 'session', 'w3', '--type', 'claude'], port, NOSLEEP);
   assert.strictEqual(code, 0);
   // Unknown liveness → we do NOT cry wolf; the normal spawned line stands.
   assert.match(stdout, /spawned w3 \(claude\) pid=7/);
@@ -211,8 +211,8 @@ test('spawn: a liveness read failure stays optimistic (alive unknown → normal 
   server.close();
 });
 
-// --- T46: spawn --env KEY=VALUE + the old-box ack-echo warning ---------------
-test('spawn --env: repeatable KEY=VALUE tokens ride body.env; ack echo matches → no warning', async () => {
+// --- T46: create session --env KEY=VALUE + the old-box ack-echo warning ---------------
+test('create session --env: repeatable KEY=VALUE tokens ride body.env; ack echo matches → no warning', async () => {
   const { server, seen } = stub((req, res, rec) => {
     res.writeHead(200);
     if (rec.method === 'GET' && rec.url === '/api/sessions') {
@@ -223,7 +223,7 @@ test('spawn --env: repeatable KEY=VALUE tokens ride body.env; ack echo matches �
   });
   const port = await listen(server);
   const { code, stdout } = await cli(
-    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'AWS_PROFILE=acct', '--env', 'AWS_ROLE_SESSION_NAME=w'],
+    ['create', 'session', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'AWS_PROFILE=acct', '--env', 'AWS_ROLE_SESSION_NAME=w'],
     port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(seen[0].body.env, { AWS_PROFILE: 'acct', AWS_ROLE_SESSION_NAME: 'w' });
@@ -232,20 +232,20 @@ test('spawn --env: repeatable KEY=VALUE tokens ride body.env; ack echo matches �
   server.close();
 });
 
-test('spawn --env: a value may contain "=" (split on the FIRST equals only)', async () => {
+test('create session --env: a value may contain "=" (split on the FIRST equals only)', async () => {
   const { server, seen } = stub((req, res, rec) => {
     res.writeHead(200);
     if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'bash' }] }));
     res.end(JSON.stringify({ ok: true, name: 'w', type: 'bash', pid: 3, envKeys: ['TOKEN'] }));
   });
   const port = await listen(server);
-  const { code } = await cli(['spawn', 'w', '--cwd', '/w', '--type', 'bash', '--env', 'TOKEN=a=b=c'], port, NOSLEEP);
+  const { code } = await cli(['create', 'session', 'w', '--cwd', '/w', '--type', 'bash', '--env', 'TOKEN=a=b=c'], port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(seen[0].body.env, { TOKEN: 'a=b=c' });
   server.close();
 });
 
-test('spawn --env: an OLD box (no envKeys in the ack) warns loudly that env was NOT applied', async () => {
+test('create session --env: an OLD box (no envKeys in the ack) warns loudly that env was NOT applied', async () => {
   const { server } = stub((req, res, rec) => {
     res.writeHead(200);
     if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'claude' }] }));
@@ -253,14 +253,14 @@ test('spawn --env: an OLD box (no envKeys in the ack) warns loudly that env was 
     res.end(JSON.stringify({ ok: true, name: 'w', type: 'claude', pid: 9 }));
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'AWS_PROFILE=acct'], port, NOSLEEP);
+  const { code, stdout } = await cli(['create', 'session', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'AWS_PROFILE=acct'], port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.match(stdout, /WARNING: env NOT applied — this node predates env support/);
   assert.match(stdout, /AWS_PROFILE/);
   server.close();
 });
 
-test('spawn --env: a box that DROPPED a key (sanitize/deny) warns naming just the missing key', async () => {
+test('create session --env: a box that DROPPED a key (sanitize/deny) warns naming just the missing key', async () => {
   const { server } = stub((req, res, rec) => {
     res.writeHead(200);
     if (rec.method === 'GET' && rec.url === '/api/sessions') return res.end(JSON.stringify({ ok: true, sessions: [{ name: 'w', type: 'claude' }] }));
@@ -269,7 +269,7 @@ test('spawn --env: a box that DROPPED a key (sanitize/deny) warns naming just th
   });
   const port = await listen(server);
   const { code, stdout } = await cli(
-    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
+    ['create', 'session', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
     port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.match(stdout, /WARNING: some env vars were NOT applied by the node \(rejected\/denied\): CLODEX_REMOTE_TOKEN/);
@@ -277,7 +277,7 @@ test('spawn --env: a box that DROPPED a key (sanitize/deny) warns naming just th
   server.close();
 });
 
-test('spawn --env --json: the mismatch warning is SUPPRESSED (raw-payload stdout stays clean JSON)', async () => {
+test('create session --env --json: the mismatch warning is SUPPRESSED (raw-payload stdout stays clean JSON)', async () => {
   // Review SHOULD-FIX 2: printer.line contaminates the --json wire-payload
   // contract. Even a DROPPED key (which loudly warns in human mode) must not print
   // a warning line to stdout under --json — the JSON already carries envKeys.
@@ -288,7 +288,7 @@ test('spawn --env --json: the mismatch warning is SUPPRESSED (raw-payload stdout
   });
   const port = await listen(server);
   const { code, stdout } = await cli(
-    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '-o', 'json', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
+    ['create', 'session', 'w', '--cwd', '/w', '--type', 'claude', '-o', 'json', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
     port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.doesNotMatch(stdout, /WARNING/, 'no human warning line under --json');
@@ -297,53 +297,53 @@ test('spawn --env --json: the mismatch warning is SUPPRESSED (raw-payload stdout
   server.close();
 });
 
-test('spawn --env: a shapeless token (no "=") is a usage error before any request', async () => {
+test('create session --env: a shapeless token (no "=") is a usage error before any request', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end('{}'); });
   const port = await listen(server);
-  const { code, stderr } = await cli(['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'JUSTAKEY'], port, NOSLEEP);
+  const { code, stderr } = await cli(['create', 'session', 'w', '--cwd', '/w', '--type', 'claude', '--env', 'JUSTAKEY'], port, NOSLEEP);
   assert.strictEqual(code, 2);
   assert.match(stderr, /--env must be KEY=VALUE/);
   assert.strictEqual(seen.length, 0); // rejected before the POST
   server.close();
 });
 
-test('send: fire-and-forget POST /api/sessions/:name/dm — the name rides the path, not the body', async () => {
+test('dm: fire-and-forget POST /api/sessions/:name/dm — the name rides the path, not the body', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true })); });
   const port = await listen(server);
-  const { code } = await cli(['send', 'b', 'fix', 'the', 'tests'], port);
+  const { code } = await cli(['dm', 'b', 'fix', 'the', 'tests'], port);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(seen.map((x) => `${x.method} ${x.url}`), ['GET /api/resources', 'POST /api/sessions/b/dm']);
   assert.deepStrictEqual(seen[1].body, { text: 'fix the tests' });
   server.close();
 });
 
-test('send: a node whose sessions row carries no dm subresource is the D.5 line, exit 1', async () => {
+test('dm: a node whose sessions row carries no dm subresource is the D.5 line, exit 1', async () => {
   const { server, seen } = stub((req, res, rec) => {
     if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['send'] })); }
     res.writeHead(200); res.end('{}');
   }, { doc: docWithout('dm') });
   const port = await listen(server);
-  const { code, stderr } = await cli(['send', 'b', 'hi'], port);
+  const { code, stderr } = await cli(['dm', 'b', 'hi'], port);
   assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
   assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/dm post; run: clodexctl upgrade node http://127.0.0.1:' + port);
   assert.ok(!seen.some((s) => s.method === 'POST'), 'the check ran BEFORE the send');
   server.close();
 });
 
-test('restart: a node whose sessions row carries no restart subresource is the D.5 line, exit 1', async () => {
+test('restart session: a node whose sessions row carries no restart subresource is the D.5 line, exit 1', async () => {
   const { server, seen } = stub((req, res, rec) => {
     if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['create'] })); }
     res.writeHead(200); res.end('{}');
   }, { doc: docWithout('restart') });
   const port = await listen(server);
-  const { code, stderr } = await cli(['restart', 'b'], port);
+  const { code, stderr } = await cli(['restart', 'session', 'b'], port);
   assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
   assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/restart post; run: clodexctl upgrade node http://127.0.0.1:' + port);
   assert.ok(!seen.some((s) => s.method === 'POST'), 'the check ran BEFORE the restart');
   server.close();
 });
 
-test('args set: a node whose args subresource carries no patch verb is the D.5 line, exit 1', async () => {
+test('patch session: a node whose args subresource carries no patch verb is the D.5 line, exit 1', async () => {
   const doc = docWithout('args');
   doc.resources[0].subresources.args = ['get'];
   const { server, seen } = stub((req, res, rec) => {
@@ -351,20 +351,20 @@ test('args set: a node whose args subresource carries no patch verb is the D.5 l
     res.writeHead(200); res.end('{}');
   }, { doc });
   const port = await listen(server);
-  const { code, stderr } = await cli(['args', 'set', 'b', '--arg', '--x'], port);
+  const { code, stderr } = await cli(['patch', 'session', 'b', '--arg', '--x'], port);
   assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
   assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/args patch; run: clodexctl upgrade node http://127.0.0.1:' + port);
   assert.ok(!seen.some((s) => s.method === 'PATCH'), 'the check ran BEFORE the write');
   server.close();
 });
 
-test('kill: a node whose sessions row carries no delete verb is the D.5 line, exit 1', async () => {
+test('delete session: a node whose sessions row carries no delete verb is the D.5 line, exit 1', async () => {
   const { server, seen } = stub((req, res, rec) => {
     if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['create'] })); }
     res.writeHead(200); res.end('{}');
   }, { doc: docWithoutVerb('delete') });
   const port = await listen(server);
-  const { code, stderr } = await cli(['kill', 'doomed', '--force'], port);
+  const { code, stderr } = await cli(['delete', 'session', 'doomed', '--force'], port);
   assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
   assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions delete; run: clodexctl upgrade node http://127.0.0.1:' + port);
   assert.ok(!seen.some((s) => s.method === 'DELETE'), 'the check ran BEFORE the delete');
@@ -426,35 +426,35 @@ test('input: a node whose sessions row carries no control subresource is the D.5
   server.close();
 });
 
-test('kill: confirm prompt gate — matching name proceeds; mismatch aborts', async () => {
+test('delete session: confirm prompt gate — matching name proceeds; mismatch aborts', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true, name: 'doomed' })); });
   const port = await listen(server);
   // matching answer → proceeds
-  const ok = await cli(['kill', 'doomed'], port, { prompt: async () => 'doomed' });
+  const ok = await cli(['delete', 'session', 'doomed'], port, { prompt: async () => 'doomed' });
   assert.strictEqual(ok.code, 0);
   assert.deepStrictEqual(seen.map((x) => `${x.method} ${x.url}`), ['GET /api/resources', 'DELETE /api/sessions/doomed']);
   // mismatched answer → aborts with usage error; only the capability check rode the wire
-  const bad = await cli(['kill', 'doomed'], port, { prompt: async () => 'nope' });
+  const bad = await cli(['delete', 'session', 'doomed'], port, { prompt: async () => 'nope' });
   assert.strictEqual(bad.code, 2);
   assert.match(bad.stderr, /confirmation did not match/);
   assert.deepStrictEqual(seen.slice(2).map((x) => `${x.method} ${x.url}`), ['GET /api/resources'], 'the abort sent no delete');
   server.close();
 });
 
-test('kill --force: no prompt, hard-delete message', async () => {
+test('delete session --force: no prompt, hard-delete message', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true, name: 'doomed' })); });
   const port = await listen(server);
-  const { code, stdout } = await cli(['kill', 'doomed', '--force'], port);
+  const { code, stdout } = await cli(['delete', 'session', 'doomed', '--force'], port);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(seen.map((x) => `${x.method} ${x.url}`), ['GET /api/resources', 'DELETE /api/sessions/doomed']);
-  assert.match(stdout, /hard delete/);
+  assert.match(stdout, /^deleted doomed \(hard delete — not resumable\)/);
   server.close();
 });
 
-test('kill --json without --force is a usage error (no request)', async () => {
+test('delete session --json without --force is a usage error (no request)', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end('{}'); });
   const port = await listen(server);
-  const { code, stderr } = await cli(['kill', 'doomed', '-o', 'json'], port);
+  const { code, stderr } = await cli(['delete', 'session', 'doomed', '-o', 'json'], port);
   assert.strictEqual(code, 2);
   assert.match(stderr, /--force/);
   assert.strictEqual(seen.length, 0);

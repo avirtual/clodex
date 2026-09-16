@@ -17,8 +17,8 @@ const { EXIT } = require('./errors');
 const VERSION = `clodexctl ${pkg.version}`;
 
 // ── the registry ─────────────────────────────────────────────────────────────
-// One entry per top-level verb users TYPE (multi-word families — ctx, args,
-// deploy — are one entry at the granularity `help <verb>` is invoked). Fields:
+// One entry per top-level verb users TYPE (multi-word families — ctx, deploy, the
+// resource-word verbs — are one entry at the granularity `help <verb>` is invoked). Fields:
 //   name, group, summary (one line, for the index)
 //   usage       one or more invocation lines
 //   args        [placeholder, desc] positional arguments
@@ -29,26 +29,6 @@ const VERSION = `clodexctl ${pkg.version}`;
 //   notes       gotchas the accuracy pass surfaced
 const VERB_REGISTRY = [
   // ── daily ──────────────────────────────────────────────────────────────
-  {
-    name: 'run', group: 'daily',
-    summary: 'make a session do something and show the result',
-    usage: 'run <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [-o json]',
-    args: [['name', 'target session'], ['text…', 'a prompt (agent) or a command (bash)']],
-    flags: [
-      ['--timeout N', 'seconds — hard ceiling on the whole verb (agent: 300, bash-exec: 30)'],
-      ['--quiet-ms N', 'bash path: idle window that ends collection (default 750)'],
-      ['--raw', 'bash path: keep ANSI (default strips it)'],
-    ],
-    examples: [
-      'clodexctl run builder "npm test"',
-      'clodexctl run bob "summarize docs/architecture.md" --timeout 600',
-    ],
-    notes: [
-      'ROUTES by the session\'s authoritative type (one GET /api/sessions): an agent (claude/codex/anything not bash) gets a prompt + waits for the turn to end, then prints the reply; a bash session runs the command and prints the terminal output.',
-      '-o json carries mode:"agent"|"pty" so a script can tell which path ran.',
-      'run ALWAYS executes — there is no --no-enter (use `input` for raw partial keystrokes).',
-    ],
-  },
   {
     name: 'get', group: 'daily',
     summary: 'list or fetch a resource',
@@ -62,6 +42,7 @@ const VERB_REGISTRY = [
       'get sandboxes [-o json|wide|name]',
       'get agents [-o json|wide|name]',
       'get catalogs [-o json]',
+      'get session <name> --subresource skills|args|transcript',
     ],
     args: [['resource', 'sessions|workspaces|peers|teams|tickets|sandboxes|agents|catalogs (singular accepted too)'], ['name', 'one object (also accepted as session/<name>)']],
     flags: [
@@ -70,6 +51,7 @@ const VERB_REGISTRY = [
       ['--team T', 'tickets only — one team\'s board'],
       ['--state S', 'tickets only — open|done|cancelled|all (human default: open)'],
       ['-o FORMAT', 'json (raw wire payload) | wide (extra columns) | name (<singular>/<id> per line)'],
+      ['--subresource S', 'sessions only — read one subresource of a named session: skills|args|transcript'],
     ],
     examples: [
       'clodexctl get sessions',
@@ -77,6 +59,8 @@ const VERB_REGISTRY = [
       'clodexctl get session bob -o json',
       'clodexctl get tickets --team clodex --state open',
       'clodexctl get sessions -o name | xargs -n1 clodexctl logs',
+      'clodexctl get session bob --subresource skills',
+      'clodexctl get session bob --subresource args',
     ],
     notes: [
       'get sessions and get catalogs run against a node of ANY version. Every other resource needs the resources API — an older node, or one that does not serve that resource (a headless node has no sandboxes), answers with the upgrade line and exit 1.',
@@ -84,6 +68,61 @@ const VERB_REGISTRY = [
       'Default columns: sessions NAME TYPE ACTIVITY CWD; workspaces ID NAME; peers ID LABEL ONLINE HOST VERSION; teams NAME; tickets ID TEAM STATE TITLE; sandboxes ID LABEL; agents NAME MODEL DESCRIPTION.',
       '-o wide adds: sessions WORKSPACE; peers URL PLATFORM; tickets ASSIGNEE BRANCH; agents TOOLS. workspaces, teams and sandboxes have no wide columns.',
       'get tickets without --state shows the OPEN board; -o json sends no state and returns every state, the server\'s own default. A ticket id (t42) and a --state value are both checked here, before any request.',
+      '--subresource skills|args print the raw JSON payload; --subresource transcript is a one-shot read of the same transcript `logs` reads (use `logs -f` to follow; -f here is forced off, not honoured). -o wide|name are accepted by the parser and ignored on all three: skills and args are always JSON, transcript renders exactly as `logs` does.',
+    ],
+  },
+  {
+    name: 'exec', group: 'daily',
+    summary: 'make a session do something and show the result',
+    usage: 'exec <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--pty] [-o json]',
+    args: [['name', 'target session'], ['text…', 'a prompt (agent) or a command (bash)']],
+    flags: [
+      ['--timeout N', 'seconds — hard ceiling on the whole verb (agent: 300, bash/pty: 30)'],
+      ['--quiet-ms N', 'pty mode: idle window that ends collection (default 750)'],
+      ['--raw', 'pty mode: keep ANSI (default strips it)'],
+      ['--pty', 'force the PTY mode — type into the live TUI screen of an AGENT (deliberate)'],
+    ],
+    examples: [
+      'clodexctl exec builder "npm test"',
+      'clodexctl exec bob "summarize docs/architecture.md" --timeout 600',
+      'clodexctl exec bob y --pty',
+      'clodexctl exec builder -- grep -n foo file',
+    ],
+    notes: [
+      'ROUTES by the session\'s authoritative type (one GET /api/sessions): an agent (claude/codex/anything not bash) gets a prompt + waits for the turn to end, then prints the reply; a bash session runs the command in its PTY and prints the terminal output.',
+      '--pty takes the PTY path whatever the type — the way to answer a dialog on an agent. It skips the type lookup entirely.',
+      '-o json carries mode:"agent"|"pty" so a script can tell which path ran.',
+      'exec ALWAYS executes — there is no --no-enter (use `input` for raw partial keystrokes). Use -- before a command with dashes.',
+      'In pty mode exit reflects DELIVERY (typed + went quiet), NOT the remote command\'s status — screen bytes carry no exit code. The echoed command + prompt are part of the printed output (honest terminal truth).',
+    ],
+  },
+  {
+    name: 'logs', group: 'daily',
+    summary: 'print a transcript slice, or follow it live',
+    usage: 'logs <name> [--tail N] [-f|--follow] [-o json]',
+    args: [['name', 'session whose transcript to read']],
+    flags: [
+      ['--tail N', 'last N entries (default: the server\'s slice)'],
+      ['-f, --follow', 'kubectl -f: print the tail, then stream new entries as each turn lands'],
+    ],
+    examples: ['clodexctl logs bob --tail 20', 'clodexctl logs bob -f -o json | jq'],
+    notes: [
+      'follow subscribes to /api/events and refetches the delta on an activity for NAME. Ctrl-C exits 0 (it\'s a pager); non-TTY stdout is fine (pipe into grep).',
+      '-o json = messages array one-shot; -o json with --follow = NDJSON (one object per entry).',
+      'Survives a dropped stream (60s staleness watchdog + bounded reconnect); a reconnect re-snapshots silently (no duplicate lines).',
+    ],
+  },
+  {
+    name: 'attach', group: 'daily',
+    summary: 'open a LIVE terminal on a session (ssh-for-agents)',
+    usage: 'attach <name> [--read-only]',
+    args: [['name', 'session to attach to (any type, any transport)']],
+    flags: [['--read-only', 'mirror the screen without taking control (shoulder-surfing)']],
+    examples: ['clodexctl attach worker', 'clodexctl attach worker --read-only'],
+    notes: [
+      'Streams the screen (best-effort scrollback replay, then raw output) and forwards your keystrokes. Ctrl-\\ detaches and is never sent to the remote.',
+      'Needs a REAL TTY on stdin and stdout (exit 2 otherwise — use exec/logs for scripting).',
+      'exec = ask and wait; attach = be there. Survives a dropped stream (auto reconnect + full re-replay). Replay is recent scrollback, NOT exact terminal state.',
     ],
   },
   {
@@ -118,35 +157,6 @@ const VERB_REGISTRY = [
     notes: ['-V/--version prints the client line alone and opens no wire; `version` asks the node too.'],
   },
   {
-    name: 'logs', group: 'daily',
-    summary: 'print a transcript slice, or follow it live',
-    usage: 'logs <name> [--tail N] [-f|--follow] [-o json]',
-    args: [['name', 'session whose transcript to read']],
-    flags: [
-      ['--tail N', 'last N entries (default: the server\'s slice)'],
-      ['-f, --follow', 'kubectl -f: print the tail, then stream new entries as each turn lands'],
-    ],
-    examples: ['clodexctl logs bob --tail 20', 'clodexctl logs bob -f -o json | jq'],
-    notes: [
-      'follow subscribes to /api/events and refetches the delta on an activity for NAME. Ctrl-C exits 0 (it\'s a pager); non-TTY stdout is fine (pipe into grep).',
-      '-o json = messages array one-shot; -o json with --follow = NDJSON (one object per entry).',
-      'Survives a dropped stream (60s staleness watchdog + bounded reconnect); a reconnect re-snapshots silently (no duplicate lines).',
-    ],
-  },
-  {
-    name: 'attach', group: 'daily',
-    summary: 'open a LIVE terminal on a session (ssh-for-agents)',
-    usage: 'attach <name> [--read-only]',
-    args: [['name', 'session to attach to (any type, any transport)']],
-    flags: [['--read-only', 'mirror the screen without taking control (shoulder-surfing)']],
-    examples: ['clodexctl attach worker', 'clodexctl attach worker --read-only'],
-    notes: [
-      'Streams the screen (best-effort scrollback replay, then raw output) and forwards your keystrokes. Ctrl-\\ detaches and is never sent to the remote.',
-      'Needs a REAL TTY on stdin and stdout (exit 2 otherwise — use run/logs for scripting).',
-      'run = ask and wait; attach = be there. Survives a dropped stream (auto reconnect + full re-replay). Replay is recent scrollback, NOT exact terminal state.',
-    ],
-  },
-  {
     name: 'web', group: 'daily',
     summary: 'open the node\'s web GUI in your browser',
     usage: 'web [ctx] [--port N] [--no-open]',
@@ -172,54 +182,73 @@ const VERB_REGISTRY = [
 
   // ── sessions ───────────────────────────────────────────────────────────
   {
-    name: 'spawn', group: 'sessions',
-    summary: 'create a new session on the node',
-    usage: 'spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json]',
-    args: [['name', 'new session name ([a-zA-Z0-9._-], 1-64)']],
+    name: 'create', group: 'sessions',
+    summary: 'create a resource on the node',
+    usage: 'create session <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json]',
+    args: [['resource', 'session (singular or plural spelling)'], ['name', 'new session name ([a-zA-Z0-9._-], 1-64)']],
     flags: [
       ['--cwd DIR', 'working directory for the session'],
       ['--type T', 'claude | codex | bash'],
       ['--model M', 'agent model (rides extraArgs, same as any raw CLI flag)'],
       ['--arg X', 'raw passthrough CLI arg — repeatable (rides extraArgs)'],
-      ['--env KEY=VALUE', 'session env var — repeatable. Merged over the node\'s global/workspace scopes. The node re-validates + deny-lists; the ack echoes the keys actually applied and spawn warns loudly if any were dropped.'],
+      ['--env KEY=VALUE', 'session env var — repeatable. Merged over the node\'s global/workspace scopes. The node re-validates + deny-lists; the ack echoes the keys actually applied and create warns loudly if any were dropped.'],
       ['--fork', 'fork mode (agents)'],
     ],
     examples: [
-      'clodexctl spawn worker --cwd /home/clodex/work --type claude',
-      'clodexctl spawn b --cwd /w --type claude --model opus --arg --foo',
-      'clodexctl spawn w --cwd /w --type claude --env AWS_PROFILE=acct --env AWS_ROLE_SESSION_NAME=w',
+      'clodexctl create session worker --cwd /home/clodex/work --type claude',
+      'clodexctl create session b --cwd /w --type claude --model opus --arg --foo',
+      'clodexctl create session w --cwd /w --type claude --env AWS_PROFILE=acct --env AWS_ROLE_SESSION_NAME=w',
     ],
     notes: [
-      'Post-spawn liveness check: a child that dies on exec (e.g. the agent CLI isn\'t on the node\'s PATH) STILL returns a pid, so spawn waits a beat and re-checks the live list — gone → it says WHY instead of reporting a dead pid.',
-      '--env is applied ONLY at create (spawn); `run`/`send` target an existing session and cannot change its env. A node predating env support drops the keys silently on its side — spawn detects the missing ack echo and warns.',
+      'Post-create liveness check: a child that dies on exec (e.g. the agent CLI isn\'t on the node\'s PATH) STILL returns a pid, so create waits a beat and re-checks the live list — gone → it says WHY instead of reporting a dead pid.',
+      '--env is applied ONLY at create; `exec`/`dm` target an existing session and cannot change its env. A node predating env support drops the keys silently on its side — create detects the missing ack echo and warns.',
+      'Only `session` is creatable today; any other resource word is a usage error naming what is supported.',
     ],
   },
   {
-    name: 'kill', group: 'sessions',
-    summary: 'HARD DELETE a session on the engine (no resume)',
-    usage: 'kill <name> [--force] [-o json]',
-    args: [['name', 'session to delete']],
+    name: 'delete', group: 'sessions',
+    summary: 'HARD DELETE a resource on the engine (no resume)',
+    usage: 'delete session <name> [--force] [-o json]',
+    args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to delete']],
     flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json)']],
-    examples: ['clodexctl kill doomed', 'clodexctl kill doomed --force -o json'],
+    examples: ['clodexctl delete session doomed', 'clodexctl delete session doomed --force -o json'],
     notes: [
       'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In -o json/non-interactive mode --force is required (there is no prompt to answer).',
     ],
   },
   {
     name: 'restart', group: 'sessions',
-    summary: 'restart a session (resume, or a fresh conversation)',
-    usage: 'restart <name> [--fresh] [-o json]',
-    args: [['name', 'session to restart']],
-    flags: [['--fresh', 'start a NEW conversation (default resumes the existing one)']],
-    examples: ['clodexctl restart bob', 'clodexctl restart bob --fresh'],
+    summary: 'restart a session, or the whole node',
+    usage: [
+      'restart session <name> [--fresh] [-o json]',
+      'restart node [--force] [-o json]',
+    ],
+    args: [['resource', 'session | node — REQUIRED (a bare `restart <name>` is a usage error)'], ['name', 'session to restart (session form only)']],
+    flags: [
+      ['--fresh', 'session form: start a NEW conversation (default resumes the existing one)'],
+      ['--force', 'node form: skip the confirm (REQUIRED with -o json)'],
+    ],
+    examples: ['clodexctl restart session bob', 'clodexctl restart session bob --fresh', 'clodexctl restart node --force'],
+    notes: [
+      'The resource word is mandatory — the two forms do very different things and a bare name would silently pick one.',
+      'restart node relaunches the whole engine — every session respawns and the wire drops out from under every client. Confirms unless --force.',
+    ],
   },
   {
-    name: 'restart-app', group: 'sessions',
-    summary: 'relaunch the WHOLE engine',
-    usage: 'restart-app [--force] [-o json]',
-    flags: [['--force', 'skip the confirm (REQUIRED with -o json)']],
-    examples: ['clodexctl restart-app --force'],
-    notes: ['Relaunches the whole engine — every session respawns and the wire drops out from under every client. Confirms unless --force.'],
+    name: 'patch', group: 'sessions',
+    summary: 'patch a resource — only the keys you pass change',
+    usage: 'patch session <name> [--arg X…] [--proxy URL] [--restart] [-o json]',
+    args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to patch']],
+    flags: [
+      ['--arg X', 'set extraArgs — repeatable (replaces the whole list)'],
+      ['--proxy URL', 'set the session proxy'],
+      ['--restart', 'respawn the session so the new args take effect'],
+    ],
+    examples: ['clodexctl patch session bob --arg --model --arg opus --restart'],
+    notes: [
+      'Needs at least one of --arg / --proxy / --restart. Undefined keys are left untouched owner-side.',
+      'To READ the same args: clodexctl get session <name> --subresource args.',
+    ],
   },
   {
     name: 'query', group: 'sessions',
@@ -232,29 +261,6 @@ const VERB_REGISTRY = [
     ],
     examples: ['clodexctl query bob report', 'clodexctl query bob filePeek --path src/main.js'],
     notes: ['Output is always JSON — these are structured telemetry payloads with no compact human form.'],
-  },
-  {
-    name: 'skills', group: 'sessions',
-    summary: 'the session\'s skill catalog (JSON)',
-    usage: 'skills <name>',
-    args: [['name', 'session whose skill catalog to read']],
-    examples: ['clodexctl skills bob'],
-  },
-  {
-    name: 'args', group: 'sessions',
-    summary: 'read or patch a session\'s launch args',
-    usage: 'args <get|set> <name> [flags]',
-    subcommands: [
-      ['args get <name>', 'the session\'s current args (JSON)'],
-      ['args set <name> [--arg X…] [--proxy URL] [--restart]', 'patch args — only the keys you pass change'],
-    ],
-    flags: [
-      ['--arg X', 'set extraArgs — repeatable (replaces the whole list)'],
-      ['--proxy URL', 'set the session proxy'],
-      ['--restart', 'respawn the session so the new args take effect'],
-    ],
-    examples: ['clodexctl args get bob', 'clodexctl args set bob --arg --model --arg opus --restart'],
-    notes: ['`set` needs at least one of --arg / --proxy / --restart. Undefined keys are left untouched owner-side.'],
   },
 
   // ── contexts ───────────────────────────────────────────────────────────
@@ -418,18 +424,14 @@ const VERB_REGISTRY = [
 
   // ── plumbing ───────────────────────────────────────────────────────────
   {
-    name: 'send', group: 'plumbing',
-    summary: 'DM an agent (fire-and-forget, or wait for the turn)',
-    usage: 'send <name> <text…> [--wait [--timeout N]] [-o json]',
+    name: 'dm', group: 'plumbing',
+    summary: 'DM an agent, fire-and-forget',
+    usage: 'dm <name> <text…> [-o json]',
     args: [['name', 'target agent'], ['text…', 'the message']],
-    flags: [
-      ['--wait', 'block until the agent\'s turn ends, then print the new entries'],
-      ['--timeout N', 'seconds to wait with --wait (default 300)'],
-    ],
-    examples: ['clodexctl send bob "status?"', 'clodexctl send bob "run the build" --wait'],
+    examples: ['clodexctl dm bob "status?"'],
     notes: [
-      'Prefer `run` — on an agent, run IS this send --wait path.',
-      '--wait means "the agent went IDLE" (turn ended), NOT "declared the work done" — a long task that parks mid-work still ends its turn. The formal completion contract is T38.',
+      'Fire-and-forget only — it returns as soon as the node accepts the message. To send and WAIT for the reply use `exec <name> <text…>`, which is this POST plus the turn-end wait.',
+      '--wait is not a flag here and is a usage error naming exec.',
     ],
   },
   {
@@ -441,24 +443,6 @@ const VERB_REGISTRY = [
     examples: ['clodexctl input bob "yes"', 'clodexctl input bob $\'\\x1b[A\' --no-enter'],
     notes: [
       'The deliberate LOW-LEVEL channel — no agent guardrail. Acquires + releases control around the write. "Send a command" means run it, so Enter is appended unless --no-enter (partial input / key sequences).',
-    ],
-  },
-  {
-    name: 'exec', group: 'plumbing',
-    summary: 'run one command in a session\'s PTY, print the output',
-    usage: 'exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty] [-o json]',
-    args: [['name', 'target session'], ['cmd…', 'the command (use -- before dashes)']],
-    flags: [
-      ['--quiet-ms N', 'idle window that ends collection (default 750)'],
-      ['--timeout N', 'seconds — hard cap on the whole wait (default 30)'],
-      ['--raw', 'keep ANSI (default strips it)'],
-      ['--pty', 'allow exec on an AGENT (types into its TUI — deliberate)'],
-    ],
-    examples: ['clodexctl exec builder "ls -la"', 'clodexctl exec builder -- grep -n foo file'],
-    notes: [
-      'Prefer `run` — on a bash session, run IS this exec path.',
-      'On an AGENT session exec REFUSES without --pty (it types into the live TUI screen; --pty is for answering a dialog). Use -- before a command with dashes.',
-      'Exit reflects DELIVERY (typed + went quiet), NOT the remote command\'s status — screen bytes carry no exit code. The echoed command + prompt are part of the printed output (honest terminal truth).',
     ],
   },
   {
@@ -482,7 +466,7 @@ const GROUPS = [
   ['sessions', 'SESSIONS'],
   ['contexts', 'CONTEXTS'],
   ['deploy', 'DEPLOY'],
-  ['plumbing', 'PLUMBING (prefer `run` — these are the raw paths it routes over)'],
+  ['plumbing', 'PLUMBING (prefer `exec` — these are the raw paths it routes over)'],
 ];
 
 const BY_NAME = new Map(VERB_REGISTRY.map((e) => [e.name, e]));

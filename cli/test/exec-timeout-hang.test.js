@@ -1,6 +1,6 @@
 'use strict';
-// run-timeout-hang.test.js — T46a. Pins that `--timeout` is a HARD ceiling on
-// the WHOLE send --wait / run verb, on every transport, even when the engine
+// exec-timeout-hang.test.js — T46a. Pins that `--timeout` is a HARD ceiling on
+// the WHOLE exec verb (agent mode), on every transport, even when the engine
 // never emits a turnEnd AND a wire request wedges forever (the live 6-minute
 // hang: a "Not logged in" reply lands, no turnEnd is emitted, and the
 // post-timeout transcript refetch hangs on a dead tunnel — so the verb never
@@ -87,7 +87,7 @@ async function cli(argv, port, extra = {}) {
 
 // ── the hang repros ──────────────────────────────────────────────────────────
 
-test('run: no turnEnd + a WEDGED post-timeout refetch → still exits by ~timeout+grace (not a 6-minute hang)', { timeout: 10_000 }, async () => {
+test('exec: no turnEnd + a WEDGED post-timeout refetch → still exits by ~timeout+grace (not a 6-minute hang)', { timeout: 10_000 }, async () => {
   // events open, no turnEnd is ever pushed; snapshot answers, send answers, but
   // every refetch hangs forever. Pre-fix: the refetch had no abort, so the verb
   // never returned and the process never exited. Post-fix: the grace deadline
@@ -99,7 +99,7 @@ test('run: no turnEnd + a WEDGED post-timeout refetch → still exits by ~timeou
   });
   const port = await listen(server);
   const t0 = Date.now();
-  const { code, stderr } = await cli(['run', 'ftest', 'hi', '--timeout', '1'], port);
+  const { code, stderr } = await cli(['exec', 'ftest', 'hi', '--timeout', '1'], port);
   const elapsed = Date.now() - t0;
   assert.strictEqual(code, 1);
   assert.match(stderr, /no end-of-turn within 1s/);
@@ -107,7 +107,7 @@ test('run: no turnEnd + a WEDGED post-timeout refetch → still exits by ~timeou
   close();
 });
 
-test('send --wait: a WEDGED snapshot GET (timer would never arm inside onOpen) → still exits by the ceiling', { timeout: 10_000 }, async () => {
+test('exec: a WEDGED snapshot GET (timer would never arm inside onOpen) → still exits by the ceiling', { timeout: 10_000 }, async () => {
   // The snapshot GET hangs forever, so onOpen never reaches past its first
   // await. Pre-fix hardTimer was armed AFTER that await, so the ceiling never
   // armed → infinite wait. Post-fix the ceiling is armed before the stream and
@@ -118,7 +118,7 @@ test('send --wait: a WEDGED snapshot GET (timer would never arm inside onOpen) �
   });
   const port = await listen(server);
   const t0 = Date.now();
-  const { code, stderr } = await cli(['send', 'ftest', 'hi', '--wait', '--timeout', '1'], port);
+  const { code, stderr } = await cli(['exec', 'ftest', 'hi', '--timeout', '1'], port);
   const elapsed = Date.now() - t0;
   assert.strictEqual(code, 1);
   assert.match(stderr, /no end-of-turn within 1s/);
@@ -126,7 +126,7 @@ test('send --wait: a WEDGED snapshot GET (timer would never arm inside onOpen) �
   close();
 });
 
-test('run: no turnEnd but the reply IS in the transcript at timeout → prints it, THEN the honest timeout error', async () => {
+test('exec: no turnEnd but the reply IS in the transcript at timeout → prints it, THEN the honest timeout error', async () => {
   // The live case: a "Not logged in" assistant line lands but no turnEnd fires.
   // Deliverable 2's bonus — the post-timeout refetch still prints whatever
   // landed before surfacing the timeout error (exit 1, no turnEnd is honest).
@@ -140,7 +140,7 @@ test('run: no turnEnd but the reply IS in the transcript at timeout → prints i
     },
   });
   const port = await listen(server);
-  const { code, stdout, stderr } = await cli(['run', 'ftest', 'hi', '--timeout', '1'], port);
+  const { code, stdout, stderr } = await cli(['exec', 'ftest', 'hi', '--timeout', '1'], port);
   assert.strictEqual(code, 1);
   assert.match(stdout, /Not logged in/);          // the landed reply IS printed
   assert.doesNotMatch(stdout, /\[user\] hi/);     // our echoed user row is not
@@ -150,7 +150,7 @@ test('run: no turnEnd but the reply IS in the transcript at timeout → prints i
 
 // ── regression guard: the ceiling machinery must not delay the happy path ─────
 
-test('run: a normal turnEnd still returns promptly (grace/abort must not stall success)', async () => {
+test('exec: a normal turnEnd still returns promptly (grace/abort must not stall success)', async () => {
   let calls = 0;
   const { server, close } = stub({
     sessions: [{ name: 'bob', type: 'claude' }],
@@ -163,7 +163,7 @@ test('run: a normal turnEnd still returns promptly (grace/abort must not stall s
   });
   const port = await listen(server);
   const t0 = Date.now();
-  const { code, stdout } = await cli(['run', 'bob', 'q', '--timeout', '30'], port);
+  const { code, stdout } = await cli(['exec', 'bob', 'q', '--timeout', '30'], port);
   const elapsed = Date.now() - t0;
   assert.strictEqual(code, 0);
   assert.match(stdout, /\[assistant\] a/);

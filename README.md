@@ -127,7 +127,7 @@ clodexctl ctx import                           # adopt every node the GUI alread
 clodexctl ctx add prod --ssh user@box          # or: --ssm i-…, --ssm-ecs cluster/family,
                                                #     --kubectl pod, --gcloud-iap …, --az-bastion …
 clodexctl get sessions                         # what's running
-clodexctl run worker "fix the failing test"    # ask an agent, wait, print the reply
+clodexctl exec worker "fix the failing test"   # ask an agent, wait, print the reply
 clodexctl attach worker                        # a LIVE terminal on the session — ssh-for-agents
 clodexctl logs worker -f                       # follow the transcript, kubectl-style
 clodexctl web prod                             # the node's full GUI in your local browser
@@ -135,7 +135,7 @@ clodexctl web prod                             # the node's full GUI in your loc
 
 - **Transports as data** — direct URL, ssh, AWS SSM (EC2 *and* Fargate — no open ports, no ssh), kubectl port-forward, GCP IAP, Azure Bastion, or a custom tunnel argv. Contexts are shareable JSON: the typed cloud kinds carry no code, so they're safe to commit to a team repo and hand around.
 - **`ctx import`** is the zero-setup on-ramp: it reads the desktop app's own stores (read-only) and adopts everything the GUI already knows — the local engine, every peered machine, every sandbox — tokens included, never printed. If you use the GUI, your whole fleet is addressable from the terminal in one command.
-- **`attach`** streams the session's screen and forwards your keystrokes through any of those tunnels; `Ctrl-\` detaches, `--read-only` shoulder-surfs. **`run`** routes by session type: agents get a prompt and a wait-for-reply, bash sessions get the command's output.
+- **`attach`** streams the session's screen and forwards your keystrokes through any of those tunnels; `Ctrl-\` detaches, `--read-only` shoulder-surfs. **`exec`** routes by session type: agents get a prompt and a wait-for-reply, bash sessions get the command's output.
 - **`deploy`** turns a bare box into a Clodex node in one command — `deploy user@host` over ssh, `deploy ssm --target i-…` over AWS SSM (zero ingress), `deploy docker` for a container node. Idempotent (re-run = update), streamed ✓/✗ steps, verified end-to-end through the real tunnel, context saved. `--claude-token-file` delivers your Claude credential over the encrypted wire — never argv, never CloudTrail.
 - **`web`** opens a foreground tunnel to the node's web GUI and pops your browser; `port-forward LOCAL:REMOTE` covers any other port. Everything supports `-o json` for scripting.
 

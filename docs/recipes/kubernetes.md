@@ -94,8 +94,8 @@ clodexctl ctx add k8s --kubectl pod/clodex-node-0 --token <wire-token>
 #   [--namespace CUSTOMER] [--kube-context ENGAGEMENT]
 
 clodexctl --ctx k8s ctx test
-clodexctl --ctx k8s spawn worker --type claude --cwd /home/clodex/work
-clodexctl --ctx k8s run worker "…"
+clodexctl --ctx k8s create session worker --type claude --cwd /home/clodex/work
+clodexctl --ctx k8s exec worker "…"
 ```
 
 `--kubectl POD_OR_SVC` is a built-in template over the tunnel mechanism — it

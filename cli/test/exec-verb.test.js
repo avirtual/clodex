@@ -1,9 +1,8 @@
 'use strict';
-// run-verb.test.js — the type-aware `run` verb and the exec-on-agent guardrail.
-// A streaming stub node:http server plays remote.js's routes: GET /api/sessions
-// (the authoritative type lookup run/exec key off), the attach/control/input
-// PTY dance (bash path), and the events/transcript/send trio (agent path).
-// `sessions` is configurable per test so we can name a session bash or claude.
+// exec-verb.test.js — the type-aware `exec` verb and its --pty mode. A streaming stub
+// node:http plays remote.js's routes: GET /api/sessions (the authoritative type lookup
+// exec keys off), the attach/control/input PTY dance (bash), and the
+// events/transcript/dm trio (agent). `sessions` names a session bash or claude.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -94,9 +93,9 @@ function endTurnWhenSent(name) {
   };
 }
 
-// ── run → agent (send-wait path) ─────────────────────────────────────────────
+// ── exec → agent (dm-and-wait path) ──────────────────────────────────────────
 
-test('run on a claude agent routes to send-wait: /api/sessions/:name/dm hit, NOT sessions/input', async () => {
+test('exec on a claude agent routes to dm-and-wait: /api/sessions/:name/dm hit, NOT sessions/input', async () => {
   let calls = 0;
   const { server, seen } = stub({
     sessions: [{ name: 'worker2', type: 'claude' }],
@@ -104,19 +103,19 @@ test('run on a claude agent routes to send-wait: /api/sessions/:name/dm hit, NOT
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: '2*3' }, { role: 'assistant', text: '6' }]; },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['run', 'worker2', '2*3', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['exec', 'worker2', '2*3', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /\[assistant\] 6/);
   assert.doesNotMatch(stdout, /\[user\] 2\*3/);
   const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
   assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
-  assert.ok(urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'used the send path');
+  assert.ok(urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'used the dm path');
   assert.ok(urls.includes('GET /api/events'), 'awaited turn end');
   assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/input$/.test(u)), 'never typed into the TUI');
   server.close();
 });
 
-test('run on a codex agent also routes to send-wait', async () => {
+test('exec on a codex agent also routes to dm-and-wait', async () => {
   let calls = 0;
   const { server, seen } = stub({
     sessions: [{ name: 'cx', type: 'codex' }],
@@ -124,14 +123,14 @@ test('run on a codex agent also routes to send-wait', async () => {
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }]; },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['run', 'cx', 'hi', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['exec', 'cx', 'hi', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /\[assistant\] yo/);
   assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url)));
   server.close();
 });
 
-test('run --json on an agent carries mode:"agent"', async () => {
+test('exec --json on an agent carries mode:"agent"', async () => {
   let calls = 0;
   const { server } = stub({
     sessions: [{ name: 'bob', type: 'claude' }],
@@ -139,7 +138,7 @@ test('run --json on an agent carries mode:"agent"', async () => {
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['run', 'bob', 'q', '-o', 'json', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['exec', 'bob', 'q', '-o', 'json', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   const j = JSON.parse(stdout);
   assert.strictEqual(j.mode, 'agent');
@@ -148,15 +147,15 @@ test('run --json on an agent carries mode:"agent"', async () => {
   server.close();
 });
 
-// ── run → bash (exec path) ───────────────────────────────────────────────────
+// ── exec → bash (PTY path) ───────────────────────────────────────────────────
 
-test('run on a bash session routes to exec: attach + input hit, NOT the dm path', async () => {
+test('exec on a bash session routes to the PTY: attach + input hit, NOT the dm path', async () => {
   const { server, seen } = stub({
     sessions: [{ name: 'shell', type: 'bash' }],
     onInput: (state) => pushOutput(state.attach, '/work\r\n'),
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['run', 'shell', 'pwd', '--quiet-ms', '80'], port);
+  const { code, stdout } = await cli(['exec', 'shell', 'pwd', '--quiet-ms', '80'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /\/work/);
   const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
@@ -169,13 +168,13 @@ test('run on a bash session routes to exec: attach + input hit, NOT the dm path'
   server.close();
 });
 
-test('run --json on a bash session carries mode:"pty"', async () => {
+test('exec --json on a bash session carries mode:"pty"', async () => {
   const { server } = stub({
     sessions: [{ name: 'shell', type: 'bash' }],
     onInput: (state) => pushOutput(state.attach, 'hi\r\n'),
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['run', 'shell', 'echo hi', '-o', 'json', '--quiet-ms', '80'], port);
+  const { code, stdout } = await cli(['exec', 'shell', 'echo hi', '-o', 'json', '--quiet-ms', '80'], port);
   assert.strictEqual(code, 0);
   const j = JSON.parse(stdout);
   assert.strictEqual(j.mode, 'pty');
@@ -184,44 +183,30 @@ test('run --json on a bash session carries mode:"pty"', async () => {
   server.close();
 });
 
-// ── run → unknown ────────────────────────────────────────────────────────────
+// ── exec → unknown ───────────────────────────────────────────────────────────
 
-test('run on an unknown session → exit 5, lists the running names', async () => {
+test('exec on an unknown session → exit 5, lists the running names', async () => {
   const { server } = stub({ sessions: [{ name: 'shell', type: 'bash' }, { name: 'bob', type: 'claude' }] });
   const port = await listen(server);
-  const { code, stderr } = await cli(['run', 'ghost', 'hi'], port);
+  const { code, stderr } = await cli(['exec', 'ghost', 'hi'], port);
   assert.strictEqual(code, 5);
   assert.match(stderr, /no such session: ghost/);
   assert.match(stderr, /running: shell, bob/);
   server.close();
 });
 
-test('run with no text → usage error', async () => {
+test('exec with no text → usage error', async () => {
   const { server } = stub({ sessions: [{ name: 'bob', type: 'claude' }] });
   const port = await listen(server);
-  const { code, stderr } = await cli(['run', 'bob'], port);
+  const { code, stderr } = await cli(['exec', 'bob'], port);
   assert.strictEqual(code, 2);
-  assert.match(stderr, /run needs text/);
+  assert.match(stderr, /exec needs text/);
   server.close();
 });
 
-// ── exec-on-agent guardrail ──────────────────────────────────────────────────
+// ── --pty: the explicit TUI-typing mode ──────────────────────────────────────
 
-test('exec on an agent refuses without --pty: warns on stderr, exit 2, no typing', async () => {
-  const { server, seen } = stub({ sessions: [{ name: 'worker2', type: 'claude' }] });
-  const port = await listen(server);
-  const { code, stderr } = await cli(['exec', 'worker2', '2*3', '--quiet-ms', '80'], port);
-  assert.strictEqual(code, 2);
-  assert.match(stderr, /worker2 is a claude agent/);
-  assert.match(stderr, /Pass --pty/);
-  // it looked up the type but never attached/typed
-  assert.ok(seen.some((s) => s.url === '/api/sessions'));
-  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url)), 'did not attach');
-  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url)), 'did not type');
-  server.close();
-});
-
-test('exec --pty on an agent proceeds (chosen TUI typing)', async () => {
+test('exec --pty on an agent types into the TUI instead of routing by type', async () => {
   const { server, seen } = stub({
     sessions: [{ name: 'worker2', type: 'claude' }],
     onInput: (state) => pushOutput(state.attach, 'y\r\n'),
@@ -231,10 +216,23 @@ test('exec --pty on an agent proceeds (chosen TUI typing)', async () => {
   assert.strictEqual(code, 0);
   assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/attach'), 'attached with --pty');
   assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/input'), 'typed with --pty');
+  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url)), 'never used the DM path');
   server.close();
 });
 
-test('exec on a bash session is unaffected by the guardrail (no --pty needed)', async () => {
+test('exec --pty does not look the type up at all', async () => {
+  const { server, seen } = stub({
+    sessions: [],   // the lookup, if it ran, would be a NOTFOUND exit 5
+    onInput: (state) => pushOutput(state.attach, 'ok\r\n'),
+  });
+  const port = await listen(server);
+  const { code } = await cli(['exec', 'ghostly', 'y', '--pty', '--quiet-ms', '80'], port);
+  assert.strictEqual(code, 0, 'no type lookup, so an absent row cannot fail it');
+  assert.ok(!seen.some((s) => s.url === '/api/sessions'), 'the type lookup never ran');
+  server.close();
+});
+
+test('exec on a bash session takes the PTY path with no --pty needed', async () => {
   const { server, seen } = stub({
     sessions: [{ name: 'shell', type: 'bash' }],
     onInput: (state) => pushOutput(state.attach, 'ok\r\n'),
@@ -247,13 +245,27 @@ test('exec on a bash session is unaffected by the guardrail (no --pty needed)', 
   server.close();
 });
 
-test('exec --json on an agent without --pty still refuses (exit 2, warning on stderr)', async () => {
-  const { server } = stub({ sessions: [{ name: 'a', type: 'codex' }] });
+// ── dm: fire-and-forget only ─────────────────────────────────────────────────
+
+test('dm --wait is a usage error naming exec, and sends nothing', async () => {
+  const { server, seen } = stub({ sessions: [{ name: 'bob', type: 'claude' }] });
   const port = await listen(server);
-  const { code, stdout, stderr } = await cli(['exec', 'a', 'x', '-o', 'json', '--quiet-ms', '80'], port);
+  const { code, stderr } = await cli(['dm', 'bob', 'hi', '--wait'], port);
   assert.strictEqual(code, 2);
-  assert.match(stderr, /is a codex agent/);
-  assert.strictEqual(stdout, '');   // nothing printed to stdout
+  assert.match(stderr, /dm has no --wait/);
+  assert.match(stderr, /clodexctl exec/);
+  assert.deepStrictEqual(seen, [], 'refused before any request');
+  server.close();
+});
+
+test('dm without --wait posts to /dm and returns fire-and-forget', async () => {
+  const { server, seen } = stub({ sessions: [{ name: 'bob', type: 'claude' }] });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['dm', 'bob', 'hi'], port);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /fire-and-forget/);
+  assert.ok(seen.some((s) => s.url === '/api/sessions/bob/dm'), 'posted the DM');
+  assert.ok(!seen.some((s) => s.url === '/api/events'), 'no events feed opened');
   server.close();
 });
 

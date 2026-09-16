@@ -222,7 +222,7 @@ clodexctl ctx add fargate --token <wire-token> --tunnel \
 ```
 </details>
 
-From here it's the normal surface: `spawn`, `run`, `logs`, `sessions`.
+From here it's the normal surface: `create session`, `exec`, `logs`, `get sessions`.
 Support boundary: clodexctl substitutes `{port}`, waits for the port, relays
 `aws`'s own stderr verbatim on failure — `ctx test --verbose` is the diagnosis
 surface; the SSM plugin's errors are AWS's, not ours.

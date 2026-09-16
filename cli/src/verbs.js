@@ -16,9 +16,12 @@ async function info({ client, printer, flags }) {
   else printer.line(out.renderInfo(hello));
 }
 
-async function get({ client, ctx, printer, flags, args }) {
+async function get({ client, ctx, printer, flags, args, io = {} }) {
   const target = R.parseTarget(args, 'get');
   const label = R.ctxLabel(ctx, flags);
+  if (flags.subresource != null) {
+    return getSubresource({ client, ctx, printer, flags, label, target, io });
+  }
   if (target.resource === 'sessions') {
     if (target.name) return getSession({ client, printer, flags, name: target.name, label });
     return getSessions({ client, printer, flags });
@@ -115,6 +118,23 @@ async function getSession({ client, printer, flags, name, label }) {
   if (flags.output === 'name') { printer.line(out.renderNames('session', [session])); return; }
   if (flags.output === 'wide') { printer.line(out.renderSessionsWide([session])); return; }
   printer.line(out.renderSessions([session]));
+}
+
+const SESSION_SUBRESOURCES = ['skills', 'args', 'transcript'];
+
+async function getSubresource({ client, ctx, printer, flags, label, target, io }) {
+  const sub = String(flags.subresource);
+  if (target.resource !== 'sessions') {
+    throw new CliError(EXIT.USAGE, `--subresource is only valid on get session (not ${target.plural})`);
+  }
+  if (!SESSION_SUBRESOURCES.includes(sub)) {
+    throw new CliError(EXIT.USAGE, `unknown subresource: ${sub} (${SESSION_SUBRESOURCES.join('|')})`);
+  }
+  const name = requireName(target.name, `get session --subresource ${sub}`);
+  if (sub === 'transcript') return logs({ client, ctx, printer, flags: { ...flags, follow: false }, args: [name], io });
+  await R.requireResource(client, 'sessions', 'get', label, sub);
+  const body = await client.get(`/api/sessions/${encodeURIComponent(name)}/${sub}`, `get session --subresource ${sub}`);
+  printer.json(body);
 }
 
 async function getWorkspaces({ client, printer, flags, label }) {
@@ -294,21 +314,6 @@ async function query({ client, ctx, printer, flags, args }) {
   printer.json(body);
 }
 
-async function argsGet({ client, ctx, printer, flags, args }) {
-  const name = requireName(args[0], 'args get');
-  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'args');
-  const body = await client.get(`/api/sessions/${encodeURIComponent(name)}/args`, 'args get');
-  printer.json(body);
-}
-
-async function skills({ client, ctx, printer, flags, args }) {
-  const name = requireName(args[0], 'skills');
-  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'skills');
-  const body = await client.get(`/api/sessions/${encodeURIComponent(name)}/skills`, 'skills');
-  printer.json(body);
-}
-
-
 function parseEnvFlags(envFlag, body) {
   const raw = Array.isArray(envFlag) ? envFlag : (envFlag != null ? [envFlag] : []);
   if (!raw.length) return [];
@@ -338,8 +343,43 @@ function warnEnvMismatch(printer, sentKeys, applied) {
   }
 }
 
-async function spawn({ client, printer, flags, args, io = {} }) {
-  const name = requireName(args[0], 'spawn');
+const CREATABLE = ['session'];
+const DELETABLE = ['session'];
+const PATCHABLE = ['session'];
+const RESTARTABLE = ['session', 'node'];
+
+const NAMELESS_RESOURCES = new Set(['restart node']);
+
+function takeResourceWord(args, verb, supported) {
+  const word = args[0];
+  if (!word) throw new CliError(EXIT.USAGE, `${verb} needs a resource (${supported.join('|')})`);
+  const entry = R.resolveResource(word);
+  const singular = entry ? entry.singular : word;
+  if (!supported.includes(singular)) {
+    throw new CliError(EXIT.USAGE, `${verb} ${word} is not supported (${supported.join('|')})`);
+  }
+  const rest = args.slice(1);
+  const takes = NAMELESS_RESOURCES.has(`${verb} ${singular}`) ? 0 : 1;
+  if (rest.length > takes) {
+    throw new CliError(EXIT.USAGE, `${verb} ${singular}: unexpected argument "${rest[takes]}"`);
+  }
+  return { word: singular, rest };
+}
+
+const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE };
+
+function checkResourceWord(verb, args) {
+  const supported = RESOURCE_VERBS[verb];
+  if (supported) takeResourceWord(args, verb, supported);
+}
+
+async function create(bundle) {
+  const { word, rest } = takeResourceWord(bundle.args, 'create', CREATABLE);
+  if (word === 'session') return createSession({ ...bundle, args: rest });
+}
+
+async function createSession({ client, printer, flags, args, io = {} }) {
+  const name = requireName(args[0], 'create session');
   const body = { name };
   if (flags.cwd) body.cwd = String(flags.cwd);
   if (flags.type) body.type = String(flags.type);
@@ -352,13 +392,13 @@ async function spawn({ client, printer, flags, args, io = {} }) {
   if (extra.length) body.extraArgs = extra;
   if (flags.fork) body.fork = true;
   const sentEnvKeys = parseEnvFlags(flags.env, body); // sorted keys we asked to set
-  const res = await client.post('/api/sessions', 'spawn', body);
+  const res = await client.post('/api/sessions', 'create session', body);
       // Human-only warning: --json stdout stays the raw wire payload (which carries envKeys itself).
   if (sentEnvKeys.length && !flags.json) warnEnvMismatch(printer, sentEnvKeys, res.envKeys);
       // A child that dies on execvp still returns a pid, then vanishes from the engine —
       // hence the delayed re-check; a read failure leaves `alive` null, not false.
   const type = res.type || flags.type || null;
-  const alive = await spawnAlive(client, res.name || name, io.sleepFn);
+  const alive = await createAlive(client, res.name || name, io.sleepFn);
   if (flags.json) { printer.json({ ...res, alive }); return; }
   if (alive === false) {
     printer.line(`spawned ${res.name || name} (${type || '?'})${res.pid ? ` pid=${res.pid}` : ''} — but it exited immediately (gone from the engine).`);
@@ -370,24 +410,24 @@ async function spawn({ client, printer, flags, args, io = {} }) {
   printer.line(`spawned ${res.name || name} (${type || '?'})${res.pid ? ` pid=${res.pid}` : ''}${res.warnings && res.warnings.length ? `\nwarnings: ${res.warnings.join('; ')}` : ''}`);
 }
 
-const SPAWN_LIVENESS_DELAY_MS = 600;
-async function spawnAlive(client, name, sleepFn) {
+const CREATE_LIVENESS_DELAY_MS = 600;
+async function createAlive(client, name, sleepFn) {
   const sleep = sleepFn || ((ms) => new Promise((r) => setTimeout(r, ms)));
   try {
-    await sleep(SPAWN_LIVENESS_DELAY_MS);
-    const body = await client.get('/api/sessions', 'spawn liveness');
+    await sleep(CREATE_LIVENESS_DELAY_MS);
+    const body = await client.get('/api/sessions', 'create session liveness');
     const list = body.sessions || [];
     return list.some((s) => s && s.name === name);
   } catch { return null; }
 }
 
-async function send({ client, ctx, printer, flags, args, io = {} }) {
-  const name = requireName(args[0], 'send');
+async function dm({ client, ctx, printer, flags, args }) {
+  const name = requireName(args[0], 'dm');
   const text = args.slice(1).join(' ').trim();
-  if (!text) throw new CliError(EXIT.USAGE, 'send needs message text');
-  if (flags.wait) return sendWait({ client, ctx, printer, flags, args, name, text, io });
+  if (!text) throw new CliError(EXIT.USAGE, 'dm needs message text');
+  if (flags.wait) throw new CliError(EXIT.USAGE, 'dm has no --wait — it is fire-and-forget; to wait for the reply use: clodexctl exec <name> <text…>');
   await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'dm');
-  const res = await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'send', { text });
+  const res = await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'dm', { text });
   if (flags.json) printer.json(res);
   else printer.line(`sent to ${name} (fire-and-forget)`);
 }
@@ -404,24 +444,25 @@ async function sessionType(client, name) {
   return found.type || '';
 }
 
-    // Routes on `type === 'bash'` (PTY exec) vs everything else (send --wait). Binary, not a
-    // claude/codex whitelist — an unknown future agent type must land on the send path.
-async function run({ client, ctx, printer, flags, args, stderr, io = {} }) {
-  const name = requireName(args[0], 'run');
+    // --pty picks the PTY mode outright; else ROUTES on the authoritative type, `bash`
+    // (PTY) vs everything else (dm-and-wait). Binary, not a claude/codex whitelist.
+async function exec({ client, ctx, printer, flags, args, io = {} }) {
+  const name = requireName(args[0], 'exec');
   const text = args.slice(1).join(' ').trim();
-  if (!text) throw new CliError(EXIT.USAGE, 'run needs text — a prompt for an agent, or a command for a bash session');
+  if (!text) throw new CliError(EXIT.USAGE, 'exec needs text — a prompt for an agent, or a command for a bash session');
+  if (flags.pty) return execPty({ client, ctx, printer, flags, args, mode: 'pty' });
   const type = await sessionType(client, name);
   if (type === 'bash') {
-    return exec({ client, ctx, printer, flags, args, mode: 'pty', knownType: 'bash', stderr });
+    return execPty({ client, ctx, printer, flags, args, mode: 'pty' });
   }
-  return sendWait({ client, ctx, printer, flags, name, text, mode: 'agent', io });
+  return dmWait({ client, ctx, printer, flags, name, text, mode: 'agent', io });
 }
 
-async function sendWait({ client, ctx, printer, flags, name, text, mode = null, io = {} }) {
+async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io = {} }) {
   await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'dm');
   const timeoutMs = (flags.timeout != null ? parseIntOr(flags.timeout, 'timeout') : 300) * 1000;
       // --timeout is a hard ceiling on the WHOLE verb (wait phase, then refetch at +grace):
-      // a wedged fetch holds its socket open and keeps sendWait from returning, which blocks
+      // a wedged fetch holds its socket open and keeps dmWait from returning, which blocks
       // the caller from reaping the transport child. io.refetchGraceMs is the test seam.
   const graceMs = io.refetchGraceMs != null ? io.refetchGraceMs : 8000;
 
@@ -437,12 +478,12 @@ async function sendWait({ client, ctx, printer, flags, name, text, mode = null, 
     // never reaches a timer of its own, so the ceiling must live out here. On
     // fire: abort the in-flight wait-phase request and settle as a timeout.
     hardTimer = setTimeout(() => { try { waitAc.abort(); } catch {} finish(resolve, { timedOut: true }); }, timeoutMs);
-    stream = client.openEventStream('/api/events', 'send --wait (events)', {
+    stream = client.openEventStream('/api/events', 'exec (events)', {
       onOpen: async () => {
         try {
-          const before = await client.get(`${transcriptPath(name)}?limit=500`, 'send --wait (snapshot)', { signal: waitAc.signal });
+          const before = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (snapshot)', { signal: waitAc.signal });
           snapshot = (before.messages || []).length;
-          await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'send', { text }, { signal: waitAc.signal });
+          await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'exec (dm)', { text }, { signal: waitAc.signal });
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
       onEvent: (event, data) => {
@@ -474,7 +515,7 @@ async function sendWait({ client, ctx, printer, flags, name, text, mode = null, 
     for (let attempt = 0; attempt < 6; attempt++) {
       let after;
       try {
-        after = await client.get(`${transcriptPath(name)}?limit=500`, 'send --wait (refetch)', { signal: refetchAc.signal });
+        after = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
       } catch (e) {
         // Swallow ONLY our own ceiling abort (client rethrows AbortError
         // unwrapped) — a real transport error that merely RACED the deadline
@@ -495,7 +536,7 @@ async function sendWait({ client, ctx, printer, flags, name, text, mode = null, 
   }
 
   if (waitResult.timedOut) {
-    throw new CliError(EXIT.SERVER, `send --wait: no end-of-turn within ${Math.round(timeoutMs / 1000)}s — the agent may still be working; check \`logs ${name}\``);
+    throw new CliError(EXIT.SERVER, `exec: no end-of-turn within ${Math.round(timeoutMs / 1000)}s — the agent may still be working; check \`logs ${name}\``);
   }
 }
 
@@ -519,20 +560,11 @@ async function input({ client, ctx, printer, flags, args }) {
 
     // Open the attach SSE BEFORE acquiring control: the stream registers us as an attacher and
     // holds the control token alive — the last stream closing auto-releases control.
-async function exec({ client, ctx, printer, flags, args, mode = null, knownType = null, stderr = null }) {
+async function execPty({ client, ctx, printer, flags, args, mode = null }) {
   const name = requireName(args[0], 'exec');
   const cmd = args.slice(1).join(' ');
   if (!cmd) throw new CliError(EXIT.USAGE, 'exec needs a command to run');
   await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'attach');
-
-  if (knownType !== 'bash' && !flags.pty) {
-    const type = knownType != null ? knownType : await sessionType(client, name);
-    if (type && type !== 'bash') {
-      const warn = stderr || ((s) => process.stderr.write(s));
-      warn(`clodexctl: ${name} is a ${type} agent — \`run ${name} …\` sends a prompt and waits; exec types into its TUI screen. Pass --pty to type into it anyway (e.g. to answer a dialog).\n`);
-      throw new CliError(EXIT.USAGE, `exec refused on agent "${name}" without --pty`);
-    }
-  }
 
   const quietMs = flags['quiet-ms'] != null ? parseIntOr(flags['quiet-ms'], 'quiet-ms') : 750;
   const timeoutMs = (flags.timeout != null ? parseIntOr(flags.timeout, 'timeout') : 30) * 1000;
@@ -595,50 +627,66 @@ async function exec({ client, ctx, printer, flags, args, mode = null, knownType 
   }
 }
 
-async function kill({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
-  const name = requireName(args[0], 'kill');
+async function del(bundle) {
+  const { word, rest } = takeResourceWord(bundle.args, 'delete', DELETABLE);
+  if (word === 'session') return deleteSession({ ...bundle, args: rest });
+}
+
+async function deleteSession({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
+  const name = requireName(args[0], 'delete session');
   if (!flags.force && flags.json) {
-    throw new CliError(EXIT.USAGE, 'kill needs --force in -o json/non-interactive mode (wire kill is a hard delete, no resume)');
+    throw new CliError(EXIT.USAGE, 'delete session needs --force in -o json/non-interactive mode (wire delete is a hard delete, no resume)');
   }
   await R.requireResource(client, 'sessions', 'delete', R.ctxLabel(ctx, flags));
   if (!flags.force) {
-    const ok = await prompt(`kill "${name}"? This is a HARD DELETE on the engine — no resume. Type the name to confirm: `);
+    const ok = await prompt(`delete "${name}"? This is a HARD DELETE on the engine — no resume. Type the name to confirm: `);
     if (String(ok).trim() !== name) throw new CliError(EXIT.USAGE, 'aborted — confirmation did not match');
   }
-  const res = await client.del(`/api/sessions/${encodeURIComponent(name)}`, 'kill');
+  const res = await client.del(`/api/sessions/${encodeURIComponent(name)}`, 'delete session');
   if (flags.json) printer.json(res);
-  else printer.line(`killed ${res.name || name} (hard delete — not resumable)`);
+  else printer.line(`deleted ${res.name || name} (hard delete — not resumable)`);
 }
 
-async function restart({ client, ctx, printer, flags, args }) {
-  const name = requireName(args[0], 'restart');
+async function restart(bundle) {
+  const { word, rest } = takeResourceWord(bundle.args, 'restart', RESTARTABLE);
+  if (word === 'session') return restartSession({ ...bundle, args: rest });
+  return restartNode(bundle);
+}
+
+async function restartSession({ client, ctx, printer, flags, args }) {
+  const name = requireName(args[0], 'restart session');
   await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'restart');
-  const res = await client.post(`/api/sessions/${encodeURIComponent(name)}/restart`, 'restart', { fresh: !!flags.fresh });
+  const res = await client.post(`/api/sessions/${encodeURIComponent(name)}/restart`, 'restart session', { fresh: !!flags.fresh });
   if (flags.json) printer.json(res);
   else printer.line(`restarted ${name}${flags.fresh ? ' (fresh)' : ' (resume)'}`);
 }
 
-async function argsSet({ client, ctx, printer, flags, args }) {
-  const name = requireName(args[0], 'args set');
-  const patch = {};
-  if (Array.isArray(flags.arg)) patch.extraArgs = flags.arg;
-  else if (flags.arg) patch.extraArgs = [String(flags.arg)];
-  if (flags.proxy != null) patch.proxy = String(flags.proxy);
-  if (flags.restart) patch.restart = true;
-  if (Object.keys(patch).length === 0) throw new CliError(EXIT.USAGE, 'args set needs at least one of --arg / --proxy / --restart');
+async function patch(bundle) {
+  const { word, rest } = takeResourceWord(bundle.args, 'patch', PATCHABLE);
+  if (word === 'session') return patchSession({ ...bundle, args: rest });
+}
+
+async function patchSession({ client, ctx, printer, flags, args }) {
+  const name = requireName(args[0], 'patch session');
+  const body = {};
+  if (Array.isArray(flags.arg)) body.extraArgs = flags.arg;
+  else if (flags.arg) body.extraArgs = [String(flags.arg)];
+  if (flags.proxy != null) body.proxy = String(flags.proxy);
+  if (flags.restart) body.restart = true;
+  if (Object.keys(body).length === 0) throw new CliError(EXIT.USAGE, 'patch session needs at least one of --arg / --proxy / --restart');
   await R.requireResource(client, 'sessions', 'patch', R.ctxLabel(ctx, flags), 'args');
-  const res = await client.patch(`/api/sessions/${encodeURIComponent(name)}/args`, 'args set', patch);
+  const res = await client.patch(`/api/sessions/${encodeURIComponent(name)}/args`, 'patch session', body);
   if (flags.json) printer.json(res);
   else printer.line(`args applied to ${name}${res.restarted ? ' (respawned)' : ''}`);
 }
 
-async function restartApp({ client, printer, flags, prompt = defaultPrompt }) {
+async function restartNode({ client, printer, flags, prompt = defaultPrompt }) {
   if (!flags.force) {
-    if (flags.json) throw new CliError(EXIT.USAGE, 'restart-app needs --force in -o json/non-interactive mode');
+    if (flags.json) throw new CliError(EXIT.USAGE, 'restart node needs --force in -o json/non-interactive mode');
     const ok = await prompt('restart the WHOLE engine? All sessions relaunch. [y/N]: ');
     if (!/^y(es)?$/i.test(String(ok).trim())) throw new CliError(EXIT.USAGE, 'aborted');
   }
-  const res = await client.post('/api/restart', 'restart-app', {});
+  const res = await client.post('/api/restart', 'restart node', {});
   if (flags.json) printer.json(res);
   else printer.line('engine restart requested');
 }
@@ -813,9 +861,10 @@ function defaultPrompt(question) {
 
 module.exports = {
   info, get, describe, apiResources, version, filterWorkspace,
-  logs, deltaFrom, query, argsGet, skills,
-  spawn, send, input, exec, run, sessionType, kill, restart, argsSet, restartApp,
+  logs, deltaFrom, query,
+  create, createSession, dm, input, exec, execPty, sessionType,
+  delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
   ctxAdd, ctxUse, ctxCurrent, ctxList, ctxRm, ctxShow, ctxImport,
   entryKind, entryTarget,
-  requireName, parseIntOr, QUERY_KINDS,
+  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, checkResourceWord, RESOURCE_VERBS,
 };

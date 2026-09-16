@@ -13,8 +13,8 @@ wire answers, and registers a context:
 
 ```sh
 clodexctl deploy ubuntu@ec2-host          # re-running IS the update path
-clodexctl --ctx ec2-host spawn worker --type claude --cwd /srv/work
-clodexctl --ctx ec2-host run worker "…"
+clodexctl --ctx ec2-host create session worker --type claude --cwd /srv/work
+clodexctl --ctx ec2-host exec worker "…"
 ```
 
 Jump hosts, ProxyCommand, non-standard ports: all of it comes free because
@@ -71,7 +71,7 @@ the update path (every step is idempotent).
 
 | Channel | What it is | Limits |
 |---|---|---|
-| **Runtime tunnel** (`--ssm` transport: sessions, `send`, `run`, `logs -f`, `attach`) | `aws ssm start-session` port-forward to the box's loopback | **None** — full wire parity, verified live; a normal Clodex peer over the tunnel |
+| **Runtime tunnel** (`--ssm` transport: `get sessions`, `dm`, `exec`, `logs -f`, `attach`) | `aws ssm start-session` port-forward to the box's loopback | **None** — full wire parity, verified live; a normal Clodex peer over the tunnel |
 | **Deploy channel** (`deploy ssm` → RunCommand) | one async `AWS-RunShellScript`, polled | no live stdin/stdout → marker trail **pseudo-streamed per poll tick** (+ full log at `/home/clodex/clodex-deploy.log`); **24 KB** output cap; **async poll** (10 min budget); wire token **visible in SSM history** → loopback-only + re-run to rotate |
 
 So the *limits are the deploy step's*, not the running node's — once deployed,

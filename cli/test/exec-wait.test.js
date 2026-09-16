@@ -1,10 +1,10 @@
 'use strict';
-// exec-wait.test.js — the SSE-driven verbs (exec, send --wait) end-to-end
-// through main.run against a stub node:http server that plays remote.js's
-// streaming routes: GET /api/sessions/:name/attach (replay + output frames), the
-// control/input dance, GET /api/events (activity frames), and the
-// transcript/send pair send --wait needs. Every request carries a Bearer
-// token; the stub enforces it exactly like remote.js's gate.
+// exec-wait.test.js — exec's two SSE-driven modes end-to-end through main.run
+// against a stub node:http server that plays remote.js's streaming routes: GET
+// /api/sessions/:name/attach (replay + output frames), the control/input dance,
+// GET /api/events (activity frames), and the transcript/dm pair the agent mode
+// needs. Every request carries a Bearer token; the stub enforces it exactly
+// like remote.js's gate.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -15,6 +15,13 @@ const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
 
 const TOKEN = 'sekret';
 const b64 = (s) => Buffer.from(s).toString('base64');
+
+const DEFAULT_SESSIONS = [
+  { name: 'bash', type: 'bash' },
+  { name: 'bob', type: 'claude' },
+  { name: 'murmur', type: 'claude' },
+  { name: 'ftest', type: 'claude' },
+];
 
 // A streaming stub. `opts` supplies per-route behaviour; the harness records
 // every request and exposes the live attach/events responses so a test can push
@@ -39,11 +46,10 @@ function sseStub(opts = {}) {
       if (req.method === 'GET' && p === '/api/peer/hello') {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['attach'] }));
       }
-      // Type lookup for exec's agent guardrail (T36f). These fixtures all exec
-      // against BASH sessions, so the guardrail must see type bash and proceed;
-      // opts.sessions overrides for a specific case.
+      // exec's mode routing reads the authoritative type here: `bash` takes the PTY
+      // path, the named agents the dm-and-wait one. opts.sessions overrides the list.
       if (req.method === 'GET' && p === '/api/sessions') {
-        res.writeHead(200); return res.end(JSON.stringify({ ok: true, sessions: opts.sessions || [{ name: 'bash', type: 'bash' }] }));
+        res.writeHead(200); return res.end(JSON.stringify({ ok: true, sessions: opts.sessions || DEFAULT_SESSIONS }));
       }
       // SSE routes
       if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
@@ -98,9 +104,9 @@ async function cli(argv, port, extra = {}) {
 
 function pushOutput(res, s) { res.write(`event: output\ndata: ${JSON.stringify({ b64: b64(s) })}\n\n`); }
 
-// ── exec ───────────────────────────────────────────────────────────────────
+// ── exec → PTY mode ────────────────────────────────────────────────────────
 
-test('exec: replay discarded, control before input, output printed ANSI-stripped, control released', async () => {
+test('exec (pty mode): replay discarded, control before input, output printed ANSI-stripped, control released', async () => {
   const { server, seen } = sseStub({
     onInput: (state, rec) => {
       // The command lands → the PTY echoes it, prints output, redraws prompt.
@@ -116,9 +122,9 @@ test('exec: replay discarded, control before input, output printed ANSI-stripped
   assert.doesNotMatch(stdout, /OLD SCROLLBACK/);
   assert.doesNotMatch(stdout, /\x1b\[/);
   const order = seen.map((s) => `${s.method} ${s.url}`);
-  // capability check, then the type lookup (guardrail), then attach opens,
-  // control acquired before input, released after
-  assert.deepStrictEqual(order.slice(0, 2), ['GET /api/resources', 'GET /api/sessions']);
+  // the type lookup PICKS the mode so it runs first, then the PTY mode's own
+  // capability check, then attach opens, control acquired before input, released after
+  assert.deepStrictEqual(order.slice(0, 2), ['GET /api/sessions', 'GET /api/resources']);
   const attachIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url));
   assert.ok(attachIdx >= 0 && order[attachIdx] === 'GET /api/sessions/bash/attach');
   const acquireIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'acquire');
@@ -203,7 +209,7 @@ test('exec: input 403 mid-flight → control release attempted, no hang, coded e
   server.close();
 });
 
-// ── send --wait ──────────────────────────────────────────────────────────────
+// ── exec → agent mode (dm + turn-end wait) ───────────────────────────────────
 
 test('exec: a node whose sessions row carries no attach subresource is the D.5 line, exit 1', async () => {
   const { server, seen } = sseStub({ doc: docWithout('attach') });
@@ -215,7 +221,7 @@ test('exec: a node whose sessions row carries no attach subresource is the D.5 l
   server.close();
 });
 
-test('send --wait: busy→turnEnd → new entries printed, snapshot respected', async () => {
+test('exec (agent mode): busy→turnEnd → new entries printed, snapshot respected', async () => {
   let calls = 0;
   const { server, seen } = sseStub({
     onEventsOpen: (state) => {
@@ -239,7 +245,7 @@ test('send --wait: busy→turnEnd → new entries printed, snapshot respected', 
     },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['send', 'bob', 'do', 'the', 'thing', '--wait', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['exec', 'bob', 'do', 'the', 'thing', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   // Only the assistant reply printed — our echoed user message + old entries excluded
   assert.match(stdout, /\[assistant\] done it/);
@@ -247,7 +253,7 @@ test('send --wait: busy→turnEnd → new entries printed, snapshot respected', 
   server.close();
 });
 
-test('send --wait: turnEnd for a different session is ignored (times out)', async () => {
+test('exec (agent mode): turnEnd for a different session is ignored (times out)', async () => {
   const { server } = sseStub({
     onEventsOpen: (state, seen) => {
       const iv = setInterval(() => {
@@ -261,13 +267,13 @@ test('send --wait: turnEnd for a different session is ignored (times out)', asyn
     transcript: () => [{ role: 'user', text: 'x' }],
   });
   const port = await listen(server);
-  const { code, stderr } = await cli(['send', 'bob', 'hi', '--wait', '--timeout', '1'], port);
+  const { code, stderr } = await cli(['exec', 'bob', 'hi', '--timeout', '1'], port);
   assert.strictEqual(code, 1);
   assert.match(stderr, /no end-of-turn within 1s/);
   server.close();
 });
 
-test('send --wait: transcript flush lags turnEnd → retries, never prints a bare echoed user row', async () => {
+test('exec (agent mode): transcript flush lags turnEnd → retries, never prints a bare echoed user row', async () => {
   // Repro of Bogdan's live bug: the assistant entry is NOT yet persisted when
   // turnEnd fires; the refetch initially sees only our echoed user message.
   let calls = 0;
@@ -285,7 +291,7 @@ test('send --wait: transcript flush lags turnEnd → retries, never prints a bar
     },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['send', 'murmur', '2+3', '--wait', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['exec', 'murmur', '2+3', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /\[assistant\] 5/);
   assert.doesNotMatch(stdout, /\[user\] 2\+3/); // the echoed user row is never printed
@@ -293,7 +299,7 @@ test('send --wait: transcript flush lags turnEnd → retries, never prints a bar
   server.close();
 });
 
-test('send --wait --json: {ok,name,entries,timedOut} shape', async () => {
+test('exec (agent mode) --json: {ok,name,entries,timedOut} shape', async () => {
   let calls = 0;
   const { server } = sseStub({
     onEventsOpen: (state, seen) => {
@@ -304,7 +310,7 @@ test('send --wait --json: {ok,name,entries,timedOut} shape', async () => {
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['send', 'bob', 'q', '--wait', '-o', 'json', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['exec', 'bob', 'q', '-o', 'json', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   const j = JSON.parse(stdout);
   assert.strictEqual(j.ok, true);
@@ -314,10 +320,10 @@ test('send --wait --json: {ok,name,entries,timedOut} shape', async () => {
   server.close();
 });
 
-test('send without --wait: unchanged fire-and-forget', async () => {
+test('dm: unchanged fire-and-forget', async () => {
   const { server, seen } = sseStub({});
   const port = await listen(server);
-  const { code, stdout } = await cli(['send', 'bob', 'hi'], port);
+  const { code, stdout } = await cli(['dm', 'bob', 'hi'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /fire-and-forget/);
   assert.deepStrictEqual(seen.map((s) => s.url), ['/api/resources', '/api/sessions/bob/dm']); // no events feed opened
