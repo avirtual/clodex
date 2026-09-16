@@ -24,6 +24,14 @@ const path = require('node:path');
 
 const { createCtlService, tokenize, refuse, aliasCtx, ALLOWED, CTX_SUBS, MAX_BLOCK_CHARS } = require('../ctl-service');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { RESOURCES_DOC } = require('../cli/test/fixtures/resources-doc');
+
+function servesResources(req, res) {
+  if (req.url.split('?')[0] !== '/api/resources') return false;
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(RESOURCES_DOC));
+  return true;
+}
 
 function tmpCtxFile() {
   const dir = mkTmpRoot('clx-ctl-');
@@ -584,6 +592,7 @@ test('a huge block is capped, and says it was', async () => {
   const http = require('node:http');
   const huge = 'x'.repeat(MAX_BLOCK_CHARS * 2);
   const server = http.createServer((req, res) => {
+    if (servesResources(req, res)) return;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, name: 'bob', extraArgs: [huge] }));
   });
@@ -641,6 +650,7 @@ test('the cap never leaks token material, wherever the token sits', async () => 
   // in the request path — a query string on the base URL would be concatenated
   // ahead of the API path and never reach the server as a query at all.
   const server = http.createServer((req, res) => {
+    if (servesResources(req, res)) return;
     const m = /off_([mp])(\d+)/.exec(req.url);
     const off = m ? (m[1] === 'm' ? -Number(m[2]) : Number(m[2])) : 0;
     const at = MAX_BLOCK_CHARS + shrink + off;
@@ -696,6 +706,7 @@ test('args set and args get reach different handlers — the method proves it', 
   const http = require('node:http');
   const seen = [];
   const server = http.createServer((req, res) => {
+    if (servesResources(req, res)) return;
     seen.push(`${req.method} ${req.url.split('?')[0]}`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, name: 'bob', extraArgs: [] }));
