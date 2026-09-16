@@ -45,7 +45,8 @@ function followStub(opts = {}) {
       if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         // Each call returns the next scripted snapshot (last one sticks).
         const msgs = opts.transcript ? opts.transcript(tIdx++, seen) : [];
-        res.writeHead(200); return res.end(JSON.stringify(serverTranscriptPage(msgs, req.url)));
+        const page = opts.page ? opts.page(msgs, req.url) : serverTranscriptPage(msgs, req.url);
+        res.writeHead(200); return res.end(JSON.stringify(page));
       }
       res.writeHead(404); res.end('{}');
     });
@@ -213,9 +214,85 @@ test('logs -f: the reconnect re-snapshot asks with since too, and prints no dupl
   assert.strictEqual((stdout.match(/old599/g) || []).length, 1, 'no dup across reconnect');
   const eventsOpens = seen.filter((s) => s.url === '/api/events').length;
   assert.strictEqual(eventsOpens, 2, 'the stream really did reconnect');
-  const resnapshots = transcriptUrls(seen).filter((u) => /since=/.test(u));
-  assert.ok(resnapshots.length >= 2, 'both the first open and the reconnect re-snapshotted with a cursor');
+  const resnapshots = seen
+    .map((s, i) => (s.url === '/api/events' ? seen.slice(i + 1).find((r) => /\/transcript\?/.test(r.url)) : null))
+    .filter(Boolean)
+    .map((s) => s.url);
+  assert.strictEqual(resnapshots.length, 2, 'the first open and the reconnect each re-snapshotted');
   for (const u of resnapshots) assert.deepStrictEqual(pairsOf(u), [['since', '600'], ['limit', '500']]);
+  server.close();
+});
+
+test('logs -f: a restart that repoints the transcript re-anchors the cursor DOWN and keeps following', async () => {
+  const sig = fakeSignalTty();
+  const OLD = bulk(600);
+  const FRESH = [{ role: 'user', text: 'boot' }, { role: 'assistant', text: 'reborn' }, { role: 'user', text: 'again' }];
+  let restarted = false;
+  let probed = false;
+  const { server, seen } = followStub({
+    onEventsOpen: (state) => {
+      setTimeout(() => { restarted = true; activity(state.events, 'bob'); }, 40);
+      setTimeout(() => activity(state.events, 'bob'), 90);
+      setTimeout(() => activity(state.events, 'bob'), 140);
+      setTimeout(() => sig.signal(), 320);
+    },
+    transcript: (i, seen) => {
+      if (!restarted) return OLD;
+      if (/limit=1(&|$)/.test(seen[seen.length - 1].url)) { probed = true; return FRESH; }
+      return probed ? [...FRESH, { role: 'assistant', text: 'post restart reply' }] : FRESH;
+    },
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['logs', 'bob', '-f'], port, { tty: sig.tty });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /\[assistant\] post restart reply/, 'the reply on the replacement transcript printed');
+  assert.doesNotMatch(stdout, /reborn/, 're-anchoring is silent — the replacement transcript is not re-printed');
+  assert.strictEqual((stdout.match(/old599/g) || []).length, 1, 'the pre-restart tail printed once');
+  const probes = transcriptUrls(seen).filter((u) => /limit=1(&|$)/.test(u));
+  assert.strictEqual(probes.length, 1, 'exactly one tail probe — the streak resets once the cursor re-anchors');
+  assert.deepStrictEqual(pairsOf(probes[0]), [['limit', '1']], 'the probe asks for the real tail, with no since');
+  server.close();
+});
+
+test('logs -f: a quiet activity frame on an unchanged transcript does not probe the tail', async () => {
+  const sig = fakeSignalTty();
+  const OLD = bulk(600);
+  const { server, seen } = followStub({
+    onEventsOpen: (state) => {
+      setTimeout(() => activity(state.events, 'bob'), 40);
+      setTimeout(() => sig.signal(), 140);
+    },
+    transcript: () => OLD,
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['logs', 'bob', '-f'], port, { tty: sig.tty });
+  assert.strictEqual(code, 0);
+  assert.strictEqual((stdout.match(/old599/g) || []).length, 1, 'nothing new, nothing re-printed');
+  const probes = transcriptUrls(seen).filter((u) => /limit=1(&|$)/.test(u));
+  assert.strictEqual(probes.length, 0, 'one empty page is under the streak threshold — no extra request');
+  server.close();
+});
+
+function legacyStub(opts) {
+  return followStub({ ...opts, page: (msgs) => ({ ok: true, messages: msgs.slice(-500) }) });
+}
+
+test('logs -f: a node serving no seq falls back to the count delta, not a full-tail re-print', async () => {
+  const sig = fakeSignalTty();
+  const { server } = legacyStub({
+    onEventsOpen: (state) => {
+      setTimeout(() => activity(state.events, 'bob'), 40);
+      setTimeout(() => activity(state.events, 'bob'), 100);
+      setTimeout(() => sig.signal(), 200);
+    },
+    transcript: (i) => (i <= 1 ? [{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'a1' }]
+      : [{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'a1' }, { role: 'assistant', text: 'a2' }]),
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['logs', 'bob', '-f'], port, { tty: sig.tty });
+  assert.strictEqual(code, 0);
+  assert.strictEqual((stdout.match(/a1/g) || []).length, 1, 'the old entries are not re-printed on every frame');
+  assert.strictEqual((stdout.match(/a2/g) || []).length, 1, 'the new entry printed exactly once');
   server.close();
 });
 

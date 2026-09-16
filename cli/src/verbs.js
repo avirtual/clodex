@@ -254,11 +254,15 @@ async function logs({ client, ctx, printer, flags, args, io = {} }) {
   else printer.line(out.renderTranscript(messages));
 }
 
+const REANCHOR_AFTER_EMPTY_PAGES = 2;
+
 async function logsFollow({ client, printer, flags, name, initial, messages, io }) {
   if (flags.json) { for (const m of messages) printer.json(m); }
   else if (messages.length) printer.line(out.renderTranscript(messages));
 
   let lastSeq = lastSeqOf(messages);
+  let legacyCount = lastSeq < 0 ? messages.length : 0;
+  let emptyPages = 0;
   let refetching = false;           // coalesce overlapping activity frames
   let pending = false;
 
@@ -268,14 +272,32 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
     else printer.line(out.renderTranscript(fresh));
   };
 
+  const reanchor = async () => {
+    let tail;
+    try { tail = await client.get(`${transcriptPath(name)}?limit=1`, 'logs -f (reanchor)'); }
+    catch { return; }
+    const seq = lastSeqOf(tail.messages);
+    if (seq >= 0 && seq < lastSeq) lastSeq = seq;
+    emptyPages = 0;
+  };
+
   const refetch = async () => {
     if (refetching) { pending = true; return; }
     refetching = true;
     try {
       const after = await client.get(`${transcriptPath(name)}?since=${lastSeq + 1}&limit=500`, 'logs -f (refetch)');
-      const fresh = after.messages || [];
-      if (fresh.length) lastSeq = Math.max(lastSeq, lastSeqOf(fresh));
-      emit(fresh);
+      const page = after.messages || [];
+      const seq = lastSeqOf(page);
+      if (!page.length) {
+        if (++emptyPages >= REANCHOR_AFTER_EMPTY_PAGES) await reanchor();
+      } else if (seq < 0) {
+        emit(page.slice(legacyCount));
+        legacyCount = page.length;
+      } else {
+        emptyPages = 0;
+        lastSeq = Math.max(lastSeq, seq);
+        emit(page);
+      }
     } finally {
       refetching = false;
       if (pending) { pending = false; refetch(); }
@@ -298,12 +320,16 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
     else { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); offSignal = () => { process.off('SIGINT', onSig); process.off('SIGTERM', onSig); }; }
 
     const guard = openGuarded(client, '/api/events', 'logs -f (events)', {
-      // On (re)connect, silently re-read the current last seq so a
-      // reconnect never re-prints old lines (no gap markers in v1).
+      // On (re)connect, silently advance the cursor so a reconnect
+      // never re-prints old lines (no gap markers in v1).
       onOpen: async () => {
         const snap = await client.get(`${transcriptPath(name)}?since=${lastSeq + 1}&limit=500`, 'logs -f (resnapshot)');
         const seen = snap.messages || [];
-        if (seen.length) lastSeq = Math.max(lastSeq, lastSeqOf(seen));
+        if (!seen.length) return;
+        emptyPages = 0;
+        const seq = lastSeqOf(seen);
+        if (seq < 0) legacyCount = seen.length;
+        else lastSeq = Math.max(lastSeq, seq);
       },
       onEvent: (event, data) => {
         if (event !== 'activity' || !data || data.name !== name) return;
