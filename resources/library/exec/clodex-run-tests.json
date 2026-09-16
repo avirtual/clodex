@@ -5,7 +5,7 @@
     "${CLODEX_BIN}/clodex-run-tests.js"
   ],
   "cwd": "${TEAM_ROOT}",
-  "description": "Suite digest, one line. Measures the TEAM ROOT unless `tree` names a worktree. scope: own = the branch's own tests plus the repo-wide shape checks, no lock; full (default) = the merge gate's run.",
+  "description": "Suite digest: runs scripts/run-tests.js. Measures the TEAM ROOT unless `tree` names a worktree. scope: own = branch tests + repo-wide shape checks, no lock; full (default) = the merge gate's run.",
   "timeoutMs": 420000,
   "maxBytes": 1024,
   "replyStderr": true,
