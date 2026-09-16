@@ -33,3 +33,13 @@ Deliberately NOT filtered against a skill catalog, unlike `getDefaultDeny` and
 only under its own tree — so a name absent from the global catalog is still a
 real default, and filtering would silently drop it the first time Preferences
 was opened anywhere else.
+
+A stored NON-EMPTY explicit list (no `*`) is upgraded on read to
+`deferredSkillDeny(known − stored)` and written back once, using the
+`knownSkillNames` dep `initStores` takes (the store never reaches into the
+engine). Such a list was written before t918 and is a snapshot of what was known
+that day, so every skill the CLI syncs afterwards arrived enabled. A stored
+deferred list is returned byte-identical with no write; an explicit `[]` stays
+`[]`, because it is the only shape the UI has for "deny nothing" and expanding
+it would deny every later-synced skill. Without the dep — a store built by a
+test or a host that has no catalog — the stored list is returned unchanged.

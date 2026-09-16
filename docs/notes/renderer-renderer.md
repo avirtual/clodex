@@ -69,15 +69,20 @@ no denial at all.
 
 ## collectPrefsSkillDefaults
 
-The same two rules as `newSessionSkillDenyList` — the toggleable filter and the
-empty-off collapse — and both collectors also carry `keptUndrawn`: a `!name`
-exemption for a skill this cwd does not currently render has no row to read, and
-dropping it would silently deny that skill the next time the dialog was opened
-anywhere. It is the skills mirror of the `carried` list the undeferred branch
-keeps for the same reason.
+The toggleable filter, as in `newSessionSkillDenyList`, and both collectors also
+carry `keptUndrawn`: a `!name` exemption for a skill this cwd does not currently
+render has no row to read, and dropping it would silently deny that skill the
+next time the dialog was opened anywhere. It is the skills mirror of the
+`carried` list the undeferred branch keeps for the same reason.
 
-The collapse asks whether anything COULD be ticked, not whether the operator
-ticked it: `collectSkillChecklist` skips disabled rows, so an all-read-only
-render and a catalog fetch that threw both collect `[]`. Saving `[]` there would
-be unrecoverable — `stores.js` reads an explicit `[]` as "deny nothing" forever —
-so an empty `toggleable` returns the stored list instead.
+The only bail out of the deferred arm asks whether anything COULD be ticked, not
+whether the operator ticked it: `collectSkillChecklist` skips disabled rows, so
+an all-read-only render and a catalog fetch that threw both collect `[]`. Saving
+`[]` there would be unrecoverable — `stores.js` reads an explicit `[]` as "deny
+nothing" forever — so an empty `toggleable` returns the stored list instead.
+
+Unlike `newSessionSkillDenyList`, an ALL-ticked prefs render saves `['*', '!each
+drawn row]` rather than `[]` (t950). The two differ because their subjects do: a
+session's list is a one-time choice for a seat that already exists, while the
+prefs default is re-applied to every seat created afterwards, and an explicit
+`[]` there means the CLI's account-synced skills arrive enabled forever.

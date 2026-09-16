@@ -401,13 +401,19 @@ test('t918 pin 3: standard writes no skill denial, and an explicit empty choice 
   assert.deepStrictEqual(own.persisted, [],
     "optimized renders and persists the operator's own empty list, not the shipped floor");
 
-  // And a non-empty explicit choice stays a plain name list: deferral is the
-  // FLOOR's shape, not something imposed on a list the operator curated.
   const box3 = freshBox();
   box3.engine.stores.agentDefaults.setDefaultSkillDeny(['review', 'init']);
   const curated = await dialogDisabledSkills(box3.engine, 'optimized');
-  assert.deepStrictEqual(curated.persisted.sort(), ['init', 'review'],
-    "the operator's own skill list, verbatim and undeferred");
+  const { skillDenyKeepList, expandSkillsOff } = require('../skills-off');
+  assert.ok(curated.persisted.includes('*'), "the operator's list arrives deferred");
+  const keeps = new Set(skillDenyKeepList(curated.persisted));
+  assert.ok(!keeps.has('review') && !keeps.has('init'),
+    'the two skills they denied are still denied');
+  assert.ok(keeps.has('code-review') && keeps.has('design'),
+    'and everything they had left on is still on — an upgrade that narrows the choice is a different choice');
+  assert.ok(expandSkillsOff(curated.persisted, { known: ['code-review', 'synced-later'] })
+    .includes('synced-later'),
+    'while a skill nobody had seen lands OFF, which the explicit list could never do');
 });
 
 test('t918 pin 4: switching Placement to a sandbox re-asks for the floor, never this Mac\'s names', async () => {
@@ -523,13 +529,12 @@ test('t918 pin 8: Check All means deny nothing, not "deny whatever arrives later
     'the ticks say "deny nothing"; re-emitting `*` would still deny whatever the CLI announces later');
 });
 
-test('t918 pin 9: Preferences can still express "deny nothing", and the floor is not a dead end', async () => {
+test('t950: Check All in Preferences keeps every drawn skill and still denies the ones synced later', async () => {
   const box = freshBox();
   const floor = box.engine.stores.agentDefaults.getDefaultSkillDeny();
   assert.ok(require('../skills-off').skillDenyIsDeferred(floor),
     'ENTER: the shipped floor really is deferred — against a plain list this collector never branched');
 
-  // Check All in Preferences: one click, and it means "deny nothing by default".
   const all = await prefsSkillDefault(box.engine, floor, {
     afterRender: (list) => {
       for (const r of list.children) {
@@ -539,9 +544,17 @@ test('t918 pin 9: Preferences can still express "deny nothing", and the floor is
     },
   });
   assert.ok(all.rows.length, 'ENTER: rows drew, so there was something to tick');
-  assert.deepStrictEqual(all.saved, [],
-    'every row ticked must save [], not `*` plus today\'s names: the latter denies every skill announced '
-    + 'later AND is sticky — the deferred list comes back next visit, so [] becomes unreachable from the UI');
+  assert.ok(require('../skills-off').skillDenyIsDeferred(all.saved),
+    'a deferred store stays deferred through an all-checked save');
+  assert.deepStrictEqual(
+    require('../skills-off').skillDenyKeepList(all.saved).sort(),
+    all.rows.map((r) => r.name).sort(),
+    'the keep list is exactly the rows the operator ticked — no more, no fewer');
+
+  const { expandSkillsOff } = require('../skills-off');
+  const later = expandSkillsOff(all.saved, { known: [...all.rows.map((r) => r.name), 'synced-tomorrow'] });
+  assert.deepStrictEqual(later, ['synced-tomorrow'],
+    'the skill that appears after the choice is the ONLY one denied: a saved [] would have enabled it');
 
   // The rest of the collector is unchanged: untick one row and the deferral and
   // its keep list survive.

@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { initStores } = require('../stores');
 const { DEFAULT_BUILTIN_DENY_FLOOR, DEFAULT_SKILL_DENY_FLOOR } = require('../catalogs');
+const { expandSkillsOff } = require('../skills-off');
 const { shellCapGranted } = require('../peer-shell');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -2680,6 +2681,86 @@ test('agentDefaults: the skill and built-in deny tri-states, and what each one f
     assert.deepStrictEqual(d.getDefaultDeny(), ['Bash']);
     assert.deepStrictEqual(d.getDefaultSkillDeny(), ['code-review']);
     assert.deepStrictEqual(d.getDefaultBuiltinDeny(), ['Plan']);
+  } finally { cleanup(); }
+});
+
+function skillUpgradeStores(known) {
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  const stores = initStores(userData, { log: console, registryDir,
+    resourcesDir: path.join(registryDir, '__no_seed__'),
+    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+    envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json'),
+    knownSkillNames: () => known.slice() });
+  return { userData, stores, file: path.join(userData, 'agent-defaults.json'),
+    cleanup() {
+      fs.rmSync(userData, { recursive: true, force: true });
+      fs.rmSync(registryDir, { recursive: true, force: true });
+    } };
+}
+
+test('t950: a stored explicit skill deny is upgraded to the deferred form, keeping exactly what it enabled', () => {
+  const KNOWN = ['code-review', 'design', 'dataviz', 'review'];
+  const { stores, file, cleanup } = skillUpgradeStores(KNOWN);
+  try {
+    const d = stores.agentDefaults;
+    d.setDefaultSkillDeny(['design', 'review']);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf-8'))['*'].denySkills,
+      ['design', 'review'],
+      'ENTER: the explicit pre-t918 shape really is on disk — an already-deferred store upgrades nothing');
+
+    const got = d.getDefaultSkillDeny();
+    assert.deepStrictEqual(got, ['*', '!code-review', '!dataviz'],
+      'known minus denied becomes the keep list, in known order');
+
+    const late = expandSkillsOff(got, { known: [...KNOWN, 'anthropic-skills-synced'] });
+    assert.ok(late.includes('anthropic-skills-synced'),
+      'a skill synced after the choice was made is denied without anyone unchecking a box');
+    assert.ok(!late.includes('code-review') && !late.includes('dataviz'),
+      'and the skills that list had ENABLED are still enabled — an upgrade that denies them is not the same choice');
+    assert.ok(late.includes('design') && late.includes('review'),
+      'the two it denied stay denied');
+
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf-8'))['*'].denySkills, got,
+      'the upgraded form is written back');
+  } finally { cleanup(); }
+});
+
+test('t950: an already-deferred store is returned verbatim and the file is never rewritten', () => {
+  const { stores, file, cleanup } = skillUpgradeStores(['code-review', 'design', 'dataviz']);
+  try {
+    const d = stores.agentDefaults;
+    const raw = '{\n    "*": {\n        "denySkills": [\n            "*",\n            "!dataviz"\n        ]\n    }\n}\n';
+    fs.writeFileSync(file, raw);
+    const before = fs.statSync(file).mtimeMs;
+
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), ['*', '!dataviz'], 'returned as stored');
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), ['*', '!dataviz'], 'and again — the read is idempotent');
+    assert.strictEqual(fs.readFileSync(file, 'utf-8'), raw,
+      'byte-identical: a getter that rewrites a deferred list re-freezes it against today\'s catalog');
+    assert.strictEqual(fs.statSync(file).mtimeMs, before, 'and the file was not touched');
+
+    d.setDefaultSkillDeny(['design']);
+    const first = d.getDefaultSkillDeny();
+    const afterUpgrade = fs.readFileSync(file, 'utf-8');
+    const upgradedAt = fs.statSync(file).mtimeMs;
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), first, 'the second read returns the upgraded list unchanged');
+    assert.strictEqual(fs.readFileSync(file, 'utf-8'), afterUpgrade, 'and rewrites nothing');
+    assert.strictEqual(fs.statSync(file).mtimeMs, upgradedAt, 'idempotent on disk too');
+  } finally { cleanup(); }
+});
+
+test('t950: an explicit EMPTY list stays empty — "deny nothing" is not "keep everything known"', () => {
+  const { stores, file, cleanup } = skillUpgradeStores(['code-review', 'design']);
+  try {
+    const d = stores.agentDefaults;
+    d.setDefaultSkillDeny([]);
+    assert.deepStrictEqual(d.getDefaultSkillDeny(), [],
+      'an explicit [] means deny nothing, upgrade or no upgrade');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf-8'))['*'].denySkills, [],
+      'and nothing was written over it');
+    assert.deepStrictEqual(expandSkillsOff(d.getDefaultSkillDeny(), { known: ['code-review', 'later'] }), [],
+      'so a skill synced later is still enabled — that is what "deny nothing" has to mean');
   } finally { cleanup(); }
 });
 
