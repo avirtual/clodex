@@ -10,6 +10,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
+const { RESOURCES_DOC } = require('./fixtures/resources-doc');
 
 const TOKEN = 'sekret';
 const b64 = (s) => Buffer.from(s).toString('base64');
@@ -31,6 +32,9 @@ function stub(opts = {}) {
       const rec = { method: req.method, url: req.url, body: body ? JSON.parse(body) : null };
       seen.push(rec);
       const p = req.url.split('?')[0];
+      if (req.method === 'GET' && p === '/api/resources') {
+        res.writeHead(200); return res.end(JSON.stringify(RESOURCES_DOC));
+      }
       if (req.method === 'GET' && p === '/api/sessions') {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, sessions }));
       }
@@ -55,7 +59,7 @@ function stub(opts = {}) {
         if (opts.onInput) opts.onInput(state, rec, seen);
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
-      if (p.startsWith('/api/transcript/')) {
+      if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: (opts.transcript && opts.transcript(seen)) || [] }));
       }
       if (p === '/api/send') { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }

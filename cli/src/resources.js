@@ -69,12 +69,14 @@ async function failUpgrade(client, resource, verb, ctxName) {
     `node ${host} (${version}) does not serve ${resource} ${verb}; run: clodexctl upgrade node ${ctxName}`);
 }
 
-async function requireResource(client, resource, verb, ctxName) {
+async function requireResource(client, resource, verb, ctxName, sub = null) {
   const doc = await fetchResources(client);
   const entry = doc && (doc.resources || []).find((r) => r.name === resource);
-  if (!entry || !(entry.verbs || []).includes(verb)) {
-    await failUpgrade(client, resource, verb, ctxName);
-  }
+  const label = sub ? `${resource}/${sub}` : resource;
+  const served = sub
+    ? !!(entry && entry.subresources && (entry.subresources[sub] || []).includes(verb))
+    : !!(entry && (entry.verbs || []).includes(verb));
+  if (!served) await failUpgrade(client, label, verb, ctxName);
   return doc;
 }
 

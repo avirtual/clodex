@@ -15,6 +15,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
+const { RESOURCES_DOC } = require('./fixtures/resources-doc');
 
 const TOKEN = 'sekret';
 
@@ -37,6 +38,9 @@ function stub(opts = {}) {
       const rec = { method: req.method, url: req.url, body: body ? JSON.parse(body) : null };
       seen.push(rec);
       const p = req.url.split('?')[0];
+      if (req.method === 'GET' && p === '/api/resources') {
+        res.writeHead(200); return res.end(JSON.stringify(RESOURCES_DOC));
+      }
       if (req.method === 'GET' && p === '/api/sessions') {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, sessions: opts.sessions || [{ name: 'bob', type: 'claude' }] }));
       }
@@ -47,7 +51,7 @@ function stub(opts = {}) {
         if (opts.onEventsOpen) opts.onEventsOpen(state, seen);
         return; // held open — turnEnd only if the test pushes it
       }
-      if (p.startsWith('/api/transcript/')) {
+      if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         const verdict = opts.transcript ? opts.transcript(seen) : [];
         if (verdict === 'hang') { held.push(res); return; }   // wedge: never respond
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: verdict || [] }));

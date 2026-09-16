@@ -59,7 +59,7 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 }
 
 const RESOURCES = [
-  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: {} },
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { transcript: ['get'], query: ['post'] } },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
   { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
   { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
@@ -577,6 +577,32 @@ class RemoteServer {
     res.setHeader('Set-Cookie', `clodex_remote_token=${encodeURIComponent(q)}; HttpOnly; SameSite=Strict; Path=/${secure}`);
   }
 
+  _handleSessionGet(name, res) {
+    const row = this._getSession(name);
+    if (!row) return this._json(res, 404, { ok: false, error: 'Session not found' });
+    return this._json(res, 200, { ok: true, session: { ...row, activity: this.activityFor(name) } });
+  }
+
+  _handleTranscript(name, url, res) {
+    const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 100, 500);
+    const sinceRaw = url.searchParams.get('since');
+    const since = sinceRaw == null ? null : Math.max(parseInt(sinceRaw, 10) || 0, 0);
+    const out = this._getTranscript(name, limit, since);
+    return this._json(res, out.ok ? 200 : 404, out);
+  }
+
+  _handleQuery(name, req, res) {
+    if (!this._query) return this._json(res, 501, { ok: false, error: 'query not available' });
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      Promise.resolve()
+        .then(() => this._query(name, String(msg.kind || ''), msg.args || {}))
+        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'query failed' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    });
+  }
+
   _route(req, res) {
     if (!this._authGate(req, res)) return;
     const url = new URL(req.url, 'http://localhost');
@@ -607,12 +633,17 @@ class RemoteServer {
       const sessions = rows.map(s => ({ ...s, activity: this.activityFor(s.name) }));
       return this._json(res, 200, { ok: true, sessions });
     }
-    if (req.method === 'GET' && p.startsWith('/api/sessions/')) {
-      const name = decodeURIComponent(p.slice('/api/sessions/'.length));
+    if (p.startsWith('/api/sessions/')) {
+      const rest = p.slice('/api/sessions/'.length).split('/');
+      let name;
+      try { name = decodeURIComponent(rest[0]); }
+      catch { return this._json(res, 400, { ok: false, error: 'bad session name' }); }
+      const sub = rest.length > 1 ? rest.slice(1).join('/') : undefined;
       if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      const row = this._getSession(name);
-      if (!row) return this._json(res, 404, { ok: false, error: 'Session not found' });
-      return this._json(res, 200, { ok: true, session: { ...row, activity: this.activityFor(name) } });
+      if (req.method === 'GET' && sub === undefined) return this._handleSessionGet(name, res);
+      if (req.method === 'GET' && sub === 'transcript') return this._handleTranscript(name, url, res);
+      if (req.method === 'POST' && sub === 'query') return this._handleQuery(name, req, res);
+      return this._json(res, 404, { ok: false, error: 'not found' });
     }
     if (req.method === 'GET' && p === '/api/workspaces') {
       if (!this._listWorkspaces) return this._json(res, 501, { ok: false, error: 'workspaces not available' });
@@ -620,15 +651,6 @@ class RemoteServer {
         id: w.id, name: w.name, open: !!w.open, lastFocusedAt: w.lastFocusedAt != null ? w.lastFocusedAt : null,
       }));
       return this._json(res, 200, { ok: true, workspaces });
-    }
-    if (req.method === 'GET' && p.startsWith('/api/transcript/')) {
-      const name = decodeURIComponent(p.slice('/api/transcript/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 100, 500);
-      const sinceRaw = url.searchParams.get('since');
-      const since = sinceRaw == null ? null : Math.max(parseInt(sinceRaw, 10) || 0, 0);
-      const out = this._getTranscript(name, limit, since);
-      return this._json(res, out.ok ? 200 : 404, out);
     }
     if (req.method === 'GET' && p === '/api/events') {
       return this._sse(req, res);
@@ -875,19 +897,6 @@ class RemoteServer {
       let out;
       try { out = this._wtermClose(seat); } catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
       return this._json(res, 200, out || { ok: true });
-    }
-    if (req.method === 'POST' && p.startsWith('/api/query/')) {
-      if (!this._query) return this._json(res, 501, { ok: false, error: 'query not available' });
-      const name = decodeURIComponent(p.slice('/api/query/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        Promise.resolve()
-          .then(() => this._query(name, String(msg.kind || ''), msg.args || {}))
-          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'query failed' }))
-          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-      });
     }
     if (req.method === 'POST' && p === '/api/send') {
       return this._readBody(req, res, (body) => {

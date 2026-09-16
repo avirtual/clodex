@@ -449,7 +449,7 @@ class PeerConnection {
   }
 
   query(name, kind, args, cb) {
-    this._request('POST', `/api/query/${encodeURIComponent(name)}`, { kind, args: args || {} }, (err, body) => {
+    this._request('POST', `/api/sessions/${encodeURIComponent(name)}/query`, { kind, args: args || {} }, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'query failed' });
     }, QUERY_TIMEOUT_MS);
   }

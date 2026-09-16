@@ -245,8 +245,8 @@ Read (all but `describe` support `-o json` — stable raw wire payload):
 | `describe session\|workspace <name>` / `describe catalogs` | the same routes, rendered as a labeled block (no `-o json`) |
 | `api-resources` | `GET /api/resources` — what this node serves |
 | `version` | `GET /api/peer/hello` — client version plus the node's |
-| `logs <name> [--tail N] [-f\|--follow]` | `GET /api/transcript/:name?limit=N` (+ `GET /api/events` when `-f`) |
-| `query <name> <kind>` | `POST /api/query/:name` — kind ∈ `ctx report bust files filePeek fileDiff` (`--path`, `--detail`) |
+| `logs <name> [--tail N] [-f\|--follow]` | `GET /api/resources` (capability check) → `GET /api/sessions/:name/transcript?limit=N` (+ `GET /api/events` when `-f`) |
+| `query <name> <kind>` | `GET /api/resources` → `POST /api/sessions/:name/query` — kind ∈ `ctx report bust files filePeek fileDiff` (`--path`, `--detail`) |
 | `args get <name>` | `GET /api/session-args/:name` |
 | `skills <name>` | `GET /api/skill-catalog/:name` |
 

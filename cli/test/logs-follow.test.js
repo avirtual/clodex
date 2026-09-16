@@ -1,6 +1,6 @@
 'use strict';
 // logs-follow.test.js — `logs NAME -f` end-to-end through main.run against a
-// stub that plays /api/transcript (tail + refetch) and /api/events (activity
+// stub that plays the transcript subresource (tail + refetch) and /api/events (activity
 // frames that trigger a delta refetch). Asserts: tail first, then only the new
 // entries on each activity; no duplicate lines across a forced reconnect; NDJSON
 // under --json; Ctrl-C (a fake signal) exits 0.
@@ -10,11 +10,12 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
+const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
 
 const TOKEN = 'sekret';
 
 // The transcript grows over the test; `script` is an array of message-arrays,
-// one per successive GET /api/transcript. onEventsOpen gets the live events res.
+// one per successive transcript GET. onEventsOpen gets the live events res.
 function followStub(opts = {}) {
   const seen = [];
   const state = { events: null };
@@ -27,6 +28,12 @@ function followStub(opts = {}) {
       const rec = { method: req.method, url: req.url, body: body ? JSON.parse(body) : null };
       seen.push(rec);
       const p = req.url.split('?')[0];
+      if (req.method === 'GET' && p === '/api/resources') {
+        res.writeHead(200); return res.end(JSON.stringify(opts.resources || RESOURCES_DOC));
+      }
+      if (req.method === 'GET' && p === '/api/peer/hello') {
+        res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['transcript'] }));
+      }
       if (req.method === 'GET' && p === '/api/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         res.write(': connected\n\n');
@@ -34,7 +41,7 @@ function followStub(opts = {}) {
         if (opts.onEventsOpen) opts.onEventsOpen(state, seen);
         return;
       }
-      if (req.method === 'GET' && p.startsWith('/api/transcript/')) {
+      if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         // Each call returns the next scripted snapshot (last one sticks).
         const msgs = opts.transcript ? opts.transcript(tIdx++, seen) : [];
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: msgs }));
@@ -143,6 +150,16 @@ test('logs -f: Ctrl-C exits 0 (pager, not a failure)', async () => {
   server.close();
 });
 
+test('logs: a node whose sessions row carries no transcript subresource is the D.5 line, exit 1', async () => {
+  const { server, seen } = followStub({ resources: docWithout('transcript'), transcript: () => [] });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['logs', 'bob'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.match(stderr, /does not serve sessions\/transcript get; run: clodexctl upgrade node/);
+  assert.ok(!seen.some((s) => /\/transcript/.test(s.url)), 'the check ran BEFORE the first transcript request');
+  server.close();
+});
+
 test('logs without -f: unchanged one-shot (no events feed opened)', async () => {
   const { server, seen } = followStub({ transcript: () => [{ role: 'assistant', text: 'hi' }] });
   const port = await listen(server);
@@ -150,5 +167,6 @@ test('logs without -f: unchanged one-shot (no events feed opened)', async () => 
   assert.strictEqual(code, 0);
   assert.match(stdout, /\[assistant\] hi/);
   assert.ok(!seen.some((s) => s.url === '/api/events'), 'no follow stream for a plain logs');
+  assert.strictEqual(seen.filter((s) => s.url === '/api/resources').length, 1, 'ONE capability check per invocation');
   server.close();
 });
